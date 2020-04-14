@@ -9,6 +9,7 @@
 #include "TcpServer.h"
 #include "absl/flags/flag.h"
 #include "llvm/Demangle/Demangle.h"
+#include "OrbitBase/Logging.h"
 
 // TODO: Remove this flag once we enable specifying the sampling frequency or
 //  period in the client.
@@ -147,6 +148,12 @@ void LinuxTracingHandler::OnFunctionCall(
   timer.m_Depth = static_cast<uint8_t>(function_call.GetDepth());
   timer.m_FunctionAddress = function_call.GetVirtualAddress();
   timer.m_UserData[0] = function_call.GetReturnValue();
+
+  const std::vector<uint64_t> registers = function_call.GetRegisters();
+  PRINT_VAR(registers.size());
+  for(size_t i = 0; i < registers.size(); ++i) {
+    ERROR("reg[%lu] = %lu", i, registers[i]);
+  }
 
   session_->RecordTimer(std::move(timer));
 }

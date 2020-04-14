@@ -588,7 +588,7 @@ void TracerThread::ProcessSampleEvent(const perf_event_header& header,
   int fd = ring_buffer->GetFileDescriptor();
   bool is_gpu_event = gpu_tracing_fds_.contains(fd);
 
-  constexpr size_t size_of_uprobes = sizeof(perf_event_sp_ip_8bytes_sample);
+  constexpr size_t size_of_uprobes = sizeof(perf_event_uprobe);
   bool is_uprobe = !is_gpu_event && (header.size == size_of_uprobes);
 
   constexpr size_t size_of_uretprobes = sizeof(perf_event_uretprobe);

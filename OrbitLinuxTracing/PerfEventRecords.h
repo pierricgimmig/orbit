@@ -111,6 +111,42 @@ struct __attribute__((__packed__)) perf_event_sp_ip_8bytes_sample {
   perf_event_sample_stack_user_8bytes stack;
 };
 
+struct __attribute__((__packed__)) XmmReg {
+  union {
+    float floats[4];
+    double doubles[2];
+  };
+};
+static_assert(sizeof(XmmReg) == 16, "XmmReg must be 128 bits");
+
+struct __attribute__((__packed__)) perf_event_uprobe_regs {
+  uint64_t abi;
+  uint64_t sp;
+  uint64_t ip;
+  uint64_t cx;
+  uint64_t dx;
+  uint64_t si;
+  uint64_t di;
+  uint64_t r8;
+  uint64_t r9;
+  // TODO: b/153910793
+  /*XmmReg xmm0;
+  XmmReg xmm1;
+  XmmReg xmm2;
+  XmmReg xmm3;
+  XmmReg xmm4;
+  XmmReg xmm5;
+  XmmReg xmm6;
+  XmmReg xmm7;*/
+};
+
+struct __attribute__((__packed__)) perf_event_uprobe {
+  perf_event_header header;
+  perf_event_sample_id_tid_time_streamid_cpu sample_id;
+  perf_event_uprobe_regs regs;
+  perf_event_sample_stack_user_8bytes stack;
+};
+
 struct __attribute__((__packed__)) perf_event_lost {
   perf_event_header header;
   uint64_t id;
