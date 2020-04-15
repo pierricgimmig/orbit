@@ -76,7 +76,8 @@ void UprobesUnwindingVisitor::visit(UprobesPerfEvent* event) {
 
   function_call_manager_.ProcessUprobes(event->GetTid(),
                                         event->GetFunction()->VirtualAddress(),
-                                        event->GetTimestamp());
+                                        event->GetTimestamp(),
+                                        event->ring_buffer_record.regs);
 
   return_address_manager_.ProcessUprobes(event->GetTid(), event->GetSp(),
                                          event->GetReturnAddress());

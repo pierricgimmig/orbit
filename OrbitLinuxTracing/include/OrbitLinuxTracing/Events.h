@@ -80,12 +80,15 @@ class Callstack {
 class FunctionCall {
  public:
   FunctionCall(pid_t tid, uint64_t virtual_address, uint64_t begin_timestamp_ns,
-               uint64_t end_timestamp_ns, uint32_t depth, uint64_t return_value)
+               uint64_t end_timestamp_ns, uint32_t depth, uint64_t return_value,
+               const std::vector<uint64_t>& registers)
       : tid_(tid),
         virtual_address_(virtual_address),
         begin_timestamp_ns_(begin_timestamp_ns),
         end_timestamp_ns_(end_timestamp_ns),
-        depth_{depth}, return_value_(return_value) {}
+        depth_{depth},
+        return_value_(return_value),
+        registers_(std::move(registers)) {}
 
   pid_t GetTid() const { return tid_; }
   uint64_t GetVirtualAddress() const { return virtual_address_; }
@@ -93,6 +96,7 @@ class FunctionCall {
   uint64_t GetEndTimestampNs() const { return end_timestamp_ns_; }
   uint32_t GetDepth() const { return depth_; }
   uint64_t GetIntegerReturnValue() const { return return_value_; }
+  const std::vector<uint64_t> GetRegisters() const { return registers_; }
 
  private:
   pid_t tid_;
@@ -101,6 +105,7 @@ class FunctionCall {
   uint64_t end_timestamp_ns_;
   uint32_t depth_;
   uint64_t return_value_;
+  std::vector<uint64_t> registers_;
 };
 
 class GpuJob {
