@@ -34,7 +34,11 @@
 #include "absl/flags/flag.h"
 
 // TODO: Remove this flag once we have a way to toggle the display return values
+<<<<<<< HEAD
 ABSL_FLAG(bool, show_return_values, true, "Show return values on time slices");
+=======
+ABSL_FLAG(bool, show_return_values, false, "Show return values on time slices");
+>>>>>>> c7cc9fb60452cbff939b717df150e6775542fbfb
 TimeGraph* GCurrentTimeGraph = nullptr;
 
 //-----------------------------------------------------------------------------
