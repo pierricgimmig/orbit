@@ -34,7 +34,7 @@
 #include "absl/flags/flag.h"
 
 // TODO: Remove this flag once we have a way to toggle the display return values
-ABSL_FLAG(bool, show_return_values, false, "Show return values on time slices");
+ABSL_FLAG(bool, show_return_values, true, "Show return values on time slices");
 TimeGraph* GCurrentTimeGraph = nullptr;
 
 //-----------------------------------------------------------------------------
@@ -439,6 +439,7 @@ void TimeGraph::SelectLeft(const TextBox* a_TextBox) {
   double maxTimeUs = m_RefTimeUs + currentTimeWindowUs;
 
   SetMinMax(minTimeUs, maxTimeUs);
+  OnPickedTimer(timer);
 }
 
 //-----------------------------------------------------------------------------
@@ -459,6 +460,7 @@ void TimeGraph::SelectRight(const TextBox* a_TextBox) {
   double maxTimeUs = m_RefTimeUs + (1 - ratio) * currentTimeWindowUs;
 
   SetMinMax(minTimeUs, maxTimeUs);
+  OnPickedTimer(timer);
 }
 
 //-----------------------------------------------------------------------------
@@ -473,7 +475,11 @@ std::string GetExtraInfo(const Timer& a_Timer) {
         "[" + ws2s(GOrbitUnreal.GetObjectNames()[a_Timer.m_UserData[0]]) + "]";
   }
   else if (show_return_value && (a_Timer.GetType() == Timer::NONE)) {
-    info = absl::StrFormat("[%lu]", a_Timer.m_UserData[0]);
+    info = absl::StrFormat(
+        "[ret:%lu rdi:%lu rsi:%lu rdx:%lu rcd:%lu r8:%lu r9:%lu]",
+        a_Timer.m_UserData[0], a_Timer.m_UserData[1], a_Timer.m_UserData[2],
+        a_Timer.m_UserData[3], a_Timer.m_UserData[4], a_Timer.m_UserData[5],
+        a_Timer.m_UserData[6]);
   }
   return info;
 }
@@ -642,11 +648,7 @@ void TimeGraph::UpdatePrimitives(bool a_Picking) {
 
               const char* name = nullptr;
               if (func) {
-                std::string extraInfo = GetExtraInfo(timer);
-                name = func->PrettyName().c_str();
-                std::string text = absl::StrFormat(
-                    "%s %s %s", name, extraInfo.c_str(), time.c_str());
-
+                std::string text = GetFunctionTimerDescription(timer);
                 textBox.SetText(text);
               } else if (timer.m_Type == Timer::INTROSPECTION) {
                 textBox.SetText(
@@ -704,6 +706,22 @@ void TimeGraph::UpdatePrimitives(bool a_Picking) {
 
   m_NeedsUpdatePrimitives = false;
   m_NeedsRedraw = true;
+}
+
+//-----------------------------------------------------------------------------
+std::string TimeGraph::GetFunctionTimerDescription(const Timer& timer) const {
+  Function* func = Capture::GSelectedFunctionsMap[timer.m_FunctionAddress];
+  if (func == nullptr) return {};
+  std::string extraInfo = GetExtraInfo(timer);
+  const char* name = func->PrettyName().c_str();
+  return absl::StrFormat("%s %s", name, extraInfo.c_str());
+}
+
+//-----------------------------------------------------------------------------
+void TimeGraph::OnPickedTimer(const Timer& timer) {
+  std::string desc = GetFunctionTimerDescription(timer);
+  if(desc.empty()) return;
+  LOG("%s", desc.c_str());
 }
 
 //-----------------------------------------------------------------------------

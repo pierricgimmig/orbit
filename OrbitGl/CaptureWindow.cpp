@@ -239,11 +239,11 @@ void CaptureWindow::SelectTextBox(class TextBox* a_TextBox) {
       Capture::GetCallstack(a_TextBox->GetTimer().m_CallstackHash);
   GOrbitApp->SetCallStack(Capture::GSelectedCallstack);
 
-  const Timer& a_Timer = a_TextBox->GetTimer();
-  DWORD64 address = a_Timer.m_FunctionAddress;
-  if (a_Timer.IsType(Timer::ZONE)) {
+  const Timer& timer = a_TextBox->GetTimer();
+  DWORD64 address = timer.m_FunctionAddress;
+  if (timer.IsType(Timer::ZONE)) {
     std::shared_ptr<CallStack> callStack =
-        Capture::GetCallstack(a_Timer.m_CallstackHash);
+        Capture::GetCallstack(timer.m_CallstackHash);
     if (callStack && callStack->m_Depth > 1) {
       address = callStack->m_Data[1];
     }
@@ -254,6 +254,8 @@ void CaptureWindow::SelectTextBox(class TextBox* a_TextBox) {
   if (m_DoubleClicking && a_TextBox) {
     m_TimeGraph.Zoom(a_TextBox);
   }
+
+  m_TimeGraph.OnPickedTimer(timer);
 }
 
 //-----------------------------------------------------------------------------

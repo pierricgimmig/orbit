@@ -111,6 +111,9 @@ class TimeGraph {
   void OnUp();
   void OnDown();
 
+  void OnPickedTimer(const Timer& timer);
+  std::string GetFunctionTimerDescription(const Timer& timer) const;
+
  protected:
   std::shared_ptr<ThreadTrack> GetThreadTrack(ThreadID a_TID);
   ThreadTrackMap GetThreadTracksCopy() const;
