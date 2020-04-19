@@ -110,7 +110,7 @@ class ScopeTimer {
 class LocalScopeTimer {
  public:
   LocalScopeTimer();
-  LocalScopeTimer(const std::string& message);
+  LocalScopeTimer(const std::string& message, double* millis = nullptr);
   LocalScopeTimer(double* millis);
   ~LocalScopeTimer();
 

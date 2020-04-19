@@ -34,8 +34,8 @@ LocalScopeTimer::LocalScopeTimer(double* millis) : millis_(millis) {
   timer_.Start();
 }
 
-LocalScopeTimer::LocalScopeTimer(const std::string& message)
-    : millis_(nullptr), message_(message) {
+LocalScopeTimer::LocalScopeTimer(const std::string& message, double* millis)
+    : millis_(millis), message_(message) {
   std::string tabs;
   for (size_t i = 0; i < CurrentDepthLocal; ++i) {
     tabs += "  ";

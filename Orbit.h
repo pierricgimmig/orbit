@@ -1,122 +1,59 @@
-//----------------------------------------
-// Orbit Profiler
-// Copyright Pierric Gimmig 2013-2017
-//----------------------------------------
-#pragma once
+#ifndef ORBIT_H_
+#define ORBIT_H_
 
 //-----------------------------------------------------------------------------
-// Orbit API
+// Orbit API (header-only)
 //
-// Simply include this header in your project, there is no lib and no cpp file.
-//
-// MANUAL INSTRUMENTATION:
 // The main feature of Orbit is its ability to dynamically instrument functions
 // without having to recompile or even relaunch your application.  However,
 // if you still want to manually instrument your code, you can.
 //
 // Use ORBIT_SCOPE or ORBIT_START/ORBIT_STOP *macros* only.
 // DO NOT use OrbitScope(...)/OrbitStart(...)/OrbitStop() directly.
-// NOTE: You need to use string literals.  Dynamic strings are not supported
-// yet.
-//
-// DLL LOADING:
-// If you want to control the loading of Orbit64.dll, i.e. you don't want to
-// have to manually inject it into your application, use the OrbitAPI class.
-// Calling OrbitAPI::Connect(...) will load the dll and try to connect to the
-// Orbit instance specified in parameters.  Note that Orbit64.dll needs to be
-// next to your exectutable.  You can also change the code below
-// (OrbitAPI::Init()).
-//-----------------------------------------------------------------------------
+// NOTE: You need to use string literals.  Dynamic strings are not supported.
 
-#define ORBIT_SCOPE(name) OrbitScope ORBIT_UNIQUE(ORB)(ORBIT_LITERAL(name))
-#define ORBIT_START(name) OrbitStart(ORBIT_LITERAL(name))
-#define ORBIT_STOP OrbitStop()
-#define ORBIT_SEND(ptr, num) OrbitSendData(ptr, num)
+// Public macros.
+#define ORBIT_SCOPE(name) orbit::Scope ORBIT_UNIQUE(ORB)(ORBIT_LITERAL(name))
+#define ORBIT_START(name) orbit::Start(ORBIT_LITERAL(name))
+#define ORBIT_STOP orbit::Stop()
+#define ORBIT_SEND(ptr, num) orbit::SendData(ptr, num)
+#define ORBIT_INT(name, value) orbit::TrackInt(ORBIT_LITERAL(name), value)
+#define ORBIT_FLOAT(name, value) orbit::TrackFloat(ORBIT_LITERAL(name), value)
 
-//-----------------------------------------------------------------------------
-struct OrbitAPI {
-  static inline bool Connect(const char* a_Host, int a_Port = 1789);
-  static inline bool IsConnected();
-
- private:
-  static inline void Init();
-
-  typedef void (*InitRemote)(char*);
-  typedef bool (*GetBool)();
-
-  static inline HINSTANCE& GetHandle();
-  static inline InitRemote& GetInitRemote();
-  static inline GetBool& GetIsConnected();
-};
-
-//-----------------------------------------------------------------------------
-#define ORBIT_NOOP       \
-  static volatile int x; \
-  x;
+// Internal macros.
 #define ORBIT_LITERAL(x) ("" x)
-
-//-----------------------------------------------------------------------------
-#pragma optimize( \
-    "", off)  // On purpose to prevent compiler from stripping functions
-// NOTE: Do not use these directly, use above macros instead
-__declspec(noinline) inline void OrbitStart(const char*) { ORBIT_NOOP; }
-__declspec(noinline) inline void OrbitStop() { ORBIT_NOOP; }
-__declspec(noinline) inline void OrbitLog(const char*) { ORBIT_NOOP; }
-__declspec(noinline) inline void OrbitSendData(void*, int) { ORBIT_NOOP; }
-#pragma optimize("", on)
-
-//-----------------------------------------------------------------------------
-struct OrbitScope {
-  OrbitScope(const char* a_Name) { OrbitStart(a_Name); }
-  ~OrbitScope() { OrbitStop(); }
-};
-
-//-----------------------------------------------------------------------------
 #define ORBIT_CONCAT_IND(x, y) (x##y)
 #define ORBIT_CONCAT(x, y) ORBIT_CONCAT_IND(x, y)
 #define ORBIT_UNIQUE(x) ORBIT_CONCAT(x, __COUNTER__)
+#define ORBIT_NOOP       \
+  static volatile int x; \
+  x;
 
-//-----------------------------------------------------------------------------
-void OrbitAPI::Init() {
-  HINSTANCE& dllHandle = GetHandle();
-  if (!dllHandle) {
-    const TCHAR* dllName =
-        sizeof(size_t) == 4 ? TEXT("Orbit32.dll") : TEXT("Orbit64.dll");
-    if (dllHandle = LoadLibrary(dllName)) {
-      GetInitRemote() =
-          (InitRemote)GetProcAddress(dllHandle, "OrbitInitRemote");
-    }
-  }
-}
+#if _WIN32
+#define NO_INLINE __declspec(noinline)
+#else
+#define NO_INLINE __attribute__((noinline))
+#endif
 
-//-----------------------------------------------------------------------------
-bool OrbitAPI::Connect(const char* a_Host, int a_Port) {
-  Init();
-  if (GetHandle() && GetInitRemote()) {
-    char host[256] = {0};
-    sprintf_s(host, sizeof(host), "%s:%i", a_Host, a_Port);
-    GetInitRemote()(host);
-    return IsConnected();
-  }
+namespace orbit {
 
-  return false;
+// NOTE: Do not use these directly, use above macros instead
+inline void NO_INLINE Start(const char*) { ORBIT_NOOP; }
+inline void NO_INLINE Stop() { ORBIT_NOOP; }
+inline void NO_INLINE Log(const char*) { ORBIT_NOOP; }
+inline void NO_INLINE TrackInt(const char*, int) { ORBIT_NOOP; }
+inline void NO_INLINE TrackFloatAsInt(const char*, int) { ORBIT_NOOP; }
+
+// Unline functions above, this needs to be inline. This is used to
+inline void TrackFloat(const char* name, float value){
+  TrackFloatAsInt(name, *reinterpret_cast<int*>(&value));
 }
 
-//-----------------------------------------------------------------------------
-bool OrbitAPI::IsConnected() {
-  return GetIsConnected() ? GetIsConnected()() : false;
-}
+struct Scope {
+  Scope(const char* name) { Start(name); }
+  ~Scope() { Stop(); }
+};
 
-//-----------------------------------------------------------------------------
-HINSTANCE& OrbitAPI::GetHandle() {
-  static HINSTANCE s_DllHandle;
-  return s_DllHandle;
-}
-OrbitAPI::InitRemote& OrbitAPI::GetInitRemote() {
-  static InitRemote s_InitRemote;
-  return s_InitRemote;
-}
-OrbitAPI::GetBool& OrbitAPI::GetIsConnected() {
-  static GetBool s_IsConnected;
-  return s_IsConnected;
-}
+}  // namespace orbit
+
+#endif  // ORBIT_H_
