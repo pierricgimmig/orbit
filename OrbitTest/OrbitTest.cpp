@@ -37,11 +37,7 @@ void SetThreadName(const std::string& a_Name) {
 
 //-----------------------------------------------------------------------------
 OrbitTest::OrbitTest() {
- #ifdef _WIN32
-  while (true) FunctionCallLoopWindows(1000); //100000
-#else
-  while (true) FunctionCallLoop(1000);
-#endif
+  while (true) FunctionCallLoop(10000);
 }
 
 //-----------------------------------------------------------------------------
@@ -110,9 +106,21 @@ void NO_INLINE OrbitTest::BusyWork(uint64_t microseconds) {
   }
 }
 
-//-----------------------------------------------------------------------------
-void OrbitTest::FunctionCallLoopWindows(uint64_t num_calls) {
+void SetMaxThreadPriority() {
+#ifdef _WIN32
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+#else
+  int policy;
+  struct sched_param param;
+  pthread_getschedparam(pthread_self(), &policy, &param);
+  param.sched_priority = sched_get_priority_max(policy);
+  pthread_setschedparam(pthread_self(), policy, &param);
+#endif
+}
+
+//-----------------------------------------------------------------------------
+void OrbitTest::FunctionCallLoop(uint64_t num_calls) {
+  SetMaxThreadPriority();
   double instrumented_time_ns = 0;
   double non_instrumented_time_ns = 0;
 
@@ -146,45 +154,6 @@ void OrbitTest::FunctionCallLoopWindows(uint64_t num_calls) {
       0.001;
   PRINT_VAR(average_call_duration_ns);
   PRINT_VAR(average_instrumented_call_duration_ns);
-  PRINT_VAR(instrumentation_overhead_us);
-  PRINT("================\n");
-}
-
-//-----------------------------------------------------------------------------
-void OrbitTest::FunctionCallLoop(uint64_t num_calls) {
-  double instrumented_time = 0;
-  double non_instrumented_time = 0;
-
-  // Non Instrumented
-  for (uint64_t i = 0; i < num_calls; ++i) {
-    double call_time = 0;
-    {
-      LocalScopeTimer timer(&call_time);
-      CallNoop();
-    }
-    non_instrumented_time += call_time;
-    OrbitSleepMs(1);
-  }
-
-  // Instrumented
-  for (uint64_t i = 0; i < num_calls; ++i) {
-    double call_time = 0;
-    {
-      LocalScopeTimer timer(&call_time);
-      CallNoopInstrumented();
-    }
-    instrumented_time += call_time;
-    OrbitSleepMs(1);
-  }
-
-  double average_call_duration_ms = non_instrumented_time / (double)num_calls;
-  double average_instrumented_call_duration_ms =
-      instrumented_time / (double)num_calls;
-  double instrumentation_overhead_us =
-      (average_instrumented_call_duration_ms - average_call_duration_ms) *
-      1000.0;
-  PRINT_VAR(average_call_duration_ms);
-  PRINT_VAR(average_instrumented_call_duration_ms);
   PRINT_VAR(instrumentation_overhead_us);
   PRINT("================\n");
 }

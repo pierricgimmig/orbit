@@ -17,7 +17,6 @@ class OrbitTest {
   void TestFunc2(uint32_t a_Depth = 0);
   void BusyWork(uint64_t microseconds);
   void FunctionCallLoop(uint64_t num_calls);
-  void FunctionCallLoopWindows(uint64_t num_calls);
   void CallNoop();
   void CallNoopInstrumented();
 
