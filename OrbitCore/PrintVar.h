@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "Utils.h"
+#include "../OrbitBase/include/OrbitBase/Logging.h"
 #include "absl/strings/str_format.h"
 
 #if __linux__
@@ -40,7 +41,7 @@ inline void PrintVar(const char* a_VarName, const T& a_Value,
   std::stringstream l_StringStream;
   l_StringStream << a_VarName << " = " << a_Value;
   if (!a_SameLine) l_StringStream << std::endl;
-  OutputDebugStringA(l_StringStream.str().c_str());
+  PLATFORM_LOG(l_StringStream.str().c_str());
 }
 
 //-----------------------------------------------------------------------------
@@ -70,7 +71,7 @@ inline std::string VarToAnsi(const char* a_VarName, const T& a_Value) {
 inline void PrintFunc(const char* function, const char* file, int line) {
   std::string func = absl::StrFormat("%s %s(%i) TID: %u\n", function, file,
                                      line, GetCurrentThreadId());
-  OutputDebugStringA(func.c_str());
+  PLATFORM_LOG(func.c_str());
 }
 
 //-----------------------------------------------------------------------------
@@ -84,7 +85,7 @@ inline void PrintDbg(const char* msg, ...) {
   vsnprintf_s(text, BUFF_SIZE - 1, msg, ap);
   va_end(ap);
 
-  OutputDebugStringA(text);
+  PLATFORM_LOG(text);
 }
 
 //-----------------------------------------------------------------------------
