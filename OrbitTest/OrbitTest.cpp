@@ -152,6 +152,7 @@ void OrbitTest::FunctionCallLoop(uint64_t num_calls) {
   double instrumentation_overhead_us =
       (average_instrumented_call_duration_ns - average_call_duration_ns) *
       0.001;
+
   PRINT_VAR(average_call_duration_ns);
   PRINT_VAR(average_instrumented_call_duration_ns);
   PRINT_VAR(instrumentation_overhead_us);
