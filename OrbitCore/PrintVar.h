@@ -5,7 +5,6 @@
 
 #include "OrbitBase/Logging.h"
 #include "Utils.h"
-#include "../OrbitBase/include/OrbitBase/Logging.h"
 #include "absl/strings/str_format.h"
 
 #define PRINT_VAR(var) LOG("%s", VAR_TO_STR(var).c_str())
