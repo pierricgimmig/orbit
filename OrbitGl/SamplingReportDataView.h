@@ -3,6 +3,7 @@
 //-----------------------------------
 #pragma once
 
+#include "CallStackDataView.h"
 #include "DataView.h"
 #include "OrbitType.h"
 #include "ProcessUtils.h"
@@ -12,14 +13,12 @@ class SamplingReportDataView : public DataView {
  public:
   SamplingReportDataView();
 
-  const std::vector<std::string>& GetColumnHeaders() override;
-  const std::vector<float>& GetColumnHeadersRatios() override;
-  const std::vector<SortingOrder>& GetColumnInitialOrders() override;
-  int GetDefaultSortingColumn() override;
+  const std::vector<Column>& GetColumns() override;
+  int GetDefaultSortingColumn() override { return COLUMN_INCLUSIVE; }
   std::vector<std::string> GetContextMenu(
       int a_ClickedIndex, const std::vector<int>& a_SelectedIndices) override;
   std::string GetValue(int a_Row, int a_Column) override;
-  const std::string& GetName() override { return m_Name; }
+  const std::string& GetName() { return m_Name; }
 
   void OnFilter(const std::string& a_Filter) override;
   void OnSort(int a_Column, std::optional<SortingOrder> a_NewOrder) override;
@@ -35,19 +34,6 @@ class SamplingReportDataView : public DataView {
   void SetThreadID(ThreadID a_TID);
   std::vector<SampledFunction>& GetSampledFunctions() { return m_Functions; }
 
-  enum SamplingColumn {
-    Toggle,
-    Index,
-    FunctionName,
-    Exclusive,
-    Inclusive,
-    ModuleName,
-    SourceFile,
-    SourceLine,
-    Address,
-    NumColumns
-  };
-
  protected:
   const SampledFunction& GetSampledFunction(unsigned int a_Row) const;
   SampledFunction& GetSampledFunction(unsigned int a_Row);
@@ -59,14 +45,21 @@ class SamplingReportDataView : public DataView {
   std::vector<SampledFunction> m_Functions;
   ThreadID m_TID = -1;
   std::string m_Name;
-  class CallStackDataView* m_CallstackDataView;
+  CallStackDataView* m_CallstackDataView;
   SamplingReport* m_SamplingReport = nullptr;
 
-  static void InitColumnsIfNeeded();
-  static std::vector<std::string> s_Headers;
-  static std::vector<int> s_HeaderMap;
-  static std::vector<float> s_HeaderRatios;
-  static std::vector<SortingOrder> s_InitialOrders;
+  enum COLUMN_INDEX {
+    COLUMN_SELECTED,
+    COLUMN_INDEX,
+    COLUMN_FUNCTION_NAME,
+    COLUMN_EXCLUSIVE,
+    COLUMN_INCLUSIVE,
+    COLUMN_MODULE_NAME,
+    COLUMN_FILE,
+    COLUMN_LINE,
+    COLUMN_ADDRESS,
+    COLUMN_NUM
+  };
 
   static const std::string MENU_ACTION_SELECT;
   static const std::string MENU_ACTION_UNSELECT;

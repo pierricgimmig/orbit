@@ -15,90 +15,28 @@
 #include "absl/strings/str_format.h"
 
 //-----------------------------------------------------------------------------
-FunctionsDataView::FunctionsDataView() {
-  InitColumnsIfNeeded();
-  m_SortingOrders.insert(m_SortingOrders.end(), s_InitialOrders.begin(),
-                         s_InitialOrders.end());
+FunctionsDataView::FunctionsDataView() : DataView(DataViewType::FUNCTIONS) {
+  InitSortingOrders();
   GOrbitApp->RegisterFunctionsDataView(this);
 }
 
 //-----------------------------------------------------------------------------
-std::vector<std::string> FunctionsDataView::s_Headers;
-std::vector<int> FunctionsDataView::s_HeaderMap;
-std::vector<float> FunctionsDataView::s_HeaderRatios;
-std::vector<DataView::SortingOrder> FunctionsDataView::s_InitialOrders;
-
-//-----------------------------------------------------------------------------
-void FunctionsDataView::InitColumnsIfNeeded() {
-  if (s_Headers.empty()) {
-    s_Headers.emplace_back("Hooked");
-    s_HeaderMap.push_back(Function::SELECTED);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(DescendingOrder);
-
-    s_Headers.emplace_back("Index");
-    s_HeaderMap.push_back(Function::INDEX);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("Function");
-    s_HeaderMap.push_back(Function::NAME);
-    s_HeaderRatios.push_back(0.5f);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("Size");
-    s_HeaderMap.push_back(Function::SIZE);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("File");
-    s_HeaderMap.push_back(Function::FILE);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("Line");
-    s_HeaderMap.push_back(Function::LINE);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("Module");
-    s_HeaderMap.push_back(Function::MODULE);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("Address");
-    s_HeaderMap.push_back(Function::ADDRESS);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-
-    s_Headers.emplace_back("Conv");
-    s_HeaderMap.push_back(Function::CALL_CONV);
-    s_HeaderRatios.push_back(0);
-    s_InitialOrders.push_back(AscendingOrder);
-  }
-}
-
-//-----------------------------------------------------------------------------
-const std::vector<std::string>& FunctionsDataView::GetColumnHeaders() {
-  return s_Headers;
-}
-
-//-----------------------------------------------------------------------------
-const std::vector<float>& FunctionsDataView::GetColumnHeadersRatios() {
-  return s_HeaderRatios;
-}
-
-//-----------------------------------------------------------------------------
-const std::vector<DataView::SortingOrder>&
-FunctionsDataView::GetColumnInitialOrders() {
-  return s_InitialOrders;
-}
-
-//-----------------------------------------------------------------------------
-int FunctionsDataView::GetDefaultSortingColumn() {
-  return std::distance(
-      s_HeaderMap.begin(),
-      std::find(s_HeaderMap.begin(), s_HeaderMap.end(), Function::ADDRESS));
+const std::vector<DataView::Column>& FunctionsDataView::GetColumns() {
+  static const std::vector<Column> columns = [] {
+    std::vector<Column> columns;
+    columns.resize(COLUMN_NUM);
+    columns[COLUMN_SELECTED] = {"Hooked", .0f, SortingOrder::Descending};
+    columns[COLUMN_INDEX] = {"Index", .0f, SortingOrder::Ascending};
+    columns[COLUMN_NAME] = {"Function", .5f, SortingOrder::Ascending};
+    columns[COLUMN_SIZE] = {"Size", .0f, SortingOrder::Ascending};
+    columns[COLUMN_FILE] = {"File", .0f, SortingOrder::Ascending};
+    columns[COLUMN_LINE] = {"Line", .0f, SortingOrder::Ascending};
+    columns[COLUMN_MODULE] = {"Module", .0f, SortingOrder::Ascending};
+    columns[COLUMN_ADDRESS] = {"Address", .0f, SortingOrder::Ascending};
+    columns[COLUMN_CALL_CONV] = {"Call conv", .0f, SortingOrder::Ascending};
+    return columns;
+  }();
+  return columns;
 }
 
 //-----------------------------------------------------------------------------
@@ -109,47 +47,30 @@ std::string FunctionsDataView::GetValue(int a_Row, int a_Column) {
     return "";
   }
 
-  Function* function = GetFunction(a_Row);
-  if (function == nullptr) {
-    return "";
-  }
+  Function& function = GetFunction(a_Row);
 
-  std::string value;
-
-  switch (s_HeaderMap[a_Column]) {
-    case Function::INDEX:
-      value = absl::StrFormat("%d", a_Row);
-      break;
-    case Function::SELECTED:
-      value = function->IsSelected() ? "X" : "-";
-      break;
-    case Function::NAME:
-      value = function->PrettyName();
-      break;
-    case Function::ADDRESS:
-      value = absl::StrFormat("0x%llx", function->GetVirtualAddress());
-      break;
-    case Function::FILE:
-      value = function->File();
-      break;
-    case Function::MODULE:
-      value =
-          function->GetPdb() != nullptr ? function->GetPdb()->GetName() : "";
-      break;
-    case Function::LINE:
-      value = absl::StrFormat("%i", function->Line());
-      break;
-    case Function::SIZE:
-      value = absl::StrFormat("%lu", function->Size());
-      break;
-    case Function::CALL_CONV:
-      value = function->GetCallingConventionString();
-      break;
+  switch (a_Column) {
+    case COLUMN_SELECTED:
+      return function.IsSelected() ? "X" : "-";
+    case COLUMN_INDEX:
+      return absl::StrFormat("%d", a_Row);
+    case COLUMN_NAME:
+      return function.PrettyName();
+    case COLUMN_SIZE:
+      return absl::StrFormat("%lu", function.Size());
+    case COLUMN_FILE:
+      return function.File();
+    case COLUMN_LINE:
+      return absl::StrFormat("%i", function.Line());
+    case COLUMN_MODULE:
+      return function.GetPdb() != nullptr ? function.GetPdb()->GetName() : "";
+    case COLUMN_ADDRESS:
+      return absl::StrFormat("0x%llx", function.GetVirtualAddress());
+    case COLUMN_CALL_CONV:
+      return function.GetCallingConventionString();
     default:
-      break;
+      return "";
   }
-
-  return value;
 }
 
 //-----------------------------------------------------------------------------
@@ -168,38 +89,37 @@ void FunctionsDataView::OnSort(int a_Column,
 
   const std::vector<std::shared_ptr<Function>>& functions =
       Capture::GTargetProcess->GetFunctions();
-  auto memberId = static_cast<Function::MemberID>(s_HeaderMap[a_Column]);
 
   if (a_NewOrder.has_value()) {
     m_SortingOrders[a_Column] = a_NewOrder.value();
   }
 
-  bool ascending = m_SortingOrders[a_Column] == AscendingOrder;
+  bool ascending = m_SortingOrders[a_Column] == SortingOrder::Ascending;
   std::function<bool(int a, int b)> sorter = nullptr;
 
-  switch (memberId) {
-    case Function::NAME:
-      sorter = ORBIT_FUNC_SORT(PrettyName());
-      break;
-    case Function::ADDRESS:
-      sorter = ORBIT_FUNC_SORT(Address());
-      break;
-    case Function::MODULE:
-      sorter = ORBIT_FUNC_SORT(GetPdb()->GetName());
-      break;
-    case Function::FILE:
-      sorter = ORBIT_FUNC_SORT(File());
-      break;
-    case Function::LINE:
-      sorter = ORBIT_FUNC_SORT(Line());
-      break;
-    case Function::SIZE:
-      sorter = ORBIT_FUNC_SORT(Size());
-      break;
-    case Function::SELECTED:
+  switch (a_Column) {
+    case COLUMN_SELECTED:
       sorter = ORBIT_FUNC_SORT(IsSelected());
       break;
-    case Function::CALL_CONV:
+    case COLUMN_NAME:
+      sorter = ORBIT_FUNC_SORT(PrettyName());
+      break;
+    case COLUMN_SIZE:
+      sorter = ORBIT_FUNC_SORT(Size());
+      break;
+    case COLUMN_FILE:
+      sorter = ORBIT_FUNC_SORT(File());
+      break;
+    case COLUMN_LINE:
+      sorter = ORBIT_FUNC_SORT(Line());
+      break;
+    case COLUMN_MODULE:
+      sorter = ORBIT_FUNC_SORT(GetPdb()->GetName());
+      break;
+    case COLUMN_ADDRESS:
+      sorter = ORBIT_FUNC_SORT(Address());
+      break;
+    case COLUMN_CALL_CONV:
       sorter = ORBIT_FUNC_SORT(CallingConvention());
       break;
     default:
@@ -228,27 +148,21 @@ std::vector<std::string> FunctionsDataView::GetContextMenu(
     int a_ClickedIndex, const std::vector<int>& a_SelectedIndices) {
   bool enable_select = false;
   bool enable_unselect = false;
-  bool enable_view_disassembly = false;
   for (int index : a_SelectedIndices) {
-    const Function* function = GetFunction(index);
-    if (function == nullptr) continue;
-    enable_select |= !function->IsSelected();
-    enable_unselect |= function->IsSelected();
-    enable_view_disassembly = true;
+    const Function& function = GetFunction(index);
+    enable_select |= !function.IsSelected();
+    enable_unselect |= function.IsSelected();
   }
 
   bool enable_create_rule = false;
-  if (a_SelectedIndices.size() == 1 &&
-      GetFunction(a_SelectedIndices[0]) != nullptr) {
+  if (a_SelectedIndices.size() == 1) {
     enable_create_rule = true;
   }
 
   std::vector<std::string> menu;
   if (enable_select) menu.emplace_back(MENU_ACTION_SELECT);
   if (enable_unselect) menu.emplace_back(MENU_ACTION_UNSELECT);
-  if (enable_view_disassembly) {
-    Append(menu, {MENU_ACTION_VIEW, MENU_ACTION_DISASSEMBLY});
-  }
+  Append(menu, {MENU_ACTION_VIEW, MENU_ACTION_DISASSEMBLY});
   if (enable_create_rule) menu.emplace_back(MENU_ACTION_CREATE_RULE);
   // TODO: MENU_ACTION_SET_AS_FRAME is never shown, should it be removed?
   Append(menu, DataView::GetContextMenu(a_ClickedIndex, a_SelectedIndices));
@@ -259,43 +173,35 @@ std::vector<std::string> FunctionsDataView::GetContextMenu(
 void FunctionsDataView::OnContextMenu(const std::string& a_Action,
                                       int a_MenuIndex,
                                       const std::vector<int>& a_ItemIndices) {
-  std::vector<Function*> functions;
-  for (int i : a_ItemIndices) {
-    Function* function = GetFunction(i);
-    if (function != nullptr) {
-      functions.push_back(function);
-    }
-  }
-
   if (a_Action == MENU_ACTION_SELECT) {
-    for (Function* function : functions) {
-      function->Select();
+    for (int i : a_ItemIndices) {
+      GetFunction(i).Select();
     }
   } else if (a_Action == MENU_ACTION_UNSELECT) {
-    for (Function* function : functions) {
-      function->UnSelect();
+    for (int i : a_ItemIndices) {
+      GetFunction(i).UnSelect();
     }
   } else if (a_Action == MENU_ACTION_VIEW) {
-    for (Function* function : functions) {
-      function->Print();
+    for (int i : a_ItemIndices) {
+      GetFunction(i).Print();
     }
 
-    GOrbitApp->SendToUiNow(L"output");
+    GOrbitApp->SendToUiNow("output");
   } else if (a_Action == MENU_ACTION_DISASSEMBLY) {
     uint32_t pid = Capture::GTargetProcess->GetID();
-    for (Function* function : functions) {
-      function->GetDisassembly(pid);
+    for (int i : a_ItemIndices) {
+      GetFunction(i).GetDisassembly(pid);
     }
   } else if (a_Action == MENU_ACTION_CREATE_RULE) {
-    if (functions.size() != 1) {
+    if (a_ItemIndices.size() != 1) {
       return;
     }
-    GOrbitApp->LaunchRuleEditor(functions[0]);
+    GOrbitApp->LaunchRuleEditor(&GetFunction(a_ItemIndices[0]));
   } else if (a_Action == MENU_ACTION_SET_AS_FRAME) {
-    if (functions.size() != 1) {
+    if (a_ItemIndices.size() != 1) {
       return;
     }
-    functions[0]->SetAsMainFrameFunction();
+    GetFunction(a_ItemIndices[0]).SetAsMainFrameFunction();
   } else {
     DataView::OnContextMenu(a_Action, a_MenuIndex, a_ItemIndices);
   }
@@ -397,9 +303,9 @@ void FunctionsDataView::OnDataChanged() {
 }
 
 //-----------------------------------------------------------------------------
-Function* FunctionsDataView::GetFunction(int a_Row) {
+Function& FunctionsDataView::GetFunction(int a_Row) const {
   ScopeLock lock(Capture::GTargetProcess->GetDataMutex());
   const std::vector<std::shared_ptr<Function>>& functions =
       Capture::GTargetProcess->GetFunctions();
-  return functions[m_Indices[a_Row]].get();
+  return *functions[m_Indices[a_Row]];
 }

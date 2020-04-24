@@ -52,8 +52,8 @@ Pdb::Pdb(const char* pdb_name)
 }
 
 //-----------------------------------------------------------------------------
-Pdb::Pdb(uint64_t module_address, uint64_t load_bias,
-         const std::string& file_name, const std::string& module_file_name)
+Pdb::Pdb(uint64_t module_address, uint64_t load_bias, std::string file_name,
+         std::string module_file_name)
     : m_MainModule(module_address),
       load_bias_(load_bias),
       m_FileName(std::move(file_name)),
@@ -234,15 +234,15 @@ void Pdb::Update() {
 
 //-----------------------------------------------------------------------------
 void Pdb::SendStatusToUi() {
-  std::wstring status = Format(
-      L"status:Parsing %s\nFunctions: %i\nTypes: %i\nGlobals: %i\n",
-      m_Name.c_str(), functions_.size(), m_Types.size(), m_Globals.size());
+  std::string status = absl::StrFormat(
+      "status:Parsing %s\nFunctions: %i\nTypes: %i\nGlobals: %i\n", m_Name,
+      functions_.size(), m_Types.size(), m_Globals.size());
 
   if (m_IsPopulatingFunctionMap) {
-    status += L"PopulatingFunctionMap\n";
+    status += "PopulatingFunctionMap\n";
   }
   if (m_IsPopulatingFunctionStringMap) {
-    status += L"PopulatingFunctionStringMap\n";
+    status += "PopulatingFunctionStringMap\n";
   }
 
   int numPoints = 10;
@@ -251,7 +251,7 @@ void Pdb::SendStatusToUi() {
                        (float)period * (float)numPoints);
   if (progress > numPoints) progress = numPoints;
   for (int i = 0; i <= progress; ++i) {
-    status += L".";
+    status += ".";
   }
 
   GTcpServer->SendToUiNow(status);

@@ -66,7 +66,6 @@
 #include "TypesDataView.h"
 #include "Utils.h"
 #include "Version.h"
-#include "curl/curl.h"
 
 #define GLUT_DISABLE_ATEXIT_HACK
 #include "GL/freeglut.h"
@@ -111,7 +110,7 @@ void OrbitApp::SetCommandLineArguments(const std::vector<std::string>& a_Args) {
   m_Arguments = a_Args;
 
   for (const std::string& arg : a_Args) {
-    if (Contains(arg, "gamelet:")) {
+    if (absl::StrContains(arg, "gamelet:")) {
       std::string address = Replace(arg, "gamelet:", "");
       Capture::GCaptureHost = address;
 
@@ -125,19 +124,19 @@ void OrbitApp::SetCommandLineArguments(const std::vector<std::string>& a_Args) {
       ConnectionManager::Get().ConnectToRemote(address);
       m_ProcessesDataView->SetIsRemote(true);
       SetIsRemote(true);
-    } else if (Contains(arg, "headless")) {
+    } else if (absl::StrContains(arg, "headless")) {
       SetHeadless(true);
-    } else if (Contains(arg, "preset:")) {
+    } else if (absl::StrContains(arg, "preset:")) {
       std::vector<std::string> vec = Tokenize(arg, ":");
       if (vec.size() > 1) {
         Capture::GPresetToLoad = vec[1];
       }
-    } else if (Contains(arg, "inject:")) {
+    } else if (absl::StrContains(arg, "inject:")) {
       std::vector<std::string> vec = Tokenize(arg, ":");
       if (vec.size() > 1) {
         Capture::GProcessToInject = vec[1];
       }
-    } else if (Contains(arg, "systrace:")) {
+    } else if (absl::StrContains(arg, "systrace:")) {
       m_PostInitArguments.push_back(arg);
     }
   }
@@ -348,7 +347,7 @@ void OrbitApp::PostInit() {
   }
 
   for (std::string& arg : m_PostInitArguments) {
-    if (Contains(arg, "systrace:")) {
+    if (absl::StrContains(arg, "systrace:")) {
       std::string command = Replace(arg, "systrace:", "");
       auto tokens = Tokenize(command, ",");
       if (!tokens.empty()) {
@@ -401,9 +400,9 @@ void OrbitApp::LoadFileMapping() {
     std::wstring wline;
     while (std::getline(infile, wline)) {
       std::string line = ws2s(wline);
-      if (StartsWith(line, "//")) continue;
+      if (absl::StartsWith(line, "//")) continue;
 
-      bool containsQuotes = Contains(line, "\"");
+      bool containsQuotes = absl::StrContains(line, "\"");
 
       std::vector<std::string> tokens = Tokenize(line);
       if (tokens.size() == 2 && !containsQuotes) {
@@ -428,17 +427,20 @@ void OrbitApp::LoadFileMapping() {
 void OrbitApp::ListSessions() {
   std::vector<std::string> sessionFileNames =
       Path::ListFiles(Path::GetPresetPath(), ".opr");
-  std::vector<std::shared_ptr<Session> > sessions;
+  std::vector<std::shared_ptr<Session>> sessions;
   for (std::string& fileName : sessionFileNames) {
-    std::shared_ptr<Session> session = std::make_shared<Session>();
-
     std::ifstream file(fileName, std::ios::binary);
     if (!file.fail()) {
-      cereal::BinaryInputArchive archive(file);
-      archive(*session);
-      file.close();
-      session->m_FileName = fileName;
-      sessions.push_back(session);
+      try {
+        auto session = std::make_shared<Session>();
+        cereal::BinaryInputArchive archive(file);
+        archive(*session);
+        file.close();
+        session->m_FileName = fileName;
+        sessions.push_back(session);
+      } catch (std::exception& e) {
+        ERROR("Loading session from \"%s\": %s", fileName.c_str(), e.what());
+      }
     }
   }
 
@@ -501,7 +503,7 @@ void OrbitApp::Disassemble(const std::string& a_FunctionName,
 }
 
 //-----------------------------------------------------------------------------
-const std::unordered_map<DWORD64, std::shared_ptr<class Rule> >*
+const std::unordered_map<DWORD64, std::shared_ptr<class Rule>>*
 OrbitApp::GetRules() {
   return &m_RuleEditor->GetRules();
 }
@@ -550,7 +552,7 @@ void OrbitApp::MainTick() {
   GTcpServer->MainThreadTick();
 
   if (!Capture::GProcessToInject.empty()) {
-    std::cout << "Injecting into " << Capture::GTargetProcess->GetFullName()
+    std::cout << "Injecting into " << Capture::GTargetProcess->GetFullPath()
               << std::endl;
     std::cout << "Orbit host: " << Capture::GCaptureHost << std::endl;
     GOrbitApp->SelectProcess(Capture::GProcessToInject);
@@ -565,7 +567,7 @@ void OrbitApp::MainTick() {
   ++GOrbitApp->m_NumTicks;
 
   if (DoZoom) {
-    GCurrentTimeGraph->UpdateThreadIds();
+    GCurrentTimeGraph->SortTracks();
     GOrbitApp->m_CaptureWindow->ZoomAll();
     GOrbitApp->NeedsRedraw();
     DoZoom = false;
@@ -674,14 +676,14 @@ void OrbitApp::AddSelectionReport(
 //-----------------------------------------------------------------------------
 void OrbitApp::GoToCode(DWORD64 a_Address) {
   m_CaptureWindow->FindCode(a_Address);
-  SendToUiNow(L"gotocode");
+  SendToUiNow("gotocode");
 }
 
 //-----------------------------------------------------------------------------
-void OrbitApp::GoToCallstack() { SendToUiNow(L"gotocallstack"); }
+void OrbitApp::GoToCallstack() { SendToUiNow("gotocallstack"); }
 
 //-----------------------------------------------------------------------------
-void OrbitApp::GoToCapture() { SendToUiNow(L"gotocapture"); }
+void OrbitApp::GoToCapture() { SendToUiNow("gotocapture"); }
 
 //-----------------------------------------------------------------------------
 void OrbitApp::OnOpenPdb(const std::string& file_name) {
@@ -738,10 +740,9 @@ std::string OrbitApp::GetSessionFileName() {
 }
 
 //-----------------------------------------------------------------------------
-std::wstring OrbitApp::GetSaveFile(const std::wstring& a_Extension) {
-  std::wstring fileName;
-  if (m_SaveFileCallback) m_SaveFileCallback(a_Extension, fileName);
-  return fileName;
+std::string OrbitApp::GetSaveFile(const std::string& extension) {
+  if (!m_SaveFileCallback) return "";
+  return m_SaveFileCallback(extension);
 }
 
 //-----------------------------------------------------------------------------
@@ -757,8 +758,7 @@ void OrbitApp::OnSaveSession(const std::string& file_name) {
 }
 
 //-----------------------------------------------------------------------------
-void OrbitApp::OnLoadSession(const std::string& file_name) {
-  std::shared_ptr<Session> session = std::make_shared<Session>();
+bool OrbitApp::OnLoadSession(const std::string& file_name) {
   std::string file_path = file_name;
 
   if (Path::GetDirectory(file_name).empty()) {
@@ -767,12 +767,20 @@ void OrbitApp::OnLoadSession(const std::string& file_name) {
 
   std::ifstream file(file_path);
   if (!file.fail()) {
-    cereal::BinaryInputArchive archive(file);
-    archive(*session);
-    session->m_FileName = file_path;
-    LoadSession(session);
-    file.close();
+    try {
+      auto session = std::make_shared<Session>();
+      cereal::BinaryInputArchive archive(file);
+      archive(*session);
+      file.close();
+      session->m_FileName = file_path;
+      LoadSession(session);
+      return true;
+    } catch (std::exception& e) {
+      ERROR("Loading session from \"%s\": %s", file_path.c_str(), e.what());
+    }
   }
+
+  return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -785,7 +793,7 @@ void OrbitApp::LoadSession(const std::shared_ptr<Session>& session) {
 //-----------------------------------------------------------------------------
 void OrbitApp::OnSaveCapture(const std::string& file_name) {
   CaptureSerializer ar;
-  ar.m_TimeGraph = GCurrentTimeGraph;
+  ar.time_graph_ = GCurrentTimeGraph;
   ar.Save(s2ws(file_name));
 }
 
@@ -799,7 +807,7 @@ void OrbitApp::OnLoadCapture(const std::string& file_name) {
   }
 
   CaptureSerializer ar;
-  ar.m_TimeGraph = GCurrentTimeGraph;
+  ar.time_graph_ = GCurrentTimeGraph;
   ar.Load(s2ws(file_name));
   m_ModulesDataView->SetProcess(Capture::GTargetProcess);
   StopCapture();
@@ -819,7 +827,7 @@ void OrbitApp::OnPdbLoaded() {
   FireRefreshCallbacks();
 
   if (m_ModulesToLoad.empty()) {
-    SendToUiAsync(L"pdbloaded");
+    SendToUiAsync("pdbloaded");
   } else {
     LoadModules();
   }
@@ -841,7 +849,7 @@ void OrbitApp::FireRefreshCallbacks(DataViewType a_Type) {
 
 //-----------------------------------------------------------------------------
 void OrbitApp::AddUiMessageCallback(
-    std::function<void(const std::wstring&)> a_Callback) {
+    std::function<void(const std::string&)> a_Callback) {
   GTcpServer->SetUiCallback(a_Callback);
   m_UiCallback = a_Callback;
 }
@@ -920,14 +928,14 @@ void OrbitApp::SetCallStack(std::shared_ptr<CallStack> a_CallStack) {
 }
 
 //-----------------------------------------------------------------------------
-void OrbitApp::SendToUiAsync(const std::wstring& a_Msg) {
-  GTcpServer->SendToUiAsync(a_Msg);
+void OrbitApp::SendToUiAsync(const std::string& message) {
+  GTcpServer->SendToUiAsync(message);
 }
 
 //-----------------------------------------------------------------------------
-void OrbitApp::SendToUiNow(const std::wstring& a_Msg) {
+void OrbitApp::SendToUiNow(const std::string& message) {
   if (m_UiCallback) {
-    m_UiCallback(a_Msg);
+    m_UiCallback(message);
   }
 }
 
@@ -1033,7 +1041,7 @@ void OrbitApp::OnRemoteProcess(const Message& a_Message) {
     GParams.m_ProcessPath = session->m_ProcessFullPath;
     GParams.m_Arguments = session->m_Arguments;
     GParams.m_WorkingDirectory = session->m_WorkingDirectory;
-    GCoreApp->SendToUiNow(L"SetProcessParams");
+    GCoreApp->SendToUiNow("SetProcessParams");
     Capture::GSessionPresets = nullptr;
   }
 }
@@ -1054,11 +1062,11 @@ void OrbitApp::ApplySession(const Session& session) {
 void OrbitApp::OnRemoteProcessList(const Message& a_Message) {
   std::istringstream buffer(std::string(a_Message.m_Data, a_Message.m_Size));
   cereal::JSONInputArchive inputAr(buffer);
-  std::shared_ptr<ProcessList> remoteProcessList =
-      std::make_shared<ProcessList>();
-  inputAr(*remoteProcessList);
-  remoteProcessList->SetRemote(true);
-  GOrbitApp->m_ProcessesDataView->SetRemoteProcessList(remoteProcessList);
+  ProcessList remoteProcessList;
+  inputAr(remoteProcessList);
+  remoteProcessList.SetRemote(true);
+  GOrbitApp->m_ProcessesDataView->SetRemoteProcessList(
+      std::move(remoteProcessList));
 
   // Trigger session loading if needed.
   if (!Capture::GPresetToLoad.empty()) {
@@ -1103,5 +1111,5 @@ void OrbitApp::OnRemoteModuleDebugInfo(
 //-----------------------------------------------------------------------------
 void OrbitApp::LaunchRuleEditor(Function* a_Function) {
   m_RuleEditor->m_Window.Launch(a_Function);
-  SendToUiNow(TEXT("RuleEditor"));
+  SendToUiNow("RuleEditor");
 }

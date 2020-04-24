@@ -8,16 +8,12 @@
 
 #include "App.h"
 #include "CallStackDataView.h"
-#include "Core.h"
 #include "FunctionsDataView.h"
 #include "GlobalsDataView.h"
 #include "LiveFunctionsDataView.h"
-#include "Log.h"
 #include "LogDataView.h"
 #include "ModulesDataView.h"
 #include "OrbitType.h"
-#include "Params.h"
-#include "Pdb.h"
 #include "ProcessesDataView.h"
 #include "SamplingReportDataView.h"
 #include "SessionsDataView.h"
@@ -31,64 +27,39 @@ DataView::~DataView() {
 }
 
 //-----------------------------------------------------------------------------
-DataView* DataView::Create(DataViewType a_Type) {
-  DataView* model = nullptr;
+std::unique_ptr<DataView> DataView::Create(DataViewType a_Type) {
   switch (a_Type) {
     case DataViewType::FUNCTIONS:
-      model = new FunctionsDataView();
-      break;
+      return std::make_unique<FunctionsDataView>();
     case DataViewType::TYPES:
-      model = new TypesDataView();
-      break;
-    case DataViewType::LIVEFUNCTIONS:
-      model = new LiveFunctionsDataView();
-      break;
+      return std::make_unique<TypesDataView>();
+    case DataViewType::LIVE_FUNCTIONS:
+      return std::make_unique<LiveFunctionsDataView>();
     case DataViewType::CALLSTACK:
-      model = new CallStackDataView();
-      break;
+      return std::make_unique<CallStackDataView>();
     case DataViewType::GLOBALS:
-      model = new GlobalsDataView();
-      break;
+      return std::make_unique<GlobalsDataView>();
     case DataViewType::MODULES:
-      model = new ModulesDataView();
-      break;
+      return std::make_unique<ModulesDataView>();
     case DataViewType::SAMPLING:
-      model = new SamplingReportDataView();
-      break;
+      return std::make_unique<SamplingReportDataView>();
     case DataViewType::PROCESSES:
-      model = new ProcessesDataView();
-      break;
+      return std::make_unique<ProcessesDataView>();
     case DataViewType::SESSIONS:
-      model = new SessionsDataView();
-      break;
+      return std::make_unique<SessionsDataView>();
     case DataViewType::LOG:
-      model = new LogDataView();
-      break;
+      return std::make_unique<LogDataView>();
     default:
-      break;
+      return nullptr;
   }
-
-  model->m_Type = a_Type;
-  return model;
 }
 
 //-----------------------------------------------------------------------------
-const std::vector<std::string>& DataView::GetColumnHeaders() {
-  static std::vector<std::string> columns = {"Invalid Header"};
-  return columns;
-}
-
-//-----------------------------------------------------------------------------
-const std::vector<float>& DataView::GetColumnHeadersRatios() {
-  static std::vector<float> ratios = {0.0};
-  return ratios;
-}
-
-//-----------------------------------------------------------------------------
-const std::vector<DataView::SortingOrder>& DataView::GetColumnInitialOrders() {
-  static std::vector<DataView::SortingOrder> orders = {
-      DataView::AscendingOrder};
-  return orders;
+void DataView::InitSortingOrders() {
+  m_SortingOrders.clear();
+  for (const auto& column : GetColumns()) {
+    m_SortingOrders.push_back(column.initial_order);
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -109,7 +80,10 @@ void DataView::OnContextMenu(const std::string& a_Action, int a_MenuIndex,
   UNUSED(a_MenuIndex);
 
   if (a_Action == MENU_ACTION_EXPORT_TO_CSV) {
-    ExportCSV(ws2s(GOrbitApp->GetSaveFile(L".csv")));
+    std::string save_file = GOrbitApp->GetSaveFile(".csv");
+    if (!save_file.empty()) {
+      ExportCSV(save_file);
+    }
   } else if (a_Action == MENU_ACTION_COPY_SELECTION) {
     CopySelection(a_ItemIndices);
   }
@@ -120,25 +94,19 @@ void DataView::ExportCSV(const std::string& a_FileName) {
   std::ofstream out(a_FileName);
   if (out.fail()) return;
 
-  const std::vector<std::string>& headers = GetColumnHeaders();
-
-  for (size_t i = 0; i < headers.size(); ++i) {
-    out << headers[i];
-    if (i < headers.size() - 1) out << ", ";
+  size_t numColumns = GetColumns().size();
+  for (size_t i = 0; i < numColumns; ++i) {
+    out << GetColumns()[i].header;
+    if (i < numColumns - 1) out << ", ";
   }
-
   out << "\n";
 
-  size_t numColumns = headers.size();
   size_t numElements = GetNumElements();
   for (size_t i = 0; i < numElements; ++i) {
     for (size_t j = 0; j < numColumns; ++j) {
       out << GetValue((int)i, (int)j);
-      if (j < numColumns - 1) {
-        out << ", ";
-      }
+      if (j < numColumns - 1) out << ", ";
     }
-
     out << "\n";
   }
 
@@ -148,16 +116,13 @@ void DataView::ExportCSV(const std::string& a_FileName) {
 //-----------------------------------------------------------------------------
 void DataView::CopySelection(const std::vector<int>& selection) {
   std::string clipboard;
-  const std::vector<std::string>& headers = GetColumnHeaders();
-
-  for (size_t i = 0; i < headers.size(); ++i) {
-    clipboard += headers[i];
-    if (i < headers.size() - 1) clipboard += ", ";
+  size_t numColumns = GetColumns().size();
+  for (size_t i = 0; i < numColumns; ++i) {
+    clipboard += GetColumns()[i].header;
+    if (i < numColumns - 1) clipboard += ", ";
   }
-
   clipboard += "\n";
 
-  size_t numColumns = headers.size();
   size_t numElements = GetNumElements();
   for (size_t i : selection) {
     if (i < numElements) {
@@ -165,7 +130,6 @@ void DataView::CopySelection(const std::vector<int>& selection) {
         clipboard += GetValue((int)i, (int)j);
         if (j < numColumns - 1) clipboard += ", ";
       }
-
       clipboard += "\n";
     }
   }

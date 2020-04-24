@@ -67,10 +67,10 @@ class CaptureWindow : public GlCanvas {
   void SendProcess();
 
  private:
-  TimeGraph m_TimeGraph;
+  TimeGraph time_graph_;
   OutputWindow m_StatsWindow;
   Timer m_HoverTimer;
-  std::wstring m_ToolTip;
+  std::string m_ToolTip;
   int m_HoverDelayMs;
   bool m_IsHovering;
   bool m_CanHover;

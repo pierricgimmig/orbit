@@ -195,10 +195,10 @@ bool Capture::StartCapture(LinuxTracingSession* session) {
   }
 
   if (GCoreApp != nullptr) {
-    GCoreApp->SendToUiNow(L"startcapture");
+    GCoreApp->SendToUiNow("startcapture");
 
     if (GSelectedFunctionsMap.size() > 0) {
-      GCoreApp->SendToUiNow(L"gotolive");
+      GCoreApp->SendToUiNow("gotolive");
     }
   }
 
@@ -494,9 +494,9 @@ bool Capture::IsOtherInstanceRunning() {
 //-----------------------------------------------------------------------------
 void Capture::SaveSession(const std::string& a_FileName) {
   Session session;
-  session.m_ProcessFullPath = GTargetProcess->GetFullName();
+  session.m_ProcessFullPath = GTargetProcess->GetFullPath();
 
-  GCoreApp->SendToUiNow(L"UpdateProcessParams");
+  GCoreApp->SendToUiNow("UpdateProcessParams");
   session.m_Arguments = GParams.m_Arguments;
   session.m_WorkingDirectory = GParams.m_WorkingDirectory;
 
@@ -508,7 +508,7 @@ void Capture::SaveSession(const std::string& a_FileName) {
   }
 
   std::string saveFileName = a_FileName;
-  if (!EndsWith(a_FileName, ".opr")) {
+  if (!absl::EndsWith(a_FileName, ".opr")) {
     saveFileName += ".opr";
   }
 
@@ -537,7 +537,7 @@ bool Capture::IsTrackingEvents() {
 #else
   static bool yieldEvents = false;
   if (yieldEvents && IsOtherInstanceRunning() && GTargetProcess) {
-    if (Contains(GTargetProcess->GetName(), "Orbit.exe")) {
+    if (absl::StrContains(GTargetProcess->GetName(), "Orbit.exe")) {
       return false;
     }
   }

@@ -30,8 +30,8 @@ class CoreApp {
  public:
   virtual ~CoreApp() = default;
   virtual void InitializeManagers();
-  virtual void SendToUiAsync(const std::wstring& /*a_Msg*/) {}
-  virtual void SendToUiNow(const std::wstring& /*a_Msg*/) {}
+  virtual void SendToUiAsync(const std::string& /*message*/) {}
+  virtual void SendToUiNow(const std::string& /*message*/) {}
   virtual bool GetUnrealSupportEnabled() { return false; }
   virtual bool GetUnitySupportEnabled() { return false; }
   virtual bool GetUnsafeHookingEnabled() { return false; }
@@ -52,7 +52,7 @@ class CoreApp {
   virtual void AddAddressInfo(LinuxAddressInfo /*address_info*/) {}
   virtual void AddKeyAndString(uint64_t /*key*/, std::string_view /*str*/) {}
   virtual void OnRemoteModuleDebugInfo(const std::vector<ModuleDebugInfo>&) {}
-  virtual void ApplySession(const Session&){}
+  virtual void ApplySession(const Session&) {}
   virtual const std::unordered_map<DWORD64, std::shared_ptr<class Rule> >*
   GetRules() {
     return nullptr;

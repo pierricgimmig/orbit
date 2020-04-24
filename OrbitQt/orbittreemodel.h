@@ -10,8 +10,8 @@ class OrbitTreeModel : public QAbstractItemModel {
   Q_OBJECT
 
  public:
-  explicit OrbitTreeModel(const QString& data, QObject* parent = 0);
-  ~OrbitTreeModel();
+  explicit OrbitTreeModel(const QString& data, QObject* parent = nullptr);
+  ~OrbitTreeModel() override;
 
   QVariant data(const QModelIndex& index, int role) const override;
   Qt::ItemFlags flags(const QModelIndex& index) const override;
@@ -23,7 +23,7 @@ class OrbitTreeModel : public QAbstractItemModel {
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   int columnCount(const QModelIndex& parent = QModelIndex()) const override;
 
-  void Filter(const std::wstring& a_Filter);
+  void Filter(const std::string& a_Filter);
 
  private:
   void setupModelData(const QStringList& lines, OrbitTreeItem* parent);

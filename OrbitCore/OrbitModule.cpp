@@ -29,7 +29,7 @@
 Module::Module(const std::string& file_name, uint64_t address_start,
                uint64_t address_end) {
   if (!Path::FileExists(file_name)) {
-    FATAL("Could not create module from file path \"%s\": file does not exist",
+    ERROR("Creating Module from path \"%s\": file does not exist",
           file_name.c_str());
   }
 
@@ -50,7 +50,7 @@ Module::Module(const std::string& file_name, uint64_t address_start,
 
 //-----------------------------------------------------------------------------
 std::string Module::GetPrettyName() {
-  if (m_PrettyName.size() == 0) {
+  if (m_PrettyName.empty()) {
 #ifdef WIN32
     m_PrettyName =
         absl::StrFormat("%s [%I64x - %I64x] %s\r\n", m_Name.c_str(),
@@ -70,7 +70,7 @@ std::string Module::GetPrettyName() {
 //-----------------------------------------------------------------------------
 bool Module::IsDll() const {
   return ToLower(Path::GetExtension(m_FullName)) == std::string(".dll") ||
-         Contains(m_Name, ".so");
+         absl::StrContains(m_Name, ".so");
 }
 
 //-----------------------------------------------------------------------------
@@ -127,8 +127,8 @@ Function* Pdb::FunctionFromName(const std::string& a_Name) {
 }
 
 //-----------------------------------------------------------------------------
-Pdb::Pdb(uint64_t module_address, uint64_t load_bias,
-         const std::string& file_name, const std::string& module_file_name)
+Pdb::Pdb(uint64_t module_address, uint64_t load_bias, std::string file_name,
+         std::string module_file_name)
     : m_MainModule(module_address),
       load_bias_(load_bias),
       m_FileName(std::move(file_name)),

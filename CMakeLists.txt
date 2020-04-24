@@ -13,6 +13,7 @@ elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
                            -Werror=float-conversion)
 endif()
 
+include(cmake/strip.cmake)
 include(cmake/tests.cmake)
 enable_testing()
 
@@ -74,7 +75,6 @@ if(WITH_GUI)
   find_package(imgui CONFIG REQUIRED)
 endif()
 
-find_package(CURL CONFIG REQUIRED)
 find_package(oqpi REQUIRED)
 find_package(capstone CONFIG REQUIRED)
 if(WITH_GUI)
@@ -83,6 +83,7 @@ if(WITH_GUI)
 endif()
 find_package(abseil CONFIG REQUIRED)
 find_package(llvm_object CONFIG REQUIRED)
+find_package(Outcome CONFIG REQUIRED)
 
 if(NOT WIN32)
   find_package(libunwindstack CONFIG REQUIRED)

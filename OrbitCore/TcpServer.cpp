@@ -78,8 +78,8 @@ void TcpServer::ResetStats() {
 //-----------------------------------------------------------------------------
 std::vector<std::string> TcpServer::GetStats() {
   std::vector<std::string> stats;
-  stats.push_back(VAR_TO_ANSI(m_NumReceivedMessages));
-  stats.push_back(VAR_TO_ANSI(m_NumMessagesPerSecond));
+  stats.push_back(VAR_TO_STR(m_NumReceivedMessages));
+  stats.push_back(VAR_TO_STR(m_NumMessagesPerSecond));
 
   if (m_TcpServer) {
     std::string bytesRcv = "Capture::GNumBytesReceiced = " +
@@ -184,22 +184,22 @@ void TcpServer::Receive(const Message& a_Message) {
 }
 
 //-----------------------------------------------------------------------------
-void TcpServer::SendToUiAsync(const std::wstring& a_Message) {
+void TcpServer::SendToUiAsync(const std::string& message) {
   if (m_UiCallback) {
-    m_UiLockFreeQueue.enqueue(a_Message);
+    m_UiLockFreeQueue.enqueue(message);
   }
 }
 
 //-----------------------------------------------------------------------------
-void TcpServer::SendToUiNow(const std::wstring& a_Message) {
+void TcpServer::SendToUiNow(const std::string& message) {
   if (m_UiCallback) {
-    m_UiCallback(a_Message);
+    m_UiCallback(message);
   }
 }
 
 //-----------------------------------------------------------------------------
 void TcpServer::MainThreadTick() {
-  std::wstring msg;
+  std::string msg;
   while (m_UiLockFreeQueue.try_dequeue(msg)) {
     m_UiCallback(msg);
   }

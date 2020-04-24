@@ -3,36 +3,47 @@
 //-----------------------------------
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "DataViewTypes.h"
 
-//-----------------------------------------------------------------------------
 class DataView {
  public:
-  enum SortingOrder {
-    AscendingOrder = 0,
-    DescendingOrder = 1,
+  enum class SortingOrder {
+    Ascending = 0,
+    Descending = 1,
   };
 
-  DataView()
+  struct Column {
+    Column() : Column{"", .0f, SortingOrder::Ascending} {}
+    Column(std::string header, float ratio, SortingOrder initial_order)
+        : header{std::move(header)},
+          ratio{ratio},
+          initial_order{initial_order} {}
+    std::string header;
+    float ratio;
+    SortingOrder initial_order;
+  };
+
+  explicit DataView(DataViewType type)
       : m_LastSortedColumn(-1),
         m_UpdatePeriodMs(-1),
         m_SelectedIndex(-1),
-        m_Type(INVALID) {}
+        m_Type(type) {}
 
   virtual ~DataView();
 
-  static DataView* Create(DataViewType a_Type);
+  static std::unique_ptr<DataView> Create(DataViewType a_Type);
 
   virtual void SetAsMainInstance() {}
-  virtual const std::vector<std::string>& GetColumnHeaders();
-  virtual const std::vector<float>& GetColumnHeadersRatios();
+  virtual const std::vector<Column>& GetColumns() = 0;
   virtual bool IsSortingAllowed() { return true; }
-  virtual const std::vector<SortingOrder>& GetColumnInitialOrders();
   virtual int GetDefaultSortingColumn() { return 0; }
+  void InitSortingOrders();
   virtual std::vector<std::string> GetContextMenu(
       int a_ClickedIndex, const std::vector<int>& a_SelectedIndices);
   virtual size_t GetNumElements() { return m_Indices.size(); }
@@ -57,10 +68,6 @@ class DataView {
                                unsigned char& /*r*/, unsigned char& /*g*/,
                                unsigned char& /*b*/) {
     return false;
-  }
-  virtual const std::string& GetName() {
-    static std::string no_name{"noname"};
-    return no_name;
   }
   virtual std::string GetLabel() { return ""; }
   virtual void SetGlPanel(class GlPanel* /*a_GlPanel*/) {}

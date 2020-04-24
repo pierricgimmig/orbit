@@ -48,9 +48,9 @@ class OrbitConan(ConanFile):
         self.requires("capstone/4.0.1@{}".format(self._orbit_channel))
         self.requires("cereal/1.3.0@{}".format(self._orbit_channel))
         self.requires("gtest/1.8.1@bincrafters/stable")
-        self.requires("libcurl/7.66.0")
         self.requires("llvm_object/9.0.1@orbitdeps/stable")
         self.requires("openssl/1.1.1d@{}".format(self._orbit_channel))
+        self.requires("Outcome/3dae433e@orbitdeps/stable")
         if self.settings.os != "Windows":
             self.requires(
                 "libunwindstack/80a734f14@{}".format(self._orbit_channel))
@@ -163,12 +163,15 @@ chmod -v 4775 /usr/bin/OrbitService
         self.copy("*", src="bin/fonts", dst="bin/fonts", symlinks=True)
         self.copy("*", src="bin/shaders", dst="bin/shaders", symlinks=True)
         self.copy("*.so*", src="bin/", dst="bin", symlinks=True)
-        if self.settings.os == "Windows":
-            self.copy("*.dll", src="bin/", dst="bin", symlinks=True)
+        self.copy("*.dll", src="bin/", dst="bin", symlinks=True)
         self.copy("Orbit", src="bin/", dst="bin")
         self.copy("Orbit.exe", src="bin/", dst="bin")
         self.copy("Orbit.pdb", src="bin/", dst="bin")
-        self.copy("OrbitService*", src="bin/", dst="bin")
+        self.copy("Orbit.debug", src="bin/", dst="bin")
+        self.copy("OrbitService", src="bin/", dst="bin")
+        self.copy("OrbitService.exe", src="bin/", dst="bin")
+        self.copy("OrbitService.pdb", src="bin/", dst="bin")
+        self.copy("OrbitService.debug", src="bin/", dst="bin")
 
     def deploy(self):
         self.copy("*", src="bin", dst="bin")

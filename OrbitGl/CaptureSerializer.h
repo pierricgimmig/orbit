@@ -9,7 +9,6 @@
 #include "OrbitType.h"
 #include "SerializationMacros.h"
 
-//-----------------------------------------------------------------------------
 class CaptureSerializer {
  public:
   CaptureSerializer();
@@ -19,7 +18,7 @@ class CaptureSerializer {
   template <class T>
   void Save(T& a_Archive);
 
-  class TimeGraph* m_TimeGraph;
+  class TimeGraph* time_graph_;
   class SamplingProfiler* m_SamplingProfiler;
 
   std::string m_CaptureName;

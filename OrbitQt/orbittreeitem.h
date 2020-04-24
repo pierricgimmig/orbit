@@ -6,7 +6,7 @@
 class OrbitTreeItem {
  public:
   explicit OrbitTreeItem(const QList<QVariant>& data,
-                         OrbitTreeItem* parentItem = 0);
+                         OrbitTreeItem* parentItem = nullptr);
   ~OrbitTreeItem();
 
   void appendChild(OrbitTreeItem* child);
@@ -22,9 +22,9 @@ class OrbitTreeItem {
   void SetVisibleRecursive(bool a_Visible);
   void SetMatchRecursive(bool a_Match);
   void SetParentsVisible(bool a_Visible);
-  void Filter(const std::wstring& a_Filter);
-  void FilterRecursive(const std::wstring& a_Filter);
-  bool Contains(const std::wstring& a_Filter);
+  void Filter(const std::string& a_Filter);
+  void FilterRecursive(const std::string& a_Filter);
+  bool Contains(const std::string& a_Filter);
 
  private:
   QList<OrbitTreeItem*> m_childItems;

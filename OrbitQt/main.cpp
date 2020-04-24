@@ -9,10 +9,16 @@
 
 #include "../OrbitGl/App.h"
 #include "CrashHandler.h"
+#include "OrbitStartupWindow.h"
 #include "Path.h"
-#include "orbitmainwindow.h"
+#include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
+#include "orbitmainwindow.h"
+
+// TODO: Remove this flag once we have a dialog with user
+ABSL_FLAG(bool, upload_dumps_to_server, false,
+          "Upload dumps to collection server when crashes");
 
 int main(int argc, char* argv[]) {
   absl::SetProgramUsageMessage("CPU Profiler");
@@ -30,9 +36,12 @@ int main(int argc, char* argv[]) {
   const char* handler_name = "crashpad_handler";
 #endif
   const std::string handler_path = QDir(QCoreApplication::applicationDirPath())
-                                 .absoluteFilePath(handler_name)
-                                 .toStdString();
-  const CrashHandler crash_handler(dump_path, handler_path);
+                                       .absoluteFilePath(handler_name)
+                                       .toStdString();
+  const std::string crash_server_url =
+      "https://clients2.google.com/cr/staging_report";
+  const CrashHandler crash_handler(dump_path, handler_path, crash_server_url,
+                                   absl::GetFlag(FLAGS_upload_dumps_to_server));
 
   a.setStyle(QStyleFactory::create("Fusion"));
 
@@ -55,7 +64,33 @@ int main(int argc, char* argv[]) {
       "QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid "
       "white; }");
 
-  OrbitMainWindow w(&a);
+  // TODO(antonrohr) refactor argument parsing; probably use a external argument
+  // parsing library
+  std::vector<std::string> arguments;
+  bool found_gamelet_arg = false;
+  for (const QString& arg : QApplication::arguments()) {
+    if (arg.contains("gamelet:")) found_gamelet_arg = true;
+    arguments.emplace_back(arg.toStdString());
+  }
+
+  if (!found_gamelet_arg) {
+    OrbitStartupWindow sw;
+    std::string ip_address;
+    int dialog_result = sw.Run(&ip_address);
+    if (dialog_result == 0) return 0;
+
+#ifdef __linux__
+    arguments.emplace_back("gamelet:" + ip_address + ":44766");
+#else
+    // TODO(antonrohr) remove this ifdef as soon as the collector works on
+    // windows
+    if (ip_address != "127.0.0.1") {
+      arguments.emplace_back("gamelet:" + ip_address + ":44766");
+    }
+#endif
+  }
+
+  OrbitMainWindow w(arguments, &a);
 
   if (!w.IsHeadless()) {
     w.showMaximized();

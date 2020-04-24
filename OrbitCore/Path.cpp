@@ -56,15 +56,15 @@ std::string Path::GetExecutablePath() {
 }
 
 bool Path::FileExists(const std::string& file) {
-  // TODO: use stat here
-  std::ifstream f(file.c_str());
-  return f.good();
+  struct stat statbuf;
+  int ret = stat(file.c_str(), &statbuf);
+  return ret == 0;
 }
 
 uint64_t Path::FileSize(const std::string& file) {
   struct stat stat_buf;
-  int rc = stat(file.c_str(), &stat_buf);
-  return rc == 0 ? stat_buf.st_size : -1;
+  int ret = stat(file.c_str(), &stat_buf);
+  return ret == 0 ? stat_buf.st_size : 0;
 }
 
 bool Path::DirExists(const std::string& dir) {
@@ -259,39 +259,14 @@ std::string Path::GetAppDataPath() {
 std::string Path::GetMainDrive() { return GetEnvVar("SystemDrive"); }
 
 std::string Path::GetSourceRoot() {
-  std::string currentDir = GetExecutablePath();
-  const int numIterations = 10;
-  const std::string fileName = "bootstrap-orbit";
-
-  for (int i = 0; i < numIterations; ++i) {
-    if (ContainsFile(currentDir, fileName)) {
-      return currentDir;
-    }
-
-    currentDir = GetParentDirectory(currentDir);
-  }
-
-  return "";
-}
-
-std::string Path::GetExternalPath() {
-  if (is_packaged_)
-    return GetExecutablePath() + "external/";
-  else
-    return GetSourceRoot() + "external/";
+  // Assuming current file in <src_path>/OrbitCore
+  std::string current_dir = GetDirectory(__FILE__);
+  return GetParentDirectory(current_dir);
 }
 
 std::string Path::GetHome() {
   std::string home = GetEnvVar("HOME") + "/";
   return home;
-}
-
-bool Path::ContainsFile(const std::string a_Dir, const std::string a_File) {
-  auto fileList = ListFiles(a_Dir, a_File);
-  for (const std::string& file : fileList) {
-    if (Contains(file, a_File)) return true;
-  }
-  return false;
 }
 
 void Path::Dump() {
@@ -343,6 +318,6 @@ std::vector<std::string> Path::ListFiles(
 std::vector<std::string> Path::ListFiles(const std::string& directory,
                                          const std::string& filter) {
   return ListFiles(directory, [&](const std::string& file_name) {
-    return Contains(file_name, filter);
+    return absl::StrContains(file_name, filter);
   });
 }

@@ -74,8 +74,9 @@ class Process {
   }
   std::shared_ptr<Module> FindModule(const std::string& a_ModuleName);
 
-  const std::string GetName() const { return m_Name; }
-  const std::string GetFullName() const { return m_FullName; }
+  const std::string& GetName() const { return m_Name; }
+  const std::string& GetFullPath() const { return m_FullPath; }
+  const std::string& GetCmdLine() const { return m_CmdLine; }
   DWORD GetID() const { return m_ID; }
   double GetCpuUsage() const { return m_CpuUsage; }
   HANDLE GetHandle() const { return m_Handle; }
@@ -86,7 +87,7 @@ class Process {
   void SetCpuUsage(float a_Usage) { m_CpuUsage = a_Usage; }
 
   Function* GetFunctionFromAddress(uint64_t address, bool a_IsExact = true);
-  std::shared_ptr<Module> GetModuleFromAddress(DWORD64 a_Address);
+  std::shared_ptr<Module> GetModuleFromAddress(uint64_t a_Address);
   std::shared_ptr<Module> GetModuleFromName(const std::string& a_Name);
 
 #ifdef _WIN32
@@ -140,7 +141,8 @@ class Process {
   void FindCoreFunctions();
 
   std::string m_Name;
-  std::string m_FullName;
+  std::string m_FullPath;
+  std::string m_CmdLine;
 
   ORBIT_SERIALIZABLE;
 

@@ -186,7 +186,7 @@ std::unordered_map<uint32_t, float> GetCpuUtilization() {
 bool Is64Bit(pid_t a_PID) {
   std::string result =
       ExecuteCommand(absl::StrFormat("file -L /proc/%u/exe", a_PID).c_str());
-  return Contains(result, "64-bit");
+  return absl::StrContains(result, "64-bit");
 }
 
 //-----------------------------------------------------------------------------
@@ -255,7 +255,7 @@ uint32_t GetVersion(const std::string& a_Version) {
   std::vector<std::string> v = Tokenize(a_Version, ".");
   if (v.size() == 3)
     return KERNEL_VERSION(std::stoi(v[0]), std::stoi(v[1]), std::stoi(v[2]));
-  PRINT("Error: GetVersion: Invalid argument\n");
+  LOG("Error: GetVersion: Invalid argument");
   return 0;
 }
 

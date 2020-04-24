@@ -44,8 +44,8 @@ void OrbitSamplingReport::Initialize(std::shared_ptr<SamplingReport> a_Report) {
 
   m_SamplingReport->SetUiRefreshFunc([&]() { this->Refresh(); });
 
-  for (std::shared_ptr<DataView> report : a_Report->GetThreadReports()) {
-    // OrbitDataViewPanel *treeView = new OrbitDataViewPanel();
+  for (const std::shared_ptr<SamplingReportDataView>& report :
+       a_Report->GetThreadReports()) {
     QWidget* tab = new QWidget();
     tab->setObjectName(QStringLiteral("tab"));
 
@@ -58,10 +58,10 @@ void OrbitSamplingReport::Initialize(std::shared_ptr<SamplingReport> a_Report) {
       treeView->GetTreeView()->setSortingEnabled(false);
     } else {
       int column = report->GetDefaultSortingColumn();
-      Qt::SortOrder order =
-          report->GetColumnInitialOrders()[column] == DataView::AscendingOrder
-              ? Qt::AscendingOrder
-              : Qt::DescendingOrder;
+      Qt::SortOrder order = report->GetColumns()[column].initial_order ==
+                                    DataView::SortingOrder::Ascending
+                                ? Qt::AscendingOrder
+                                : Qt::DescendingOrder;
       treeView->GetTreeView()->sortByColumn(column, order);
     }
 

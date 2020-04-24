@@ -177,11 +177,10 @@ target_link_libraries(
          xxHash::xxHash
          concurrentqueue::concurrentqueue
          multicore::multicore
-         CURL::CURL
          oqpi::oqpi
          asio::asio
          abseil::abseil
-         llvm_object::llvm_object 
+         llvm_object::llvm_object
          crashpad::crashpad)
 
 if(WIN32)
@@ -211,9 +210,10 @@ add_executable(OrbitCoreTests)
 
 target_sources(OrbitCoreTests PRIVATE
     ElfFileTests.cpp
+    LinuxTracingSessionTests.cpp
+    PathTest.cpp
     RingBufferTest.cpp
     StringManagerTest.cpp
-    LinuxTracingSessionTests.cpp
     SymbolHelperTests.cpp
 )
 

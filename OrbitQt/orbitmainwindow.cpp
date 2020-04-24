@@ -22,6 +22,7 @@
 #include "../OrbitGl/SamplingReport.h"
 #include "../OrbitPlugin/OrbitSDK.h"
 #include "../external/concurrentqueue/concurrentqueue.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "licensedialog.h"
 #include "orbitdiffdialog.h"
@@ -41,7 +42,8 @@ OrbitMainWindow* GMainWindow;
 extern QMenu* GContextMenu;
 
 //-----------------------------------------------------------------------------
-OrbitMainWindow::OrbitMainWindow(QApplication* a_App, QWidget* parent)
+OrbitMainWindow::OrbitMainWindow(const std::vector<std::string>& arguments,
+                                 QApplication* a_App, QWidget* parent)
     : QMainWindow(parent),
       m_App(a_App),
       ui(new Ui::OrbitMainWindow),
@@ -69,7 +71,7 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App, QWidget* parent)
       [this](std::shared_ptr<SamplingReport> a_Report) {
         this->OnNewSelection(std::move(a_Report));
       });
-  GOrbitApp->AddUiMessageCallback([this](const std::wstring& a_Message) {
+  GOrbitApp->AddUiMessageCallback([this](const std::string& a_Message) {
     this->OnReceiveMessage(a_Message);
   });
   GOrbitApp->SetFindFileCallback([this](const std::wstring& a_Caption,
@@ -79,14 +81,13 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App, QWidget* parent)
   });
   GOrbitApp->AddWatchCallback(
       [this](const Variable* a_Variable) { this->OnAddToWatch(a_Variable); });
-  GOrbitApp->SetSaveFileCallback(
-      [this](const std::wstring& a_Ext, std::wstring& o_FileName) {
-        this->OnGetSaveFileName(a_Ext, o_FileName);
-      });
+  GOrbitApp->SetSaveFileCallback([this](const std::string& extension) {
+    return this->OnGetSaveFileName(extension);
+  });
   GOrbitApp->SetClipboardCallback(
       [this](const std::wstring& a_Text) { this->OnSetClipboard(a_Text); });
 
-  ParseCommandlineArguments();
+  ParseCommandlineArguments(arguments);
 
   ui->DebugGLWidget->Initialize(GlPanel::DEBUG, this);
   ui->CaptureGLWidget->Initialize(GlPanel::CAPTURE, this);
@@ -94,7 +95,7 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App, QWidget* parent)
 
   ui->ModulesList->Initialize(DataViewType::MODULES);
   ui->FunctionsList->Initialize(DataViewType::FUNCTIONS);
-  ui->LiveFunctionsList->Initialize(DataViewType::LIVEFUNCTIONS);
+  ui->LiveFunctionsList->Initialize(DataViewType::LIVE_FUNCTIONS);
   ui->CallStackView->Initialize(DataViewType::CALLSTACK);
   ui->TypesList->Initialize(DataViewType::TYPES);
   ui->GlobalsList->Initialize(DataViewType::GLOBALS);
@@ -167,22 +168,16 @@ OrbitMainWindow::~OrbitMainWindow() {
 }
 
 //-----------------------------------------------------------------------------
-void OrbitMainWindow::ParseCommandlineArguments() {
-  std::vector<std::string> args;
-  for (QString arg : QCoreApplication::arguments()) {
-    std::string argStr = arg.toStdString();
-    args.push_back(argStr);
-
-    if (Contains(argStr, "headless")) {
+void OrbitMainWindow::ParseCommandlineArguments(
+    const std::vector<std::string>& arguments) {
+  for (const std::string& argument : arguments) {
+    if (absl::StrContains(argument, "inject:")) {
       m_Headless = true;
-      this->menuBar()->hide();
-    } else if (Contains(argStr, "inject:")) {
-      m_Headless = true;
-    } else if (argStr == "dev") {
+    } else if (argument == "dev") {
       m_IsDev = true;
     }
   }
-  GOrbitApp->SetCommandLineArguments(args);
+  GOrbitApp->SetCommandLineArguments(arguments);
 }
 
 //-----------------------------------------------------------------------------
@@ -240,7 +235,7 @@ void OrbitMainWindow::UpdatePanel(DataViewType a_Type) {
     case DataViewType::FUNCTIONS:
       ui->FunctionsList->Refresh();
       break;
-    case DataViewType::LIVEFUNCTIONS:
+    case DataViewType::LIVE_FUNCTIONS:
       ui->LiveFunctionsList->Refresh();
       break;
     case DataViewType::TYPES:
@@ -331,8 +326,8 @@ void OrbitMainWindow::OnNewSelection(
 }
 
 //-----------------------------------------------------------------------------
-void OrbitMainWindow::OnReceiveMessage(const std::wstring& a_Message) {
-  if (a_Message == L"ScreenShot") {
+void OrbitMainWindow::OnReceiveMessage(const std::string& a_Message) {
+  if (a_Message == "ScreenShot") {
     QFile file("sshot.png");
     file.open(QIODevice::WriteOnly);
     QPixmap pixMap = this->grab();
@@ -343,52 +338,52 @@ void OrbitMainWindow::OnReceiveMessage(const std::wstring& a_Message) {
 #ifdef _WIN32
     ShellExecute(0, 0, fileName.c_str(), 0, 0, SW_SHOW);
 #endif
-  } else if (StartsWith(a_Message, L"code")) {
+  } else if (absl::StartsWith(a_Message, "code")) {
     ui->FileMappingWidget->hide();
 
-    bool success = ui->CodeTextEdit->loadCode(ws2s(a_Message));
+    bool success = ui->CodeTextEdit->loadCode(a_Message);
 
     if (!success) {
       ui->FileMappingTextEdit->loadFileMap();
       ui->FileMappingWidget->show();
     }
-  } else if (StartsWith(a_Message, L"tooltip:")) {
+  } else if (absl::StartsWith(a_Message, "tooltip:")) {
     QToolTip::showText(QCursor::pos(),
-                       Replace(ws2s(a_Message), "tooltip:", "").c_str(), this);
-  } else if (StartsWith(a_Message, L"output")) {
+                       Replace(a_Message, "tooltip:", "").c_str(), this);
+  } else if (absl::StartsWith(a_Message, "output")) {
     ui->MainTabWidget->setCurrentWidget(ui->OutputTab);
-  } else if (StartsWith(a_Message, L"gotocode")) {
+  } else if (absl::StartsWith(a_Message, "gotocode")) {
     ui->RightTabWidget->setCurrentWidget(ui->CodeTab);
-  } else if (StartsWith(a_Message, L"gotocallstack")) {
+  } else if (absl::StartsWith(a_Message, "gotocallstack")) {
     ui->RightTabWidget->setCurrentWidget(ui->CallStackTab);
-  } else if (StartsWith(a_Message, L"startcapture")) {
+  } else if (absl::StartsWith(a_Message, "startcapture")) {
     SetTitle("");
-  } else if (StartsWith(a_Message, L"gotolive")) {
+  } else if (absl::StartsWith(a_Message, "gotolive")) {
     ui->RightTabWidget->setCurrentWidget(ui->LiveTab);
-  } else if (StartsWith(a_Message, L"gotocapture")) {
+  } else if (absl::StartsWith(a_Message, "gotocapture")) {
     ui->MainTabWidget->setCurrentWidget(ui->CaptureTab);
-  } else if (StartsWith(a_Message, L"pdb:")) {
+  } else if (absl::StartsWith(a_Message, "pdb:")) {
     if (GOrbitApp->IsLoading()) {
-      m_CurrentPdbName = Replace(ws2s(a_Message), "pdb:", "");
+      m_CurrentPdbName = Replace(a_Message, "pdb:", "");
       m_OutputDialog->Reset();
       m_OutputDialog->SetStatus(m_CurrentPdbName);
       m_OutputDialog->show();
       this->setDisabled(true);
     }
-  } else if (StartsWith(a_Message, L"pdbloaded")) {
+  } else if (absl::StartsWith(a_Message, "pdbloaded")) {
     this->setDisabled(false);
     m_OutputDialog->hide();
-  } else if (StartsWith(a_Message, L"status:")) {
-    m_OutputDialog->SetStatus(Replace(ws2s(a_Message), "status:", ""));
-  } else if (StartsWith(a_Message, L"log:")) {
-    m_OutputDialog->AddLog(Replace(a_Message, L"log:", L""));
-  } else if (StartsWith(a_Message, L"asm:")) {
+  } else if (absl::StartsWith(a_Message, "status:")) {
+    m_OutputDialog->SetStatus(Replace(a_Message, "status:", ""));
+  } else if (absl::StartsWith(a_Message, "log:")) {
+    m_OutputDialog->AddLog(Replace(a_Message, "log:", ""));
+  } else if (absl::StartsWith(a_Message, "asm:")) {
     OpenDisassembly(a_Message);
-  } else if (StartsWith(a_Message, L"RuleEditor")) {
+  } else if (absl::StartsWith(a_Message, "RuleEditor")) {
     m_RuleEditor->show();
-  } else if (StartsWith(a_Message, L"UpdateProcessParams")) {
+  } else if (absl::StartsWith(a_Message, "UpdateProcessParams")) {
     ui->ProcessesList->UpdateProcessParams();
-  } else if (StartsWith(a_Message, L"SetProcessParams")) {
+  } else if (absl::StartsWith(a_Message, "SetProcessParams")) {
     ui->ProcessesList->SetProcessParams();
   }
 }
@@ -400,11 +395,15 @@ void OrbitMainWindow::OnAddToWatch(const class Variable* a_Variable) {
 }
 
 //-----------------------------------------------------------------------------
-void OrbitMainWindow::OnGetSaveFileName(const std::wstring& a_Extension,
-                                        std::wstring& o_FileName) {
-  QString file = QFileDialog::getSaveFileName(
-      this, "Specify a file to save...", nullptr, ws2s(a_Extension).c_str());
-  o_FileName = file.toStdWString();
+std::string OrbitMainWindow::OnGetSaveFileName(const std::string& extension) {
+  std::string filename =
+      QFileDialog::getSaveFileName(this, "Specify a file to save...", nullptr,
+                                   extension.c_str())
+          .toStdString();
+  if (!filename.empty() && !absl::EndsWith(filename, extension)) {
+    filename += extension;
+  }
+  return filename;
 }
 
 //-----------------------------------------------------------------------------
@@ -464,8 +463,15 @@ void OrbitMainWindow::on_actionSave_Session_triggered() {
 void OrbitMainWindow::on_actionOpen_Session_triggered() {
   QStringList list = QFileDialog::getOpenFileNames(
       this, "Select a file to open...", Path::GetPresetPath().c_str(), "*.opr");
-  for (auto& file : list) {
-    GOrbitApp->OnLoadSession(file.toStdString());
+  for (const auto& file : list) {
+    bool loaded = GOrbitApp->OnLoadSession(file.toStdString());
+    if (!loaded) {
+      QMessageBox::critical(
+          this, "Error loading session",
+          absl::StrFormat("Could not load session from \"%s\".",
+                          file.toStdString())
+              .c_str());
+    }
     break;
   }
 }
@@ -508,7 +514,10 @@ void OrbitMainWindow::on_actionSave_Session_As_triggered() {
   QString file =
       QFileDialog::getSaveFileName(this, "Specify a file to save...",
                                    Path::GetPresetPath().c_str(), "*.opr");
-  GOrbitApp->OnSaveSession(file.toStdString());
+  if (!file.isEmpty()) {
+    printf("filename: %s\n", file.toStdString().c_str());
+    GOrbitApp->OnSaveSession(file.toStdString());
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -591,7 +600,7 @@ void OrbitMainWindow::on_actionDiff_triggered() {
 }
 
 //-----------------------------------------------------------------------------
-void OrbitMainWindow::OpenDisassembly(const std::wstring& a_String) {
+void OrbitMainWindow::OpenDisassembly(const std::string& a_String) {
   OrbitDisassemblyDialog* dialog = new OrbitDisassemblyDialog(this);
   dialog->SetText(a_String);
   dialog->setWindowTitle("Orbit Disassembly");

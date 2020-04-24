@@ -10,7 +10,7 @@
 // Debug Interface Access SDK API.
 //
 
-#include "Dia2Dump.h"
+#include "dia2dump.h"
 
 #include "../../../OrbitCore/OrbitDia.h"
 #include "../../../OrbitCore/ScopeTimer.h"
@@ -838,7 +838,6 @@ bool DumpAllFunctions(IDiaSymbol* pGlobal) {
   HRESULT res = pGlobal->findChildren(SymTagFunction, NULL, nsNone,
                                       &pEnumSymbols.m_Symbol);
   if (FAILED(res)) {
-    PRINT_VAR(res);
     PrintLastError();
     return false;
   }

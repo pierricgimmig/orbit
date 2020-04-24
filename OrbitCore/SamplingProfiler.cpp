@@ -140,9 +140,7 @@ void SamplingProfiler::AddCallStack(CallStack& a_CallStack) {
 //-----------------------------------------------------------------------------
 void SamplingProfiler::AddHashedCallStack(CallstackEvent& a_CallStack) {
   if (!HasCallStack(a_CallStack.m_Id)) {
-    PRINT(
-        "Error: Callstacks can only be added by hash when they are already "
-        "present.\n");
+    LOG("Error: Callstacks can only be added by hash when already present.");
   }
   ScopeLock lock(m_Mutex);
   m_Callstacks.push_back(a_CallStack);
@@ -233,7 +231,7 @@ void SamplingProfiler::Print() {
       PRINT_VAR((void*)callstack->m_Hash);
       PRINT_VAR(callstack->m_Depth);
       for (uint32_t i = 0; i < callstack->m_Depth; ++i) {
-        PRINT("%s\n", m_AddressToName[callstack->m_Data[i]].c_str());
+        LOG("%s", m_AddressToName[callstack->m_Data[i]].c_str());
       }
     }
   }
@@ -255,7 +253,7 @@ void SamplingProfiler::ProcessSamples() {
   // Unique call stacks and per thread data
   for (const CallstackEvent& callstack : m_Callstacks) {
     if (!HasCallStack(callstack.m_Id)) {
-      PRINT("Error: Processed unknown callstack!\n");
+      LOG("Error: Processed unknown callstack!");
     }
 
     ThreadSampleData& threadSampleData = m_ThreadSampleData[callstack.m_TID];
@@ -405,9 +403,9 @@ void SamplingProfiler::AddAddress(uint64_t a_Address) {
                    symbol_info);
     }
 
-    std::wstring symName = symbol_info->Name;
-    if (symName == L"") {
-      symName = Format(L"%I64x", a_Address);
+    std::string symName = ws2s(symbol_info->Name);
+    if (symName.empty()) {
+      symName = absl::StrFormat("%" PRIx64, a_Address);
       PRINT_VAR(GetLastErrorAsString());
 
       std::shared_ptr<OrbitDiaSymbol> symbol =
@@ -415,7 +413,7 @@ void SamplingProfiler::AddAddress(uint64_t a_Address) {
       if (symbol->m_Symbol) {
         BSTR bstrName;
         if (symbol->m_Symbol->get_name(&bstrName) == S_OK) {
-          symName = bstrName;
+          symName = ws2s(bstrName);
           SysFreeString(bstrName);
         }
       }
@@ -423,8 +421,8 @@ void SamplingProfiler::AddAddress(uint64_t a_Address) {
 
     m_ExactAddressToFunctionAddress[a_Address] =
         symbol_info->Address ? symbol_info->Address : a_Address;
-    m_AddressToName[a_Address] = ws2s(symName);
-    m_AddressToName[symbol_info->Address] = ws2s(symName);
+    m_AddressToName[a_Address] = symName;
+    m_AddressToName[symbol_info->Address] = symName;
 
     LineInfo lineInfo;
     if (SymUtils::GetLineInfo(a_Address, lineInfo)) {
@@ -465,7 +463,7 @@ void SamplingProfiler::AddAddress(uint64_t a_Address) {
       if (function != nullptr) {
         function_name = function->PrettyName();
       }
-    } else if (Contains(address_info->function_name, "[unknown]")) {
+    } else if (absl::StrContains(address_info->function_name, "[unknown]")) {
       if (function != nullptr) {
         function_name = function->PrettyName();
         address_info->function_name = function->PrettyName();
@@ -508,7 +506,7 @@ void SamplingProfiler::FillThreadSampleDataSampleReports() {
       function.m_Address = address;
 
       std::shared_ptr<Module> module = m_Process->GetModuleFromAddress(address);
-      function.m_Module = module ? module->m_Name : "unknown module";
+      function.m_Module = module ? module->m_Name : "???";
 
       const LineInfo& lineInfo = m_AddressToLineInfo[address];
       function.m_Line = lineInfo.m_Line;
