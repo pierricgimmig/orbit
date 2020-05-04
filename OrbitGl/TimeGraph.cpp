@@ -95,7 +95,10 @@ Color TimeGraph::GetTimesliceColor(Timer timer) {
 }
 
 //-----------------------------------------------------------------------------
-TimeGraph::TimeGraph() { m_LastThreadReorder.Start(); }
+TimeGraph::TimeGraph() {
+  scheduler_track_ = std::make_shared<SchedulerTrack>(this);
+  process_track_ = std::make_shared<ThreadTrack>(this, 0);
+}
 
 //-----------------------------------------------------------------------------
 void TimeGraph::SetStringManager(std::shared_ptr<StringManager> str_manager) {
@@ -118,7 +121,7 @@ void TimeGraph::SetFontSize(int a_FontSize) {
 //-----------------------------------------------------------------------------
 void TimeGraph::Clear() {
   m_Batcher.Reset();
-  m_SessionMinCounter = 0xFFFFFFFFFFFFFFFF;
+  m_SessionMinCounter = std::numeric_limits<uint64_t>::max();
   m_SessionMaxCounter = 0;
   m_ThreadCountMap.clear();
   GEventTracer.GetEventBuffer().Reset();
@@ -127,6 +130,9 @@ void TimeGraph::Clear() {
   ScopeLock lock(m_Mutex);
   tracks_.clear();
   thread_tracks_.clear();
+  scheduler_track_ = std::make_shared<SchedulerTrack>(this);
+  process_track_ = std::make_shared<ThreadTrack>(this, 0);
+  thread_tracks_[0] = process_track_;
 
   m_ContextSwitchesMap.clear();
   m_CoreUtilizationMap.clear();
@@ -314,14 +320,11 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
     track->OnTimer(a_Timer);
     ++m_ThreadCountMap[a_Timer.m_TID];
   } else {
-    // Use thead 0 as container for scheduling events.  TODO: most of this
-    // should be done once.
-    const std::shared_ptr<ThreadTrack>& track0 = GetOrCreateThreadTrack(0);
+    scheduler_track_->OnTimer(a_Timer);
     std::string process_name = Capture::GTargetProcess->GetName();
-    track0->SetName(process_name + " (all threads)");
-    track0->SetLabelDisplayMode(Track::NAME_ONLY);
-    track0->SetEventTrackColor(GetThreadColor(0));
-    track0->OnTimer(a_Timer);
+    process_track_->SetName(process_name + " (all threads)");
+    process_track_->SetLabelDisplayMode(Track::NAME_ONLY);
+    process_track_->SetEventTrackColor(GetThreadColor(0));
     ++m_ThreadCountMap[0];
   }
 }
@@ -621,7 +624,7 @@ std::shared_ptr<ThreadTrack> TimeGraph::GetOrCreateThreadTrack(ThreadID a_TID) {
   std::shared_ptr<ThreadTrack> track = thread_tracks_[a_TID];
   if (track == nullptr) {
     if (a_TID == 0) {
-      track = std::make_shared<SchedulerTrack>(this, a_TID);
+      return process_track_;
     } else {
       track = std::make_shared<ThreadTrack>(this, a_TID);
     }
@@ -668,9 +671,6 @@ void TimeGraph::SortTracks() {
     std::vector<std::pair<ThreadID, uint32_t>> sortedThreads =
         OrbitUtils::ReverseValueSort(m_ThreadCountMap);
     for (auto& pair : sortedThreads) {
-      // Scheduling information is held in thread "0", which is handled
-      // separately.
-      // TODO: Make a proper "SchedTrack" instead of a hack.
       if (pair.first != 0) sortedThreadIds.push_back(pair.first);
     }
 
@@ -698,6 +698,12 @@ void TimeGraph::SortTracks() {
       }
       sortedThreadIds = filteredThreadIds;
     }
+
+    // Scheduler Track.
+    sorted_tracks_.emplace_back(scheduler_track_);
+
+    // Process Track.
+    sorted_tracks_.emplace_back(process_track_);
 
     // Thread Tracks.
     for (auto thread_id : sortedThreadIds) {

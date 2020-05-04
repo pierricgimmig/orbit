@@ -45,6 +45,7 @@ target_sources(
          PluginCanvas.h
          PluginManager.h
          ProcessesDataView.h
+         ProcessTrack.h
          RuleEditor.h
          SamplingReport.h
          SamplingReportDataView.h
@@ -92,6 +93,7 @@ target_sources(
           PluginManager.cpp
           ProcessListManager.cpp
           ProcessesDataView.cpp
+          ProcessTrack.cpp
           RuleEditor.cpp
           SamplingReport.cpp
           SamplingReportDataView.cpp

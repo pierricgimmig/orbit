@@ -9,7 +9,8 @@ const Color kInactiveColor(100, 100, 100, 255);
 const Color kSelectionColor(0, 128, 255, 255);
 
 void SchedulerTrack::Draw(GlCanvas* canvas, bool picking) {
-  ThreadTrack::Draw(canvas, picking);
+  UNUSED(canvas);
+  UNUSED(picking);
 }
 
 float SchedulerTrack::GetHeight() const {
@@ -39,8 +40,6 @@ inline float GetYFromDepth(const TimeGraphLayout& layout, float track_y,
 }
 
 void SchedulerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
-  event_track_->UpdatePrimitives(min_tick, max_tick);
-
   Batcher* batcher = &time_graph_->GetBatcher();
   GlCanvas* canvas = time_graph_->GetCanvas();
   const TimeGraphLayout& layout = time_graph_->GetLayout();

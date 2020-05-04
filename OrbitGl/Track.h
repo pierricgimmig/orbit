@@ -30,10 +30,11 @@ class Track : public Pickable {
     kGraphTrack,
     kGpuTrack,
     kSchedulerTrack,
+    kProcessTrack,
     kUnknown,
   };
 
-  Track();
+  Track(TimeGraph* time_graph);
   ~Track() override = default;
 
   // Pickable

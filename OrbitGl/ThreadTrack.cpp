@@ -15,8 +15,8 @@
 ABSL_FLAG(bool, show_return_values, false, "Show return values on time slices");
 
 //-----------------------------------------------------------------------------
-ThreadTrack::ThreadTrack(TimeGraph* time_graph, uint32_t thread_id) {
-  time_graph_ = time_graph;
+ThreadTrack::ThreadTrack(TimeGraph* time_graph, uint32_t thread_id)
+    : Track(time_graph) {
   m_ID = thread_id;
   text_renderer_ = time_graph->GetTextRenderer();
   thread_id_ = thread_id;
