@@ -4,6 +4,8 @@
 
 #include "Callstack.h"
 #include "ContextSwitch.h"
+#include "OrbitLinuxTracing/Events.h"
+#include "OrbitLinuxTracing/TracingOptions.h"
 #include "OrbitModule.h"
 #include "Params.h"
 #include "absl/flags/flag.h"
@@ -42,7 +44,7 @@ void LinuxTracingHandler::Start(
   tracer_->SetListener(this);
 
   tracer_->SetTraceContextSwitches(GParams.m_TrackContextSwitches);
-  tracer_->SetTraceCallstacks(true);
+  tracer_->SetSamplingMethod(LinuxTracing::kDwarf);
   tracer_->SetTraceInstrumentedFunctions(true);
   tracer_->SetTraceGpuDriver(absl::GetFlag(FLAGS_trace_gpu_driver));
 
@@ -97,7 +99,10 @@ void LinuxTracingHandler::OnCallstack(
     uint64_t address = frame.GetPc();
     cs.m_Data.push_back(address);
 
-    {
+    // TODO(kuebler): This is mainly for clustering IPs to their functions.
+    //  We should enable this also as a post-processing step.
+    if (frame.GetFunctionOffset() !=
+        LinuxTracing::CallstackFrame::kUnknownFunctionOffset) {
       absl::MutexLock lock{&addresses_seen_mutex_};
       if (!addresses_seen_.contains(address)) {
         LinuxAddressInfo address_info{address, frame.GetMapName(),
@@ -148,22 +153,9 @@ uint64_t LinuxTracingHandler::ProcessStringAndGetKey(
   return key;
 }
 
-pid_t LinuxTracingHandler::TimelineToThreadId(std::string_view timeline) {
-  auto it = timeline_to_thread_id_.find(timeline);
-  if (it != timeline_to_thread_id_.end()) {
-    return it->second;
-  }
-
-  pid_t new_id = current_timeline_thread_id_;
-  current_timeline_thread_id_++;
-  timeline_to_thread_id_.emplace(timeline, new_id);
-  return new_id;
-}
-
 void LinuxTracingHandler::OnGpuJob(const LinuxTracing::GpuJob& gpu_job) {
   Timer timer_user_to_sched;
-  timer_user_to_sched.m_TID = TimelineToThreadId(gpu_job.GetTimeline());
-  timer_user_to_sched.m_SubmitTID = gpu_job.GetTid();
+  timer_user_to_sched.m_TID = gpu_job.GetTid();
   timer_user_to_sched.m_Start = gpu_job.GetAmdgpuCsIoctlTimeNs();
   timer_user_to_sched.m_End = gpu_job.GetAmdgpuSchedRunJobTimeNs();
   timer_user_to_sched.m_Depth = gpu_job.GetDepth();
@@ -179,8 +171,7 @@ void LinuxTracingHandler::OnGpuJob(const LinuxTracing::GpuJob& gpu_job) {
   tracing_buffer_->RecordTimer(std::move(timer_user_to_sched));
 
   Timer timer_sched_to_start;
-  timer_sched_to_start.m_TID = TimelineToThreadId(gpu_job.GetTimeline());
-  timer_sched_to_start.m_SubmitTID = gpu_job.GetTid();
+  timer_sched_to_start.m_TID = gpu_job.GetTid();
   timer_sched_to_start.m_Start = gpu_job.GetAmdgpuSchedRunJobTimeNs();
   timer_sched_to_start.m_End = gpu_job.GetGpuHardwareStartTimeNs();
   timer_sched_to_start.m_Depth = gpu_job.GetDepth();
@@ -195,8 +186,7 @@ void LinuxTracingHandler::OnGpuJob(const LinuxTracing::GpuJob& gpu_job) {
   tracing_buffer_->RecordTimer(std::move(timer_sched_to_start));
 
   Timer timer_start_to_finish;
-  timer_start_to_finish.m_TID = TimelineToThreadId(gpu_job.GetTimeline());
-  timer_start_to_finish.m_SubmitTID = gpu_job.GetTid();
+  timer_start_to_finish.m_TID = gpu_job.GetTid();
   timer_start_to_finish.m_Start = gpu_job.GetGpuHardwareStartTimeNs();
   timer_start_to_finish.m_End = gpu_job.GetDmaFenceSignaledTimeNs();
   timer_start_to_finish.m_Depth = gpu_job.GetDepth();

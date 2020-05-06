@@ -12,6 +12,7 @@
 #include "Core.h"
 #include "EventBuffer.h"
 #include "Geometry.h"
+#include "GpuTrack.h"
 #include "MemoryTracker.h"
 #include "SchedulerTrack.h"
 #include "StringManager.h"
@@ -109,13 +110,14 @@ class TimeGraph {
   void OnUp();
   void OnDown();
 
-  Color GetEventTrackColor(Timer timer);
-  Color GetTimesliceColor(Timer timer);
+  Color GetThreadColor(ThreadID tid) const;
   StringManager* GetStringManager() { return string_manager_.get(); }
 
  protected:
   void AddTrack(std::unique_ptr<Track> track);
+  uint64_t GetGpuTimelineHash(const Timer& timer) const;
   std::shared_ptr<ThreadTrack> GetOrCreateThreadTrack(ThreadID a_TID);
+  std::shared_ptr<GpuTrack> GetOrCreateGpuTrack(uint64_t timeline_hash);
 
  private:
   TextRenderer m_TextRendererStatic;
@@ -161,6 +163,8 @@ class TimeGraph {
   mutable Mutex m_Mutex;
   std::vector<std::shared_ptr<Track>> tracks_;
   std::unordered_map<ThreadID, std::shared_ptr<ThreadTrack>> thread_tracks_;
+  // Mapping from timeline hash to GPU tracks.
+  std::unordered_map<uint64_t, std::shared_ptr<GpuTrack>> gpu_tracks_;
   std::vector<std::shared_ptr<Track>> sorted_tracks_;
   std::string m_ThreadFilter;
 

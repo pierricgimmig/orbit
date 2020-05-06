@@ -1,6 +1,6 @@
-//-----------------------------------
-// Copyright Pierric Gimmig 2013-2017
-//-----------------------------------
+// Copyright (c) 2020 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 // clang-format off
 #include "OrbitAsio.h"
@@ -293,6 +293,10 @@ bool OrbitApp::Init(ApplicationOptions&& options) {
 
 //-----------------------------------------------------------------------------
 void OrbitApp::PostInit() {
+  if (options_.crash_handler != nullptr) {
+    options_.crash_handler->SetUploadsEnabled(GetUploadDumpsToServerEnabled());
+  }
+
   if (!options_.asio_server_address.empty()) {
     GTcpClient = std::make_unique<TcpClient>();
     GTcpClient->AddMainThreadCallback(
@@ -482,8 +486,10 @@ void OrbitApp::SetLicense(const std::wstring& a_License) {
 }
 
 //-----------------------------------------------------------------------------
-int OrbitApp::OnExit() {
-  if (GTimerManager && GTimerManager->m_IsRecording) GOrbitApp->StopCapture();
+void OrbitApp::OnExit() {
+  if (GTimerManager && GTimerManager->m_IsRecording) {
+    StopCapture();
+  }
 
   GParams.Save();
   GTimerManager = nullptr;
@@ -491,14 +497,13 @@ int OrbitApp::OnExit() {
   ConnectionManager::Get().Stop();
   GTcpClient->Stop();
 
-  if (GOrbitApp->HasTcpServer()) {
+  if (HasTcpServer()) {
     GTcpServer->Stop();
   }
 
   GCoreApp = nullptr;
   GOrbitApp = nullptr;
   Orbit_ImGui_Shutdown();
-  return 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -555,68 +560,9 @@ void OrbitApp::MainTick() {
 std::string OrbitApp::GetVersion() { return OrbitVersion::GetVersion(); }
 
 //-----------------------------------------------------------------------------
-void OrbitApp::RegisterProcessesDataView(ProcessesDataView* a_Processes) {
-  assert(m_ProcessesDataView == nullptr);
-  m_ProcessesDataView = a_Processes;
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterModulesDataView(ModulesDataView* a_Modules) {
-  assert(m_ModulesDataView == nullptr);
-  assert(m_ProcessesDataView != nullptr);
-  m_ModulesDataView = a_Modules;
-  m_ProcessesDataView->SetModulesDataView(m_ModulesDataView);
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterFunctionsDataView(FunctionsDataView* a_Functions) {
-  m_FunctionsDataView = a_Functions;
-  m_Panels.push_back(a_Functions);
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterLiveFunctionsDataView(
-    LiveFunctionsDataView* a_Functions) {
-  m_LiveFunctionsDataView = a_Functions;
-  m_Panels.push_back(a_Functions);
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterCallStackDataView(CallStackDataView* a_Callstack) {
-  assert(m_CallStackDataView == nullptr);
-  m_CallStackDataView = a_Callstack;
-  m_Panels.push_back(a_Callstack);
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterTypesDataView(TypesDataView* a_Types) {
-  m_TypesDataView = a_Types;
-  m_Panels.push_back(a_Types);
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterGlobalsDataView(GlobalsDataView* a_Globals) {
-  m_GlobalsDataView = a_Globals;
-  m_Panels.push_back(a_Globals);
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterSessionsDataView(SessionsDataView* a_Sessions) {
-  m_SessionsDataView = a_Sessions;
-  m_Panels.push_back(a_Sessions);
-  ListSessions();
-}
-
-//-----------------------------------------------------------------------------
 void OrbitApp::RegisterCaptureWindow(CaptureWindow* a_Capture) {
   assert(m_CaptureWindow == nullptr);
   m_CaptureWindow = a_Capture;
-}
-
-//-----------------------------------------------------------------------------
-void OrbitApp::RegisterOutputLog(LogDataView* a_Log) {
-  assert(m_Log == nullptr);
-  m_Log = a_Log;
 }
 
 //-----------------------------------------------------------------------------
@@ -635,7 +581,7 @@ void OrbitApp::AddSamplingReport(
   auto report = std::make_shared<SamplingReport>(sampling_profiler);
 
   for (SamplingReportCallback& callback : app->m_SamplingReportsCallbacks) {
-    callback(report);
+    callback(app->GetOrCreateDataView(DataViewType::CALLSTACK), report);
   }
 }
 
@@ -646,7 +592,9 @@ void OrbitApp::AddSelectionReport(
 
   for (SamplingReportCallback& callback :
        GOrbitApp->m_SelectionReportCallbacks) {
-    callback(report);
+    DataView* callstack_data_view =
+        GOrbitApp->GetOrCreateDataView(DataViewType::CALLSTACK);
+    callback(callstack_data_view, report);
   }
 }
 
@@ -1002,19 +950,57 @@ void OrbitApp::EnableSampling(bool a_Value) {
 bool OrbitApp::GetSamplingEnabled() { return GParams.m_TrackSamplingEvents; }
 
 //-----------------------------------------------------------------------------
+
+void OrbitApp::OnProcessSelected(uint32_t pid) {
+  Message msg(Msg_RemoteProcessRequest);
+  msg.m_Header.m_GenericHeader.m_Address = pid;
+  GTcpClient->Send(msg);
+
+  std::shared_ptr<Process> process = FindProcessByPid(pid);
+
+  if (process) {
+    m_ModulesDataView->SetProcess(process);
+    Capture::SetTargetProcess(process);
+    FireRefreshCallbacks();
+  }
+}
+
+//-----------------------------------------------------------------------------
+bool OrbitApp::GetUploadDumpsToServerEnabled() const {
+  return GParams.m_UploadDumpsToServer;
+}
+
+//-----------------------------------------------------------------------------
+void OrbitApp::EnableUploadDumpsToServer(bool a_Value) {
+  if (options_.crash_handler != nullptr) {
+    options_.crash_handler->SetUploadsEnabled(a_Value);
+  }
+  GParams.m_UploadDumpsToServer = a_Value;
+  GParams.Save();
+}
+
+//-----------------------------------------------------------------------------
 void OrbitApp::OnRemoteProcess(const Message& a_Message) {
   std::istringstream buffer(a_Message.GetDataAsString());
   cereal::JSONInputArchive inputAr(buffer);
-  std::shared_ptr<Process> remoteProcess = std::make_shared<Process>();
-  inputAr(*remoteProcess);
-  remoteProcess->SetIsRemote(true);
-  PRINT_VAR(remoteProcess->GetName());
-  GOrbitApp->m_ProcessesDataView->UpdateProcess(remoteProcess);
+  std::shared_ptr<Process> remote_process = std::make_shared<Process>();
+  inputAr(*remote_process);
+  remote_process->SetIsRemote(true);
+  PRINT_VAR(remote_process->GetName());
+
+  UpdateProcess(remote_process);
+
+  if (remote_process->GetID() == m_ProcessesDataView->GetSelectedProcessId()) {
+    m_ModulesDataView->SetProcess(remote_process);
+    // Is this needed?
+    Capture::SetTargetProcess(remote_process);
+    FireRefreshCallbacks();
+  }
 
   // Trigger session loading if needed.
   std::shared_ptr<Session> session = Capture::GSessionPresets;
   if (session) {
-    GetSymbolsManager()->LoadSymbols(session, remoteProcess);
+    GetSymbolsManager()->LoadSymbols(session, remote_process);
     GParams.m_ProcessPath = session->m_ProcessFullPath;
     GParams.m_Arguments = session->m_Arguments;
     GParams.m_WorkingDirectory = session->m_WorkingDirectory;
@@ -1062,6 +1048,21 @@ void OrbitApp::OnRemoteModuleDebugInfo(const Message& a_Message) {
   OnRemoteModuleDebugInfo(remote_module_debug_infos);
 }
 
+std::shared_ptr<Process> OrbitApp::FindProcessByPid(uint32_t pid) {
+  absl::MutexLock lock(&process_map_mutex_);
+  auto it = process_map_.find(pid);
+  if (it == process_map_.end()) {
+    return nullptr;
+  }
+
+  return it->second;
+}
+
+void OrbitApp::UpdateProcess(const std::shared_ptr<Process>& process) {
+  absl::MutexLock lock(&process_map_mutex_);
+  process_map_.insert_or_assign(process->GetID(), process);
+}
+
 //-----------------------------------------------------------------------------
 void OrbitApp::OnRemoteModuleDebugInfo(
     const std::vector<ModuleDebugInfo>& remote_module_debug_infos) {
@@ -1091,4 +1092,86 @@ void OrbitApp::OnRemoteModuleDebugInfo(
 void OrbitApp::LaunchRuleEditor(Function* a_Function) {
   m_RuleEditor->m_Window.Launch(a_Function);
   SendToUiNow("RuleEditor");
+}
+
+DataView* OrbitApp::GetOrCreateDataView(DataViewType type) {
+  switch (type) {
+    case DataViewType::FUNCTIONS:
+      if (!m_FunctionsDataView) {
+        m_FunctionsDataView = std::make_unique<FunctionsDataView>();
+        m_Panels.push_back(m_FunctionsDataView.get());
+      }
+      return m_FunctionsDataView.get();
+
+    case DataViewType::TYPES:
+      if (!m_TypesDataView) {
+        m_TypesDataView = std::make_unique<TypesDataView>();
+        m_Panels.push_back(m_TypesDataView.get());
+      }
+      return m_TypesDataView.get();
+
+    case DataViewType::LIVE_FUNCTIONS:
+      if (!m_LiveFunctionsDataView) {
+        m_LiveFunctionsDataView = std::make_unique<LiveFunctionsDataView>();
+        m_Panels.push_back(m_LiveFunctionsDataView.get());
+      }
+      return m_LiveFunctionsDataView.get();
+
+    case DataViewType::CALLSTACK:
+      if (!m_CallStackDataView) {
+        m_CallStackDataView = std::make_unique<CallStackDataView>();
+        m_Panels.push_back(m_CallStackDataView.get());
+      }
+      return m_CallStackDataView.get();
+
+    case DataViewType::GLOBALS:
+      if (!m_GlobalsDataView) {
+        m_GlobalsDataView = std::make_unique<GlobalsDataView>();
+        m_Panels.push_back(m_GlobalsDataView.get());
+      }
+      return m_GlobalsDataView.get();
+
+    case DataViewType::MODULES:
+      if (!m_ModulesDataView) {
+        m_ModulesDataView = std::make_unique<ModulesDataView>();
+        m_Panels.push_back(m_ModulesDataView.get());
+      }
+      return m_ModulesDataView.get();
+
+    case DataViewType::PROCESSES:
+      if (!m_ProcessesDataView) {
+        m_ProcessesDataView = std::make_unique<ProcessesDataView>();
+        m_ProcessesDataView->SetSelectionListener(
+            [&](uint32_t pid) { OnProcessSelected(pid); });
+        m_Panels.push_back(m_ProcessesDataView.get());
+      }
+      return m_ProcessesDataView.get();
+
+    case DataViewType::SESSIONS:
+      if (!m_SessionsDataView) {
+        m_SessionsDataView = std::make_unique<SessionsDataView>();
+        m_Panels.push_back(m_SessionsDataView.get());
+      }
+      return m_SessionsDataView.get();
+
+    case DataViewType::LOG:
+      if (!m_LogDataView) {
+        m_LogDataView = std::make_unique<LogDataView>();
+        m_Panels.push_back(m_LogDataView.get());
+      }
+      return m_LogDataView.get();
+
+    case DataViewType::SAMPLING:
+      FATAL(
+          "DataViewType::SAMPLING Data View construction is not supported by"
+          "the factory.");
+
+    case DataViewType::ALL:
+      FATAL("DataViewType::ALL should not be used with the factory.");
+
+    case DataViewType::INVALID:
+      FATAL("DataViewType::INVALID should not be used with the factory.");
+  }
+
+  FATAL("Unreachable");
 }

@@ -1,6 +1,6 @@
-//-----------------------------------
-// Copyright Pierric Gimmig 2013-2017
-//-----------------------------------
+// Copyright (c) 2020 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include "Params.h"
 
@@ -27,16 +27,16 @@ Params::Params()
       m_AllowUnsafeHooking(false),
       m_HookOutputDebugString(false),
       m_FindFileAndLineInfo(true),
-      m_AutoReleasePdb(false),
       m_BpftraceCallstacks(false),
       m_SystemWideScheduling(true),
+      m_UploadDumpsToServer(false),
       m_MaxNumTimers(1000000),
       m_FontSize(14.f),
       m_Port(44766),
       m_NumBytesAssembly(1024),
       m_DiffArgs("%1 %2") {}
 
-ORBIT_SERIALIZE(Params, 16) {
+ORBIT_SERIALIZE(Params, 17) {
   ORBIT_NVP_VAL(0, m_LoadTypeInfo);
   ORBIT_NVP_VAL(0, m_SendCallStacks);
   ORBIT_NVP_VAL(0, m_MaxNumTimers);
@@ -57,10 +57,10 @@ ORBIT_SERIALIZE(Params, 16) {
   ORBIT_NVP_VAL(10, m_Arguments);
   ORBIT_NVP_VAL(10, m_WorkingDirectory);
   ORBIT_NVP_VAL(11, m_FindFileAndLineInfo);
-  ORBIT_NVP_VAL(12, m_AutoReleasePdb);
   ORBIT_NVP_VAL(13, m_ProcessFilter);
   ORBIT_NVP_VAL(14, m_BpftraceCallstacks);
   ORBIT_NVP_VAL(15, m_SystemWideScheduling);
+  ORBIT_NVP_VAL(17, m_UploadDumpsToServer);
 }
 
 //-----------------------------------------------------------------------------

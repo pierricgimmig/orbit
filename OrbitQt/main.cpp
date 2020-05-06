@@ -1,6 +1,6 @@
-//-----------------------------------
-// Copyright Pierric Gimmig 2013-2017
-//-----------------------------------
+// Copyright (c) 2020 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include <QApplication>
 #include <QDir>
@@ -23,10 +23,6 @@ ABSL_FLAG(uint16_t, asio_port, 44766,
           "The service's Asio tcp_server port (use default value if unsure)");
 ABSL_FLAG(uint16_t, grpc_port, 44755,
           "The service's GRPC server port (use default value if unsure)");
-
-// TODO: Remove this flag once we have a dialog with user
-ABSL_FLAG(bool, upload_dumps_to_server, false,
-          "Upload dumps to collection server when crashes");
 
 // TODO: remove this once we deprecated legacy parameters
 static void ParseLegacyCommandLine(int argc, char* argv[],
@@ -64,10 +60,10 @@ int main(int argc, char* argv[]) {
                                        .toStdString();
   const std::string crash_server_url =
       "https://clients2.google.com/cr/staging_report";
-  const CrashHandler crash_handler(dump_path, handler_path, crash_server_url,
-                                   absl::GetFlag(FLAGS_upload_dumps_to_server));
+  CrashHandler crash_handler(dump_path, handler_path, crash_server_url);
 
   ApplicationOptions options;
+  options.crash_handler = &crash_handler;
 
   ParseLegacyCommandLine(argc, argv, &options);
   std::string remote = absl::GetFlag(FLAGS_remote);
@@ -147,7 +143,7 @@ int main(int argc, char* argv[]) {
 
   int errorCode = app.exec();
 
-  OrbitApp::OnExit();
+  GOrbitApp->OnExit();
 
   return errorCode;
 }

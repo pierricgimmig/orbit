@@ -16,6 +16,7 @@
 #include "EventTrack.h"
 #include "Geometry.h"
 #include "GlCanvas.h"
+#include "GpuTrack.h"
 #include "GraphTrack.h"
 #include "Log.h"
 #include "OrbitType.h"
@@ -36,9 +37,15 @@
 
 TimeGraph* GCurrentTimeGraph = nullptr;
 
-namespace {
+//-----------------------------------------------------------------------------
+TimeGraph::TimeGraph() {
+  m_LastThreadReorder.Start();
+  scheduler_track_ = std::make_shared<SchedulerTrack>(this);
+  process_track_ = GetOrCreateThreadTrack(0);
+}
 
-Color GetThreadColor(ThreadID a_TID) {
+//-----------------------------------------------------------------------------
+Color TimeGraph::GetThreadColor(ThreadID tid) const {
   static unsigned char a = 255;
   static std::vector<Color> s_ThreadColors{
       Color(231, 68, 53, a),    // red
@@ -48,56 +55,7 @@ Color GetThreadColor(ThreadID a_TID) {
       Color(215, 171, 105, a),  // beige
       Color(248, 101, 22, a)    // orange
   };
-  return s_ThreadColors[a_TID % s_ThreadColors.size()];
-}
-
-}  // namespace
-
-Color TimeGraph::GetEventTrackColor(Timer timer) {
-  if (timer.m_Type == Timer::GPU_ACTIVITY) {
-    const Color kGray(100, 100, 100, 255);
-    return kGray;
-  } else {
-    return GetThreadColor(timer.m_TID);
-  }
-}
-
-Color TimeGraph::GetTimesliceColor(Timer timer) {
-  if (timer.m_Type == Timer::GPU_ACTIVITY) {
-    // We color code the timeslices for GPU activity using the color
-    // of the CPU thread track that submitted the job.
-    Color col = GetThreadColor(timer.m_SubmitTID);
-
-    // We disambiguate the different types of GPU activity based on the
-    // string that is displayed on their timeslice.
-    constexpr const char* kSwQueueString = "sw queue";
-    constexpr const char* kHwQueueString = "hw queue";
-    constexpr const char* kHwExecutionString = "hw execution";
-    float coeff = 1.0f;
-    std::string gpu_stage =
-        string_manager_->Get(timer.m_UserData[0]).value_or("");
-    if (gpu_stage == kSwQueueString) {
-      coeff = 0.5f;
-    } else if (gpu_stage == kHwQueueString) {
-      coeff = 0.75f;
-    } else if (gpu_stage == kHwExecutionString) {
-      coeff = 1.0f;
-    }
-
-    col[0] = static_cast<uint8_t>(coeff * col[0]);
-    col[1] = static_cast<uint8_t>(coeff * col[1]);
-    col[2] = static_cast<uint8_t>(coeff * col[2]);
-
-    return col;
-  } else {
-    return GetThreadColor(timer.m_TID);
-  }
-}
-
-//-----------------------------------------------------------------------------
-TimeGraph::TimeGraph() {
-  scheduler_track_ = std::make_shared<SchedulerTrack>(this);
-  process_track_ = GetOrCreateThreadTrack(0);
+  return s_ThreadColors[tid % s_ThreadColors.size()];
 }
 
 //-----------------------------------------------------------------------------
@@ -275,6 +233,11 @@ double TimeGraph::GetTimeIntervalMicro(double a_Ratio) {
 }
 
 //-----------------------------------------------------------------------------
+uint64_t TimeGraph::GetGpuTimelineHash(const Timer& timer) const {
+  return timer.m_UserData[1];
+}
+
+//-----------------------------------------------------------------------------
 void TimeGraph::ProcessTimer(const Timer& a_Timer) {
   if (a_Timer.m_End > m_SessionMaxCounter) {
     m_SessionMaxCounter = a_Timer.m_End;
@@ -305,9 +268,11 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
 
   std::shared_ptr<ThreadTrack> track = GetOrCreateThreadTrack(a_Timer.m_TID);
   if (a_Timer.m_Type == Timer::GPU_ACTIVITY) {
-    track->SetName(string_manager_->Get(a_Timer.m_UserData[1]).value_or(""));
-    track->SetLabelDisplayMode(Track::NAME_ONLY);
-    track->SetEventTrackColor(GetEventTrackColor(a_Timer));
+     uint64_t timeline_hash = GetGpuTimelineHash(a_Timer);
+    std::shared_ptr<GpuTrack> track = GetOrCreateGpuTrack(timeline_hash);
+    track->SetName(string_manager_->Get(timeline_hash).value_or(""));
+    track->SetLabel(string_manager_->Get(timeline_hash).value_or(""));
+    track->OnTimer(a_Timer);
   }
   if (a_Timer.m_Type == Timer::INTROSPECTION) {
     const Color kGreenIntrospection(87, 166, 74, 255);
@@ -319,10 +284,11 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
     track->OnTimer(a_Timer);
     ++m_ThreadCountMap[a_Timer.m_TID];
   } else {
+    // Use thead 0 as container for "all" sampling events.
+    // TODO: most of this should be done once.
     scheduler_track_->OnTimer(a_Timer);
     std::string process_name = Capture::GTargetProcess->GetName();
     process_track_->SetName(process_name + " (all threads)");
-    process_track_->SetLabelDisplayMode(Track::NAME_ONLY);
     process_track_->SetEventTrackColor(GetThreadColor(0));
   }
 }
@@ -606,8 +572,7 @@ void TimeGraph::DrawTracks(bool a_Picking) {
   for (auto& track : sorted_tracks_) {
     if (track->GetName().empty()) {
       if (track->GetType() == Track::kThreadTrack) {
-        std::string threadName =
-            Capture::GTargetProcess->GetThreadNameFromTID(track->GetID());
+        std::string threadName = track->GetLabel();
         track->SetName(threadName);
       }
     }
@@ -631,6 +596,18 @@ std::shared_ptr<ThreadTrack> TimeGraph::GetOrCreateThreadTrack(ThreadID a_TID) {
     thread_tracks_[a_TID] = track;
     track->SetEventTrackColor(GetThreadColor(a_TID));
   }
+  return track;
+}
+
+std::shared_ptr<GpuTrack> TimeGraph::GetOrCreateGpuTrack(uint64_t timeline_hash) {
+  ScopeLock lock(m_Mutex);
+  std::shared_ptr<GpuTrack> track = gpu_tracks_[timeline_hash];
+  if (track == nullptr) {
+    track = std::make_shared<GpuTrack>(this, string_manager_, timeline_hash);
+    tracks_.emplace_back(track);
+    gpu_tracks_[timeline_hash] = track;
+  }
+
   return track;
 }
 
@@ -658,18 +635,14 @@ void TimeGraph::SortTracks() {
 
   // Reorder threads once every second when capturing
   if (!Capture::IsCapturing() || m_LastThreadReorder.QueryMillis() > 1000.0) {
-    sorted_tracks_.clear();
-
     std::vector<ThreadID> sortedThreadIds;
-
-    // Thread "0" holds scheduling information and is used to select callstacks
-    // from all threads, show it at the top.
-    sortedThreadIds.push_back(0);
 
     // Show threads with instrumented functions first
     std::vector<std::pair<ThreadID, uint32_t>> sortedThreads =
         OrbitUtils::ReverseValueSort(m_ThreadCountMap);
     for (auto& pair : sortedThreads) {
+      // Track "0" is the "process" track that holds all sampling info,
+      // it is handled separately.
       if (pair.first != 0) sortedThreadIds.push_back(pair.first);
     }
 
@@ -699,8 +672,15 @@ void TimeGraph::SortTracks() {
       sortedThreadIds = filteredThreadIds;
     }
 
+    sorted_tracks_.clear();
+
     // Scheduler Track.
     sorted_tracks_.emplace_back(scheduler_track_);
+
+    // Gpu Tracks.
+    for (auto timeline_and_track : gpu_tracks_) {
+      sorted_tracks_.emplace_back(timeline_and_track.second);
+    }
 
     // Thread Tracks.
     for (auto thread_id : sortedThreadIds) {
@@ -719,8 +699,12 @@ void TimeGraph::OnLeft() {
   TextBox* selection = Capture::GSelectedTextBox;
   if (selection) {
     const Timer& timer = selection->GetTimer();
-    const TextBox* left =
-        GetOrCreateThreadTrack(timer.m_TID)->GetLeft(selection);
+    const TextBox* left = nullptr;
+    if (timer.m_Type == Timer::GPU_ACTIVITY) {
+      left = GetOrCreateGpuTrack(GetGpuTimelineHash(timer))->GetLeft(selection);
+    } else {
+      left = GetOrCreateThreadTrack(timer.m_TID)->GetLeft(selection);
+    }
     if (left) {
       SelectLeft(left);
     }
@@ -733,8 +717,12 @@ void TimeGraph::OnRight() {
   TextBox* selection = Capture::GSelectedTextBox;
   if (selection) {
     const Timer& timer = selection->GetTimer();
-    const TextBox* right =
-        GetOrCreateThreadTrack(timer.m_TID)->GetRight(selection);
+    const TextBox* right = nullptr;
+    if (timer.m_Type == Timer::GPU_ACTIVITY) {
+      right = GetOrCreateGpuTrack(GetGpuTimelineHash(timer))->GetRight(selection);
+    } else {
+      right = GetOrCreateThreadTrack(timer.m_TID)->GetRight(selection);
+    }
     if (right) {
       SelectRight(right);
     }
@@ -747,7 +735,12 @@ void TimeGraph::OnUp() {
   TextBox* selection = Capture::GSelectedTextBox;
   if (selection) {
     const Timer& timer = selection->GetTimer();
-    const TextBox* up = GetOrCreateThreadTrack(timer.m_TID)->GetUp(selection);
+    const TextBox* up = nullptr;
+    if (timer.m_Type == Timer::GPU_ACTIVITY) {
+      up = GetOrCreateGpuTrack(GetGpuTimelineHash(timer))->GetUp(selection);
+    } else {
+      up = GetOrCreateThreadTrack(timer.m_TID)->GetUp(selection);
+    }
     if (up) {
       Select(up);
     }
@@ -760,8 +753,12 @@ void TimeGraph::OnDown() {
   TextBox* selection = Capture::GSelectedTextBox;
   if (selection) {
     const Timer& timer = selection->GetTimer();
-    const TextBox* down =
-        GetOrCreateThreadTrack(timer.m_TID)->GetDown(selection);
+    const TextBox* down = nullptr;
+    if (timer.m_Type == Timer::GPU_ACTIVITY) {
+      down = GetOrCreateGpuTrack(GetGpuTimelineHash(timer))->GetDown(selection);
+    } else {
+      down = GetOrCreateThreadTrack(timer.m_TID)->GetDown(selection);
+    }
     if (down) {
       Select(down);
     }

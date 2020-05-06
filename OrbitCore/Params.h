@@ -1,6 +1,7 @@
-//-----------------------------------
-// Copyright Pierric Gimmig 2013-2017
-//-----------------------------------
+// Copyright (c) 2020 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #pragma once
 
 #include <string>
@@ -28,10 +29,10 @@ struct Params {
   bool m_AllowUnsafeHooking;
   bool m_HookOutputDebugString;
   bool m_FindFileAndLineInfo;
-  bool m_AutoReleasePdb;
   bool m_BpftraceCallstacks;
   bool m_SystemWideScheduling;
   bool m_UseBpftrace;
+  bool m_UploadDumpsToServer;
   int m_MaxNumTimers;
   float m_FontSize;
   int m_Port;
