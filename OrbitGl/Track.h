@@ -30,7 +30,6 @@ class Track : public Pickable {
     kGraphTrack,
     kGpuTrack,
     kSchedulerTrack,
-    kProcessTrack,
     kUnknown,
   };
 

@@ -677,6 +677,7 @@ void TimeGraph::SortTracks() {
     std::vector<std::pair<ThreadID, uint32_t>> sortedByEvents =
         OrbitUtils::ReverseValueSort(m_EventCount);
     for (auto& pair : sortedByEvents) {
+      if (pair.first == 0) continue;
       if (m_ThreadCountMap.find(pair.first) == m_ThreadCountMap.end()) {
         sortedThreadIds.push_back(pair.first);
       }
