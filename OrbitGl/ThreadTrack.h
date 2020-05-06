@@ -53,6 +53,7 @@ class ThreadTrack : public Track {
 
   void SetEventTrackColor(Color color);
   void ClearSelectedEvents() { event_track_->ClearSelectedEvents(); }
+  bool IsEmpty() const;
 
  protected:
   void UpdateDepth(uint32_t depth) {

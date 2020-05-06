@@ -324,3 +324,8 @@ void ThreadTrack::SetEventTrackColor(Color color) {
   ScopeLock lock(mutex_);
   event_track_->SetColor(color);
 }
+
+//-----------------------------------------------------------------------------
+bool ThreadTrack::IsEmpty() const { 
+  return (GetNumTimers() == 0) && event_track_->IsEmpty(); 
+}

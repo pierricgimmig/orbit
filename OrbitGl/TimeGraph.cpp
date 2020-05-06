@@ -97,7 +97,7 @@ Color TimeGraph::GetTimesliceColor(Timer timer) {
 //-----------------------------------------------------------------------------
 TimeGraph::TimeGraph() {
   scheduler_track_ = std::make_shared<SchedulerTrack>(this);
-  process_track_ = std::make_shared<ThreadTrack>(this, 0);
+  process_track_ = GetOrCreateThreadTrack(0);
 }
 
 //-----------------------------------------------------------------------------
@@ -131,8 +131,7 @@ void TimeGraph::Clear() {
   tracks_.clear();
   thread_tracks_.clear();
   scheduler_track_ = std::make_shared<SchedulerTrack>(this);
-  process_track_ = std::make_shared<ThreadTrack>(this, 0);
-  thread_tracks_[0] = process_track_;
+  process_track_ = GetOrCreateThreadTrack(0);
 
   m_ContextSwitchesMap.clear();
   m_CoreUtilizationMap.clear();
@@ -325,7 +324,6 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
     process_track_->SetName(process_name + " (all threads)");
     process_track_->SetLabelDisplayMode(Track::NAME_ONLY);
     process_track_->SetEventTrackColor(GetThreadColor(0));
-    ++m_ThreadCountMap[0];
   }
 }
 
@@ -624,7 +622,8 @@ std::shared_ptr<ThreadTrack> TimeGraph::GetOrCreateThreadTrack(ThreadID a_TID) {
   std::shared_ptr<ThreadTrack> track = thread_tracks_[a_TID];
   if (track == nullptr) {
     if (a_TID == 0) {
-      return process_track_;
+      track = std::make_shared<ThreadTrack>(this, 0);
+      process_track_ = track;
     } else {
       track = std::make_shared<ThreadTrack>(this, a_TID);
     }
@@ -702,12 +701,12 @@ void TimeGraph::SortTracks() {
     // Scheduler Track.
     sorted_tracks_.emplace_back(scheduler_track_);
 
-    // Process Track.
-    sorted_tracks_.emplace_back(process_track_);
-
     // Thread Tracks.
     for (auto thread_id : sortedThreadIds) {
-      sorted_tracks_.emplace_back(GetOrCreateThreadTrack(thread_id));
+      std::shared_ptr<ThreadTrack> track = GetOrCreateThreadTrack(thread_id);
+      if (!track->IsEmpty()) {
+        sorted_tracks_.emplace_back(track);
+      }
     }
 
     m_LastThreadReorder.Reset();

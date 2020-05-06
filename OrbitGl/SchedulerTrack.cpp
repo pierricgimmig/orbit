@@ -17,7 +17,7 @@ float SchedulerTrack::GetHeight() const {
   TimeGraphLayout& layout = time_graph_->GetLayout();
   return depth_ *
              (layout.GetTextCoresHeight() + layout.GetSpaceBetweenCores()) +
-         layout.GetEventTrackHeight() + layout.GetTrackBottomMargin();
+         layout.GetTrackBottomMargin();
 }
 
 inline Color GetTimerColor(const Timer& timer, TimeGraph* time_graph,
@@ -33,8 +33,7 @@ inline Color GetTimerColor(const Timer& timer, TimeGraph* time_graph,
 
 inline float GetYFromDepth(const TimeGraphLayout& layout, float track_y,
                            uint32_t depth) {
-  return track_y - layout.GetEventTrackHeight() -
-         layout.GetSpaceBetweenTracksAndThread() -
+  return track_y - layout.GetSpaceBetweenTracksAndThread() -
          (layout.GetTextCoresHeight() + layout.GetSpaceBetweenCores()) *
              (depth + 1);
 }

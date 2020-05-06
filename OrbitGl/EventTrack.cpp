@@ -154,3 +154,11 @@ void EventTrack::SelectEvents() {
   selected_callstack_events_ =
       time_graph_->SelectEvents(from[0], to[0], m_ThreadId);
 }
+
+//-----------------------------------------------------------------------------
+bool EventTrack::IsEmpty() const {
+  ScopeLock lock(GEventTracer.GetEventBuffer().GetMutex());
+  std::map<uint64_t, CallstackEvent>& callstacks =
+  GEventTracer.GetEventBuffer().GetCallstacks()[m_ThreadId];
+  return callstacks.empty();
+}
