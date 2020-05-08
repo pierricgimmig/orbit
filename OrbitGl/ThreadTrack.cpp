@@ -133,6 +133,7 @@ void ThreadTrack::SetTimesliceText(const Timer& timer, double elapsed_us,
 
 //-----------------------------------------------------------------------------
 void ThreadTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
+  event_track_->SetPos(m_Pos[0], m_Pos[1]);
   event_track_->UpdatePrimitives(min_tick, max_tick);
 
   Batcher* batcher = &time_graph_->GetBatcher();

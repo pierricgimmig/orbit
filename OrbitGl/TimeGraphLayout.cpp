@@ -11,13 +11,17 @@ TimeGraphLayout::TimeGraphLayout() {
   m_EventTrackHeight = 10.f;
   m_GraphTrackHeight = 20.f;
   m_TrackBottomMargin = 5.f;
+  m_TrackTopMargin = 5.f;
   m_SpaceBetweenCores = 2.f;
   m_SpaceBetweenCoresAndThread = 30.f;
   m_SpaceBetweenTracks = 20.f;
   m_SpaceBetweenTracksAndThread = 5.f;
   m_SpaceBetweenThreadBlocks = 35.f;
-  m_TrackLabelOffset = 6.f;
+  m_TrackLabelOffsetX = 30.f;
+  m_TrackLabelOffsetY = 6.f;
   m_SliderWidth = 15.f;
+  m_TrackTabWidth = 350.f;
+  m_TrackTabHeight = 15.f;
   m_TextZ = -0.02f;
   m_TrackZ = -0.1f;
 };
@@ -38,7 +42,8 @@ bool TimeGraphLayout::DrawProperties() {
 
   ImGui::Begin("Layout Properties", &m_DrawProperties, size, 1.f, 0);
   bool needs_redraw = false;
-  FLOAT_SLIDER(m_TrackLabelOffset);
+  FLOAT_SLIDER(m_TrackLabelOffsetX);
+  FLOAT_SLIDER(m_TrackLabelOffsetY);
   FLOAT_SLIDER(m_TextBoxHeight);
   FLOAT_SLIDER(m_CoresHeight);
   FLOAT_SLIDER(m_EventTrackHeight);
@@ -49,7 +54,10 @@ bool TimeGraphLayout::DrawProperties() {
   FLOAT_SLIDER(m_SpaceBetweenTracksAndThread);
   FLOAT_SLIDER(m_SpaceBetweenThreadBlocks);
   FLOAT_SLIDER(m_SliderWidth);
+  FLOAT_SLIDER(m_TrackTabHeight);
+  FLOAT_SLIDER_MIN_MAX(m_TrackTabWidth, 0, 1000.f);
   FLOAT_SLIDER_MIN_MAX(m_TrackBottomMargin, 0, 20.f);
+  FLOAT_SLIDER_MIN_MAX(m_TrackTopMargin, 0, 20.f);
   FLOAT_SLIDER_MIN_MAX(m_TextZ, -1.f, 1.f);
   FLOAT_SLIDER_MIN_MAX(m_TrackZ, -1.f, 1.f);
   ImGui::Checkbox("DrawTrackBackground", &m_DrawTrackBackground);
