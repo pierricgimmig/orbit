@@ -47,10 +47,10 @@ void ClearCaptureData() {
 GlCanvas::GlCanvas() {
   m_TextRenderer.SetCanvas(this);
 
-  m_DesiredWorldWidth = 1600.f;
-  m_DesiredWorldHeight = 1000.f;
-  m_WorldWidth = m_DesiredWorldWidth;
-  m_WorldHeight = m_DesiredWorldHeight;
+  m_Width = 0;
+  m_Height = 0;
+  m_WorldWidth = 0;
+  m_WorldHeight = 0;
   m_WorldTopLeftX = -5.f;
   m_WorldTopLeftY = 5.f;
   m_WorldMinWidth = 1.f;
@@ -186,10 +186,7 @@ void GlCanvas::MouseWheelMoved(int a_X, int a_Y, int a_Delta, bool a_Ctrl) {
                           ? 0.f
                           : static_cast<float>(m_WheelMomentum + delta);
   } else {
-    float zoomInc = zoomRatio * m_DesiredWorldHeight;
-    m_DesiredWorldHeight += delta * zoomInc;
-    m_WorldTopLeftY = worldy + mousey / getHeight() * m_DesiredWorldHeight;
-    UpdateSceneBox();
+    // TODO: scale track height.
   }
 
   // Use the original sign of a_Delta here.
@@ -346,8 +343,8 @@ void GlCanvas::prepare2DViewport(int topleft_x, int topleft_y,
   // mat4_set_orthographic( &m_TextRenderer.GetProjection(), topleft_x,
   // bottomrigth_x, topleft_y, bottomrigth_y, -1, 1);
 
-  m_WorldWidth = m_DesiredWorldWidth;
-  m_WorldHeight = m_DesiredWorldHeight;
+  m_WorldWidth = m_Width;
+  m_WorldHeight = m_Height;
 
   UpdateSceneBox();
 
@@ -366,8 +363,6 @@ void GlCanvas::prepare2DViewport(int topleft_x, int topleft_y,
   // TRACE_VAR( m_WorldTopLeftY );
   // TRACE_VAR( m_WorldWidth );
   // TRACE_VAR( m_WorldHeight );
-  // TRACE_VAR( m_DesiredWorldWidth );
-  // TRACE_VAR( m_DesiredWorldHeight );/**/
   // TRACE_VAR( GTimerManager->m_NumQueuedEntries );
   // TRACE_VAR( GTimerManager->m_NumQueuedMessages );
   // TRACE_VAR( GTimerManager->m_NumQueuedTimers );

@@ -21,6 +21,11 @@ class TimeGraphLayout {
   float GetSliderWidth() const { return m_SliderWidth; }
   float GetTrackTabWidth() const { return m_TrackTabWidth; }
   float GetTrackTabHeight() const { return m_TrackTabHeight; }
+  float GetTrackTabOffset() const { return m_TrackTabOffset; }
+  float GetCollapseButtonOffset() const { return m_CollapseButtonOffset; }
+  float GetRoundingRadius() const { return m_RoundingRadius; }
+  float GetRoundingNumSides() const { return m_RoundingNumSides; }
+  float GetTextOffset() const { return m_TextOffset; }
   float GetSpaceBetweenTracks() const { return m_SpaceBetweenTracks; }
   float GetSpaceBetweenCores() const { return m_SpaceBetweenCores; }
   float GetSpaceBetweenTracksAndThread() const {
@@ -47,9 +52,13 @@ class TimeGraphLayout {
   float m_SliderWidth;
   float m_TrackTabWidth;
   float m_TrackTabHeight;
+  float m_TrackTabOffset;
+  float m_CollapseButtonOffset;
+  float m_RoundingRadius;
+  float m_RoundingNumSides;
+  float m_TextOffset;
 
   float m_SpaceBetweenCores;
-  float m_SpaceBetweenCoresAndThread;
   float m_SpaceBetweenTracks;
   float m_SpaceBetweenTracksAndThread;
   float m_SpaceBetweenThreadBlocks;

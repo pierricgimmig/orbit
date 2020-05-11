@@ -15,41 +15,12 @@
 #include "TextBox.h"
 #include "TextRenderer.h"
 #include "TimeGraphLayout.h"
+#include "TriangleToggle.h"
 
 class GlCanvas;
 class TimeGraph;
 
 typedef BlockChain<TextBox, 4 * 1024> TimerChain;
-
-class TriangleToggle : public Pickable {
- public:
-  using StateChangeHandler = std::function<void(bool)>;
-  explicit TriangleToggle(bool initial_state, StateChangeHandler handler)
-      : is_active_(initial_state), handler_(handler) {}
-
-  TriangleToggle() = delete;
-  TriangleToggle(const TriangleToggle&) = delete;
-  TriangleToggle& operator=(const TriangleToggle&) = delete;
-  TriangleToggle(TriangleToggle&&) = delete;
-  TriangleToggle& operator=(TriangleToggle&&) = delete;
-
-  // Pickable
-  void Draw(GlCanvas* canvas, bool picking) override;
-  void OnPick(int x, int y) override;
-  void OnRelease() override;
-
-  bool GetActive() const { return is_active_; }
-  void SetActive(bool active) { is_active_ = active; }
-  Vec2 GetPos() const { return pos_; }
-  void SetPos(const Vec2& pos) { pos_ = pos; }
-
- private:
-  StateChangeHandler handler_;
-  bool is_active_;
-  bool is_picked_ = false;
-  Vec2 pos_ = {0, 0};
-  float size_ = 10.f;
-};
 
 //-----------------------------------------------------------------------------
 class Track : public Pickable {
