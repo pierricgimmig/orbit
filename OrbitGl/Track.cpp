@@ -11,6 +11,20 @@
 #include "absl/strings/str_format.h"
 
 //-----------------------------------------------------------------------------
+Track::Track(TimeGraph* time_graph)
+    : time_graph_(time_graph),
+      collapse_toggle_(
+          true, [this](bool state) { OnCollapseToggle(state); }, time_graph) {
+  m_MousePos[0] = m_MousePos[1] = Vec2(0, 0);
+  m_Pos = Vec2(0, 0);
+  m_Size = Vec2(0, 0);
+  m_PickingOffset = Vec2(0, 0);
+  m_Picked = false;
+  m_Moving = false;
+  m_Canvas = nullptr;
+}
+
+//-----------------------------------------------------------------------------
 std::vector<Vec2> GetRoundedCornerMask(float radius, uint32_t num_sides) {
   std::vector<Vec2> points;
   points.emplace_back(0.f, 0.f);
@@ -25,20 +39,6 @@ std::vector<Vec2> GetRoundedCornerMask(float radius, uint32_t num_sides) {
 
   points.emplace_back(radius, 0.f);
   return points;
-}
-
-//-----------------------------------------------------------------------------
-Track::Track(TimeGraph* time_graph)
-    : time_graph_(time_graph),
-      collapse_toggle_(true, [this](bool state) { OnCollapseToggle(state); },
-                       time_graph) {
-  m_MousePos[0] = m_MousePos[1] = Vec2(0, 0);
-  m_Pos = Vec2(0, 0);
-  m_Size = Vec2(0, 0);
-  m_PickingOffset = Vec2(0, 0);
-  m_Picked = false;
-  m_Moving = false;
-  m_Canvas = nullptr;
 }
 
 //-----------------------------------------------------------------------------

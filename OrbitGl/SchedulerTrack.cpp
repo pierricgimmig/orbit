@@ -9,8 +9,7 @@ const Color kInactiveColor(100, 100, 100, 255);
 const Color kSelectionColor(0, 128, 255, 255);
 
 SchedulerTrack::SchedulerTrack(TimeGraph* time_graph)
-    : ThreadTrack(time_graph, /*thread_id*/ 0) {
-}
+    : ThreadTrack(time_graph, /*thread_id*/ 0) {}
 
 void SchedulerTrack::Draw(GlCanvas* /*canvas*/, bool /*picking*/) {}
 
@@ -70,7 +69,7 @@ void SchedulerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
       float world_timer_x =
           static_cast<float>(world_start_x + normalized_start * world_width);
       float world_timer_y =
-          GetYFromDepth(m_Pos[1], timer.m_Depth, /*collapsed*/  false);
+          GetYFromDepth(m_Pos[1], timer.m_Depth, /*collapsed*/ false);
 
       bool is_visible_width = normalized_length * canvas->getWidth() > 1;
       bool is_same_pid_as_target = target_pid == 0 || target_pid == timer.m_PID;
