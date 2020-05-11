@@ -25,21 +25,37 @@ pid_t ReadMmapRecordPid(PerfEventRingBuffer* ring_buffer) {
   return pid;
 }
 
+uint64_t ReadSampleRecordStreamId(PerfEventRingBuffer* ring_buffer) {
+  uint64_t stream_id;
+  // All PERF_RECORD_SAMPLEs start with
+  //   perf_event_header header;
+  //   perf_event_sample_id_tid_time_streamid_cpu sample_id;
+  ring_buffer->ReadValueAtOffset(
+      &stream_id,
+      sizeof(perf_event_header) +
+          offsetof(perf_event_sample_id_tid_time_streamid_cpu, stream_id));
+  return stream_id;
+}
+
 pid_t ReadSampleRecordPid(PerfEventRingBuffer* ring_buffer) {
   pid_t pid;
+  // All PERF_RECORD_SAMPLEs start with
+  //   perf_event_header header;
+  //   perf_event_sample_id_tid_time_streamid_cpu sample_id;
   ring_buffer->ReadValueAtOffset(
-      &pid, offsetof(perf_event_stack_sample, sample_id.pid));
+      &pid, sizeof(perf_event_header) +
+                offsetof(perf_event_sample_id_tid_time_streamid_cpu, pid));
   return pid;
 }
 
-std::unique_ptr<SamplePerfEvent> ConsumeSamplePerfEvent(
+std::unique_ptr<StackSamplePerfEvent> ConsumeStackSamplePerfEvent(
     PerfEventRingBuffer* ring_buffer, const perf_event_header& header) {
   // Data in the ring buffer has the layout of perf_event_stack_sample, but we
   // copy it into dynamically_sized_perf_event_stack_sample.
   uint64_t dyn_size;
   ring_buffer->ReadValueAtOffset(
       &dyn_size, offsetof(perf_event_stack_sample, stack.dyn_size));
-  auto event = std::make_unique<SamplePerfEvent>(dyn_size);
+  auto event = std::make_unique<StackSamplePerfEvent>(dyn_size);
   event->ring_buffer_record->header = header;
   ring_buffer->ReadValueAtOffset(&event->ring_buffer_record->sample_id,
                                  offsetof(perf_event_stack_sample, sample_id));

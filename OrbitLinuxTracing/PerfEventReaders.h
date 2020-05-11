@@ -10,9 +10,11 @@ namespace LinuxTracing {
 // more complex operations than simply copying an entire perf_event_open record.
 pid_t ReadMmapRecordPid(PerfEventRingBuffer* ring_buffer);
 
+uint64_t ReadSampleRecordStreamId(PerfEventRingBuffer* ring_buffer);
+
 pid_t ReadSampleRecordPid(PerfEventRingBuffer* ring_buffer);
 
-std::unique_ptr<SamplePerfEvent> ConsumeSamplePerfEvent(
+std::unique_ptr<StackSamplePerfEvent> ConsumeStackSamplePerfEvent(
     PerfEventRingBuffer* ring_buffer, const perf_event_header& header);
 
 std::unique_ptr<CallchainSamplePerfEvent> ConsumeCallchainSamplePerfEvent(

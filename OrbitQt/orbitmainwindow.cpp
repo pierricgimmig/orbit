@@ -6,6 +6,7 @@
 
 #include <QBuffer>
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -24,7 +25,6 @@
 #include "../external/concurrentqueue/concurrentqueue.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
-#include "licensedialog.h"
 #include "orbitdiffdialog.h"
 #include "orbitdisassemblydialog.h"
 #include "orbitsamplingreport.h"
@@ -156,7 +156,8 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
   CreateSelectionTab();
   CreatePluginTabs();
 
-  this->setWindowTitle("Orbit Profiler");
+  setWindowTitle(QString("%1 %2").arg(QCoreApplication::applicationName(),
+                                      QCoreApplication::applicationVersion()));
   std::string iconFileName = Path::GetExecutablePath() + "orbit.ico";
   this->setWindowIcon(QIcon(iconFileName.c_str()));
 
@@ -453,12 +454,8 @@ void OrbitMainWindow::OnSetClipboard(const std::wstring& a_Text) {
 
 //-----------------------------------------------------------------------------
 void OrbitMainWindow::on_actionAbout_triggered() {
-  std::string title = "Orbit Profiler";
-  title += " | Version " + GOrbitApp->GetVersion();
-  std::string text = "Copyright (c) 2013-2018 - Pierric Gimmig\n Qt:";
-  text += qVersion();
-
-  QMessageBox::about(this, title.c_str(), text.c_str());
+  const QString text{"Copyright (c) 2020 The Orbit Authors. All rights reserved."};
+  QMessageBox::about(this, windowTitle(), text);
 }
 
 //-----------------------------------------------------------------------------
