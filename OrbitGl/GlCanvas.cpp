@@ -170,17 +170,13 @@ void GlCanvas::MouseWheelMoved(int a_X, int a_Y, int a_Delta, bool a_Ctrl) {
   if (delta > m_MaxWheelDelta) m_MaxWheelDelta = delta;
 
   float mousex = a_X;
-  float mousey = a_Y;
-
   float worldx;
   float worldy;
 
   ScreenToWorld(a_X, a_Y, worldx, worldy);
   m_MouseRatio = mousex / getWidth();
 
-  static float zoomRatio = 0.1f;
   bool zoomWidth = !a_Ctrl;
-
   if (zoomWidth) {
     m_WheelMomentum = delta * m_WheelMomentum < 0
                           ? 0.f

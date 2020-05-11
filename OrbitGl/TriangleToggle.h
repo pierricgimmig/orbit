@@ -36,9 +36,9 @@ class TriangleToggle : public Pickable {
   void SetPos(const Vec2& pos) { pos_ = pos; }
 
  private:
+  bool is_active_;
   StateChangeHandler handler_;
   TimeGraph* time_graph_;
-  bool is_active_;
   Vec2 pos_ = {0, 0};
   float size_ = 10.f;
 };

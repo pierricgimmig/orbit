@@ -122,7 +122,6 @@ void Track::Draw(GlCanvas* canvas, bool picking) {
   float label_offset_x = layout.GetTrackLabelOffsetX();
   float label_offset_y = layout.GetTrackLabelOffsetY();
   const Color kTextWhite(255, 255, 255, 255);
-  TextRenderer* text_renderer = time_graph_->GetTextRenderer();
   canvas->AddText(label_.c_str(), tab_x0 + label_offset_x,
                   y1 + label_offset_y + m_Size[1], text_z,
                   Color(255, 255, 255, 255), label_width - label_offset_x);
@@ -153,7 +152,7 @@ void Track::SetSize(float a_SizeX, float a_SizeY) {
 }
 
 //-----------------------------------------------------------------------------
-void Track::OnCollapseToggle(bool state) {
+void Track::OnCollapseToggle(bool /*state*/) {
   time_graph_->NeedsUpdate();
   time_graph_->NeedsRedraw();
 }

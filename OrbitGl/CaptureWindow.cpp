@@ -452,9 +452,7 @@ void CaptureWindow::MouseWheelMoved(int a_X, int a_Y, int a_Delta,
   ScreenToWorld(a_X, a_Y, worldx, worldy);
   m_MouseRatio = static_cast<double>(mousex) / getWidth();
 
-  static float zoomRatio = 0.1f;
   bool zoomWidth = !a_Ctrl;
-
   if (zoomWidth) {
     time_graph_.ZoomTime(delta, m_MouseRatio);
     m_WheelMomentum = delta * m_WheelMomentum < 0 ? 0 : m_WheelMomentum + delta;

@@ -44,5 +44,5 @@ void TriangleToggle::OnPick(int /*x*/, int /*y*/) {}
 void TriangleToggle::OnRelease() {
   is_active_ = !is_active_;
   handler_(is_active_);
-  GCurrentTimeGraph->NeedsUpdate();
+  time_graph_->NeedsUpdate();
 }
