@@ -63,6 +63,7 @@
 #include "TypesDataView.h"
 #include "Utils.h"
 #include "Version.h"
+#include "Geometry.h"
 
 #define GLUT_DISABLE_ATEXIT_HACK
 #include "GL/freeglut.h"
@@ -70,6 +71,11 @@
 #if __linux__
 #include <OrbitLinuxTracing/OrbitTracing.h>
 #endif
+
+#include "absl/flags/flag.h"
+#include "absl/flags/parse.h"
+#include "absl/flags/usage.h"
+ABSL_FLAG(bool, benchmark, false,"Benchmark mode");
 
 std::unique_ptr<OrbitApp> GOrbitApp;
 float GFontSize;
@@ -244,9 +250,59 @@ void OrbitApp::AppendSystrace(const std::string& a_FileName,
 }
 
 //-----------------------------------------------------------------------------
+template <typename T>
+void TestBlockChain(T element) {
+  typedef BlockChain<T, 64 * 1024> TestChain;
+  TestChain block_chain;
+  std::vector<T> text_vector_emplace_back;
+  std::vector<T> text_vector_push_back;
+  std::vector<uint64_t> iterations = {1000000000000,      10,      100,       1000,
+                                      10'000, 100'000, 1'000'000, 10'000'000};
+
+  for (uint32_t num_iterations : iterations) {
+    // BlockChain test.
+    {
+      LOG("/======= Adding %u elements to container ======", num_iterations);
+      SCOPE_TIMER_LOG("BlockChain");
+      for (int i = 0; i < num_iterations; ++i) block_chain.push_back(element);
+    }
+
+    // std::vector test.
+    {
+      SCOPE_TIMER_LOG("std::vector push_back");
+      for (int i = 0; i < num_iterations; ++i)
+        text_vector_push_back.push_back(element);
+    }
+
+    // std::vector test.
+    {
+      SCOPE_TIMER_LOG("std::vector emplace_back");
+      for (int i = 0; i < num_iterations; ++i)
+        text_vector_emplace_back.emplace_back(element);
+    }
+
+    LOG("\\======= Adding %u elements to container ======\n\n", num_iterations);
+  }
+}
+
+class Colors{
+  public:
+  Colors(){data[0] = 0;}
+  float data[4];
+};
+
+//-----------------------------------------------------------------------------
 bool OrbitApp::Init(ApplicationOptions&& options) {
   GOrbitApp = std::make_unique<OrbitApp>(std::move(options));
   GCoreApp = GOrbitApp.get();
+
+  bool benchmark = absl::GetFlag(FLAGS_benchmark);
+  if (benchmark) {
+    Line line;
+    Color color;
+    // TestBlockChain<Line>(line);
+    TestBlockChain<Color>(color);
+  }
 
   GTimerManager = std::make_unique<TimerManager>();
   GTcpServer = std::make_unique<TcpServer>();
