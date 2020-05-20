@@ -75,7 +75,7 @@
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
-ABSL_FLAG(bool, benchmark, false,"Benchmark mode");
+ABSL_FLAG(bool, benchmark, false, "Benchmark mode");
 
 std::unique_ptr<OrbitApp> GOrbitApp;
 float GFontSize;
@@ -256,7 +256,7 @@ void TestBlockChain(T element) {
   TestChain block_chain;
   std::vector<T> text_vector_emplace_back;
   std::vector<T> text_vector_push_back;
-  std::vector<uint64_t> iterations = {1000000000000,      10,      100,       1000,
+  std::vector<uint64_t> iterations = {1,      10,      100,       1000,
                                       10'000, 100'000, 1'000'000, 10'000'000};
 
   for (uint32_t num_iterations : iterations) {
@@ -285,9 +285,9 @@ void TestBlockChain(T element) {
   }
 }
 
-class Colors{
-  public:
-  Colors(){data[0] = 0;}
+class Colors {
+ public:
+  Colors() { data[0] = 0; }
   float data[4];
 };
 
