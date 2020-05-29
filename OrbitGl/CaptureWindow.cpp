@@ -881,6 +881,8 @@ void CaptureWindow::RenderUI() {
     RenderMemTracker();
   }
 
+  RenderButtons();
+
   // Rendering
   glViewport(0, 0, getWidth(), getHeight());
   ImGui::Render();
@@ -951,9 +953,6 @@ void CaptureWindow::RenderButtons() {
   if( ImGui::Button(capture_button_label) ){
     GOrbitApp->ToggleCapture();
   }
-
-  if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("I am a tooltip");
 
   ImGui::End();
   ImGui::PopStyleColor();
