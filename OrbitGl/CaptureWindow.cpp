@@ -42,7 +42,7 @@ CaptureWindow::CaptureWindow() {
   time_graph_.SetPickingManager(&m_PickingManager);
   time_graph_.SetCanvas(this);
   m_DrawUI = false;
-  m_DrawHelp = true;
+  m_DrawHelp = false;
   m_DrawFilter = false;
   m_DrawMemTracker = false;
   m_FirstHelpDraw = true;
@@ -777,10 +777,6 @@ void CaptureWindow::DrawStatus() {
   int PosY = s_PosY;
   int LeftY = s_PosY;
 
-  if (!m_DrawHelp) {
-    m_TextRenderer.AddText2D(" Press 'H' for help", s_PosX, LeftY,
-                             Z_VALUE_TEXT_UI, s_Color);
-  }
   LeftY += s_IncY;
 
   if (Capture::GInjected) {
@@ -884,6 +880,8 @@ void CaptureWindow::RenderUI() {
     RenderMemTracker();
   }
 
+  RenderButtons();
+
   // Rendering
   glViewport(0, 0, getWidth(), getHeight());
   ImGui::Render();
@@ -932,6 +930,30 @@ void CaptureWindow::RenderHelpUi() {
 
   ImGui::End();
 
+  ImGui::PopStyleColor();
+}
+
+//-----------------------------------------------------------------------------
+void CaptureWindow::RenderButtons() {
+  //float barHeight = m_Slider.GetPixelHeight();
+  ImGui::SetNextWindowPos(ImVec2(0, 0));
+  ImVec4 color(1.f, 0, 0, 1.f);
+  ColorToFloat(m_Slider.GetBarColor(), &color.x);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, color);
+
+  ImGui::Begin("Capture buttons", nullptr, ImVec2(0, 0), 1.f,
+                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+                        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+
+  const char* capture_button_label =
+      GTimerManager->m_IsRecording ? "Stop Capture" : "Start Capture";
+
+  if( ImGui::Button(capture_button_label) ){
+    GOrbitApp->ToggleCapture();
+  }
+
+  ImGui::End();
   ImGui::PopStyleColor();
 }
 
