@@ -47,6 +47,7 @@ class CaptureWindow : public GlCanvas {
   void PostRender() override;
   void Resize(int a_Width, int a_Height) override;
   void RenderHelpUi();
+  void RenderButtons();
   void RenderThreadFilterUi();
   void RenderMemTracker();
   void RenderBar();
