@@ -672,13 +672,13 @@ void CaptureWindow::DrawScreenSpace() {
   float z = GlCanvas::Z_VALUE_TEXT_UI_BG;
 
   // Top bar
-  glColor4ubv(&col[0]);
-  glBegin(GL_QUADS);
-  glVertex3f(0, canvasHeight, z);
-  glVertex3f(getWidth(), canvasHeight, z);
-  glVertex3f(getWidth(), canvasHeight - height, z);
-  glVertex3f(0, canvasHeight - height, z);
-  glEnd();
+  // glColor4ubv(&col[0]);
+  // glBegin(GL_QUADS);
+  // glVertex3f(0, canvasHeight, z);
+  // glVertex3f(getWidth(), canvasHeight, z);
+  // glVertex3f(getWidth(), canvasHeight - height, z);
+  // glVertex3f(0, canvasHeight - height, z);
+  // glEnd();
 
   // Time bar
   if (time_graph_.GetSessionTimeSpanUs() > 0) {
@@ -799,6 +799,8 @@ void CaptureWindow::RenderUI() {
   ScopeImguiContext state(m_ImGuiContext);
   Orbit_ImGui_NewFrame(this);
 
+  ImGui::ShowDemoWindow();
+
   if (m_DrawStats) {
     if (time_graph_.GetLayout().DrawProperties()) {
       NeedsUpdate();
@@ -872,21 +874,18 @@ void CaptureWindow::RenderUI() {
     }
   }
 
-  if (m_DrawFilter) {
-    RenderThreadFilterUi();
-  }
+  RenderThreadFilterUi();
+  //RenderButtons();
 
   if (m_DrawMemTracker && !m_DrawHelp) {
     RenderMemTracker();
   }
 
-  RenderButtons();
-
   // Rendering
   glViewport(0, 0, getWidth(), getHeight());
   ImGui::Render();
 
-  RenderBar();
+  //RenderBar();
 }
 
 //-----------------------------------------------------------------------------
@@ -953,6 +952,9 @@ void CaptureWindow::RenderButtons() {
     GOrbitApp->ToggleCapture();
   }
 
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("I am a tooltip");
+
   ImGui::End();
   ImGui::PopStyleColor();
 }
@@ -961,11 +963,15 @@ void CaptureWindow::RenderButtons() {
 void CaptureWindow::RenderThreadFilterUi() {
   float barHeight = m_Slider.GetPixelHeight();
   ImGui::SetNextWindowPos(ImVec2(0, barHeight * 1.5f));
-  ImGui::SetNextWindowSize(ImVec2(barHeight * 50.f, barHeight * 3.f));
+  float width = this->getWidth();
+  ImGui::SetNextWindowSize(ImVec2(width, barHeight * 3.f));
 
   ImVec4 color(1.f, 0, 0, 1.f);
   ColorToFloat(m_Slider.GetBarColor(), &color.x);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, color);
+
+  const char* capture_button_label =
+      GTimerManager->m_IsRecording ? "Stop Capture" : "Start Capture";
 
   if (!ImGui::Begin("Thread Filter", &m_DrawHelp, ImVec2(0, 0), 1.f,
                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -976,8 +982,14 @@ void CaptureWindow::RenderThreadFilterUi() {
     return;
   }
 
+  if( ImGui::Button(capture_button_label) ){
+    GOrbitApp->ToggleCapture();
+  }
+
+  ImGui::SameLine();
   static char filter[128] = "";
   ImGui::Text("Thread Filter");
+  ImGui::SameLine();
   ImGui::InputText("", filter, IM_ARRAYSIZE(filter));
   GCurrentTimeGraph->SetThreadFilter(filter);
 
