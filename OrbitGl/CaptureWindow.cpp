@@ -881,6 +881,8 @@ void CaptureWindow::RenderUI() {
     RenderMemTracker();
   }
 
+  RenderButtons();
+
   // Rendering
   glViewport(0, 0, getWidth(), getHeight());
   ImGui::Render();
