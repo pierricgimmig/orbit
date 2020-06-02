@@ -210,7 +210,7 @@ uint32_t LoadTextureFromFile(const char* file_name) {
   int image_height = 0;
   if (!LoadTextureFromFile(file_name, &texture_id, &image_width,
                            &image_height)) {
-    LOG("ERROR, could not load texture %f", file_name);
+    LOG("ERROR, could not load texture %s", file_name);
   }
 
   return texture_id;
