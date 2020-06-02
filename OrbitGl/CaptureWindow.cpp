@@ -899,7 +899,6 @@ void ColorToFloat(Color a_Color, float* o_Float) {
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderHelpUi() {
-  float barHeight = m_Slider.GetPixelHeight();
   static float y_offset = 8.f;
   ImGui::SetNextWindowPos(ImVec2(0, toolbar_height_ + y_offset));
 
@@ -936,11 +935,8 @@ ImTextureID TextureId(uint32_t id) {
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderToolbars() {
-  float barHeight = m_Slider.GetPixelHeight();
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   float width = this->getWidth();
-  float current_y = 0;
-  // ImGui::SetNextWindowSize(ImVec2(width, -1.f));
 
   ImVec4 color(1.f, 0, 0, 1.f);
   const ImVec4 transparent(0.f, 0, 0, 0.f);
@@ -986,7 +982,7 @@ void CaptureWindow::RenderToolbars() {
   ImGui::ImageButton(TextureId(toolbar_.load_capture_id), icon_size);
   if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Capture");
   ImGui::SameLine();
-  if (ImGui::ImageButton(TextureId(toolbar_.clear_capture_id), icon_size)) {
+  if( ImGui::ImageButton(TextureId(toolbar_.clear_capture_id), icon_size) ) {
     Capture::ClearCaptureData();
     Capture::GClearCaptureDataFunc();
     GCurrentTimeGraph->Clear();
@@ -1030,6 +1026,7 @@ void CaptureWindow::RenderToolbars() {
   ImGui::PushItemWidth(300.f);
   ImGui::InputText("##Track Filter", track_filter, IM_ARRAYSIZE(track_filter));
   ImGui::PopItemWidth();
+  GCurrentTimeGraph->SetThreadFilter(track_filter);
 
   current_x += ImGui::GetWindowWidth() + space_between_toolbars;
   ImGui::End();
@@ -1047,7 +1044,7 @@ void CaptureWindow::RenderToolbars() {
   ImGui::PushItemWidth(300.f);
   ImGui::InputText("##Search", filter, IM_ARRAYSIZE(filter));
   ImGui::PopItemWidth();
-  GCurrentTimeGraph->SetThreadFilter(filter);
+  GOrbitApp->FilterFunctions(filter);
 
   current_x += ImGui::GetWindowWidth() + space_between_toolbars;
   ImGui::End();
@@ -1063,7 +1060,7 @@ void CaptureWindow::RenderToolbars() {
 
   double timeSpan = time_graph_.GetSessionTimeSpanUs();
   std::string capture_time = GetPrettyTime(timeSpan * 0.001);
-  ImGui::Text(capture_time.c_str());
+  ImGui::Text("%s", capture_time.c_str());
   current_x += ImGui::GetWindowWidth() + space_between_toolbars;
   ImGui::End();
 
