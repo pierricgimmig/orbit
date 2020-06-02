@@ -938,8 +938,13 @@ void CaptureWindow::RenderToolbars() {
   float width = this->getWidth();
 
   ImVec4 color(1.f, 0, 0, 1.f);
+  const ImVec4 transparent(0.f, 0, 0, 0.f);
+  const ImVec4 popup(66.f/255.f, 150.f/255.f, 250.f/255.f, 1.f);
   ColorToFloat(m_Slider.GetBarColor(), &color.x);
   ImGui::PushStyleColor(ImGuiCol_WindowBg, color);
+  ImGui::PushStyleColor(ImGuiCol_Button, transparent);
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, transparent);
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, popup);
 
   if (!ImGui::Begin("Toolbar", &m_DrawHelp, ImVec2(0, 0), 1.f,
                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -961,6 +966,7 @@ void CaptureWindow::RenderToolbars() {
   ImVec2 icon_size(icon_height, icon_height);
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   if (ImGui::ImageButton(TextureId(toolbar_.start_capture_id), icon_size)) {
+    m_DrawHelp = false;
     GOrbitApp->StartCapture();
   }
   ImGui::PopStyleVar();
@@ -975,7 +981,7 @@ void CaptureWindow::RenderToolbars() {
   ImGui::ImageButton(TextureId(toolbar_.load_capture_id), icon_size);
   if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load Capture");
   ImGui::SameLine();
-  if( ImGui::ImageButton(TextureId(toolbar_.clear_capture_id), icon_size) ) {
+  if (ImGui::ImageButton(TextureId(toolbar_.clear_capture_id), icon_size)) {
     Capture::ClearCaptureData();
     Capture::GClearCaptureDataFunc();
     GCurrentTimeGraph->Clear();
@@ -998,14 +1004,12 @@ void CaptureWindow::RenderToolbars() {
   float current_x = ImGui::GetWindowWidth() + space_between_toolbars;
   toolbar_height_ = ImGui::GetWindowHeight();
   ImGui::End();
-  ImGui::PopStyleColor();
 
   if (disabled) {
     ImGui::PopStyleVar();
   }
 
   //
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, color);
   ImGui::SetNextWindowPos(ImVec2(current_x, 0));
 
   ImGui::Begin("Filters", &m_DrawHelp, ImVec2(0, 0), 1.f,
@@ -1069,10 +1073,15 @@ void CaptureWindow::RenderToolbars() {
   if (ImGui::IsItemHovered()) ImGui::SetTooltip("Process Info");
   ImGui::SameLine();
   std::string process_info = Capture::GTargetProcess->GetName();
-  uint32_t process_id = Capture::GTargetProcess->GetID();
-  ImGui::Text("%s [%u]", process_info.c_str(), process_id);
+  if (!process_info.empty()) {
+    uint32_t process_id = Capture::GTargetProcess->GetID();
+    ImGui::Text("%s [%u]", process_info.c_str(), process_id);
+  }
   ImGui::End();
 
+  ImGui::PopStyleColor();
+  ImGui::PopStyleColor();
+  ImGui::PopStyleColor();
   ImGui::PopStyleColor();
 }
 
