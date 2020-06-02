@@ -102,6 +102,7 @@ if(WITH_GUI)
 endif()
 
 find_package(oqpi REQUIRED)
+find_package(stb REQUIRED)
 find_package(capstone CONFIG REQUIRED)
 if(WITH_GUI)
   find_package(freeglut CONFIG REQUIRED)

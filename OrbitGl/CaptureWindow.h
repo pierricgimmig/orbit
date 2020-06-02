@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #pragma once
 
 #include "GlCanvas.h"
@@ -10,11 +9,28 @@
 
 struct ContextSwitch;
 
+struct Toolbar {
+  void Init();
+  uint32_t start_capture_id;
+  uint32_t stop_capture_id;
+  uint32_t save_capture_id;
+  uint32_t load_capture_id;
+  uint32_t clear_capture_id;
+  uint32_t help_id;
+  uint32_t filter_tracks_id;
+  uint32_t search_id;
+  uint32_t time_id;
+  uint32_t feedback_id;
+  uint32_t info_id;
+  std::string icons_path;
+};
+
 class CaptureWindow : public GlCanvas {
  public:
   CaptureWindow();
   ~CaptureWindow() override;
 
+  void Initialize() override;
   void ZoomAll();
   void Zoom(int a_Delta);
   void Pan(float a_Ratio);
@@ -49,10 +65,8 @@ class CaptureWindow : public GlCanvas {
   void PostRender() override;
   void Resize(int a_Width, int a_Height) override;
   void RenderHelpUi();
-  void RenderButtons();
-  void RenderThreadFilterUi();
+  void RenderToolbars();
   void RenderMemTracker();
-  void RenderBar();
   void RenderTimeBar();
   void OnTimerAdded(Timer& a_Timer);
   void OnContextSwitchAdded(const ContextSwitch& a_CS);
@@ -85,6 +99,9 @@ class CaptureWindow : public GlCanvas {
   GlSlider m_Slider;
   GlSlider m_VerticalSlider;
   int m_ProcessX;
+
+  Toolbar toolbar_;
+  float toolbar_height_ = 0;
 
   static const std::string MENU_ACTION_GO_TO_CALLSTACK;
   static const std::string MENU_ACTION_GO_TO_SOURCE;
