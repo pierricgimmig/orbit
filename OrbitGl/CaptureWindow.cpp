@@ -927,11 +927,6 @@ void CaptureWindow::RenderHelpUi() {
   ImGui::PopStyleColor();
 }
 
-ImTextureID TextureId(uint32_t id) {
-  uint64_t texture_id = id;
-  return reinterpret_cast<ImTextureID>(texture_id);
-}
-
 //-----------------------------------------------------------------------------
 ImTextureID TextureId(uint32_t id) {
   uint64_t texture_id = id;
