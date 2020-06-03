@@ -1215,7 +1215,7 @@ void CaptureWindow::Initialize() {
 
 //-----------------------------------------------------------------------------
 uint32_t LoadIcon(const char* name) {
-  std::string icon_path = Path::GetSourceRoot() + "icons/" + name;
+  std::string icon_path = Path::GetExecutablePath() + "icons/" + name;
   return LoadTextureFromFile(icon_path.c_str());
 }
 
