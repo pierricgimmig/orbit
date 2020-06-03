@@ -9,22 +9,6 @@
 
 struct ContextSwitch;
 
-struct Toolbar {
-  void Init();
-  uint32_t start_capture_id;
-  uint32_t stop_capture_id;
-  uint32_t save_capture_id;
-  uint32_t load_capture_id;
-  uint32_t clear_capture_id;
-  uint32_t help_id;
-  uint32_t filter_tracks_id;
-  uint32_t search_id;
-  uint32_t time_id;
-  uint32_t feedback_id;
-  uint32_t info_id;
-  std::string icons_path;
-};
-
 class CaptureWindow : public GlCanvas {
  public:
   CaptureWindow();
@@ -84,6 +68,9 @@ class CaptureWindow : public GlCanvas {
   void SendProcess();
 
  private:
+  void LoadIcons();
+
+ private:
   TimeGraph time_graph_;
   OutputWindow m_StatsWindow;
   Timer m_HoverTimer;
@@ -100,8 +87,24 @@ class CaptureWindow : public GlCanvas {
   GlSlider m_VerticalSlider;
   int m_ProcessX;
 
-  Toolbar toolbar_;
+  // Toolbars.
+  uint32_t start_capture_icon_id_;
+  uint32_t stop_capture_icon_id_;
+  uint32_t save_capture_icon_id_;
+  uint32_t load_capture_icon_id_;
+  uint32_t clear_capture_icon_id_;
+  uint32_t help_icon_id_;
+  uint32_t filter_tracks_icon_id_;
+  uint32_t search_icon_id_;
+  uint32_t time_icon_id_;
+  uint32_t feedback_icon_id_;
+  uint32_t info_icon_id_;
+  std::string icons_path_;
   float toolbar_height_ = 0;
+
+  static constexpr size_t kFilterLength = 64;
+  char track_filter_[kFilterLength] = "";
+  char find_filter_[kFilterLength] = "";
 
   static const std::string MENU_ACTION_GO_TO_CALLSTACK;
   static const std::string MENU_ACTION_GO_TO_SOURCE;
