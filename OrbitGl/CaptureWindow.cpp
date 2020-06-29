@@ -646,17 +646,20 @@ void CaptureWindow::Draw() {
     DrawStatus();
     RenderTimeBar();
 
+#if USE_IMMEDIATE_MODE
     // Vertical line
     glColor4f(0, 1, 0, 0.5f);
     glBegin(GL_LINES);
     glVertex3f(m_MouseX, m_WorldTopLeftY, Z_VALUE_TEXT);
     glVertex3f(m_MouseX, m_WorldTopLeftY - m_WorldHeight, Z_VALUE_TEXT);
     glEnd();
+#endif
   }
 }
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::DrawScreenSpace() {
+#if USE_IMMEDIATE_MODE
   double timeSpan = time_graph_.GetSessionTimeSpanUs();
 
   Color col = m_Slider.GetBarColor();
@@ -712,6 +715,7 @@ void CaptureWindow::DrawScreenSpace() {
   glVertex3f(margin_x1, canvasHeight - height, z);
   glVertex3f(margin_x0, canvasHeight - height, z);
   glEnd();
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -1150,6 +1154,7 @@ void CaptureWindow::RenderMemTracker() {
 //-----------------------------------------------------------------------------
 void DrawTexturedSquare(GLuint a_TextureId, float a_Size, float a_X,
                         float a_Y) {
+#if USE_IMMEDIATE_MODE
   glUseProgram(0);
   glColor4ub(255, 255, 255, 255);
 
@@ -1170,6 +1175,12 @@ void DrawTexturedSquare(GLuint a_TextureId, float a_Size, float a_X,
 
   glBindTexture(GL_TEXTURE_2D, 0);
   glDisable(GL_TEXTURE_2D);
+#else
+  UNUSED(a_TextureId);
+  UNUSED(a_Size);
+  UNUSED(a_X);
+  UNUSED(a_Y);
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -1202,6 +1213,7 @@ inline double GetIncrementMs(double a_MilliSeconds) {
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderTimeBar() {
+#if USE_IMMEDIATE_MODE
   static int numTimePoints = 10;
 
   if (time_graph_.GetSessionTimeSpanUs() > 0) {
@@ -1240,6 +1252,7 @@ void CaptureWindow::RenderTimeBar() {
       glEnd();
     }
   }
+#endif
 }
 
 //-----------------------------------------------------------------------------

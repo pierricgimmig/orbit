@@ -422,6 +422,7 @@ float GlCanvas::ScreenToworldWidth(int a_Width) const {
 
 //-----------------------------------------------------------------------------
 void GlCanvas::drawSquareGrid(float size, float delta) {
+#if USE_IMMEDIATE_MODE
   int halfIncrements = static_cast<int>(size * 0.5f / delta);
   float halfSize = delta * halfIncrements;
 
@@ -446,6 +447,10 @@ void GlCanvas::drawSquareGrid(float size, float delta) {
   glVertex3f(0, halfSize, 0);
 
   glEnd();
+#else
+  UNUSED(size);
+  UNUSED(delta);
+#endif
 }
 
 //-----------------------------------------------------------------------------

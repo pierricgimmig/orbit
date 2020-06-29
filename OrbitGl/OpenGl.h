@@ -20,3 +20,5 @@
 // clang-format off
 #include <GL/gl.h>
 // clang-format on
+
+#define USE_IMMEDIATE_MODE 0

@@ -29,6 +29,7 @@ void EventTrack::Draw(GlCanvas* canvas, bool picking) {
     color = picking_manager.GetPickableColor(this);
   }
 
+#if USE_IMMEDIATE_MODE
   glColor4ubv(&color[0]);
 
   float x0 = m_Pos[0];
@@ -73,6 +74,7 @@ void EventTrack::Draw(GlCanvas* canvas, bool picking) {
     glVertex3f(x0, y1, -0.f);
     glEnd();
   }
+#endif
 
   m_Canvas = canvas;
 }
