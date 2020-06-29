@@ -15,6 +15,7 @@ TriangleToggle::TriangleToggle(State initial_state, StateChangeHandler handler,
       time_graph_(time_graph) {}
 
 void TriangleToggle::Draw(GlCanvas* canvas, bool picking) {
+#if USE_IMMEDIATE_MODE
   const Color kWhite(255, 255, 255, 255);
   const Color kGrey(100, 100, 100, 255);
   Color color = state_ == State::kInactive ? kGrey : kWhite;
@@ -55,6 +56,12 @@ void TriangleToggle::Draw(GlCanvas* canvas, bool picking) {
   }
 
   glPopMatrix();
+#else
+  UNUSED(canvas);
+  UNUSED(picking);
+  UNUSED(size_);
+  UNUSED(pos_);
+#endif
 }
 
 void TriangleToggle::OnPick(int /*x*/, int /*y*/) {}

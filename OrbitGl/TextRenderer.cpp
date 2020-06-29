@@ -136,6 +136,7 @@ void TextRenderer::Display() {
 
 //-----------------------------------------------------------------------------
 void TextRenderer::DrawOutline(vertex_buffer_t* a_Buffer) {
+#if USE_IMMEDIATE_MODE
   glBegin(GL_LINES);
 
   for (size_t i = 0; i < a_Buffer->indices->size; i += 3) {
@@ -164,6 +165,9 @@ void TextRenderer::DrawOutline(vertex_buffer_t* a_Buffer) {
   }
 
   glEnd();
+#else
+  UNUSED(a_Buffer);
+#endif
 }
 
 //-----------------------------------------------------------------------------

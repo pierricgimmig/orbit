@@ -9,8 +9,10 @@
 GraphTrack::GraphTrack(TimeGraph* time_graph) : Track(time_graph) {}
 
 void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
+  UNUSED(canvas);
   UNUSED(picking);
 
+#if USE_IMMEDIATE_MODE
   TimeGraphLayout& layout = time_graph_->GetLayout();
   float trackWidth = canvas->GetWorldWidth();
 
@@ -78,6 +80,7 @@ void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
     previous_time = time;
     last_normalized_value = normalized_value;
   }
+#endif
 }
 
 void GraphTrack::OnDrag(int /*x*/, int /*y*/) {}
