@@ -38,6 +38,7 @@ std::map<int, std::string>& Card::GetTypeMap() {
 void Card::Draw(GlCanvas*) {
   if (!m_Active) return;
 
+#if USE_IMMEDIATE_MODE
   glColor4ub(m_Color[0], m_Color[1], m_Color[2], m_Color[3]);
   glBegin(GL_QUADS);
   glVertex3f(m_Pos[0], m_Pos[1], 0);
@@ -45,6 +46,7 @@ void Card::Draw(GlCanvas*) {
   glVertex3f(m_Pos[0] + m_Size[0], m_Pos[1] + m_Size[1], 0);
   glVertex3f(m_Pos[0] + m_Size[0], m_Pos[1], 0);
   glEnd();
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -115,6 +117,7 @@ void FloatGraphCard::Draw(GlCanvas* a_Canvas) {
 
   Card::Draw(a_Canvas);
 
+#if USE_IMMEDIATE_MODE
   glBegin(GL_LINES);
   glColor4f(1, 1, 1, 1);
 
@@ -139,6 +142,7 @@ void FloatGraphCard::Draw(GlCanvas* a_Canvas) {
   }
 
   glEnd();
+#endif
 
   Color col(255, 255, 255, 255);
 

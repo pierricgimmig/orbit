@@ -44,6 +44,7 @@ std::vector<Vec2> GetRoundedCornerMask(float radius, uint32_t num_sides) {
 }
 
 //-----------------------------------------------------------------------------
+#if USE_IMMEDIATE_MODE
 void DrawTriangleFan(const std::vector<Vec2>& points, const Vec2& pos,
                      const Color& color, float rotation, float z) {
   glColor4ubv(&color[0]);
@@ -57,9 +58,14 @@ void DrawTriangleFan(const std::vector<Vec2>& points, const Vec2& pos,
   glEnd();
   glPopMatrix();
 }
+#else
+void DrawTriangleFan(const std::vector<Vec2>&, const Vec2&, const Color&, float,
+                     float) {}
+#endif
 
 //-----------------------------------------------------------------------------
 void Track::Draw(GlCanvas* canvas, bool picking) {
+#if USE_IMMEDIATE_MODE
   const TimeGraphLayout& layout = time_graph_->GetLayout();
   Color picking_color = canvas->GetPickingManager().GetPickableColor(this);
   const Color kTabColor(50, 50, 50, 255);
@@ -142,6 +148,10 @@ void Track::Draw(GlCanvas* canvas, bool picking) {
                   label_width - label_offset_x);
 
   m_Canvas = canvas;
+#else
+  UNUSED(canvas);
+  UNUSED(picking);
+#endif
 }
 
 //-----------------------------------------------------------------------------

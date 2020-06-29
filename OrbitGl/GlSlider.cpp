@@ -113,6 +113,7 @@ void GlSlider::Draw(GlCanvas* a_Canvas, bool a_Picking) {
 void GlSlider::DrawHorizontal(GlCanvas* canvas, bool picking) {
   m_Canvas = canvas;
 
+#if USE_IMMEDIATE_MODE
   static float y = 0;
 
   float canvasWidth = m_Canvas->getWidth();
@@ -147,12 +148,16 @@ void GlSlider::DrawHorizontal(GlCanvas* canvas, bool picking) {
   glVertex3f(stop, y + GetPixelHeight(), 0);
   glVertex3f(start, y + GetPixelHeight(), 0);
   glEnd();
+#else
+  UNUSED(picking);
+#endif
 }
 
 //-----------------------------------------------------------------------------
 void GlSlider::DrawVertical(GlCanvas* canvas, bool picking) {
   m_Canvas = canvas;
-
+  UNUSED(picking);
+#if USE_IMMEDIATE_MODE
   float x = m_Canvas->getWidth() - GetPixelHeight();
 
   float canvasHeight = m_Canvas->getHeight();
@@ -188,4 +193,5 @@ void GlSlider::DrawVertical(GlCanvas* canvas, bool picking) {
   glVertex3f(x + GetPixelHeight(), stop, 0);
   glVertex3f(x + GetPixelHeight(), start, 0);
   glEnd();
+#endif
 }

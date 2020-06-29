@@ -77,6 +77,7 @@ float TextBox::GetScreenSize(const TextRenderer& a_TextRenderer) {
 void TextBox::Draw(TextRenderer& a_TextRenderer, float a_MinX, bool a_Visible,
                    bool a_RightJustify, bool isInactive, unsigned int a_ID,
                    bool a_IsPicking, bool a_IsHighlighted) {
+#if USE_IMMEDIATE_MODE
   bool isCoreActivity = m_Timer.IsType(Timer::CORE_ACTIVITY);
   bool isSameThreadIdAsSelected =
       isCoreActivity && m_Timer.m_TID == Capture::GSelectedThreadId;
@@ -142,4 +143,14 @@ void TextBox::Draw(TextRenderer& a_TextRenderer, float a_MinX, bool a_Visible,
   glVertex3f(m_Pos[0], m_Pos[1], z);
   glVertex3f(m_Pos[0], m_Pos[1] + m_Size[1], z);
   glEnd();
+#else
+  UNUSED(a_TextRenderer);
+  UNUSED(a_MinX);
+  UNUSED(a_Visible);
+  UNUSED(a_RightJustify);
+  UNUSED(isInactive);
+  UNUSED(a_ID);
+  UNUSED(a_IsPicking);
+  UNUSED(a_IsHighlighted);
+#endif
 }
