@@ -253,7 +253,10 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("Orbit Profiler [BETA]");
     QCoreApplication::setApplicationVersion(OrbitQt::kVersionString);
-
+#define USE_DESKTOP_OPENGL 1
+#if (USE_DESKTOP_OPENGL<1)
+    QCoreApplication::setAttribute(Qt::AA_UseOpenGLES);
+#endif
     const std::string dump_path = Path::GetDumpPath();
 #ifdef _WIN32
     const char* handler_name = "crashpad_handler.exe";
@@ -277,6 +280,7 @@ int main(int argc, char* argv[]) {
 
     const auto deployment_configuration = FigureOutDeploymentConfiguration();
 
+ #if (USE_DESKTOP_OPENGL)
     const auto open_gl_version = OrbitQt::DetectOpenGlVersion();
 
     if (!open_gl_version) {
@@ -301,6 +305,7 @@ int main(int argc, char* argv[]) {
               .arg(open_gl_version->minor));
       return -1;
     }
+#endif
 
     auto context = Context::Create();
     if (!context) {
