@@ -4,18 +4,23 @@
 
 #pragma once
 
-#include <freetype-gl/mat4.h>
+//#include <freetype-gl/mat4.h>
 
 #include <map>
 
 #include "OpenGl.h"
 #include "Platform.h"
 #include "TextBox.h"
+#include "GlUtils.h"
 
 namespace ftgl {
 struct vertex_buffer_t;
 struct texture_font_t;
 }  // namespace ftgl
+
+typedef int texture_font_t;
+typedef int vertex_buffer_t;
+typedef int texture_atlas_t;
 
 class TextRenderer {
  public:
