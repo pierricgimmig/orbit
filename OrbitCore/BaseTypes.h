@@ -34,7 +34,8 @@ typedef DWORD64 EpochType;
 typedef int64_t __int64;
 #define TCHAR wchar_t
 #define MAX_PATH PATH_MAX
-#define HANDLE void*
+//#define HANDLE void*
+typedef void * HANDLE;
 #define __int8 char
 #define LONG long
 typedef DWORD ULONG;

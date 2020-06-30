@@ -7,7 +7,6 @@
 #include <freetype-gl/shader.h>
 #include <freetype-gl/vertex-buffer.h>
 
-#include "App.h"
 #include "Core.h"
 #include "GlCanvas.h"
 #include "GlUtils.h"

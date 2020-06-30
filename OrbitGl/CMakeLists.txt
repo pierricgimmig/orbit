@@ -122,13 +122,13 @@ target_link_libraries(
          freeglut::freeglut
          capstone::capstone
          gte::gte
-         glew::glew
+         #glew::glew
          Outcome::Outcome
          stb::stb)
 
-if(TARGET OpenGL::GLX AND TARGET OpenGL::OpenGL)
-  target_link_libraries(OrbitGl PUBLIC OpenGL::GLX)
-endif()
+#if(TARGET OpenGL::GLX AND TARGET OpenGL::OpenGL)
+#  target_link_libraries(OrbitGl PUBLIC OpenGL::GLX)
+#endif()
 
 if(NOT WIN32)
   target_link_libraries(OrbitGl PRIVATE X11::X11 X11::Xi X11::Xxf86vm)
