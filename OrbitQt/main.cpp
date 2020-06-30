@@ -253,7 +253,7 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("Orbit Profiler [BETA]");
     QCoreApplication::setApplicationVersion(OrbitQt::kVersionString);
-#define USE_DESKTOP_OPENGL 1
+#define USE_DESKTOP_OPENGL 0
 #if (USE_DESKTOP_OPENGL<1)
     QCoreApplication::setAttribute(Qt::AA_UseOpenGLES);
 #endif

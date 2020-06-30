@@ -101,21 +101,21 @@ GlCanvas::~GlCanvas() {
 //-----------------------------------------------------------------------------
 void GlCanvas::Initialize() {
   static bool firstInit = true;
-  if (firstInit) {
-    // glewExperimental = GL_TRUE;
-    GLenum err = glewInit();
-    CheckGlError();
-    if (GLEW_OK != err) {
-      /* Problem: glewInit failed, something is seriously wrong. */
-      ORBIT_LOGV(glewGetErrorString(err));
-      exit(EXIT_FAILURE);
-    }
-    std::string glew = absl::StrFormat(
-        "Using GLEW %s",
-        reinterpret_cast<const char*>(glewGetString(GLEW_VERSION)));
-    PRINT_VAR(glew);
+  //if (firstInit) {
+  //  // glewExperimental = GL_TRUE;
+  //  GLenum err = glewInit();
+  //  CheckGlError();
+  //  if (GLEW_OK != err) {
+  //    /* Problem: glewInit failed, something is seriously wrong. */
+  //    ORBIT_LOGV(glewGetErrorString(err));
+  //    exit(EXIT_FAILURE);
+  //  }
+  //  std::string glew = absl::StrFormat(
+  //      "Using GLEW %s",
+  //      reinterpret_cast<const char*>(glewGetString(GLEW_VERSION)));
+  //  PRINT_VAR(glew);
     firstInit = false;
-  }
+  //}
 }
 
 //-----------------------------------------------------------------------------

@@ -12,12 +12,14 @@
 #endif
 // clang-format on
 
-#include <GL/glew.h>
+//#include <GL/glew.h>
 #include <GL/glu.h>
-#include <freetype-gl/freetype-gl.h>
+//#include <freetype-gl/freetype-gl.h>
 
 // clang-format off
-#include <GL/gl.h>
+//#include <GL/gl.h>
 // clang-format on
+
+#include "GLES2/gl2.h"
 
 #define USE_IMMEDIATE_MODE 0
