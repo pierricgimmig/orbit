@@ -14,6 +14,7 @@
 #include "EventBuffer.h"
 #include "Geometry.h"
 #include "GpuTrack.h"
+#include "GraphTrack.h"
 #include "SchedulerTrack.h"
 #include "StringManager.h"
 #include "TextBox.h"
@@ -39,6 +40,7 @@ class TimeGraph {
                                            ThreadID a_TID);
 
   void ProcessTimer(const Timer& a_Timer);
+  void ProcessOrbitFunctionTimer(const Function* function, const Timer& timer);
   void UpdateMaxTimeStamp(TickType a_Time);
 
   float GetThreadTotalHeight();
@@ -113,6 +115,8 @@ class TimeGraph {
 
   Color GetThreadColor(ThreadID tid) const;
   StringManager* GetStringManager() { return string_manager_.get(); }
+  void OnPickedTimer(const Timer& timer);
+  std::string GetFunctionTimerDescription(const Timer& timer) const;
 
   void SetCurrentTextBoxes(const absl::flat_hash_map<uint64_t, const TextBox*>& boxes) {
     overlay_current_textboxes_ = boxes;
@@ -123,6 +127,7 @@ class TimeGraph {
   std::shared_ptr<SchedulerTrack> GetOrCreateSchedulerTrack();
   std::shared_ptr<ThreadTrack> GetOrCreateThreadTrack(ThreadID a_TID);
   std::shared_ptr<GpuTrack> GetOrCreateGpuTrack(uint64_t timeline_hash);
+  std::shared_ptr<GraphTrack> GetOrCreateGraphTrack(uint64_t graph_id);
 
  private:
   TextRenderer m_TextRendererStatic;
@@ -173,6 +178,7 @@ class TimeGraph {
   mutable Mutex m_Mutex;
   std::vector<std::shared_ptr<Track>> tracks_;
   std::unordered_map<ThreadID, std::shared_ptr<ThreadTrack>> thread_tracks_;
+  std::unordered_map<uint64_t, std::shared_ptr<GraphTrack>> graph_tracks_;
   // Mapping from timeline hash to GPU tracks.
   std::unordered_map<uint64_t, std::shared_ptr<GpuTrack>> gpu_tracks_;
   std::vector<std::shared_ptr<Track>> sorted_tracks_;

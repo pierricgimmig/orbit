@@ -65,7 +65,7 @@ class Timer {
   uint8_t m_Processor;
   uint64_t m_CallstackHash;
   uint64_t m_FunctionAddress;
-  uint64_t m_UserData[2];
+  uint64_t m_UserData[8];
   TickType m_Start;
   TickType m_End;
 };

@@ -6,7 +6,8 @@
 
 #include "GlCanvas.h"
 
-GraphTrack::GraphTrack(TimeGraph* time_graph) : Track(time_graph) {}
+GraphTrack::GraphTrack(TimeGraph* time_graph, uint64_t graph_id)
+    : Track(time_graph), graph_id_(graph_id) {}
 
 void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
   UNUSED(picking);
@@ -76,8 +77,7 @@ void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
 
 void GraphTrack::OnDrag(int /*x*/, int /*y*/) {}
 
-void GraphTrack::AddTimer(const Timer& timer) {
-  double value = *reinterpret_cast<const double*>(&timer.m_UserData[0]);
+void GraphTrack::AddValue(double value, const Timer& timer) {
   values_[timer.m_Start] = value;
   if (value > max_) max_ = value;
   if (value < min_) min_ = value;

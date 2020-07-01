@@ -118,6 +118,43 @@ struct __attribute__((__packed__)) perf_event_sp_ip_8bytes_sample {
   perf_event_sample_stack_user_8bytes stack;
 };
 
+/*
+  static constexpr uint64_t SAMPLE_REGS_UPROBE =
+  (1lu << PERF_REG_X86_CX) | (1lu << PERF_REG_X86_DX) |
+  (1lu << PERF_REG_X86_SI) | (1lu << PERF_REG_X86_DI) |
+  (1lu << PERF_REG_X86_SP) | (1lu << PERF_REG_X86_IP) |
+  (1lu << PERF_REG_X86_R8) | (1lu << PERF_REG_X86_R9);
+*/
+struct __attribute__((__packed__)) perf_event_uprobe_regs {
+  uint64_t abi;
+  uint64_t cx;
+  uint64_t dx;
+  uint64_t si;
+  uint64_t di;
+  uint64_t sp;
+  uint64_t ip;
+  uint64_t r8;
+  uint64_t r9;
+};
+
+struct __attribute__((__packed__)) perf_event_uprobe {
+  perf_event_header header;
+  perf_event_sample_id_tid_time_streamid_cpu sample_id;
+  perf_event_uprobe_regs regs;
+  perf_event_sample_stack_user_8bytes stack;
+};
+
+// This struct must be in sync with the SAMPLE_REGS_URET_PROBE in
+// PerfEventOpen.h.
+struct __attribute__((__packed__)) perf_event_uretprobe {
+  perf_event_header header;
+  perf_event_sample_id_tid_time_streamid_cpu sample_id;
+  uint64_t abi;
+  uint64_t ax;
+  uint64_t sp;
+  uint64_t ip;
+};
+
 struct __attribute__((__packed__)) perf_event_ax_sample {
   perf_event_header header;
   perf_event_sample_id_tid_time_streamid_cpu sample_id;
