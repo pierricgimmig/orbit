@@ -42,7 +42,7 @@
    #include <GLES/gl.h>
 #elif defined(_WIN32) && (defined(_M_IX86) || defined(_M_X64))
    /* mainly for PowerVR OpenGL ES 1.x win32 emulator */
-   #include <GLES\gl.h>
+   #include <GLES2\gl2.h>
    #undef APIENTRY
    #define APIENTRY
    #if defined(GLUES_EXPORTS)

@@ -22,6 +22,8 @@
 #include "TextRenderer.h"
 #include "VariableTracing.h"
 #include "absl/strings/str_format.h"
+#include "glues.h"
+
 
 RingBuffer<float, 512> GDeltaTimeBuffer;
 
