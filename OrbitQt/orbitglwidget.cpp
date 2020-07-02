@@ -19,13 +19,23 @@
 #define ORBIT_DEBUG_OPEN_GL 0
 
 //-----------------------------------------------------------------------------
-OrbitGLWidget::OrbitGLWidget(QWidget* parent) : QOpenGLWidget(parent) {
+OrbitGLWidget::OrbitGLWidget(QWidget* parent)
+    : QOpenGLWidget(parent), geometries(0), texture(0), angularSpeed(0) {
   m_OrbitPanel = nullptr;
   m_DebugLogger = nullptr;
   setFocusPolicy(Qt::WheelFocus);
   setMouseTracking(true);
   setUpdateBehavior(QOpenGLWidget::PartialUpdate);
   installEventFilter(this);
+}
+
+OrbitGLWidget::~OrbitGLWidget() {
+  // Make sure the context is current when deleting the texture
+  // and the buffers.
+  makeCurrent();
+  delete texture;
+  delete geometries;
+  doneCurrent();
 }
 
 //-----------------------------------------------------------------------------
@@ -70,11 +80,88 @@ void OrbitGLWidget::initializeGL() {
 
   initializeOpenGLFunctions();
 
+  glClearColor(0.2, 0.2, 0.2, 1);
+
+  initShaders();
+  initTextures();
+
+  // Enable depth buffer
+  glEnable(GL_DEPTH_TEST);
+
+  // Enable back face culling
+  glEnable(GL_CULL_FACE);
+
+  geometries = new GeometryEngine;
+
+  // Use QBasicTimer because its faster than QTimer
+  timer.start(12, this);
+
   if (m_OrbitPanel) {
     m_OrbitPanel->Initialize();
   }
 
   PrintContextInformation();
+}
+
+void OrbitGLWidget::initShaders() {
+  const char* vshader =
+      "precision mediump int;\n"
+      "precision mediump float;\n"
+      "uniform mat4 mvp_matrix;\n"
+      "attribute vec4 a_position;\n"
+      "attribute vec2 a_texcoord;\n"
+      "varying vec2 v_texcoord;\n"
+      "void main()\n"
+      "{\n"
+      "gl_Position = mvp_matrix * a_position;\n"
+      "v_texcoord = a_texcoord;\n"
+      "}\n";
+
+  const char* fshader =
+      "precision mediump int;\n"
+      "precision mediump float;\n"
+      "uniform sampler2D texture;\n"
+      "varying vec2 v_texcoord;\n"
+      "void main()\n"
+      "{\n"
+      "    gl_FragColor = texture2D(texture, v_texcoord);\n"
+      "}\n";
+
+  // Compile vertex shader
+  if (!program.addShaderFromSourceCode(QOpenGLShader::Vertex, vshader)) {
+    close();
+  }
+
+  // Compile fragment shader
+  if (!program.addShaderFromSourceCode(QOpenGLShader::Fragment, fshader)) {
+    close();
+  }
+
+  // Link shader pipeline
+  if (!program.link()) {
+    close();
+  }
+
+  // Bind shader pipeline for use
+  if (!program.bind()) {
+    close();
+  }
+}
+
+void OrbitGLWidget::initTextures() {
+  // Load cube.png image
+  texture =
+      new QOpenGLTexture(QImage("../../logos/cube.png").mirrored());
+
+  // Set nearest filtering mode for texture minification
+  texture->setMinificationFilter(QOpenGLTexture::Nearest);
+
+  // Set bilinear filtering mode for texture magnification
+  texture->setMagnificationFilter(QOpenGLTexture::Linear);
+
+  // Wrap texture coordinates by repeating
+  // f.ex. texture coordinate (1.1, 1.2) is same as (0.1, 0.2)
+  texture->setWrapMode(QOpenGLTexture::Repeat);
 }
 
 //-----------------------------------------------------------------------------
@@ -176,6 +263,18 @@ void OrbitGLWidget::messageLogged(const QOpenGLDebugMessage& msg) {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::resizeGL(int w, int h) {
+  // Calculate aspect ratio
+  qreal aspect = qreal(w) / qreal(h ? h : 1);
+
+  // Set near plane to 3.0, far plane to 7.0, field of view 45 degrees
+  const qreal zNear = 3.0, zFar = 7.0, fov = 45.0;
+
+  // Reset projection
+  projection.setToIdentity();
+
+  // Set perspective projection
+  projection.perspective(fov, aspect, zNear, zFar);
+
   if (m_OrbitPanel) {
     m_OrbitPanel->Resize(w, h);
 
@@ -189,8 +288,27 @@ void OrbitGLWidget::resizeGL(int w, int h) {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::paintGL() {
+  // Clear color and depth buffer
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  texture->bind();
+
+  // Calculate model view transformation
+  QMatrix4x4 matrix;
+  matrix.translate(0.0, 0.0, -5.0);
+  matrix.rotate(rotation);
+
+  // Set modelview-projection matrix
+  program.setUniformValue("mvp_matrix", projection * matrix);
+
+  // Use texture unit 0 which contains cube.png
+  program.setUniformValue("texture", 0);
+
+  // Draw cube geometry
+  geometries->drawCubeGeometry(&program);
+
   if (m_OrbitPanel) {
-    m_OrbitPanel->Render(width(), height());
+    // m_OrbitPanel->Render(width(), height());
   }
 
   static volatile bool doScreenShot = false;
@@ -208,7 +326,7 @@ void OrbitGLWidget::TakeScreenShot() {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mousePressEvent(QMouseEvent* event) {
-  if (m_OrbitPanel) {
+  if (false && m_OrbitPanel) {
     if (event->buttons() == Qt::LeftButton) {
       m_OrbitPanel->LeftDown(event->x(), event->y());
     }
@@ -222,12 +340,15 @@ void OrbitGLWidget::mousePressEvent(QMouseEvent* event) {
     }
   }
 
+  // Save mouse press position
+  mousePressPosition = QVector2D(event->localPos());
+
   update();
 }
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mouseReleaseEvent(QMouseEvent* event) {
-  if (m_OrbitPanel) {
+  if (false && m_OrbitPanel) {
     if (event->button() == Qt::LeftButton) {
       m_OrbitPanel->LeftUp();
     }
@@ -243,7 +364,41 @@ void OrbitGLWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
   }
 
+  // Mouse release position - mouse press position
+  QVector2D diff = QVector2D(event->localPos()) - mousePressPosition;
+
+  // Rotation axis is perpendicular to the mouse position difference
+  // vector
+  QVector3D n = QVector3D(diff.y(), diff.x(), 0.0).normalized();
+
+  // Accelerate angular speed relative to the length of the mouse sweep
+  qreal acc = diff.length() / 100.0;
+
+  // Calculate new rotation axis as weighted sum
+  rotationAxis = (rotationAxis * angularSpeed + n * acc).normalized();
+
+  // Increase angular speed
+  angularSpeed += acc;
+
   update();
+}
+
+//-----------------------------------------------------------------------------
+void OrbitGLWidget::timerEvent(QTimerEvent*) {
+  // Decrease angular speed (friction)
+  angularSpeed *= 0.99;
+
+  // Stop rotation when speed goes below threshold
+  if (angularSpeed < 0.01) {
+    angularSpeed = 0.0;
+  } else {
+    // Update rotation
+    rotation =
+        QQuaternion::fromAxisAndAngle(rotationAxis, angularSpeed) * rotation;
+
+    // Request an update
+    update();
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -286,12 +441,12 @@ void OrbitGLWidget::mouseDoubleClickEvent(QMouseEvent* event) {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mouseMoveEvent(QMouseEvent* event) {
-  if (m_OrbitPanel) {
-    m_OrbitPanel->MouseMoved(event->x(), event->y(),
-                             event->buttons() & Qt::LeftButton,
-                             event->buttons() & Qt::RightButton,
-                             event->buttons() & Qt::MiddleButton);
-  }
+  // if (m_OrbitPanel) {
+  //  m_OrbitPanel->MouseMoved(event->x(), event->y(),
+  //                           event->buttons() & Qt::LeftButton,
+  //                           event->buttons() & Qt::RightButton,
+  //                           event->buttons() & Qt::MiddleButton);
+  //}
 
   update();
 }

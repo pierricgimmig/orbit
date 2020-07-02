@@ -15,6 +15,7 @@ target_sources(
           deploymentconfigurations.h
           Error.h
           eventloop.h
+          geometryengine.h
           orbitaboutdialog.h
           orbitcodeeditor.h
           orbitdataviewpanel.h
@@ -41,6 +42,7 @@ target_sources(
   PRIVATE CrashHandler.cpp
           Error.cpp
           deploymentconfigurations.cpp
+          geometryengine.cpp
           main.cpp
           orbitaboutdialog.cpp
           orbitaboutdialog.ui

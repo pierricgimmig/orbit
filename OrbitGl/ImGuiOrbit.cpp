@@ -44,6 +44,7 @@ GLuint GTextureRecord = 0;
 // - in your Render function, try translating your projection matrix by
 // (0.5f,0.5f) or (0.375f,0.375f)
 void Orbit_ImGui_RenderDrawLists(ImDrawData* draw_data) {
+#if USE_IMMEDIATE_MODE
   // We are using the OpenGL fixed pipeline to make the example code simpler to
   // read! Setup render state: alpha-blending enabled, no face culling, no depth
   // testing, scissor enabled, vertex/texcoord/color pointers.
@@ -131,6 +132,7 @@ void Orbit_ImGui_RenderDrawLists(ImDrawData* draw_data) {
   glViewport(last_viewport[0], last_viewport[1],
              static_cast<GLsizei>(last_viewport[2]),
              static_cast<GLsizei>(last_viewport[3]));
+#endif
 }
 
 const char* Orbit_ImGui_GetClipboardText() {
@@ -175,6 +177,7 @@ void Orbit_ImGui_CharCallback(GlCanvas* a_GlCanvas, unsigned int c) {
 // settings
 bool LoadTextureFromFile(const char* filename, uint32_t* out_texture,
                          int* out_width, int* out_height) {
+#if USE_IMMEDIATE_MODE
   // Load from file
   int image_width = 0;
   int image_height = 0;
@@ -200,6 +203,7 @@ bool LoadTextureFromFile(const char* filename, uint32_t* out_texture,
   *out_texture = image_texture;
   *out_width = image_width;
   *out_height = image_height;
+#endif
 
   return true;
 }

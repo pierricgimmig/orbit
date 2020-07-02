@@ -20,6 +20,7 @@ class GlCanvas : public GlPanel {
   void Initialize() override;
   void Resize(int a_Width, int a_Height) override;
   void Render(int a_Width, int a_Height) override;
+
   virtual void PostRender() {}
 
   int getWidth() const;

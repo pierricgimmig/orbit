@@ -24,7 +24,6 @@
 #include "absl/strings/str_format.h"
 #include "glues.h"
 
-
 RingBuffer<float, 512> GDeltaTimeBuffer;
 
 float GlCanvas::Z_VALUE_UI = 0.00f;
@@ -103,7 +102,7 @@ GlCanvas::~GlCanvas() {
 //-----------------------------------------------------------------------------
 void GlCanvas::Initialize() {
   static bool firstInit = true;
-  //if (firstInit) {
+  // if (firstInit) {
   //  // glewExperimental = GL_TRUE;
   //  GLenum err = glewInit();
   //  CheckGlError();
@@ -116,7 +115,7 @@ void GlCanvas::Initialize() {
   //      "Using GLEW %s",
   //      reinterpret_cast<const char*>(glewGetString(GLEW_VERSION)));
   //  PRINT_VAR(glew);
-    firstInit = false;
+  firstInit = false;
   //}
 }
 
@@ -293,6 +292,7 @@ void GlCanvas::OnTimer() {
 /** Inits the OpenGL viewport for drawing in 3D. */
 void GlCanvas::prepare3DViewport(int topleft_x, int topleft_y,
                                  int bottomrigth_x, int bottomrigth_y) {
+#if USE_IMMEDIATE_MODE
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // Black Background
   glClearDepth(1.0f);                    // Depth Buffer Setup
   glEnable(GL_DEPTH_TEST);               // Enables Depth Testing
@@ -312,11 +312,13 @@ void GlCanvas::prepare3DViewport(int topleft_x, int topleft_y,
                  200 /*clip far*/);
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
+#endif
 }
 
 /** Inits the OpenGL viewport for drawing in 2D. */
 void GlCanvas::prepare2DViewport(int topleft_x, int topleft_y,
                                  int bottomrigth_x, int bottomrigth_y) {
+#if USE_IMMEDIATE_MODE
   glClearColor(m_BackgroundColor[0], m_BackgroundColor[1], m_BackgroundColor[2],
                m_BackgroundColor[3]);
   if (m_Picking) glClearColor(0.f, 0.f, 0.f, 0.f);
@@ -381,16 +383,21 @@ void GlCanvas::prepare2DViewport(int topleft_x, int topleft_y,
              m_WorldTopLeftY - m_WorldHeight, m_WorldTopLeftY);
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
+#endif
 }
 
 //-----------------------------------------------------------------------------
 void GlCanvas::prepareScreenSpaceViewport() {
+#if USE_IMMEDIATE_MODE
   glViewport(0, 0, getWidth(), getHeight());
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();
   glOrtho(0, getWidth(), 0, getHeight(), -1, 1);
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
+#else
+
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -478,7 +485,10 @@ void GlCanvas::Render(int a_Width, int a_Height) {
   timer.Start();
 
   prepare2DViewport(0, 0, getWidth(), getHeight());
+
+#if USE_IMMEDIATE_MODE
   glLoadIdentity();
+#endif
 
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

@@ -741,23 +741,24 @@ void TimeGraph::DrawText() {
 
 //----------------------------------------------------------------------------
 void TimeGraph::DrawBuffered(bool a_Picking) {
-  glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
+  //glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDisable(GL_CULL_FACE);
-  glEnableClientState(GL_VERTEX_ARRAY);
-  glEnableClientState(GL_COLOR_ARRAY);
+  //glEnableClientState(GL_VERTEX_ARRAY);
+  //glEnableClientState(GL_COLOR_ARRAY);
   glEnable(GL_TEXTURE_2D);
 
   DrawBoxBuffer(a_Picking);
   DrawLineBuffer(a_Picking);
 
-  glDisableClientState(GL_COLOR_ARRAY);
-  glDisableClientState(GL_VERTEX_ARRAY);
-  glPopAttrib();
+  //glDisableClientState(GL_COLOR_ARRAY);
+  //glDisableClientState(GL_VERTEX_ARRAY);
+  //glPopAttrib();
 }
 
 //----------------------------------------------------------------------------
 void TimeGraph::DrawBoxBuffer(bool a_Picking) {
+#if USE_IMMEDIATE_MODE
   Block<Box, BoxBuffer::NUM_BOXES_PER_BLOCK>* boxBlock =
       m_Batcher.GetBoxBuffer().m_Boxes.m_Root;
   Block<Color, BoxBuffer::NUM_BOXES_PER_BLOCK * 4>* colorBlock;
@@ -775,10 +776,12 @@ void TimeGraph::DrawBoxBuffer(bool a_Picking) {
     boxBlock = boxBlock->m_Next;
     colorBlock = colorBlock->m_Next;
   }
+#endif
 }
 
 //----------------------------------------------------------------------------
 void TimeGraph::DrawLineBuffer(bool a_Picking) {
+#if USE_IMMEDIATE_MODE
   Block<Line, LineBuffer::NUM_LINES_PER_BLOCK>* lineBlock =
       m_Batcher.GetLineBuffer().m_Lines.m_Root;
   Block<Color, LineBuffer::NUM_LINES_PER_BLOCK * 2>* colorBlock;
@@ -796,6 +799,7 @@ void TimeGraph::DrawLineBuffer(bool a_Picking) {
     lineBlock = lineBlock->m_Next;
     colorBlock = colorBlock->m_Next;
   }
+#endif
 }
 
 //-----------------------------------------------------------------------------

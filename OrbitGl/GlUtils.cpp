@@ -22,6 +22,7 @@ void CheckGlError() {
 }
 
 void OutputGlMatrices() {
+#if USE_IMMEDIATE_MODE
   int i;
   glGetIntegerv(GL_MATRIX_MODE, &i);
   /*
@@ -60,4 +61,5 @@ void OutputGlMatrices() {
   glGetFloatv(GL_TEXTURE_MATRIX, matrix);
   mat4* texture = reinterpret_cast<mat4*>(&matrix[0]);
   PRINT_VAR(*texture);
+#endif
 }

@@ -13,6 +13,7 @@
 #include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QStyleFactory>
+#include <QSurfaceFormat>
 
 #ifdef _WIN32
 #include <process.h>
@@ -253,6 +254,11 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("Orbit Profiler [BETA]");
     QCoreApplication::setApplicationVersion(OrbitQt::kVersionString);
+
+    QSurfaceFormat format;
+    format.setDepthBufferSize(24);
+    QSurfaceFormat::setDefaultFormat(format);
+
 #define USE_DESKTOP_OPENGL 0
 #if (USE_DESKTOP_OPENGL<1)
     QCoreApplication::setAttribute(Qt::AA_UseOpenGLES);
