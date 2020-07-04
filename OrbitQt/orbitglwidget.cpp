@@ -89,7 +89,7 @@ void OrbitGLWidget::initializeGL() {
   glEnable(GL_DEPTH_TEST);
 
   // Enable back face culling
-  glEnable(GL_CULL_FACE);
+  //glEnable(GL_CULL_FACE);
 
   geometries = new GeometryEngine;
 
@@ -109,12 +109,15 @@ void OrbitGLWidget::initShaders() {
       "precision mediump float;\n"
       "uniform mat4 mvp_matrix;\n"
       "attribute vec4 a_position;\n"
+      "attribute vec4 a_color;\n"
       "attribute vec2 a_texcoord;\n"
       "varying vec2 v_texcoord;\n"
+      "varying vec4 v_color;\n"
       "void main()\n"
       "{\n"
       "gl_Position = mvp_matrix * a_position;\n"
       "v_texcoord = a_texcoord;\n"
+      "v_color = a_color;\n"
       "}\n";
 
   const char* fshader =
@@ -122,9 +125,11 @@ void OrbitGLWidget::initShaders() {
       "precision mediump float;\n"
       "uniform sampler2D texture;\n"
       "varying vec2 v_texcoord;\n"
+      "varying vec4 v_color;\n"
       "void main()\n"
       "{\n"
-      "    gl_FragColor = texture2D(texture, v_texcoord);\n"
+      "    gl_FragColor = v_color;\n"
+      //"    gl_FragColor = texture2D(texture, v_texcoord);\n"
       "}\n";
 
   // Compile vertex shader
@@ -273,7 +278,11 @@ void OrbitGLWidget::resizeGL(int w, int h) {
   projection.setToIdentity();
 
   // Set perspective projection
-  projection.perspective(fov, aspect, zNear, zFar);
+  //projection.perspective(fov, aspect, zNear, zFar);
+  float half_height = 5.f;
+  float half_width = aspect * half_height;
+  projection.ortho(-half_width, half_width, -half_height, half_height, zNear,
+                   zFar);
 
   if (m_OrbitPanel) {
     m_OrbitPanel->Resize(w, h);
@@ -307,8 +316,11 @@ void OrbitGLWidget::paintGL() {
   // Draw cube geometry
   geometries->drawCubeGeometry(&program);
 
+  PRINT_VAR(program.programId());
+  
+  texture->release();
   if (m_OrbitPanel) {
-    // m_OrbitPanel->Render(width(), height());
+    m_OrbitPanel->Render(width(), height());
   }
 
   static volatile bool doScreenShot = false;
@@ -326,7 +338,7 @@ void OrbitGLWidget::TakeScreenShot() {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mousePressEvent(QMouseEvent* event) {
-  if (false && m_OrbitPanel) {
+  if (m_OrbitPanel) {
     if (event->buttons() == Qt::LeftButton) {
       m_OrbitPanel->LeftDown(event->x(), event->y());
     }
@@ -348,7 +360,7 @@ void OrbitGLWidget::mousePressEvent(QMouseEvent* event) {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mouseReleaseEvent(QMouseEvent* event) {
-  if (false && m_OrbitPanel) {
+  if (m_OrbitPanel) {
     if (event->button() == Qt::LeftButton) {
       m_OrbitPanel->LeftUp();
     }
@@ -441,12 +453,12 @@ void OrbitGLWidget::mouseDoubleClickEvent(QMouseEvent* event) {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mouseMoveEvent(QMouseEvent* event) {
-  // if (m_OrbitPanel) {
-  //  m_OrbitPanel->MouseMoved(event->x(), event->y(),
-  //                           event->buttons() & Qt::LeftButton,
-  //                           event->buttons() & Qt::RightButton,
-  //                           event->buttons() & Qt::MiddleButton);
-  //}
+   if (m_OrbitPanel) {
+    m_OrbitPanel->MouseMoved(event->x(), event->y(),
+                             event->buttons() & Qt::LeftButton,
+                             event->buttons() & Qt::RightButton,
+                             event->buttons() & Qt::MiddleButton);
+  }
 
   update();
 }

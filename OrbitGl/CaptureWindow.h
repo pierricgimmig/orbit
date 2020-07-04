@@ -69,7 +69,7 @@ class CaptureWindow : public GlCanvas {
 
  private:
   TimeGraph time_graph_;
-  OutputWindow m_StatsWindow;
+  //OutputWindow m_StatsWindow;
   Timer m_HoverTimer;
   std::string m_ToolTip;
   int m_HoverDelayMs;

@@ -26,6 +26,7 @@ void BlackBoard::ZoomAll() {}
 //-----------------------------------------------------------------------------
 void BlackBoard::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl, bool a_Shift,
                             bool a_Alt) {
+#if USE_IMMEDIATE_MODE
   if (!m_ImguiActive) {
     switch (a_KeyCode) {
       case 'A':
@@ -40,6 +41,7 @@ void BlackBoard::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl, bool a_Shift,
   io.KeyAlt = a_Alt;
 
   Orbit_ImGui_KeyCallback(this, a_KeyCode, true);
+#endif
 }
 
 ImVector<ImVec2> points;

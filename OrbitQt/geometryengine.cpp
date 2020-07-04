@@ -3,6 +3,8 @@
 #include <QVector2D>
 #include <QVector3D>
 
+#include "../OrbitCore/PrintVar.h"
+
 struct VertexData {
   QVector3D position;
   QVector2D texCoord;
@@ -99,8 +101,13 @@ void GeometryEngine::drawCubeGeometry(QOpenGLShaderProgram* program) {
   // Offset for position
   quintptr offset = 0;
 
+  GLint program_id;
+  glGetIntegerv(GL_CURRENT_PROGRAM, &program_id);
+  PRINT_VAR(program_id);    
+
   // Tell OpenGL programmable pipeline how to locate vertex position data
   int vertexLocation = program->attributeLocation("a_position");
+  PRINT_VAR(vertexLocation);
   program->enableAttributeArray(vertexLocation);
   program->setAttributeBuffer(vertexLocation, GL_FLOAT, offset, 3,
                               sizeof(VertexData));
@@ -117,4 +124,6 @@ void GeometryEngine::drawCubeGeometry(QOpenGLShaderProgram* program) {
 
   // Draw cube geometry using indices from VBO 1
   glDrawElements(GL_TRIANGLE_STRIP, 34, GL_UNSIGNED_SHORT, 0);
+
+  GLint drawCubeGeometry_shader_program_id_after_draw;
 }

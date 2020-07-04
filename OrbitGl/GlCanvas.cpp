@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "OpenGl.h"
 #include "GlCanvas.h"
 
 #include <string>
@@ -12,7 +13,7 @@
 #include "Card.h"
 #include "Core.h"
 #include "GlUtils.h"
-#include "ImGuiOrbit.h"
+//#include "ImGuiOrbit.h"
 #include "Log.h"
 #include "OpenGl.h"
 #include "Pdb.h"
@@ -88,15 +89,15 @@ GlCanvas::GlCanvas() {
 
   UpdateSceneBox();
 
-  m_ImGuiContext = ImGui::CreateContext();
-  ScopeImguiContext state(m_ImGuiContext);
-  Orbit_ImGui_Init();
+  // m_ImGuiContext = ImGui::CreateContext();
+  // ScopeImguiContext state(m_ImGuiContext);
+  // Orbit_ImGui_Init();
 }
 
 //-----------------------------------------------------------------------------
 GlCanvas::~GlCanvas() {
-  ImGui::DestroyContext(m_ImGuiContext);
-  ScopeImguiContext state(m_ImGuiContext);
+  /*ImGui::DestroyContext(m_ImGuiContext);
+  ScopeImguiContext state(m_ImGuiContext);*/
 }
 
 //-----------------------------------------------------------------------------
@@ -157,7 +158,7 @@ void GlCanvas::LeftDown(int a_X, int a_Y) {
   m_ScreenClickY = a_Y;
   m_IsSelecting = false;
 
-  Orbit_ImGui_MouseButtonCallback(this, 0, true);
+ // Orbit_ImGui_MouseButtonCallback(this, 0, true);
 
   NeedsRedraw();
 }
@@ -187,7 +188,7 @@ void GlCanvas::MouseWheelMoved(int a_X, int a_Y, int a_Delta, bool a_Ctrl) {
   }
 
   // Use the original sign of a_Delta here.
-  Orbit_ImGui_ScrollCallback(this, -delta);
+ // Orbit_ImGui_ScrollCallback(this, -delta);
 
   NeedsRedraw();
 }
@@ -195,13 +196,13 @@ void GlCanvas::MouseWheelMoved(int a_X, int a_Y, int a_Delta, bool a_Ctrl) {
 //-----------------------------------------------------------------------------
 void GlCanvas::LeftUp() {
   m_PickingManager.Release();
-  Orbit_ImGui_MouseButtonCallback(this, 0, false);
+ // Orbit_ImGui_MouseButtonCallback(this, 0, false);
   NeedsRedraw();
 }
 
 //-----------------------------------------------------------------------------
 void GlCanvas::LeftDoubleClick() {
-  ScopeImguiContext state(m_ImGuiContext);
+ // ScopeImguiContext state(m_ImGuiContext);
   m_DoubleClicking = true;
   NeedsRedraw();
 }
@@ -214,13 +215,13 @@ void GlCanvas::RightDown(int a_X, int a_Y) {
   m_SelectStart = m_SelectStop = Vec2(worldx, worldy);
   m_IsSelecting = true;
 
-  Orbit_ImGui_MouseButtonCallback(this, 1, true);
+ // Orbit_ImGui_MouseButtonCallback(this, 1, true);
   NeedsRedraw();
 }
 
 //-----------------------------------------------------------------------------
 bool GlCanvas::RightUp() {
-  Orbit_ImGui_MouseButtonCallback(this, 1, false);
+ // Orbit_ImGui_MouseButtonCallback(this, 1, false);
   m_IsSelecting = true;
   NeedsRedraw();
   return false;
@@ -231,20 +232,20 @@ void GlCanvas::mouseLeftWindow() {}
 
 //-----------------------------------------------------------------------------
 void GlCanvas::CharEvent(unsigned int a_Char) {
-  Orbit_ImGui_CharCallback(this, a_Char);
+  //Orbit_ImGui_CharCallback(this, a_Char);
 }
 
 //-----------------------------------------------------------------------------
 void GlCanvas::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl, bool a_Shift,
                           bool a_Alt) {
   UpdateSpecialKeys(a_Ctrl, a_Shift, a_Alt);
-  ScopeImguiContext state(m_ImGuiContext);
-  ImGuiIO& io = ImGui::GetIO();
-  io.KeyCtrl = a_Ctrl;
-  io.KeyShift = a_Shift;
-  io.KeyAlt = a_Alt;
+ // ScopeImguiContext state(m_ImGuiContext);
+ // ImGuiIO& io = ImGui::GetIO();
+ // io.KeyCtrl = a_Ctrl;
+ // io.KeyShift = a_Shift;
+ // io.KeyAlt = a_Alt;
 
-  Orbit_ImGui_KeyCallback(this, a_KeyCode, true);
+  //Orbit_ImGui_KeyCallback(this, a_KeyCode, true);
   NeedsRedraw();
 }
 
@@ -252,7 +253,7 @@ void GlCanvas::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl, bool a_Shift,
 void GlCanvas::KeyReleased(unsigned int a_KeyCode, bool a_Ctrl, bool a_Shift,
                            bool a_Alt) {
   UpdateSpecialKeys(a_Ctrl, a_Shift, a_Alt);
-  Orbit_ImGui_KeyCallback(this, a_KeyCode, false);
+ // Orbit_ImGui_KeyCallback(this, a_KeyCode, false);
   NeedsRedraw();
 }
 
@@ -473,34 +474,43 @@ void GlCanvas::Render(int a_Width, int a_Height) {
   m_Width = a_Width;
   m_Height = a_Height;
 
+  glUseProgram(7);
+  PRINT_SHADER_ID;
+
+  GLint program_id;
+  glGetIntegerv(GL_CURRENT_PROGRAM, &program_id);
+  PRINT_VAR(program_id);    
+
   if (!m_NeedsRedraw) {
     return;
   }
 
   m_NeedsRedraw = false;
 
-  ScopeImguiContext state(m_ImGuiContext);
-
   Timer timer;
   timer.Start();
 
+#if USE_IMMEDIATE_MODE
+
+  ScopeImguiContext state(m_ImGuiContext);
   prepare2DViewport(0, 0, getWidth(), getHeight());
 
-#if USE_IMMEDIATE_MODE
   glLoadIdentity();
-#endif
-
+  
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   glBindTexture(GL_TEXTURE_2D, 0);
   glUseProgram(0);
 
-  // Clear text renderer
+    // Clear text renderer
   m_TextRenderer.Init();
   m_TextRenderer.Clear();
+#endif
 
+  PRINT_SHADER_ID;
   Draw();
 
+ #if USE_IMMEDIATE_MODE
   prepareScreenSpaceViewport();
   DrawScreenSpace();
 
@@ -510,10 +520,11 @@ void GlCanvas::Render(int a_Width, int a_Height) {
   RenderText();
 
   glFlush();
+#endif
 
   timer.Stop();
 
-  m_ImguiActive = ImGui::IsAnyItemActive();
+  //m_ImguiActive = ImGui::IsAnyItemActive();
 
   PostRender();
 
@@ -532,7 +543,7 @@ void GlCanvas::Resize(int a_Width, int a_Height) {
 void GlCanvas::RenderUI() {
   if (!m_DrawUI) return;
 
-  ImGui::PushFont(GOrbitImguiFont);
+ /* ImGui::PushFont(GOrbitImguiFont);
 
   ScopeImguiContext state(m_ImGuiContext);
   Orbit_ImGui_NewFrame(this);
@@ -540,31 +551,31 @@ void GlCanvas::RenderUI() {
   glViewport(0, 0, getWidth(), getHeight());
   ImGui::Render();
 
-  ImGui::PopFont();
+  ImGui::PopFont();*/
 }
 
 //-----------------------------------------------------------------------------
 void GlCanvas::RenderSamplingUI() {
   if (!Capture::GIsSampling) return;
 
-  ImGui::SetNextWindowSize(ImVec2(500, 100), ImGuiCond_FirstUseEver);
-  bool opened = true;
-  ImGui::Begin("Sampling target application", &opened);
+  //ImGui::SetNextWindowSize(ImVec2(500, 100), ImGuiCond_FirstUseEver);
+  //bool opened = true;
+  //ImGui::Begin("Sampling target application", &opened);
 
-  //// Typically we would use ImVec2(-1.0f,0.0f) to use all available width, or
-  /// ImVec2(width,0.0f) for a specified width. ImVec2(0.0f,0.0f) uses
-  /// ItemWidth.
-  // ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
-  ////ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-  // ImGui::Text("Progress Bar");
+  ////// Typically we would use ImVec2(-1.0f,0.0f) to use all available width, or
+  ///// ImVec2(width,0.0f) for a specified width. ImVec2(0.0f,0.0f) uses
+  ///// ItemWidth.
+  //// ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
+  //////ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+  //// ImGui::Text("Progress Bar");
 
-  float curTime = Capture::GSamplingProfiler->GetSampleTime();
-  float totTime = Capture::GSamplingProfiler->GetSampleTimeTotal();
-  std::string prog = absl::StrFormat("%f/%f", curTime, totTime);
-  ImGui::ProgressBar(std::min(curTime / totTime, 1.f), ImVec2(0.f, 0.f),
-                     prog.c_str());
+  //float curTime = Capture::GSamplingProfiler->GetSampleTime();
+  //float totTime = Capture::GSamplingProfiler->GetSampleTimeTotal();
+  //std::string prog = absl::StrFormat("%f/%f", curTime, totTime);
+  //ImGui::ProgressBar(std::min(curTime / totTime, 1.f), ImVec2(0.f, 0.f),
+  //                   prog.c_str());
 
-  ImGui::End();
+  //ImGui::End();
 }
 
 //-----------------------------------------------------------------------------

@@ -423,6 +423,9 @@ void TimeGraph::UpdatePrimitives() {
   m_Batcher.Reset();
   m_TextRendererStatic.Clear();
 
+  Box box(Vec2(-5.f, -5.f), Vec2(10.f, 10.f), 0.f);
+  m_Batcher.AddBox(box, Color(255, 100, 100, 255), PickingID::BOX);
+
   UpdateMaxTimeStamp(GEventTracer.GetEventBuffer().GetMaxTime());
 
   m_SceneBox = m_Canvas->GetSceneBox();
@@ -496,6 +499,8 @@ void TimeGraph::Draw(bool a_Picking) {
   if ((!a_Picking && m_NeedsUpdatePrimitives) || a_Picking) {
     UpdatePrimitives();
   }
+
+  PRINT_SHADER_ID;
 
   DrawTracks(a_Picking);
   DrawBuffered(a_Picking);
@@ -741,42 +746,101 @@ void TimeGraph::DrawText() {
 
 //----------------------------------------------------------------------------
 void TimeGraph::DrawBuffered(bool a_Picking) {
-  //glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glDisable(GL_CULL_FACE);
-  //glEnableClientState(GL_VERTEX_ARRAY);
-  //glEnableClientState(GL_COLOR_ARRAY);
-  glEnable(GL_TEXTURE_2D);
+  // glPushAttrib(GL_ENABLE_BIT | GL_COLOR_BUFFER_BIT);
+  // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  // glDisable(GL_CULL_FACE);
+  // glEnableClientState(GL_VERTEX_ARRAY);
+  // glEnableClientState(GL_COLOR_ARRAY);
+  // glEnable(GL_TEXTURE_2D);
 
   DrawBoxBuffer(a_Picking);
-  DrawLineBuffer(a_Picking);
+  //DrawLineBuffer(a_Picking);
 
-  //glDisableClientState(GL_COLOR_ARRAY);
-  //glDisableClientState(GL_VERTEX_ARRAY);
-  //glPopAttrib();
+  // glDisableClientState(GL_COLOR_ARRAY);
+  // glDisableClientState(GL_VERTEX_ARRAY);
+  // glPopAttrib();
+}
+
+void DrawTriangles(float* vertices, size_t num_vertices, uint32_t* indices,
+                   size_t num_indices, unsigned char* colors) {
+  PRINT_VAR(num_vertices);
+  PRINT_VAR(num_indices);
+
+  PRINT_SHADER_ID;
+
+  // Index buffer.
+  GLuint index_buffer;
+  glGenBuffers(1, &index_buffer);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, num_indices * sizeof(uint32_t), indices,
+               GL_STATIC_DRAW);
+
+  // Vertex buffer.
+  GLuint vertex_buffer;
+  glGenBuffers(1, &vertex_buffer);
+  PRINT_VAR(vertex_buffer);
+  glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+  glBufferData(GL_ARRAY_BUFFER, num_vertices * 3 * sizeof(float), vertices,
+               GL_STATIC_DRAW);
+
+  // 1st attribute buffer : vertices
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0,         // attribute
+                        3,         // size
+                        GL_FLOAT,  // type
+                        GL_FALSE,  // normalized?
+                        0,         // stride
+                        (void*)0   // array buffer offset
+  );
+
+   // Color buffer
+  GLuint color_buffer;
+  glGenBuffers(1, &color_buffer);
+  PRINT_VAR(color_buffer);
+  glBindBuffer(GL_ARRAY_BUFFER, color_buffer);
+  glBufferData(GL_ARRAY_BUFFER, num_vertices * sizeof(Color), colors,
+               GL_STATIC_DRAW);
+
+  // 2nd attribute buffer : colors
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1,         // attribute
+                        sizeof(Color),     // size
+                        GL_UNSIGNED_BYTE,  // type
+                        GL_TRUE,  // normalized?
+                        0,         // stride
+                        (void*)0   // array buffer offset
+  );
+
+  glDrawElements(GL_TRIANGLES,     // mode
+                 num_indices,      // count
+                 GL_UNSIGNED_INT,  // type
+                 (void*)0          // element array buffer offset
+  );
 }
 
 //----------------------------------------------------------------------------
 void TimeGraph::DrawBoxBuffer(bool a_Picking) {
-#if USE_IMMEDIATE_MODE
   Block<Box, BoxBuffer::NUM_BOXES_PER_BLOCK>* boxBlock =
       m_Batcher.GetBoxBuffer().m_Boxes.m_Root;
+  Block<uint32_t, BoxBuffer::NUM_BOXES_PER_BLOCK* 6>* indexBlock =
+      m_Batcher.GetBoxBuffer().m_Indices.m_Root;
   Block<Color, BoxBuffer::NUM_BOXES_PER_BLOCK * 4>* colorBlock;
 
   colorBlock = !a_Picking ? m_Batcher.GetBoxBuffer().m_Colors.m_Root
                           : m_Batcher.GetBoxBuffer().m_PickingColors.m_Root;
-
+  static bool doReturn = false;
+  if (doReturn) return;
   while (boxBlock) {
-    if (int numElems = boxBlock->m_Size) {
-      glVertexPointer(3, GL_FLOAT, sizeof(Vec3), boxBlock->m_Data);
-      glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(Color), colorBlock->m_Data);
-      glDrawArrays(GL_QUADS, 0, numElems * 4);
+    if (GLuint numElems = boxBlock->m_Size) {
+      DrawTriangles(&boxBlock->m_Data->vertices_[0][0], boxBlock->m_Size * 4,
+                    indexBlock->m_Data, indexBlock->m_Size, &colorBlock->m_Data[0][0]);
     }
 
     boxBlock = boxBlock->m_Next;
     colorBlock = colorBlock->m_Next;
+    indexBlock = indexBlock->m_Next;
   }
-#endif
+  // doReturn = true;
 }
 
 //----------------------------------------------------------------------------

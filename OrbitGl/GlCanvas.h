@@ -6,7 +6,7 @@
 
 #include "GlPanel.h"
 #include "GlUtils.h"
-#include "ImGuiOrbit.h"
+//#include "ImGuiOrbit.h"
 #include "PickingManager.h"
 #include "ProcessUtils.h"
 #include "TextRenderer.h"
@@ -100,7 +100,7 @@ class GlCanvas : public GlPanel {
   virtual void RenderText() {}
   void RenderSamplingUI();
 
-  ImGuiContext* GetImGuiContext() { return m_ImGuiContext; }
+  //ImGuiContext* GetImGuiContext() { return m_ImGuiContext; }
 
   PickingManager& GetPickingManager() { return m_PickingManager; }
 
@@ -147,7 +147,7 @@ class GlCanvas : public GlPanel {
   int m_ID;
   Vec4 m_BackgroundColor;
 
-  ImGuiContext* m_ImGuiContext;
+  //ImGuiContext* m_ImGuiContext;
   TickType m_RefTimeClick;
   TickType m_SelectedInterval;
   TextRenderer m_TextRenderer;

@@ -47,6 +47,15 @@ void Batcher::AddBox(const Box& a_Box, const Color* colors,
                      PickingID::Type picking_type, void* user_data) {
   Color pickCol = PickingID::GetColor(picking_type, box_buffer_.m_Boxes.size());
   box_buffer_.m_Boxes.push_back(a_Box);
+
+  size_t offset = (box_buffer_.m_Boxes.size()-1) * 4;
+  box_buffer_.m_Indices.push_back(offset+0);
+  box_buffer_.m_Indices.push_back(offset+1);
+  box_buffer_.m_Indices.push_back(offset+2);
+  box_buffer_.m_Indices.push_back(offset+0);
+  box_buffer_.m_Indices.push_back(offset+2);
+  box_buffer_.m_Indices.push_back(offset+3);
+
   box_buffer_.m_Colors.push_back(colors, 4);
   box_buffer_.m_PickingColors.push_back_n(pickCol, 4);
   box_buffer_.m_UserData.push_back(user_data);

@@ -13,7 +13,7 @@ target_sources(
   OrbitGl
   PUBLIC App.h
          Batcher.h
-         BlackBoard.h
+         #BlackBoard.h
          CallStackDataView.h
          CaptureSerializer.h
          CaptureWindow.h
@@ -36,7 +36,7 @@ target_sources(
          GraphTrack.h
          HomeWindow.h
          Images.h
-         ImGuiOrbit.h
+         #ImGuiOrbit.h
          LiveFunctionsDataView.h
          LogDataView.h
          ModulesDataView.h
@@ -63,7 +63,7 @@ target_sources(
   OrbitGl
   PRIVATE App.cpp
           Batcher.cpp
-          BlackBoard.cpp
+          #BlackBoard.cpp
           CallStackDataView.cpp
           CaptureSerializer.cpp
           CaptureWindow.cpp
@@ -84,7 +84,7 @@ target_sources(
           GpuTrack.cpp
           GraphTrack.cpp
           HomeWindow.cpp
-          ImGuiOrbit.cpp
+          #ImGuiOrbit.cpp
           LiveFunctionsDataView.cpp
           LogDataView.cpp
           ModulesDataView.cpp
@@ -113,21 +113,21 @@ target_link_libraries(
   OrbitGl
   PUBLIC OrbitCore
          OrbitProtos
-         freetype-gl::freetype-gl
-         OpenGL::GLU
+         #freetype-gl::freetype-gl
+         #OpenGL::GLU
          freetype::freetype
-         imgui::imgui
+         #imgui::imgui
          capstone::capstone
          gte::gte
-         glew::glew
+         #glew::glew
          Outcome::Outcome
          stb::stb
 		 ANGLE::ANGLE
 		 glues::glues)
 
-if(TARGET OpenGL::GLX AND TARGET OpenGL::OpenGL)
-  target_link_libraries(OrbitGl PUBLIC OpenGL::GLX)
-endif()
+#if(TARGET OpenGL::GLX AND TARGET OpenGL::OpenGL)
+#  target_link_libraries(OrbitGl PUBLIC OpenGL::GLX)
+#endif()
 
 if(NOT WIN32)
   target_link_libraries(OrbitGl PRIVATE X11::X11 X11::Xi X11::Xxf86vm)

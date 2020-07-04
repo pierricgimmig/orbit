@@ -26,7 +26,7 @@
 #include "FunctionsDataView.h"
 #include "GlCanvas.h"
 #include "GlobalsDataView.h"
-#include "ImGuiOrbit.h"
+//#include "ImGuiOrbit.h"
 #include "Injection.h"
 #include "Introspection.h"
 #include "KeyAndString.h"
@@ -228,7 +228,37 @@ void OrbitApp::AppendSystrace(const std::string& a_FileName,
 }
 
 //-----------------------------------------------------------------------------
+void NextRepresentableDouble(double value) {
+  double to1 = std::nextafter(value, value+1000.0);
+  std::stringstream ss;
+  ss << "The next representable double after " << std::setprecision(20) << value
+     << " is " << to1 << " diff:" << to1 - value;
+  LOG("%s", ss.str().c_str());
+}
+
+//-----------------------------------------------------------------------------
+void NextRepresentableFloat(float value) {
+  float to1 = std::nextafter(value, value + 1000.f);
+  std::stringstream ss;
+  ss << "The next representable float after " << std::setprecision(20) << value
+     << " is " << to1 << " diff:" << to1 - value;
+  LOG("%s", ss.str().c_str());
+}
+
+//-----------------------------------------------------------------------------
+void TestPrecision() {
+  for (double i = 0; i < 20.0; ++i) {
+    NextRepresentableDouble(pow(10.0, i)+0.1);
+  }
+
+  for (float i = 0; i < 16.0; ++i) {
+    NextRepresentableFloat(pow(10.f, i)+0.1);
+  }
+}
+
+//-----------------------------------------------------------------------------
 bool OrbitApp::Init(ApplicationOptions&& options) {
+  TestPrecision();
   GOrbitApp = std::make_unique<OrbitApp>(std::move(options));
   GCoreApp = GOrbitApp.get();
 
@@ -501,7 +531,10 @@ void OrbitApp::OnExit() {
   GTimerManager = nullptr;
   GCoreApp = nullptr;
   GOrbitApp = nullptr;
+
+#if USE_IMMEDIATE_MODE
   Orbit_ImGui_Shutdown();
+#endif
 }
 
 //-----------------------------------------------------------------------------

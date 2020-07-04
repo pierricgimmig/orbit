@@ -157,7 +157,7 @@ void CaptureWindow::LeftDown(int a_X, int a_Y) {
 
   m_IsSelecting = false;
 
-  Orbit_ImGui_MouseButtonCallback(this, 0, true);
+//  Orbit_ImGui_MouseButtonCallback(this, 0, true);
 
   m_Picking = true;
   NeedsRedraw();
@@ -457,7 +457,7 @@ void CaptureWindow::MouseWheelMoved(int a_X, int a_Y, int a_Delta,
   }
 
   // Use the original sign of a_Delta here.
-  Orbit_ImGui_ScrollCallback(this, -delta);
+//  Orbit_ImGui_ScrollCallback(this, -delta);
 
   m_CanHover = true;
 
@@ -479,7 +479,7 @@ void CaptureWindow::MouseWheelMovedHorizontally(int /*a_X*/, int /*a_Y*/,
   }
 
   // Use the original sign of a_Delta here.
-  Orbit_ImGui_ScrollCallback(this, -delta);
+//  Orbit_ImGui_ScrollCallback(this, -delta);
 }
 
 //-----------------------------------------------------------------------------
@@ -487,7 +487,9 @@ void CaptureWindow::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl,
                                bool a_Shift, bool a_Alt) {
   UpdateSpecialKeys(a_Ctrl, a_Shift, a_Alt);
 
+  #if USE_IMMEDIATE_MODE
   ScopeImguiContext state(m_ImGuiContext);
+#endif
 
   if (!m_ImguiActive) {
     switch (a_KeyCode) {
@@ -544,12 +546,14 @@ void CaptureWindow::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl,
     }
   }
 
+  #if USE_IMMEDIATE_MODE
   ImGuiIO& io = ImGui::GetIO();
   io.KeyCtrl = a_Ctrl;
   io.KeyShift = a_Shift;
   io.KeyAlt = a_Alt;
 
   Orbit_ImGui_KeyCallback(this, a_KeyCode, true);
+#endif
 
   NeedsRedraw();
 }
@@ -615,6 +619,7 @@ void CaptureWindow::Draw() {
 
   time_graph_.Draw(m_Picking);
 
+#if USE_IMMEDIATE_MODE
   if (m_SelectStart[0] != m_SelectStop[0]) {
     TickType minTime = std::min(m_TimeStart, m_TimeStop);
     TickType maxTime = std::max(m_TimeStart, m_TimeStop);
@@ -633,19 +638,19 @@ void CaptureWindow::Draw() {
     box.Draw(m_TextRenderer, -FLT_MAX, true, true);
   }
 
+
   if (!m_Picking && !m_IsHovering) {
     DrawStatus();
     RenderTimeBar();
 
-#if USE_IMMEDIATE_MODE
     // Vertical line
     glColor4f(0, 1, 0, 0.5f);
     glBegin(GL_LINES);
     glVertex3f(m_MouseX, m_WorldTopLeftY, Z_VALUE_TEXT);
     glVertex3f(m_MouseX, m_WorldTopLeftY - m_WorldHeight, Z_VALUE_TEXT);
     glEnd();
-#endif
   }
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -775,6 +780,7 @@ void CaptureWindow::DrawStatus() {
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderUI() {
+#if USE_IMMEDIATE_MODE
   ScopeImguiContext state(m_ImGuiContext);
   Orbit_ImGui_NewFrame(this);
 
@@ -840,8 +846,10 @@ void CaptureWindow::RenderUI() {
   }
 
   // Rendering
-  glViewport(0, 0, getWidth(), getHeight());
-  ImGui::Render();
+  /*glViewport(0, 0, getWidth(), getHeight());
+  ImGui::Render();*/
+
+  #endif
 }
 
 //-----------------------------------------------------------------------------
@@ -860,6 +868,7 @@ void ColorToFloat(Color a_Color, float* o_Float) {
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderHelpUi() {
+#if USE_IMMEDIATE_MODE
   constexpr float kYOffset = 8.f;
   ImGui::SetNextWindowPos(ImVec2(0, toolbar_height_ + kYOffset));
 
@@ -886,40 +895,45 @@ void CaptureWindow::RenderHelpUi() {
   ImGui::End();
 
   ImGui::PopStyleColor();
+#endif
 }
 
 //-----------------------------------------------------------------------------
-ImTextureID TextureId(uint64_t id) {
-  return reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(id));
-}
+//ImTextureID TextureId(uint64_t id) {
+//  return reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(id));
+//}
 
 //-----------------------------------------------------------------------------
-bool IconButton(uint64_t texture_id, const char* tooltip, ImVec2 size,
-                bool enabled) {
-  ImTextureID imgui_texture_id = TextureId(texture_id);
-
-  if (!enabled) {
-    ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
-  }
-
-  bool clicked = ImGui::ImageButton(imgui_texture_id, size);
-
-  if (tooltip != nullptr &&
-      ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("%s", tooltip);
-  }
-
-  if (!enabled) {
-    ImGui::PopItemFlag();
-    ImGui::PopStyleVar();
-  }
-
-  return clicked;
-}
+//bool IconButton(uint64_t texture_id, const char* tooltip, ImVec2 size,
+//                bool enabled) {
+//#if USE_IMMEDIATE_MODE
+//  ImTextureID imgui_texture_id = TextureId(texture_id);
+//
+//  if (!enabled) {
+//    ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+//    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
+//  }
+//
+//  bool clicked = ImGui::ImageButton(imgui_texture_id, size);
+//
+//  if (tooltip != nullptr &&
+//      ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+//    ImGui::SetTooltip("%s", tooltip);
+//  }
+//
+//  if (!enabled) {
+//    ImGui::PopItemFlag();
+//    ImGui::PopStyleVar();
+//  }
+//
+//  return clicked;
+//#endif
+//  return false;
+//}
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderToolbars() {
+#if USE_IMMEDIATE_MODE
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   float width = this->getWidth();
   const ImVec4 transparent(0.f, 0, 0, 0.f);
@@ -1101,45 +1115,11 @@ void CaptureWindow::RenderToolbars() {
   ImGui::PopStyleColor();
   ImGui::PopStyleColor();
   ImGui::PopStyleColor();
+#endif
 }
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::RenderMemTracker() {
-  float barHeight = m_Slider.GetPixelHeight();
-  ImGui::SetNextWindowPos(ImVec2(0, barHeight * 1.5f));
-
-  ImVec4 color(1.f, 0, 0, 1.f);
-  ColorToFloat(m_Slider.GetBarColor(), &color.x);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, color);
-
-  bool dummy = true;
-  if (!ImGui::Begin(
-          "MemTracker Overlay", &dummy, ImVec2(0, 0), 1.f,
-          ImGuiWindowFlags_NoTitleBar /*| ImGuiWindowFlags_NoResize*/ |
-              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::PopStyleColor();
-    ImGui::End();
-    return;
-  }
-
-  ImGui::Text("=== Memory Tracker ===");
-
-  const MemoryTracker& memTracker = time_graph_.GetMemoryTracker();
-  if (memTracker.NumAllocatedBytes() == 0) {
-    std::string str = VAR_TO_STR(memTracker.NumAllocatedBytes()) +
-                      std::string("            ");
-    ImGui::Text("%s", str.c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumFreedBytes()).c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumLiveBytes()).c_str());
-  } else {
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumAllocatedBytes()).c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumFreedBytes()).c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumLiveBytes()).c_str());
-  }
-
-  ImGui::End();
-
-  ImGui::PopStyleColor();
 }
 
 //-----------------------------------------------------------------------------
@@ -1253,10 +1233,7 @@ void CaptureWindow::Initialize() {
 }
 
 //-----------------------------------------------------------------------------
-uint32_t LoadIcon(const char* name) {
-  std::string icon_path = Path::GetExecutablePath() + "icons/" + name;
-  return LoadTextureFromFile(icon_path.c_str());
-}
+uint32_t LoadIcon(const char* name) { return 0; }
 
 //-----------------------------------------------------------------------------
 void CaptureWindow::LoadIcons() {

@@ -30,24 +30,24 @@ void PluginCanvas::KeyPressed(unsigned int a_KeyCode, bool a_Ctrl, bool a_Shift,
     }
   }
 
-  ImGuiIO& io = ImGui::GetIO();
+  /*ImGuiIO& io = ImGui::GetIO();
   io.KeyCtrl = a_Ctrl;
   io.KeyShift = a_Shift;
   io.KeyAlt = a_Alt;
 
-  Orbit_ImGui_KeyCallback(this, a_KeyCode, true);
+  Orbit_ImGui_KeyCallback(this, a_KeyCode, true);*/
 }
 
 //-----------------------------------------------------------------------------
 void PluginCanvas::RenderUI() {
-  ScopeImguiContext state(m_ImGuiContext);
-  Orbit_ImGui_NewFrame(this);
+  //ScopeImguiContext state(m_ImGuiContext);
+  //Orbit_ImGui_NewFrame(this);
 
-  if (m_Plugin) {
-    m_Plugin->Draw(ImGui::GetCurrentContext(), getWidth(), getHeight());
-  }
+  //if (m_Plugin) {
+  //  m_Plugin->Draw(ImGui::GetCurrentContext(), getWidth(), getHeight());
+  //}
 
-  // Rendering
-  glViewport(0, 0, getWidth(), getHeight());
-  ImGui::Render();
+  //// Rendering
+  //glViewport(0, 0, getWidth(), getHeight());
+  //ImGui::Render();
 }

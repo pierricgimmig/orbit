@@ -224,7 +224,7 @@ std::string Path::JoinPath(const std::vector<std::string>& parts) {
 std::string Path::GetAppDataPath() {
 #ifdef WIN32
   std::string appData = GetEnvVar("APPDATA");
-  std::string path = Path::JoinPath({appData, "OrbitProfiler"});
+  std::string path = Path::JoinPath({appData, "orbit_profiler"});
 #else
   std::string path = Path::JoinPath({Path::GetHome(), ".orbitprofiler"});
 #endif

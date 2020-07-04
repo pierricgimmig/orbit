@@ -5,7 +5,7 @@
 #include "TimeGraphLayout.h"
 
 #include "Capture.h"
-#include "ImGuiOrbit.h"
+//#include "ImGuiOrbit.h"
 
 //-----------------------------------------------------------------------------
 TimeGraphLayout::TimeGraphLayout() {
@@ -48,7 +48,7 @@ TimeGraphLayout::TimeGraphLayout() {
 
 //-----------------------------------------------------------------------------
 bool TimeGraphLayout::DrawProperties() {
-  ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
+  /*ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
   ImVec2 size(400, 400);
 
   ImGui::Begin("Layout Properties", &m_DrawProperties, size, 1.f, 0);
@@ -81,5 +81,6 @@ bool TimeGraphLayout::DrawProperties() {
   ImGui::Checkbox("DrawTrackBackground", &m_DrawTrackBackground);
   ImGui::End();
 
-  return needs_redraw;
+  return needs_redraw;*/
+  return false;
 }

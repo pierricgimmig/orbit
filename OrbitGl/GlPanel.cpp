@@ -4,7 +4,6 @@
 
 #include "GlPanel.h"
 
-#include "BlackBoard.h"
 #include "CaptureWindow.h"
 #include "GlCanvas.h"
 #include "HomeWindow.h"
@@ -19,7 +18,7 @@ GlPanel* GlPanel::Create(Type a_Type, void* a_UserData) {
       panel = new CaptureWindow();
       break;
     case VISUALIZE:
-      panel = new BlackBoard();
+      
       break;
     case DEBUG:
       panel = new HomeWindow();
@@ -30,6 +29,7 @@ GlPanel* GlPanel::Create(Type a_Type, void* a_UserData) {
       break;
   }
 
+  if (panel)
   panel->m_Type = a_Type;
 
   // Todo: fix leak...

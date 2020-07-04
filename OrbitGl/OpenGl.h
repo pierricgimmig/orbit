@@ -23,3 +23,11 @@
 #include "GLES2/gl2.h"
 
 #define USE_IMMEDIATE_MODE 0
+
+#include "PrintVar.h"
+#define PRINT_SHADER_ID                             \
+  do {                                              \
+    GLint program_id;                               \
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program_id); \
+    PRINT_VAR(program_id);                          \
+  } while (0)

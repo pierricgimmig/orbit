@@ -9,7 +9,7 @@
 #include "../OrbitCore/RingBuffer.h"
 #include "../OrbitCore/Threading.h"
 #include "CoreMath.h"
-#include "ImGuiOrbit.h"
+//#include "ImGuiOrbit.h"
 
 class GlCanvas;
 
@@ -58,13 +58,10 @@ class Vector2DGraphCard : public Card {
  public:
   Vector2DGraphCard(const std::string& a_Name) : Card(a_Name) {}
 
-  void Update(float a_X, float a_Y) { m_Points.push_back(ImVec2(a_X, a_Y)); }
+  void Update(float a_X, float a_Y) { }
   void DrawImGui(GlCanvas* a_Canvas) override;
 
  protected:
-  ImVector<ImVec2> m_Points;
-  ImVec2 m_Min;
-  ImVec2 m_Max;
 };
 
 //-----------------------------------------------------------------------------

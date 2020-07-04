@@ -26,10 +26,10 @@ HomeWindow::~HomeWindow() {
 //-----------------------------------------------------------------------------
 void HomeWindow::VariableTracingCallback(std::vector<std::string>& a_Entries) {
   if (m_DrawDebugDisplay) {
-    m_DebugWindow.Clear();
+   /* m_DebugWindow.Clear();
     for (std::string& entry : a_Entries) {
       m_DebugWindow.AddLine(entry);
-    }
+    }*/
   }
 }
 
@@ -40,64 +40,64 @@ void HomeWindow::OnTimer() { GlCanvas::OnTimer(); }
 void HomeWindow::RenderUI() {
   if (!m_DrawUI) return;
 
-  ScopeImguiContext state(m_ImGuiContext);
+  //ScopeImguiContext state(m_ImGuiContext);
 
-  Orbit_ImGui_NewFrame(this);
+  //Orbit_ImGui_NewFrame(this);
 
-  RenderSamplingUI();
-  RenderProcessUI();
+  //RenderSamplingUI();
+  //RenderProcessUI();
 
-  m_WatchWindow.Draw("Watch");
+  //m_WatchWindow.Draw("Watch");
 
-  bool show_test_window = true;
-  bool show_another_window = false;
-  ImVec4 clear_color = ImColor(114, 144, 154);
+  //bool show_test_window = true;
+  //bool show_another_window = false;
+  //ImVec4 clear_color = ImColor(114, 144, 154);
 
-  if (m_DrawTestUI) {
-    // 1. Show a simple window
-    // Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets appears in
-    // a window automatically called "Debug"
-    {
-      static float f = 0.0f;
-      ImGui::Text("Hello, world!");
-      ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
-      ImGui::ColorEdit3("clear color", reinterpret_cast<float*>(&clear_color));
-      if (ImGui::Button("Test Window")) show_test_window ^= 1;
-      if (ImGui::Button("Another Window")) show_another_window ^= 1;
-      ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
-                  1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-    }
+  //if (m_DrawTestUI) {
+  //  // 1. Show a simple window
+  //  // Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets appears in
+  //  // a window automatically called "Debug"
+  //  {
+  //    static float f = 0.0f;
+  //    ImGui::Text("Hello, world!");
+  //    ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
+  //    ImGui::ColorEdit3("clear color", reinterpret_cast<float*>(&clear_color));
+  //    if (ImGui::Button("Test Window")) show_test_window ^= 1;
+  //    if (ImGui::Button("Another Window")) show_another_window ^= 1;
+  //    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
+  //                1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+  //  }
 
-    // 2. Show another simple window, this time using an explicit Begin/End pair
-    if (show_another_window) {
-      ImGui::SetNextWindowSize(ImVec2(200, 100), ImGuiCond_FirstUseEver);
-      ImGui::Begin("Another Window", &show_another_window);
-      ImGui::Text("Hello");
-      ImGui::End();
-    }
+  //  // 2. Show another simple window, this time using an explicit Begin/End pair
+  //  if (show_another_window) {
+  //    ImGui::SetNextWindowSize(ImVec2(200, 100), ImGuiCond_FirstUseEver);
+  //    ImGui::Begin("Another Window", &show_another_window);
+  //    ImGui::Text("Hello");
+  //    ImGui::End();
+  //  }
 
-    // 3. Show the ImGui test window. Most of the sample code is in
-    // ImGui::ShowTestWindow()
-    if (show_test_window) {
-      ImGui::SetNextWindowPos(ImVec2(650, 20), ImGuiCond_FirstUseEver);
-      ImGui::ShowTestWindow();
-    }
-  }
+  //  // 3. Show the ImGui test window. Most of the sample code is in
+  //  // ImGui::ShowTestWindow()
+  //  if (show_test_window) {
+  //    ImGui::SetNextWindowPos(ImVec2(650, 20), ImGuiCond_FirstUseEver);
+  //    ImGui::ShowTestWindow();
+  //  }
+  //}
 
-  if (m_DrawDebugDisplay) {
-    m_DebugWindow.Draw("Debug", &m_DrawDebugDisplay);
-  }
+  //if (m_DrawDebugDisplay) {
+  //  m_DebugWindow.Draw("Debug", &m_DrawDebugDisplay);
+  //}
 
-  if (m_DrawLog) {
-    GLogger.GetLockedLog(
-        OrbitLog::Global, [&](const std::vector<std::string>& a_Entries) {
-          m_LogWindow.Draw("Log", a_Entries, &m_LogWindow.m_Open);
-        });
-  }
+  //if (m_DrawLog) {
+  //  GLogger.GetLockedLog(
+  //      OrbitLog::Global, [&](const std::vector<std::string>& a_Entries) {
+  //        m_LogWindow.Draw("Log", a_Entries, &m_LogWindow.m_Open);
+  //      });
+  //}
 
-  // Rendering
-  glViewport(0, 0, getWidth(), getHeight());
-  ImGui::Render();
+  //// Rendering
+  //glViewport(0, 0, getWidth(), getHeight());
+  //ImGui::Render();
 }
 
 //-----------------------------------------------------------------------------
@@ -106,7 +106,7 @@ void HomeWindow::RenderProcessUI() {}
 //-----------------------------------------------------------------------------
 void HomeWindow::KeyPressed(unsigned int a_KeyCode, bool /*a_Ctrl*/,
                             bool a_Shift, bool a_Alt) {
-  ScopeImguiContext state(m_ImGuiContext);
+ /* ScopeImguiContext state(m_ImGuiContext);
 
   if (!m_ImguiActive) {
     switch (a_KeyCode) {
@@ -129,7 +129,7 @@ void HomeWindow::KeyPressed(unsigned int a_KeyCode, bool /*a_Ctrl*/,
   io.KeyCtrl = a_Alt;
   io.KeyShift = a_Shift;
   io.KeyAlt = a_Alt;
-  Orbit_ImGui_KeyCallback(this, a_KeyCode, true);
+  Orbit_ImGui_KeyCallback(this, a_KeyCode, true);*/
 }
 
 //-----------------------------------------------------------------------------
