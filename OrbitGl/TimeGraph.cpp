@@ -247,6 +247,11 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
     m_SessionMaxCounter = a_Timer.m_End;
   }
 
+  ++num_processed_timers_;
+
+  if (a_Timer.m_Start < min_timestamp_) min_timestamp_ = a_Timer.m_Start;
+  if (a_Timer.m_End > max_timestamp_) max_timestamp_ = a_Timer.m_End;
+
   switch (a_Timer.m_Type) {
     case Timer::ALLOC:
       m_MemTracker.ProcessAlloc(a_Timer);
@@ -422,9 +427,10 @@ void TimeGraph::UpdatePrimitives() {
 
   m_Batcher.Reset();
   m_TextRendererStatic.Clear();
+  ThreadTrack::ResetNumBoxesProcessed();
 
-  Box box(Vec2(-5.f, -5.f), Vec2(10.f, 10.f), 0.f);
-  m_Batcher.AddBox(box, Color(255, 100, 100, 255), PickingID::BOX);
+  /*Box box(Vec2(-5.f, -5.f), Vec2(10.f, 10.f), 0.f);
+  m_Batcher.AddBox(box, Color(255, 100, 100, 255), PickingID::BOX);*/
 
   UpdateMaxTimeStamp(GEventTracer.GetEventBuffer().GetMaxTime());
 
@@ -440,11 +446,25 @@ void TimeGraph::UpdatePrimitives() {
   float current_y = -m_Layout.GetSchedulerTrackOffset();
 
   for (auto& track : sorted_tracks_) {
+    PRINT_VAR(current_y);
     track->SetY(current_y);
     track->UpdatePrimitives(min_tick, max_tick);
     current_y -= (track->GetHeight() + m_Layout.GetSpaceBetweenTracks());
   }
 
+  /*Box box(Vec2(0, -1500.f), Vec2(3600000000.f, 400.f), 0.f);
+  m_Batcher.AddBox(box, Color(255, 100, 100, 255), PickingID::BOX);*/
+
+  PRINT_VAR(ThreadTrack::NumBoxesProcessed());
+  /*Box bbox = m_Batcher.GetBoundingBox();
+  PRINT_VAR(bbox.vertices_[0][0]);
+  PRINT_VAR(bbox.vertices_[0][1]);
+  PRINT_VAR(bbox.vertices_[2][0]);
+  PRINT_VAR(bbox.vertices_[2][1]);*/
+  PRINT_VAR(min_timestamp_);
+  PRINT_VAR(max_timestamp_);
+  uint64_t duration_s = (max_timestamp_ - min_timestamp_) / 1000000000;
+  PRINT_VAR(duration_s);
   min_y_ = current_y;
   m_NeedsUpdatePrimitives = false;
   m_NeedsRedraw = true;
@@ -499,8 +519,6 @@ void TimeGraph::Draw(bool a_Picking) {
   if ((!a_Picking && m_NeedsUpdatePrimitives) || a_Picking) {
     UpdatePrimitives();
   }
-
-  PRINT_SHADER_ID;
 
   DrawTracks(a_Picking);
   DrawBuffered(a_Picking);
@@ -754,20 +772,16 @@ void TimeGraph::DrawBuffered(bool a_Picking) {
   // glEnable(GL_TEXTURE_2D);
 
   DrawBoxBuffer(a_Picking);
-  //DrawLineBuffer(a_Picking);
+  // DrawLineBuffer(a_Picking);
 
   // glDisableClientState(GL_COLOR_ARRAY);
   // glDisableClientState(GL_VERTEX_ARRAY);
   // glPopAttrib();
 }
 
+//----------------------------------------------------------------------------
 void DrawTriangles(float* vertices, size_t num_vertices, uint32_t* indices,
                    size_t num_indices, unsigned char* colors) {
-  PRINT_VAR(num_vertices);
-  PRINT_VAR(num_indices);
-
-  PRINT_SHADER_ID;
-
   // Index buffer.
   GLuint index_buffer;
   glGenBuffers(1, &index_buffer);
@@ -778,43 +792,37 @@ void DrawTriangles(float* vertices, size_t num_vertices, uint32_t* indices,
   // Vertex buffer.
   GLuint vertex_buffer;
   glGenBuffers(1, &vertex_buffer);
-  PRINT_VAR(vertex_buffer);
   glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
   glBufferData(GL_ARRAY_BUFFER, num_vertices * 3 * sizeof(float), vertices,
                GL_STATIC_DRAW);
-
-  // 1st attribute buffer : vertices
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0,         // attribute
+  glEnableVertexAttribArray(0);    // 1st attribute
+  glVertexAttribPointer(0,         // index
                         3,         // size
                         GL_FLOAT,  // type
-                        GL_FALSE,  // normalized?
+                        GL_FALSE,  // normalized
                         0,         // stride
-                        (void*)0   // array buffer offset
+                        nullptr    // pointer
   );
 
-   // Color buffer
+  // Color buffer
   GLuint color_buffer;
   glGenBuffers(1, &color_buffer);
-  PRINT_VAR(color_buffer);
   glBindBuffer(GL_ARRAY_BUFFER, color_buffer);
   glBufferData(GL_ARRAY_BUFFER, num_vertices * sizeof(Color), colors,
                GL_STATIC_DRAW);
-
-  // 2nd attribute buffer : colors
-  glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1,         // attribute
+  glEnableVertexAttribArray(1);            // 2nd attribute
+  glVertexAttribPointer(1,                 // index
                         sizeof(Color),     // size
                         GL_UNSIGNED_BYTE,  // type
-                        GL_TRUE,  // normalized?
-                        0,         // stride
-                        (void*)0   // array buffer offset
+                        GL_TRUE,           // normalized
+                        0,                 // stride
+                        nullptr            // pointer
   );
 
   glDrawElements(GL_TRIANGLES,     // mode
                  num_indices,      // count
                  GL_UNSIGNED_INT,  // type
-                 (void*)0          // element array buffer offset
+                 nullptr           // indices
   );
 }
 
@@ -828,19 +836,17 @@ void TimeGraph::DrawBoxBuffer(bool a_Picking) {
 
   colorBlock = !a_Picking ? m_Batcher.GetBoxBuffer().m_Colors.m_Root
                           : m_Batcher.GetBoxBuffer().m_PickingColors.m_Root;
-  static bool doReturn = false;
-  if (doReturn) return;
+
   while (boxBlock) {
     if (GLuint numElems = boxBlock->m_Size) {
       DrawTriangles(&boxBlock->m_Data->vertices_[0][0], boxBlock->m_Size * 4,
-                    indexBlock->m_Data, indexBlock->m_Size, &colorBlock->m_Data[0][0]);
+                    indexBlock->m_Data, indexBlock->m_Size,
+                    &colorBlock->m_Data[0][0]);
     }
-
     boxBlock = boxBlock->m_Next;
     colorBlock = colorBlock->m_Next;
     indexBlock = indexBlock->m_Next;
   }
-  // doReturn = true;
 }
 
 //----------------------------------------------------------------------------

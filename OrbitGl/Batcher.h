@@ -70,7 +70,15 @@ class Batcher {
   BoxBuffer& GetBoxBuffer() { return box_buffer_; }
   LineBuffer& GetLineBuffer() { return line_buffer_; }
 
+  float GetMin() const { return box_min_; }
+  float GetMax() const { return box_max_; }
+
+  Box GetBoundingBox();
+
  protected:
   LineBuffer line_buffer_;
   BoxBuffer box_buffer_;
+
+  float box_min_ = FLT_MAX;
+  float box_max_ = -FLT_MAX;
 };

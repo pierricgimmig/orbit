@@ -116,6 +116,9 @@ class TimeGraph {
   Color GetThreadColor(ThreadID tid) const;
   StringManager* GetStringManager() { return string_manager_.get(); }
 
+  uint64_t MinTimestamp() const { return min_timestamp_; }
+  uint64_t MaxTimestamp() const { return max_timestamp_; }
+
  protected:
   void AddTrack(std::unique_ptr<Track> track);
   uint64_t GetGpuTimelineHash(const Timer& timer) const;
@@ -173,6 +176,10 @@ class TimeGraph {
   std::shared_ptr<ThreadTrack> process_track_;
 
   std::shared_ptr<StringManager> string_manager_;
+
+  uint32_t num_processed_timers_ = 0;
+  uint64_t min_timestamp_ = std::numeric_limits<uint64_t>::max();
+  uint64_t max_timestamp_ = 0;
 };
 
 extern TimeGraph* GCurrentTimeGraph;

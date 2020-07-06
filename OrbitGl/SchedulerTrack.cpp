@@ -45,6 +45,7 @@ float SchedulerTrack::GetYFromDepth(float track_y, uint32_t depth,
 }
 
 void SchedulerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
+  return;
   Batcher* batcher = &time_graph_->GetBatcher();
   GlCanvas* canvas = time_graph_->GetCanvas();
   const TimeGraphLayout& layout = time_graph_->GetLayout();
@@ -75,7 +76,7 @@ void SchedulerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
     if (!chain) continue;
     for (TimerChainIterator it = chain->begin(); it != chain->end(); ++it) {
       TimerBlock& block = *it;
-      if (!block.Intersects(min_tick, max_tick)) continue;
+      //if (!block.Intersects(min_tick, max_tick)) continue;
 
       // We have to reset this when we go to the next depth, as otherwise we
       // would miss drawing events that should be drawn.
@@ -85,8 +86,8 @@ void SchedulerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
       for (size_t k = 0; k < block.size(); ++k) {
         TextBox& text_box = block[k];
         const Timer& timer = text_box.GetTimer();
-        if (min_tick > timer.m_End || max_tick < timer.m_Start) continue;
-        if (timer.m_Start >= min_ignore && timer.m_End <= max_ignore) continue;
+        //if (min_tick > timer.m_End || max_tick < timer.m_Start) continue;
+        //if (timer.m_Start >= min_ignore && timer.m_End <= max_ignore) continue;
 
         UpdateDepth(timer.m_Depth + 1);
 

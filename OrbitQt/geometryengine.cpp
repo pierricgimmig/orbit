@@ -101,10 +101,6 @@ void GeometryEngine::drawCubeGeometry(QOpenGLShaderProgram* program) {
   // Offset for position
   quintptr offset = 0;
 
-  GLint program_id;
-  glGetIntegerv(GL_CURRENT_PROGRAM, &program_id);
-  PRINT_VAR(program_id);    
-
   // Tell OpenGL programmable pipeline how to locate vertex position data
   int vertexLocation = program->attributeLocation("a_position");
   PRINT_VAR(vertexLocation);

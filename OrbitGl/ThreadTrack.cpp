@@ -16,8 +16,12 @@
 #include "absl/flags/flag.h"
 #include "absl/strings/str_format.h"
 
+#include "../third_party/orbit_1.0.2/Orbit.h"
+
 // TODO: Remove this flag once we have a way to toggle the display return values
 ABSL_FLAG(bool, show_return_values, false, "Show return values on time slices");
+
+uint32_t ThreadTrack::num_boxes_processed_;
 
 //-----------------------------------------------------------------------------
 ThreadTrack::ThreadTrack(TimeGraph* time_graph, int32_t thread_id)
@@ -177,14 +181,14 @@ void ThreadTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
   uint64_t pixel_delta_in_ticks = static_cast<uint64_t>(TicksFromMicroseconds(
                                       time_graph_->GetTimeWindowUs())) /
                                   canvas->getWidth();
-  uint64_t min_timegraph_tick =
-      time_graph_->GetTickFromUs(time_graph_->GetMinTimeUs());
+  uint64_t min_timegraph_tick = time_graph_->MinTimestamp();
 
   for (auto& chain : chains_by_depth) {
     if (!chain) continue;
+    ORBIT_SCOPE("Update chain by depth");
     for (TimerChainIterator it = chain->begin(); it != chain->end(); ++it) {
       TimerBlock& block = *it;
-      if (!block.Intersects(min_tick, max_tick)) continue;
+      // if (!block.Intersects(min_tick, max_tick)) continue;
 
       // We have to reset this when we go to the next depth, as otherwise we
       // would miss drawing events that should be drawn.
@@ -194,23 +198,24 @@ void ThreadTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
       for (size_t k = 0; k < block.size(); ++k) {
         TextBox& text_box = block[k];
         const Timer& timer = text_box.GetTimer();
-        if (min_tick > timer.m_End || max_tick < timer.m_Start) continue;
-        if (timer.m_Start >= min_ignore && timer.m_End <= max_ignore) continue;
+        // if (min_tick > timer.m_End || max_tick < timer.m_Start) continue;
+        // if (timer.m_Start >= min_ignore && timer.m_End <= max_ignore)
+        // continue;
+
+        uint64_t start_tick = timer.m_Start - min_timegraph_tick;
+        uint64_t end_tick = timer.m_End - min_timegraph_tick;
 
         UpdateDepth(timer.m_Depth + 1);
-        double start_us = time_graph_->GetUsFromTick(timer.m_Start);
-        double end_us = time_graph_->GetUsFromTick(timer.m_End);
+        double start_us = time_graph_->GetUsFromTick(start_tick);
+        double end_us = time_graph_->GetUsFromTick(end_tick);
         double elapsed_us = end_us - start_us;
-        double normalized_start = start_us * inv_time_window;
-        double normalized_length = elapsed_us * inv_time_window;
-        float world_timer_width =
-            static_cast<float>(normalized_length * world_width);
-        float world_timer_x =
-            static_cast<float>(world_start_x + normalized_start * world_width);
+        double world_timer_width = end_tick - start_tick;
+        float world_timer_x = start_tick;
         float world_timer_y =
             GetYFromDepth(m_Pos[1], timer.m_Depth, is_collapsed);
 
-        bool is_visible_width = normalized_length * canvas->getWidth() > 1;
+        bool is_visible_width =
+            true;  // normalized_length * canvas->getWidth() > 1;
         bool is_selected = &text_box == Capture::GSelectedTextBox;
         bool is_inactive =
             !Capture::GVisibleFunctionsMap.empty() &&
@@ -229,6 +234,7 @@ void ThreadTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick) {
             SetTimesliceText(timer, elapsed_us, min_x, &text_box);
           }
           batcher->AddShadedBox(pos, size, z, color, PickingID::BOX, &text_box);
+          ++num_boxes_processed_;
         } else {
           auto type = PickingID::LINE;
           batcher->AddVerticalLine(pos, size[1], z, color, type, &text_box);

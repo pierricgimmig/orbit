@@ -48,17 +48,21 @@ void Batcher::AddBox(const Box& a_Box, const Color* colors,
   Color pickCol = PickingID::GetColor(picking_type, box_buffer_.m_Boxes.size());
   box_buffer_.m_Boxes.push_back(a_Box);
 
-  size_t offset = (box_buffer_.m_Boxes.size()-1) * 4;
-  box_buffer_.m_Indices.push_back(offset+0);
-  box_buffer_.m_Indices.push_back(offset+1);
-  box_buffer_.m_Indices.push_back(offset+2);
-  box_buffer_.m_Indices.push_back(offset+0);
-  box_buffer_.m_Indices.push_back(offset+2);
-  box_buffer_.m_Indices.push_back(offset+3);
+  size_t offset = (box_buffer_.m_Boxes.m_Current->m_Size - 1) * 4;
+  box_buffer_.m_Indices.push_back(offset + 0);
+  box_buffer_.m_Indices.push_back(offset + 1);
+  box_buffer_.m_Indices.push_back(offset + 2);
+  box_buffer_.m_Indices.push_back(offset + 0);
+  box_buffer_.m_Indices.push_back(offset + 2);
+  box_buffer_.m_Indices.push_back(offset + 3);
 
   box_buffer_.m_Colors.push_back(colors, 4);
   box_buffer_.m_PickingColors.push_back_n(pickCol, 4);
   box_buffer_.m_UserData.push_back(user_data);
+
+  float x_value = a_Box.vertices_[0][0];
+  if (x_value < box_min_) box_min_ = x_value;
+  if (x_value > box_max_) box_max_ = x_value;
 }
 
 void Batcher::AddBox(const Box& a_Box, Color color,
@@ -104,4 +108,22 @@ void Batcher::GetBoxGradientColors(Color color, Color* colors) {
 void Batcher::Reset() {
   line_buffer_.Reset();
   box_buffer_.Reset();
+  float box_min_ = FLT_MAX;
+  float box_max_ = -FLT_MAX;
+}
+
+Box Batcher::GetBoundingBox() {
+  auto boxBlock = box_buffer_.m_Boxes.m_Root;
+  if (boxBlock->m_Size == 0){
+      return Box(Vec2(0, 0), Vec2(0, 0), 0);
+  }
+  
+  Box bbox = *(box_buffer_.m_Boxes.SlowAt(0));
+  while (boxBlock) {
+    for (int i = 0; i < boxBlock->m_Size; ++i) {
+      bbox.Grow(boxBlock->m_Data[i]);
+    }
+    boxBlock = boxBlock->m_Next;
+  }
+  return bbox;
 }

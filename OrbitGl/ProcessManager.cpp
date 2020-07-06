@@ -150,7 +150,7 @@ std::unique_ptr<grpc::ClientContext> ProcessManagerImpl::CreateContext(
 bool IsTrue(bool* var) { return *var; }
 
 void ProcessManagerImpl::WorkerFunction() {
-  while (true) {
+  while (false) {
     if (shutdown_mutex_.LockWhenWithTimeout(
             absl::Condition(IsTrue, &shutdown_initiated_), refresh_timeout_)) {
       // Shutdown was initiated we need to exit

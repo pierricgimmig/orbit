@@ -59,6 +59,8 @@ class ThreadTrack : public Track {
 
   int32_t GetThreadId() const { return thread_id_; }
   bool IsCollapsable() const override { return depth_ > 1; }
+  static uint32_t NumBoxesProcessed() { return num_boxes_processed_; }
+  static void ResetNumBoxesProcessed() { num_boxes_processed_ = 0; }
 
  protected:
   void UpdateDepth(uint32_t depth) {
@@ -78,4 +80,5 @@ class ThreadTrack : public Track {
   ThreadID thread_id_;
   mutable Mutex mutex_;
   std::map<int, std::shared_ptr<TimerChain>> timers_;
+  static uint32_t num_boxes_processed_;
 };

@@ -103,7 +103,7 @@ void ConnectionManager::SetupClientCallbacks() {
 }
 
 void ConnectionManager::ConnectionThreadWorker() {
-  while (!exit_requested_) {
+  while (false && !exit_requested_) {
     if (!GTcpClient->IsValid()) {
       GTcpClient->Stop();
       GTcpClient->Connect(remote_address_);

@@ -474,9 +474,6 @@ void GlCanvas::Render(int a_Width, int a_Height) {
   m_Width = a_Width;
   m_Height = a_Height;
 
-  glUseProgram(7);
-  PRINT_SHADER_ID;
-
   GLint program_id;
   glGetIntegerv(GL_CURRENT_PROGRAM, &program_id);
   PRINT_VAR(program_id);    
@@ -507,7 +504,6 @@ void GlCanvas::Render(int a_Width, int a_Height) {
   m_TextRenderer.Clear();
 #endif
 
-  PRINT_SHADER_ID;
   Draw();
 
  #if USE_IMMEDIATE_MODE

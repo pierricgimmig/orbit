@@ -272,16 +272,20 @@ void OrbitGLWidget::resizeGL(int w, int h) {
   qreal aspect = qreal(w) / qreal(h ? h : 1);
 
   // Set near plane to 3.0, far plane to 7.0, field of view 45 degrees
-  const qreal zNear = 3.0, zFar = 7.0, fov = 45.0;
+  const qreal zNear = -30, zFar = 7.0, fov = 45.0;
 
   // Reset projection
   projection.setToIdentity();
 
   // Set perspective projection
   //projection.perspective(fov, aspect, zNear, zFar);
-  float half_height = 5.f;
+  float half_height = 50.f;
   float half_width = aspect * half_height;
-  projection.ortho(-half_width, half_width, -half_height, half_height, zNear,
+  /*projection.ortho(-half_width, half_width, -half_height, half_height, zNear,
+                   zFar);*/
+  static volatile float from_ratio = 0.0f;
+  static volatile float to_ratio = 1.f;
+  projection.ortho(from_ratio*3600000000, to_ratio*3600000000, -3000, -62, zNear,
                    zFar);
 
   if (m_OrbitPanel) {
@@ -304,8 +308,8 @@ void OrbitGLWidget::paintGL() {
 
   // Calculate model view transformation
   QMatrix4x4 matrix;
-  matrix.translate(0.0, 0.0, -5.0);
-  matrix.rotate(rotation);
+  /*matrix.translate(0.0, 0.0, -5.0);*/
+  //matrix.rotate(rotation);
 
   // Set modelview-projection matrix
   program.setUniformValue("mvp_matrix", projection * matrix);
@@ -314,7 +318,7 @@ void OrbitGLWidget::paintGL() {
   program.setUniformValue("texture", 0);
 
   // Draw cube geometry
-  geometries->drawCubeGeometry(&program);
+  //geometries->drawCubeGeometry(&program);
 
   PRINT_VAR(program.programId());
   
