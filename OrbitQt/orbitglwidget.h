@@ -67,6 +67,7 @@ class OrbitGLWidget : public QOpenGLWidget, protected QOpenGLFunctions {
   QOpenGLTexture* texture;
   QMatrix4x4 projection;
   QVector2D mousePressPosition;
+  QVector2D mousePressDelta;
   QVector3D rotationAxis;
   qreal angularSpeed;
   QQuaternion rotation;

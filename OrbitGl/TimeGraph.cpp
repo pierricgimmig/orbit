@@ -36,6 +36,7 @@
 #include "absl/strings/str_format.h"
 
 TimeGraph* GCurrentTimeGraph = nullptr;
+bool GSendToGPU = true;
 
 //-----------------------------------------------------------------------------
 TimeGraph::TimeGraph() {
@@ -425,6 +426,8 @@ void TimeGraph::NeedsUpdate() { m_NeedsUpdatePrimitives = true; }
 void TimeGraph::UpdatePrimitives() {
   CHECK(string_manager_);
 
+  if (!GSendToGPU) return;
+
   m_Batcher.Reset();
   m_TextRendererStatic.Clear();
   ThreadTrack::ResetNumBoxesProcessed();
@@ -446,7 +449,6 @@ void TimeGraph::UpdatePrimitives() {
   float current_y = -m_Layout.GetSchedulerTrackOffset();
 
   for (auto& track : sorted_tracks_) {
-    PRINT_VAR(current_y);
     track->SetY(current_y);
     track->UpdatePrimitives(min_tick, max_tick);
     current_y -= (track->GetHeight() + m_Layout.GetSpaceBetweenTracks());
@@ -782,49 +784,61 @@ void TimeGraph::DrawBuffered(bool a_Picking) {
 //----------------------------------------------------------------------------
 void DrawTriangles(float* vertices, size_t num_vertices, uint32_t* indices,
                    size_t num_indices, unsigned char* colors) {
-  // Index buffer.
-  GLuint index_buffer;
-  glGenBuffers(1, &index_buffer);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, num_indices * sizeof(uint32_t), indices,
-               GL_STATIC_DRAW);
+  static GLuint index_buffer;
+  static GLuint vertex_buffer;
+  static GLuint color_buffer;
 
-  // Vertex buffer.
-  GLuint vertex_buffer;
-  glGenBuffers(1, &vertex_buffer);
-  glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-  glBufferData(GL_ARRAY_BUFFER, num_vertices * 3 * sizeof(float), vertices,
-               GL_STATIC_DRAW);
-  glEnableVertexAttribArray(0);    // 1st attribute
-  glVertexAttribPointer(0,         // index
-                        3,         // size
-                        GL_FLOAT,  // type
-                        GL_FALSE,  // normalized
-                        0,         // stride
-                        nullptr    // pointer
-  );
+  if (GSendToGPU) {
+    // Index buffer.
+    glGenBuffers(1, &index_buffer);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, num_indices * sizeof(uint32_t),
+                 indices, GL_STATIC_DRAW);
 
-  // Color buffer
-  GLuint color_buffer;
-  glGenBuffers(1, &color_buffer);
-  glBindBuffer(GL_ARRAY_BUFFER, color_buffer);
-  glBufferData(GL_ARRAY_BUFFER, num_vertices * sizeof(Color), colors,
-               GL_STATIC_DRAW);
-  glEnableVertexAttribArray(1);            // 2nd attribute
-  glVertexAttribPointer(1,                 // index
-                        sizeof(Color),     // size
-                        GL_UNSIGNED_BYTE,  // type
-                        GL_TRUE,           // normalized
-                        0,                 // stride
-                        nullptr            // pointer
-  );
+    // Vertex buffer.
+    glGenBuffers(1, &vertex_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    glBufferData(GL_ARRAY_BUFFER, num_vertices * 3 * sizeof(float), vertices,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);    // 1st attribute
+    glVertexAttribPointer(0,         // index
+                          3,         // size
+                          GL_FLOAT,  // type
+                          GL_FALSE,  // normalized
+                          0,         // stride
+                          nullptr    // pointer
+    );
 
+    // Color buffer.
+    glGenBuffers(1, &color_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, color_buffer);
+    glBufferData(GL_ARRAY_BUFFER, num_vertices * sizeof(Color), colors,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(1);            // 2nd attribute
+    glVertexAttribPointer(1,                 // index
+                          sizeof(Color),     // size
+                          GL_UNSIGNED_BYTE,  // type
+                          GL_TRUE,           // normalized
+                          0,                 // stride
+                          nullptr            // pointer
+    );
+  } else {
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, color_buffer);
+  }
+
+  // Draw call.
   glDrawElements(GL_TRIANGLES,     // mode
                  num_indices,      // count
                  GL_UNSIGNED_INT,  // type
                  nullptr           // indices
   );
-}
+
+  if (num_vertices > 100000){
+    GSendToGPU = false;
+  }
+ }
 
 //----------------------------------------------------------------------------
 void TimeGraph::DrawBoxBuffer(bool a_Picking) {
@@ -834,8 +848,9 @@ void TimeGraph::DrawBoxBuffer(bool a_Picking) {
       m_Batcher.GetBoxBuffer().m_Indices.m_Root;
   Block<Color, BoxBuffer::NUM_BOXES_PER_BLOCK * 4>* colorBlock;
 
-  colorBlock = !a_Picking ? m_Batcher.GetBoxBuffer().m_Colors.m_Root
-                          : m_Batcher.GetBoxBuffer().m_PickingColors.m_Root;
+  colorBlock = m_Batcher.GetBoxBuffer().m_Colors.m_Root;
+  /*colorBlock = !a_Picking ? m_Batcher.GetBoxBuffer().m_Colors.m_Root
+                          : m_Batcher.GetBoxBuffer().m_PickingColors.m_Root;*/
 
   while (boxBlock) {
     if (GLuint numElems = boxBlock->m_Size) {

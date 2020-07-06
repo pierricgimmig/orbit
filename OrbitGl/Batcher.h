@@ -35,7 +35,7 @@ struct BoxBuffer {
     m_UserData.Reset();
   }
 
-  static const int NUM_BOXES_PER_BLOCK = 64 * 1024;
+  static const int NUM_BOXES_PER_BLOCK = 16 * 1024 * 1024;
   BlockChain<Box, NUM_BOXES_PER_BLOCK> m_Boxes;
   BlockChain<uint32_t, 6 * NUM_BOXES_PER_BLOCK> m_Indices;
   BlockChain<Color, 4 * NUM_BOXES_PER_BLOCK> m_Colors;

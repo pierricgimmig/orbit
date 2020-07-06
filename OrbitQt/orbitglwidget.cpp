@@ -27,6 +27,7 @@ OrbitGLWidget::OrbitGLWidget(QWidget* parent)
   setMouseTracking(true);
   setUpdateBehavior(QOpenGLWidget::PartialUpdate);
   installEventFilter(this);
+  mousePressDelta = {0, 0};
 }
 
 OrbitGLWidget::~OrbitGLWidget() {
@@ -89,7 +90,7 @@ void OrbitGLWidget::initializeGL() {
   glEnable(GL_DEPTH_TEST);
 
   // Enable back face culling
-  //glEnable(GL_CULL_FACE);
+  // glEnable(GL_CULL_FACE);
 
   geometries = new GeometryEngine;
 
@@ -155,8 +156,7 @@ void OrbitGLWidget::initShaders() {
 
 void OrbitGLWidget::initTextures() {
   // Load cube.png image
-  texture =
-      new QOpenGLTexture(QImage("../../logos/cube.png").mirrored());
+  texture = new QOpenGLTexture(QImage("../../logos/cube.png").mirrored());
 
   // Set nearest filtering mode for texture minification
   texture->setMinificationFilter(QOpenGLTexture::Nearest);
@@ -278,15 +278,15 @@ void OrbitGLWidget::resizeGL(int w, int h) {
   projection.setToIdentity();
 
   // Set perspective projection
-  //projection.perspective(fov, aspect, zNear, zFar);
+  // projection.perspective(fov, aspect, zNear, zFar);
   float half_height = 50.f;
   float half_width = aspect * half_height;
   /*projection.ortho(-half_width, half_width, -half_height, half_height, zNear,
                    zFar);*/
   static volatile float from_ratio = 0.0f;
   static volatile float to_ratio = 1.f;
-  projection.ortho(from_ratio*3600000000, to_ratio*3600000000, -3000, -62, zNear,
-                   zFar);
+  projection.ortho(from_ratio * 3600000000, to_ratio * 3600000000, -3000, -62,
+                   zNear, zFar);
 
   if (m_OrbitPanel) {
     m_OrbitPanel->Resize(w, h);
@@ -309,7 +309,19 @@ void OrbitGLWidget::paintGL() {
   // Calculate model view transformation
   QMatrix4x4 matrix;
   /*matrix.translate(0.0, 0.0, -5.0);*/
-  //matrix.rotate(rotation);
+  // matrix.rotate(rotation);
+
+  static volatile float delta_scale = 1.f;
+  float dx = mousePressDelta.x() * delta_scale;
+  float dy = mousePressDelta.y() * delta_scale;
+  PRINT_VAR(dx);
+  PRINT_VAR(dy);
+  float min_x = 0.f + dx;
+  float max_x = 3600000000 + dx;
+  float min_y = -3000 + dy;
+  float max_y = -62 + dy;
+  projection.setToIdentity();
+  projection.ortho(min_x, max_x, min_y, max_y, -30.0, 7.0);
 
   // Set modelview-projection matrix
   program.setUniformValue("mvp_matrix", projection * matrix);
@@ -318,10 +330,10 @@ void OrbitGLWidget::paintGL() {
   program.setUniformValue("texture", 0);
 
   // Draw cube geometry
-  //geometries->drawCubeGeometry(&program);
+  // geometries->drawCubeGeometry(&program);
 
   PRINT_VAR(program.programId());
-  
+
   texture->release();
   if (m_OrbitPanel) {
     m_OrbitPanel->Render(width(), height());
@@ -382,6 +394,7 @@ void OrbitGLWidget::mouseReleaseEvent(QMouseEvent* event) {
 
   // Mouse release position - mouse press position
   QVector2D diff = QVector2D(event->localPos()) - mousePressPosition;
+  mousePressDelta = {0, 0};
 
   // Rotation axis is perpendicular to the mouse position difference
   // vector
@@ -457,12 +470,18 @@ void OrbitGLWidget::mouseDoubleClickEvent(QMouseEvent* event) {
 
 //-----------------------------------------------------------------------------
 void OrbitGLWidget::mouseMoveEvent(QMouseEvent* event) {
-   if (m_OrbitPanel) {
+  if (m_OrbitPanel) {
     m_OrbitPanel->MouseMoved(event->x(), event->y(),
                              event->buttons() & Qt::LeftButton,
                              event->buttons() & Qt::RightButton,
                              event->buttons() & Qt::MiddleButton);
   }
+
+  // Save mouse press position
+  if (event->buttons() & Qt::LeftButton) {
+  
+    mousePressDelta = QVector2D(event->localPos()) - mousePressPosition;
+    }
 
   update();
 }
