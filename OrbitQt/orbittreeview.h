@@ -46,7 +46,7 @@ class OrbitTreeView : public QTreeView {
   void ShowContextMenu(const QPoint& pos);
   void OnMenuClicked(const std::string& a_Action, int a_MenuIndex);
   void OnRangeChanged(int a_Min, int a_Max);
-  void OnSingleRowSelected(int row);
+  void OnRowSelected(int row);
 
  private:
   std::unique_ptr<OrbitTableModel> model_;

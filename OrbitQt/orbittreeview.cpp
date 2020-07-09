@@ -249,16 +249,20 @@ void OrbitTreeView::keyPressEvent(QKeyEvent* event) {
 }
 
 void OrbitTreeView::selectionChanged(const QItemSelection& selected,
-                        const QItemSelection& deselected) {
+                                     const QItemSelection& deselected) {
   QTreeView::selectionChanged(selected, deselected);
 
-  // Single row selection.
-  if (!is_internal_refresh && selectionModel()->selectedRows().size() == 1) {
-    OnSingleRowSelected(selected.indexes()[0].row());
+  // Dont trigger callbacks if selection was initiated internally.
+  if (is_internal_refresh) return;
+
+  // Row selection callback.
+  QModelIndexList rows = selectionModel()->selectedRows();
+  if (rows.size() == 1) {
+    OnRowSelected(rows[0].row());
   }
 }
 
-void OrbitTreeView::OnSingleRowSelected(int row){
+void OrbitTreeView::OnRowSelected(int row) {
   model_->OnRowSelected(row);
   for (OrbitTreeView* tree_view : links_) {
     tree_view->Refresh();
