@@ -110,26 +110,10 @@ void OrbitTreeView::OnFilter(const QString& filter) {
 }
 
 //-----------------------------------------------------------------------------
-void OrbitTreeView::Select(int row) {
-  QModelIndex idx = model_->CreateIndex(row, 0);
-  model_->OnClicked(idx);
-  Refresh();
-}
-
-//-----------------------------------------------------------------------------
 void OrbitTreeView::OnTimer() {
   if (isVisible() && !model_->GetDataView()->SkipTimer()) {
     model_->OnTimer();
     Refresh();
-  }
-}
-
-//-----------------------------------------------------------------------------
-void OrbitTreeView::OnClicked(const QModelIndex& index) {
-  model_->OnClicked(index);
-
-  for (OrbitTreeView* tree_view : links_) {
-    tree_view->Refresh();
   }
 }
 
@@ -150,8 +134,12 @@ void OrbitTreeView::Refresh() {
   if (selected >= 0) {
     QItemSelectionModel* selection = selectionModel();
     QModelIndex idx = model_->CreateIndex(selected, 0);
+
+    // Don't re-trigger row selection callback when re-selecting.
+    is_internal_refresh = true;
     selection->select(
         idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    is_internal_refresh = false;
   }
 }
 
@@ -257,6 +245,23 @@ void OrbitTreeView::keyPressEvent(QKeyEvent* event) {
     model_->GetDataView()->CopySelection(items);
   } else {
     QTreeView::keyPressEvent(event);
+  }
+}
+
+void OrbitTreeView::selectionChanged(const QItemSelection& selected,
+                        const QItemSelection& deselected) {
+  QTreeView::selectionChanged(selected, deselected);
+
+  // Single row selection.
+  if (!is_internal_refresh && selectionModel()->selectedRows().size() == 1) {
+    OnSingleRowSelected(selected.indexes()[0].row());
+  }
+}
+
+void OrbitTreeView::OnSingleRowSelected(int row){
+  model_->OnRowSelected(row);
+  for (OrbitTreeView* tree_view : links_) {
+    tree_view->Refresh();
   }
 }
 
