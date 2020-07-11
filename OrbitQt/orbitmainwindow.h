@@ -5,6 +5,8 @@
 #pragma once
 
 #include <QApplication>
+#include <QLabel>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QString>
 #include <QTimer>
@@ -96,15 +98,20 @@ class OrbitMainWindow : public QMainWindow {
   std::vector<OrbitGLWidget*> m_GlWidgets;
   bool m_Headless;
 
-  // sampling tab
+  // Sampling tab.
   class QWidget* m_SamplingTab;
   class OrbitSamplingReport* m_OrbitSamplingReport;
   class QGridLayout* m_SamplingLayout;
 
-  // selection tab
+  // Selection tab.
   class QWidget* m_SelectionTab;
   class OrbitSamplingReport* m_SelectionReport;
   class QGridLayout* m_SelectionLayout;
+
+  // Capture toolbar.
+  QLabel* timer_label_ = nullptr;
+  QLineEdit* search_line_edit_ = nullptr;
+  QLineEdit* filter_line_edit_ = nullptr;
 
   class OutputDialog* m_OutputDialog;
   std::string m_CurrentPdbName;

@@ -123,7 +123,7 @@ class TimeGraph {
   double m_MinTimeUs = 0;
   double m_MaxTimeUs = 0;
   TickType m_SessionMinCounter = 0;
-  TickType m_SessionMaxCounter = 0;
+  TickType m_SessionMaxCounter = 1000000000;
   std::map<ThreadID, uint32_t> m_EventCount;
   double m_TimeWindowUs = 0;
   float m_WorldStartX = 0;

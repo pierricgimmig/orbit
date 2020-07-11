@@ -10,7 +10,6 @@
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QFileDialog>
-#include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPointer>
@@ -230,34 +229,84 @@ void SetFontSize(QWidget* widget, uint32_t font_size) {
   widget->setFont(font);
 }
 
+QWidget* CreateSpacer(QWidget* parent) {
+  QLabel* spacer = new QLabel(parent);
+  spacer->setText("    ");
+  return spacer;
+}
+
+QAction* CreateDummyAction(const QIcon& icon, QObject* parent) {
+  QAction* action = new QAction(icon, "", parent);
+  action->setDisabled(true);
+  return action;
+}
+
 void OrbitMainWindow::SetupCaptureToolbar() {
-  ui->actionStart_Capture->setIcon(QIcon("icons/outline_play_arrow_white_48dp.png"));
-  ui->actionStop_Capture->setIcon(QIcon("icons/outline_stop_white_48dp.png"));
-  ui->actionClear_Capture->setIcon(QIcon("icons/outline_clear_white_48dp.png"));
-  ui->actionOpen_Capture->setIcon(QIcon("icons/outline_folder_white_48dp.png"));
-  ui->actionSave_Capture->setIcon(QIcon("icons/outline_save_alt_white_48dp.png"));
-  ui->actionHelp->setIcon(QIcon("icons/outline_help_outline_white_48dp.png"));
-  ui->actionFeedback->setIcon(QIcon("icons/outline_feedback_white_48dp.png"));
+  // Sizes.
+  uint32_t kFontSize = 15;
+  uint32_t kIconSize = 30;
+  QToolBar* toolbar = ui->capture_toolbar;
+  toolbar->setIconSize(QSize(kIconSize, kIconSize));
 
-  QLabel* search_label = new QLabel(ui->capture_toolbar);
-  search_label->setText("Search");
-  SetFontSize(search_label, 30);
-  ui->capture_toolbar->addWidget(search_label);
+  // Create icons.
+  QIcon icon_start = QIcon("icons/outline_play_arrow_white_48dp.png");
+  QIcon icon_stop = QIcon("icons/outline_stop_white_48dp.png");
+  QIcon icon_clear = QIcon("icons/outline_clear_white_48dp.png");
+  QIcon icon_open = QIcon("icons/outline_folder_white_48dp.png");
+  QIcon icon_save = QIcon("icons/outline_save_alt_white_48dp.png");
+  QIcon icon_help = QIcon("icons/outline_help_outline_white_48dp.png");
+  QIcon icon_feedback = QIcon("icons/outline_feedback_white_48dp.png");
+  QIcon icon_search = QIcon("icons/outline_search_white_48dp.png");
+  QIcon icon_filter = QIcon("icons/outline_filter_list_white_48dp.png");
+  QIcon icon_timer = QIcon("icons/outline_access_time_white_48dp.png");
 
-  QLineEdit* search_line_edit = new QLineEdit(ui->capture_toolbar);
-  SetFontSize(search_line_edit, 30);
-  ui->capture_toolbar->addWidget(search_line_edit);
+  // Set action icons.
+  ui->actionStart_Capture->setIcon(icon_start);
+  ui->actionStop_Capture->setIcon (icon_stop);
+  ui->actionClear_Capture->setIcon(icon_clear);
+  ui->actionOpen_Capture->setIcon (icon_open);
+  ui->actionSave_Capture->setIcon (icon_save);
+  ui->actionHelp->setIcon(icon_help);
+  ui->actionFeedback->setIcon(icon_feedback);
+  ui->actionSearch->setIcon(icon_search);
+  ui->actionFilter_Tracks->setIcon(icon_filter);
 
-  QLineEdit* filter_line_edit = new QLineEdit(ui->capture_toolbar);
-  ui->capture_toolbar->addWidget(filter_line_edit);
+  // Actions.
+  toolbar->addAction(ui->actionStart_Capture);
+  toolbar->addAction(ui->actionStop_Capture);
+  toolbar->addAction(ui->actionClear_Capture);
+  toolbar->addAction(ui->actionOpen_Capture);
+  toolbar->addAction(ui->actionSave_Capture);
+  toolbar->addAction(ui->actionHelp);
+  toolbar->addAction(ui->actionFeedback);
 
-  ui->capture_toolbar->setIconSize(QSize(30, 30));
+  // Filter tracks.
+  toolbar->addWidget(CreateSpacer(toolbar));
+  toolbar->addAction(CreateDummyAction(icon_filter, toolbar));
+  filter_line_edit_ = new QLineEdit(toolbar);
+  filter_line_edit_->setClearButtonEnabled(true);
+  filter_line_edit_->setPlaceholderText("Filter tracks");
+  SetFontSize(filter_line_edit_, kFontSize);
+  toolbar->addWidget(filter_line_edit_);
 
-  QSlider* slider = new QSlider(Qt::Horizontal, ui->capture_toolbar);
-  slider->setMinimum(0);
-  slider->setMaximum(100);
-  ui->capture_toolbar->addWidget(slider);
+  // Search functions.
+  toolbar->addWidget(CreateSpacer(toolbar));
+  toolbar->addAction(CreateDummyAction(icon_search, toolbar));
+  search_line_edit_ = new QLineEdit();
+  search_line_edit_->setClearButtonEnabled(true);
+  search_line_edit_->setPlaceholderText("Search functions");
+  SetFontSize(search_line_edit_, kFontSize);
+  toolbar->addWidget(search_line_edit_);
 
+  // Status.
+  toolbar->addWidget(CreateSpacer(toolbar));
+  toolbar->addAction(CreateDummyAction(icon_timer, toolbar));
+  timer_label_ = new QLabel(toolbar);
+  timer_label_->setText("1s");
+  SetFontSize(timer_label_, kFontSize);
+  toolbar->addWidget(timer_label_);
+
+  // Initial state.
   ui->actionStop_Capture->setDisabled(true);
 }
 
