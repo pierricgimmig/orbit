@@ -241,24 +241,28 @@ QAction* CreateDummyAction(const QIcon& icon, QObject* parent) {
   return action;
 }
 
+QIcon GetIcon(const std::string& icon_name) {
+  return QIcon(Path::JoinPath({Path::GetIconsPath(), icon_name}).c_str());
+}
+
 void OrbitMainWindow::SetupCaptureToolbar() {
   // Sizes.
-  uint32_t kFontSize = 15;
+  uint32_t kFontSize = 10;
   uint32_t kIconSize = 30;
   QToolBar* toolbar = ui->capture_toolbar;
   toolbar->setIconSize(QSize(kIconSize, kIconSize));
 
   // Create icons.
-  QIcon icon_start = QIcon("icons/outline_play_arrow_white_48dp.png");
-  QIcon icon_stop = QIcon("icons/outline_stop_white_48dp.png");
-  QIcon icon_clear = QIcon("icons/outline_clear_white_48dp.png");
-  QIcon icon_open = QIcon("icons/outline_folder_white_48dp.png");
-  QIcon icon_save = QIcon("icons/outline_save_alt_white_48dp.png");
-  QIcon icon_help = QIcon("icons/outline_help_outline_white_48dp.png");
-  QIcon icon_feedback = QIcon("icons/outline_feedback_white_48dp.png");
-  QIcon icon_search = QIcon("icons/outline_search_white_48dp.png");
-  QIcon icon_filter = QIcon("icons/outline_filter_list_white_48dp.png");
-  QIcon icon_timer = QIcon("icons/outline_access_time_white_48dp.png");
+  QIcon icon_start = GetIcon("outline_play_arrow_white_48dp.png");
+  QIcon icon_stop = GetIcon("outline_stop_white_48dp.png");
+  QIcon icon_clear = GetIcon("outline_clear_white_48dp.png");
+  QIcon icon_open = GetIcon("outline_folder_white_48dp.png");
+  QIcon icon_save = GetIcon("outline_save_alt_white_48dp.png");
+  QIcon icon_help = GetIcon("outline_help_outline_white_48dp.png");
+  QIcon icon_feedback = GetIcon("outline_feedback_white_48dp.png");
+  QIcon icon_search = GetIcon("outline_search_white_48dp.png");
+  QIcon icon_filter = GetIcon("outline_filter_list_white_48dp.png");
+  QIcon icon_timer = GetIcon("outline_access_time_white_48dp.png");
 
   // Set action icons.
   ui->actionStart_Capture->setIcon(icon_start);
@@ -304,6 +308,9 @@ void OrbitMainWindow::SetupCaptureToolbar() {
   timer_label_ = new QLabel(toolbar);
   timer_label_->setText("1s");
   SetFontSize(timer_label_, kFontSize);
+  QFontMetrics fm(timer_label_->font());
+  int pixel_width = fm.width("w");
+  timer_label_->setMinimumWidth(5 * pixel_width);
   toolbar->addWidget(timer_label_);
 
   // Initial state.
