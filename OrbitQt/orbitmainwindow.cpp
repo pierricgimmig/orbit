@@ -275,7 +275,7 @@ void OrbitMainWindow::SetupCaptureToolbar() {
   ui->actionSearch->setIcon(icon_search);
   ui->actionFilter_Tracks->setIcon(icon_filter);
 
-  // Actions.
+  // Add actions.
   toolbar->addAction(ui->actionStart_Capture);
   toolbar->addAction(ui->actionStop_Capture);
   toolbar->addAction(ui->actionClear_Capture);
