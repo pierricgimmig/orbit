@@ -748,10 +748,6 @@ void CaptureWindow::RenderUI() {
     }
   }
 
-  if (m_DrawMemTracker && !m_DrawHelp) {
-    RenderMemTracker();
-  }
-
   // Rendering
   glViewport(0, 0, getWidth(), getHeight());
   ImGui::Render();
@@ -829,45 +825,6 @@ bool IconButton(uint64_t texture_id, const char* tooltip, ImVec2 size,
   }
 
   return clicked;
-}
-
-//-----------------------------------------------------------------------------
-void CaptureWindow::RenderMemTracker() {
-  float barHeight = m_Slider.GetPixelHeight();
-  ImGui::SetNextWindowPos(ImVec2(0, barHeight * 1.5f));
-
-  ImVec4 color(1.f, 0, 0, 1.f);
-  ColorToFloat(m_Slider.GetBarColor(), &color.x);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, color);
-
-  bool dummy = true;
-  if (!ImGui::Begin(
-          "MemTracker Overlay", &dummy, ImVec2(0, 0), 1.f,
-          ImGuiWindowFlags_NoTitleBar /*| ImGuiWindowFlags_NoResize*/ |
-              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::PopStyleColor();
-    ImGui::End();
-    return;
-  }
-
-  ImGui::Text("=== Memory Tracker ===");
-
-  const MemoryTracker& memTracker = time_graph_.GetMemoryTracker();
-  if (memTracker.NumAllocatedBytes() == 0) {
-    std::string str = VAR_TO_STR(memTracker.NumAllocatedBytes()) +
-                      std::string("            ");
-    ImGui::Text("%s", str.c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumFreedBytes()).c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumLiveBytes()).c_str());
-  } else {
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumAllocatedBytes()).c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumFreedBytes()).c_str());
-    ImGui::Text("%s", VAR_TO_STR(memTracker.NumLiveBytes()).c_str());
-  }
-
-  ImGui::End();
-
-  ImGui::PopStyleColor();
 }
 
 //-----------------------------------------------------------------------------

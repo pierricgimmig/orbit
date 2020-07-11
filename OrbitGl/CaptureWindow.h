@@ -50,11 +50,6 @@ class CaptureWindow : public GlCanvas {
   void PostRender() override;
   void Resize(int a_Width, int a_Height) override;
   void RenderHelpUi();
-<<<<<<< HEAD
-  void RenderToolbars();
-=======
-  void RenderMemTracker();
->>>>>>> 4dafeb10... Use Qt for capture view toolbar instead of ImGui.
   void RenderTimeBar();
   void ResetHoverTimer();
   void SelectTextBox(class TextBox* a_TextBox);
