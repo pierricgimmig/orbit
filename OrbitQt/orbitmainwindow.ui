@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>976</width>
-    <height>594</height>
+    <width>1750</width>
+    <height>1509</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -15,7 +15,7 @@
   </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0">
+    <item row="0" column="1">
      <widget class="QSplitter" name="splitter_2">
       <property name="enabled">
        <bool>true</bool>
@@ -31,7 +31,7 @@
       </property>
       <widget class="QTabWidget" name="MainTabWidget">
        <property name="currentIndex">
-        <number>0</number>
+        <number>2</number>
        </property>
        <widget class="QWidget" name="HomeTab">
         <attribute name="title">
@@ -87,11 +87,49 @@
         <attribute name="title">
          <string>capture</string>
         </attribute>
-        <layout class="QGridLayout" name="gridLayout_5">
-         <item row="0" column="0">
+        <layout class="QVBoxLayout" name="verticalLayout">
+         <item>
+          <widget class="QToolBar" name="capture_toolbar">
+           <property name="enabled">
+            <bool>true</bool>
+           </property>
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>15</pointsize>
+            </font>
+           </property>
+           <property name="windowTitle">
+            <string>toolBar</string>
+           </property>
+           <property name="toolTip">
+            <string extracomment="Orbit Toolbar"/>
+           </property>
+           <property name="whatsThis">
+            <string extracomment="what's this?"/>
+           </property>
+           <addaction name="actionStart_Capture"/>
+           <addaction name="actionStop_Capture"/>
+           <addaction name="actionClear_Capture"/>
+           <addaction name="actionOpen_Capture"/>
+           <addaction name="actionSave_Capture"/>
+           <addaction name="actionHelp"/>
+           <addaction name="actionFeedback"/>
+           <addaction name="separator"/>
+          </widget>
+         </item>
+         <item>
           <widget class="OrbitGLWidget" name="CaptureGLWidget"/>
          </item>
         </layout>
+        <zorder>CaptureGLWidget</zorder>
+        <zorder>horizontalLayoutWidget</zorder>
+        <zorder>capture_toolbar</zorder>
        </widget>
        <widget class="QWidget" name="OutputTab">
         <attribute name="title">
@@ -116,7 +154,7 @@
       </widget>
       <widget class="QTabWidget" name="RightTabWidget">
        <property name="currentIndex">
-        <number>0</number>
+        <number>1</number>
        </property>
        <widget class="QWidget" name="FunctionsTab">
         <attribute name="title">
@@ -207,8 +245,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>976</width>
-     <height>21</height>
+     <width>1750</width>
+     <height>20</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -236,22 +274,10 @@
     <addaction name="actionReport_Missing_Feature"/>
     <addaction name="actionReport_Bug"/>
    </widget>
-   <widget class="QMenu" name="menuCrash">
-    <property name="title">
-     <string>Crash Test</string>
-    </property>
-    <addaction name="actionCheckFalse"/>
-    <addaction name="actionNullPointerDereference"/>
-    <addaction name="actionStackOverflow"/>
-    <addaction name="actionServiceCheckFalse"/>
-    <addaction name="actionServiceNullPointerDereference"/>
-    <addaction name="actionServiceStackOverflow"/>
-   </widget>
    <widget class="QMenu" name="menuDebug">
     <property name="title">
      <string>Debug</string>
     </property>
-    <addaction name="menuCrash"/>
    </widget>
    <widget class="QMenu" name="menuTools">
     <property name="title">
@@ -290,9 +316,12 @@
     <string>Open Preset</string>
    </property>
   </action>
-  <action name="actionStart_Captue">
+  <action name="actionStart_Capture">
    <property name="text">
-    <string>Start Captue</string>
+    <string>Start Capture</string>
+   </property>
+   <property name="toolTip">
+    <string>Start Capture</string>
    </property>
   </action>
   <action name="actionStop_Capture">
@@ -301,6 +330,9 @@
    </property>
   </action>
   <action name="actionQuit">
+   <property name="icon">
+    <iconset theme="./icons/outline_clear_white_48dp.png"/>
+   </property>
    <property name="text">
     <string>Quit</string>
    </property>
@@ -353,7 +385,7 @@
     <string>[Service] Check False</string>
    </property>
   </action>
-    <action name="actionServiceNullPointerDereference">
+  <action name="actionServiceNullPointerDereference">
    <property name="text">
     <string>[Service] Null Pointer Dereference</string>
    </property>
@@ -363,18 +395,58 @@
     <string>[Service] Stack Overflow</string>
    </property>
   </action>
+  <action name="actionClear_Capture">
+   <property name="text">
+    <string>Clear Capture</string>
+   </property>
+   <property name="toolTip">
+    <string>Clear Capture</string>
+   </property>
+  </action>
+  <action name="actionFilter_Tracks">
+   <property name="text">
+    <string>Filter Tracks</string>
+   </property>
+   <property name="toolTip">
+    <string>Filter Tracks</string>
+   </property>
+  </action>
+  <action name="actionSearch">
+   <property name="text">
+    <string>Search</string>
+   </property>
+   <property name="toolTip">
+    <string>Search</string>
+   </property>
+  </action>
+  <action name="actionFeedback">
+   <property name="text">
+    <string>Feedback</string>
+   </property>
+   <property name="toolTip">
+    <string>Feedback</string>
+   </property>
+  </action>
+  <action name="actionHelp">
+   <property name="text">
+    <string>Help</string>
+   </property>
+   <property name="toolTip">
+    <string>Help</string>
+   </property>
+  </action>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <customwidgets>
   <customwidget>
-   <class>OrbitCodeEditor</class>
-   <extends>QPlainTextEdit</extends>
-   <header>orbitcodeeditor.h</header>
-  </customwidget>
-  <customwidget>
    <class>OrbitGLWidget</class>
    <extends>QOpenGLWidget</extends>
    <header>orbitglwidget.h</header>
+  </customwidget>
+  <customwidget>
+   <class>OrbitCodeEditor</class>
+   <extends>QPlainTextEdit</extends>
+   <header>orbitcodeeditor.h</header>
   </customwidget>
   <customwidget>
    <class>OrbitDataViewPanel</class>

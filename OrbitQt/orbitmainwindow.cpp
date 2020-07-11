@@ -10,6 +10,7 @@
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPointer>
@@ -74,6 +75,8 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
   ui->splitter_2->setSizes(sizes);
 
   GOrbitApp->SetCaptureStartedCallback([this] {
+    ui->actionStart_Capture->setDisabled(true);
+    ui->actionStop_Capture->setDisabled(false);
     ui->actionOpen_Capture->setDisabled(true);
     ui->actionSave_Capture->setDisabled(true);
     ui->actionOpen_Preset->setDisabled(true);
@@ -96,6 +99,8 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
       [finalizing_capture_dialog] { finalizing_capture_dialog->show(); });
   GOrbitApp->SetCaptureStoppedCallback([this, finalizing_capture_dialog] {
     finalizing_capture_dialog->close();
+    ui->actionStart_Capture->setDisabled(false);
+    ui->actionStop_Capture->setDisabled(true);
     ui->actionOpen_Capture->setDisabled(false);
     ui->actionSave_Capture->setDisabled(false);
     ui->actionOpen_Preset->setDisabled(false);
@@ -197,6 +202,8 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
     ui->menuDebug->menuAction()->setVisible(false);
   }
 
+  SetupCaptureToolbar();
+
   // Output window
   this->ui->plainTextEdit->SetIsOutputWindow();
 
@@ -215,6 +222,43 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
   GMainWindow = this;
 
   GOrbitApp->PostInit();
+}
+
+void SetFontSize(QWidget* widget, uint32_t font_size) {
+  QFont font = widget->font();
+  font.setPointSize(font_size);
+  widget->setFont(font);
+}
+
+void OrbitMainWindow::SetupCaptureToolbar() {
+  ui->actionStart_Capture->setIcon(QIcon("icons/outline_play_arrow_white_48dp.png"));
+  ui->actionStop_Capture->setIcon(QIcon("icons/outline_stop_white_48dp.png"));
+  ui->actionClear_Capture->setIcon(QIcon("icons/outline_clear_white_48dp.png"));
+  ui->actionOpen_Capture->setIcon(QIcon("icons/outline_folder_white_48dp.png"));
+  ui->actionSave_Capture->setIcon(QIcon("icons/outline_save_alt_white_48dp.png"));
+  ui->actionHelp->setIcon(QIcon("icons/outline_help_outline_white_48dp.png"));
+  ui->actionFeedback->setIcon(QIcon("icons/outline_feedback_white_48dp.png"));
+
+  QLabel* search_label = new QLabel(ui->capture_toolbar);
+  search_label->setText("Search");
+  SetFontSize(search_label, 30);
+  ui->capture_toolbar->addWidget(search_label);
+
+  QLineEdit* search_line_edit = new QLineEdit(ui->capture_toolbar);
+  SetFontSize(search_line_edit, 30);
+  ui->capture_toolbar->addWidget(search_line_edit);
+
+  QLineEdit* filter_line_edit = new QLineEdit(ui->capture_toolbar);
+  ui->capture_toolbar->addWidget(filter_line_edit);
+
+  ui->capture_toolbar->setIconSize(QSize(30, 30));
+
+  QSlider* slider = new QSlider(Qt::Horizontal, ui->capture_toolbar);
+  slider->setMinimum(0);
+  slider->setMaximum(100);
+  ui->capture_toolbar->addWidget(slider);
+
+  ui->actionStop_Capture->setDisabled(true);
 }
 
 //-----------------------------------------------------------------------------
@@ -556,7 +600,26 @@ void OrbitMainWindow::on_actionSave_Preset_As_triggered() {
   }
 }
 
-//-----------------------------------------------------------------------------
+void OrbitMainWindow::on_actionStart_Capture_triggered() {
+  GOrbitApp->StartCapture();
+}
+
+void OrbitMainWindow::on_actionStop_Capture_triggered() {
+  GOrbitApp->StopCapture();
+}
+
+void OrbitMainWindow::on_actionClear_Capture_triggered() {
+  GOrbitApp->ClearCapture();
+}
+
+void OrbitMainWindow::on_actionHelp_triggered() {
+  GOrbitApp->ToggleDrawHelp();
+}
+
+void OrbitMainWindow::on_actionFeedback_triggered() {
+  ShowFeedbackDialog();
+}
+
 void OrbitMainWindow::on_actionSave_Capture_triggered() {
   QString file = QFileDialog::getSaveFileName(
       this, "Save capture...",

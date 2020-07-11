@@ -616,6 +616,18 @@ void OrbitApp::StopCapture() {
   FireRefreshCallbacks();
 }
 
+void OrbitApp::ClearCapture() {
+  Capture::ClearCaptureData();
+  Capture::GClearCaptureDataFunc();
+  GCurrentTimeGraph->Clear();
+}
+
+void OrbitApp::ToggleDrawHelp() {
+  if (m_CaptureWindow) {
+    m_CaptureWindow->ToggleDrawHelp();
+  }
+}
+
 void OrbitApp::OnCaptureStopped() {
   Capture::FinalizeCapture();
 
