@@ -66,6 +66,8 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
       const std::string& file_name);
   bool StartCapture();
   void StopCapture();
+  void ClearCapture();
+  void ToggleDrawHelp();
   void OnCaptureStopped();
   void ToggleCapture();
   void SetCallStack(std::shared_ptr<CallStack> a_CallStack);

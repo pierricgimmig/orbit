@@ -420,7 +420,9 @@ void TimeGraph::SelectRight(const TextBox* a_TextBox) {
 }
 
 //-----------------------------------------------------------------------------
-void TimeGraph::NeedsUpdate() { m_NeedsUpdatePrimitives = true; }
+void TimeGraph::NeedsUpdate() {
+  m_NeedsUpdatePrimitives = true;
+}
 
 //-----------------------------------------------------------------------------
 void TimeGraph::UpdatePrimitives() {

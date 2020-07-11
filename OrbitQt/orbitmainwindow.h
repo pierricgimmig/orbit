@@ -63,15 +63,16 @@ class OrbitMainWindow : public QMainWindow {
 
   void on_actionOpen_Preset_triggered();
   void on_actionQuit_triggered();
-
   void on_actionToogleDevMode_toggled(bool arg1);
-
   void on_actionSave_Preset_As_triggered();
 
+  void on_actionStart_Capture_triggered();
+  void on_actionStop_Capture_triggered();
   void on_actionSave_Capture_triggered();
-
   void on_actionOpen_Capture_triggered();
-
+  void on_actionClear_Capture_triggered();
+  void on_actionHelp_triggered();
+  void on_actionFeedback_triggered();
   void on_actionShow_Includes_Util_triggered();
 
   void on_actionCheckFalse_triggered();
@@ -83,6 +84,7 @@ class OrbitMainWindow : public QMainWindow {
 
  private:
   void StartMainTimer();
+  void SetupCaptureToolbar();
   void SetupCodeView();
   void ShowFeedbackDialog();
 
