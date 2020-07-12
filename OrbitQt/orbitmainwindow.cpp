@@ -266,13 +266,13 @@ void OrbitMainWindow::SetupCaptureToolbar() {
 
   // Set action icons.
   ui->actionStart_Capture->setIcon(icon_start);
-  ui->actionStop_Capture->setIcon (icon_stop);
+  ui->actionStop_Capture->setIcon(icon_stop);
   ui->actionClear_Capture->setIcon(icon_clear);
-  ui->actionOpen_Capture->setIcon (icon_open);
-  ui->actionSave_Capture->setIcon (icon_save);
+  ui->actionOpen_Capture->setIcon(icon_open);
+  ui->actionSave_Capture->setIcon(icon_save);
   ui->actionHelp->setIcon(icon_help);
   ui->actionFeedback->setIcon(icon_feedback);
-  ui->actionSearch->setIcon(icon_search);
+  ui->actionFilter_Functions->setIcon(icon_search);
   ui->actionFilter_Tracks->setIcon(icon_filter);
 
   // Add actions.
@@ -287,20 +287,27 @@ void OrbitMainWindow::SetupCaptureToolbar() {
   // Filter tracks.
   toolbar->addWidget(CreateSpacer(toolbar));
   toolbar->addAction(CreateDummyAction(icon_filter, toolbar));
-  filter_line_edit_ = new QLineEdit(toolbar);
-  filter_line_edit_->setClearButtonEnabled(true);
-  filter_line_edit_->setPlaceholderText("Filter tracks");
-  SetFontSize(filter_line_edit_, kFontSize);
-  toolbar->addWidget(filter_line_edit_);
+  filter_tracks_line_edit_ = new QLineEdit(toolbar);
+  filter_tracks_line_edit_->setClearButtonEnabled(true);
+  filter_tracks_line_edit_->setPlaceholderText("filter tracks");
+  SetFontSize(filter_tracks_line_edit_, kFontSize);
+  toolbar->addWidget(filter_tracks_line_edit_);
+  connect(filter_tracks_line_edit_, SIGNAL(textChanged(const QString&)), this,
+          SLOT(OnFilterTracksTextChanged(const QString&)));
 
-  // Search functions.
+  // Filter functions.
   toolbar->addWidget(CreateSpacer(toolbar));
   toolbar->addAction(CreateDummyAction(icon_search, toolbar));
-  search_line_edit_ = new QLineEdit();
-  search_line_edit_->setClearButtonEnabled(true);
-  search_line_edit_->setPlaceholderText("Search functions");
-  SetFontSize(search_line_edit_, kFontSize);
-  toolbar->addWidget(search_line_edit_);
+  filter_functions_line_edit_ = new QLineEdit();
+  filter_functions_line_edit_->setClearButtonEnabled(true);
+  filter_functions_line_edit_->setPlaceholderText("filter functions");
+  SetFontSize(filter_functions_line_edit_, kFontSize);
+  toolbar->addWidget(filter_functions_line_edit_);
+  connect(filter_functions_line_edit_, SIGNAL(textChanged(const QString&)),
+          this, SLOT(OnFilterFunctionsTextChanged(const QString&)));
+  connect(ui->LiveFunctionsList->GetFilterLineEdit(),
+          SIGNAL(textChanged(const QString&)), this,
+          SLOT(OnLiveTabFunctionsFilterTextChanged(const QString&)));
 
   // Status.
   toolbar->addWidget(CreateSpacer(toolbar));
@@ -592,10 +599,35 @@ void OrbitMainWindow::OnTimer() {
 
   // Output window
   this->ui->plainTextEdit->OnTimer();
+
+  if (timer_label_) {
+    timer_label_->setText(GOrbitApp->GetCaptureTime().c_str());
+  }
 }
 
 //-----------------------------------------------------------------------------
 void OrbitMainWindow::OnHideSearch() { ui->lineEdit->hide(); }
+
+void OrbitMainWindow::OnFilterFunctionsTextChanged(const QString& text) {
+  ui->LiveFunctionsList->SetFilter(text);
+}
+
+//-----------------------------------------------------------------------------
+void OrbitMainWindow::OnLiveTabFunctionsFilterTextChanged(const QString& text) {
+  PRINT_FUNC;
+  GOrbitApp->FilterFunctions(text.toStdString());
+
+  // Set main toolbar functions filter without triggering signals.
+  filter_functions_line_edit_->blockSignals(true);
+  filter_functions_line_edit_->setText(text);
+  filter_functions_line_edit_->blockSignals(false);
+  filter_functions_line_edit_->update();
+}
+
+//-----------------------------------------------------------------------------
+void OrbitMainWindow::OnFilterTracksTextChanged(const QString& text) {
+  GOrbitApp->FilterTracks(text.toStdString());
+}
 
 //-----------------------------------------------------------------------------
 void OrbitMainWindow::on_actionOpen_Preset_triggered() {
@@ -668,13 +700,9 @@ void OrbitMainWindow::on_actionClear_Capture_triggered() {
   GOrbitApp->ClearCapture();
 }
 
-void OrbitMainWindow::on_actionHelp_triggered() {
-  GOrbitApp->ToggleDrawHelp();
-}
+void OrbitMainWindow::on_actionHelp_triggered() { GOrbitApp->ToggleDrawHelp(); }
 
-void OrbitMainWindow::on_actionFeedback_triggered() {
-  ShowFeedbackDialog();
-}
+void OrbitMainWindow::on_actionFeedback_triggered() { ShowFeedbackDialog(); }
 
 void OrbitMainWindow::on_actionSave_Capture_triggered() {
   QString file = QFileDialog::getSaveFileName(

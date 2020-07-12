@@ -403,7 +403,7 @@
     <string>Filter Tracks</string>
    </property>
   </action>
-  <action name="actionSearch">
+  <action name="actionFilter_Functions">
    <property name="text">
     <string>Search</string>
    </property>
@@ -425,27 +425,6 @@
    </property>
    <property name="toolTip">
     <string>Help</string>
-   </property>
-  </action>
-  <action name="actionSearch_Functions">
-   <property name="text">
-    <string>Search Functions</string>
-   </property>
-   <property name="toolTip">
-    <string>Search Functions</string>
-   </property>
-  </action>
-  <action name="actionFilter_Tracks_2">
-   <property name="text">
-    <string>Filter Tracks</string>
-   </property>
-   <property name="toolTip">
-    <string>Filter Tracks</string>
-   </property>
-  </action>
-  <action name="actionEmpty">
-   <property name="text">
-    <string>Empty</string>
    </property>
   </action>
  </widget>

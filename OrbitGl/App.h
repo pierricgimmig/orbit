@@ -56,6 +56,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   static void MainTick();
 
   std::string GetCaptureFileName();
+  std::string GetCaptureTime();
   std::string GetSaveFile(const std::string& extension);
   void SetClipboard(const std::string& text);
   outcome::result<void, std::string> OnSavePreset(const std::string& file_name);
@@ -212,6 +213,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   void UpdateSamplingReport();
   void LoadPreset(const std::shared_ptr<Preset>& session);
   void FilterFunctions(const std::string& filter);
+  void FilterTracks(const std::string& filter);
 
   void CrashOrbitService(CrashOrbitServiceRequest_CrashType crash_type);
 
