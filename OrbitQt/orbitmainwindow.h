@@ -63,6 +63,9 @@ class OrbitMainWindow : public QMainWindow {
 
   void OnTimer();
   void OnHideSearch();
+  void OnFilterFunctionsTextChanged(const QString& text);
+  void OnLiveTabFunctionsFilterTextChanged(const QString& text);
+  void OnFilterTracksTextChanged(const QString& text);
 
   void on_actionOpen_Preset_triggered();
   void on_actionQuit_triggered();
@@ -110,8 +113,8 @@ class OrbitMainWindow : public QMainWindow {
 
   // Capture toolbar.
   QLabel* timer_label_ = nullptr;
-  QLineEdit* search_line_edit_ = nullptr;
-  QLineEdit* filter_line_edit_ = nullptr;
+  QLineEdit* filter_functions_line_edit_ = nullptr;
+  QLineEdit* filter_tracks_line_edit_ = nullptr;
 
   class OutputDialog* m_OutputDialog;
   std::string m_CurrentPdbName;
