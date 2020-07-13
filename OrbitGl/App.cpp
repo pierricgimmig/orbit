@@ -461,7 +461,7 @@ std::string OrbitApp::GetCaptureFileName() {
   return result;
 }
 
-std::string OrbitApp::GetCaptureTime(){
+std::string OrbitApp::GetCaptureTime() {
   double time =
       GCurrentTimeGraph ? GCurrentTimeGraph->GetSessionTimeSpanUs() : 0;
   return GetPrettyTime(time * 0.001);

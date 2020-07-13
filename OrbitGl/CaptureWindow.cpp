@@ -896,6 +896,4 @@ void CaptureWindow::RenderTimeBar() {
 }
 
 //-----------------------------------------------------------------------------
-void CaptureWindow::Initialize() {
-  GlCanvas::Initialize();
-}
+void CaptureWindow::Initialize() { GlCanvas::Initialize(); }
