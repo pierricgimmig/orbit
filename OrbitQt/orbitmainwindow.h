@@ -63,8 +63,8 @@ class OrbitMainWindow : public QMainWindow {
 
   void OnTimer();
   void OnHideSearch();
-  void OnFilterFunctionsTextChanged(const QString& text);
   void OnLiveTabFunctionsFilterTextChanged(const QString& text);
+  void OnFilterFunctionsTextChanged(const QString& text);
   void OnFilterTracksTextChanged(const QString& text);
 
   void on_actionOpen_Preset_triggered();

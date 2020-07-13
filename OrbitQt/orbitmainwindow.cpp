@@ -309,7 +309,7 @@ void OrbitMainWindow::SetupCaptureToolbar() {
           SIGNAL(textChanged(const QString&)), this,
           SLOT(OnLiveTabFunctionsFilterTextChanged(const QString&)));
 
-  // Status.
+  // Timer.
   toolbar->addWidget(CreateSpacer(toolbar));
   toolbar->addAction(CreateDummyAction(icon_timer, toolbar));
   timer_label_ = new QLabel(toolbar);
@@ -609,19 +609,18 @@ void OrbitMainWindow::OnTimer() {
 void OrbitMainWindow::OnHideSearch() { ui->lineEdit->hide(); }
 
 void OrbitMainWindow::OnFilterFunctionsTextChanged(const QString& text) {
+  // The toolbar and live tab filters are mirrored.
   ui->LiveFunctionsList->SetFilter(text);
 }
 
 //-----------------------------------------------------------------------------
 void OrbitMainWindow::OnLiveTabFunctionsFilterTextChanged(const QString& text) {
-  PRINT_FUNC;
   GOrbitApp->FilterFunctions(text.toStdString());
 
   // Set main toolbar functions filter without triggering signals.
   filter_functions_line_edit_->blockSignals(true);
   filter_functions_line_edit_->setText(text);
   filter_functions_line_edit_->blockSignals(false);
-  filter_functions_line_edit_->update();
 }
 
 //-----------------------------------------------------------------------------
