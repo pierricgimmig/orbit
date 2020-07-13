@@ -115,7 +115,7 @@ void OrbitTest::ManualInstrumentationApiTest() {
 
     static int int_var = -100;
     if (++int_var > 100) int_var = -100;
-    ORBIT_INT("int_var", int_var, 2, 3, 4, 5);
+    ORBIT_INT("int_var", int_var);
 
     static int64_t int64_var = -100;
     if (++int64_var > 100) int64_var = -100;
