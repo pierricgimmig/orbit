@@ -6,11 +6,10 @@
 #define ORBIT_LINUX_TRACING_UPROBES_FUNCTION_CALL_MANAGER_H_
 
 #include <OrbitBase/Logging.h>
-#include <OrbitLinuxTracing/Events.h>
 #include "PerfEventRecords.h"
 
 #include <stack>
-#include <vector>
+
 
 #include "absl/container/flat_hash_map.h"
 #include "capture.pb.h"
@@ -54,6 +53,12 @@ class UprobesFunctionCallManager {
     // As we erase the stack for this thread as soon as it becomes empty.
     CHECK(!tid_uprobes_stack.empty());
 
+    auto& tid_uprobe = tid_uprobes_stack.top();
+    std::vector<uint64_t> registers{
+        tid_uprobe.registers.di, tid_uprobe.registers.si,
+        tid_uprobe.registers.dx, tid_uprobe.registers.cx,
+        tid_uprobe.registers.r8, tid_uprobe.registers.r9};
+
     FunctionCall function_call;
     function_call.set_tid(tid);
     function_call.set_absolute_address(
@@ -63,20 +68,9 @@ class UprobesFunctionCallManager {
     function_call.set_end_timestamp_ns(end_timestamp);
     function_call.set_depth(tid_uprobes_stack.size() - 1);
     function_call.set_return_value(return_value);
-
-    // TODO:PG:
-    /*
-    auto& tid_uprobe = tid_uprobes_stack.top();
-    std::vector<uint64_t> regs{
-        tid_uprobe.registers.di, tid_uprobe.registers.si,
-        tid_uprobe.registers.dx, tid_uprobe.registers.cx,
-        tid_uprobe.registers.r8, tid_uprobe.registers.r9};
-    auto function_call = std::make_optional<FunctionCall>(
-        tid, tid_uprobes_stack.top().function_address,
-        tid_uprobes_stack.top().begin_timestamp, end_timestamp,
-        tid_uprobes_stack.size() - 1, return_value, regs);
-
-    */
+    for(uint64_t register : registers) {
+      function_call.add_registers(register);
+    }
 
     tid_uprobes_stack.pop();
     if (tid_uprobes_stack.empty()) {

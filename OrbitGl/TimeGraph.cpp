@@ -279,7 +279,7 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
     if (func != nullptr) {
       ++Capture::GFunctionCountMap[a_Timer.m_FunctionAddress];
       FunctionUtils::UpdateStats(func, a_Timer);
-      if (FunctionUtils::IsOrbitFunc(func)) {
+      if (FunctionUtils::IsOrbitFunc(*func)) {
         ProcessOrbitFunctionTimer(func, a_Timer);
         return;
       }
@@ -312,7 +312,7 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
 //-----------------------------------------------------------------------------
 void TimeGraph::ProcessOrbitFunctionTimer(const Function* function,
                                           const Timer& timer) {
-  Function::OrbitType type = function->GetOrbitType();
+  Function::OrbitType type = function->orbit_type();
 
   /*
     ORBIT_TIMER_START,

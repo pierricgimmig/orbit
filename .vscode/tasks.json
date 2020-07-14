@@ -12,7 +12,7 @@
         "-j16"
       ],
       "options": {
-        "cwd": "${workspaceFolder}/build_default_relwithdebinfo"
+        "cwd": "${workspaceFolder}/build_clang9_relwithdebinfo"
       },
       "group": {
         "kind": "build",
