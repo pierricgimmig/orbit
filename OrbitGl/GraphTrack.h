@@ -19,6 +19,7 @@ class GraphTrack : public Track {
   void Draw(GlCanvas* canvas, bool picking) override;
   void OnDrag(int x, int y) override;
   void AddValue(double value, const Timer& timer);
+  double GetValueAtTime(uint64_t time, double default_value = 0);
   float GetHeight() const override;
 
  protected:

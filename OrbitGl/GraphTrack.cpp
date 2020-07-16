@@ -10,7 +10,8 @@ GraphTrack::GraphTrack(TimeGraph* time_graph, uint64_t graph_id)
     : Track(time_graph), graph_id_(graph_id) {}
 
 void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
-  UNUSED(picking);
+
+  Track::Draw(canvas, picking);
 
   Batcher* batcher = canvas->GetBatcher();
 
@@ -73,6 +74,8 @@ void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
     previous_time = time;
     last_normalized_value = normalized_value;
   }
+
+  PRINT_VAR(GetValueAtTime(canvas->GetMouseTime()));
 }
 
 void GraphTrack::OnDrag(int /*x*/, int /*y*/) {}
@@ -86,7 +89,18 @@ void GraphTrack::AddValue(double value, const Timer& timer) {
   if (value_range_ > 0) inv_value_range_ = 1.0 / value_range_;
 }
 
-//-----------------------------------------------------------------------------
+double GraphTrack::GetValueAtTime(uint64_t time, double default_value) {
+  auto iterator_lower = values_.lower_bound(time);
+  if (iterator_lower != values_.end()) {
+    return iterator_lower->second;
+  }
+  auto iterator_upper = values_.upper_bound(time);
+  if (iterator_upper != values_.end()) {
+    return iterator_upper->second;
+  }
+  return default_value;
+}
+
 float GraphTrack::GetHeight() const {
   TimeGraphLayout& layout = time_graph_->GetLayout();
   float height = layout.GetTextBoxHeight() +
