@@ -68,8 +68,8 @@ class UprobesFunctionCallManager {
     function_call.set_end_timestamp_ns(end_timestamp);
     function_call.set_depth(tid_uprobes_stack.size() - 1);
     function_call.set_return_value(return_value);
-    for(uint64_t register : registers) {
-      function_call.add_registers(register);
+    for(uint64_t reg : registers) {
+      function_call.add_registers(reg);
     }
 
     tid_uprobes_stack.pop();
