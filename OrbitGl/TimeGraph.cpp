@@ -765,9 +765,9 @@ std::shared_ptr<GpuTrack> TimeGraph::GetOrCreateGpuTrack(
 //-----------------------------------------------------------------------------
 void SetTrackNameFromRemoteMemory(std::shared_ptr<Track> track,
                                   uint64_t string_address) {
-  PRINT_FUNC;
+  /*PRINT_FUNC;
   GOrbitApp->GetMainThreadExecutor()->Schedule([track, string_address](){
-  PRINT_FUNC;
+  PRINT_FUNC;*/
     const auto& thread_pool = GOrbitApp->GetThreadPool();
 
 
@@ -776,16 +776,20 @@ void SetTrackNameFromRemoteMemory(std::shared_ptr<Track> track,
       PRINT_VAR(pid);
       const auto& process_manager = GOrbitApp->GetProcessManager();
       auto error_or = process_manager->LoadNullTerminatedString(pid, string_address);
-      PRINT_VAR(error_or.error().message());
+      
       if(error_or) {
         PRINT_VAR(error_or.value());
         GOrbitApp->GetMainThreadExecutor()->Schedule([track, error_or](){
           ERROR("Setting track name from mainthread. (%s)", error_or.value().c_str());
           track->SetName(error_or.value());
+          track->SetLabel(error_or.value());
         });
+      } else {
+      
+      PRINT_VAR(error_or.error().message());
       }
     });
-  });
+  //});
 }
 
 //-----------------------------------------------------------------------------
