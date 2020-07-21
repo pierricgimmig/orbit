@@ -657,8 +657,6 @@ void TracerThread::ProcessSampleEvent(const perf_event_header& header,
     auto event = make_unique_for_overwrite<UretprobesPerfEvent>();
     ring_buffer->ConsumeRecord(header, &event->ring_buffer_record);
     constexpr size_t size_of_uretprobes = sizeof(perf_event_ax_sample);
-    ERROR("size_of_uretprobes: %u", size_of_uretprobes);
-    ERROR("header.size: %u", header.size);
     CHECK(header.size == size_of_uretprobes);
     if (event->GetPid() != pid_) {
       return;

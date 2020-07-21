@@ -51,6 +51,9 @@ class ProcessManager {
                                                         uint64_t address,
                                                         uint64_t size) = 0;
 
+  virtual ErrorMessageOr<std::string> LoadNullTerminatedString(
+      int32_t pid, uint64_t address, uint64_t max_size = 256) = 0;
+
   // Get symbols for a module
   virtual ErrorMessageOr<ModuleSymbols> LoadSymbols(
       const std::string& module_path) const = 0;

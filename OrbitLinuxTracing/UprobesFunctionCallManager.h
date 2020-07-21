@@ -36,7 +36,6 @@ class UprobesFunctionCallManager {
                       const perf_event_uprobe_regs& regs = dummy_regs) {
     auto& tid_uprobes_stack = tid_uprobes_stacks_[tid];
     tid_uprobes_stack.emplace(function_address, begin_timestamp, regs);
-    LOG("ProcessUprobes");
   }
 
   std::optional<FunctionCall> ProcessUretprobes(pid_t tid,

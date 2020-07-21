@@ -74,8 +74,6 @@ void GraphTrack::Draw(GlCanvas* canvas, bool picking) {
     previous_time = time;
     last_normalized_value = normalized_value;
   }
-
-  PRINT_VAR(GetValueAtTime(canvas->GetMouseTime()));
 }
 
 void GraphTrack::OnDrag(int /*x*/, int /*y*/) {}

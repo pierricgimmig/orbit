@@ -21,9 +21,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build_clang9_relwithdebinfo/bin/Orbit",
-      "args": [
-        "--local",
-      ],
+      "args": [],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/build_clang9_relwithdebinfo/bin/",
       "environment": [],

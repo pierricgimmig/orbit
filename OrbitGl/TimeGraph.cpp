@@ -314,63 +314,42 @@ void TimeGraph::ProcessOrbitFunctionTimer(const Function* function,
                                           const Timer& timer) {
   Function::OrbitType type = function->orbit_type();
 
-  /*
-    ORBIT_TIMER_START,
-    ORBIT_TIMER_STOP,
-    ORBIT_LOG,
-    ORBIT_OUTPUT_DEBUG_STRING,
-    UNREAL_ACTOR,
-    ALLOC,
-    FREE,
-    REALLOC,
-    ORBIT_DATA,
-    ORBIT_TIMER_START_ASYNC,
-    ORBIT_TIMER_STOP_ASYNC,
-    ORBIT_TRACK_INT,
-    ORBIT_TRACK_INT_64,
-    ORBIT_TRACK_UINT,
-    ORBIT_TRACK_UINT_64,
-    ORBIT_TRACK_FLOAT,
-    ORBIT_TRACK_DOUBLE,
-    ORBIT_TRACK_FLOAT_AS_INT,
-    ORBIT_TRACK_DOUBLE_AS_INT_64,
-  */
   switch (type) {
     case Function::ORBIT_TRACK_INT: {
-      uint64_t graph_id = timer.m_UserData[1];
-      int32_t value = static_cast<int32_t>(timer.m_UserData[2]);
+      uint64_t graph_id = timer.m_Registers[0];
+      int32_t value = static_cast<int32_t>(timer.m_Registers[1]);
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
     } break;
     case Function::ORBIT_TRACK_INT_64: {
-      uint64_t graph_id = timer.m_UserData[1];
-      int64_t value = static_cast<int64_t>(timer.m_UserData[2]);
+      uint64_t graph_id = timer.m_Registers[0];
+      int64_t value = static_cast<int64_t>(timer.m_Registers[1]);
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
     } break;
     case Function::ORBIT_TRACK_UINT: {
-      uint64_t graph_id = timer.m_UserData[1];
-      uint32_t value = static_cast<int32_t>(timer.m_UserData[2]);
+      uint64_t graph_id = timer.m_Registers[0];
+      uint32_t value = static_cast<int32_t>(timer.m_Registers[1]);
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
     } break;
     case Function::ORBIT_TRACK_UINT_64: {
-      uint64_t graph_id = timer.m_UserData[1];
-      uint64_t value = static_cast<int64_t>(timer.m_UserData[2]);
+      uint64_t graph_id = timer.m_Registers[0];
+      uint64_t value = static_cast<int64_t>(timer.m_Registers[1]);
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
     } break;
     case Function::ORBIT_TRACK_FLOAT_AS_INT: {
-      uint64_t graph_id = timer.m_UserData[1];
-      int32_t int_value = static_cast<int32_t>(timer.m_UserData[2]);
+      uint64_t graph_id = timer.m_Registers[0];
+      int32_t int_value = static_cast<int32_t>(timer.m_Registers[1]);
       float value = *(reinterpret_cast<float*>(&int_value));
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
       break;
     }
     case Function::ORBIT_TRACK_DOUBLE_AS_INT_64: {
-      uint64_t graph_id = timer.m_UserData[1];
-      int64_t int_value = static_cast<int64_t>(timer.m_UserData[2]);
+      uint64_t graph_id = timer.m_Registers[0];
+      int64_t int_value = static_cast<int64_t>(timer.m_Registers[1]);
       double value = *(reinterpret_cast<double*>(&int_value));
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
@@ -784,12 +763,39 @@ std::shared_ptr<GpuTrack> TimeGraph::GetOrCreateGpuTrack(
 }
 
 //-----------------------------------------------------------------------------
+void SetTrackNameFromRemoteMemory(std::shared_ptr<Track> track,
+                                  uint64_t string_address) {
+  PRINT_FUNC;
+  GOrbitApp->GetMainThreadExecutor()->Schedule([track, string_address](){
+  PRINT_FUNC;
+    const auto& thread_pool = GOrbitApp->GetThreadPool();
+
+
+    thread_pool->Schedule([track, string_address](){
+      int32_t pid = Capture::GTargetProcess->GetID();
+      PRINT_VAR(pid);
+      const auto& process_manager = GOrbitApp->GetProcessManager();
+      auto error_or = process_manager->LoadNullTerminatedString(pid, string_address);
+      PRINT_VAR(error_or.error().message());
+      if(error_or) {
+        PRINT_VAR(error_or.value());
+        GOrbitApp->GetMainThreadExecutor()->Schedule([track, error_or](){
+          ERROR("Setting track name from mainthread. (%s)", error_or.value().c_str());
+          track->SetName(error_or.value());
+        });
+      }
+    });
+  });
+}
+
+//-----------------------------------------------------------------------------
 std::shared_ptr<GraphTrack> TimeGraph::GetOrCreateGraphTrack(
     uint64_t graph_id) {
   ScopeLock lock(m_Mutex);
   std::shared_ptr<GraphTrack> track = graph_tracks_[graph_id];
   if (track == nullptr) {
     track = std::make_shared<GraphTrack>(this, graph_id);
+    SetTrackNameFromRemoteMemory(track, graph_id);
     tracks_.emplace_back(track);
     graph_tracks_[graph_id] = track;
   }
