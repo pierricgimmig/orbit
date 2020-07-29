@@ -20,6 +20,7 @@ message CaptureOptions {
     string file_path = 1;
     uint64 file_offset = 2;
     uint64 absolute_address = 3;
+    uint32 orbit_type = 4;
   }
   repeated InstrumentedFunction instrumented_functions = 5;
 

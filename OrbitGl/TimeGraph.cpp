@@ -77,13 +77,14 @@ void TimeGraph::SetFontSize(int a_FontSize) {
 
 //-----------------------------------------------------------------------------
 void TimeGraph::Clear() {
+  ScopeLock lock(m_Mutex);
+
   m_Batcher.Reset();
   m_SessionMinCounter = std::numeric_limits<uint64_t>::max();
   m_SessionMaxCounter = 0;
   m_ThreadCountMap.clear();
   GEventTracer.GetEventBuffer().Reset();
 
-  ScopeLock lock(m_Mutex);
   tracks_.clear();
   scheduler_track_ = nullptr;
   thread_tracks_.clear();
@@ -281,7 +282,7 @@ void TimeGraph::ProcessTimer(const Timer& a_Timer) {
       FunctionUtils::UpdateStats(func, a_Timer);
       if (FunctionUtils::IsOrbitFunc(*func)) {
         ProcessOrbitFunctionTimer(func, a_Timer);
-        return;
+        //return;
       }
     }
   }
@@ -329,13 +330,13 @@ void TimeGraph::ProcessOrbitFunctionTimer(const Function* function,
     } break;
     case Function::ORBIT_TRACK_UINT: {
       uint64_t graph_id = timer.m_Registers[0];
-      uint32_t value = static_cast<int32_t>(timer.m_Registers[1]);
+      uint32_t value = static_cast<uint32_t>(timer.m_Registers[1]);
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
     } break;
     case Function::ORBIT_TRACK_UINT_64: {
       uint64_t graph_id = timer.m_Registers[0];
-      uint64_t value = static_cast<int64_t>(timer.m_Registers[1]);
+      uint64_t value = static_cast<uint64_t>(timer.m_Registers[1]);
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, timer);
     } break;
@@ -355,9 +356,45 @@ void TimeGraph::ProcessOrbitFunctionTimer(const Function* function,
       track->AddValue(value, timer);
       break;
     }
+    case Function::ORBIT_TIMER_START:
+    //case Function::ORBIT_TIMER_STOP:
+      ProcessManualIntrumentationTimer(timer);
+      break;
     default:
       break;
   }
+}
+
+void TimeGraph::ProcessManualIntrumentationTimer(const Timer& timer) {
+  uint64_t string_address = timer.m_Registers[0];
+  if (!manual_instrumentation_strings_.contains(string_address)) {
+    // Prevent redundant string requests while the current request is in flight.
+    manual_instrumentation_strings_[string_address] = "";
+
+    const auto& thread_pool = GOrbitApp->GetThreadPool();
+    thread_pool->Schedule([this, string_address]() {
+      int32_t pid = Capture::GTargetProcess->GetID();
+      const auto& process_manager = GOrbitApp->GetProcessManager();
+      auto error_or_string =
+          process_manager->LoadNullTerminatedString(pid, string_address);
+
+      if (error_or_string) {
+        GOrbitApp->GetMainThreadExecutor()->Schedule(
+            [this, string_address, error_or_string]() {
+              manual_instrumentation_strings_[string_address] =
+                  error_or_string.value();
+                  PRINT_VAR(error_or_string.value());
+            });
+      } else {
+        ERROR("Error loading remote string %s", error_or_string.error().message());
+      }
+    });
+  }
+}
+
+const std::string& TimeGraph::GetManualInstrumentationString(
+    uint64_t string_address) {
+  return manual_instrumentation_strings_[string_address];
 }
 
 //-----------------------------------------------------------------------------
@@ -765,31 +802,25 @@ std::shared_ptr<GpuTrack> TimeGraph::GetOrCreateGpuTrack(
 //-----------------------------------------------------------------------------
 void SetTrackNameFromRemoteMemory(std::shared_ptr<Track> track,
                                   uint64_t string_address) {
-  /*PRINT_FUNC;
-  GOrbitApp->GetMainThreadExecutor()->Schedule([track, string_address](){
-  PRINT_FUNC;*/
-    const auto& thread_pool = GOrbitApp->GetThreadPool();
+  const auto& thread_pool = GOrbitApp->GetThreadPool();
 
+  thread_pool->Schedule([track, string_address](){
+    int32_t pid = Capture::GTargetProcess->GetID();
+    PRINT_VAR(pid);
+    const auto& process_manager = GOrbitApp->GetProcessManager();
+    auto error_or = process_manager->LoadNullTerminatedString(pid, string_address);
 
-    thread_pool->Schedule([track, string_address](){
-      int32_t pid = Capture::GTargetProcess->GetID();
-      PRINT_VAR(pid);
-      const auto& process_manager = GOrbitApp->GetProcessManager();
-      auto error_or = process_manager->LoadNullTerminatedString(pid, string_address);
-      
-      if(error_or) {
-        PRINT_VAR(error_or.value());
-        GOrbitApp->GetMainThreadExecutor()->Schedule([track, error_or](){
-          ERROR("Setting track name from mainthread. (%s)", error_or.value().c_str());
-          track->SetName(error_or.value());
-          track->SetLabel(error_or.value());
-        });
-      } else {
-      
-      PRINT_VAR(error_or.error().message());
-      }
-    });
-  //});
+    if(error_or) {
+      GOrbitApp->GetMainThreadExecutor()->Schedule([track, error_or](){
+        ERROR("Setting track name from mainthread. (%s)", error_or.value().c_str());
+        track->SetName(error_or.value());
+        track->SetLabel(error_or.value());
+      });
+    } else {
+
+    PRINT_VAR(error_or.error().message());
+    }
+  });
 }
 
 //-----------------------------------------------------------------------------

@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "LibunwindstackUnwinder.h"
+#include "ManualInstrumentation.h"
 #include "PerfEvent.h"
 #include "PerfEventVisitor.h"
 #include "UprobesFunctionCallManager.h"
@@ -57,11 +58,14 @@ class UprobesUnwindingVisitor : public PerfEventVisitor {
         std::move(discarded_samples_in_uretprobes_counter);
   }
 
-  void visit(StackSamplePerfEvent* event) override;
-  void visit(CallchainSamplePerfEvent* event) override;
-  void visit(UprobesPerfEvent* event) override;
-  void visit(UretprobesPerfEvent* event) override;
-  void visit(MapsPerfEvent* event) override;
+  void SetManualInstrumentationParams(
+      std::shared_ptr<ManualInstrumentationParams> params);
+
+  void visit(StackSamplePerfEvent* event) final;
+  void visit(CallchainSamplePerfEvent* event) final;
+  void visit(UprobesPerfEvent* event) final;
+  void visit(UretprobesPerfEvent* event) final;
+  void visit(MapsPerfEvent* event) final;
 
  private:
   UprobesFunctionCallManager function_call_manager_{};

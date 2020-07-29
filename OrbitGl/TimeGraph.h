@@ -43,7 +43,6 @@ class TimeGraph {
                                            ThreadID a_TID);
 
   void ProcessTimer(const Timer& a_Timer);
-  void ProcessOrbitFunctionTimer(const Function* function, const Timer& timer);
   void UpdateMaxTimeStamp(TickType a_Time);
 
   float GetThreadTotalHeight();
@@ -120,6 +119,7 @@ class TimeGraph {
   StringManager* GetStringManager() { return string_manager_.get(); }
   void OnPickedTimer(const Timer& timer);
   std::string GetFunctionTimerDescription(const Timer& timer) const;
+  const std::string& GetManualInstrumentationString(uint64_t string_address);
 
   void SetCurrentTextBoxes(const absl::flat_hash_map<uint64_t, const TextBox*>& boxes) {
     overlay_current_textboxes_ = boxes;
@@ -131,6 +131,9 @@ class TimeGraph {
   std::shared_ptr<ThreadTrack> GetOrCreateThreadTrack(ThreadID a_TID);
   std::shared_ptr<GpuTrack> GetOrCreateGpuTrack(uint64_t timeline_hash);
   std::shared_ptr<GraphTrack> GetOrCreateGraphTrack(uint64_t graph_id);
+
+  void ProcessOrbitFunctionTimer(const Function* function, const Timer& timer);
+  void ProcessManualIntrumentationTimer(const Timer& timer);
 
  private:
   TextRenderer m_TextRendererStatic;
@@ -192,6 +195,7 @@ class TimeGraph {
   std::shared_ptr<ThreadTrack> process_track_;
 
   std::shared_ptr<StringManager> string_manager_;
+  absl::flat_hash_map<uint64_t, std::string> manual_instrumentation_strings_;
 };
 
 extern TimeGraph* GCurrentTimeGraph;

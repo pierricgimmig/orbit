@@ -171,4 +171,9 @@ void UprobesUnwindingVisitor::visit(MapsPerfEvent* event) {
   current_maps_ = LibunwindstackUnwinder::ParseMaps(event->GetMaps());
 }
 
+void UprobesUnwindingVisitor::SetManualInstrumentationParams(
+      std::shared_ptr<ManualInstrumentationParams> ) {
+
+}
+
 }  // namespace LinuxTracing

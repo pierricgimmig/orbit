@@ -13,6 +13,7 @@
 #include <stack>
 #include <vector>
 
+#include "ManualInstrumentation.h"
 #include "absl/container/flat_hash_map.h"
 
 // Keeps a stack, for every thread, of the return addresses at the top of the

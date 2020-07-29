@@ -99,11 +99,17 @@ void NO_INLINE OrbitTest::BusyWork(uint64_t microseconds) {
   }
 }
 
+void NO_INLINE SleepFor2Millis() {
+  ORBIT_SCOPE("Sleep for 2 ms");
+  std::this_thread::sleep_for(std::chrono::milliseconds(2));
+}
+
 //-----------------------------------------------------------------------------
 void OrbitTest::ManualInstrumentationApiTest() {
 #if ORBIT_API_ENABLED
   while (!m_ExitRequested) {
     ORBIT_SCOPE("ORBIT_SCOPE_TEST");
+    SleepFor2Millis();
 
     ORBIT_START("ORBIT_START_TEST");
     std::this_thread::sleep_for(std::chrono::microseconds(500));

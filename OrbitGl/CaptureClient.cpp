@@ -45,6 +45,7 @@ void CaptureClient::Capture(
     instrumented_function->set_file_offset(FunctionUtils::Offset(*function));
     instrumented_function->set_absolute_address(
         FunctionUtils::GetAbsoluteAddress(*function));
+    instrumented_function->set_orbit_type(function->orbit_type());
   }
 
   if (!reader_writer_->Write(request)) {
