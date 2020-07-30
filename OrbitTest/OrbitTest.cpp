@@ -99,9 +99,16 @@ void NO_INLINE OrbitTest::BusyWork(uint64_t microseconds) {
   }
 }
 
+//-----------------------------------------------------------------------------
+void NO_INLINE SleepFor1Milli() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+
+//-----------------------------------------------------------------------------
 void NO_INLINE SleepFor2Millis() {
   ORBIT_SCOPE("Sleep for 2 ms");
-  std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  SleepFor1Milli();
+  SleepFor1Milli();
 }
 
 //-----------------------------------------------------------------------------
