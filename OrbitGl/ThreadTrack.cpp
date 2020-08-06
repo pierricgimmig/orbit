@@ -138,10 +138,15 @@ void ThreadTrack::SetTimesliceText(const TimerInfo& timer_info,
 
     text_box->SetElapsedTimeTextLength(time.length());
 
-    const char* name = nullptr;
     if (func) {
       std::string extra_info = GetExtraInfo(timer_info);
-      name = FunctionUtils::GetDisplayName(*func).c_str();
+      std::string name;
+      if(func->type() == FunctionInfo::kOrbitTimerStart) {
+        name = time_graph_->GetManualInstrumentationString(timer_info.registers(0));
+      } else {
+        name = FunctionUtils::GetDisplayName(*func).c_str();
+      }
+
       std::string text =
           absl::StrFormat("%s %s %s", name, extra_info.c_str(), time.c_str());
 

@@ -6,13 +6,29 @@
 
 #include "FunctionUtils.h"
 #include "OrbitBase/Logging.h"
-
 #include "absl/flags/flag.h"
 
 ABSL_DECLARE_FLAG(uint16_t, sampling_rate);
 ABSL_DECLARE_FLAG(bool, frame_pointer_unwinding);
 
 using orbit_client_protos::FunctionInfo;
+
+/*
+CaptureOptions::InstrumentedFunction::FunctionType type; UNUSED(type);
+FunctionInfo::OrbitType orbit_type; UNUSED(orbit_type);
+*/
+
+static CaptureOptions::InstrumentedFunction::FunctionType
+IntrumentedFunctionTypeFromOrbitType(FunctionInfo::OrbitType orbit_type) {
+  switch (orbit_type) {
+    case FunctionInfo::kOrbitTimerStart:
+      return CaptureOptions::InstrumentedFunction::kTimerStart;
+    case FunctionInfo::kOrbitTimerStop:
+      return CaptureOptions::InstrumentedFunction::kTimerStop;
+    default:
+      return CaptureOptions::InstrumentedFunction::kRegular;
+  }
+}
 
 void CaptureClient::Capture(
     int32_t pid, const std::map<uint64_t, FunctionInfo*>& selected_functions) {
@@ -38,6 +54,7 @@ void CaptureClient::Capture(
       capture_options->set_unwinding_method(CaptureOptions::kDwarf);
     }
   }
+
   capture_options->set_trace_gpu_driver(true);
   for (const auto& pair : selected_functions) {
     const FunctionInfo& function = *pair.second;
@@ -46,7 +63,9 @@ void CaptureClient::Capture(
     instrumented_function->set_file_path(function.loaded_module_path());
     instrumented_function->set_file_offset(FunctionUtils::Offset(function));
     instrumented_function->set_absolute_address(
-        FunctionUtils::GetAbsoluteAddress(function));
+        FunctionUtils::GetAbsoluteAddress(*function));
+    instrumented_function->set_function_type(
+        IntrumentedFunctionTypeFromOrbitType(function->type()));
   }
 
   if (!reader_writer_->Write(request)) {

@@ -93,6 +93,18 @@ void CaptureEventProcessor::ProcessFunctionCall(
   timer_info.set_processor(-1);
   timer_info.set_type(TimerInfo::kNone);
 
+  int num_registers = function_call.registers_size();
+  Timer timer;
+  constexpr int max_num_registers = std::size(timer.m_Registers);
+  if(num_registers > max_num_registers) {
+    ERROR("Received %i register values, max supported is %i", num_registers, max_num_registers);
+    num_registers = max_num_registers;
+  }
+
+  for(int i = 0; i < num_registers; ++i) {
+    timer.m_Registers[i] = function_call.registers(i);
+  }
+
   capture_listener_->OnTimer(timer_info);
 }
 

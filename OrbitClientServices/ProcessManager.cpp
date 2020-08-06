@@ -36,6 +36,9 @@ class ProcessManagerImpl final : public ProcessManager {
   ErrorMessageOr<std::string> LoadProcessMemory(int32_t pid, uint64_t address,
                                                 uint64_t size) override;
 
+  ErrorMessageOr<std::string> LoadNullTerminatedString(
+      int32_t pid, uint64_t address, uint64_t max_size) override;
+
   ErrorMessageOr<ModuleSymbols> LoadSymbols(
       const std::string& module_path) const override;
 
@@ -200,6 +203,18 @@ ErrorMessageOr<std::string> ProcessManagerImpl::LoadProcessMemory(
   }
 
   return std::move(*response.mutable_memory());
+}
+
+ErrorMessageOr<std::string> ProcessManagerImpl::LoadNullTerminatedString(
+      int32_t pid, uint64_t address, uint64_t max_size){
+  auto errorOrString = LoadProcessMemory(pid, address, max_size);
+  if(errorOrString) {
+    std::string str = errorOrString.value();
+    str[str.size()-1] = '\0';
+    errorOrString = str.c_str();
+  }
+
+  return errorOrString;
 }
 
 }  // namespace
