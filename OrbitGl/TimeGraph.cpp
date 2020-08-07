@@ -355,7 +355,6 @@ void TimeGraph::ProcessTimer(const TimerInfo& timer_info) {
       FunctionUtils::UpdateStats(func, timer_info);
       if (FunctionUtils::IsOrbitFunc(*func)) {
         ProcessOrbitFunctionTimer(func, timer_info);
-        return;
       }
     }
   }
@@ -389,34 +388,31 @@ void TimeGraph::ProcessOrbitFunctionTimer(const FunctionInfo* function,
                                           const TimerInfo& timer_info) {
   auto type = function->type();
   uint64_t time = timer_info.start();
+  CHECK(timer_info.registers_size() > 0);
+  uint64_t graph_id = timer_info.registers(0);
 
   switch (type) {
     case FunctionInfo::kOrbitTrackInt: {
-      uint64_t graph_id = timer_info.registers(0);
       int32_t value = static_cast<int32_t>(timer_info.registers(1));
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, time);
     } break;
     case FunctionInfo::kOrbitTrackInt64: {
-      uint64_t graph_id = timer_info.registers(0);
       int64_t value = static_cast<int64_t>(timer_info.registers(1));
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, time);
     } break;
     case FunctionInfo::kOrbitTrackUint: {
-      uint64_t graph_id = timer_info.registers(0);
       uint32_t value = static_cast<uint32_t>(timer_info.registers(1));
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, time);
     } break;
     case FunctionInfo::kOrbitTrackUint64: {
-      uint64_t graph_id = timer_info.registers(0);
       uint64_t value = static_cast<uint64_t>(timer_info.registers(1));
       auto track = GetOrCreateGraphTrack(graph_id);
       track->AddValue(value, time);
     } break;
     case FunctionInfo::kOrbitTrackFloatAsInt: {
-      uint64_t graph_id = timer_info.registers(0);
       int32_t int_value = static_cast<int32_t>(timer_info.registers(1));
       float value = *(reinterpret_cast<float*>(&int_value));
       auto track = GetOrCreateGraphTrack(graph_id);
@@ -424,7 +420,6 @@ void TimeGraph::ProcessOrbitFunctionTimer(const FunctionInfo* function,
       break;
     }
     case FunctionInfo::kOrbitTrackDoubleAsInt64: {
-      uint64_t graph_id = timer_info.registers(0);
       int64_t int_value = static_cast<int64_t>(timer_info.registers(1));
       double value = *(reinterpret_cast<double*>(&int_value));
       auto track = GetOrCreateGraphTrack(graph_id);
