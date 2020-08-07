@@ -76,14 +76,14 @@ void GraphTrack::Draw(GlCanvas* canvas, PickingMode picking_mode) {
 
 void GraphTrack::AddValue(double value, uint64_t time) {
   values_[time] = value;
-  if (value > max_) max_ = value;
-  if (value < min_) min_ = value;
+  max_ = std::max(max_, value);
+  min_ = std::min(min_, value);
   value_range_ = max_ - min_;
 
   if (value_range_ > 0) inv_value_range_ = 1.0 / value_range_;
 }
 
-double GraphTrack::GetValueAtTime(uint64_t time, double default_value) {
+double GraphTrack::GetValueAtTime(uint64_t time, double default_value) const {
   auto iterator_lower = values_.lower_bound(time);
   if (iterator_lower != values_.end()) {
     return iterator_lower->second;

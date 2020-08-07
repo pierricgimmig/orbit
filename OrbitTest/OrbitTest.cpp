@@ -106,7 +106,7 @@ void NO_INLINE SleepFor1Milli() {
 
 //-----------------------------------------------------------------------------
 void NO_INLINE SleepFor2Millis() {
-  ORBIT_SCOPE("Sleep for 2 ms");
+  ORBIT_SCOPE("Sleep for two milliseconds");
   SleepFor1Milli();
   SleepFor1Milli();
 }

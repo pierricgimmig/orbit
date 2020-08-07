@@ -436,23 +436,23 @@ void TimeGraph::ProcessOrbitFunctionTimer(const FunctionInfo* function,
 
 void TimeGraph::ProcessManualIntrumentationTimer(const TimerInfo& timer_info) {
   uint64_t string_address = timer_info.registers(0);
+
+  // Request remote string on first encounter of string_address.
   if (!manual_instrumentation_strings_.contains(string_address)) {
     // Prevent redundant string requests while the current request is in flight.
     manual_instrumentation_strings_[string_address] = "";
 
-    const auto& thread_pool = GOrbitApp->GetThreadPool();
-    thread_pool->Schedule([this, string_address]() {
+    GOrbitApp->GetThreadPool()->Schedule([this, string_address]() {
       int32_t pid = Capture::GTargetProcess->GetID();
       const auto& process_manager = GOrbitApp->GetProcessManager();
       auto error_or_string =
           process_manager->LoadNullTerminatedString(pid, string_address);
 
-      if (error_or_string) {
+      if (error_or_string.has_value()) {
         GOrbitApp->GetMainThreadExecutor()->Schedule(
             [this, string_address, error_or_string]() {
               manual_instrumentation_strings_[string_address] =
                   error_or_string.value();
-              PRINT_VAR(error_or_string.value());
             });
       } else {
         ERROR("Error loading remote string %s",
@@ -462,9 +462,10 @@ void TimeGraph::ProcessManualIntrumentationTimer(const TimerInfo& timer_info) {
   }
 }
 
-const std::string& TimeGraph::GetManualInstrumentationString(
-    uint64_t string_address) {
-  return manual_instrumentation_strings_[string_address];
+std::string TimeGraph::GetManualInstrumentationString(
+    uint64_t string_address) const {
+  auto it = manual_instrumentation_strings_.find(string_address);
+  return it == manual_instrumentation_strings_.end() ? "" : it->second;
 }
 
 //-----------------------------------------------------------------------------

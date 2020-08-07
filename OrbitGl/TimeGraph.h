@@ -147,7 +147,7 @@ class TimeGraph {
   Color GetThreadColor(ThreadID tid) const;
   void OnPickedTimer(const Timer& timer);
   std::string GetFunctionTimerDescription(const Timer& timer) const;
-  const std::string& GetManualInstrumentationString(uint64_t string_address);
+  std::string GetManualInstrumentationString(uint64_t string_address) const;
 
   void SetIteratorOverlayData(
       const absl::flat_hash_map<uint64_t, const TextBox*>& iterator_text_boxes,
@@ -221,7 +221,7 @@ class TimeGraph {
   mutable Mutex m_Mutex;
   std::vector<std::shared_ptr<Track>> tracks_;
   std::unordered_map<ThreadID, std::shared_ptr<ThreadTrack>> thread_tracks_;
-  std::unordered_map<uint64_t, std::shared_ptr<GraphTrack>> graph_tracks_;
+  absl::flat_hash_map<uint64_t, std::shared_ptr<GraphTrack>> graph_tracks_;
   // Mapping from timeline hash to GPU tracks.
   std::unordered_map<uint64_t, std::shared_ptr<GpuTrack>> gpu_tracks_;
   std::vector<std::shared_ptr<Track>> sorted_tracks_;
