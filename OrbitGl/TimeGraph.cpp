@@ -162,6 +162,8 @@ void TimeGraph::Zoom(const TextBox* a_TextBox) {
 
 //-----------------------------------------------------------------------------
 double TimeGraph::GetCaptureTimeSpanUs() {
+  PRINT_VAR(capture_min_timestamp_);
+  PRINT_VAR(capture_max_timestamp_);
   if (UpdateCaptureMinMaxTimestamps()) {
     return TicksToMicroseconds(capture_min_timestamp_, capture_max_timestamp_);
   }

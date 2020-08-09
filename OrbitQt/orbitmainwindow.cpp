@@ -272,7 +272,6 @@ void OrbitMainWindow::SetupCaptureToolbar() {
   QIcon icon_open = GetIcon("outline_folder_white_48dp.png");
   QIcon icon_save = GetIcon("outline_save_alt_white_48dp.png");
   QIcon icon_help = GetIcon("outline_help_outline_white_48dp.png");
-  QIcon icon_feedback = GetIcon("outline_feedback_white_48dp.png");
   QIcon icon_search = GetIcon("outline_search_white_48dp.png");
   QIcon icon_filter = GetIcon("outline_filter_list_white_48dp.png");
   QIcon icon_timer = GetIcon("outline_access_time_white_48dp.png");
@@ -284,7 +283,6 @@ void OrbitMainWindow::SetupCaptureToolbar() {
   ui->actionOpen_Capture->setIcon(icon_open);
   ui->actionSave_Capture->setIcon(icon_save);
   ui->actionHelp->setIcon(icon_help);
-  ui->actionFeedback->setIcon(icon_feedback);
   ui->actionFilter_Functions->setIcon(icon_search);
   ui->actionFilter_Tracks->setIcon(icon_filter);
 
@@ -295,7 +293,6 @@ void OrbitMainWindow::SetupCaptureToolbar() {
   toolbar->addAction(ui->actionOpen_Capture);
   toolbar->addAction(ui->actionSave_Capture);
   toolbar->addAction(ui->actionHelp);
-  toolbar->addAction(ui->actionFeedback);
 
   // Filter tracks.
   toolbar->addWidget(CreateSpacer(toolbar));
