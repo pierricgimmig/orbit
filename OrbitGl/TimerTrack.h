@@ -27,7 +27,7 @@ class TimerTrack : public Track {
 
   // Pickable
   void Draw(GlCanvas* canvas, PickingMode picking_mode) override;
-  void OnTimer(const orbit_client_protos::TimerInfo& timer_info);
+  virtual void OnTimer(const orbit_client_protos::TimerInfo& timer_info);
   [[nodiscard]] std::string GetTooltip() const override;
 
   // Track

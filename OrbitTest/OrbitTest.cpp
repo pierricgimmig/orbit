@@ -85,14 +85,43 @@ void NO_INLINE OrbitTest::BusyWork(uint64_t microseconds) {
   }
 }
 
-void NO_INLINE SleepFor1Ms() { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+static void NO_INLINE SleepFor1Ms() { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
 
-void NO_INLINE SleepFor2Ms() {
+static void NO_INLINE SleepFor2Ms() {
   ORBIT_SCOPE("Sleep for two milliseconds");
   ORBIT_SCOPE_WITH_COLOR("Sleep for two milliseconds", orbit::Color::kTeal);
   ORBIT_SCOPE_WITH_COLOR("Sleep for two milliseconds", orbit::Color::kOrange);
   SleepFor1Ms();
   SleepFor1Ms();
+}
+
+static void ExecuteTask(uint32_t id) {
+  static const std::vector<uint32_t> sleep_times_ms = {10, 200, 20,  300, 60,  100, 150,
+                                                       20, 30,  320, 380, 400, 450, 500};
+  uint32_t sleep_time = sleep_times_ms[id % sleep_times_ms.size()];
+  ORBIT_START_ASYNC("ORBIT_ASYNC_TASKS", id);
+  std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
+  std::string str = absl::StrFormat(
+      "This is a very long dynamic string: The quick brown fox jumps over the lazy dog. This "
+      "string is associated with task id %u. We slept for %u ms.",
+      id, sleep_time);
+  ORBIT_ASYNC_STRING(str.c_str(), id);
+  ORBIT_STOP_ASYNC(id);
+}
+
+static void LaunchTasks() {
+  static uint32_t task_id = 0;
+  constexpr uint32_t kNumTaskThreads = 10;
+  std::vector<std::thread> threads;
+  for (int i = 0; i < kNumTaskThreads; ++i) {
+    uint32_t id = ++task_id;
+    threads.emplace_back(std::thread([id]() { ExecuteTask(id); }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  for (auto& thread : threads) {
+    thread.join();
+  }
 }
 
 void OrbitTest::ManualInstrumentationApiTest() {
@@ -139,6 +168,7 @@ void OrbitTest::ManualInstrumentationApiTest() {
       ORBIT_DOUBLE(track_name.c_str(), cos(double_var * static_cast<double>(i)));
     }
 
+    LaunchTasks();
     std::this_thread::sleep_for(std::chrono::milliseconds(15));
   }
 #endif

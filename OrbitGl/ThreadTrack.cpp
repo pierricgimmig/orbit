@@ -50,7 +50,6 @@ std::string ThreadTrack::GetBoxTooltip(PickingId id) const {
 
   const FunctionInfo* func =
       GOrbitApp->GetCaptureData().GetSelectedFunction(text_box->GetTimerInfo().function_address());
-  CHECK(func != nullptr);
 
   if (!func) {
     return text_box->GetText();
@@ -199,10 +198,10 @@ void ThreadTrack::SetTimesliceText(const TimerInfo& timer_info, double elapsed_u
           time.c_str());
       text_box->SetText(text);
     } else {
-      ERROR(
-          "Unexpected case in ThreadTrack::SetTimesliceText, function=\"%s\", "
-          "type=%d",
-          func->name(), static_cast<int>(timer_info.type()));
+      // ERROR(
+      //     "Unexpected case in ThreadTrack::SetTimesliceText, function=\"%s\", "
+      //     "type=%d",
+      //     func->name(), static_cast<int>(timer_info.type()));
     }
   }
 

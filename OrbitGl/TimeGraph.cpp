@@ -46,6 +46,11 @@ TimeGraph::TimeGraph() : m_Batcher(BatcherId::kTimeGraph) {
 
   // The process track is a special ThreadTrack of id "kAllThreadsFakeTid".
   process_track_ = GetOrCreateThreadTrack(SamplingProfiler::kAllThreadsFakeTid);
+
+  manual_instrumentation_manager_ = std::make_unique<ManualInstrumentationManager>(
+      [this](const std::string& name, const TimerInfo& timer_info) {
+        ProcessAsyncSpan(name, timer_info);
+      });
 }
 
 Color TimeGraph::GetThreadColor(int32_t tid) const {
@@ -308,9 +313,8 @@ void TimeGraph::ProcessTimer(const TimerInfo& timer_info, const FunctionInfo* fu
     capture_max_timestamp_ = timer_info.end();
   }
 
-  if (function != nullptr && function->type() == FunctionInfo::kOrbitTrackValue) {
-    ProcessValueTrackingTimer(timer_info);
-    return;
+  if (function != nullptr && function->type() != FunctionInfo::kNone) {
+    ProcessOrbitFunctionTimer(function->type(), timer_info);
   }
 
   if (timer_info.type() == TimerInfo::kGpuActivity) {
@@ -334,6 +338,21 @@ void TimeGraph::ProcessTimer(const TimerInfo& timer_info, const FunctionInfo* fu
   }
 
   NeedsUpdate();
+}
+
+void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
+                                          const TimerInfo& timer_info) {
+  switch (type) {
+    case FunctionInfo::kOrbitTrackValue:
+      ProcessValueTrackingTimer(timer_info);
+      break;
+    case FunctionInfo::kOrbitTimerStartAsync:
+    case FunctionInfo::kOrbitTimerStopAsync:
+      ProcessAsyncTimer(timer_info);
+      break;
+    default:
+      break;
+  }
 }
 
 void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
@@ -360,10 +379,23 @@ void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
     case orbit_api::kTrackDouble: {
       track->AddValue(orbit_api::Decode<double>(event.value), time);
     } break;
+    case orbit_api::kString: {
+      manual_instrumentation_manager_->ProcessStringEvent(event);
+    }
     default:
       ERROR("Unsupported value tracking type [%u]", event.type);
       break;
   }
+}
+
+void TimeGraph::ProcessAsyncTimer(const TimerInfo& timer_info) {
+  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  manual_instrumentation_manager_->ProcessAsyncEvent(event, timer_info);
+}
+
+void TimeGraph::ProcessAsyncSpan(const std::string& track_name, const TimerInfo& timer_info) {
+  auto track = GetOrCreateAsyncTrack(track_name);
+  track->OnTimer(timer_info);
 }
 
 uint32_t TimeGraph::GetNumTimers() const {
@@ -793,6 +825,18 @@ GraphTrack* TimeGraph::GetOrCreateGraphTrack(const std::string& name) {
   return track.get();
 }
 
+AsyncTrack* TimeGraph::GetOrCreateAsyncTrack(const std::string& name) {
+  ScopeLock lock(m_Mutex);
+  std::shared_ptr<AsyncTrack> track = async_tracks_[name];
+  if (track == nullptr) {
+    track = std::make_shared<AsyncTrack>(this, name);
+    tracks_.emplace_back(track);
+    async_tracks_[name] = track;
+  }
+
+  return track.get();
+}
+
 void TimeGraph::SetThreadFilter(const std::string& a_Filter) {
   m_ThreadFilter = a_Filter;
   NeedsUpdate();
@@ -868,6 +912,11 @@ void TimeGraph::SortTracks() {
     // Graph Tracks.
     for (const auto& graph_track : graph_tracks_) {
       sorted_tracks_.emplace_back(graph_track.second);
+    }
+
+    // Async Tracks.
+    for (const auto& async_track : async_tracks_) {
+      sorted_tracks_.emplace_back(async_track.second);
     }
 
     // Process Track.
