@@ -357,6 +357,12 @@ void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
 
 void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
   orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+
+  if (event.type == orbit_api::kString) {
+    manual_instrumentation_manager_->ProcessStringEvent(event);
+    return;
+  }
+
   auto track = GetOrCreateGraphTrack(event.name);
   uint64_t time = timer_info.start();
 
@@ -378,9 +384,6 @@ void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
     } break;
     case orbit_api::kTrackDouble: {
       track->AddValue(orbit_api::Decode<double>(event.value), time);
-    } break;
-    case orbit_api::kString: {
-      manual_instrumentation_manager_->ProcessStringEvent(event);
     } break;
     default:
       ERROR("Unsupported value tracking type [%u]", event.type);

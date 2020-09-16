@@ -21,6 +21,10 @@ class AsyncTrack : public ThreadTrack {
   void Draw(GlCanvas* canvas, PickingMode picking_mode) override;
   void UpdatePrimitives(uint64_t min_tick, uint64_t max_tick, PickingMode picking_mode) override;
 
+  protected:
+  void SetTimesliceText(const orbit_client_protos::TimerInfo& timer, double elapsed_us, float min_x,
+                        TextBox* text_box) override;
+
   absl::flat_hash_map<uint32_t, uint64_t> max_span_time_by_depth_;
 };
 

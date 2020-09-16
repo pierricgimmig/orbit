@@ -145,6 +145,9 @@ class TimeGraph {
 
   void OnAsyncSpan(const orbit_client_protos::TimerInfo& begin,
                    const orbit_client_protos::TimerInfo& end);
+  ManualInstrumentationManager* GetManualInstrumentationManager() {
+    return manual_instrumentation_manager_.get();
+  }
 
  protected:
   std::shared_ptr<SchedulerTrack> GetOrCreateSchedulerTrack();

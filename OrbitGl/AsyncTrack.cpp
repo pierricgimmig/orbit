@@ -3,6 +3,11 @@
 // found in the LICENSE file.
 
 #include "AsyncTrack.h"
+#include "GlCanvas.h"
+#include "ManualInstrumentationManager.h"
+#include "TimeGraph.h"
+
+using orbit_client_protos::TimerInfo;
 
 AsyncTrack::AsyncTrack(TimeGraph* time_graph, const std::string& name)
     : ThreadTrack(time_graph, -1) {
@@ -32,4 +37,26 @@ void AsyncTrack::OnTimer(const orbit_client_protos::TimerInfo& timer_info) {
   orbit_client_protos::TimerInfo new_timer_info = timer_info;
   new_timer_info.set_depth(depth);
   ThreadTrack::OnTimer(new_timer_info);
+}
+
+void AsyncTrack::SetTimesliceText(const TimerInfo& timer_info, double elapsed_us, float min_x,
+                                   TextBox* text_box) {
+  TimeGraphLayout layout = time_graph_->GetLayout();
+  std::string time = GetPrettyTime(absl::Microseconds(elapsed_us));
+  text_box->SetElapsedTimeTextLength(time.length());
+
+  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  std::string name = time_graph_->GetManualInstrumentationManager()->GetString(event.id);
+  std::string text = absl::StrFormat(
+      "%s %s", event.name, time.c_str());
+  text_box->SetText(text);
+
+  const Color kTextWhite(255, 255, 255, 255);
+  const Vec2& box_pos = text_box->GetPos();
+  const Vec2& box_size = text_box->GetSize();
+  float pos_x = std::max(box_pos[0], min_x);
+  float max_size = box_pos[0] + box_size[0] - pos_x;
+  text_renderer_->AddTextTrailingCharsPrioritized(
+      text_box->GetText().c_str(), pos_x, text_box->GetPos()[1] + layout.GetTextOffset(),
+      GlCanvas::kZValueText, kTextWhite, text_box->GetElapsedTimeTextLength(), max_size);
 }

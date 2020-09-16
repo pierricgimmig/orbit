@@ -37,6 +37,7 @@ class ManualInstrumentationManager {
   void ProcessAsyncEvent(const orbit_api::Event& event,
                          const orbit_client_protos::TimerInfo& timer_info);
   void ProcessStringEvent(const orbit_api::Event& event);
+  std::string GetString(uint32_t id) { return string_manager_.Get(id).value_or (""); }
 
  private:
   TimerInfoCallback timer_info_callback_;
