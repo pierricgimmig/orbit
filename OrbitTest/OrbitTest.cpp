@@ -113,7 +113,7 @@ static void LaunchTasks() {
   static uint32_t task_id = 0;
   constexpr uint32_t kNumTaskThreads = 10;
   std::vector<std::thread> threads;
-  for (int i = 0; i < kNumTaskThreads; ++i) {
+  for (size_t i = 0; i < kNumTaskThreads; ++i) {
     uint32_t id = ++task_id;
     threads.emplace_back(std::thread([id]() { ExecuteTask(id); }));
     std::this_thread::sleep_for(std::chrono::milliseconds(10));

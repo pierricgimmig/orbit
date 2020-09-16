@@ -381,7 +381,7 @@ void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
     } break;
     case orbit_api::kString: {
       manual_instrumentation_manager_->ProcessStringEvent(event);
-    }
+    } break;
     default:
       ERROR("Unsupported value tracking type [%u]", event.type);
       break;

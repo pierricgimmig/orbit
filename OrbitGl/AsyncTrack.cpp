@@ -12,7 +12,7 @@ AsyncTrack::AsyncTrack(TimeGraph* time_graph, const std::string& name)
 
 std::string AsyncTrack::GetTooltip() const { return "AsyncTrack tooltip"; }
 
-[[nodiscard]] std::string AsyncTrack::GetBoxTooltip(PickingId id) const {
+[[nodiscard]] std::string AsyncTrack::GetBoxTooltip(PickingId) const {
   return "AsyncTrack box tooltip";
 }
 
@@ -28,7 +28,7 @@ void AsyncTrack::OnTimer(const orbit_client_protos::TimerInfo& timer_info) {
   uint32_t depth = 0;
   while (max_span_time_by_depth_[depth] > timer_info.start()) ++depth;
   max_span_time_by_depth_[depth] = timer_info.end();
-  
+
   orbit_client_protos::TimerInfo new_timer_info = timer_info;
   new_timer_info.set_depth(depth);
   ThreadTrack::OnTimer(new_timer_info);
