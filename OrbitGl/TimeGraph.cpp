@@ -66,6 +66,13 @@ Color TimeGraph::GetThreadColor(int32_t tid) const {
   return s_ThreadColors[tid % s_ThreadColors.size()];
 }
 
+Color TimeGraph::GetColor(uint64_t id) const {
+  uint32_t truncated_id = static_cast<uint32_t>(id);
+  return GetThreadColor(truncated_id);
+}
+
+Color TimeGraph::GetColor(const std::string& str) const { return GetColor(StringHash(str)); }
+
 void TimeGraph::SetStringManager(std::shared_ptr<StringManager> str_manager) {
   string_manager_ = std::move(str_manager);
 }
@@ -96,6 +103,7 @@ void TimeGraph::Clear() {
   thread_tracks_.clear();
   gpu_tracks_.clear();
   graph_tracks_.clear();
+  async_tracks_.clear();
 
   cores_seen_.clear();
   scheduler_track_ = GetOrCreateSchedulerTrack();

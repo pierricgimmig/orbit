@@ -129,6 +129,8 @@ class TimeGraph {
   const TextBox* FindDown(const TextBox* from);
 
   Color GetThreadColor(int32_t tid) const;
+  Color GetColor(uint64_t id) const;
+  Color GetColor(const std::string& str) const;
 
   void SetIteratorOverlayData(
       const absl::flat_hash_map<uint64_t, const TextBox*>& iterator_text_boxes,

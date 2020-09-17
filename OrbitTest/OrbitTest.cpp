@@ -33,8 +33,17 @@ void SetThreadName(const std::string& a_Name) {
 #endif
 }
 
+OrbitTest::OrbitTest() { Init(); }
+
 OrbitTest::OrbitTest(uint32_t num_threads, uint32_t recurse_depth, uint32_t sleep_us)
-    : num_threads_(num_threads), recurse_depth_(recurse_depth), sleep_us_(sleep_us) {}
+    : num_threads_(num_threads), recurse_depth_(recurse_depth), sleep_us_(sleep_us) {
+  Init();
+}
+
+void OrbitTest::Init() {
+  const size_t kNumWorkers = 10;
+  thread_pool_ = ThreadPool::Create(kNumWorkers, kNumWorkers, absl::Milliseconds(500));
+}
 
 OrbitTest::~OrbitTest() {
   m_ExitRequested = true;
@@ -109,21 +118,6 @@ static void ExecuteTask(uint32_t id) {
   ORBIT_STOP_ASYNC(id);
 }
 
-static void LaunchTasks() {
-  static uint32_t task_id = 0;
-  constexpr uint32_t kNumTaskThreads = 10;
-  std::vector<std::thread> threads;
-  for (size_t i = 0; i < kNumTaskThreads; ++i) {
-    uint32_t id = ++task_id;
-    threads.emplace_back(std::thread([id]() { ExecuteTask(id); }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-
-  for (auto& thread : threads) {
-    thread.join();
-  }
-}
-
 void OrbitTest::ManualInstrumentationApiTest() {
 #if ORBIT_API_ENABLED
   while (!m_ExitRequested) {
@@ -168,8 +162,14 @@ void OrbitTest::ManualInstrumentationApiTest() {
       ORBIT_DOUBLE(track_name.c_str(), cos(double_var * static_cast<double>(i)));
     }
 
-    LaunchTasks();
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+    // Asyn spans.
+    static uint32_t task_id = 0;
+    size_t kNumTasksToSchedule = 10;
+    for (size_t i = 0; i < kNumTasksToSchedule; ++i) {
+      uint32_t id = ++task_id;
+      thread_pool_->Schedule([id]() { ExecuteTask(id); });
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
   }
 #endif
 }

@@ -23,10 +23,6 @@ ABSL_FLAG(bool, show_return_values, false, "Show return values on time slices");
 
 TimerTrack::TimerTrack(TimeGraph* time_graph) : Track(time_graph) {
   text_renderer_ = time_graph->GetTextRenderer();
-
-  num_timers_ = 0;
-  min_time_ = std::numeric_limits<uint64_t>::max();
-  max_time_ = std::numeric_limits<uint64_t>::min();
 }
 
 void TimerTrack::Draw(GlCanvas* canvas, PickingMode picking_mode) {

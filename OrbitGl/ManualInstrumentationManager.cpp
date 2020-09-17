@@ -20,8 +20,7 @@ void ManualInstrumentationManager::ProcessAsyncEvent(
       const TimerInfo& start_timer_info = it->second;
       orbit_api::Event start_event = ApiEventFromTimerInfo(start_timer_info);
 
-      TimerInfo async_span;
-      async_span.set_start(start_timer_info.start());
+      TimerInfo async_span = start_timer_info;
       async_span.set_end(timer_info.end());
       timer_info_callback_(start_event.name, async_span);
     }
