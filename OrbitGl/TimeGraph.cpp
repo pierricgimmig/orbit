@@ -301,13 +301,10 @@ void TimeGraph::ProcessTimer(const TimerInfo& timer_info, const FunctionInfo* fu
   } else if (timer_info.type() == TimerInfo::kFrame) {
     std::shared_ptr<FrameTrack> track = GetOrCreateFrameTrack(*function);
     track->OnTimer(timer_info);
+  } else if (timer_info.type() == TimerInfo::kIntrospection) {
+    ProcessIntrospectionTimer(timer_info);
   } else {
     std::shared_ptr<ThreadTrack> track = GetOrCreateThreadTrack(timer_info.thread_id());
-    if (timer_info.type() == TimerInfo::kIntrospection) {
-      const Color kGreenIntrospection(87, 166, 74, 255);
-      track->SetColor(kGreenIntrospection);
-    }
-
     if (timer_info.type() != TimerInfo::kCoreActivity) {
       track->OnTimer(timer_info);
       ++thread_count_map_[timer_info.thread_id()];
@@ -332,12 +329,38 @@ void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
       ProcessValueTrackingTimer(timer_info);
       break;
     case FunctionInfo::kOrbitTimerStartAsync:
-      [[fallthrough]];
     case FunctionInfo::kOrbitTimerStopAsync:
       manual_instrumentation_manager_->ProcessAsyncTimer(timer_info);
       break;
     default:
       break;
+  }
+}
+
+void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
+  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+
+  switch (event.type) {
+    case orbit_api::kScopeStart: {
+      std::shared_ptr<ThreadTrack> track = GetOrCreateThreadTrack(timer_info.thread_id());
+      const Color kGreenIntrospection(87, 166, 74, 255);
+      track->SetColor(kGreenIntrospection);
+      track->OnTimer(timer_info);
+      ++thread_count_map_[timer_info.thread_id()];
+    } break;
+    case orbit_api::kScopeStartAsync:
+      break;
+    case orbit_api::kTrackInt:
+    case orbit_api::kTrackInt64:
+    case orbit_api::kTrackUint:
+    case orbit_api::kTrackUint64:
+    case orbit_api::kTrackFloat:
+    case orbit_api::kTrackDouble:
+    case orbit_api::kString:
+      ProcessValueTrackingTimer(timer_info);
+      break;
+    default:
+      ERROR("Unhandled introspection type");
   }
 }
 
