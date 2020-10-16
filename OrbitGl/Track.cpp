@@ -94,7 +94,7 @@ void Track::Draw(GlCanvas* canvas, PickingMode picking_mode) {
   if (!picking) {
     if (layout.GetDrawTrackBackground()) {
       Box box(Vec2(x0, y0 + top_margin), Vec2(size_[0], -size_[1] - top_margin), track_z);
-      batcher->AddBox(box, GlCanvas::kTabColor, shared_from_this());
+      batcher->AddBox(box, color_, shared_from_this());
     }
   }
 

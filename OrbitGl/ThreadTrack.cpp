@@ -240,10 +240,8 @@ void ThreadTrack::SetTimesliceText(const TimerInfo& timer_info, double elapsed_u
 
       text_box->SetText(text);
     } else if (timer_info.type() == TimerInfo::kIntrospection) {
-      std::string text = absl::StrFormat(
-          "%s %s", time_graph_->GetStringManager()->Get(timer_info.user_data_key()).value_or(""),
-          time.c_str());
-      text_box->SetText(text);
+      auto api_event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+      text_box->SetText(api_event.name);
     } else {
       ERROR(
           "Unexpected case in ThreadTrack::SetTimesliceText, function=\"%s\", "
