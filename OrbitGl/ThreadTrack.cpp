@@ -53,7 +53,6 @@ std::string ThreadTrack::GetBoxTooltip(PickingId id) const {
 
   const FunctionInfo* func =
       GOrbitApp->GetCaptureData().GetSelectedFunction(text_box->GetTimerInfo().function_address());
-  CHECK(func != nullptr);
 
   if (!func) {
     return text_box->GetText();
