@@ -4,7 +4,10 @@
 
 #include "LinuxTracingGrpcHandler.h"
 
+#include "absl/flags/flag.h"
 #include "llvm/Demangle/Demangle.h"
+
+ABSL_DECLARE_FLAG(bool, devmode);
 
 namespace orbit_service {
 
@@ -21,27 +24,6 @@ using orbit_grpc_protos::SchedulingSlice;
 using orbit_grpc_protos::ThreadName;
 using orbit_grpc_protos::ThreadStateSlice;
 
-orbit_grpc_protos::IntrospectionCall IntrospectionCallFromTracingScope(
-    const orbit::tracing::Scope& scope) {
-  IntrospectionCall introspection_call;
-  FunctionCall& function_call = *introspection_call.mutable_function_call();
-  function_call.set_tid(scope.tid);
-  function_call.set_pid(getpid());
-  function_call.set_begin_timestamp_ns(scope.begin);
-  function_call.set_end_timestamp_ns(scope.end);
-  function_call.set_depth(scope.depth);
-
-  function_call.mutable_registers()->Reserve(6);
-  function_call.add_registers(scope.encoded_event.args[0]);
-  function_call.add_registers(scope.encoded_event.args[1]);
-  function_call.add_registers(scope.encoded_event.args[2]);
-  function_call.add_registers(scope.encoded_event.args[3]);
-  function_call.add_registers(scope.encoded_event.args[4]);
-  function_call.add_registers(scope.encoded_event.args[5]);
-
-  return introspection_call;
-}
-
 void LinuxTracingGrpcHandler::Start(CaptureOptions capture_options) {
   CHECK(tracer_ == nullptr);
   CHECK(!sender_thread_.joinable());
@@ -57,9 +39,31 @@ void LinuxTracingGrpcHandler::Start(CaptureOptions capture_options) {
 
   sender_thread_ = std::thread{[this] { SenderThread(); }};
 
+  if (absl::GetFlag(FLAGS_devmode)) {
+    SetupIntrospection();
+  }
+}
+
+void LinuxTracingGrpcHandler::SetupIntrospection() {
   orbit_tracing_listener_ =
       std::make_unique<orbit::tracing::Listener>([this](const orbit::tracing::Scope& scope) {
-        OnIntrospectionCall(IntrospectionCallFromTracingScope(scope));
+        IntrospectionCall introspection_call;
+        FunctionCall& function_call = *introspection_call.mutable_function_call();
+
+        function_call.set_tid(scope.tid);
+        function_call.set_pid(getpid());
+        function_call.set_begin_timestamp_ns(scope.begin);
+        function_call.set_end_timestamp_ns(scope.end);
+        function_call.set_depth(scope.depth);
+        function_call.mutable_registers()->Reserve(6);
+        function_call.add_registers(scope.encoded_event.args[0]);
+        function_call.add_registers(scope.encoded_event.args[1]);
+        function_call.add_registers(scope.encoded_event.args[2]);
+        function_call.add_registers(scope.encoded_event.args[3]);
+        function_call.add_registers(scope.encoded_event.args[4]);
+        function_call.add_registers(scope.encoded_event.args[5]);
+
+        OnIntrospectionCall(introspection_call);
       });
 }
 
@@ -290,11 +294,12 @@ void LinuxTracingGrpcHandler::SenderThread() {
 }
 
 void LinuxTracingGrpcHandler::SendBufferedEvents(std::vector<CaptureEvent>&& buffered_events) {
-  ORBIT_UINT64("LinuxTracingGrpcHandler NumBufferedEvents", buffered_events.size());
-  ORBIT_START_ASYNC("LinuxTracingGrpcHandler::SendBufferedEvents", 0);
   if (buffered_events.empty()) {
     return;
   }
+
+  ORBIT_SCOPE("GrpcHandler::SendBufferedEvents");
+  ORBIT_UINT64("Number of sent buffered events", buffered_events.size());
   constexpr uint64_t kMaxEventsPerResponse = 10'000;
   CaptureResponse response;
   for (CaptureEvent& event : buffered_events) {
@@ -308,8 +313,6 @@ void LinuxTracingGrpcHandler::SendBufferedEvents(std::vector<CaptureEvent>&& buf
     response.mutable_capture_events()->Add(std::move(event));
   }
   reader_writer_->Write(response);
-
-  ORBIT_STOP_ASYNC(0);
 }
 
 }  // namespace orbit_service

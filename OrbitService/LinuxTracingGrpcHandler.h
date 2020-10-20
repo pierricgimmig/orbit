@@ -67,6 +67,7 @@ class LinuxTracingGrpcHandler : public LinuxTracing::TracerListener {
   absl::flat_hash_set<uint64_t> tracepoint_keys_sent_;
   absl::Mutex tracepoint_keys_sent_mutex_;
 
+  void SetupIntrospection();
   void SenderThread();
   void SendBufferedEvents(std::vector<orbit_grpc_protos::CaptureEvent>&& buffered_events);
 

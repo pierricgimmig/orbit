@@ -188,7 +188,7 @@ Color Track::GetBackGroundColor() const {
     const Color kTrackSelectedColor(50, 57, 255, 255);
     return kTrackSelectedColor;
   } else if (process_id_ != -1 && process_id_ != capture_process_id) {
-    const Color kExternalProcessColor(99, 57, 116, 255);
+    const Color kExternalProcessColor(30, 30, 40, 255);
     return kExternalProcessColor;
   }
 

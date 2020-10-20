@@ -14,6 +14,8 @@
 #include "../../../Orbit.h"
 #include "OrbitBase/ThreadPool.h"
 
+#define ORBIT_SCOPE_FUNCTION ORBIT_SCOPE(__FUNCTION__)
+
 namespace orbit::tracing {
 
 struct Scope {
