@@ -87,9 +87,21 @@ void Stop() {
   GetThreadLocalScopes().pop_back();
 }
 
-// Will be implemented shortly.
-void StartAsync(const char*, uint64_t, orbit::Color) { CHECK(0); }
-void StopAsync(uint64_t) { CHECK(0); }
+void StartAsync(const char* name, uint64_t id, orbit::Color color) {
+  orbit::tracing::Scope scope(orbit_api::kScopeStartAsync, name, id, color);
+  scope.begin = MonotonicTimestampNs();
+  scope.end = scope.begin;
+  scope.tid = GetCurrentThreadId();
+  Listener::DeferScopeProcessing(scope);
+}
+
+void StopAsync(uint64_t id) {
+  orbit::tracing::Scope scope(orbit_api::kScopeStopAsync, /*name*/ nullptr, id);
+  scope.begin = MonotonicTimestampNs();
+  scope.end = scope.begin;
+  scope.tid = GetCurrentThreadId();
+  Listener::DeferScopeProcessing(scope);
+}
 
 void TrackValue(orbit_api::EventType type, const char* name, uint64_t value, orbit::Color color) {
   orbit::tracing::Scope scope(type, name, value, color);

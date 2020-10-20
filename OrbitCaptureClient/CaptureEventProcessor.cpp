@@ -138,14 +138,7 @@ void CaptureEventProcessor::ProcessIntrospectionCall(const IntrospectionCall& in
   timer_info.set_function_address(0);
   timer_info.set_processor(-1);
   timer_info.set_type(TimerInfo::kIntrospection);
-
-  timer_info.mutable_registers()->Reserve(6);
-  timer_info.add_registers(function_call.registers(0));
-  timer_info.add_registers(function_call.registers(1));
-  timer_info.add_registers(function_call.registers(2));
-  timer_info.add_registers(function_call.registers(3));
-  timer_info.add_registers(function_call.registers(4));
-  timer_info.add_registers(function_call.registers(5));
+  timer_info.mutable_registers()->CopyFrom(function_call.registers());
 
   capture_listener_->OnTimer(timer_info);
 }

@@ -111,10 +111,8 @@ void LinuxTracingGrpcHandler::OnIntrospectionCall(
     orbit_grpc_protos::IntrospectionCall introspection_call) {
   CaptureEvent event;
   *event.mutable_introspection_call() = std::move(introspection_call);
-  {
-    absl::MutexLock lock{&event_buffer_mutex_};
-    event_buffer_.emplace_back(std::move(event));
-  }
+  absl::MutexLock lock{&event_buffer_mutex_};
+  event_buffer_.emplace_back(std::move(event));
 }
 
 void LinuxTracingGrpcHandler::OnGpuJob(GpuJob gpu_job) {
@@ -293,6 +291,7 @@ void LinuxTracingGrpcHandler::SenderThread() {
 
 void LinuxTracingGrpcHandler::SendBufferedEvents(std::vector<CaptureEvent>&& buffered_events) {
   ORBIT_UINT64("LinuxTracingGrpcHandler NumBufferedEvents", buffered_events.size());
+  ORBIT_START_ASYNC("LinuxTracingGrpcHandler::SendBufferedEvents", 0);
   if (buffered_events.empty()) {
     return;
   }
@@ -309,6 +308,8 @@ void LinuxTracingGrpcHandler::SendBufferedEvents(std::vector<CaptureEvent>&& buf
     response.mutable_capture_events()->Add(std::move(event));
   }
   reader_writer_->Write(response);
+
+  ORBIT_STOP_ASYNC(0);
 }
 
 }  // namespace orbit_service

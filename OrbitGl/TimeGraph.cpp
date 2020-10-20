@@ -343,12 +343,12 @@ void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
   switch (event.type) {
     case orbit_api::kScopeStart: {
       std::shared_ptr<ThreadTrack> track = GetOrCreateThreadTrack(timer_info.thread_id());
-      const Color kGreenIntrospection(87, 166, 74, 255);
-      track->SetColor(kGreenIntrospection);
       track->OnTimer(timer_info);
       ++thread_count_map_[timer_info.thread_id()];
     } break;
     case orbit_api::kScopeStartAsync:
+    case orbit_api::kScopeStopAsync:
+      manual_instrumentation_manager_->ProcessAsyncTimer(timer_info);
       break;
     case orbit_api::kTrackInt:
     case orbit_api::kTrackInt64:
@@ -360,7 +360,7 @@ void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
       ProcessValueTrackingTimer(timer_info);
       break;
     default:
-      ERROR("Unhandled introspection type");
+      ERROR("Unhandled introspection type [%u]", event.type);
   }
 }
 
@@ -397,6 +397,10 @@ void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
     default:
       ERROR("Unsupported value tracking type [%u]", event.type);
       break;
+  }
+
+  if(track->GetProcessId() == -1){
+    track->SetProcessId(timer_info.process_id());
   }
 }
 
