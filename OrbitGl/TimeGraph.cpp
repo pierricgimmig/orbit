@@ -399,7 +399,7 @@ void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
       break;
   }
 
-  if(track->GetProcessId() == -1){
+  if (track->GetProcessId() == -1) {
     track->SetProcessId(timer_info.process_id());
   }
 }
@@ -925,26 +925,22 @@ void TimeGraph::SortTracks() {
     ScopeLock lock(mutex_);
     sorted_tracks_.clear();
 
-    // Scheduler Track.
-    if (!scheduler_track_->IsEmpty()) {
-      sorted_tracks_.emplace_back(scheduler_track_);
-    }
-
-    // Gpu Tracks.
+    // Gpu tracks.
     for (const auto& timeline_and_track : gpu_tracks_) {
       sorted_tracks_.emplace_back(timeline_and_track.second);
     }
 
+    // Frame tracks.
     for (const auto& name_and_track : frame_tracks_) {
       sorted_tracks_.emplace_back(name_and_track.second);
     }
 
-    // Graph Tracks.
+    // Graph tracks.
     for (const auto& graph_track : graph_tracks_) {
       sorted_tracks_.emplace_back(graph_track.second);
     }
 
-    // Async Tracks.
+    // Async tracks.
     for (const auto& async_track : async_tracks_) {
       sorted_tracks_.emplace_back(async_track.second);
     }
@@ -953,12 +949,12 @@ void TimeGraph::SortTracks() {
       sorted_tracks_.emplace_back(tracepoints_system_wide_track_);
     }
 
-    // Process Track.
+    // Process track.
     if (!process_track_->IsEmpty()) {
       sorted_tracks_.emplace_back(process_track_);
     }
 
-    // Thread Tracks.
+    // Thread tracks.
     for (auto thread_id : sorted_thread_ids) {
       std::shared_ptr<ThreadTrack> track = GetOrCreateThreadTrack(thread_id);
       if (!track->IsEmpty()) {
@@ -982,6 +978,32 @@ void TimeGraph::SortTracks() {
       }
       sorted_tracks_ = std::move(filtered_tracks);
     }
+
+    // Separate "capture_pid" tracks from tracks that originate from other processes.
+    int32_t capture_pid = GOrbitApp->GetCaptureData().process_id();
+    std::vector<std::shared_ptr<Track>> capture_pid_tracks;
+    std::vector<std::shared_ptr<Track>> external_pid_tracks;
+    for (auto& track : sorted_tracks_) {
+      int32_t pid = track->GetProcessId();
+      if (pid != -1 && pid != capture_pid) {
+        external_pid_tracks.emplace_back(track);
+      } else {
+        capture_pid_tracks.emplace_back(track);
+      }
+    }
+
+    // Clear before repopulating.
+    sorted_tracks_.clear();
+
+    // Scheduler track.
+    if (!scheduler_track_->IsEmpty()) {
+      sorted_tracks_.emplace_back(scheduler_track_);
+    }
+
+    // For now, "external_pid_tracks" should only contain
+    // introspection tracks. Display them on top.
+    Append(sorted_tracks_, external_pid_tracks);
+    Append(sorted_tracks_, capture_pid_tracks);
 
     last_thread_reorder_.Reset();
   }
