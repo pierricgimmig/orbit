@@ -6,6 +6,7 @@
 
 #include <OrbitBase/Logging.h>
 #include <OrbitBase/Tracing.h>
+#include <OrbitBase/ThreadPool.h>
 
 #include <thread>
 
@@ -722,13 +723,21 @@ void TracerThread::Run(const std::shared_ptr<std::atomic<bool>>& exit_requested)
   ring_buffers_.clear();
   ORBIT_STOP();
 
-  // Close the file descriptors.
-  ORBIT_START_WITH_COLOR("Closing file descriptors", orbit::Color::kRed);
-  for (int fd : tracing_fds_) {
-    ORBIT_SCOPE("Closing fd");
-    close(fd);
-  }
-  ORBIT_STOP();
+
+  static std::unique_ptr<ThreadPool> thread_pool = ThreadPool::Create(1, 10, absl::Milliseconds(100));
+
+  auto fds_to_close = std::move(tracing_fds_);
+  tracing_fds_.clear();
+  thread_pool->Schedule([fds_to_close]() {
+    // Close the file descriptors.
+    ORBIT_START_WITH_COLOR("Closing file descriptors", orbit::Color::kRed);
+    for (int fd : fds_to_close) {
+      ORBIT_SCOPE("Closing fd");
+      //fsync(fd);
+      close(fd);
+    }
+    ORBIT_STOP();
+  });
 }
 
 void TracerThread::ProcessContextSwitchCpuWideEvent(const perf_event_header& header,
