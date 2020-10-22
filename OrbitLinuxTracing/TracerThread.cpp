@@ -115,7 +115,8 @@ void TracerThread::InitUprobesEventVisitor() {
 bool TracerThread::OpenUprobes(const LinuxTracing::Function& function,
                                const std::vector<int32_t>& cpus,
                                absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
-  ORBIT_SCOPE_FUNCTION;
+  std::string msg = absl::StrFormat("OpenUprobe 0x%lx", function.VirtualAddress());
+  ORBIT_SCOPE(msg.c_str());
   const char* module = function.BinaryPath().c_str();
   const uint64_t offset = function.FileOffset();
   for (int32_t cpu : cpus) {
@@ -200,6 +201,10 @@ bool TracerThread::OpenUserSpaceProbes(const std::vector<int32_t>& cpus) {
       // Open both uprobes and uretprobes for regular functions.
       bool success = OpenUprobes(function, cpus, &uprobes_fds_per_cpu) &&
                      OpenUretprobes(function, cpus, &uretprobes_fds_per_cpu);
+
+    for(auto[_, fd] : uretprobes_fds_per_cpu) {
+      LOG("uretprobes_fd: %d", fd);
+  }
       if (!success) {
         CloseFileDescriptors(uprobes_fds_per_cpu);
         CloseFileDescriptors(uretprobes_fds_per_cpu);
@@ -723,21 +728,40 @@ void TracerThread::Run(const std::shared_ptr<std::atomic<bool>>& exit_requested)
   ring_buffers_.clear();
   ORBIT_STOP();
 
-
-  static std::unique_ptr<ThreadPool> thread_pool = ThreadPool::Create(1, 10, absl::Milliseconds(100));
-
-  auto fds_to_close = std::move(tracing_fds_);
-  tracing_fds_.clear();
-  thread_pool->Schedule([fds_to_close]() {
+  static std::unique_ptr<ThreadPool> thread_pool =
+      ThreadPool::Create(100, 200, absl::Milliseconds(100));
+  bool multiple_workers = true;
+  if (multiple_workers) {
     // Close the file descriptors.
     ORBIT_START_WITH_COLOR("Closing file descriptors", orbit::Color::kRed);
-    for (int fd : fds_to_close) {
-      ORBIT_SCOPE("Closing fd");
-      //fsync(fd);
-      close(fd);
+    for (int fd : tracing_fds_) {
+      thread_pool->Schedule([fd]() {
+        ORBIT_SCOPE("Closing fd");
+        // fsync(fd);
+        close(fd);
+      });
     }
     ORBIT_STOP();
-  });
+    tracing_fds_.clear();
+  } else {
+    auto fds_to_close = std::move(tracing_fds_);
+    tracing_fds_.clear();
+    thread_pool->Schedule([fds_to_close]() {
+      // Close the file descriptors.
+      ORBIT_START_WITH_COLOR("Closing file descriptors", orbit::Color::kRed);
+      for (int fd : fds_to_close) {
+        ORBIT_SCOPE("Closing fd");
+        // fsync(fd);
+        close(fd);
+      }
+      ORBIT_STOP();
+    });
+  }
+
+  while(thread_pool->GetNumberOfBusyThreads() != 0) {
+    usleep(10000);
+  }
+  tracing_fds_.clear();
 }
 
 void TracerThread::ProcessContextSwitchCpuWideEvent(const perf_event_header& header,
