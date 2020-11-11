@@ -906,7 +906,7 @@ void OrbitApp::SetupIntrospection() {
         if (!time_graph->GetIntrospectionEnabled()) return;
 
         TimerInfo timer_info;
-        timer_info.set_process_id(getpid());
+        timer_info.set_process_id(10); //getpid()
         timer_info.set_thread_id(scope.tid);
         timer_info.set_start(scope.begin);
         timer_info.set_end(scope.end);
