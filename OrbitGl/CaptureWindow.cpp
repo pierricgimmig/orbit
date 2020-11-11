@@ -13,7 +13,6 @@ using orbit_client_protos::TimerInfo;
 
 CaptureWindow::CaptureWindow(uint32_t font_size)
     : GlCanvas(font_size), font_size_(font_size), time_graph_(font_size) {
-  GCurrentTimeGraph = &time_graph_;
   time_graph_.SetTextRenderer(&text_renderer_);
   time_graph_.SetCanvas(this);
   draw_help_ = true;
@@ -43,8 +42,6 @@ CaptureWindow::CaptureWindow(uint32_t font_size)
 
   vertical_slider_->SetOrthogonalSliderPixelHeight(slider_->GetPixelHeight());
   slider_->SetOrthogonalSliderPixelHeight(vertical_slider_->GetPixelHeight());
-
-  GOrbitApp->RegisterCaptureWindow(this);
 }
 
 CaptureWindow::~CaptureWindow() {
@@ -402,6 +399,9 @@ void CaptureWindow::KeyPressed(unsigned int key_code, bool ctrl, bool shift, boo
       case 'H':
         draw_help_ = !draw_help_;
         break;
+      case 'I':
+        time_graph_.ToggleIntrospection();
+        break;
       case 'X':
         GOrbitApp->ToggleCapture();
         draw_help_ = false;
@@ -470,6 +470,7 @@ void CaptureWindow::OnCaptureStarted() {
 }
 
 void CaptureWindow::Draw() {
+  ORBIT_SCOPE_FUNCTION;
   world_max_y_ = 1.5f * ScreenToWorldHeight(static_cast<int>(slider_->GetPixelHeight()));
 
   if (GOrbitApp->IsCapturing()) {

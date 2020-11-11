@@ -60,6 +60,7 @@ class CaptureWindow : public GlCanvas {
   void OnContextMenu(const std::string& action, int menu_index) override;
   void ToggleDrawHelp();
   void set_draw_help(bool draw_help);
+  TimeGraph* GetTimeGraph() { return &time_graph_; }
 
   Batcher& GetBatcherById(BatcherId batcher_id);
 

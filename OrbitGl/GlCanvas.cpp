@@ -98,8 +98,16 @@ GlCanvas::~GlCanvas() {
 
 std::unique_ptr<GlCanvas> GlCanvas::Create(CanvasType canvas_type, uint32_t font_size) {
   switch (canvas_type) {
-    case CanvasType::kCaptureWindow:
-      return std::make_unique<CaptureWindow>(font_size);
+    case CanvasType::kCaptureWindow: {
+      auto main_capture_window = std::make_unique<CaptureWindow>(font_size);
+      GOrbitApp->RegisterCaptureWindow(main_capture_window.get());
+      return std::move(main_capture_window);
+    }
+    case CanvasType::kIntrospectionWindow: {
+      auto introspection_window = std::make_unique<CaptureWindow>(font_size);
+      GOrbitApp->RegisterIntrospectionWindow(introspection_window.get());
+      return introspection_window;
+    }
     case CanvasType::kDebug:
       return std::make_unique<GlCanvas>(font_size);
     default:

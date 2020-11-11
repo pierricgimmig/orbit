@@ -33,6 +33,7 @@
 #include "ModulesDataView.h"
 #include "OrbitBase/Result.h"
 #include "OrbitBase/ThreadPool.h"
+#include "OrbitBase/Tracing.h"
 #include "OrbitCaptureClient/CaptureClient.h"
 #include "OrbitCaptureClient/CaptureListener.h"
 #include "OrbitClientData/FunctionInfoSet.h"
@@ -122,6 +123,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   void OnValidateFramePointers(std::vector<const ModuleData*> modules_to_validate);
 
   void RegisterCaptureWindow(CaptureWindow* capture);
+  void RegisterIntrospectionWindow(CaptureWindow* canvas);
   void RegisterDebugCanvas(GlCanvas* debug_canvas);
 
   void SetSamplingReport(
@@ -245,6 +247,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   }
 
   void SetStatusListener(StatusListener* listener) { status_listener_ = listener; }
+  void SetupIntrospection();
 
   void SendDisassemblyToUi(std::string disassembly, DisassemblyReport report);
   void SendTooltipToUi(const std::string& tooltip);
@@ -375,6 +378,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   std::unique_ptr<TracepointsDataView> tracepoints_data_view_;
 
   CaptureWindow* capture_window_ = nullptr;
+  CaptureWindow* introspection_window_ = nullptr;
   GlCanvas* debug_canvas_ = nullptr;
 
   std::shared_ptr<SamplingReport> sampling_report_;
@@ -399,6 +403,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   const SymbolHelper symbol_helper_;
 
   StatusListener* status_listener_ = nullptr;
+  std::unique_ptr<orbit::tracing::Listener> introspection_listener_;
 
   std::unique_ptr<FramePointerValidatorClient> frame_pointer_validator_client_;
 
