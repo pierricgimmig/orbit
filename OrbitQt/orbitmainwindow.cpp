@@ -222,6 +222,11 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
   if (absl::GetFlag(FLAGS_devmode)) {
     ui->debugOpenGLWidget->Initialize(GlCanvas::CanvasType::kDebug, this, font_size);
     GOrbitApp->RegisterDebugCanvas(ui->debugOpenGLWidget->GetCanvas());
+
+    // Introspection
+    OrbitGLWidget* debug_widget = new OrbitGLWidget();
+    debug_widget->Initialize(GlCanvas::CanvasType::kIntrospectionWindow, this, font_size);
+    debug_widget->show();
   } else {
     ui->RightTabWidget->removeTab(ui->RightTabWidget->indexOf(ui->debugTab));
   }

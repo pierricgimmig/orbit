@@ -133,6 +133,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   void OnValidateFramePointers(std::vector<const ModuleData*> modules_to_validate);
 
   void RegisterCaptureWindow(CaptureWindow* capture);
+  void RegisterIntrospectionWindow(CaptureWindow* canvas);
   void RegisterDebugCanvas(GlCanvas* debug_canvas);
   void RegisterIntrospectionWindow(IntrospectionWindow* canvas);
   void StopIntrospection();
@@ -258,6 +259,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   }
 
   void SetStatusListener(StatusListener* listener) { status_listener_ = listener; }
+  void SetupIntrospection();
 
   void SendDisassemblyToUi(std::string disassembly, DisassemblyReport report);
   void SendTooltipToUi(const std::string& tooltip);
@@ -422,6 +424,7 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   const SymbolHelper symbol_helper_;
 
   StatusListener* status_listener_ = nullptr;
+  std::unique_ptr<orbit::tracing::Listener> introspection_listener_;
 
   std::unique_ptr<FramePointerValidatorClient> frame_pointer_validator_client_;
 
