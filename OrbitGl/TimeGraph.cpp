@@ -333,6 +333,8 @@ void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
 }
 
 void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
+  if (!introspection_enabled_) return;
+
   orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
 
   switch (event.type) {
@@ -554,6 +556,10 @@ void TimeGraph::NeedsUpdate() {
 }
 
 void TimeGraph::UpdatePrimitives(PickingMode picking_mode) {
+  ORBIT_SCOPE_FUNCTION;
+  if (!string_manager_) {
+    string_manager_ = std::make_shared<StringManager>();
+  }
   CHECK(string_manager_);
 
   batcher_.StartNewFrame();
@@ -612,6 +618,7 @@ const std::vector<CallstackEvent>& TimeGraph::GetSelectedCallstackEvents(int32_t
 }
 
 void TimeGraph::Draw(GlCanvas* canvas, PickingMode picking_mode) {
+  ORBIT_SCOPE_FUNCTION;
   current_mouse_time_ns_ = GetTickFromWorld(canvas_->GetMouseX());
 
   const bool picking = picking_mode != PickingMode::kNone;
@@ -928,19 +935,23 @@ void TimeGraph::SetThreadFilter(const std::string& filter) {
 }
 
 void TimeGraph::SortTracks() {
-  // Get or create thread track from events' thread id.
-  event_count_.clear();
-  event_count_[SamplingProfiler::kAllThreadsFakeTid] =
-      GOrbitApp->GetCaptureData().GetCallstackData()->GetCallstackEventsCount();
+  std::shared_ptr<ThreadTrack> process_track = nullptr;
 
-  // The process track is a special ThreadTrack of id "kAllThreadsFakeTid".
-  auto process_track_ = GetOrCreateThreadTrack(SamplingProfiler::kAllThreadsFakeTid);
-  for (const auto& tid_and_count :
-       GOrbitApp->GetCaptureData().GetCallstackData()->GetCallstackEventsCountsPerTid()) {
-    const int32_t thread_id = tid_and_count.first;
-    const uint32_t count = tid_and_count.second;
-    event_count_[thread_id] = count;
-    GetOrCreateThreadTrack(thread_id);
+  if (this == GCurrentTimeGraph) {
+    // Get or create thread track from events' thread id.
+    event_count_.clear();
+    event_count_[SamplingProfiler::kAllThreadsFakeTid] =
+        GOrbitApp->GetCaptureData().GetCallstackData()->GetCallstackEventsCount();
+
+    // The process track is a special ThreadTrack of id "kAllThreadsFakeTid".
+    process_track = GetOrCreateThreadTrack(SamplingProfiler::kAllThreadsFakeTid);
+    for (const auto& tid_and_count :
+         GOrbitApp->GetCaptureData().GetCallstackData()->GetCallstackEventsCountsPerTid()) {
+      const int32_t thread_id = tid_and_count.first;
+      const uint32_t count = tid_and_count.second;
+      event_count_[thread_id] = count;
+      GetOrCreateThreadTrack(thread_id);
+    }
   }
 
   // Reorder threads once every second when capturing
@@ -971,13 +982,14 @@ void TimeGraph::SortTracks() {
       all_processes_sorted_tracks.emplace_back(async_track.second);
     }
 
+    // Tracepoint tracks.
     if (!tracepoints_system_wide_track_->IsEmpty()) {
       all_processes_sorted_tracks.emplace_back(tracepoints_system_wide_track_);
     }
 
     // Process track.
-    if (!process_track_->IsEmpty()) {
-      all_processes_sorted_tracks.emplace_back(process_track_);
+    if (process_track && !process_track->IsEmpty()) {
+      all_processes_sorted_tracks.emplace_back(process_track);
     }
 
     // Thread tracks.
@@ -1279,4 +1291,9 @@ void TimeGraph::RemoveFrameTrack(const orbit_client_protos::FunctionInfo& functi
   frame_tracks_.erase(function.address());
   sorting_invalidated_ = true;
   NeedsUpdate();
+}
+
+void TimeGraph::ToggleIntrospection() {
+  introspection_enabled_ = !introspection_enabled_;
+  if (introspection_enabled_) Clear();
 }

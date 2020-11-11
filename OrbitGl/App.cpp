@@ -317,6 +317,7 @@ void OrbitApp::PostInit() {
 
     if (absl::GetFlag(FLAGS_devmode)) {
       crash_manager_ = CrashManager::Create(grpc_channel_);
+      SetupIntrospection();
     }
   }
 
@@ -491,6 +492,7 @@ Timer GMainTimer;
 
 // TODO: make it non-static
 void OrbitApp::MainTick() {
+  ORBIT_SCOPE_FUNCTION;
   GMainTimer.Restart();
 
   if (DoZoom && GOrbitApp->HasCaptureData()) {
@@ -503,15 +505,21 @@ void OrbitApp::MainTick() {
 
 void OrbitApp::RegisterCaptureWindow(CaptureWindow* capture) {
   CHECK(capture_window_ == nullptr);
+  GCurrentTimeGraph = capture->GetTimeGraph();
   capture_window_ = capture;
 }
 
-void OrbitApp::RegisterDebugCanvas(GlCanvas* debug_canvas) {
+void OrbitApp::RegisterDebugCanvas(GlCanvas* canvas) {
   CHECK(debug_canvas_ == nullptr);
-  debug_canvas_ = debug_canvas;
+  debug_canvas_ = canvas;
   debug_canvas_->EnableImGui();
   Orbit_ImGui_Init(debug_canvas_->GetInitialFontSize());
   debug_canvas_->AddRenderCallback([this]() { RenderImGui(); });
+}
+
+void OrbitApp::RegisterIntrospectionWindow(CaptureWindow* capture_window) {
+  CHECK(introspection_window_ == nullptr);
+  introspection_window_ = capture_window;
 }
 
 void OrbitApp::NeedsRedraw() {
@@ -897,6 +905,32 @@ void OrbitApp::SendErrorToUi(const std::string& title, const std::string& text) 
     CHECK(error_message_callback_);
     error_message_callback_(title, text);
   });
+}
+
+void OrbitApp::SetupIntrospection() {
+  introspection_listener_ =
+      std::make_unique<orbit::tracing::Listener>([this](const orbit::tracing::Scope& scope) {
+        TimeGraph* time_graph = introspection_window_->GetTimeGraph();
+        if (!time_graph->GetIntrospectionEnabled()) return;
+
+        TimerInfo timer_info;
+        timer_info.set_process_id(getpid());
+        timer_info.set_thread_id(scope.tid);
+        timer_info.set_start(scope.begin);
+        timer_info.set_end(scope.end);
+        timer_info.set_depth(static_cast<uint8_t>(scope.depth));
+        timer_info.set_function_address(0);  // function address n/a, set to invalid value
+        timer_info.set_processor(-1);        // cpu info not available, set to invalid value
+        timer_info.set_type(TimerInfo::kIntrospection);
+        timer_info.mutable_registers()->Reserve(6);
+        timer_info.add_registers(scope.encoded_event.args[0]);
+        timer_info.add_registers(scope.encoded_event.args[1]);
+        timer_info.add_registers(scope.encoded_event.args[2]);
+        timer_info.add_registers(scope.encoded_event.args[3]);
+        timer_info.add_registers(scope.encoded_event.args[4]);
+        timer_info.add_registers(scope.encoded_event.args[5]);
+        time_graph->ProcessTimer(timer_info, /*FunctionInfo*/ nullptr);
+      });
 }
 
 void OrbitApp::LoadModuleOnRemote(ModuleData* module_data,
@@ -1502,7 +1536,9 @@ void OrbitApp::CrashOrbitService(CrashOrbitServiceRequest_CrashType crash_type) 
   }
 }
 
-bool OrbitApp::IsCapturing() const { return capture_client_->IsCapturing(); }
+bool OrbitApp::IsCapturing() const {
+  return capture_client_ ? capture_client_->IsCapturing() : false;
+}
 
 ScopedStatus OrbitApp::CreateScopedStatus(const std::string& initial_message) {
   CHECK(std::this_thread::get_id() == main_thread_id_);

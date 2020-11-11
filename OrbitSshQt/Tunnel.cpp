@@ -8,6 +8,7 @@
 #include <QTimer>
 
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/Tracing.h"
 #include "OrbitSshQt/Error.h"
 
 /**
@@ -159,6 +160,7 @@ outcome::result<void> Tunnel::shutdown() {
 }
 
 outcome::result<void> Tunnel::readFromChannel() {
+  ORBIT_SCOPE("Tunnel::readFromChannel");
   while (true) {
     const size_t kChunkSize = 1024 * 1024;
     const auto result = channel_->ReadStdOut(kChunkSize);
@@ -173,6 +175,7 @@ outcome::result<void> Tunnel::readFromChannel() {
       // Empty result means remote socket was closed.
       return Error::kRemoteSocketClosed;
     } else if (result) {
+      ORBIT_UINT64("Tunnel::readFromChannel bytes read", result.value().size());
       read_buffer_.append(result.value());
     }
   }
@@ -192,9 +195,11 @@ outcome::result<void> Tunnel::readFromChannel() {
 }
 
 outcome::result<void> Tunnel::writeToChannel() {
+  ORBIT_SCOPE("Tunnel::writeToChannel");
   if (!write_buffer_.empty()) {
     OUTCOME_TRY(bytes_written, channel_->Write(write_buffer_));
     write_buffer_ = write_buffer_.substr(bytes_written);
+    ORBIT_UINT64("Tunnel::writeToChannel bytes written", bytes_written);
   }
   return outcome::success();
 }

@@ -172,6 +172,8 @@ class TimeGraph {
   [[nodiscard]] uint64_t GetCurrentMouseTimeNs() const { return current_mouse_time_ns_; }
 
   void RemoveFrameTrack(const orbit_client_protos::FunctionInfo& function);
+  void ToggleIntrospection();
+  bool GetIntrospectionEnabled() const { return introspection_enabled_; }
 
  protected:
   std::shared_ptr<SchedulerTrack> GetOrCreateSchedulerTrack();
@@ -234,6 +236,7 @@ class TimeGraph {
   bool needs_update_primitives_ = false;
   bool needs_redraw_ = false;
 
+  bool introspection_enabled_ = true;
   bool draw_text_ = true;
 
   Batcher batcher_;
