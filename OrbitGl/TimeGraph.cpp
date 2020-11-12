@@ -623,7 +623,7 @@ const std::vector<CallstackEvent>& TimeGraph::GetSelectedCallstackEvents(int32_t
 }
 
 void TimeGraph::Draw(GlCanvas* canvas, PickingMode picking_mode) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE("TimeGraph::Draw");
   current_mouse_time_ns_ = GetTickFromWorld(canvas_->GetMouseX());
 
   const bool picking = picking_mode != PickingMode::kNone;

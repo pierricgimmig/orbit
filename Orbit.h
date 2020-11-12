@@ -84,6 +84,9 @@
 #define ORBIT_SCOPE(name) ORBIT_SCOPE_WITH_COLOR(name, orbit::Color::kAuto)
 #define ORBIT_SCOPE_WITH_COLOR(name, col) orbit_api::Scope ORBIT_VAR(name, col)
 
+#define ORBIT_SPAN(name) ORBIT_SPAN_WITH_COLOR(name, orbit::Color::kAuto)
+#define ORBIT_SPAN_WITH_COLOR(name, col) orbit_api::Span ORBIT_VAR(name, col)
+
 // ORBIT_START/ORBIT_STOP: Profile sections inside a scope.
 //
 // Overview:
@@ -423,7 +426,7 @@ void Start(const char* name, orbit::Color color);
 void Stop();
 void StartAsync(const char* name, uint64_t id, orbit::Color color);
 void StopAsync(uint64_t id);
-void AsyncString(const char* str, uint64_t id);
+void AsyncString(const char* str, uint64_t id, orbit::Color color);
 void TrackValue(EventType type, const char* name, uint64_t value, orbit::Color color);
 
 #endif  // ORBIT_API_INTERNAL_IMPL
@@ -431,6 +434,11 @@ void TrackValue(EventType type, const char* name, uint64_t value, orbit::Color c
 struct Scope {
   Scope(const char* name, orbit::Color color) { Start(name, color); }
   ~Scope() { Stop(); }
+};
+
+struct Span {
+  Span(const char* name, orbit::Color color) { StartAsync(name, 0, color); }
+  ~Span() { StopAsync(0); }
 };
 
 }  // namespace orbit_api
