@@ -216,12 +216,8 @@ bool CaptureClient::TryAbortCapture() {
   return true;
 }
 
-<<<<<<< HEAD
 ErrorMessageOr<void> CaptureClient::FinishCapture() {
-=======
-void CaptureClient::FinishCapture() {
   ORBIT_SCOPE_FUNCTION;
->>>>>>> c14f9b74 (Add profiling markers in client code)
   if (reader_writer_ == nullptr) {
     return outcome::success();
   }
