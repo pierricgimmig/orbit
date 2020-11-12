@@ -345,6 +345,7 @@ int GlCanvas::GetWidth() const { return screen_width_; }
 int GlCanvas::GetHeight() const { return screen_height_; }
 
 void GlCanvas::Render(int width, int height) {
+  ORBIT_SCOPE("GlCanvas::Render");
   screen_width_ = width;
   screen_height_ = height;
 

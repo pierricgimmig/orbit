@@ -470,10 +470,10 @@ void CaptureWindow::OnCaptureStarted() {
 }
 
 void CaptureWindow::Draw() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE("CaptureWindow::Draw");
   world_max_y_ = 1.5f * ScreenToWorldHeight(static_cast<int>(slider_->GetPixelHeight()));
 
-  if (GOrbitApp->IsCapturing()) {
+  if (GOrbitApp->IsCapturing() || time_graph_.GetIntrospectionEnabled()) {
     ZoomAll();
   }
 
@@ -680,6 +680,11 @@ void CaptureWindow::RenderImGui() {
       IMGUI_VAR_TO_TEXT(time_graph_.GetNumDrawnTextBoxes());
       IMGUI_VAR_TO_TEXT(time_graph_.GetNumTimers());
       IMGUI_VAR_TO_TEXT(time_graph_.GetThreadTotalHeight());
+      IMGUI_VAR_TO_TEXT(time_graph_.GetMinTimeUs());
+      IMGUI_VAR_TO_TEXT(time_graph_.GetMaxTimeUs());
+      IMGUI_VAR_TO_TEXT(time_graph_.GetCaptureMin());
+      IMGUI_VAR_TO_TEXT(time_graph_.GetCaptureMax());
+      IMGUI_VAR_TO_TEXT(time_graph_.GetTimeWindowUs());
 
       IMGUI_VAR_TO_TEXT(
           GOrbitApp->GetCaptureData().GetCallstackData()->callstack_events_by_tid().size());

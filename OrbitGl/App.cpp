@@ -170,6 +170,7 @@ void OrbitApp::OnCaptureComplete() {
 
   main_thread_executor_->Schedule(
       [this, sampling_profiler = std::move(sampling_profiler)]() mutable {
+        ORBIT_SCOPE("OnCaptureComplete");
         GetMutableCaptureData().set_sampling_profiler(sampling_profiler);
         RefreshCaptureView();
 
@@ -190,6 +191,7 @@ void OrbitApp::OnCaptureComplete() {
 
 void OrbitApp::OnCaptureCancelled() {
   main_thread_executor_->Schedule([this]() mutable {
+    ORBIT_SCOPE("OnCaptureCancelled");
     CHECK(capture_failed_callback_);
     capture_failed_callback_();
 
@@ -202,6 +204,7 @@ void OrbitApp::OnCaptureCancelled() {
 
 void OrbitApp::OnCaptureFailed(ErrorMessage error_message) {
   main_thread_executor_->Schedule([this, error_message = std::move(error_message)]() mutable {
+    ORBIT_SCOPE("OnCaptureFailed");
     CHECK(capture_failed_callback_);
     capture_failed_callback_();
 
@@ -418,6 +421,7 @@ void OrbitApp::ListPresets() {
 }
 
 void OrbitApp::RefreshCaptureView() {
+  ORBIT_SCOPE_FUNCTION;
   NeedsRedraw();
   GOrbitApp->FireRefreshCallbacks();
   DoZoom = true;  // TODO: remove global, review logic
@@ -438,6 +442,9 @@ void OrbitApp::RenderImGui() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::Begin("OrbitDebug", nullptr, ImVec2(0, 0), 1.f, window_flags);
   capture_window_->RenderImGui();
+  if(introspection_window_) {
+    introspection_window_->RenderImGui();
+  }
   ImGui::PopStyleVar();
   ImGui::PopStyleColor();
   ImGui::End();
@@ -492,7 +499,7 @@ Timer GMainTimer;
 
 // TODO: make it non-static
 void OrbitApp::MainTick() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE("OrbitApp::MainTick");
   GMainTimer.Restart();
 
   if (DoZoom && GOrbitApp->HasCaptureData()) {
@@ -531,6 +538,7 @@ void OrbitApp::NeedsRedraw() {
 void OrbitApp::SetSamplingReport(
     SamplingProfiler sampling_profiler,
     absl::flat_hash_map<CallstackID, std::shared_ptr<CallStack>> unique_callstacks) {
+  ORBIT_SCOPE_FUNCTION;
   // clear old sampling report
   if (sampling_report_ != nullptr) {
     sampling_report_->ClearReport();
@@ -565,6 +573,7 @@ void OrbitApp::SetSelectionReport(
 }
 
 void OrbitApp::SetTopDownView(const CaptureData& capture_data) {
+  ORBIT_SCOPE_FUNCTION;
   CHECK(top_down_view_callback_);
   std::unique_ptr<CallTreeView> top_down_view = CallTreeView::CreateTopDownViewFromSamplingProfiler(
       capture_data.sampling_profiler(), capture_data);
@@ -591,6 +600,7 @@ void OrbitApp::ClearSelectionTopDownView() {
 }
 
 void OrbitApp::SetBottomUpView(const CaptureData& capture_data) {
+  ORBIT_SCOPE_FUNCTION;
   CHECK(bottom_up_view_callback_);
   std::unique_ptr<CallTreeView> bottom_up_view =
       CallTreeView::CreateBottomUpViewFromSamplingProfiler(capture_data.sampling_profiler(),
@@ -811,6 +821,7 @@ void OrbitApp::AbortCapture() {
 }
 
 void OrbitApp::ClearCapture() {
+  ORBIT_SCOPE_FUNCTION;
   capture_data_.reset();
   set_selected_thread_id(SamplingProfiler::kAllThreadsFakeTid);
   SelectTextBox(nullptr);
