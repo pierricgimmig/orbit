@@ -26,13 +26,13 @@ Scope::Scope(orbit_api::EventType type, const char* name, uint64_t data, orbit::
 Listener::Listener(TimerCallback callback) {
   constexpr size_t kMinNumThreads = 1;
   constexpr size_t kMaxNumThreads = 1;
-  thread_pool_ = ThreadPool::Create(kMinNumThreads, kMaxNumThreads, absl::Milliseconds(500));
+  thread_pool_ = ThreadPool::Create(kMinNumThreads, kMaxNumThreads, absl::Milliseconds(1));
   thread_pool_->EnableAutoProfiling(false);  // To prevent feedback loop.
   user_callback_ = std::move(callback);
 
   // Activate listener (only one listener instance is supported).
   absl::MutexLock lock(&global_tracing_mutex);
-  CHECK(!IsActive());
+  //CHECK(!IsActive());
   global_tracing_listener = this;
   active_ = true;
 }
@@ -44,7 +44,7 @@ Listener::~Listener() {
 
   // Deactivate listener.
   absl::MutexLock lock(&global_tracing_mutex);
-  CHECK(IsActive());
+  //CHECK(IsActive());
   active_ = false;
   global_tracing_listener = nullptr;
 }
@@ -54,7 +54,7 @@ Listener::~Listener() {
 void Listener::DeferScopeProcessing(const Scope& scope) {
   // User callback is called from a worker thread to
   // minimize contention on the instrumented threads.
-  absl::MutexLock lock(&global_tracing_mutex);
+  //absl::MutexLock lock(&global_tracing_mutex);
   if (!IsActive()) return;
   global_tracing_listener->thread_pool_->Schedule([scope]() {
     absl::MutexLock lock(&global_tracing_mutex);

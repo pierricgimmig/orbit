@@ -13,6 +13,7 @@
 #include <Windows.h>
 #endif
 
+#include "OrbitBase/Tracing.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -68,12 +69,13 @@ constexpr const char* kLogTimeFormat = "%Y-%m-%dT%H:%M:%E6S";
     }                                   \
   } while (0)
 
-#define CHECK(assertion)                \
-  do {                                  \
-    if (UNLIKELY(!(assertion))) {       \
-      LOG("Check failed: " #assertion); \
-      PLATFORM_ABORT();                 \
-    }                                   \
+#define CHECK(assertion)                                    \
+  do {                                                      \
+    /*ORBIT_SCOPE_NO_REENTRY(#assertion, orbit::Color::kRed);*/ \
+    if (UNLIKELY(!(assertion))) {                           \
+      LOG("Check failed: " #assertion);                     \
+      PLATFORM_ABORT();                                     \
+    }                                                       \
   } while (0)
 
 #ifndef NDEBUG
