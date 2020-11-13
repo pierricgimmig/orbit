@@ -12,6 +12,9 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
 
+#undef CHECK
+#define CHECK(x)
+
 namespace {
 
 class ThreadPoolImpl : public ThreadPool {

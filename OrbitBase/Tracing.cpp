@@ -18,6 +18,15 @@ using orbit::tracing::TimerCallback;
 ABSL_CONST_INIT static absl::Mutex global_tracing_mutex(absl::kConstInit);
 ABSL_CONST_INIT static Listener* global_tracing_listener = nullptr;
 
+static thread_local bool prevent_reentry_;
+
+struct InternalScope {
+  InternalScope() { prevent_reentry_ = true; }
+  ~InternalScope() { prevent_reentry_ = false; }
+};
+
+#define SCOPE_INTERNAL InternalScope internal_scope
+
 namespace orbit::tracing {
 
 Scope::Scope(orbit_api::EventType type, const char* name, uint64_t data, orbit::Color color)
@@ -52,11 +61,15 @@ Listener::~Listener() {
 }  // namespace orbit::tracing
 
 void Listener::DeferScopeProcessing(const Scope& scope) {
+  if (prevent_reentry_) return;
+  InternalScope internal_scope;
   // User callback is called from a worker thread to
   // minimize contention on the instrumented threads.
   //absl::MutexLock lock(&global_tracing_mutex);
   if (!IsActive()) return;
   global_tracing_listener->thread_pool_->Schedule([scope]() {
+    if (prevent_reentry_) return;
+    InternalScope internal_scope;
     absl::MutexLock lock(&global_tracing_mutex);
     if (!IsActive()) return;
     global_tracing_listener->user_callback_(scope);

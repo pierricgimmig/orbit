@@ -71,7 +71,7 @@ constexpr const char* kLogTimeFormat = "%Y-%m-%dT%H:%M:%E6S";
 
 #define CHECK(assertion)                                    \
   do {                                                      \
-    /*ORBIT_SCOPE_NO_REENTRY(#assertion, orbit::Color::kRed);*/ \
+    ORBIT_SCOPE_WITH_COLOR(#assertion, orbit::Color::kRed); \
     if (UNLIKELY(!(assertion))) {                           \
       LOG("Check failed: " #assertion);                     \
       PLATFORM_ABORT();                                     \

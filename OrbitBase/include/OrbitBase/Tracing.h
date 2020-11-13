@@ -15,25 +15,8 @@
 #include "OrbitBase/ThreadPool.h"
 
 #define ORBIT_SCOPE_FUNCTION ORBIT_SCOPE(__FUNCTION__)
-#define ORBIT_SCOPE_NO_REENTRY(name, col) orbit::tracing::InternalScope ORBIT_VAR(name, col)
 
 namespace orbit::tracing {
-
-struct InternalScope {
-  InternalScope(const char* name, orbit::Color color) {
-    if (prevent_reentry_ == false) {
-      orbit_api::Start(name, color);
-      active = true;
-    }
-    prevent_reentry_ = true;
-  }
-  ~InternalScope() {
-    if (active) orbit_api::Stop();
-    prevent_reentry_ = false;
-  }
-  static inline thread_local bool prevent_reentry_;
-  bool active = false;
-};
 
 struct Scope {
   Scope(orbit_api::EventType type, const char* name = nullptr, uint64_t data = 0,
