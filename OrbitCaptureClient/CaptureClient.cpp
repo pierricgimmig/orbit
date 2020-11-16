@@ -5,8 +5,8 @@
 #include "OrbitCaptureClient/CaptureClient.h"
 
 #include "OrbitBase/Logging.h"
-#include "OrbitBase/Tracing.h"
 #include "OrbitBase/Result.h"
+#include "OrbitBase/Tracing.h"
 #include "OrbitCaptureClient/CaptureEventProcessor.h"
 #include "OrbitClientData/FunctionUtils.h"
 #include "OrbitClientData/ProcessData.h"

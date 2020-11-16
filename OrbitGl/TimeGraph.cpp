@@ -333,7 +333,6 @@ void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
 }
 
 void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
-
   orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
 
   switch (event.type) {

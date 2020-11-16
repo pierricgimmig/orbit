@@ -462,9 +462,7 @@ void CaptureWindow::OnCaptureStarted() {
   NeedsRedraw();
 }
 
-bool CaptureWindow::ShouldAutoZoom() {
-  return GOrbitApp->IsCapturing();
-}
+bool CaptureWindow::ShouldAutoZoom() { return GOrbitApp->IsCapturing(); }
 
 void CaptureWindow::Draw() {
   ORBIT_SCOPE("CaptureWindow::Draw");

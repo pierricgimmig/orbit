@@ -720,8 +720,8 @@ void OrbitMainWindow::closeEvent(QCloseEvent* event) {
 }
 
 bool OrbitMainWindow::eventFilter(QObject* object, QEvent* event) {
-  if(object == introspection_widget_) {
-    if(event->type() == QEvent::Close) {
+  if (object == introspection_widget_) {
+    if (event->type() == QEvent::Close) {
       GOrbitApp->StopIntrospection();
     }
   }

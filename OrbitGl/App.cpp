@@ -441,7 +441,7 @@ void OrbitApp::RenderImGui() {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::Begin("OrbitDebug", nullptr, ImVec2(0, 0), 1.f, window_flags);
   capture_window_->RenderImGui();
-  if(introspection_window_) {
+  if (introspection_window_) {
     introspection_window_->RenderImGui();
   }
   ImGui::PopStyleVar();

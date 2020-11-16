@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 #include "OrbitBase/ThreadPool.h"
-#include "OrbitBase/Tracing.h"
 
 #include <list>
 #include <thread>
 
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/Tracing.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
 
