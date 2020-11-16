@@ -399,15 +399,8 @@ void CaptureWindow::KeyPressed(unsigned int key_code, bool ctrl, bool shift, boo
       case 'H':
         draw_help_ = !draw_help_;
         break;
-      case 'I':
-        time_graph_.ToggleIntrospection();
-        break;
       case 'X':
-        GOrbitApp->ToggleCapture();
-        draw_help_ = false;
-#ifdef __linux__
-        ZoomAll();
-#endif
+        ToggleCapture();
         break;
       case 'O':
         if (ctrl) {
@@ -469,11 +462,15 @@ void CaptureWindow::OnCaptureStarted() {
   NeedsRedraw();
 }
 
+bool CaptureWindow::ShouldAutoZoom() {
+  return GOrbitApp->IsCapturing();
+}
+
 void CaptureWindow::Draw() {
   ORBIT_SCOPE("CaptureWindow::Draw");
   world_max_y_ = 1.5f * ScreenToWorldHeight(static_cast<int>(slider_->GetPixelHeight()));
 
-  if (GOrbitApp->IsCapturing() || time_graph_.GetIntrospectionEnabled()) {
+  if (ShouldAutoZoom()) {
     ZoomAll();
   }
 
@@ -621,6 +618,14 @@ void CaptureWindow::UpdateWorldTopLeftY(float val) {
   NeedsUpdate();
 }
 
+void CaptureWindow::ToggleCapture() {
+  GOrbitApp->ToggleCapture();
+  draw_help_ = false;
+#ifdef __linux__
+  ZoomAll();
+#endif
+}
+
 void CaptureWindow::ToggleDrawHelp() { set_draw_help(!draw_help_); }
 
 void CaptureWindow::set_draw_help(bool draw_help) {
@@ -731,19 +736,10 @@ void CaptureWindow::RenderHelpUi() {
   float world_y = 0;
   ScreenToWorld(kXOffset, kYOffset, world_x, world_y);
 
-  const char* help_message =
-      "Start/Stop Capture: 'X'\n"
-      "Pan: 'A','D' or \"Left Click + Drag\"\n"
-      "Zoom: 'W', 'S', Scroll or \"Ctrl + Right Click + Drag\"\n"
-      "Vertical Zoom: \"Ctrl + Scroll\"\n"
-      "Select: Left Click\n"
-      "Measure: \"Right Click + Drag\"\n"
-      "Toggle Help: 'H'";
-
   const uint32_t kHelpMessageFontSize = 2 * font_size_;
   Vec2 text_bounding_box_pos;
   Vec2 text_bounding_box_size;
-  text_renderer_.AddText(help_message, world_x, world_y, GlCanvas::kZValueTextUi,
+  text_renderer_.AddText(GetHelpText(), world_x, world_y, GlCanvas::kZValueTextUi,
                          Color(255, 255, 255, 255), kHelpMessageFontSize, -1.f /*max_size*/,
                          false /*right_justified*/, &text_bounding_box_pos,
                          &text_bounding_box_size);
@@ -753,6 +749,18 @@ void CaptureWindow::RenderHelpUi() {
   const float kRoundingRadius = 20.f;
   ui_batcher_.AddRoundedBox(text_bounding_box_pos, text_bounding_box_size, GlCanvas::kZValueUi,
                             kRoundingRadius, kBoxColor, kMargin);
+}
+
+const char* CaptureWindow::GetHelpText() {
+  const char* help_message =
+      "Start/Stop Capture: 'X'\n"
+      "Pan: 'A','D' or \"Left Click + Drag\"\n"
+      "Zoom: 'W', 'S', Scroll or \"Ctrl + Right Click + Drag\"\n"
+      "Vertical Zoom: \"Ctrl + Scroll\"\n"
+      "Select: Left Click\n"
+      "Measure: \"Right Click + Drag\"\n"
+      "Toggle Help: 'H'";
+  return help_message;
 }
 
 inline double GetIncrementMs(double milli_seconds) {

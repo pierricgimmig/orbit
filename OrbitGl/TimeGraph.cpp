@@ -333,8 +333,6 @@ void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
 }
 
 void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
-  if (!introspection_enabled_) return;
-
   orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
 
   switch (event.type) {
@@ -1291,9 +1289,4 @@ void TimeGraph::RemoveFrameTrack(const orbit_client_protos::FunctionInfo& functi
   frame_tracks_.erase(function.address());
   sorting_invalidated_ = true;
   NeedsUpdate();
-}
-
-void TimeGraph::ToggleIntrospection() {
-  introspection_enabled_ = !introspection_enabled_;
-  if (introspection_enabled_) Clear();
 }

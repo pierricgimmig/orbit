@@ -222,11 +222,6 @@ OrbitMainWindow::OrbitMainWindow(QApplication* a_App,
   if (absl::GetFlag(FLAGS_devmode)) {
     ui->debugOpenGLWidget->Initialize(GlCanvas::CanvasType::kDebug, this, font_size);
     GOrbitApp->RegisterDebugCanvas(ui->debugOpenGLWidget->GetCanvas());
-
-    // Introspection
-    OrbitGLWidget* debug_widget = new OrbitGLWidget();
-    debug_widget->Initialize(GlCanvas::CanvasType::kIntrospectionWindow, this, font_size);
-    debug_widget->show();
   } else {
     ui->RightTabWidget->removeTab(ui->RightTabWidget->indexOf(ui->debugTab));
   }
@@ -591,6 +586,17 @@ void OrbitMainWindow::on_actionClear_Capture_triggered() { GOrbitApp->ClearCaptu
 
 void OrbitMainWindow::on_actionHelp_triggered() { GOrbitApp->ToggleDrawHelp(); }
 
+void OrbitMainWindow::on_actionIntrospection_triggered() {
+  if (introspection_widget_ == nullptr) {
+    introspection_widget_ = new OrbitGLWidget();
+    introspection_widget_->setWindowFlags(Qt::WindowStaysOnTopHint);
+    introspection_widget_->Initialize(GlCanvas::CanvasType::kIntrospectionWindow, this, 14);
+    introspection_widget_->installEventFilter(this);
+  }
+
+  introspection_widget_->show();
+}
+
 void OrbitMainWindow::ShowCaptureOnSaveWarningIfNeeded() {
   QSettings settings("The Orbit Authors", "Orbit Profiler");
   const QString skip_capture_warning("SkipCaptureVersionWarning");
@@ -711,4 +717,13 @@ void OrbitMainWindow::closeEvent(QCloseEvent* event) {
   } else {
     QMainWindow::closeEvent(event);
   }
+}
+
+bool OrbitMainWindow::eventFilter(QObject* object, QEvent* event) {
+  if(object == introspection_widget_) {
+    if(event->type() == QEvent::Close) {
+      GOrbitApp->StopIntrospection();
+    }
+  }
+  return false;
 }

@@ -320,7 +320,6 @@ void OrbitApp::PostInit() {
 
     if (absl::GetFlag(FLAGS_devmode)) {
       crash_manager_ = CrashManager::Create(grpc_channel_);
-      SetupIntrospection();
     }
   }
 
@@ -524,9 +523,15 @@ void OrbitApp::RegisterDebugCanvas(GlCanvas* canvas) {
   debug_canvas_->AddRenderCallback([this]() { RenderImGui(); });
 }
 
-void OrbitApp::RegisterIntrospectionWindow(CaptureWindow* capture_window) {
+void OrbitApp::RegisterIntrospectionWindow(IntrospectionWindow* introspection_window) {
   CHECK(introspection_window_ == nullptr);
-  introspection_window_ = capture_window;
+  introspection_window_ = introspection_window;
+}
+
+void OrbitApp::StopIntrospection() {
+  if (introspection_window_) {
+    introspection_window_->StopIntrospection();
+  }
 }
 
 void OrbitApp::NeedsRedraw() {
@@ -916,32 +921,6 @@ void OrbitApp::SendErrorToUi(const std::string& title, const std::string& text) 
     CHECK(error_message_callback_);
     error_message_callback_(title, text);
   });
-}
-
-void OrbitApp::SetupIntrospection() {
-  introspection_listener_ =
-      std::make_unique<orbit::tracing::Listener>([this](const orbit::tracing::Scope& scope) {
-        TimeGraph* time_graph = introspection_window_->GetTimeGraph();
-        if (!time_graph->GetIntrospectionEnabled()) return;
-
-        TimerInfo timer_info;
-        timer_info.set_process_id(10); //getpid()
-        timer_info.set_thread_id(scope.tid);
-        timer_info.set_start(scope.begin);
-        timer_info.set_end(scope.end);
-        timer_info.set_depth(static_cast<uint8_t>(scope.depth));
-        timer_info.set_function_address(0);  // function address n/a, set to invalid value
-        timer_info.set_processor(-1);        // cpu info not available, set to invalid value
-        timer_info.set_type(TimerInfo::kIntrospection);
-        timer_info.mutable_registers()->Reserve(6);
-        timer_info.add_registers(scope.encoded_event.args[0]);
-        timer_info.add_registers(scope.encoded_event.args[1]);
-        timer_info.add_registers(scope.encoded_event.args[2]);
-        timer_info.add_registers(scope.encoded_event.args[3]);
-        timer_info.add_registers(scope.encoded_event.args[4]);
-        timer_info.add_registers(scope.encoded_event.args[5]);
-        time_graph->ProcessTimer(timer_info, /*FunctionInfo*/ nullptr);
-      });
 }
 
 void OrbitApp::LoadModuleOnRemote(ModuleData* module_data,
