@@ -91,6 +91,7 @@ void TextRenderer::SetFontSize(uint32_t size) {
 uint32_t TextRenderer::GetFontSize() const { return current_font_size_; }
 
 void TextRenderer::DisplayLayer(Batcher* batcher, float layer) {
+  ORBIT_SCOPE_FUNCTION;
   if (!buffers_by_layer_.count(layer)) return;
   auto& buffer = buffers_by_layer_.at(layer);
   if (m_DrawOutline) {

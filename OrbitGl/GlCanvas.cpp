@@ -288,6 +288,7 @@ void GlCanvas::Prepare2DViewport(int top_left_x, int top_left_y, int bottom_righ
 }
 
 void GlCanvas::PrepareScreenSpaceViewport() {
+  ORBIT_SCOPE_FUNCTION;
   glViewport(0, 0, GetWidth(), GetHeight());
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();

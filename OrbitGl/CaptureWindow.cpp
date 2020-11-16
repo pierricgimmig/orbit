@@ -524,6 +524,7 @@ void CaptureWindow::Draw() {
 }
 
 void CaptureWindow::DrawScreenSpace() {
+  ORBIT_SCOPE("CaptureWindow::DrawScreenSpace");
   double time_span = time_graph_.GetCaptureTimeSpanUs();
 
   Color col = slider_->GetBarColor();
@@ -709,6 +710,7 @@ void CaptureWindow::RenderImGui() {
 }
 
 void CaptureWindow::RenderText(float layer) {
+  ORBIT_SCOPE_FUNCTION;
   if (GetPickingMode() == PickingMode::kNone) {
     time_graph_.DrawText(this, layer);
   }
