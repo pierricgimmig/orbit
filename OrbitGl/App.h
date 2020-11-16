@@ -259,7 +259,6 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   }
 
   void SetStatusListener(StatusListener* listener) { status_listener_ = listener; }
-  void SetupIntrospection();
 
   void SendDisassemblyToUi(std::string disassembly, DisassemblyReport report);
   void SendTooltipToUi(const std::string& tooltip);

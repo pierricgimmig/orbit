@@ -399,9 +399,6 @@ void CaptureWindow::KeyPressed(unsigned int key_code, bool ctrl, bool shift, boo
       case 'H':
         draw_help_ = !draw_help_;
         break;
-      case 'I':
-        time_graph_.ToggleIntrospection();
-        break;
       case 'X':
         ToggleCapture();
         break;
