@@ -8,7 +8,9 @@
 
 using orbit_client_protos::TimerInfo;
 
-IntrospectionWindow::IntrospectionWindow(uint32_t font_size) : CaptureWindow(font_size) {}
+IntrospectionWindow::IntrospectionWindow(uint32_t font_size) : CaptureWindow(font_size) {
+  time_graph_.SetStringManager(std::make_shared<StringManager>());
+}
 
 IntrospectionWindow::~IntrospectionWindow() { StopIntrospection(); }
 

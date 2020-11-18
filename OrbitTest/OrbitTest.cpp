@@ -110,12 +110,11 @@ static void ExecuteTask(uint32_t id) {
                                                        20, 30,  320, 380, 400, 450, 500};
   uint32_t sleep_time = sleep_times_ms[id % sleep_times_ms.size()];
   std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
-  std::string msg = absl::StrFormat(
+  std::string str = absl::StrFormat(
       "This is a very long dynamic string: The quick brown fox jumps over the lazy dog. This "
       "string is associated with task id %u. We slept for %u ms.",
       id, sleep_time);
-  const char* data = msg.c_str();
-  ORBIT_ASYNC_STRING(data, id);
+  ORBIT_ASYNC_STRING(str.c_str(), id);
   ORBIT_STOP_ASYNC(id);
 }
 

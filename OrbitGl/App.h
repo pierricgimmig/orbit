@@ -423,7 +423,6 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   const SymbolHelper symbol_helper_;
 
   StatusListener* status_listener_ = nullptr;
-  std::unique_ptr<orbit::tracing::Listener> introspection_listener_;
 
   std::unique_ptr<FramePointerValidatorClient> frame_pointer_validator_client_;
 

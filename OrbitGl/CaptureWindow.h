@@ -62,7 +62,7 @@ class CaptureWindow : public GlCanvas {
   virtual void ToggleCapture();
   void ToggleDrawHelp();
   void set_draw_help(bool draw_help);
-  TimeGraph* GetTimeGraph() { return &time_graph_; }
+  [[nodiscard]] TimeGraph* GetTimeGraph() { return &time_graph_; }
 
   Batcher& GetBatcherById(BatcherId batcher_id);
 

@@ -233,6 +233,7 @@ class TimeGraph {
   // timeline.
   bool needs_update_primitives_ = false;
   bool needs_redraw_ = false;
+
   bool draw_text_ = true;
 
   Batcher batcher_;

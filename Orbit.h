@@ -84,9 +84,6 @@
 #define ORBIT_SCOPE(name) ORBIT_SCOPE_WITH_COLOR(name, orbit::Color::kAuto)
 #define ORBIT_SCOPE_WITH_COLOR(name, col) orbit_api::Scope ORBIT_VAR(name, col)
 
-#define ORBIT_SPAN(name) ORBIT_SPAN_WITH_COLOR(name, orbit::Color::kAuto)
-#define ORBIT_SPAN_WITH_COLOR(name, col) orbit_api::Span ORBIT_VAR(name, col)
-
 // ORBIT_START/ORBIT_STOP: Profile sections inside a scope.
 //
 // Overview:
@@ -440,10 +437,6 @@ struct Scope {
   ~Scope() { Stop(); }
 };
 
-struct Span {
-  Span(const char* name, orbit::Color color) { StartAsync(name, 0, color); }
-  ~Span() { StopAsync(0); }
-};
 
 }  // namespace orbit_api
 

@@ -555,9 +555,6 @@ void TimeGraph::NeedsUpdate() {
 
 void TimeGraph::UpdatePrimitives(PickingMode picking_mode) {
   ORBIT_SCOPE_FUNCTION;
-  if (!string_manager_) {
-    string_manager_ = std::make_shared<StringManager>();
-  }
   CHECK(string_manager_);
 
   batcher_.StartNewFrame();

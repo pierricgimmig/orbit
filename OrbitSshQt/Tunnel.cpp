@@ -160,7 +160,7 @@ outcome::result<void> Tunnel::shutdown() {
 }
 
 outcome::result<void> Tunnel::readFromChannel() {
-  ORBIT_SPAN("Tunnel::readFromChannel");
+  ORBIT_SCOPE("Tunnel::readFromChannel");
   while (true) {
     const size_t kChunkSize = 1024 * 1024;
     const auto result = channel_->ReadStdOut(kChunkSize);
@@ -195,7 +195,7 @@ outcome::result<void> Tunnel::readFromChannel() {
 }
 
 outcome::result<void> Tunnel::writeToChannel() {
-  ORBIT_SPAN("Tunnel::writeToChannel");
+  ORBIT_SCOPE("Tunnel::writeToChannel");
   if (!write_buffer_.empty()) {
     OUTCOME_TRY(bytes_written, channel_->Write(write_buffer_));
     write_buffer_ = write_buffer_.substr(bytes_written);

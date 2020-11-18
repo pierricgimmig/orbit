@@ -515,9 +515,9 @@ void OrbitApp::RegisterCaptureWindow(CaptureWindow* capture) {
   capture_window_ = capture;
 }
 
-void OrbitApp::RegisterDebugCanvas(GlCanvas* canvas) {
+void OrbitApp::RegisterDebugCanvas(GlCanvas* debug_canvas) {
   CHECK(debug_canvas_ == nullptr);
-  debug_canvas_ = canvas;
+  debug_canvas_ = debug_canvas;
   debug_canvas_->EnableImGui();
   Orbit_ImGui_Init(debug_canvas_->GetInitialFontSize());
   debug_canvas_->AddRenderCallback([this]() { RenderImGui(); });
