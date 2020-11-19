@@ -437,7 +437,6 @@ struct Scope {
   ~Scope() { Stop(); }
 };
 
-
 }  // namespace orbit_api
 
 #endif  // ORBIT_API_ENABLED

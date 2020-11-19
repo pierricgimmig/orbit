@@ -5,7 +5,6 @@
 #include "OrbitSsh/Socket.h"
 
 #include "OrbitBase/Logging.h"
-#include "OrbitBase/Tracing.h"
 #include "OrbitSsh/Error.h"
 
 namespace OrbitSsh {

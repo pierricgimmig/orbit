@@ -34,7 +34,6 @@
 #include "ModulesDataView.h"
 #include "OrbitBase/Result.h"
 #include "OrbitBase/ThreadPool.h"
-#include "OrbitBase/Tracing.h"
 #include "OrbitCaptureClient/CaptureClient.h"
 #include "OrbitCaptureClient/CaptureListener.h"
 #include "OrbitClientData/FunctionInfoSet.h"
@@ -105,7 +104,6 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   }
   void ToggleDrawHelp();
   void ToggleCapture();
-  void EnableIntrospection(bool value);
   void LoadFileMapping();
   void ListPresets();
   void RefreshCaptureView();
@@ -133,7 +131,6 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   void OnValidateFramePointers(std::vector<const ModuleData*> modules_to_validate);
 
   void RegisterCaptureWindow(CaptureWindow* capture);
-  void RegisterIntrospectionWindow(CaptureWindow* canvas);
   void RegisterDebugCanvas(GlCanvas* debug_canvas);
   void RegisterIntrospectionWindow(IntrospectionWindow* canvas);
   void StopIntrospection();

@@ -34,6 +34,8 @@ using orbit_client_protos::TimerInfo;
 
 TimeGraph* GCurrentTimeGraph = nullptr;
 
+bool TimeGraph::IsMainCaptureTimegraph() { return this == GCurrentTimeGraph; }
+
 TimeGraph::TimeGraph(uint32_t font_size)
     : font_size_(font_size), text_renderer_static_(font_size), batcher_(BatcherId::kTimeGraph) {
   scheduler_track_ = GetOrCreateSchedulerTrack();
@@ -116,7 +118,7 @@ bool TimeGraph::UpdateCaptureMinMaxTimestamps() {
   }
   mutex_.unlock();
 
-  if (GOrbitApp->HasCaptureData() &&
+  if (GIsMainCaptureTimegraph() && OrbitApp->HasCaptureData() &&
       GOrbitApp->GetCaptureData().GetCallstackData()->GetCallstackEventsCount() > 0) {
     capture_min_timestamp_ = std::min(capture_min_timestamp_,
                                       GOrbitApp->GetCaptureData().GetCallstackData()->min_time());
@@ -932,7 +934,7 @@ void TimeGraph::SetThreadFilter(const std::string& filter) {
 void TimeGraph::SortTracks() {
   std::shared_ptr<ThreadTrack> process_track = nullptr;
 
-  if (this == GCurrentTimeGraph) {
+  if (IsMainCaptureTimegraph()) {
     // Get or create thread track from events' thread id.
     event_count_.clear();
     event_count_[SamplingProfiler::kAllThreadsFakeTid] =
