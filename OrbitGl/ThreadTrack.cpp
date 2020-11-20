@@ -118,7 +118,9 @@ Color ThreadTrack::GetTimerColor(const TimerInfo& timer_info, bool is_selected) 
   }
 
   uint64_t address = timer_info.function_address();
-  const FunctionInfo* function_info = GOrbitApp->GetCaptureData().GetSelectedFunction(address);
+  const FunctionInfo* function_info = GOrbitApp->HasCaptureData()
+                                          ? GOrbitApp->GetCaptureData().GetSelectedFunction(address)
+                                          : nullptr;
   CHECK(function_info || timer_info.type() == TimerInfo::kIntrospection);
   std::optional<Color> user_color =
       function_info ? GetUserColor(timer_info, *function_info) : std::nullopt;
@@ -235,7 +237,9 @@ void ThreadTrack::SetTimesliceText(const TimerInfo& timer_info, double elapsed_u
   if (text_box->GetText().empty()) {
     std::string time = GetPrettyTime(absl::Microseconds(elapsed_us));
     const FunctionInfo* func =
-        GOrbitApp->GetCaptureData().GetSelectedFunction(timer_info.function_address());
+        GOrbitApp->HasCaptureData()
+            ? GOrbitApp->GetCaptureData().GetSelectedFunction(timer_info.function_address())
+            : nullptr;
 
     text_box->SetElapsedTimeTextLength(time.length());
 
