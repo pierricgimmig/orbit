@@ -168,6 +168,7 @@ void CaptureWindow::Pick(PickingId picking_id, int x, int y) {
   const TextBox* text_box = batcher.GetTextBox(picking_id);
   if (text_box) {
     SelectTextBox(text_box);
+    m_NeedsCheckHighlightChange = true;
   } else if (type == PickingType::kPickable) {
     picking_manager_.Pick(picking_id, x, y);
   } else {
