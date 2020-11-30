@@ -105,8 +105,10 @@ class GlCanvas {
 
   [[nodiscard]] virtual bool GetNeedsRedraw() const { return m_NeedsRedraw; }
   void NeedsRedraw() { m_NeedsRedraw = true; }
-  
-  [[nodiscard]] virtual bool GetNeedsCheckHighlightChange() const { return m_NeedsCheckHighlightChange; }
+
+  [[nodiscard]] virtual bool GetNeedsCheckHighlightChange() const {
+    return m_NeedsCheckHighlightChange;
+  }
   void ResetNeedsCheckHighlightChange() { m_NeedsCheckHighlightChange = false; };
 
   [[nodiscard]] bool GetIsMouseOver() const { return is_mouse_over_; }
