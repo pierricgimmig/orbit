@@ -397,3 +397,18 @@ std::pair<TextBox*, TextBox*> LiveFunctionsDataView::GetMinMax(const FunctionInf
   }
   return std::make_pair(min_box, max_box);
 }
+
+int LiveFunctionsDataView::GetRowFromFunctionAddress(uint64_t function) {
+  int function_row = -1;
+  bool find_function_row = false;
+  do {
+    function_row++;
+    find_function_row =
+        absl::StrFormat("0x%llx", function) == GetValue(function_row, kColumnAddress);
+  } while (GetValue(function_row, kColumnAddress) != "" && !find_function_row);
+
+  if (find_function_row) {
+    return function_row;
+  }
+  return -1;
+}
