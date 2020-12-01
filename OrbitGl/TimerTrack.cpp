@@ -107,14 +107,12 @@ void TimerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick,
 
         bool is_visible_width = normalized_length * canvas->GetWidth() > 1;
         bool is_selected = &text_box == GOrbitApp->selected_text_box();
-        bool need_highlight = GOrbitApp->selected_text_box() &&
-                              timer_info.thread_id() != SamplingProfiler::kAllThreadsFakeTid &&
-                              timer_info.thread_id() == GOrbitApp->selected_thread_id() &&
-                              timer_info.function_address() ==
-                                  GOrbitApp->selected_text_box()->GetTimerInfo().function_address();
-        need_highlight =
-            need_highlight ||
-            (!GOrbitApp->selected_text_box() && GOrbitApp->highlighted_function() > 0 &&
+        bool need_highlight =
+            (GOrbitApp->selected_text_box() && /*if picking from the capture window*/
+             timer_info.function_address() ==
+                 GOrbitApp->selected_text_box()->GetTimerInfo().function_address()) ||
+            (!GOrbitApp->selected_text_box() && /*if picking from the live functions panel*/
+             GOrbitApp->highlighted_function() > 0 &&
              GOrbitApp->highlighted_function() == timer_info.function_address());
 
         Vec2 pos(world_timer_x, world_timer_y);
