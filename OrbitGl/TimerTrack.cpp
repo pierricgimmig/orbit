@@ -109,6 +109,7 @@ void TimerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick,
         bool is_selected = &text_box == GOrbitApp->selected_text_box();
         bool need_highlight =
             (GOrbitApp->selected_text_box() && /*if picking from the capture window*/
+             GOrbitApp->selected_text_box()->GetTimerInfo().function_address() > 0 &&
              timer_info.function_address() ==
                  GOrbitApp->selected_text_box()->GetTimerInfo().function_address()) ||
             (!GOrbitApp->selected_text_box() && /*if picking from the live functions panel*/

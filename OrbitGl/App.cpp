@@ -1374,8 +1374,8 @@ void OrbitApp::SetVisibleFunctions(absl::flat_hash_set<uint64_t> visible_functio
 
 uint64_t OrbitApp::highlighted_function() const { return data_manager_->highlighted_function(); }
 
-void OrbitApp::set_highlighted_function(uint64_t highlighted_function) {
-  data_manager_->set_highlighted_function(highlighted_function);
+void OrbitApp::set_highlighted_function(uint64_t highlighted_function_address) {
+  data_manager_->set_highlighted_function(highlighted_function_address);
   NeedsRedraw();
 }
 

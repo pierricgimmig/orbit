@@ -34,7 +34,7 @@ class DataManager final {
   void DeselectFunction(const orbit_client_protos::FunctionInfo& function);
   void ClearSelectedFunctions();
   void set_visible_functions(absl::flat_hash_set<uint64_t> visible_functions);
-  void set_highlighted_function(uint64_t highlighted_function);
+  void set_highlighted_function(uint64_t highlighted_function_address);
   void set_selected_thread_id(int32_t thread_id);
   void set_selected_text_box(const TextBox* text_box);
   void set_selected_process(int32_t pid);

@@ -50,9 +50,9 @@ void DataManager::set_visible_functions(absl::flat_hash_set<uint64_t> visible_fu
   visible_functions_ = std::move(visible_functions);
 }
 
-void DataManager::set_highlighted_function(uint64_t highlighted_function) {
+void DataManager::set_highlighted_function(uint64_t highlighted_function_address) {
   CHECK(std::this_thread::get_id() == main_thread_id_);
-  highlighted_function_ = highlighted_function;
+  highlighted_function_ = highlighted_function_address;
 }
 
 void DataManager::set_selected_thread_id(int32_t thread_id) {
