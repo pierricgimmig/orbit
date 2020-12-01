@@ -109,9 +109,7 @@ void OrbitLiveFunctions::Reset() {
 }
 
 void OrbitLiveFunctions::onRowSelected(int row) {
-  if (row < 0) {
-    return;
-  }
+  CHECK(row >= 0);
   ui->data_view_panel_->GetTreeView()->SetIsInternalRefresh(true);
   QItemSelectionModel* selection = ui->data_view_panel_->GetTreeView()->selectionModel();
   QModelIndex idx = ui->data_view_panel_->GetTreeView()->GetModel()->CreateIndex(row, 0);
