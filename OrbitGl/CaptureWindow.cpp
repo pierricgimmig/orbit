@@ -416,6 +416,7 @@ void CaptureWindow::KeyPressed(unsigned int key_code, bool ctrl, bool shift, boo
           time_graph_.JumpToNeighborBox(GOrbitApp->selected_text_box(),
                                         TimeGraph::JumpDirection::kPrevious,
                                         TimeGraph::JumpScope::kSameDepth);
+          needs_check_highlight_change_ = true;
         }
         break;
       case 20:  // Right
@@ -431,6 +432,7 @@ void CaptureWindow::KeyPressed(unsigned int key_code, bool ctrl, bool shift, boo
           time_graph_.JumpToNeighborBox(GOrbitApp->selected_text_box(),
                                         TimeGraph::JumpDirection::kNext,
                                         TimeGraph::JumpScope::kSameDepth);
+          needs_check_highlight_change_ = true;
         }
         break;
       case 19:  // Up
