@@ -168,7 +168,6 @@ void CaptureWindow::Pick(PickingId picking_id, int x, int y) {
   const TextBox* text_box = batcher.GetTextBox(picking_id);
   if (text_box) {
     SelectTextBox(text_box);
-    m_NeedsCheckHighlightChange = true;
   } else if (type == PickingType::kPickable) {
     picking_manager_.Pick(picking_id, x, y);
   } else {
@@ -183,6 +182,7 @@ void CaptureWindow::SelectTextBox(const TextBox* text_box) {
   if (text_box == nullptr) return;
   GOrbitApp->SelectTextBox(text_box);
   GOrbitApp->set_selected_thread_id(text_box->GetTimerInfo().thread_id());
+  needs_check_highlight_change_ = true;
 
   const TimerInfo& timer_info = text_box->GetTimerInfo();
 

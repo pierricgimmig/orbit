@@ -107,9 +107,9 @@ class GlCanvas {
   void NeedsRedraw() { m_NeedsRedraw = true; }
 
   [[nodiscard]] virtual bool GetNeedsCheckHighlightChange() const {
-    return m_NeedsCheckHighlightChange;
+    return needs_check_highlight_change_;
   }
-  void ResetNeedsCheckHighlightChange() { m_NeedsCheckHighlightChange = false; };
+  void ResetNeedsCheckHighlightChange() { needs_check_highlight_change_ = false; };
 
   [[nodiscard]] bool GetIsMouseOver() const { return is_mouse_over_; }
   void SetIsMouseOver(bool value) { is_mouse_over_ = value; }
@@ -185,7 +185,7 @@ class GlCanvas {
   bool picking_;
   bool double_clicking_;
   bool control_key_;
-  bool m_NeedsCheckHighlightChange = false;
+  bool needs_check_highlight_change_ = false;
   bool is_mouse_over_ = false;
   bool m_NeedsRedraw;
   int m_MainWindowWidth = 0;
