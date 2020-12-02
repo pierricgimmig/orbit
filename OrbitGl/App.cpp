@@ -1388,7 +1388,7 @@ void OrbitApp::set_selected_thread_id(ThreadID thread_id) {
 const TextBox* OrbitApp::selected_text_box() const { return data_manager_->selected_text_box(); }
 void OrbitApp::SelectTextBox(const TextBox* text_box) {
   data_manager_->set_selected_text_box(text_box);
-  data_manager_->set_highlighted_function(0);
+  data_manager_->set_highlighted_function(DataManager::kUnusedHighlightedFunctionAddress);
 }
 
 void OrbitApp::SelectCallstackEvents(const std::vector<CallstackEvent>& selected_callstack_events,

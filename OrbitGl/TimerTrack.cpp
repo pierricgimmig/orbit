@@ -113,7 +113,7 @@ void TimerTrack::UpdatePrimitives(uint64_t min_tick, uint64_t max_tick,
              timer_info.function_address() ==
                  GOrbitApp->selected_text_box()->GetTimerInfo().function_address()) ||
             (!GOrbitApp->selected_text_box() && /*if picking from the live functions panel*/
-             GOrbitApp->highlighted_function() > 0 &&
+             GOrbitApp->highlighted_function() != DataManager::kUnusedHighlightedFunctionAddress &&
              GOrbitApp->highlighted_function() == timer_info.function_address());
 
         Vec2 pos(world_timer_x, world_timer_y);
