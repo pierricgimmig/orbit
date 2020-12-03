@@ -77,6 +77,12 @@ std::string LiveFunctionsDataView::GetValue(int row, int column) {
   }
 }
 
+void LiveFunctionsDataView::OnSelect(int row) {
+  GOrbitApp->SelectTextBox(nullptr);
+  const CaptureData& capture_data = GOrbitApp->GetCaptureData();
+  GOrbitApp->set_highlighted_function(capture_data.GetAbsoluteAddress(*GetSelectedFunction(row)));
+}
+
 #define ORBIT_FUNC_SORT(Member)                                                      \
   [&](int a, int b) {                                                                \
     return OrbitUtils::Compare(functions[a].Member, functions[b].Member, ascending); \
@@ -390,4 +396,13 @@ std::pair<TextBox*, TextBox*> LiveFunctionsDataView::GetMinMax(const FunctionInf
     }
   }
   return std::make_pair(min_box, max_box);
+}
+
+int LiveFunctionsDataView::GetRowFromFunctionAddress(uint64_t function_address) {
+  for (int function_row = 0; function_row < static_cast<int>(GetNumElements()); function_row++) {
+    if (absl::StrFormat("0x%llx", function_address) == GetValue(function_row, kColumnAddress)) {
+      return function_row;
+    }
+  }
+  return -1;
 }
