@@ -1100,6 +1100,16 @@ void OrbitApp::RetrieveModuleFromRemote(ModuleData* module_data,
   (void)future;
 }
 
+void OrbitApp::LoadOrbitApiModuleOnRemote() {
+  const char* kLibOrbitName = "liborbit.so";
+  std::vector<ModuleData*> orbit_modules =
+      module_manager_->GetMutableModulesByName(kLibOrbitName);
+  CHECK(orbit_modules.size() <= 1);
+  if (!orbit_modules.empty() && !orbit_modules[0]->is_loaded()) {
+    LoadModules(orbit_modules);
+  }
+}
+
 void OrbitApp::LoadModules(
     const std::vector<ModuleData*>& modules,
     absl::flat_hash_map<std::string, std::vector<uint64_t>> function_hashes_to_hook_map,
@@ -1519,6 +1529,9 @@ void OrbitApp::UpdateProcessAndModuleList(int32_t pid) {
       // Update modules and get the ones to reload.
       std::vector<ModuleData*> modules_to_reload =
           module_manager_->AddOrUpdateModules(module_infos);
+
+      // Automatically load liborbit.so.
+      LoadOrbitApiModuleOnRemote();
 
       absl::flat_hash_map<std::string, std::vector<uint64_t>> function_hashes_to_hook_map;
       for (const FunctionInfo& func : data_manager_->GetSelectedFunctions()) {
