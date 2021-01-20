@@ -1102,8 +1102,7 @@ void OrbitApp::RetrieveModuleFromRemote(ModuleData* module_data,
 
 void OrbitApp::LoadOrbitApiModuleOnRemote() {
   const char* kLibOrbitName = "liborbit.so";
-  std::vector<ModuleData*> orbit_modules =
-      module_manager_->GetMutableModulesByName(kLibOrbitName);
+  std::vector<ModuleData*> orbit_modules = module_manager_->GetMutableModulesByName(kLibOrbitName);
   CHECK(orbit_modules.size() <= 1);
   if (!orbit_modules.empty() && !orbit_modules[0]->is_loaded()) {
     LoadModules(orbit_modules);
