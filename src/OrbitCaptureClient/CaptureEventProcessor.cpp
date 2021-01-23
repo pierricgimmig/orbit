@@ -79,7 +79,12 @@ void CaptureEventProcessor::ProcessEvent(const ClientCaptureEvent& event) {
     case ClientCaptureEvent::kModuleUpdateEvent:
       // TODO (http://b/168797897): Process module update events
       break;
-    case ClientCaptureEvent::EVENT_NOT_SET:
+    case ClientCaptureEvent::kApiEvent: {
+      auto& api_event = event.api_event();
+      LOG("API EVENT RECEIVED!! %s", api_event.name());
+      break;
+    }
+    case CaptureEvent::EVENT_NOT_SET:
       ERROR("CaptureEvent::EVENT_NOT_SET read from Capture's gRPC stream");
       break;
   }
