@@ -80,8 +80,7 @@ void CaptureEventProcessor::ProcessEvent(const ClientCaptureEvent& event) {
       // TODO (http://b/168797897): Process module update events
       break;
     case ClientCaptureEvent::kApiEvent: {
-      auto& api_event = event.api_event();
-      LOG("API EVENT RECEIVED!! %s", api_event.name());
+      api_event_processor_.ProcessApiEvent(event.api_event());
       break;
     }
     case CaptureEvent::EVENT_NOT_SET:
