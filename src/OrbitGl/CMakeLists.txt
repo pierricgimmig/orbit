@@ -112,6 +112,7 @@ target_sources(
           TimerChain.cpp
           TimerInfosIterator.cpp
           TimerTrack.cpp
+          ScopeTree.cpp
           ThreadStateTrack.cpp
           ThreadTrack.cpp
           Track.cpp
@@ -165,11 +166,13 @@ target_sources(OrbitGlTests PRIVATE
                ScopeTreeTest.cpp
                SliderTest.cpp
                TimerInfosIteratorTest.cpp
+               ScopeTreeTest.cpp
                ClientFlags.cpp)
 
 target_link_libraries(
   OrbitGlTests
   PRIVATE OrbitGl
-          GTest::Main)
+          GTest::Main
+          CONAN_PKG::abseil)
 
 register_test(OrbitGlTests)
