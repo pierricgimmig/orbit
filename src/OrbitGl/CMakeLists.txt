@@ -110,6 +110,7 @@ target_sources(
           SamplingReport.cpp
           SamplingReportDataView.cpp
           SchedulerTrack.cpp
+          ScopeTree.cpp
           SourceCodeReport.cpp
           TextRenderer.cpp
           TimeGraph.cpp
@@ -170,11 +171,13 @@ target_sources(OrbitGlTests PRIVATE
                ScopeTreeTest.cpp
                SliderTest.cpp
                TimerInfosIteratorTest.cpp
+               ScopeTreeTest.cpp
                ClientFlags.cpp)
 
 target_link_libraries(
   OrbitGlTests
   PRIVATE OrbitGl
-          GTest::Main)
+          GTest::Main
+          CONAN_PKG::abseil)
 
 register_test(OrbitGlTests)
