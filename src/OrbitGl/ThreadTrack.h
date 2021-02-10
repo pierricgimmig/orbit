@@ -63,6 +63,7 @@ class ThreadTrack final : public TimerTrack {
 
   [[nodiscard]] float GetHeight() const override;
   [[nodiscard]] float GetHeaderHeight() const override;
+  [[nodiscard]] float GetYFromDepth(uint32_t depth) const;
 
   void UpdatePositionOfSubtracks();
   void UpdateMinMaxTimestamps();
@@ -70,6 +71,8 @@ class ThreadTrack final : public TimerTrack {
   std::shared_ptr<orbit_gl::ThreadStateTrack> thread_state_track_;
   std::shared_ptr<orbit_gl::EventTrack> event_track_;
   std::shared_ptr<orbit_gl::TracepointTrack> tracepoint_track_;
+
+  absl::Mutex mutex_;
   ScopeTree scope_tree_;
 };
 
