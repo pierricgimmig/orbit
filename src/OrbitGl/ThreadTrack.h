@@ -75,7 +75,7 @@ class ThreadTrack final : public TimerTrack {
   std::shared_ptr<orbit_gl::TracepointTrack> tracepoint_track_;
 
   absl::Mutex mutex_;
-  ScopeTree scope_tree_;
+  ScopeTree<TextBox> scope_tree_;
 };
 
 #endif  // ORBIT_GL_THREAD_TRACK_H_
