@@ -280,6 +280,7 @@ message ClientCaptureEvent {
   oneof event {
     // Please keep these alphabetically ordered.
     AddressInfo address_info = 1;
+    ApiEvent api_event = 16;
     CallstackSample callstack_sample = 2;
     FunctionCall function_call = 3;
     GpuJob gpu_job = 4;
