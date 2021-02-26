@@ -421,6 +421,7 @@ void VerifyOrderOfAllEvents(const std::vector<orbit_grpc_protos::ProducerCapture
         previous_event_timestamp_ns = event.module_update_event().timestamp_ns();
         break;
       case orbit_grpc_protos::ProducerCaptureEvent::kApiEvent:
+      case orbit_grpc_protos::ProducerCaptureEvent::kApiEventFixed:
         UNREACHABLE();
         break;
       case orbit_grpc_protos::ProducerCaptureEvent::EVENT_NOT_SET:
