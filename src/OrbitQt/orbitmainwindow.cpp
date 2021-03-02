@@ -847,6 +847,7 @@ void OrbitMainWindow::on_actionSave_Preset_As_triggered() {
 void OrbitMainWindow::on_actionToggle_Capture_triggered() { app_->ToggleCapture(); }
 
 const QString OrbitMainWindow::kCollectThreadStatesSettingKey{"CollectThreadStates"};
+const QString OrbitMainWindow::kBulkCaptureEventsSettingKey{"BulkCaptureEvents"};
 const QString OrbitMainWindow::kLimitLocalMarkerDepthPerCommandBufferSettingsKey{
     "LimitLocalMarkerDepthPerCommandBuffer"};
 const QString OrbitMainWindow::kMaxLocalMarkerDepthPerCommandBufferSettingsKey{
@@ -856,6 +857,7 @@ const QString OrbitMainWindow::kMaxLocalMarkerDepthPerCommandBufferSettingsKey{
 void OrbitMainWindow::LoadCaptureOptionsIntoApp() {
   QSettings settings;
   app_->SetCollectThreadStates(settings.value(kCollectThreadStatesSettingKey, false).toBool());
+  app_->SetBulkCaptureEvents(settings.value(kBulkCaptureEventsSettingKey, false).toBool());
 
   uint64_t max_local_marker_depth_per_command_buffer = std::numeric_limits<uint64_t>::max();
   if (settings.value(kLimitLocalMarkerDepthPerCommandBufferSettingsKey, false).toBool()) {
@@ -870,6 +872,7 @@ void OrbitMainWindow::on_actionCaptureOptions_triggered() {
 
   orbit_qt::CaptureOptionsDialog dialog{this};
   dialog.SetCollectThreadStates(settings.value(kCollectThreadStatesSettingKey, false).toBool());
+  dialog.SetBulkCaptureEvents(settings.value(kBulkCaptureEventsSettingKey, false).toBool());
   dialog.SetLimitLocalMarkerDepthPerCommandBuffer(
       settings.value(kLimitLocalMarkerDepthPerCommandBufferSettingsKey, false).toBool());
   dialog.SetMaxLocalMarkerDepthPerCommandBuffer(
@@ -881,6 +884,7 @@ void OrbitMainWindow::on_actionCaptureOptions_triggered() {
   }
 
   settings.setValue(kCollectThreadStatesSettingKey, dialog.GetCollectThreadStates());
+  settings.setValue(kBulkCaptureEventsSettingKey, dialog.GetBulkCaptureEvents());
   settings.setValue(kLimitLocalMarkerDepthPerCommandBufferSettingsKey,
                     dialog.GetLimitLocalMarkerDepthPerCommandBuffer());
   settings.setValue(kMaxLocalMarkerDepthPerCommandBufferSettingsKey,
