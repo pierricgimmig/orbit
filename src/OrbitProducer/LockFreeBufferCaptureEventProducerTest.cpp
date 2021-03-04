@@ -22,6 +22,7 @@
 #include "OrbitProducer/FakeProducerSideService.h"
 #include "OrbitProducer/LockFreeBufferCaptureEventProducer.h"
 #include "capture.pb.h"
+#include "flatbuffers/capture_generated.h"
 #include "grpcpp/grpcpp.h"
 
 namespace orbit_producer {
@@ -61,6 +62,26 @@ orbit_grpc_protos::ProducerCaptureEvent* CreateCaptureEventFixed(orbit_api::ApiE
   api_event->set_d1(str_as_uint64[1]);
   api_event->set_d2(str_as_uint64[2]);
   api_event->set_d3(str_as_uint64[3]);
+  return capture_event;
+}
+
+orbit_grpc_protos::fbs::ProducerCaptureEvent* CreateCaptureEventFixedFlatBuffer(
+    orbit_api::ApiEvent* /*event*/) {
+  orbit_grpc_protos::fbs::ProducerCaptureEvent* capture_event = nullptr;
+
+  // auto* api_event = capture_event->mutable_api_event_fixed();
+  // api_event->set_timestamp_ns(event->timestamp_ns);
+  // api_event->set_pid(event->pid);
+  // api_event->set_tid(event->tid);
+  // api_event->set_type(event->encoded_event.event.type);
+  // api_event->set_color(event->encoded_event.event.color);
+  // api_event->set_data(event->encoded_event.event.data);
+  // char* str = event->encoded_event.event.name;
+  // uint64_t* str_as_uint64 = reinterpret_cast<uint64_t*>(str);
+  // api_event->set_d0(str_as_uint64[0]);
+  // api_event->set_d1(str_as_uint64[1]);
+  // api_event->set_d2(str_as_uint64[2]);
+  // api_event->set_d3(str_as_uint64[3]);
   return capture_event;
 }
 
@@ -107,6 +128,16 @@ TEST(ApiEvent, Performance) {
       ScopeTimer t(msg);
       for (size_t i = 0; i < api_events.size(); ++i) {
         CreateCaptureEventFixed(&api_events[i], arena);
+      }
+    }
+
+    // Create 10'000 flatbuffer events
+    {
+      std::string msg =
+          absl::StrFormat("Creating %u individual FlatBuffer events", api_events.size());
+      ScopeTimer t(msg);
+      for (size_t i = 0; i < api_events.size(); ++i) {
+        CreateCaptureEventFixedFlatBuffer(&api_events[i]);
       }
     }
 

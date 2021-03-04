@@ -1,0 +1,29 @@
+// Generated from services_ggp.proto
+
+namespace orbit_grpc_protos.fbs;
+
+table StartCaptureRequest {
+}
+
+table StartCaptureResponse {
+}
+
+table StopAndSaveCaptureRequest {
+}
+
+table StopAndSaveCaptureResponse {
+}
+
+table UpdateSelectedFunctionsRequest {
+  functions:[string];
+}
+
+table UpdateSelectedFunctionsResponse {
+}
+
+table ShutdownServiceRequest {
+}
+
+table ShutdownServiceResponse {
+}
+

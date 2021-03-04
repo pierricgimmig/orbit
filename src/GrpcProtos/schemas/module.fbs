@@ -1,0 +1,14 @@
+// Generated from module.proto
+
+namespace orbit_grpc_protos.fbs;
+
+table ModuleInfo {
+  name:string;
+  file_path:string;
+  file_size:ulong;
+  address_start:ulong;
+  address_end:ulong;
+  build_id:string;
+  load_bias:ulong;
+}
+

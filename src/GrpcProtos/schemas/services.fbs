@@ -1,0 +1,82 @@
+// Generated from services.proto
+
+include "capture.fbs";
+include "code_block.fbs";
+include "module.fbs";
+include "process.fbs";
+include "tracepoint.fbs";
+
+namespace orbit_grpc_protos.fbs.CrashOrbitServiceRequest_;
+
+enum CrashType : int {
+  CHECK_FALSE = 0,
+  NULL_POINTER_DEREFERENCE = 1,
+  STACK_OVERFLOW = 2,
+}
+
+namespace orbit_grpc_protos.fbs;
+
+table CaptureRequest {
+  capture_options:orbit_grpc_protos.fbs.CaptureOptions;
+}
+
+table CaptureResponse {
+  capture_events:[orbit_grpc_protos.fbs.ClientCaptureEvent];
+}
+
+table GetProcessListRequest {
+}
+
+table GetProcessListResponse {
+  processes:[orbit_grpc_protos.fbs.ProcessInfo];
+}
+
+table GetModuleListRequest {
+  process_id:int;
+}
+
+table GetModuleListResponse {
+  modules:[orbit_grpc_protos.fbs.ModuleInfo];
+}
+
+table GetTracepointListRequest {
+}
+
+table GetTracepointListResponse {
+  tracepoints:[orbit_grpc_protos.fbs.TracepointInfo];
+}
+
+table GetProcessMemoryRequest {
+  pid:int;
+  address:ulong;
+  size:ulong;
+}
+
+table GetProcessMemoryResponse {
+  memory:[ubyte];
+}
+
+table GetDebugInfoFileRequest {
+  module_path:string;
+}
+
+table GetDebugInfoFileResponse {
+  debug_info_file_path:string;
+}
+
+table ValidateFramePointersRequest {
+  module_path:string;
+  functions:[orbit_grpc_protos.fbs.CodeBlock];
+}
+
+table ValidateFramePointersResponse {
+  functions_without_frame_pointer:[orbit_grpc_protos.fbs.CodeBlock];
+}
+
+table CrashOrbitServiceRequest {
+  crash_type:orbit_grpc_protos.fbs.CrashOrbitServiceRequest_.CrashType;
+}
+
+table CrashOrbitServiceResponse {
+}
+

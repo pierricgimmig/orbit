@@ -1,0 +1,9 @@
+// Generated from code_block.proto
+
+namespace orbit_grpc_protos.fbs;
+
+table CodeBlock {
+  offset:ulong;
+  size:ulong;
+}
+

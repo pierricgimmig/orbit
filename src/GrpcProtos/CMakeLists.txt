@@ -28,4 +28,28 @@ target_sources(GrpcProtos PRIVATE
         symbol.proto
         tracepoint.proto)
 
+# FlatBuffers
+set(GENERATED_INCLUDES_DIR "${CMAKE_CURRENT_BINARY_DIR}/grpc_codegen/flatbuffers/")
+
+file(GLOB_RECURSE FLATBUFFERS_SCHEMAS ${CMAKE_CURRENT_LIST_DIR}/*.fbs)
+
+set(FLATBUFFERS_FLATC_SCHEMA_EXTRA_ARGS
+        "--proto-namespace-suffix" "blah")
+
+set(FLATC_ARGS "${FLATBUFFERS_FLATC_SCHEMA_EXTRA_ARGS}")
+
+build_flatbuffers("${FLATBUFFERS_SCHEMAS}"
+                  ""
+                  GENERATED_INCLUDES
+                  ""
+                  "${GENERATED_INCLUDES_DIR}"
+                  ""
+                  "")
+
+message(STATUS "FLATBUFFERS_SCHEMAS: ${FLATBUFFERS_SCHEMAS}")
+
+add_dependencies(GrpcProtos GENERATED_INCLUDES)
+
+target_link_libraries(GrpcProtos PUBLIC CONAN_PKG::flatbuffers)
+
 grpc_helper(GrpcProtos)

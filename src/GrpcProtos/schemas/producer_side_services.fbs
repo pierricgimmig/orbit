@@ -1,0 +1,50 @@
+// Generated from producer_side_services.proto
+
+include "capture.fbs";
+include "module.fbs";
+include "tracepoint.fbs";
+
+namespace orbit_grpc_protos.fbs;
+
+table ReceiveCommandsAndSendEventsRequest {
+  event:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsRequest_.Anonymous2;
+}
+
+namespace orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsRequest_;
+
+table BufferedCaptureEvents {
+  capture_events:[orbit_grpc_protos.fbs.ProducerCaptureEvent];
+}
+
+table AllEventsSent {
+}
+
+table Anonymous2 {
+  buffered_capture_events:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsRequest_.BufferedCaptureEvents;
+  all_events_sent:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsRequest_.AllEventsSent;
+}
+
+namespace orbit_grpc_protos.fbs;
+
+table ReceiveCommandsAndSendEventsResponse {
+  command:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsResponse_.Anonymous3;
+}
+
+namespace orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsResponse_;
+
+table StartCaptureCommand {
+  capture_options:orbit_grpc_protos.fbs.CaptureOptions;
+}
+
+table StopCaptureCommand {
+}
+
+table CaptureFinishedCommand {
+}
+
+table Anonymous3 {
+  start_capture_command:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsResponse_.StartCaptureCommand;
+  stop_capture_command:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsResponse_.StopCaptureCommand;
+  capture_finished_command:orbit_grpc_protos.fbs.ReceiveCommandsAndSendEventsResponse_.CaptureFinishedCommand;
+}
+

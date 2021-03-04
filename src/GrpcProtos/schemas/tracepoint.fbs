@@ -1,0 +1,9 @@
+// Generated from tracepoint.proto
+
+namespace orbit_grpc_protos.fbs;
+
+table TracepointInfo {
+  category:string;
+  name:string;
+}
+
