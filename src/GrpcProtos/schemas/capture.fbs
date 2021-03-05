@@ -271,7 +271,7 @@ table SystemMemoryUsage {
   cached_kb:long;
 }
 
-table ClientCaptureEvent {
+union ClientCaptureEvent {
   address_info:orbit_grpc_protos.fbs.AddressInfo,
   api_event:orbit_grpc_protos.fbs.ApiEvent,
   api_event_fixed:orbit_grpc_protos.fbs.ApiEventFixed,
