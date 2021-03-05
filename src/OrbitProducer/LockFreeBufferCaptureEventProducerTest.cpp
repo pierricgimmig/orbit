@@ -66,23 +66,90 @@ orbit_grpc_protos::ProducerCaptureEvent* CreateCaptureEventFixed(orbit_api::ApiE
 }
 
 orbit_grpc_protos::fbs::ProducerCaptureEvent* CreateCaptureEventFixedFlatBuffer(
-    orbit_api::ApiEvent* /*event*/) {
-  orbit_grpc_protos::fbs::ProducerCaptureEvent* capture_event = nullptr;
+    orbit_api::ApiEvent* event, flatbuffers::FlatBufferBuilder* flat_buffer_builder) {
+  flatbuffers::FlatBufferBuilder& builder = *flat_buffer_builder;
+  builder.Clear();
+  orbit_grpc_protos::fbs::ApiEventFixedBuilder api_fixed_builder(builder);
+  api_fixed_builder.add_timestamp_ns(event->timestamp_ns);
+  api_fixed_builder.add_pid(event->pid);
+  api_fixed_builder.add_tid(event->tid);
+  api_fixed_builder.add_type(event->encoded_event.event.type);
+  api_fixed_builder.add_color(event->encoded_event.event.color);
+  api_fixed_builder.add_data(777 /*event->encoded_event.event.data*/);
+  char* str = event->encoded_event.event.name;
+  uint64_t* str_as_uint64 = reinterpret_cast<uint64_t*>(str);
+  api_fixed_builder.add_d0(str_as_uint64[0]);
+  api_fixed_builder.add_d1(str_as_uint64[1]);
+  api_fixed_builder.add_d2(str_as_uint64[2]);
+  api_fixed_builder.add_d3(str_as_uint64[3]);
+  // api_fixed_builder.add_d4(1);
+  auto api_event_fixed = api_fixed_builder.Finish();
 
-  // auto* api_event = capture_event->mutable_api_event_fixed();
-  // api_event->set_timestamp_ns(event->timestamp_ns);
-  // api_event->set_pid(event->pid);
-  // api_event->set_tid(event->tid);
-  // api_event->set_type(event->encoded_event.event.type);
-  // api_event->set_color(event->encoded_event.event.color);
-  // api_event->set_data(event->encoded_event.event.data);
-  // char* str = event->encoded_event.event.name;
-  // uint64_t* str_as_uint64 = reinterpret_cast<uint64_t*>(str);
-  // api_event->set_d0(str_as_uint64[0]);
-  // api_event->set_d1(str_as_uint64[1]);
-  // api_event->set_d2(str_as_uint64[2]);
-  // api_event->set_d3(str_as_uint64[3]);
-  return capture_event;
+  orbit_grpc_protos::fbs::ProducerCaptureEvent::Builder capture_event_builder(builder);
+  capture_event_builder.add_api_event_fixed(api_event_fixed);
+  auto capture_event = capture_event_builder.Finish();
+  builder.Finish(capture_event);
+  return orbit_grpc_protos::fbs::GetMutableProducerCaptureEvent(builder.GetBufferPointer());
+}
+
+orbit_grpc_protos::fbs::ProducerCaptureEvent* CreateCaptureEventFixedFlatBufferWithLogs(
+    orbit_api::ApiEvent* event) {
+  flatbuffers::FlatBufferBuilder builder(256);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  orbit_grpc_protos::fbs::ApiEventFixedBuilder api_fixed_builder(builder);
+  api_fixed_builder.add_timestamp_ns(event->timestamp_ns);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  api_fixed_builder.add_pid(event->pid);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  api_fixed_builder.add_tid(event->tid);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  api_fixed_builder.add_type(event->encoded_event.event.type);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  api_fixed_builder.add_color(event->encoded_event.event.color);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  api_fixed_builder.add_data(777 /*event->encoded_event.event.data*/);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  char* str = event->encoded_event.event.name;
+  uint64_t* str_as_uint64 = reinterpret_cast<uint64_t*>(str);
+  api_fixed_builder.add_d0(str_as_uint64[0]);
+  api_fixed_builder.add_d1(str_as_uint64[1]);
+  api_fixed_builder.add_d2(str_as_uint64[2]);
+  api_fixed_builder.add_d3(str_as_uint64[3]);
+  api_fixed_builder.add_d4(1);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  auto api_event_fixed = api_fixed_builder.Finish();
+  LOG("builder.GetSize() = %i", builder.GetSize());
+
+  orbit_grpc_protos::fbs::ProducerCaptureEvent::Builder capture_event_builder(builder);
+  capture_event_builder.add_api_event_fixed(api_event_fixed);
+  auto capture_event = capture_event_builder.Finish();
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  builder.Finish(capture_event);
+  LOG("builder.GetSize() = %i", builder.GetSize());
+  LOG("sizeof(orbit_api::ApiEvent) = %u", sizeof(orbit_api::ApiEvent));
+  LOG("sizeof(orbit_grpc_protos::fbs::ApiEventFixed) = %u",
+      sizeof(orbit_grpc_protos::fbs::ApiEventFixed));
+
+  LOG("sizeof(orbit_grpc_protos::fbs::ProducerCaptureEvent) = %u",
+      sizeof(orbit_grpc_protos::fbs::ProducerCaptureEvent));
+  auto deserialized_event =
+      orbit_grpc_protos::fbs::GetProducerCaptureEvent(builder.GetBufferPointer());
+  LOG("deserialized_event");
+  LOG("deserialized_event = %p", deserialized_event);
+  LOG("deserialized_event->api_event_fixed() = %p", deserialized_event->api_event_fixed());
+  LOG("deserialized_event->api_event_fixed()->data() = %u",
+      deserialized_event->api_event_fixed()->data());
+  LOG("deserialized_event->api_event_fixed()->data() = %u",
+      deserialized_event->api_event_fixed()->d0());
+  LOG("deserialized_event->api_event_fixed()->data() = %u",
+      deserialized_event->api_event_fixed()->d1());
+  LOG("deserialized_event->api_event_fixed()->data() = %u",
+      deserialized_event->api_event_fixed()->d2());
+  LOG("deserialized_event->api_event_fixed()->data() = %u",
+      deserialized_event->api_event_fixed()->d3());
+  LOG("deserialized_event->api_event_fixed()->data() = %u",
+      deserialized_event->api_event_fixed()->d4());
+  return nullptr;
 }
 
 orbit_grpc_protos::ProducerCaptureEvent* CreateCaptureEvent(orbit_api::ApiEvent* events,
@@ -119,6 +186,8 @@ TEST(ApiEvent, Performance) {
 
   constexpr size_t kNumIterations = 100;
 
+  CreateCaptureEventFixedFlatBufferWithLogs(&api_events[0]);
+
   for (size_t i = 0; i < kNumIterations; ++i) {
     LOG("iteration %u", i);
     // Create 10'000 capture events individually.
@@ -132,12 +201,13 @@ TEST(ApiEvent, Performance) {
     }
 
     // Create 10'000 flatbuffer events
+    flatbuffers::FlatBufferBuilder flat_buffer_builder(1024);
     {
       std::string msg =
           absl::StrFormat("Creating %u individual FlatBuffer events", api_events.size());
       ScopeTimer t(msg);
       for (size_t i = 0; i < api_events.size(); ++i) {
-        CreateCaptureEventFixedFlatBuffer(&api_events[i]);
+        CreateCaptureEventFixedFlatBuffer(&api_events[i], &flat_buffer_builder);
       }
     }
 

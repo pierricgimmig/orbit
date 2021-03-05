@@ -272,40 +272,28 @@ table SystemMemoryUsage {
 }
 
 table ClientCaptureEvent {
-  event:orbit_grpc_protos.fbs.ClientCaptureEvent_.Anonymous0;
-}
-
-namespace orbit_grpc_protos.fbs.ClientCaptureEvent_;
-
-table Anonymous0 {
-  address_info:orbit_grpc_protos.fbs.AddressInfo;
-  api_event:orbit_grpc_protos.fbs.ApiEvent;
-  api_event_fixed:orbit_grpc_protos.fbs.ApiEventFixed;
-  callstack_sample:orbit_grpc_protos.fbs.CallstackSample;
-  function_call:orbit_grpc_protos.fbs.FunctionCall;
-  gpu_job:orbit_grpc_protos.fbs.GpuJob;
-  gpu_queue_submission:orbit_grpc_protos.fbs.GpuQueueSubmission;
-  interned_callstack:orbit_grpc_protos.fbs.InternedCallstack;
-  interned_string:orbit_grpc_protos.fbs.InternedString;
-  interned_tracepoint_info:orbit_grpc_protos.fbs.InternedTracepointInfo;
-  introspection_scope:orbit_grpc_protos.fbs.IntrospectionScope;
-  module_update_event:orbit_grpc_protos.fbs.ModuleUpdateEvent;
-  scheduling_slice:orbit_grpc_protos.fbs.SchedulingSlice;
-  system_memory_usage:orbit_grpc_protos.fbs.SystemMemoryUsage;
-  thread_name:orbit_grpc_protos.fbs.ThreadName;
-  thread_state_slice:orbit_grpc_protos.fbs.ThreadStateSlice;
-  tracepoint_event:orbit_grpc_protos.fbs.TracepointEvent;
+  address_info:orbit_grpc_protos.fbs.AddressInfo,
+  api_event:orbit_grpc_protos.fbs.ApiEvent,
+  api_event_fixed:orbit_grpc_protos.fbs.ApiEventFixed,
+  callstack_sample:orbit_grpc_protos.fbs.CallstackSample,
+  function_call:orbit_grpc_protos.fbs.FunctionCall,
+  gpu_job:orbit_grpc_protos.fbs.GpuJob,
+  gpu_queue_submission:orbit_grpc_protos.fbs.GpuQueueSubmission,
+  interned_callstack:orbit_grpc_protos.fbs.InternedCallstack,
+  interned_string:orbit_grpc_protos.fbs.InternedString,
+  interned_tracepoint_info:orbit_grpc_protos.fbs.InternedTracepointInfo,
+  introspection_scope:orbit_grpc_protos.fbs.IntrospectionScope,
+  module_update_event:orbit_grpc_protos.fbs.ModuleUpdateEvent,
+  scheduling_slice:orbit_grpc_protos.fbs.SchedulingSlice,
+  system_memory_usage:orbit_grpc_protos.fbs.SystemMemoryUsage,
+  thread_name:orbit_grpc_protos.fbs.ThreadName,
+  thread_state_slice:orbit_grpc_protos.fbs.ThreadStateSlice,
+  tracepoint_event:orbit_grpc_protos.fbs.TracepointEvent
 }
 
 namespace orbit_grpc_protos.fbs;
 
 table ProducerCaptureEvent {
-  event:orbit_grpc_protos.fbs.ProducerCaptureEvent_.Anonymous1;
-}
-
-namespace orbit_grpc_protos.fbs.ProducerCaptureEvent_;
-
-table Anonymous1 {
   api_event:orbit_grpc_protos.fbs.ApiEvent;
   api_event_fixed:orbit_grpc_protos.fbs.ApiEventFixed;
   callstack_sample:orbit_grpc_protos.fbs.CallstackSample;
@@ -325,3 +313,4 @@ table Anonymous1 {
   thread_state_slice:orbit_grpc_protos.fbs.ThreadStateSlice;
 }
 
+root_type ProducerCaptureEvent;
