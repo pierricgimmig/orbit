@@ -110,7 +110,6 @@ target_sources(
           SamplingReport.cpp
           SamplingReportDataView.cpp
           SchedulerTrack.cpp
-          ScopeTree.cpp
           SourceCodeReport.cpp
           TextRenderer.cpp
           TimeGraph.cpp

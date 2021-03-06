@@ -20,6 +20,7 @@ target_include_directories(OrbitProducer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/incl
 target_include_directories(OrbitProducer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(OrbitProducer PUBLIC
+        GrpcFlatBuffers
         GrpcProtos
         OrbitBase
         ServiceLib
