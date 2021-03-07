@@ -14,13 +14,7 @@ target_compile_options(GrpcFlatBuffers PRIVATE ${STRICT_COMPILE_FLAGS})
 target_compile_definitions(GrpcFlatBuffers PRIVATE -D_WIN32_WINNT=0x0700)
 target_compile_definitions(GrpcFlatBuffers PRIVATE -DNTDDI_VERSION=0x06030000)
 
-target_include_directories(GrpcFlatBuffers PUBLIC
-        ${CMAKE_CURRENT_LIST_DIR}/include)
-
-target_sources(GrpcFlatBuffers PUBLIC
-        include/GrpcFlatBuffers/Constants.h)
-
-target_sources(GrpcFlatBuffers PRIVATE
+set(FLATBUFFER_SCHEMAS
         capture.fbs
         code_block.fbs
         module.fbs
@@ -31,30 +25,30 @@ target_sources(GrpcFlatBuffers PRIVATE
         symbol.fbs
         tracepoint.fbs)
 
-#get_target_property(FLATBUFFERS_SCHEMAS GrpcFlatBuffers SOURCES)
+target_sources(GrpcFlatBuffers PUBLIC
+        include/GrpcFlatBuffers/Constants.h
+        ${FLATBUFFER_SCHEMAS})
 
-set(FLATBUFFER_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/flatbuffers_codegen")
-add_custom_command(
-        OUTPUT "${FLATBUFFER_OUTPUT_DIRECTORY}"
-        COMMAND ${CMAKE_COMMAND} ARGS -E make_directory "${FLATBUFFER_OUTPUT_DIRECTORY}")
+set(FLATBUFFER_CODE_GEN_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/flatbuffers_codegen/")
+set(FLATBUFFER_CODE_GEN_DIR "${FLATBUFFER_CODE_GEN_ROOT_DIR}/flatbuffers/")
 
-# FlatBuffers
-set(GENERATED_INCLUDES_DIR "${CMAKE_CURRENT_BINARY_DIR}/flatbuffers_codegen/")
-
-file(GLOB_RECURSE FLATBUFFERS_SCHEMAS ${CMAKE_CURRENT_LIST_DIR}/*.fbs)
-message(STATUS "FLATBUFFERS_SCHEMAS: ${FLATBUFFERS_SCHEMAS}")
+add_custom_target(build-time-make-directory ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${FLATBUFFER_CODE_GEN_DIR})
 
 find_program(FLATBUFFERS_FLATC_EXECUTABLE flatc)
-message( "FLATBUFFERS_FLATC_EXECUTABLE = ${FLATBUFFERS_FLATC_EXECUTABLE}")
 
-build_flatbuffers("${FLATBUFFERS_SCHEMAS}"
+build_flatbuffers("${FLATBUFFER_SCHEMAS}"
                   ""
-                  GENERATED_INCLUDES_
+                  FLATBUFFER_CODE_GEN_DIR
                   ""
-                  "${GENERATED_INCLUDES_DIR}"
+                  "${FLATBUFFER_CODE_GEN_DIR}"
                   ""
                   "")
 
-add_dependencies(GrpcFlatBuffers GENERATED_INCLUDES_)
+target_include_directories(GrpcFlatBuffers PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/include
+        ${FLATBUFFER_CODE_GEN_ROOT_DIR})
+
+add_dependencies(GrpcFlatBuffers FLATBUFFER_CODE_GEN_DIR)
 
 target_link_libraries(GrpcFlatBuffers PUBLIC CONAN_PKG::flatbuffers)
