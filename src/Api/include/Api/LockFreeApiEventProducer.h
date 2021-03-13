@@ -5,16 +5,16 @@
 #ifndef API_LOCK_FREE_API_EVENT_PRODUCER_H_
 #define API_LOCK_FREE_API_EVENT_PRODUCER_H_
 
-#include "Api/EncodedEvent.h"
+#include "OrbitBase/Tracing.h"
 #include "OrbitProducer/LockFreeBufferCaptureEventProducer.h"
 #include "ProducerSideChannel/ProducerSideChannel.h"
 
 namespace orbit_api {
 
-// This class is used to enqueue orbit_api::ApiEvent events from multiple threads and relay them to
+// This class is used to enqueue orbit_base::ApiEvent events from multiple threads and relay them to
 // OrbitService in the form of orbit_grpc_protos::ApiEvent events.
 class LockFreeApiEventProducer
-    : public orbit_producer::LockFreeBufferCaptureEventProducer<orbit_api::ApiEvent> {
+    : public orbit_producer::LockFreeBufferCaptureEventProducer<orbit_base::ApiEvent> {
  public:
   LockFreeApiEventProducer() {
     BuildAndStart(orbit_producer_side_channel::CreateProducerSideChannel());
@@ -24,7 +24,7 @@ class LockFreeApiEventProducer
 
  protected:
   [[nodiscard]] virtual orbit_grpc_protos::ProducerCaptureEvent* TranslateIntermediateEvent(
-      orbit_api::ApiEvent&& raw_api_event, google::protobuf::Arena* arena) override {
+      orbit_base::ApiEvent&& raw_api_event, google::protobuf::Arena* arena) override {
     auto* capture_event =
         google::protobuf::Arena::CreateMessage<orbit_grpc_protos::ProducerCaptureEvent>(arena);
     auto* api_event = capture_event->mutable_api_event();

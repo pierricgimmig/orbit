@@ -27,6 +27,7 @@ target_sources(OrbitCaptureClient PRIVATE
         GpuQueueSubmissionProcessor.cpp)
 
 target_link_libraries(OrbitCaptureClient PUBLIC
+        ApiInterface
         GrpcProtos
         OrbitCore)
 

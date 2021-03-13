@@ -311,52 +311,52 @@ void TimeGraph::ProcessOrbitFunctionTimer(FunctionInfo::OrbitType type,
 }
 
 void TimeGraph::ProcessApiEventTimer(const TimerInfo& timer_info) {
-  orbit_api::Event api_event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event api_event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
   switch (api_event.type) {
-    case orbit_api::kScopeStart:
-    case orbit_api::kScopeStop: {
+    case orbit_base::kScopeStart:
+    case orbit_base::kScopeStop: {
       ThreadTrack* track = track_manager_->GetOrCreateThreadTrack(timer_info.thread_id());
       track->OnTimer(timer_info);
       break;
     }
-    case orbit_api::kScopeStartAsync:
-    case orbit_api::kScopeStopAsync:
+    case orbit_base::kScopeStartAsync:
+    case orbit_base::kScopeStopAsync:
       manual_instrumentation_manager_->ProcessAsyncTimer(timer_info);
       break;
 
-    case orbit_api::kTrackInt:
-    case orbit_api::kTrackInt64:
-    case orbit_api::kTrackUint:
-    case orbit_api::kTrackUint64:
-    case orbit_api::kTrackFloat:
-    case orbit_api::kTrackDouble:
-    case orbit_api::kString:
+    case orbit_base::kTrackInt:
+    case orbit_base::kTrackInt64:
+    case orbit_base::kTrackUint:
+    case orbit_base::kTrackUint64:
+    case orbit_base::kTrackFloat:
+    case orbit_base::kTrackDouble:
+    case orbit_base::kString:
       ProcessValueTrackingTimer(timer_info);
       break;
-    case orbit_api::kNone:
+    case orbit_base::kNone:
       UNREACHABLE();
   }
 }
 
 void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
-  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
 
   switch (event.type) {
-    case orbit_api::kScopeStart: {
+    case orbit_base::kScopeStart: {
       ThreadTrack* track = track_manager_->GetOrCreateThreadTrack(timer_info.thread_id());
       track->OnTimer(timer_info);
     } break;
-    case orbit_api::kScopeStartAsync:
-    case orbit_api::kScopeStopAsync:
+    case orbit_base::kScopeStartAsync:
+    case orbit_base::kScopeStopAsync:
       manual_instrumentation_manager_->ProcessAsyncTimer(timer_info);
       break;
-    case orbit_api::kTrackInt:
-    case orbit_api::kTrackInt64:
-    case orbit_api::kTrackUint:
-    case orbit_api::kTrackUint64:
-    case orbit_api::kTrackFloat:
-    case orbit_api::kTrackDouble:
-    case orbit_api::kString:
+    case orbit_base::kTrackInt:
+    case orbit_base::kTrackInt64:
+    case orbit_base::kTrackUint:
+    case orbit_base::kTrackUint64:
+    case orbit_base::kTrackFloat:
+    case orbit_base::kTrackDouble:
+    case orbit_base::kString:
       ProcessValueTrackingTimer(timer_info);
       break;
     default:
@@ -365,9 +365,9 @@ void TimeGraph::ProcessIntrospectionTimer(const TimerInfo& timer_info) {
 }
 
 void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
-  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
 
-  if (event.type == orbit_api::kString) {
+  if (event.type == orbit_base::kString) {
     manual_instrumentation_manager_->ProcessStringEvent(event);
     return;
   }
@@ -376,23 +376,23 @@ void TimeGraph::ProcessValueTrackingTimer(const TimerInfo& timer_info) {
   uint64_t time = timer_info.start();
 
   switch (event.type) {
-    case orbit_api::kTrackInt: {
-      track->AddValue(orbit_api::Decode<int32_t>(event.data), time);
+    case orbit_base::kTrackInt: {
+      track->AddValue(orbit_base::Decode<int32_t>(event.data), time);
     } break;
-    case orbit_api::kTrackInt64: {
-      track->AddValue(orbit_api::Decode<int64_t>(event.data), time);
+    case orbit_base::kTrackInt64: {
+      track->AddValue(orbit_base::Decode<int64_t>(event.data), time);
     } break;
-    case orbit_api::kTrackUint: {
-      track->AddValue(orbit_api::Decode<uint32_t>(event.data), time);
+    case orbit_base::kTrackUint: {
+      track->AddValue(orbit_base::Decode<uint32_t>(event.data), time);
     } break;
-    case orbit_api::kTrackUint64: {
+    case orbit_base::kTrackUint64: {
       track->AddValue(event.data, time);
     } break;
-    case orbit_api::kTrackFloat: {
-      track->AddValue(orbit_api::Decode<float>(event.data), time);
+    case orbit_base::kTrackFloat: {
+      track->AddValue(orbit_base::Decode<float>(event.data), time);
     } break;
-    case orbit_api::kTrackDouble: {
-      track->AddValue(orbit_api::Decode<double>(event.data), time);
+    case orbit_base::kTrackDouble: {
+      track->AddValue(orbit_base::Decode<double>(event.data), time);
     } break;
     default:
       ERROR("Unsupported value tracking type [%u]", event.type);

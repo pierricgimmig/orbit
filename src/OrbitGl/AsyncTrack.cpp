@@ -42,7 +42,7 @@ AsyncTrack::AsyncTrack(TimeGraph* time_graph, TimeGraphLayout* layout, const std
   if (text_box == nullptr) return "";
   auto* manual_inst_manager = app_->GetManualInstrumentationManager();
   TimerInfo timer_info = text_box->GetTimerInfo();
-  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
 
   // The FunctionInfo here corresponds to one of the automatically instrumented empty stubs from
   // Orbit.h. Use it to retrieve the module from which the manually instrumented scope originated.
@@ -98,7 +98,7 @@ void AsyncTrack::SetTimesliceText(const TimerInfo& timer_info, double elapsed_us
   std::string time = GetPrettyTime(absl::Microseconds(elapsed_us));
   text_box->SetElapsedTimeTextLength(time.length());
 
-  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
   const uint64_t event_id = event.data;
   std::string name = app_->GetManualInstrumentationManager()->GetString(event_id);
   std::string text = absl::StrFormat("%s %s", name, time.c_str());
@@ -129,7 +129,7 @@ Color AsyncTrack::GetTimerColor(const TimerInfo& timer_info, bool is_selected,
     return kInactiveColor;
   }
 
-  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
   const uint64_t event_id = event.data;
   std::string name = app_->GetManualInstrumentationManager()->GetString(event_id);
   Color color = TimeGraph::GetColor(name);

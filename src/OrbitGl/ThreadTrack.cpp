@@ -154,7 +154,7 @@ bool ThreadTrack::IsTrackSelected() const {
     return std::nullopt;
   }
 
-  orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+  orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
   if (event.color == kOrbitColorAuto) {
     return std::nullopt;
   }
@@ -186,7 +186,7 @@ Color ThreadTrack::GetTimerColor(const TimerInfo& timer_info, bool is_selected,
   if (user_color.has_value()) {
     color = user_color.value();
   } else if (timer_info.type() == TimerInfo::kIntrospection) {
-    orbit_api::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
+    orbit_base::Event event = ManualInstrumentationManager::ApiEventFromTimerInfo(timer_info);
     color = event.color == kOrbitColorAuto ? TimeGraph::GetColor(event.name)
                                            : ToColor(static_cast<uint64_t>(event.color));
   } else {

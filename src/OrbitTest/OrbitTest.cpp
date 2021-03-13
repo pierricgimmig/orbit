@@ -15,17 +15,9 @@
 #include <string>
 #include <thread>
 
+#include "Api/Orbit.h"
 #include "OrbitBase/ThreadUtils.h"
 #include "absl/strings/str_format.h"
-
-// OrbitBase defines an implementation of the Orbit API for introspection. To prevent symbol clash
-// with the header-only use of the API, we wrap the include of Orbit.h in a namespace. This is only
-// needed for internal projects that link with OrbitBase, basically only OrbitTest.
-namespace orbit_api_wrapper {
-#include "Api/Orbit.h"
-}
-
-using namespace orbit_api_wrapper;
 
 #if __linux__
 #define NO_INLINE __attribute__((noinline))

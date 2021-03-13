@@ -100,7 +100,7 @@ message ApiEvent {
   int32 tid = 2;
   uint64 timestamp_ns = 3;
 
-  // The fields below are used to encode orbit_api::EncodedEvent events. This is
+  // The fields below are used to encode orbit_base::EncodedEvent events. This is
   // done mainly for the performance gain of not having to allocate memory out
   // of the Arena for strings, but also to emulate the old uprobe-based use of
   // registers to encode events. To review after deprecation (b/182485096).

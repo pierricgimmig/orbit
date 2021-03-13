@@ -59,24 +59,24 @@ class ApiTester {
         capture_event_processor_(&capture_event_listener_) {}
 
   ApiTester& Start(const char* name = nullptr, orbit_api_color color = kOrbitColorAuto) {
-    EnqueueApiEvent(orbit_api::kScopeStart, name, 0, color);
+    EnqueueApiEvent(orbit_base::kScopeStart, name, 0, color);
     return *this;
   }
   ApiTester& Stop() {
-    EnqueueApiEvent(orbit_api::kScopeStop);
+    EnqueueApiEvent(orbit_base::kScopeStop);
     return *this;
   }
   ApiTester& StartAsync(uint64_t id, const char* name = nullptr,
                         orbit_api_color color = kOrbitColorAuto) {
-    EnqueueApiEvent(orbit_api::kScopeStartAsync, name, id, color);
+    EnqueueApiEvent(orbit_base::kScopeStartAsync, name, id, color);
     return *this;
   }
   ApiTester& StopAsync(uint64_t id) {
-    EnqueueApiEvent(orbit_api::kScopeStopAsync, /*name=*/nullptr, id);
+    EnqueueApiEvent(orbit_base::kScopeStopAsync, /*name=*/nullptr, id);
     return *this;
   }
   ApiTester& TrackValue(const char* name, uint64_t value, orbit_api_color color = kOrbitColorAuto) {
-    EnqueueApiEvent(orbit_api::kTrackUint64, name, value, color);
+    EnqueueApiEvent(orbit_base::kTrackUint64, name, value, color);
     return *this;
   }
 
@@ -86,32 +86,32 @@ class ApiTester {
     return *this;
   }
 
-  size_t CountTimersOfType(orbit_api::EventType type) {
+  size_t CountTimersOfType(orbit_base::EventType type) {
     const std::vector<TimerInfo>& timers = api_event_listener_.timers_;
     return std::count_if(timers.begin(), timers.end(), [type](const TimerInfo& timer_info) {
-      return ApiEventFromTimerInfo(timer_info).type == type;
+      return EventFromTimerInfo(timer_info).type == type;
     });
   }
 
   ApiTester& CheckNumScopeTimers(size_t num_timers) {
-    EXPECT_EQ(CountTimersOfType(orbit_api::kScopeStart), num_timers);
+    EXPECT_EQ(CountTimersOfType(orbit_base::kScopeStart), num_timers);
     return *this;
   }
 
   ApiTester& CheckNumAsyncScopeTimers(size_t num_timers) {
-    EXPECT_EQ(CountTimersOfType(orbit_api::kScopeStartAsync), num_timers);
+    EXPECT_EQ(CountTimersOfType(orbit_base::kScopeStartAsync), num_timers);
     return *this;
   }
 
   ApiTester& CheckNumTrackingTimers(size_t num_timers) {
-    EXPECT_EQ(CountTimersOfType(orbit_api::kTrackUint64), num_timers);
+    EXPECT_EQ(CountTimersOfType(orbit_base::kTrackUint64), num_timers);
     return *this;
   }
 
  private:
-  void EnqueueApiEvent(orbit_api::EventType type, const char* name = nullptr, uint64_t data = 0,
+  void EnqueueApiEvent(orbit_base::EventType type, const char* name = nullptr, uint64_t data = 0,
                        orbit_api_color color = kOrbitColorAuto) {
-    orbit_api::EncodedEvent encoded_event(type, name, data, color);
+    orbit_base::EncodedEvent encoded_event(type, name, data, color);
     ClientCaptureEvent client_capture_event;
     ApiEvent* api_event = client_capture_event.mutable_api_event();
     api_event->set_timestamp_ns(orbit_base::CaptureTimestampNs());
@@ -128,10 +128,10 @@ class ApiTester {
     capture_event_processor_.ProcessEvent(client_capture_event);
   }
 
-  [[nodiscard]] static orbit_api::Event ApiEventFromTimerInfo(
+  [[nodiscard]] static orbit_base::Event EventFromTimerInfo(
       const orbit_client_protos::TimerInfo& timer_info) {
     // On x64 Linux, 6 registers are used for integer argument passing.
-    // Manual instrumentation uses those registers to encode orbit_api::Event
+    // Manual instrumentation uses those registers to encode orbit_base::Event
     // objects.
     constexpr size_t kNumIntegerRegisters = 6;
     CHECK(timer_info.registers_size() == kNumIntegerRegisters);
@@ -141,7 +141,7 @@ class ApiTester {
     uint64_t arg_3 = timer_info.registers(3);
     uint64_t arg_4 = timer_info.registers(4);
     uint64_t arg_5 = timer_info.registers(5);
-    orbit_api::EncodedEvent encoded_event(arg_0, arg_1, arg_2, arg_3, arg_4, arg_5);
+    orbit_base::EncodedEvent encoded_event(arg_0, arg_1, arg_2, arg_3, arg_4, arg_5);
     return encoded_event.event;
   }
 

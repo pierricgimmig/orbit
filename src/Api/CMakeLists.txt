@@ -7,7 +7,6 @@ cmake_minimum_required(VERSION 3.15)
 add_library(ApiInterface INTERFACE)
 
 target_sources(ApiInterface INTERFACE
-        include/Api/EncodedEvent.h
         include/Api/LockFreeApiEventProducer.h
         include/Api/Orbit.h)
 

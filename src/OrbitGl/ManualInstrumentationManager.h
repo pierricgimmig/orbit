@@ -29,11 +29,11 @@ class ManualInstrumentationManager {
   void RemoveAsyncTimerListener(AsyncTimerInfoListener* listener);
   void ProcessAsyncTimerDeprecated(const orbit_client_protos::TimerInfo& timer_info);
   void ProcessAsyncTimer(const orbit_client_protos::TimerInfo& timer_info);
-  void ProcessStringEvent(const orbit_api::Event& event);
+  void ProcessStringEvent(const orbit_base::Event& event);
   [[nodiscard]] std::string GetString(uint32_t id) const {
     return string_manager_.Get(id).value_or("");
   }
-  [[nodiscard]] static orbit_api::Event ApiEventFromTimerInfo(
+  [[nodiscard]] static orbit_base::Event ApiEventFromTimerInfo(
       const orbit_client_protos::TimerInfo& timer_info);
 
  private:
