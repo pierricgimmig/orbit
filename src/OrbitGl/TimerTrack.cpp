@@ -283,23 +283,45 @@ void TimerTrack::UpdatePrimitives(Batcher* batcher, uint64_t min_tick, uint64_t 
     // would miss drawing events that should be drawn.
     uint64_t min_ignore = std::numeric_limits<uint64_t>::max();
     uint64_t max_ignore = std::numeric_limits<uint64_t>::min();
-    for (TimerBlock& block : *chain) {
-      if (!block.Intersects(min_tick, max_tick)) continue;
+    static volatile bool render_with_nodes = true;
+    if (render_with_nodes) {
+      for (auto& [depth, ordered_nodes] : scope_tree_.GetOrderedNodesByDepth()) {
+        auto first_node_to_draw = ordered_nodes.lower_bound(min_tick);
+        if (first_node_to_draw != ordered_nodes.begin()) --first_node_to_draw;
+        for (auto it = first_node_to_draw; it != ordered_nodes.end() && it->first < max_tick;
+             ++it) {
+          ScopeNode<TextBox>* node = it->second;
+          next_text_box = node->GetScope();
 
-      for (size_t k = 0; k < block.size(); ++k) {
-        // The current index (k) points to the "next" text box and we want to draw the text box from
-        // the previous iteration ("current").
-        next_text_box = &block[k];
+          if (DrawTimer(prev_text_box, next_text_box, draw_data, current_text_box, &min_ignore,
+                        &max_ignore)) {
+            ++visible_timer_count_;
+          }
 
-        if (DrawTimer(prev_text_box, next_text_box, draw_data, current_text_box, &min_ignore,
-                      &max_ignore)) {
-          ++visible_timer_count_;
+          prev_text_box = current_text_box;
+          current_text_box = next_text_box;
         }
+      }
+    } else {
+      for (TimerBlock& block : *chain) {
+        if (!block.Intersects(min_tick, max_tick)) continue;
 
-        prev_text_box = current_text_box;
-        current_text_box = next_text_box;
+        for (size_t k = 0; k < block.size(); ++k) {
+          // The current index (k) points to the "next" text box and we want to draw the text box
+          // from the previous iteration ("current").
+          next_text_box = &block[k];
+
+          if (DrawTimer(prev_text_box, next_text_box, draw_data, current_text_box, &min_ignore,
+                        &max_ignore)) {
+            ++visible_timer_count_;
+          }
+
+          prev_text_box = current_text_box;
+          current_text_box = next_text_box;
+        }
       }
     }
+
     // We still need to draw the last timer.
     next_text_box = nullptr;
     if (DrawTimer(prev_text_box, next_text_box, draw_data, current_text_box, &min_ignore,
