@@ -29,6 +29,7 @@ class AsyncScopeTester {
     std::lock_guard lock(mutex_);
     for (uint64_t id : async_scope_ids_to_stop_) {
       ORBIT_STOP_ASYNC(id);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     async_scope_ids_to_stop_.clear();
   }
