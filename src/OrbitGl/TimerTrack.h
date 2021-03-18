@@ -18,6 +18,7 @@
 #include "CoreMath.h"
 #include "OrbitClientData/CallstackTypes.h"
 #include "PickingManager.h"
+#include "ScopeTree.h"
 #include "TextBox.h"
 #include "TextRenderer.h"
 #include "TimerChain.h"
@@ -131,6 +132,9 @@ class TimerTrack : public Track {
   static const Color kHighlightColor;
 
   OrbitApp* app_ = nullptr;
+
+  absl::Mutex scope_tree_mutex_;
+  ScopeTree<TextBox> scope_tree_;
 };
 
 #endif  // ORBIT_GL_TIMER_TRACK_H_

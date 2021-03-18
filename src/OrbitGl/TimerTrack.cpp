@@ -327,6 +327,12 @@ void TimerTrack::OnTimer(const TimerInfo& timer_info) {
     timers_[timer_info.depth()] = timer_chain;
   }
   timer_chain->push_back(text_box);
+
+  {
+    absl::MutexLock lock(&mutex_);
+    scope_tree_.Insert(timer_chain->Last());
+  }
+
   ++num_timers_;
   if (timer_info.start() < min_time_) min_time_ = timer_info.start();
   if (timer_info.end() > max_time_) max_time_ = timer_info.end();
