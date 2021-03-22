@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "../Orbit.h"
+#include "absl/strings/str_format.h"
 
 class AsyncScopeTester {
  public:
@@ -28,6 +29,11 @@ class AsyncScopeTester {
   void Stop() {
     std::lock_guard lock(mutex_);
     for (uint64_t id : async_scope_ids_to_stop_) {
+      std::string str = absl::StrFormat(
+          "This is a very long dynamic string: The quick brown fox jumps over the lazy dog. This "
+          "string is associated with task id %u.",
+          id);
+      ORBIT_ASYNC_STRING(str.c_str(), id);
       ORBIT_STOP_ASYNC(id);
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -107,8 +113,8 @@ void ManualInstrumentationApiTest() {
 
 // Program to test support for legacy manual instrumentation API.
 int main() {
-  // Async scopes
   AsyncScopeTester tester;
+
   std::thread async_start_thread([&tester] { StartAsyncScopesThread(&tester); });
   std::thread async_stop_thread([&tester] { StopAsyncScopesThread(&tester); });
   std::thread instrumentation_thread([] { ManualInstrumentationApiTest(); });
