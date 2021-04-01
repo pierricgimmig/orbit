@@ -493,20 +493,6 @@ void TimeGraph::ProcessAsyncTimer(const std::string& track_name, const TimerInfo
   track->OnTimer(timer_info);
 }
 
-uint32_t TimeGraph::GetNumTimers() const {
-  uint32_t num_timers = 0;
-  std::lock_guard<std::recursive_mutex> lock(mutex_);
-  for (const auto& track : track_manager_->GetAllTracks()) {
-    num_timers += track->GetNumTimers();
-  }
-  // Frame tracks are removable by users and cannot simply be thrown into the
-  // tracks_ vector.
-  for (const auto& track : track_manager_->GetFrameTracks()) {
-    num_timers += track->GetNumTimers();
-  }
-  return num_timers;
-}
-
 std::vector<std::shared_ptr<TimerChain>> TimeGraph::GetAllTimerChains() const {
   std::vector<std::shared_ptr<TimerChain>> chains;
   for (const auto& track : track_manager_->GetAllTracks()) {

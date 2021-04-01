@@ -27,7 +27,7 @@ const std::string& CaptureStats::GenerateStats(CaptureWindow* capture_window) {
   TrackManager* track_manager = time_graph->GetTrackManager();
   const CaptureData* capture_data = time_graph->GetCaptureData();
 
-  uint32_t total_timers = time_graph->GetNumTimers();
+  uint32_t total_timers = track_manager->GetNumTimers();
   int32_t target_pid = capture_data != nullptr ? capture_data->process_id() : -1;
   constexpr double kUsToS = 1 / 1'000'000.0;
   double duration_s = time_graph->GetCaptureTimeSpanUs() * kUsToS;
