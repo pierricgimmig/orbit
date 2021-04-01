@@ -382,7 +382,7 @@ void OrbitApp::PostInit(bool is_connected) {
     frame_pointer_validator_client_ =
         std::make_unique<FramePointerValidatorClient>(this, grpc_channel_);
 
-    if (absl::GetFlag(FLAGS_devmode)) {
+    if (IsDevMode()) {
       crash_manager_ = CrashManager::Create(grpc_channel_);
     }
   }
@@ -961,7 +961,7 @@ void OrbitApp::StartCapture() {
 
   TracepointInfoSet selected_tracepoints = data_manager_->selected_tracepoints();
   bool collect_thread_states = data_manager_->collect_thread_states();
-  bool enable_introspection = absl::GetFlag(FLAGS_devmode);
+  bool enable_introspection = IsDevMode();
   double samples_per_second = data_manager_->samples_per_second();
   UnwindingMethod unwinding_method = data_manager_->unwinding_method();
   uint64_t max_local_marker_depth_per_command_buffer =
@@ -1077,6 +1077,8 @@ bool OrbitApp::IsCaptureConnected(const CaptureData& capture) const {
   return selected_process->pid() == capture_process->pid() &&
          selected_process->full_path() == capture_process->full_path();
 }
+
+bool OrbitApp::IsDevMode() const { return absl::GetFlag(FLAGS_devmode); }
 
 void OrbitApp::SendDisassemblyToUi(std::string disassembly, DisassemblyReport report) {
   main_thread_executor_->Schedule(
@@ -1880,7 +1882,7 @@ void OrbitApp::FilterTracks(const std::string& filter) {
 }
 
 void OrbitApp::CrashOrbitService(CrashOrbitServiceRequest_CrashType crash_type) {
-  if (absl::GetFlag(FLAGS_devmode)) {
+  if (IsDevMode()) {
     thread_pool_->Schedule([crash_type, this] { crash_manager_->CrashOrbitService(crash_type); });
   }
 }

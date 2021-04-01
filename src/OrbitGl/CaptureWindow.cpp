@@ -335,7 +335,9 @@ bool CaptureWindow::RightUp() {
     select_start_ = select_stop_;
   }
 
-  selection_stats_.GenerateStats(this, time_start_, time_stop_);
+  if (app_->IsDevMode()) {
+    selection_stats_.Generate(this, time_start_, time_stop_);
+  }
 
   bool show_context_menu = select_start_[0] == select_stop_[0];
   is_selecting_ = false;
@@ -786,16 +788,9 @@ void CaptureWindow::RenderImGuiDebugUI() {
   if (ImGui::CollapsingHeader("Timer Summary")) {
     const std::string& selection_summary = selection_stats_.GetSummary();
 
-    if (ImGui::Button("Refresh timer summary and copy to clipboard")) {
-      app_->SetClipboard(capture_stats_.GenerateStats(this) + selection_summary);
+    if (ImGui::Button("Copy to clipboard")) {
+      app_->SetClipboard(selection_summary);
     }
-
-    const std::string& capture_summary = capture_stats_.GetSummary();
-    ImGui::TextUnformatted(capture_summary.c_str(),
-                           capture_summary.c_str() + capture_summary.size());
-
-    ImGui::Text("Timer summary for selected range (%.6f ms)",
-                static_cast<double>(time_stop_ - time_start_) / 1000000.0);
 
     ImGui::TextUnformatted(selection_summary.c_str(),
                            selection_summary.c_str() + selection_summary.size());

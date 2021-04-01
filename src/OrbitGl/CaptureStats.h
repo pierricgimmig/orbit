@@ -5,7 +5,6 @@
 #ifndef ORBIT_GL_CAPUTRE_STATS_H_
 #define ORBIT_GL_CAPUTRE_STATS_H_
 
-#include <limits>
 #include <string>
 
 class CaptureWindow;
@@ -13,12 +12,7 @@ class CaptureWindow;
 // CaptureStats generates statistics about a capture or a section of capture.
 class CaptureStats {
  public:
-  CaptureStats() = default;
-
-  const std::string& GenerateStats(CaptureWindow* capture_window);
-  const std::string& GenerateStats(CaptureWindow* capture_window, uint64_t start_ns,
-                                   uint64_t end_ns);
-
+  void Generate(CaptureWindow* capture_window, uint64_t start_ns, uint64_t end_ns);
   [[nodiscard]] const std::string& GetSummary() { return summary_; }
 
  private:

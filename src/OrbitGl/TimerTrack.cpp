@@ -418,7 +418,7 @@ std::vector<std::shared_ptr<TimerChain>> TimerTrack::GetAllChains() const {
   return chains;
 }
 
-std::vector<const TextBox*> TimerTrack::GetScopesInRange(uint64_t start_ns, uint64_t end_ns) {
+std::vector<const TextBox*> TimerTrack::GetScopesInRange(uint64_t start_ns, uint64_t end_ns) const {
   std::vector<const TextBox*> result;
   for (auto chain : GetAllChains()) {
     if (chain == nullptr) continue;

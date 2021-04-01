@@ -195,6 +195,8 @@ class OrbitApp final : public DataViewFactory, public CaptureListener {
   // This needs to be called from the main thread.
   [[nodiscard]] bool IsCaptureConnected(const CaptureData& capture) const;
 
+  [[nodiscard]] bool IsDevMode() const;
+
   // Callbacks
   using CaptureStartedCallback = std::function<void()>;
   void SetCaptureStartedCallback(CaptureStartedCallback callback) {
