@@ -336,7 +336,10 @@ bool CaptureWindow::RightUp() {
   }
 
   if (app_->IsDevMode()) {
-    selection_stats_.Generate(this, time_start_, time_stop_);
+    auto result = selection_stats_.Generate(this, time_start_, time_stop_);
+    if (result.has_error()) {
+      ERROR("%s", result.error().message());
+    }
   }
 
   bool show_context_menu = select_start_[0] == select_stop_[0];

@@ -55,6 +55,7 @@ target_sources(
          SamplingReport.h
          SamplingReportDataView.h
          SchedulerTrack.h
+         SchedulingStats.h
          ScopeTree.h
          SourceCodeReport.h
          StatusListener.h
@@ -114,6 +115,7 @@ target_sources(
           SamplingReport.cpp
           SamplingReportDataView.cpp
           SchedulerTrack.cpp
+          SchedulingStats.cpp
           SourceCodeReport.cpp
           TextRenderer.cpp
           TimeGraph.cpp
@@ -166,6 +168,7 @@ target_sources(OrbitGlTests PRIVATE
 target_sources(OrbitGlTests PRIVATE
                BatcherTest.cpp
                BlockChainTest.cpp
+               CaptureStatsTest.cpp
                GlUtilsTest.cpp
                GpuTrackTest.cpp
                PickingManagerTest.cpp

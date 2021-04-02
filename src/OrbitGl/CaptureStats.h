@@ -7,12 +7,15 @@
 
 #include <string>
 
+#include "OrbitBase/Result.h"
+
 class CaptureWindow;
 
 // CaptureStats generates statistics about a capture or a section of capture.
 class CaptureStats {
  public:
-  void Generate(CaptureWindow* capture_window, uint64_t start_ns, uint64_t end_ns);
+  CaptureStats() = default;
+  ErrorMessageOr<void> Generate(CaptureWindow* capture_window, uint64_t start_ns, uint64_t end_ns);
   [[nodiscard]] const std::string& GetSummary() { return summary_; }
 
  private:
