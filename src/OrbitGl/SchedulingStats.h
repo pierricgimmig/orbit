@@ -20,10 +20,11 @@ class TextBox;
 
 class SchedulingStats {
  public:
-  typedef std::function<const std::string&(int32_t)> ThreadNameProvider;
+  typedef std::function<std::string(int32_t)> ThreadNameProvider;
 
   SchedulingStats(const std::vector<const TextBox*>& scheduling_scopes,
-                  ThreadNameProvider thread_name_provider, uint64_t start_ns, uint64_t end_ns);
+                  const ThreadNameProvider& thread_name_provider, uint64_t start_ns,
+                  uint64_t end_ns);
 
   [[nodiscard]] std::string ToString() const;
 

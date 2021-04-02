@@ -788,7 +788,7 @@ void CaptureWindow::RenderImGuiDebugUI() {
     }
   }
 
-  if (ImGui::CollapsingHeader("Timer Summary")) {
+  if (ImGui::CollapsingHeader("Selection Summary")) {
     const std::string& selection_summary = selection_stats_.GetSummary();
 
     if (ImGui::Button("Copy to clipboard")) {

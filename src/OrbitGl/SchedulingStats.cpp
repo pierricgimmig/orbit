@@ -10,7 +10,7 @@ using orbit_client_protos::TimerInfo;
 static constexpr double kNsToMs = 1 / 1000000.0;
 
 SchedulingStats::SchedulingStats(const std::vector<const TextBox*>& scheduling_scopes,
-                                 ThreadNameProvider thread_name_provider, uint64_t start_ns,
+                                 const ThreadNameProvider& thread_name_provider, uint64_t start_ns,
                                  uint64_t end_ns) {
   duration_ms_ = static_cast<double>(end_ns - start_ns) * kNsToMs;
 
