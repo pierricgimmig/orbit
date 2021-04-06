@@ -16,12 +16,14 @@ target_include_directories(Introspection PRIVATE
         ${CMAKE_CURRENT_LIST_DIR})
 
 target_sources(
-  Introspection
-  PUBLIC include/Introspection/DebugUtils.h)
+  Introspection PUBLIC
+  include/Introspection/DebugManager.h
+  include/Introspection/StaticToggle.h)
 
 target_sources(
-  Introspection
-  PRIVATE DebugUtils.cpp)
+  Introspection PRIVATE
+  DebugManager.cpp
+  StaticToggle.cpp)
 
 target_include_directories(Introspection PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
@@ -37,7 +39,7 @@ add_executable(IntrospectionTests)
 target_compile_options(IntrospectionTests PRIVATE ${STRICT_COMPILE_FLAGS})
 
 target_sources(IntrospectionTests PRIVATE
-    DebugUtilsTest.cpp)
+    IntrospectionTest.cpp)
 
 target_link_libraries(
   IntrospectionTests
