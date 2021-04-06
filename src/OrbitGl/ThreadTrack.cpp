@@ -458,11 +458,11 @@ void ThreadTrack::UpdatePrimitives(Batcher* batcher, uint64_t min_tick, uint64_t
   UpdatePrimitivesOfSubtracks(batcher, min_tick, max_tick, picking_mode, z_offset);
 
   STATIC_TOGGLE(use_scope_tree, true);
-  if(!use_scope_tree) {
+  if (!use_scope_tree) {
     TimerTrack::UpdatePrimitives(batcher, min_tick, max_tick, picking_mode, z_offset);
     return;
   }
-  
+
   UpdateBoxHeight();
 
   const internal::DrawData draw_data = GetDrawData(

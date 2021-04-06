@@ -12,7 +12,6 @@ target_compile_options(OrbitCore PRIVATE ${STRICT_COMPILE_FLAGS})
 target_sources(
   OrbitCore
   PUBLIC CoreUtils.h
-         DebugUtils.h
          Path.h
          StringManager.h
          SymbolHelper.h)
@@ -20,7 +19,6 @@ target_sources(
 target_sources(
   OrbitCore
   PRIVATE CoreUtils.cpp
-          DebugUtils.cpp
           Path.cpp
           StringManager.cpp
           SymbolHelper.cpp)

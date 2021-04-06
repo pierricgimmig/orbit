@@ -35,7 +35,6 @@
 #include "CallStackDataView.h"
 #include "CaptureWindow.h"
 #include "CoreUtils.h"
-#include "DebugUtils.h"
 #include "Disassembler.h"
 #include "DisassemblyReport.h"
 #include "ElfUtils/ElfFile.h"
@@ -44,6 +43,7 @@
 #include "GlCanvas.h"
 #include "GrpcProtos/Constants.h"
 #include "ImGuiOrbit.h"
+#include "Introspection/DebugUtils.h"
 #include "MainThreadExecutor.h"
 #include "MetricsUploader/ScopedMetric.h"
 #include "ModulesDataView.h"
@@ -521,10 +521,9 @@ void OrbitApp::RenderImGuiDebugUI() {
     }
 
     if (ImGui::BeginTabItem("DebugUtils")) {
-      absl::MutexLock lock(&DebugManager::Get().GetMutex());
-      for (StaticToggle* toggle : DebugManager::Get().GetStaticToggles()) {
+      for (StaticToggle* toggle : DebugManager::Get().GetSortedStaticToggles()) {
         bool value = toggle->GetValue();
-        if(ImGui::Checkbox(toggle->GetFullName().c_str(), &value)){
+        if (ImGui::Checkbox(toggle->GetFullName().c_str(), &value)) {
           toggle->SetValue(value);
         }
       }

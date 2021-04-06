@@ -37,7 +37,7 @@ class DebugManager {
 
 // A StaticToggle lives at global scope and is used primarily for debug purposes. It must be created
 // through the STATIC_TOGGLE macro above. In Orbit, we can changed the state of static toggles
-// through automatically generated UI (devmode only).
+// through some automatically generated UI (devmode only).
 //
 // Usage:
 //
