@@ -16,6 +16,7 @@
 #include "App.h"
 #include "Batcher.h"
 #include "CoreUtils.h"
+#include "DebugUtils.h"
 #include "GlCanvas.h"
 #include "GlUtils.h"
 #include "ManualInstrumentationManager.h"
@@ -455,6 +456,13 @@ void ThreadTrack::UpdatePrimitives(Batcher* batcher, uint64_t min_tick, uint64_t
   CHECK(batcher);
   visible_timer_count_ = 0;
   UpdatePrimitivesOfSubtracks(batcher, min_tick, max_tick, picking_mode, z_offset);
+
+  STATIC_TOGGLE(use_scope_tree, true);
+  if(!use_scope_tree) {
+    TimerTrack::UpdatePrimitives(batcher, min_tick, max_tick, picking_mode, z_offset);
+    return;
+  }
+  
   UpdateBoxHeight();
 
   const internal::DrawData draw_data = GetDrawData(
