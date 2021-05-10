@@ -144,6 +144,7 @@ else()
 endif()
 
 add_subdirectory(src/Api)
+add_subdirectory(src/ApiTestC)
 add_subdirectory(src/CaptureClient)
 add_subdirectory(src/CaptureFile)
 add_subdirectory(src/ClientData)
