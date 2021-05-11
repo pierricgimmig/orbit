@@ -179,6 +179,8 @@ class TimeGraph : public orbit_gl::CaptureViewElement {
     return accessible_parent_;
   }
 
+  inline static bool skip_rendering_ = false;
+
  protected:
   [[nodiscard]] virtual std::unique_ptr<orbit_accessibility::AccessibleInterface>
   CreateAccessibleInterface() override;

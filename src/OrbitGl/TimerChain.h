@@ -45,6 +45,27 @@ class TimerBlock {
     return &data_[size_ - 1];
   }
 
+  template <class... Args>
+  void emplace_back(Args&&... args) {
+      if (size_ == kBlockSize) {
+      if (next_ == nullptr) {
+        next_ = new TimerBlock(chain_, this);
+      }
+
+      chain_->current_ = next_;
+      ++chain_->num_blocks_;
+      next_->emplace_back(std::forward<Args>(args)...);
+      return;
+    }
+
+    CHECK(size_ < kBlockSize);
+    TextBox* text_box = new(&data_[size_])TextBox(std::forward<Args>(args)...);
+    ++size_;
+    ++chain_->num_items_;
+    min_timestamp_ = std::min(text_box->GetTimerInfo().start(), min_timestamp_);
+    max_timestamp_ = std::max(text_box->GetTimerInfo().end(), max_timestamp_);
+  }
+
   // Tests if [min, max] intersects with [min_timestamp, max_timestamp], where
   // {min, max}_timestamp are the minimum and maximum timestamp of the timers
   // that have so far been added to this block.
@@ -114,6 +135,12 @@ class TimerChain {
   ~TimerChain();
 
   void push_back(const TextBox& item) { current_->Add(item); }
+
+  template <class... Args>
+  void emplace_back(Args&&... args) {
+    current_->emplace_back(std::forward<Args>(args)...);
+  }
+
   [[nodiscard]] bool empty() const { return num_items_ == 0; }
   [[nodiscard]] uint64_t size() const { return num_items_; }
 

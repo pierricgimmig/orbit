@@ -100,7 +100,7 @@ ScopeTree<ScopeT>::ScopeTree() {
 
 template <typename ScopeT>
 ScopeNode<ScopeT>* ScopeTree<ScopeT>::CreateNode(ScopeT* scope) {
-  nodes_.push_back(ScopeNodeT(scope));
+  nodes_.emplace_back(scope);
   ScopeNodeT* node = nodes_.Last();
   return node;
 }

@@ -429,14 +429,34 @@ float ThreadTrack::GetYFromDepth(uint32_t depth) const {
 }
 
 void ThreadTrack::OnTimer(const TimerInfo& timer_info) {
-  TimerTrack::OnTimer(timer_info);
+  if (timer_info.type() != TimerInfo::kCoreActivity) {
+    UpdateDepth(timer_info.depth() + 1);
+  }
+
+  if (process_id_ == -1) {
+    process_id_ = timer_info.process_id();
+  }
+
+  if (timer_chain_ == nullptr) {
+    timer_chain_ = std::make_shared<TimerChain>();
+    timers_[0] = timer_chain_;
+  }
+
+  timer_chain_->emplace_back(Vec2(0, 0), Vec2(0, 0), "");
+
+  ++num_timers_;
+  if (timer_info.start() < min_time_) min_time_ = timer_info.start();
+  if (timer_info.end() > max_time_) max_time_ = timer_info.end();
+
+  timer_chain_->GetLast()->SetTimerInfo(std::move(timer_info));
 
   // Get the address of the freshly added TextBox and insert it into the ScopeTree.
-  std::shared_ptr<TimerChain> timer_chain = timers_[timer_info.depth()];
-  CHECK(timer_chain != nullptr);
+  static volatile bool do_insert = true;
+  if (!do_insert) return;
+  
   {
     absl::MutexLock lock(&scope_tree_mutex_);
-    scope_tree_.Insert(timer_chain->GetLast());
+    scope_tree_.Insert(timer_chain_->GetLast());
   }
 }
 

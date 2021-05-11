@@ -66,6 +66,25 @@ class Block final {
     return this;
   }
 
+  // Returns block the element was inserted to.
+  template <class... Args>
+  Block<T, Size>* emplace_back(Args&&... args) {
+    if (size() == Size) {
+      if (!HasNext()) {
+        next_ = new Block<T, Size>(this);
+      }
+
+      return next_->emplace_back(std::forward<Args>(args)...);
+    }
+
+    CHECK(size_ < Size);
+    T* item= new (&data_[size_]) T(std::forward<Args>(args)...);
+    ++size_;
+
+    return this;
+  }
+
+
   Block<T, Size>* prev_;
   Block<T, Size>* next_;
   uint32_t size_;
@@ -155,6 +174,12 @@ class BlockChain final {
     for (uint32_t i = 0; i < num; ++i) {
       push_back(item);
     }
+  }
+
+  template <class... Args>
+  void emplace_back(Args&&... args) {
+    current_ = current_->emplace_back(std::forward<Args>(args)...);
+    ++size_;
   }
 
   void clear() {

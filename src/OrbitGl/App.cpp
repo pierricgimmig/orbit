@@ -1033,9 +1033,12 @@ Future<ErrorMessageOr<CaptureListener::CaptureOutcome>> OrbitApp::LoadCaptureFro
 
         ErrorMessageOr<CaptureListener::CaptureOutcome> load_result{CaptureOutcome::kComplete};
         if (capture_file_or_error.has_value()) {
-          is_capture_loading_ = true;
+          //is_capture_loading_ = true;
+          TimeGraph::skip_rendering_ = true;
           load_result = LoadCaptureFromNewFormat(this, capture_file_or_error.value().get(),
                                                  &capture_loading_cancellation_requested_);
+          TimeGraph::skip_rendering_ = false;
+
           is_capture_loading_ = false;
         } else {  // Fall back to old capture format.
           load_result = orbit_client_model::capture_deserializer::Load(
