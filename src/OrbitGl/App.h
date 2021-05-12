@@ -104,6 +104,7 @@ class OrbitApp final : public DataViewFactory, public orbit_capture_client::Capt
   orbit_base::Future<ErrorMessageOr<CaptureOutcome>> LoadCaptureFromFile(
       const std::filesystem::path& file_path);
   void OnLoadCaptureCancelRequested();
+  void FinalizeCaptureLoad() const;
 
   [[nodiscard]] orbit_capture_client::CaptureClient::State GetCaptureState() const;
   [[nodiscard]] bool IsCapturingOrLoading() const;

@@ -451,12 +451,22 @@ void ThreadTrack::OnTimer(const TimerInfo& timer_info) {
   timer_chain_->GetLast()->SetTimerInfo(std::move(timer_info));
 
   // Get the address of the freshly added TextBox and insert it into the ScopeTree.
-  static volatile bool do_insert = true;
+  static volatile bool do_insert = false;
   if (!do_insert) return;
   
   {
     absl::MutexLock lock(&scope_tree_mutex_);
     scope_tree_.Insert(timer_chain_->GetLast());
+  }
+}
+
+void ThreadTrack::FillScopeTreeFromTimerChain() {
+  if (timer_chain_ == nullptr) return;
+  absl::MutexLock lock(&scope_tree_mutex_);
+  for (auto& block : *timer_chain_) {
+    for (size_t k = 0; k < block.size(); ++k) {
+      scope_tree_.Insert(&block[k]);
+    }
   }
 }
 

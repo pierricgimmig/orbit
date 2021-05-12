@@ -56,6 +56,8 @@ class ThreadTrack final : public TimerTrack {
   [[nodiscard]] bool IsEmpty() const override;
 
   [[nodiscard]] std::vector<CaptureViewElement*> GetVisibleChildren() override;
+  
+  void FillScopeTreeFromTimerChain();
 
  protected:
   [[nodiscard]] bool IsTimerActive(const orbit_client_protos::TimerInfo& timer) const override;

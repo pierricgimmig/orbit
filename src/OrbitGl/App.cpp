@@ -1017,6 +1017,14 @@ static ErrorMessageOr<CaptureListener::CaptureOutcome> LoadCaptureFromNewFormat(
   }
 }
 
+void OrbitApp::FinalizeCaptureLoad() const {
+  const TrackManager* track_manager = GetTimeGraph()->GetTrackManager();
+  std::vector<ThreadTrack*> thread_tracks = track_manager->GetThreadTracks();
+  for (auto thread_track : thread_tracks) {
+    thread_track->FillScopeTreeFromTimerChain();
+  }
+}
+
 Future<ErrorMessageOr<CaptureListener::CaptureOutcome>> OrbitApp::LoadCaptureFromFile(
     const std::filesystem::path& file_path) {
   ScopedMetric metric{metrics_uploader_,
@@ -1037,19 +1045,22 @@ Future<ErrorMessageOr<CaptureListener::CaptureOutcome>> OrbitApp::LoadCaptureFro
           TimeGraph::skip_rendering_ = true;
           load_result = LoadCaptureFromNewFormat(this, capture_file_or_error.value().get(),
                                                  &capture_loading_cancellation_requested_);
-          TimeGraph::skip_rendering_ = false;
-
           is_capture_loading_ = false;
         } else {  // Fall back to old capture format.
+          TimeGraph::skip_rendering_ = true;
           load_result = orbit_client_model::capture_deserializer::Load(
               file_path, this, module_manager_.get(), &capture_loading_cancellation_requested_);
         }
 
         if (load_result.has_error()) {
+          TimeGraph::skip_rendering_ = false;
           metric.SetStatusCode(orbit_metrics_uploader::OrbitLogEvent_StatusCode_INTERNAL_ERROR);
           return load_result;
         }
 
+        FinalizeCaptureLoad();
+
+        TimeGraph::skip_rendering_ = false;
         switch (load_result.value()) {
           case CaptureOutcome::kCancelled:
             metric.SetStatusCode(orbit_metrics_uploader::OrbitLogEvent_StatusCode_CANCELLED);
