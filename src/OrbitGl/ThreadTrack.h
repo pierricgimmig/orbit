@@ -56,7 +56,7 @@ class ThreadTrack final : public TimerTrack {
   [[nodiscard]] bool IsEmpty() const override;
 
   [[nodiscard]] std::vector<CaptureViewElement*> GetVisibleChildren() override;
-  
+
   void FillScopeTreeFromTimerChain();
 
  protected:

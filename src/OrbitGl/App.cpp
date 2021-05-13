@@ -1041,7 +1041,7 @@ Future<ErrorMessageOr<CaptureListener::CaptureOutcome>> OrbitApp::LoadCaptureFro
 
         ErrorMessageOr<CaptureListener::CaptureOutcome> load_result{CaptureOutcome::kComplete};
         if (capture_file_or_error.has_value()) {
-          //is_capture_loading_ = true;
+          // is_capture_loading_ = true;
           TimeGraph::skip_rendering_ = true;
           load_result = LoadCaptureFromNewFormat(this, capture_file_or_error.value().get(),
                                                  &capture_loading_cancellation_requested_);
