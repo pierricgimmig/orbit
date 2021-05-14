@@ -27,10 +27,11 @@ class OrbitApp;
 
 class ThreadTrack final : public TimerTrack {
  public:
+  enum class ScopeTreeUpdateType { kAlways, kOnCaptureComplete, kNever };
   explicit ThreadTrack(CaptureViewElement* parent, TimeGraph* time_graph,
                        orbit_gl::Viewport* viewport, TimeGraphLayout* layout, int32_t thread_id,
                        OrbitApp* app, const orbit_client_model::CaptureData* capture_data,
-                       uint32_t indentation_level = 0);
+                       ScopeTreeUpdateType scope_tree_update_type, uint32_t indentation_level = 0);
 
   void InitializeNameAndLabel(int32_t thread_id);
 
@@ -57,7 +58,7 @@ class ThreadTrack final : public TimerTrack {
 
   [[nodiscard]] std::vector<CaptureViewElement*> GetVisibleChildren() override;
 
-  void FillScopeTreeFromTimerChain();
+  void OnCaptureComplete();
 
  protected:
   [[nodiscard]] bool IsTimerActive(const orbit_client_protos::TimerInfo& timer) const override;
@@ -84,6 +85,7 @@ class ThreadTrack final : public TimerTrack {
 
   absl::Mutex scope_tree_mutex_;
   ScopeTree<TextBox> scope_tree_;
+  ScopeTreeUpdateType scope_tree_update_type_ = ScopeTreeUpdateType::kAlways;
   std::shared_ptr<TimerChain> timer_chain_;
 };
 

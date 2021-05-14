@@ -681,8 +681,7 @@ const std::vector<CallstackEvent>& TimeGraph::GetSelectedCallstackEvents(int32_t
 void TimeGraph::Draw(Batcher& batcher, TextRenderer& text_renderer, uint64_t current_mouse_time_ns,
                      PickingMode picking_mode, float z_offset) {
   ORBIT_SCOPE("TimeGraph::Draw");
-
-  if (skip_rendering_) return;
+  if (app_->IsLoadingCapture()) return;
 
   const bool picking = picking_mode != PickingMode::kNone;
   if ((!picking && update_primitives_requested_) || picking) {

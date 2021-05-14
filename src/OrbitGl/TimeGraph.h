@@ -179,8 +179,6 @@ class TimeGraph : public orbit_gl::CaptureViewElement {
     return accessible_parent_;
   }
 
-  inline static bool skip_rendering_ = false;
-
  protected:
   [[nodiscard]] virtual std::unique_ptr<orbit_accessibility::AccessibleInterface>
   CreateAccessibleInterface() override;
@@ -225,7 +223,7 @@ class TimeGraph : public orbit_gl::CaptureViewElement {
   // timeline.
   bool update_primitives_requested_ = false;
   bool redraw_requested_ = false;
-
+  
   bool draw_text_ = true;
 
   Batcher batcher_;

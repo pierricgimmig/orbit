@@ -39,7 +39,8 @@ using orbit_grpc_protos::InstrumentedFunction;
 
 ThreadTrack::ThreadTrack(CaptureViewElement* parent, TimeGraph* time_graph,
                          orbit_gl::Viewport* viewport, TimeGraphLayout* layout, int32_t thread_id,
-                         OrbitApp* app, const CaptureData* capture_data, uint32_t indentation_level)
+                         OrbitApp* app, const CaptureData* capture_data,
+                         ScopeTreeUpdateType scope_tree_update_type, uint32_t indentation_level)
     : TimerTrack(parent, time_graph, viewport, layout, app, capture_data, indentation_level) {
   thread_id_ = thread_id;
   InitializeNameAndLabel(thread_id);
@@ -54,6 +55,8 @@ ThreadTrack::ThreadTrack(CaptureViewElement* parent, TimeGraph* time_graph,
   tracepoint_bar_ = std::make_shared<orbit_gl::TracepointThreadBar>(
       this, app_, time_graph, viewport, layout, capture_data, thread_id_);
   SetTrackColor(TimeGraph::GetThreadColor(thread_id));
+
+  scope_tree_update_type_ = scope_tree_update_type;
 }
 
 void ThreadTrack::InitializeNameAndLabel(int32_t thread_id) {
@@ -429,9 +432,7 @@ float ThreadTrack::GetYFromDepth(uint32_t depth) const {
 }
 
 void ThreadTrack::OnTimer(const TimerInfo& timer_info) {
-  if (timer_info.type() != TimerInfo::kCoreActivity) {
-    UpdateDepth(timer_info.depth() + 1);
-  }
+  UpdateDepth(timer_info.depth() + 1);
 
   if (process_id_ == -1) {
     process_id_ = timer_info.process_id();
@@ -443,29 +444,30 @@ void ThreadTrack::OnTimer(const TimerInfo& timer_info) {
   }
 
   TextBox& text_box = timer_chain_->emplace_back();
+  text_box.SetTimerInfo(std::move(timer_info));
 
   ++num_timers_;
   if (timer_info.start() < min_time_) min_time_ = timer_info.start();
   if (timer_info.end() > max_time_) max_time_ = timer_info.end();
 
-  text_box.SetTimerInfo(std::move(timer_info));
-
-  // Get the address of the freshly added TextBox and insert it into the ScopeTree.
-  static volatile bool do_insert = false;
-  if (!do_insert) return;
-
+  // When loading a capture, we postpone ScopeTree insertion so that FillScopeTreeFromTimerChain can
+  // parallelized per ThreadTrack.
+  if (scope_tree_update_type_ == ScopeTreeUpdateType::kAlways)
   {
     absl::MutexLock lock(&scope_tree_mutex_);
     scope_tree_.Insert(&text_box);
   }
 }
 
-void ThreadTrack::FillScopeTreeFromTimerChain() {
-  if (timer_chain_ == nullptr) return;
-  absl::MutexLock lock(&scope_tree_mutex_);
-  for (auto& block : *timer_chain_) {
-    for (size_t k = 0; k < block.size(); ++k) {
-      scope_tree_.Insert(&block[k]);
+void ThreadTrack::OnCaptureComplete() {
+  if (scope_tree_update_type_ == ScopeTreeUpdateType::kOnCaptureComplete) {
+    // Build scope tree from timer chain.
+    if (timer_chain_ == nullptr) return;
+    absl::MutexLock lock(&scope_tree_mutex_);
+    for (auto& block : *timer_chain_) {
+      for (size_t k = 0; k < block.size(); ++k) {
+        scope_tree_.Insert(&block[k]);
+      }
     }
   }
 }
