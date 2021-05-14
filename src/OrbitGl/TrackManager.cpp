@@ -351,8 +351,8 @@ ThreadTrack* TrackManager::GetOrCreateThreadTrack(int32_t tid) {
   std::shared_ptr<ThreadTrack> track = thread_tracks_[tid];
   if (track == nullptr) {
     ThreadTrack::ScopeTreeUpdateType scope_tree_update_type =
-        from_saved_capture_ ? ThreadTrack::ScopeTreeUpdateType::kOnCaptureComplete
-                            : ThreadTrack::ScopeTreeUpdateType::kAlways;
+        GetIsDataFromSavedCapture() ? ThreadTrack::ScopeTreeUpdateType::kOnCaptureComplete
+                                    : ThreadTrack::ScopeTreeUpdateType::kAlways;
     track = std::make_shared<ThreadTrack>(time_graph_, time_graph_, viewport_, layout_, tid, app_,
                                           capture_data_, scope_tree_update_type);
     AddTrack(track);
