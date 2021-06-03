@@ -150,6 +150,7 @@ target_link_libraries(
          OrbitAccessibility
          OrbitCore
          PresetFile
+         WindowsTracing
          CONAN_PKG::Outcome
          CONAN_PKG::freetype-gl
          CONAN_PKG::freetype

@@ -126,6 +126,7 @@ add_definitions(-DUNICODE -D_UNICODE)
 
 if(WIN32)
   add_definitions(-DWIN32)
+  add_subdirectory(src/WindowsTracing)
 else()
   add_subdirectory(src/CaptureEventProducer)
   add_subdirectory(src/FakeClient)

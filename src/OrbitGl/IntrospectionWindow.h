@@ -11,6 +11,7 @@
 
 #include "CaptureWindow.h"
 #include "OrbitBase/Tracing.h"
+#include "WindowsTracing/EventTracer.h"
 
 class OrbitApp;
 
@@ -36,6 +37,8 @@ class IntrospectionWindow : public CaptureWindow {
   [[nodiscard]] bool ShouldAutoZoom() const override;
 
   std::unique_ptr<orbit_base::TracingListener> introspection_listener_;
+
+  EventTracer event_tracer_;
 };
 
 #endif  // ORBIT_GL_INTROSPECTION_WINDOW_H_
