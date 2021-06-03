@@ -7,7 +7,7 @@
 #include "OrbitProcess.h"
 #include "CoreApp.h"
 #include <memory>
-#include "../external/breakpad/src/google_breakpad/processor/minidump.h"
+#include <google_breakpad/processor/minidump.h>
 
 using namespace google_breakpad;
 

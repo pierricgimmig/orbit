@@ -59,22 +59,22 @@ void SymUtils::ListModules( HANDLE a_ProcessHandle, std::map< DWORD64, std::shar
         module->m_AddressEnd = (DWORD64)moduleInfo.lpBaseOfDll + moduleInfo.SizeOfImage;
         module->m_EntryPoint = (DWORD64)moduleInfo.EntryPoint;
 
-        std::tr2::sys::path filePath = module->m_FullName;
+        std::filesystem::path filePath = module->m_FullName;
         filePath.replace_extension( ".pdb" );
-        if( std::tr2::sys::exists( filePath ) )
+        if( std::filesystem::exists( filePath ) )
         {
             module->m_FoundPdb = true;
-            module->m_PdbSize = std::tr2::sys::file_size( filePath );
+            module->m_PdbSize = std::filesystem::file_size( filePath );
             module->m_PdbName = filePath.wstring();
         }
         else if( Contains( module->m_FullName, L"qt" ) )
         {
             std::wstring pdbName = Path::GetFileName( filePath.wstring() );
             filePath = std::wstring( L"C:\\Qt\\5.8\\msvc2015_64\\bin\\" ) + pdbName;
-            if( std::tr2::sys::exists( filePath ) )
+            if( std::filesystem::exists( filePath ) )
             {
                 module->m_FoundPdb = true;
-                module->m_PdbSize = std::tr2::sys::file_size( filePath );
+                module->m_PdbSize = std::filesystem::file_size( filePath );
                 module->m_PdbName = filePath.wstring();
             }
         }

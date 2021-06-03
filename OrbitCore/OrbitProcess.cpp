@@ -57,8 +57,6 @@ void Process::Init()
     m_Handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, m_ID);
     m_Is64Bit = ProcessUtils::Is64Bit(m_Handle);
     m_IsElevated = IsElevated( m_Handle );
-    
-    
     m_UpdateCpuTimer.Start();
 }
 
@@ -393,7 +391,7 @@ void Process::FindPdbs( const std::vector< std::wstring > & a_SearchLocations )
                 if( Contains( module->m_DebugSignature, signature ) )
                 {
                     // Found matching pdb
-                    module->m_PdbSize = std::tr2::sys::file_size( module->m_PdbName );
+                    module->m_PdbSize = std::filesystem::file_size( module->m_PdbName );
                     break;
                 }
                 else

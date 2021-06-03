@@ -7,6 +7,7 @@
 #include "Core.h"
 #include "Pdb.h"
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <fstream>
 #include <ppl.h>
@@ -215,7 +216,7 @@ void Pdb::PrintGlobals() const
 std::wstring Pdb::GetCachedName()
 {
     std::string pdbName = ws2s( Path::GetFileName( m_FileName ) );
-    std::tr2::sys::path fileName = GuidToString( m_ModuleInfo.PdbSig70 ) + "-" + ToHexString( m_ModuleInfo.PdbAge ) + "_" + pdbName;
+    std::filesystem::path fileName = GuidToString( m_ModuleInfo.PdbSig70 ) + "-" + ToHexString( m_ModuleInfo.PdbAge ) + "_" + pdbName;
     fileName.replace_extension(".bin");
     return fileName.wstring();
 }
@@ -463,7 +464,8 @@ bool Pdb::LoadPdb( const wchar_t* a_PdbName )
     m_LoadTimer->Start();
 
     std::string msg = "pdb:" + ws2s( a_PdbName );
-    GTcpServer->SendToUiAsync( msg );
+    if(GTcpServer)
+        GTcpServer->SendToUiAsync( msg );
 
     std::string nameStr = ws2s( a_PdbName );
 

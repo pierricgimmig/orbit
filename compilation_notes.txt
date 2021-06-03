@@ -1,0 +1,3 @@
+Note, we need to copy linked_ptr.h from
+C:\git\orbitprofiler\external\vcpkg\buildtrees\breakpad\src\9e12edba6d-12269dd01c\src\processor\linked_ptr.h to 
+C:\git\orbitprofiler\external\vcpkg\installed\x64-windows\include\google_breakpad\processor\linked_ptr.h

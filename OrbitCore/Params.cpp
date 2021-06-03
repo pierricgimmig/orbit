@@ -103,7 +103,7 @@ void Params::ScanPdbCache()
     std::wstring cachePath = Path::GetCachePath();
     SCOPE_TIMER_LOG( Format( L"Scanning cache (%s)", cachePath.c_str() ) );
 
-    for( auto it = std::tr2::sys::directory_iterator( cachePath ); it != std::tr2::sys::directory_iterator(); ++it )
+    for( auto it = std::filesystem::directory_iterator( cachePath ); it != std::filesystem::directory_iterator(); ++it )
     {
         const auto& file = it->path();
         if( file.extension() == ".bin" )

@@ -1041,13 +1041,13 @@ void DiaParser::PrintSymbol(IDiaSymbol* pSymbol, DWORD dwIndent)
         PrintCallSiteInfo(pSymbol);
         break;
 
-    case SymTagHeapAllocationSite:
+    /*case SymTagHeapAllocationSite:
         PrintHeapAllocSite(pSymbol);
         break;
 
     case SymTagCoffGroup:
         PrintCoffGroup(pSymbol);
-        break;
+        break;*/
 
     default:
 	{

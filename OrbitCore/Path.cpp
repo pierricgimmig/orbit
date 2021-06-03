@@ -279,8 +279,8 @@ std::vector< std::wstring > Path::ListFiles( const std::wstring & a_Dir, std::fu
 {
     std::vector< std::wstring > files;
 
-    for( auto it = std::tr2::sys::recursive_directory_iterator( a_Dir );
-        it != std::tr2::sys::recursive_directory_iterator(); ++it )
+    for( auto it = std::filesystem::recursive_directory_iterator( a_Dir );
+        it != std::filesystem::recursive_directory_iterator(); ++it )
     {
         const auto& file = it->path();
 

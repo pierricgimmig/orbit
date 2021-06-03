@@ -131,6 +131,8 @@ function(AppendToVar var val)
     set("${var}" "${${var}} ${val}" PARENT_SCOPE)
 endfunction()
 
+AppendToVar(CMAKE_CXX_FLAGS "/std:c++17")
+
 #if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
 #	AppendToVar(CMAKE_CXX_FLAGS "/std:c++17")
 #else()

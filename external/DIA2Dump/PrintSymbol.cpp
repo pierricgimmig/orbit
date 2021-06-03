@@ -12,6 +12,7 @@
 
 #include <malloc.h>
 
+#include "cvconst.h"
 #include "dia2dump.h"
 #include "regs.h"
 #include "PrintSymbol.h"
@@ -1038,13 +1039,13 @@ void PrintSymbol(IDiaSymbol* pSymbol, DWORD dwIndent)
         PrintCallSiteInfo(pSymbol);
         break;
 
-    case SymTagHeapAllocationSite:
-        PrintHeapAllocSite(pSymbol);
-        break;
+    //case SymTagHeapAllocationSite:
+    //    PrintHeapAllocSite(pSymbol);
+    //    break;
 
-    case SymTagCoffGroup:
-        PrintCoffGroup(pSymbol);
-        break;
+    //case SymTagCoffGroup:
+    //    PrintCoffGroup(pSymbol);
+    //    break;
 
     default:
     {
