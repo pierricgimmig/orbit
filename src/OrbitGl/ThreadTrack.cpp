@@ -69,7 +69,7 @@ void ThreadTrack::InitializeNameAndLabel(int32_t thread_id) {
     SetLabel("All tracepoint events");
   } else if (thread_id == orbit_base::kAllProcessThreadsTid) {
     // This is the process track.
-    std::string process_name = capture_data_->process_name();
+    std::string process_name = capture_data_ ? capture_data_->process_name() : "unknown";
     SetName("All Threads");
     const std::string_view all_threads = " (all_threads)";
     SetLabel(process_name.append(all_threads));

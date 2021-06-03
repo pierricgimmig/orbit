@@ -14,7 +14,7 @@ using orbit_client_model::CaptureData;
 using orbit_client_protos::TimerInfo;
 using orbit_grpc_protos::CaptureStarted;
 
-IntrospectionWindow::IntrospectionWindow(OrbitApp* app) : CaptureWindow(app) {
+IntrospectionWindow::IntrospectionWindow(OrbitApp* app) : CaptureWindow(app), event_tracer_(2000.f) {
   // Create CaptureData.
   CaptureStarted capture_started;
   capture_started.set_process_id(orbit_base::GetCurrentProcessId());
@@ -57,8 +57,13 @@ void IntrospectionWindow::StartIntrospection() {
         timer_info.add_registers(scope.encoded_event.args[5]);
         GetTimeGraph()->ProcessTimer(timer_info, /*FunctionInfo*/ nullptr);
       });
+
+  event_tracer_.Start();
 }
-void IntrospectionWindow::StopIntrospection() { introspection_listener_ = nullptr; }
+void IntrospectionWindow::StopIntrospection() { 
+  introspection_listener_ = nullptr; 
+  event_tracer_.Stop();
+}
 
 void IntrospectionWindow::Draw(bool viewport_was_dirty) {
   ORBIT_SCOPE_FUNCTION;

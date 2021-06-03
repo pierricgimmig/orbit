@@ -15,6 +15,7 @@ if(WITH_CRASH_HANDLING)
 endif()
 
 if(WIN32)
+  SET_TARGET_PROPERTIES(Orbit PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\" /SUBSYSTEM:WINDOWS")
   set_target_properties(Orbit PROPERTIES WIN32_EXECUTABLE ON)
 
   include(${CMAKE_SOURCE_DIR}/cmake/version.cmake)

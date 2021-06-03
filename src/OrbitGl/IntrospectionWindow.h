@@ -12,6 +12,7 @@
 #include "CaptureWindow.h"
 #include "ClientModel/CaptureData.h"
 #include "OrbitBase/Tracing.h"
+#include "WindowsTracing/EventTracer.h"
 
 class OrbitApp;
 
@@ -38,6 +39,8 @@ class IntrospectionWindow : public CaptureWindow {
 
   std::unique_ptr<orbit_base::TracingListener> introspection_listener_;
   std::unique_ptr<orbit_client_model::CaptureData> capture_data_;
+
+  EventTracer event_tracer_;
 };
 
 #endif  // ORBIT_GL_INTROSPECTION_WINDOW_H_
