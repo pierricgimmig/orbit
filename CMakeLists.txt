@@ -90,6 +90,10 @@ find_package(concurrentqueue REQUIRED)
 find_package(gte REQUIRED)
 find_package(oqpi REQUIRED)
 
+if(WIN32)
+find_package(OrbitLib REQUIRED)
+endif()
+
 if(WITH_GUI)
   find_package(OpenGL REQUIRED)
   find_package(

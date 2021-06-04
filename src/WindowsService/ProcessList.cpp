@@ -14,6 +14,22 @@
 
 #include "OrbitBase/Logging.h"
 
+#include "OrbitLib.h"
+
+struct ProcessListener : public orbit_lib::ProcessListener {
+  void OnError(const char* message) override { ERROR("%s", message); }
+
+  void OnProcess(const char* process_path, uint32_t pid, bool is_64_bit, float cpu_usage) override {
+    orbit_grpc_protos::ProcessInfo& process_info = process_infos[pid];
+    process_info.set_pid(pid);
+    process_info.set_name(process_path);
+    process_info.set_is_64_bit(is_64_bit);
+    process_info.set_cpu_usage(cpu_usage);
+  }
+
+  absl::flat_hash_map<uint32_t, orbit_grpc_protos::ProcessInfo> process_infos;
+};
+
 namespace orbit_service {
 
 ErrorMessageOr<void> ProcessList::Refresh() {
@@ -23,13 +39,15 @@ ErrorMessageOr<void> ProcessList::Refresh() {
   process_info.set_name("Blah");
   updated_processes[1] = process_info;
 
-  // TODO WindowsService: ListProcesses
-  processes_ = std::move(updated_processes);
+  ProcessListener listener;
+  orbit_lib::ListProcesses(&listener);
 
- /* if (processes_.empty()) {
-    return ErrorMessage{
-        "Could not determine a single process from the proc-filesystem. Something seems to wrong."};
-  }*/
+  // TODO WindowsService: ListProcesses
+  processes_ = std::move(listener.process_infos);
+
+  if (processes_.empty()) {
+    return ErrorMessage{"Could not list any process"};
+  }
 
   return outcome::success();
 }

@@ -70,7 +70,7 @@ void ProcessData::UpdateModuleInfos(absl::Span<const ModuleInfo> module_infos) {
           module_info.file_path(),
           ModuleInMemory{module_info.address_start(), module_info.address_end(),
                          module_info.file_path(), module_info.build_id()});
-      CHECK(success);
+      //CHECK(success);
     }
     {
       const auto [it, success] =

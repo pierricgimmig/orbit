@@ -19,6 +19,8 @@
 #include "module.pb.h"
 #include "process.pb.h"
 
+#include "OrbitLib.h"
+
 namespace orbit_service {
 
 using grpc::ServerContext;
@@ -33,7 +35,21 @@ using orbit_grpc_protos::GetProcessListRequest;
 using orbit_grpc_protos::GetProcessListResponse;
 using orbit_grpc_protos::GetProcessMemoryRequest;
 using orbit_grpc_protos::GetProcessMemoryResponse;
+using orbit_grpc_protos::ModuleInfo;
 using orbit_grpc_protos::ProcessInfo;
+
+struct ModuleListener : public orbit_lib::ModuleListener {
+    void OnError(const char* message) override { ERROR("%s", message); }
+    void OnModule(const char* module_path, uint64_t start_address, uint64_t end_address,
+        uint64_t debug_info_size) override {
+      ModuleInfo& module_info = module_infos.emplace_back();
+      module_info.set_address_end(end_address);
+      module_info.set_address_start(start_address);
+      module_info.set_file_path(module_path);
+  }
+
+  std::vector<ModuleInfo> module_infos;
+};
 
 Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRequest*,
                                           GetProcessListResponse* response) {
@@ -61,11 +77,12 @@ Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRe
 Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
                                          const GetModuleListRequest* request,
                                          GetModuleListResponse* response) {
-  // TODO WindowsService: ListModules
-
-  /*for (const auto& module_info : module_infos.value()) {
+  ModuleListener module_listener;
+  orbit_lib::ListModules(request->process_id(), &module_listener);
+  
+  for (const auto& module_info : module_listener.module_infos) {
     *(response->add_modules()) = module_info;
-  }*/
+  }
 
   return Status::OK;
 }

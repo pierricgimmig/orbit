@@ -38,12 +38,20 @@ target_include_directories(WindowsServiceLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(WindowsServiceLib PUBLIC
         GrpcProtos
         WindowsTracing
-        OrbitVersion)
+        OrbitVersion
+        OrbitLib)
 
 project(OrbitService)
 add_executable(OrbitService main.cpp)
 target_link_libraries(OrbitService PRIVATE WindowsServiceLib)
 target_compile_options(OrbitService PRIVATE ${STRICT_COMPILE_FLAGS})
+
+add_custom_command(TARGET OrbitService POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/OrbitLib/"
+        $<TARGET_FILE_DIR:OrbitService>)
+
+SET_TARGET_PROPERTIES(OrbitService PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\" /SUBSYSTEM:CONSOLE")
 
 # add_executable(ServiceTests)
 # target_compile_options(ServiceTests PRIVATE ${STRICT_COMPILE_FLAGS})
