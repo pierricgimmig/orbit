@@ -1,6 +1,7 @@
 #include "OrbitLib.h"
 
 #include <chrono>
+#include <filesystem>
 #include <thread>
 
 #include "windows.h"
@@ -57,7 +58,8 @@ int ListModules(uint32_t pid, ModuleListener* listener) {
     process->ListModules();
     for (auto [base_address, module] : process->GetModules()) {
         std::string module_name = ws2s(module->m_FullName);
-        listener->OnModule(module_name.c_str(), module->m_AddressStart, module->m_AddressEnd, module->m_PdbSize);
+        uint64_t size = std::filesystem::exists(module_name) ? std::filesystem::file_size(module_name) : 0;
+        listener->OnModule(module_name.c_str(), module->m_AddressStart, module->m_AddressEnd, size);
     }
 
     return 0;

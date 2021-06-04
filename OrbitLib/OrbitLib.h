@@ -25,7 +25,7 @@ namespace orbit_lib {
 
     struct ModuleListener : public ErrorHandler {
         virtual void OnModule(const char* module_path, uint64_t start_address, uint64_t end_address,
-            uint64_t debug_info_size) = 0;
+            uint64_t file_size) = 0;
     };
 
     struct DebugInfoListener : public ErrorHandler {
