@@ -10,16 +10,18 @@
 #include "CoreApp.h"
 #include "OrbitModule.h"
 
-#pragma optimize("", off)
-
 namespace orbit_lib{ 
 
 void Initialize() {
+    static bool init = false;
+    if (init) return;
+
     static CoreApp app;
     GCoreApp = &app;
     InitProfiling();
     Capture::Init();
     oqpi_tk::start_default_scheduler();
+    init = true;
 }
 
 int ListProcesses(ProcessListener* listener) {
