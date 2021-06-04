@@ -144,12 +144,12 @@ struct DebugInfoListener : public orbit_lib::DebugInfoListener {
   }
 
   void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address,
-      const char* file_name, int line) override {
+                  uint64_t size, const char* file_name, int line) override {
     orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
     symbol_info->set_name(function_name);
     symbol_info->set_demangled_name(function_name);
     symbol_info->set_address(relative_address);
-    symbol_info->set_size(0);
+    symbol_info->set_size(size);
   }
 
   orbit_grpc_protos::ModuleSymbols module_symbols;
