@@ -28,11 +28,14 @@ target_sources(WindowsTracing PRIVATE
         include/WindowsTracing/EventGuid.h
         include/WindowsTracing/EventTracer.h
         include/WindowsTracing/EventTypes.h
+        include/WindowsTracing/Tracer.h
+        include/WindowsTracing/TracerListener.h
         include/WindowsTracing/WindowsTracing.h)
 
 target_sources(WindowsTracing PRIVATE
         EventCallbacks.cpp
         EventTracer.cpp
+        Tracer.cpp
         WindowsTracing.cpp)
 
 target_include_directories(WindowsTracing INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)

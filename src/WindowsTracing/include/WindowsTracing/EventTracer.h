@@ -8,8 +8,6 @@
 #include <atomic>
 
 #include "WindowsTracing/Etw.h"
-
-//-----------------------------------------------------------------------------
 class EventTracer
 {
 public:
