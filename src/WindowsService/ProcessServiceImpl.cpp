@@ -19,7 +19,7 @@
 #include "module.pb.h"
 #include "process.pb.h"
 
-#include "OrbitLib.h"
+#include "OrbitLib/OrbitLib.h"
 
 namespace orbit_service {
 
@@ -47,6 +47,7 @@ struct ModuleListener : public orbit_lib::ModuleListener {
       module_info.set_address_start(start_address);
       module_info.set_file_path(module_path);
       module_info.set_file_size(size);
+      module_info.set_build_id("todo-pg-build-id");
   }
 
   std::vector<ModuleInfo> module_infos;

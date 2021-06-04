@@ -34,6 +34,8 @@ class SymbolHelper {
                                                             const std::string& build_id) const;
   [[nodiscard]] static ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadSymbolsFromFile(
       const fs::path& file_path);
+  [[nodiscard]] static ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadSymbolsFromPdb(
+      const fs::path& file_path);
   [[nodiscard]] static ErrorMessageOr<void> VerifySymbolsFile(const fs::path& symbols_path,
                                                               const std::string& build_id);
 

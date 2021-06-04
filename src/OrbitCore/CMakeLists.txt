@@ -40,7 +40,7 @@ target_link_libraries(
          CONAN_PKG::Outcome)
 
 if(WIN32)
-  target_link_libraries(OrbitCore PRIVATE dbghelp.lib)
+  target_link_libraries(OrbitCore PRIVATE OrbitLib dbghelp.lib)
   target_compile_definitions(OrbitCore PUBLIC -D_WIN32_WINNT=0x0700)
   target_compile_definitions(OrbitCore PUBLIC -DNTDDI_VERSION=0x06030000)
 endif()

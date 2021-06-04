@@ -27,6 +27,7 @@
 #include "OrbitBase/Result.h"
 #include "OrbitBase/Tracing.h"
 #include "OrbitBase/WriteStringToFile.h"
+#include "OrbitLib/OrbitLib.h"
 #include "Path.h"
 
 using orbit_grpc_protos::ModuleSymbols;
@@ -129,10 +130,42 @@ std::vector<fs::path> FindStructuredDebugDirectories() {
   return directories;
 }
 
+[[nodiscard]] std::string GetDebugExtensionFromModulePath(const fs::path& module_path) {
+  std::string extension = module_path.extension().string();
+  if (extension == ".exe" || extension == ".dll") {
+    return ".pdb";
+  } 
+  return ".debug";
+}
+
+struct DebugInfoListener : public orbit_lib::DebugInfoListener {
+  void OnError(const char* message) override {
+    error_message = message;
+  }
+
+  void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address,
+      const char* file_name, int line) override {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(function_name);
+    symbol_info->set_demangled_name(function_name);
+    symbol_info->set_address(relative_address);
+    symbol_info->set_size(0);
+  }
+
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  std::string error_message;
+};
+
 }  // namespace
 
 ErrorMessageOr<void> SymbolHelper::VerifySymbolsFile(const fs::path& symbols_path,
                                                      const std::string& build_id) {
+
+  if (symbols_path.extension().string() == ".pdb") {
+    // TODO-PG
+    return outcome::success();
+  }
+
   auto object_file_or_error = CreateObjectFile(symbols_path);
   if (object_file_or_error.has_error()) {
     return ErrorMessage(absl::StrFormat("Unable to load object file \"%s\": %s",
@@ -184,15 +217,16 @@ ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsWithSymbolsPathFile(
   }
 
   const fs::path& filename = module_path.filename();
-  fs::path filename_dot_debug = filename;
-  filename_dot_debug.replace_extension(".debug");
-  fs::path filename_plus_debug = filename;
-  filename_plus_debug.replace_extension(filename.extension().string() + ".debug");
+  fs::path filename_dot_debug_extension = filename;
+  std::string debug_extension = GetDebugExtensionFromModulePath(filename);
+  filename_dot_debug_extension.replace_extension(debug_extension);
+  fs::path filename_plus_debug_extension = filename;
+  filename_plus_debug_extension.replace_extension(filename.extension().string() + debug_extension);
 
   std::set<fs::path> search_paths;
   for (const auto& directory : symbols_file_directories_) {
-    search_paths.insert(directory / filename_dot_debug);
-    search_paths.insert(directory / filename_plus_debug);
+    search_paths.insert(directory / filename_dot_debug_extension);
+    search_paths.insert(directory / filename_plus_debug_extension);
     search_paths.insert(directory / filename);
   }
 
@@ -240,9 +274,28 @@ ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsWithSymbolsPathFile(
   return cache_file_path;
 }
 
+ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> SymbolHelper::LoadSymbolsFromPdb(
+    const fs::path& file_path) {
+  ORBIT_SCOPE_FUNCTION;
+  SCOPED_TIMED_LOG("LoadSymbolsFromPdb: %s", file_path.string());
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+
+  DebugInfoListener debug_info_listener;
+  orbit_lib::ListFunctions(file_path.string().c_str(), &debug_info_listener);
+
+  if (!debug_info_listener.error_message.empty())
+    return ErrorMessage(debug_info_listener.error_message);
+
+  return std::move(debug_info_listener.module_symbols);
+}
+
 ErrorMessageOr<ModuleSymbols> SymbolHelper::LoadSymbolsFromFile(const fs::path& file_path) {
   ORBIT_SCOPE_FUNCTION;
   SCOPED_TIMED_LOG("LoadSymbolsFromFile: %s", file_path.string());
+
+  if (file_path.extension().string() == ".pdb") {
+    return LoadSymbolsFromPdb(file_path);
+  }
 
   auto object_file_or_error = CreateObjectFile(file_path);
   if (object_file_or_error.has_error()) {
