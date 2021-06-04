@@ -41,11 +41,12 @@ using orbit_grpc_protos::ProcessInfo;
 struct ModuleListener : public orbit_lib::ModuleListener {
     void OnError(const char* message) override { ERROR("%s", message); }
     void OnModule(const char* module_path, uint64_t start_address, uint64_t end_address,
-        uint64_t debug_info_size) override {
+        uint64_t size) override {
       ModuleInfo& module_info = module_infos.emplace_back();
       module_info.set_address_end(end_address);
       module_info.set_address_start(start_address);
       module_info.set_file_path(module_path);
+      module_info.set_file_size(size);
   }
 
   std::vector<ModuleInfo> module_infos;
