@@ -46,10 +46,11 @@ struct TestDebugInfoListener : public orbit_lib::DebugInfoListener {
 		OutputDebugStringA(message);
 	}
 
-	void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address, const char* file_name, int line) {
+	void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address, uint64_t size, const char* file_name, int line) {
 		PRINT_VAR(module_path);
 		PRINT_VAR(function_name);
 		PRINT_VAR(relative_address);
+    PRINT_VAR(size);
 		PRINT_VAR(file_name);
 		PRINT_VAR(line);
 	}

@@ -84,7 +84,9 @@ int ListFunctions(const char* symbols_path, DebugInfoListener* listener) {
         std::string module_name = ws2s(function.GetModuleName());
         std::string function_name = ws2s(function.m_PrettyName);
         std::string file_name = ws2s(function.m_File);
-		listener->OnFunction(module_name.c_str(), function_name.c_str(), function.m_Address, file_name.c_str(), function.m_Line);
+        uint64_t function_size = function.m_Size;
+        listener->OnFunction(module_name.c_str(), function_name.c_str(), function.m_Address,
+                             function_size, file_name.c_str(), function.m_Line);
     }
 
     GPdbDbg = nullptr;

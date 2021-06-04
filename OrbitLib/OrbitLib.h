@@ -29,8 +29,9 @@ namespace orbit_lib {
     };
 
     struct DebugInfoListener : public ErrorHandler {
-        virtual void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address,
-            const char* file_name, int line) = 0;
+      virtual void OnFunction(const char* module_path, const char* function_name,
+                              uint64_t relative_address, uint64_t size, const char* file_name,
+                              int line) = 0;
     };
 
     struct CaptureListener : public ErrorHandler {
