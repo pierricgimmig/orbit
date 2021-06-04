@@ -29,6 +29,7 @@ public:
 
     bool LoadDataFromPdb();
     bool LoadPdbDia();
+    bool LoadFunctions();
     void Update();
     void AddFunction( Function & a_Function );
     void CheckOrbitFunction( Function & a_Function );

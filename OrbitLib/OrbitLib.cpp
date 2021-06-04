@@ -13,7 +13,7 @@
 
 namespace orbit_lib{ 
 
-void Initialize() {
+void LazyInit() {
     static bool init = false;
     if (init) return;
 
@@ -27,6 +27,7 @@ void Initialize() {
 
 int ListProcesses(ProcessListener* listener) {
     if (listener == nullptr) return -1;
+    LazyInit();
 
     ProcessList process_list;
     process_list.UpdateCpuTimes();
@@ -47,10 +48,12 @@ int ListProcesses(ProcessListener* listener) {
 
 int ListModules(uint32_t pid, ModuleListener* listener) {
     if (listener == nullptr) return -1;
+    LazyInit();
+
     ProcessList process_list;
     std::shared_ptr<Process> process = process_list.m_ProcessesMap[pid];
     if(process == nullptr) {
-        listener->OnError("Error in ListModules:Process not found");
+        listener->OnError("Error listing modules: Process not found");
         return -1;
     }
 
@@ -58,7 +61,10 @@ int ListModules(uint32_t pid, ModuleListener* listener) {
     process->ListModules();
     for (auto [base_address, module] : process->GetModules()) {
         std::string module_name = ws2s(module->m_FullName);
-        uint64_t size = std::filesystem::exists(module_name) ? std::filesystem::file_size(module_name) : 0;
+        uint64_t size = 0;
+        if (std::filesystem::exists(module_name)) {
+            size = std::filesystem::file_size(module_name);
+        }
         listener->OnModule(module_name.c_str(), module->m_AddressStart, module->m_AddressEnd, size);
     }
 
@@ -67,12 +73,12 @@ int ListModules(uint32_t pid, ModuleListener* listener) {
 
 int ListFunctions(const char* symbols_path, DebugInfoListener* listener) {
     if (listener == nullptr) return -1;
+    LazyInit();
 
     std::wstring wide_symbols_path = s2ws(symbols_path);
     auto pdb = std::make_shared<Pdb>(wide_symbols_path.c_str());
     GPdbDbg = pdb;
-    pdb->LoadDataFromPdb();
-    pdb->LoadPdb(wide_symbols_path.c_str());
+    pdb->LoadFunctions();
 
     for (Function& function : pdb->GetFunctions()) {
         std::string module_name = ws2s(function.GetModuleName());

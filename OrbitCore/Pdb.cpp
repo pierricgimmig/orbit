@@ -491,6 +491,15 @@ bool Pdb::LoadPdb( const wchar_t* a_PdbName )
 }
 
 //-----------------------------------------------------------------------------
+bool Pdb::LoadFunctions() {
+    LoadDataFromPdb();
+    if (m_DiaGlobalSymbol == nullptr) return false;
+    constexpr size_t kReserveSize = 8 * 1024;
+    m_Functions.reserve(kReserveSize);
+    return DumpAllFunctions(m_DiaGlobalSymbol);
+}
+
+//-----------------------------------------------------------------------------
 bool Pdb::LoadDataFromPdb()
 {
     DiaManager diaManager;

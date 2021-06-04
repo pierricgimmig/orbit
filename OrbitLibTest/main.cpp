@@ -58,9 +58,6 @@ struct TestDebugInfoListener : public orbit_lib::DebugInfoListener {
 std::vector<uint32_t> pids;
 
 int main(int argc, char* argv[]) {
-
-	orbit_lib::Initialize();
-
 	// Processes
 	TestProcessListener process_listener;
 	orbit_lib::ListProcesses(&process_listener);

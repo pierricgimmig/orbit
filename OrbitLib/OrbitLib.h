@@ -38,8 +38,6 @@ namespace orbit_lib {
             uint32_t pid) = 0;
     };
 
-    ORBIT_LIB_API void Initialize();
-
     ORBIT_LIB_API int ListProcesses(ProcessListener* listener);
     ORBIT_LIB_API int ListModules(uint32_t pid, ModuleListener* listener);
     ORBIT_LIB_API int ListFunctions(const char* symbols_path, DebugInfoListener* listener);
