@@ -15,34 +15,34 @@
 
 namespace orbit_lib {
 
-    struct ProcessListener {
-        void (*on_process)(const char* process_path, uint32_t pid, bool is_64_bit, float cpu_usage);
-        void (*on_error)(const char* error_message);
+    struct ErrorHandler {
+        virtual void OnError(const char* error_message) = 0;
     };
 
-    struct ModuleListener {
-        void (*on_module)(const char* module_path, uint64_t start_address, uint64_t end_address,
-            uint64_t debug_info_size);
-        void (*on_error)(const char* error_message);
+    struct ProcessListener : public ErrorHandler {
+        virtual void OnProcess(const char* process_path, uint32_t pid, bool is_64_bit, float cpu_usage) = 0;
     };
 
-    struct DebugInfoListener {
-        void (*on_function)(const char* module_path, const char* function_name, uint64_t relative_address,
-            const char* file_name, int line);
-        void (*on_error)(const char* error_message);
+    struct ModuleListener : public ErrorHandler {
+        virtual void OnModule(const char* module_path, uint64_t start_address, uint64_t end_address,
+            uint64_t debug_info_size) = 0;
     };
 
-    struct CaptureListener {
-        void (*on_timer)(uint64_t absolute_address, uint64_t start, uint64_t end, uint32_t tid,
-            uint32_t pid);
-        void (*on_error)(const char* error_message);
+    struct DebugInfoListener : public ErrorHandler {
+        virtual void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address,
+            const char* file_name, int line) = 0;
+    };
+
+    struct CaptureListener : public ErrorHandler {
+        virtual void OnTimer(uint64_t absolute_address, uint64_t start, uint64_t end, uint32_t tid,
+            uint32_t pid) = 0;
     };
 
     ORBIT_LIB_API void Initialize();
 
-    ORBIT_LIB_API int ListProcesses(const ProcessListener& listener);
-    ORBIT_LIB_API int ListModules(uint32_t pid, const ModuleListener& listener);
-    ORBIT_LIB_API int ListFunctions(const char* symbols_path, const DebugInfoListener& listener);
+    ORBIT_LIB_API int ListProcesses(ProcessListener* listener);
+    ORBIT_LIB_API int ListModules(uint32_t pid, ModuleListener* listener);
+    ORBIT_LIB_API int ListFunctions(const char* symbols_path, DebugInfoListener* listener);
 
     ORBIT_LIB_API int StartCapture(uint32_t pid, uint64_t* addresses, size_t num_addresses,
         const CaptureListener& listener);
