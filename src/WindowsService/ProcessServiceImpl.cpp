@@ -46,6 +46,7 @@ struct ModuleListener : public orbit_lib::ModuleListener {
       module_info.set_address_end(end_address);
       module_info.set_address_start(start_address);
       module_info.set_file_path(module_path);
+      module_info.set_name(std::filesystem::path(module_path).filename().string());
       module_info.set_file_size(size);
       module_info.set_build_id("todo-pg-build-id");
   }
