@@ -6,6 +6,7 @@
 #define WINDOWS_TRACING_EVENT_TRACER_H_
 
 #include <atomic>
+#include <thread>
 
 #include "WindowsTracing/Etw.h"
 class EventTracer
@@ -31,6 +32,7 @@ protected:
     uint32_t target_pid_ = 0;
     float sampling_frequency_hz_ = 2000.f;
     std::atomic<bool> is_tracing_ = false;
+    std::unique_ptr<std::thread> tracing_thread_;
 };
 
 #endif  // WINDOWS_TRACING_EVENT_TRACER_H_

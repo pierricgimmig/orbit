@@ -22,7 +22,7 @@ class Tracer {
   explicit Tracer(orbit_grpc_protos::CaptureOptions capture_options)
       : capture_options_{std::move(capture_options)} {}
 
-  ~Tracer() { Stop(); }
+  ~Tracer() {}
 
   Tracer(const Tracer&) = delete;
   Tracer& operator=(const Tracer&) = delete;
@@ -36,19 +36,13 @@ class Tracer {
 
  private:
   void EventTracerThread();
+  void SendThreadSnapshot();
 
   orbit_grpc_protos::CaptureOptions capture_options_;
 
   TracerListener* listener_ = nullptr;
-
-  // exit_requested_ must outlive this object because it is used by thread_.
-  // The control block of shared_ptr is thread safe (i.e., reference counting
-  // and pointee's lifetime management are atomic and thread safe).
-  std::shared_ptr<std::atomic<bool>> exit_requested_ = std::make_unique<std::atomic<bool>>(true);
-  std::shared_ptr<std::thread> thread_;
   std::unique_ptr<EventTracer> event_tracer_ = nullptr;
   std::unique_ptr<TracingContext> tracing_context_ = nullptr;
-  uint64_t start_time_ns_ = 0;
 };
 
 }  // namespace orbit_linux_tracing

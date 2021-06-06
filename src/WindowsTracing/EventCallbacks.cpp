@@ -1,6 +1,6 @@
-//-----------------------------------
-// Copyright Pierric Gimmig 2013-2017
-//-----------------------------------
+// Copyright (c) 2020 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 #include "WindowsTracing/EventCallbacks.h"
 
@@ -13,29 +13,50 @@
 
 #include "capture.pb.h"
 
-orbit_windows_tracing::TracingContext* g_tracing_context;
-
 using orbit_grpc_protos::Callstack;
 using orbit_grpc_protos::FullAddressInfo;
 using orbit_grpc_protos::FullCallstackSample;
 using orbit_grpc_protos::FunctionCall;
 
 using orbit_windows_tracing::CpuEvent;
+using orbit_windows_tracing::TracingContext;
 
-// TODO-PG: manage lifecycle of g_tracing_context and tracing thread
+TracingContext* g_tracing_context;
 
 namespace {
 
-    enum class ContextSwitchType {kIn, kOut};
+class ClockUtils {
+ public:
+  [[nodiscard]] static inline uint64_t RawTimestampToNs(uint64_t raw_timestamp) {
+    return raw_timestamp * GetInstance().performance_period_ns_;
+  }
+
+ private:
+  ClockUtils() {
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    performance_frequency_ = frequency.QuadPart;
+    performance_period_ns_ = 1'000'000'000 / performance_frequency_;
+  }
+
+  static ClockUtils& GetInstance() {
+    static ClockUtils clock_utils;
+    return clock_utils;
+  }
+
+  uint64_t performance_frequency_;
+  uint64_t performance_period_ns_;
+};
+
 void OnContextSwitch(const CSwitch& context_switch, uint64_t timestamp, uint8_t processor_number,
                      uint16_t processor_index) {
-  if (g_tracing_context == nullptr) return;
+  CHECK(g_tracing_context);
 
   uint32_t old_pid = g_tracing_context->pid_by_tid[context_switch.OldThreadId];
 
   CpuEvent new_cpu_event;
   new_cpu_event.context_switch = context_switch;
-  new_cpu_event.timestamp_ns = timestamp;
+  new_cpu_event.timestamp_ns = ClockUtils::RawTimestampToNs(timestamp);
 
   bool has_last_cpu_event = g_tracing_context->last_cpu_event_by_cpu.count(processor_index) > 0;
   if (has_last_cpu_event) {
@@ -44,15 +65,20 @@ void OnContextSwitch(const CSwitch& context_switch, uint64_t timestamp, uint8_t 
     uint32_t in_tid = last_cpu_event.context_switch.NewThreadId;
     uint32_t out_tid = new_cpu_event.context_switch.OldThreadId;
 
-    CHECK(in_tid == out_tid);
-    CHECK(new_cpu_event.timestamp_ns >= last_cpu_event.timestamp_ns);
-    orbit_grpc_protos::SchedulingSlice scheduling_slice;
-    scheduling_slice.set_pid(old_pid);
-    scheduling_slice.set_tid(out_tid);
-    scheduling_slice.set_core(processor_index);
-    scheduling_slice.set_duration_ns(new_cpu_event.timestamp_ns - last_cpu_event.timestamp_ns);
-    scheduling_slice.set_out_timestamp_ns(new_cpu_event.timestamp_ns);
-    g_tracing_context->listener->OnSchedulingSlice(std::move(scheduling_slice));
+    if (in_tid == out_tid) {
+      CHECK(new_cpu_event.timestamp_ns >= last_cpu_event.timestamp_ns);
+      orbit_grpc_protos::SchedulingSlice scheduling_slice;
+      scheduling_slice.set_pid(old_pid);
+      scheduling_slice.set_tid(out_tid);
+      scheduling_slice.set_core(processor_index);
+      scheduling_slice.set_duration_ns(new_cpu_event.timestamp_ns - last_cpu_event.timestamp_ns);
+      scheduling_slice.set_out_timestamp_ns(new_cpu_event.timestamp_ns);
+      g_tracing_context->listener->OnSchedulingSlice(std::move(scheduling_slice));
+    } else {
+      // It's still unclear why, but this happens sometimes, probably because of 
+      // missed events. TODO-PG: handle missed events. 
+      LOG("OnContextSwitch: out_tid != in_tid");
+    }
   }
 
   if (g_tracing_context)
@@ -60,7 +86,7 @@ void OnContextSwitch(const CSwitch& context_switch, uint64_t timestamp, uint8_t 
 }
 
 void OnThreadStart(uint32_t tid, uint32_t pid) {
-  if (g_tracing_context == nullptr) return;
+  CHECK(g_tracing_context);
   g_tracing_context->pid_by_tid[tid] = pid;
 }
 
@@ -69,7 +95,7 @@ void OnThreadStop(uint32_t tid, uint32_t pid) {
 }
 
 void CallbackThread(PEVENT_RECORD event_record, uint8_t opcode) {
-  if (g_tracing_context == nullptr) return;
+  CHECK(g_tracing_context);
 
   switch (opcode) {
     case Thread_TypeGroup1::OPCODE_START:
@@ -100,7 +126,7 @@ void CallbackThread(PEVENT_RECORD event_record, uint8_t opcode) {
 }
 
 void CallbackStackWalk(PEVENT_RECORD event_record, UCHAR opcode) {
-  if (g_tracing_context == nullptr) return;
+  CHECK(g_tracing_context);
 
   if (opcode == StackWalk_Event::OPCODE_STACK) {
     StackWalk_Event* event = absl::bit_cast<StackWalk_Event*>(event_record->UserData);
@@ -113,11 +139,13 @@ void CallbackStackWalk(PEVENT_RECORD event_record, UCHAR opcode) {
     size_t non_address_size = (sizeof(StackWalk_Event) - sizeof(event->Stack1));
     size_t stack_depth = (event_record->UserDataLength - non_address_size) / sizeof(uint64_t);
     uint64_t* addresses = &event->Stack1;
+    uint64_t timestamp_ns =
+        ClockUtils::RawTimestampToNs(event_record->EventHeader.TimeStamp.QuadPart);
 
     FullCallstackSample sample;
     sample.set_pid(pid);
     sample.set_tid(tid);
-    sample.set_timestamp_ns(event_record->EventHeader.TimeStamp.QuadPart);
+    sample.set_timestamp_ns(timestamp_ns);
 
     Callstack* callstack = sample.mutable_callstack();
     for (int i = 0; i < stack_depth; ++i) {
@@ -144,7 +172,9 @@ void Callback(PEVENT_RECORD event_record) {
   }
 }
 
-void SetTracingContext(TracingContext* tracing_context) { g_tracing_context = tracing_context; }
-
+void SetTracingContext(TracingContext* tracing_context) { 
+    CHECK(g_tracing_context == nullptr || tracing_context == nullptr);
+    g_tracing_context = tracing_context;
+}
 
 }  // namespace orbit_windows_tracing

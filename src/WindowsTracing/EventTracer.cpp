@@ -151,12 +151,12 @@ void EventTracer::Start() {
     return;
   }
 
-  std::thread* thread = new std::thread([&]() { EventTracerThread(); });
-  thread->detach();
+  tracing_thread_ = std::make_unique<std::thread>([this]() { EventTracerThread(); });
 }
 
 void EventTracer::Stop() {
   CleanupTrace();
+  tracing_thread_->join();
   is_tracing_ = false;
 }
 
