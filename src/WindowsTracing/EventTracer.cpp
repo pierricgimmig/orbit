@@ -13,10 +13,8 @@
 #include "WindowsTracing/EventGuid.h"
 #include "WindowsTracing/EventTypes.h"
 
-#pragma optimize("", off)
-
-EventTracer::EventTracer(float sampling_frequency_hz)
-    : sampling_frequency_hz_(sampling_frequency_hz) {}
+EventTracer::EventTracer(uint32_t target_pid, float sampling_frequency_hz)
+    : target_pid_(target_pid), sampling_frequency_hz_(sampling_frequency_hz) {}
 EventTracer::~EventTracer() { CleanupTrace(); }
 
 void PrintLastError(){}
@@ -76,7 +74,6 @@ void EventTracer::SetSamplingFrequencyHz(float frequency) {
   }
 }
 
-
 void EventTracer::SetupStackTracing() {
   constexpr int kMaxStackTracingIds = 96;
   int numIDs = 0;
@@ -125,7 +122,7 @@ void EventTracer::Start() {
 
   // Sampling profiling
   SetPrivilege(SE_SYSTEM_PROFILE_NAME, true);
-  SetSamplingFrequencyHz(2000);
+  SetSamplingFrequencyHz(sampling_frequency_hz_);
   is_tracing_ = true;
 
   if (ControlTrace(0, KERNEL_LOGGER_NAME, session_properties_, EVENT_TRACE_CONTROL_STOP) !=
@@ -158,12 +155,10 @@ void EventTracer::Start() {
   thread->detach();
 }
 
-
 void EventTracer::Stop() {
   CleanupTrace();
   is_tracing_ = false;
 }
-
 
 void EventTracer::CleanupTrace() {
   if (ControlTrace(trace_handle_, KERNEL_LOGGER_NAME, session_properties_,

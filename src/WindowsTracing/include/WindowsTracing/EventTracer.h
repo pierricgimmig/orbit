@@ -11,7 +11,7 @@
 class EventTracer
 {
 public:
-    explicit EventTracer(float sampling_frequency_hz);
+    explicit EventTracer(uint32_t targe_pid, float sampling_frequency_hz);
     ~EventTracer();
 
     void Start();
@@ -28,6 +28,7 @@ protected:
     _EVENT_TRACE_PROPERTIES* session_properties_ = nullptr;
     uint64_t session_handle_ = 0;
     uint64_t trace_handle_ = 0;
+    uint32_t target_pid_ = 0;
     float sampling_frequency_hz_ = 2000.f;
     std::atomic<bool> is_tracing_ = false;
 };

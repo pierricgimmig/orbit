@@ -205,7 +205,7 @@ static ProducerCaptureEvent CreateCaptureStartedEvent(const CaptureOptions& capt
 
   capture_started->set_process_id(target_pid);
 
-  // TODO WindowsService: set build id
+  // TODO-PG: set build id
   /*auto executable_path_or_error = orbit_base::GetExecutablePath(target_pid);
   if (executable_path_or_error.has_value()) {
     const std::string& executable_path = executable_path_or_error.value();

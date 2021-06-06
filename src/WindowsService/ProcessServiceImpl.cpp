@@ -92,11 +92,11 @@ Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
 
 Status ProcessServiceImpl::GetProcessMemory(ServerContext*, const GetProcessMemoryRequest* request,
                                             GetProcessMemoryResponse* response) {
+  // TODO-PG
+  CHECK(0);
   uint64_t size = std::min(request->size(), kMaxGetProcessMemoryResponseSize);
   response->mutable_memory()->resize(size);
   uint64_t num_bytes_read = 0;
-  
-  // TODO WindowsService
 
   return Status(StatusCode::PERMISSION_DENIED,
                 absl::StrFormat("Could not read %lu bytes from address %#lx of process %u", size,
@@ -106,7 +106,7 @@ Status ProcessServiceImpl::GetProcessMemory(ServerContext*, const GetProcessMemo
 Status ProcessServiceImpl::GetDebugInfoFile(ServerContext*, const GetDebugInfoFileRequest* request,
                                             GetDebugInfoFileResponse* response) {
 
-  // TODO WindowsService
+  // TODO-PG
   return Status(StatusCode::NOT_FOUND, "");
   //response->set_debug_info_file_path(symbols_path.value());
   //return Status::OK;
