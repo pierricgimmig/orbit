@@ -21,6 +21,8 @@
 
 #include "OrbitLib/OrbitLib.h"
 
+#include "WindowsTracing/WindowsTracing.h"
+
 namespace orbit_service {
 
 using grpc::ServerContext;
@@ -37,22 +39,6 @@ using orbit_grpc_protos::GetProcessMemoryRequest;
 using orbit_grpc_protos::GetProcessMemoryResponse;
 using orbit_grpc_protos::ModuleInfo;
 using orbit_grpc_protos::ProcessInfo;
-
-struct ModuleListener : public orbit_lib::ModuleListener {
-    void OnError(const char* message) override { ERROR("%s", message); }
-    void OnModule(const char* module_path, uint64_t start_address, uint64_t end_address,
-        uint64_t size) override {
-      ModuleInfo& module_info = module_infos.emplace_back();
-      module_info.set_address_end(end_address);
-      module_info.set_address_start(start_address);
-      module_info.set_file_path(module_path);
-      module_info.set_name(std::filesystem::path(module_path).filename().string());
-      module_info.set_file_size(size);
-      module_info.set_build_id("todo-pg-build-id");
-  }
-
-  std::vector<ModuleInfo> module_infos;
-};
 
 Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRequest*,
                                           GetProcessListResponse* response) {
@@ -80,7 +66,7 @@ Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRe
 Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
                                          const GetModuleListRequest* request,
                                          GetModuleListResponse* response) {
-  ModuleListener module_listener;
+  orbit_windows_tracing::ModuleListener module_listener;
   orbit_lib::ListModules(request->process_id(), &module_listener);
   
   for (const auto& module_info : module_listener.module_infos) {

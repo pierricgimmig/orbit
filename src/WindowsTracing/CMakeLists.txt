@@ -43,6 +43,7 @@ target_include_directories(WindowsTracing INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_link_libraries(WindowsTracing PUBLIC
         GrpcProtos
         OrbitBase
+        OrbitLib
         CONAN_PKG::abseil
         CONAN_PKG::grpc
         CONAN_PKG::Outcome)

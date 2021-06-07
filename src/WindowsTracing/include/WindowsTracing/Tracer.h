@@ -35,8 +35,8 @@ class Tracer {
   void Stop();
 
  private:
-  void EventTracerThread();
-  void SendThreadSnapshot();
+  void SendThreadSnapshot() const;
+  void SendModuleSnapshot() const;
 
   orbit_grpc_protos::CaptureOptions capture_options_;
 

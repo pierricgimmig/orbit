@@ -6,9 +6,11 @@
 
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
+#include "OrbitLib/OrbitLib.h"
 #include "WindowsTracing/EventCallbacks.h"
 #include "WindowsTracing/EventTracer.h"
 #include "WindowsTracing/TracerListener.h"
+#include "WindowsTracing/WindowsTracing.h"
 #include "capture.pb.h"
 
 using orbit_grpc_protos::ThreadName;
@@ -23,6 +25,7 @@ void Tracer::Start() {
   tracing_context_ = std::make_unique<TracingContext>(listener_, target_pid);
   orbit_windows_tracing::SetTracingContext(tracing_context_.get());
   SendThreadSnapshot();
+  SendModuleSnapshot();
   event_tracer_->Start();
 }
 
@@ -30,10 +33,11 @@ void Tracer::Stop() {
   CHECK(event_tracer_ != nullptr);
   event_tracer_->Stop();
   SendThreadSnapshot();
+  SendModuleSnapshot();
   orbit_windows_tracing::SetTracingContext(nullptr);
 }
 
-void Tracer::SendThreadSnapshot() {
+void Tracer::SendThreadSnapshot() const {
   ThreadNamesSnapshot thread_names_snapshot;
   thread_names_snapshot.set_timestamp_ns(orbit_base::CaptureTimestampNs());
 
@@ -44,6 +48,20 @@ void Tracer::SendThreadSnapshot() {
     name->set_name(std::to_string(tid));
   }
   listener_->OnThreadNamesSnapshot(std::move(thread_names_snapshot));
+}
+
+void Tracer::SendModuleSnapshot() const { 
+  uint32_t pid = capture_options_.pid();
+  ModuleListener module_listener;
+  orbit_lib::ListModules(pid, &module_listener);
+
+  for (const auto& module_info : module_listener.module_infos) {
+    orbit_grpc_protos::ModuleUpdateEvent module_update_event;
+    module_update_event.set_pid(pid);
+    module_update_event.set_timestamp_ns(orbit_base::CaptureTimestampNs());
+    *module_update_event.mutable_module() = std::move(module_info);
+    listener_->OnModuleUpdate(std::move(module_update_event));
+  }
 }
 
 }  // namespace orbit_windows_tracing
