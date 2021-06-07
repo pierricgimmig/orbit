@@ -161,7 +161,7 @@ struct DebugInfoListener : public orbit_lib::DebugInfoListener {
 ErrorMessageOr<void> SymbolHelper::VerifySymbolsFile(const fs::path& symbols_path,
                                                      const std::string& build_id) {
 
-  if (symbols_path.extension().string() == ".pdb") {
+  if (symbols_path.extension().string() == ".pdb" || symbols_path.extension().string() == ".dll") {
     // TODO-PG
     return outcome::success();
   }
@@ -223,12 +223,13 @@ ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsWithSymbolsPathFile(
   fs::path filename_plus_debug_extension = filename;
   filename_plus_debug_extension.replace_extension(filename.extension().string() + debug_extension);
 
-  std::set<fs::path> search_paths;
+  std::vector<fs::path> search_paths;
   for (const auto& directory : symbols_file_directories_) {
-    search_paths.insert(directory / filename_dot_debug_extension);
-    search_paths.insert(directory / filename_plus_debug_extension);
-    search_paths.insert(directory / filename);
+    search_paths.push_back(directory / filename_dot_debug_extension);
+    search_paths.push_back(directory / filename_plus_debug_extension);
+    search_paths.push_back(directory / filename);
   }
+  search_paths.push_back(module_path.string());
 
   LOG("Trying to find symbols for module: \"%s\"", module_path.string());
   for (const auto& symbols_path : search_paths) {
@@ -293,7 +294,7 @@ ErrorMessageOr<ModuleSymbols> SymbolHelper::LoadSymbolsFromFile(const fs::path& 
   ORBIT_SCOPE_FUNCTION;
   SCOPED_TIMED_LOG("LoadSymbolsFromFile: %s", file_path.string());
 
-  if (file_path.extension().string() == ".pdb") {
+  if (file_path.extension().string() == ".pdb" || file_path.extension().string() == ".dll") {
     return LoadSymbolsFromPdb(file_path);
   }
 
