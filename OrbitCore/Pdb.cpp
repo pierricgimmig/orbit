@@ -492,11 +492,21 @@ bool Pdb::LoadPdb( const wchar_t* a_PdbName )
 
 //-----------------------------------------------------------------------------
 bool Pdb::LoadFunctions() {
+  std::string file_name = ws2s(m_FileName);
+  constexpr size_t kReserveSize = 8 * 1024;
+
+  if (ToLower(Path::GetExtension(m_FileName)) == L".dll") {
+    m_Functions.reserve(kReserveSize);
+    ParseDll(file_name.c_str());
+    return true;
+  } else {
     LoadDataFromPdb();
     if (m_DiaGlobalSymbol == nullptr) return false;
-    constexpr size_t kReserveSize = 8 * 1024;
     m_Functions.reserve(kReserveSize);
     return DumpAllFunctions(m_DiaGlobalSymbol);
+  }
+
+  return false;
 }
 
 //-----------------------------------------------------------------------------
