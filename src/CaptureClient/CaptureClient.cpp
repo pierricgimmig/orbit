@@ -184,7 +184,11 @@ ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
     instrumented_function->set_file_offset(
         orbit_client_data::function_utils::Offset(function, *module));
     instrumented_function->set_file_build_id(function.module_build_id());
-    instrumented_function->set_function_id(function_id);
+    
+    // TODO-PG: use function_id
+    // instrumented_function->set_function_id(function_id);
+    uint64_t absolute_address = module->address_start() + function.address();
+    instrumented_function->set_function_id(absolute_address);
     instrumented_function->set_function_name(function.pretty_name());
     instrumented_function->set_function_type(
         InstrumentedFunctionTypeFromOrbitType(function.orbit_type()));

@@ -13,6 +13,7 @@
 #include "WindowsTracing/EventCallbacks.h"
 #include "WindowsTracing/EventTracer.h"
 #include "WindowsTracing/TracerListener.h"
+#include "WindowsTracing/WindowsTracing.h"
 #include "capture.pb.h"
 
 namespace orbit_windows_tracing {
@@ -43,6 +44,7 @@ class Tracer {
   TracerListener* listener_ = nullptr;
   std::unique_ptr<EventTracer> event_tracer_ = nullptr;
   std::unique_ptr<TracingContext> tracing_context_ = nullptr;
+  std::unique_ptr<CaptureListener> capture_listener_ = nullptr;
 };
 
 }  // namespace orbit_linux_tracing

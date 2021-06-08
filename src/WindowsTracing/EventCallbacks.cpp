@@ -9,6 +9,7 @@
 
 #include "WindowsTracing/EventGuid.h"
 #include "WindowsTracing/EventTypes.h"
+#include "WindowsTracing/WindowsTracing.h"
 #include "OrbitBase/Logging.h"
 
 #include "capture.pb.h"
@@ -25,29 +26,6 @@ TracingContext* g_tracing_context;
 
 namespace {
 
-class ClockUtils {
- public:
-  [[nodiscard]] static inline uint64_t RawTimestampToNs(uint64_t raw_timestamp) {
-    return raw_timestamp * GetInstance().performance_period_ns_;
-  }
-
- private:
-  ClockUtils() {
-    LARGE_INTEGER frequency;
-    QueryPerformanceFrequency(&frequency);
-    performance_frequency_ = frequency.QuadPart;
-    performance_period_ns_ = 1'000'000'000 / performance_frequency_;
-  }
-
-  static ClockUtils& GetInstance() {
-    static ClockUtils clock_utils;
-    return clock_utils;
-  }
-
-  uint64_t performance_frequency_;
-  uint64_t performance_period_ns_;
-};
-
 void OnContextSwitch(const CSwitch& context_switch, uint64_t timestamp, uint8_t processor_number,
                      uint16_t processor_index) {
   CHECK(g_tracing_context);
@@ -56,7 +34,7 @@ void OnContextSwitch(const CSwitch& context_switch, uint64_t timestamp, uint8_t 
 
   CpuEvent new_cpu_event;
   new_cpu_event.context_switch = context_switch;
-  new_cpu_event.timestamp_ns = ClockUtils::RawTimestampToNs(timestamp);
+  new_cpu_event.timestamp_ns = orbit_windows_tracing::ClockUtils::RawTimestampToNs(timestamp);
 
   bool has_last_cpu_event = g_tracing_context->last_cpu_event_by_cpu.count(processor_index) > 0;
   if (has_last_cpu_event) {
@@ -140,7 +118,7 @@ void CallbackStackWalk(PEVENT_RECORD event_record, UCHAR opcode) {
     size_t stack_depth = (event_record->UserDataLength - non_address_size) / sizeof(uint64_t);
     uint64_t* addresses = &event->Stack1;
     uint64_t timestamp_ns =
-        ClockUtils::RawTimestampToNs(event_record->EventHeader.TimeStamp.QuadPart);
+        orbit_windows_tracing::ClockUtils::RawTimestampToNs(event_record->EventHeader.TimeStamp.QuadPart);
 
     FullCallstackSample sample;
     sample.set_pid(pid);

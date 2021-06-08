@@ -10,9 +10,9 @@
 #include "WindowsTracing/EventCallbacks.h"
 #include "WindowsTracing/EventTracer.h"
 #include "WindowsTracing/TracerListener.h"
-#include "WindowsTracing/WindowsTracing.h"
 #include "capture.pb.h"
 
+using orbit_grpc_protos::FunctionCall;
 using orbit_grpc_protos::ThreadName;
 using orbit_grpc_protos::ThreadNamesSnapshot;
 
@@ -27,10 +27,26 @@ void Tracer::Start() {
   SendThreadSnapshot();
   SendModuleSnapshot();
   event_tracer_->Start();
+
+  std::vector<uint64_t> function_addresses;
+  for (const orbit_grpc_protos::InstrumentedFunction& instrumented_function :
+       capture_options_.instrumented_functions()) {
+    LOG("Hooking function %lu", instrumented_function.function_id());
+    function_addresses.push_back(instrumented_function.function_id());
+    // TODO-PG: Adopt function id instead of using it as address
+    // instrumented_functions_.emplace_back(function_id, instrumented_function.file_path(),
+    //                                      instrumented_function.file_offset());
+  }
+
+  capture_listener_ = std::make_unique<CaptureListener>(listener_);
+  orbit_lib::StartCapture(target_pid, function_addresses.data(), function_addresses.size(),
+                          capture_listener_.get());
 }
 
 void Tracer::Stop() {
   CHECK(event_tracer_ != nullptr);
+  orbit_lib::StopCapture();
+  capture_listener_->listener_ = nullptr; // TODO-PG: purge events and exit gracefully.
   event_tracer_->Stop();
   SendThreadSnapshot();
   SendModuleSnapshot();
