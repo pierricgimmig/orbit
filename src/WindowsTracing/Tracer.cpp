@@ -11,6 +11,7 @@
 #include "WindowsTracing/EventTracer.h"
 #include "WindowsTracing/TracerListener.h"
 #include "capture.pb.h"
+#include "krabs/krabs.hpp"
 
 using orbit_grpc_protos::FunctionCall;
 using orbit_grpc_protos::ThreadName;

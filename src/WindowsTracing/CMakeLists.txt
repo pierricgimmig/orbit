@@ -44,6 +44,7 @@ target_link_libraries(WindowsTracing PUBLIC
         GrpcProtos
         OrbitBase
         OrbitLib
+        krabsetw
         CONAN_PKG::abseil
         CONAN_PKG::grpc
         CONAN_PKG::Outcome)

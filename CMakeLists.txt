@@ -92,6 +92,7 @@ find_package(oqpi REQUIRED)
 
 if(WIN32)
 find_package(OrbitLib REQUIRED)
+find_package(krabsetw REQUIRED)
 endif()
 
 if(WITH_GUI)
