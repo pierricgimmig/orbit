@@ -678,7 +678,9 @@ void OrbitApp::Disassemble(int32_t pid, const FunctionInfo& function) {
   }
   thread_pool_->Schedule([this, absolute_address = absolute_address.value(), is_64_bit, pid,
                           function] {
-    auto result = GetProcessManager()->LoadProcessMemory(pid, absolute_address, function.size());
+    constexpr size_t kMinNumBytes = 64;
+    size_t num_bytes_to_read = function.size() > 0 ? function.size() : kMinNumBytes;
+    auto result = GetProcessManager()->LoadProcessMemory(pid, absolute_address, num_bytes_to_read);
     if (!result.has_value()) {
       SendErrorToUi("Error reading memory", absl::StrFormat("Could not read process memory: %s.",
                                                             result.error().message()));

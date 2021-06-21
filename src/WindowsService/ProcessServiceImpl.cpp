@@ -5,6 +5,7 @@
 #include "ProcessServiceImpl.h"
 
 #include <absl/strings/str_format.h>
+#include <absl/base/casts.h>
 #include <stdint.h>
 
 #include <algorithm>
@@ -78,11 +79,23 @@ Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
 
 Status ProcessServiceImpl::GetProcessMemory(ServerContext*, const GetProcessMemoryRequest* request,
                                             GetProcessMemoryResponse* response) {
-  // TODO-PG
-  CHECK(0);
+  HANDLE process_handle = OpenProcess(PROCESS_VM_READ, FALSE, request->pid());
+  if (process_handle == nullptr) {
+    return Status(StatusCode::PERMISSION_DENIED,
+                  absl::StrFormat("Could not get handle for process %u", request->pid()));
+  }
+
   uint64_t size = std::min(request->size(), kMaxGetProcessMemoryResponseSize);
   response->mutable_memory()->resize(size);
+  void* address = absl::bit_cast<void*>(request->address());
   uint64_t num_bytes_read = 0;
+  auto result = ReadProcessMemory(process_handle, address, response->mutable_memory()->data(),
+                                  size, &num_bytes_read);
+  response->mutable_memory()->resize(num_bytes_read);
+
+  if (result != 0) {
+    return Status::OK;
+  }
 
   return Status(StatusCode::PERMISSION_DENIED,
                 absl::StrFormat("Could not read %lu bytes from address %#lx of process %u", size,

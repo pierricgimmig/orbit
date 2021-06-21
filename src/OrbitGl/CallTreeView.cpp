@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include "OrbitBase/ThreadConstants.h"
+#include "OrbitBase/Tracing.h"
 #include "capture_data.pb.h"
 
 using orbit_client_data::PostProcessedSamplingData;
@@ -180,6 +181,7 @@ std::unique_ptr<CallTreeView> CallTreeView::CreateTopDownViewFromPostProcessedSa
 std::unique_ptr<CallTreeView> CallTreeView::CreateBottomUpViewFromPostProcessedSamplingData(
     const PostProcessedSamplingData& post_processed_sampling_data,
     const CaptureData& capture_data) {
+  ORBIT_SCOPE_FUNCTION;
   auto bottom_up_view = std::make_unique<CallTreeView>();
   const std::string& process_name = capture_data.process_name();
   const absl::flat_hash_map<int32_t, std::string>& thread_names = capture_data.thread_names();

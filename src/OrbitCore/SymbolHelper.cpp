@@ -161,9 +161,12 @@ struct DebugInfoListener : public orbit_lib::DebugInfoListener {
 ErrorMessageOr<void> SymbolHelper::VerifySymbolsFile(const fs::path& symbols_path,
                                                      const std::string& build_id) {
 
-  if (symbols_path.extension().string() == ".pdb" || symbols_path.extension().string() == ".dll") {
+  if (symbols_path.extension().string() == ".pdb" || absl::AsciiStrToLower(symbols_path.extension().string()) == ".dll") {
     // TODO-PG
-    return outcome::success();
+    std::error_code error;
+    if (fs::exists(symbols_path, error)) {
+      return outcome::success();
+    }
   }
 
   auto object_file_or_error = CreateObjectFile(symbols_path);
