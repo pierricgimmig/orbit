@@ -50,7 +50,8 @@ public:
         UNREAL_OBJECT,
         ZONE,
         ALLOC,
-        FREE
+        FREE,
+        FILE_IO
     };
 
     Type GetType() const { return m_Type; }

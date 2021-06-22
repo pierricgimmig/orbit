@@ -74,7 +74,7 @@ bool Function::Hookable()
 
     CV_call_e conv = (CV_call_e)m_CallConv;
     return ( ( conv == CV_CALL_NEAR_C || CV_CALL_THISCALL ) && m_Size >= 5 )
-        || ( GParams.m_AllowUnsafeHooking && m_Size == 0 );
+        || ( /*GParams.m_AllowUnsafeHooking &&*/ m_Size == 0 );
 }
 
 //-----------------------------------------------------------------------------

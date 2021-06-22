@@ -6,11 +6,10 @@ project(OrbitTest)
 
 add_executable(OrbitTest)
 
-target_sources(OrbitTest PRIVATE main.cpp OrbitLibTest.cpp)
-target_sources(OrbitTest PUBLIC OrbitLibTest.h)
+target_sources(OrbitTest PRIVATE main.cpp)
 
 target_include_directories(OrbitTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(OrbitTest PRIVATE OrbitLib)
+target_link_libraries(OrbitTest PRIVATE OrbitAsm OrbitLib)
 
 get_cmake_property(_variableNames VARIABLES)
 list (SORT _variableNames)

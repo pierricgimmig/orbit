@@ -219,6 +219,21 @@ void TcpClient::DecodeMessage( Message & a_Message )
 
         break;
     }
+    case Msg_FunctionHookFileIo: {
+      ULONG64* addresses = (ULONG64*)a_Message.GetData();
+      int numAddresses = a_Message.m_Size / sizeof(ULONG64);
+      for (int i = 0; i < numAddresses; ++i) {
+        void* address = (void*)addresses[i];
+        std::wstring dbgMsg = s2ws(Format("Hooking file io function at address: %p\n", address));
+        OutputDebugString(dbgMsg.c_str());
+        Hijacking::CreateFileIoHook(address);
+        GTcpClient->Send(Msg_NumInstalledHooks, i + 1);
+      }
+
+      Hijacking::EnableHooks(addresses, numAddresses);
+
+      break;
+    }
     case Msg_FunctionHookZoneStart:
     {
         ULONG64* addresses = (ULONG64*)a_Message.GetData();

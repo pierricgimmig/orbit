@@ -30,6 +30,7 @@ enum MessageType : int16_t
     Msg_FunctionHookFree,
     Msg_FunctionHookRealloc,
     Msg_FunctionHookOrbitData,
+    Msg_FunctionHookFileIo,
 	Msg_SavedContext,
     Msg_ClearArgTracking,
     Msg_ArgTracking,

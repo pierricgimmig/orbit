@@ -10,6 +10,7 @@ struct OrbitUnrealInfo;
 namespace Hijacking
 {
     bool CreateHook( void* a_FunctionAddress );
+    bool CreateFileIoHook(void* a_FunctionAddress);
     bool CreateZoneStartHook( void* a_FunctionAddress );
     bool CreateZoneStopHook( void* a_FunctionAddress );
     bool CreateOutputDebugStringHook( void* a_FunctionAddress );

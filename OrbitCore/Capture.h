@@ -23,6 +23,7 @@ struct Capture
     static bool InjectRemote();
     static void SetTargetProcess( const std::shared_ptr< Process > & a_Process );
     static bool StartCapture();
+    static bool StartCapture(const std::shared_ptr<Process> process);
     static void StopCapture();
     static void ToggleRecording();
     static void ClearCaptureData();

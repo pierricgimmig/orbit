@@ -163,6 +163,33 @@ bool Capture::Connect()
 }
 
 //-----------------------------------------------------------------------------
+bool Capture::StartCapture(const std::shared_ptr<Process> process) {
+  SCOPE_TIMER_LOG(L"Capture::StartCapture");
+  if (process == nullptr) {
+    return false;
+  }
+
+  GTargetProcess = process;
+  GCaptureTimer.Start();
+  GCaptureTimePoint = std::chrono::system_clock::now();
+  GInjected = Connect();
+  if (!GInjected) {
+    return false;
+  }
+  
+  ++Message::GSessionID;
+  GTcpServer->Send(Msg_NewSession);
+  GTimerManager->StartRecording();
+  ClearCaptureData();
+  if (GClearCaptureDataFunc) {
+    GClearCaptureDataFunc();
+  }
+
+  GTcpServer->Send(Msg_StartCapture);
+  return true;
+}
+
+//-----------------------------------------------------------------------------
 bool Capture::StartCapture()
 {
     SCOPE_TIMER_LOG( L"Capture::StartCapture" );

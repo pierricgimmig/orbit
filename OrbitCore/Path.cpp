@@ -74,7 +74,7 @@ std::wstring Path::GetBasePath()
 
     std::wstring exePath = GetExecutablePath();
     m_BasePath = exePath.substr(0, exePath.find(L"bin/"));
-    m_IsPackaged = DirExists( GetBasePath() + L"text" );
+    m_IsPackaged = true; //DirExists(GetBasePath() + L"text");
 
     return m_BasePath;
 }
@@ -88,15 +88,7 @@ std::wstring Path::GetOrbitAppPdb()
 //-----------------------------------------------------------------------------
 std::wstring Path::GetDllPath( bool a_Is64Bit )
 {
-    std::wstring basePath = GetBasePath();
-    
-#ifdef _DEBUG
-    basePath += m_IsPackaged ? L"" : ( a_Is64Bit ? L"bin/x64/Debug/" : L"bin/Win32/Debug/" );
-#else
-    basePath += m_IsPackaged ? L"" : ( a_Is64Bit ? L"bin/x64/Release/" : L"bin/Win32/Release/" );
-#endif
-
-    return basePath + GetDllName( a_Is64Bit );
+    return GetExecutablePath() + GetDllName(a_Is64Bit);
 }
 
 //-----------------------------------------------------------------------------

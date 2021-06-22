@@ -43,8 +43,14 @@ namespace orbit_lib {
     ORBIT_LIB_API int ListModules(uint32_t pid, ModuleListener* listener);
     ORBIT_LIB_API int ListFunctions(const char* symbols_path, DebugInfoListener* listener);
 
-    ORBIT_LIB_API int StartCapture(uint32_t pid, uint64_t* addresses, size_t num_addresses,
-        const CaptureListener& listener);
+    struct FunctionHook {
+      enum class Type { kInvalid, kRegular, kFileIO };
+      uint64_t address = 0;
+      Type type = Type::kInvalid;
+    };
+
+    ORBIT_LIB_API int StartCapture(uint32_t pid, FunctionHook* function_hooks, size_t num_hooks,
+        CaptureListener* listener);
     ORBIT_LIB_API int StopCapture();
 
 }  // namespace orbit_lib

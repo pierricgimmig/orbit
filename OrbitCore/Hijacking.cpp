@@ -12,10 +12,12 @@
 #include "Message.h"
 #include "OrbitType.h"
 #include "TimerManager.h"
+#include <fileapi.h>
 #include <iostream>
 #include <vector>
 #include <unordered_set>
 #include <intrin.h>
+#include <iostream>
 #include "Callstack.h"
 #include "../OrbitAsm/OrbitAsm.h"
 #include "../OrbitPlugin/OrbitSDK.h"
@@ -23,6 +25,18 @@
 #include "../external/minhook/src/trampoline.h"
 
 const unsigned int MAX_DEPTH = 64;
+
+[[nodiscard]] std::string GetFileNameFromHandle(HANDLE file_handle) {
+  std::string path;
+  path.resize(FILENAME_MAX);
+  DWORD read_length = GetFinalPathNameByHandleA(file_handle, &path[0],
+                                                static_cast<DWORD>(path.size()), VOLUME_NAME_NT);
+  if (read_length > path.size()) {
+    return "path is too long";
+  }
+  path[path.size() - 1] = '\0';
+  return path.c_str();
+}
 
 //-----------------------------------------------------------------------------
 struct ContextScope
@@ -55,6 +69,7 @@ struct ThreadLocalData
         m_SessionID = -1;
         m_ThreadID = GetCurrentThreadId();
         m_ZoneStack = 0;
+        m_ReentryFlag = false;
     }
 
     __forceinline void CheckSessionId()
@@ -79,6 +94,7 @@ struct ThreadLocalData
     int                             m_SessionID;
     DWORD                           m_ThreadID;
     int                             m_ZoneStack;
+    bool                            m_ReentryFlag;
 };
 
 //-----------------------------------------------------------------------------
@@ -88,6 +104,7 @@ namespace Hijacking
     bool  Deinitialize();
     
     void  Prolog            ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
+    void  PrologFileIO      ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
     void  PrologZoneStart   ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
     void  PrologZoneStop    ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
     void  PrologOutputDbg   ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
@@ -161,6 +178,10 @@ void Hijacking::Prolog( void* a_OriginalFunctionAddress, Context* a_Context, uns
 {
     SSE_SCOPE;
     CheckTls();
+    
+    // Prevent infinite recursion when instrumenting function that could be called by the prolog.
+    if (TlsData->m_ReentryFlag) return;
+    TlsData->m_ReentryFlag = true;
 
     PushContext( a_Context, a_OriginalFunctionAddress );
     PushReturnAddress( &a_Context->m_RET.m_Ptr );
@@ -169,6 +190,30 @@ void Hijacking::Prolog( void* a_OriginalFunctionAddress, Context* a_Context, uns
     TlsData->m_Timers.back().m_FunctionAddress = reinterpret_cast<ULONG64>( a_OriginalFunctionAddress );
     TlsData->m_Timers.back().m_CallstackHash = SendCallstack( a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr );
     TlsData->m_Timers.back().Start();
+    TlsData->m_ReentryFlag = false;
+}
+
+void Hijacking::PrologFileIO(void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize) {
+    SSE_SCOPE;
+    CheckTls();
+
+    // Prevent infinite recursion when instrumenting function that could be called by the prolog.
+    if (TlsData->m_ReentryFlag) return;
+    TlsData->m_ReentryFlag = true;
+
+    // FileWrite and FileRead functions take a HANDLE as first parameter.
+    HANDLE handle = static_cast<HANDLE>(a_Context->m_RCX.m_Ptr);
+    GTcpClient->Send(GetFileNameFromHandle(handle));
+
+    PushContext(a_Context, a_OriginalFunctionAddress);
+    PushReturnAddress(&a_Context->m_RET.m_Ptr);
+
+    TlsData->m_Timers.push_back(Timer());
+    TlsData->m_Timers.back().m_FunctionAddress = reinterpret_cast<ULONG64>(a_OriginalFunctionAddress);
+    TlsData->m_Timers.back().m_CallstackHash =
+        SendCallstack(a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr);
+    TlsData->m_Timers.back().Start();
+    TlsData->m_ReentryFlag = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -616,6 +661,10 @@ bool Hijacking::CreateHook( void* a_FunctionAddress )
 bool Hijacking::CreateZoneStartHook( void* a_FunctionAddress )
 {
     return CreateHook( a_FunctionAddress, &PrologZoneStart, &EpilogEmpty );
+}
+
+bool Hijacking::CreateFileIoHook(void* a_FunctionAddress) {
+  return CreateHook(a_FunctionAddress, &PrologFileIO, &Epilog);
 }
 
 //-----------------------------------------------------------------------------

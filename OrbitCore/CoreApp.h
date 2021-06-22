@@ -16,7 +16,7 @@ public:
     virtual void SendToUiNow( const std::wstring & /*a_Msg*/ ){}
     virtual bool GetUnrealSupportEnabled(){ return false; }
     virtual bool GetUnitySupportEnabled(){ return false; }
-    virtual bool GetUnsafeHookingEnabled(){ return false; }
+    virtual bool GetUnsafeHookingEnabled(){ return true; }
     virtual bool GetSamplingEnabled(){ return false; }
     virtual bool GetOutputDebugStringEnabled(){ return false; }
     virtual void LogMsg( const std::wstring & /*a_Msg*/ ){}
