@@ -147,6 +147,7 @@ else()
   add_subdirectory(src/Service)
   add_subdirectory(src/UserSpaceInstrumentation)
   add_subdirectory(src/VulkanTutorial)
+  add_subdirectory(third_party/libunwindstack)
 endif()
 
 add_subdirectory(src/ApiInterface)
