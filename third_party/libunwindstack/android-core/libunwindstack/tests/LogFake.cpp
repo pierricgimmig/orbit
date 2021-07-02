@@ -68,14 +68,14 @@ extern "C" int __android_log_print(int prio, const char* tag, const char* fmt, .
 }
 
 extern "C" int __android_log_vprint(int prio, const char* tag, const char* fmt, va_list ap) {
-  std::cout << prio << " " << tag << " " << fmt << std::endl;
-  // g_fake_log_print += std::to_string(prio) + ' ';
-  // g_fake_log_print += tag;
-  // g_fake_log_print += ' ';
+  std::string to_print;
+  to_print += std::to_string(prio) + ' ';
+  to_print += tag;
+  to_print += ' ';
 
-  // android::base::StringAppendV(&g_fake_log_print, fmt, ap);
+  android::base::StringAppendV(&to_print, fmt, ap);
 
-  // g_fake_log_print += '\n';
+  std::cout << to_print << std::endl;
 
   return 1;
 }
