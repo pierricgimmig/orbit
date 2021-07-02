@@ -144,7 +144,9 @@ static bool ShouldStop(const std::vector<std::string>* map_suffixes_to_ignore,
 
 void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
                       const std::vector<std::string>* map_suffixes_to_ignore) {
+  // wotzlaw - start
   ALOGI("Unwind function call");
+  // wotzlaw - end
   frames_.clear();
   last_error_.code = ERROR_NONE;
   last_error_.address = 0;
@@ -168,6 +170,10 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
       rel_pc = step_pc;
       last_error_.code = ERROR_INVALID_MAP;
     } else {
+      // wotzlaw - start
+      ALOGI("MapsInfo name: %s", map_info->name.c_str());
+      // wotzlaw - end
+
       if (ShouldStop(map_suffixes_to_ignore, map_info->name)) {
         break;
       }
