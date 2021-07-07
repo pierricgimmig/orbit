@@ -30,6 +30,7 @@
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 
+#include <unwindstack/Coff.h>
 #include <unwindstack/Elf.h>
 #include <unwindstack/JitDebug.h>
 #include <unwindstack/MapInfo.h>
@@ -128,6 +129,14 @@ FrameData* Unwinder::FillInFrame(MapInfo* map_info, Elf* elf, uint64_t rel_pc,
   return frame;
 }
 
+static std::string Suffix(const std::string& name) {
+  auto pos = name.find_last_of('.');
+  if (pos == std::string::npos) {
+    return "";
+  }
+  return name.substr(pos + 1);
+}
+
 static bool ShouldStop(const std::vector<std::string>* map_suffixes_to_ignore,
                        std::string& map_name) {
   if (map_suffixes_to_ignore == nullptr) {
@@ -144,9 +153,8 @@ static bool ShouldStop(const std::vector<std::string>* map_suffixes_to_ignore,
 
 void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
                       const std::vector<std::string>* map_suffixes_to_ignore) {
-  // wotzlaw - start
   ALOGI("Unwind function call");
-  // wotzlaw - end
+
   frames_.clear();
   last_error_.code = ERROR_NONE;
   last_error_.address = 0;
@@ -165,19 +173,23 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
     uint64_t step_pc;
     uint64_t rel_pc;
     Elf* elf;
+    Coff* coff;
     if (map_info == nullptr) {
       step_pc = regs_->pc();
       rel_pc = step_pc;
       last_error_.code = ERROR_INVALID_MAP;
     } else {
-      // wotzlaw - start
-      ALOGI("MapsInfo name: %s", map_info->name.c_str());
-      // wotzlaw - end
-
       if (ShouldStop(map_suffixes_to_ignore, map_info->name)) {
         break;
       }
-      elf = map_info->GetElf(process_memory_, arch);
+      if (Suffix(map_info->name) == "dll") {
+        ALOGI("MapsInfo name: %s", map_info->name.c_str());
+        coff = map_info->GetCoff();
+        // TODO: Actually unwind using the COFF file.
+        break;
+      } else {
+        elf = map_info->GetElf(process_memory_, arch);
+      }
       // If this elf is memory backed, and there is a valid file, then set
       // an indicator that we couldn't open the file.
       if (!elf_from_memory_not_file_ && map_info->memory_backed_elf && !map_info->name.empty() &&

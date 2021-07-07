@@ -24,11 +24,14 @@
 #include <mutex>
 #include <string>
 
+#include <unwindstack/Coff.h>
 #include <unwindstack/Elf.h>
 
 namespace unwindstack {
 
 class MemoryFileAtOffset;
+
+Memory* CreateCoffMemory(const std::string& filename);
 
 struct MapInfo {
   MapInfo(MapInfo* map_info, uint64_t start, uint64_t end, uint64_t offset, uint64_t flags,
@@ -59,6 +62,7 @@ struct MapInfo {
   uint16_t flags = 0;
   std::string name;
   std::shared_ptr<Elf> elf;
+  std::shared_ptr<Coff> coff;
   // The offset of the beginning of this mapping to the beginning of the
   // ELF file.
   // elf_offset == offset - elf_start_offset.
@@ -84,6 +88,9 @@ struct MapInfo {
 
   // This function guarantees it will never return nullptr.
   Elf* GetElf(const std::shared_ptr<Memory>& process_memory, ArchEnum expected_arch);
+
+  //
+  Coff* GetCoff();
 
   uint64_t GetLoadBias(const std::shared_ptr<Memory>& process_memory);
 

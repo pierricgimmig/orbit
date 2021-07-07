@@ -37,6 +37,7 @@ target_sources(
           ${ANDROID_BASE_ROOT}/threads.cpp
           # ${ANDROID_CORE_ROOT}/liblog/properties.cpp
           ${UNWINDSTACK_ROOT}/ArmExidx.cpp
+          ${UNWINDSTACK_ROOT}/Coff.cpp
           ${UNWINDSTACK_ROOT}/DwarfCfa.cpp
           ${UNWINDSTACK_ROOT}/DwarfEhFrameWithHdr.cpp
           ${UNWINDSTACK_ROOT}/DwarfMemory.cpp
@@ -63,6 +64,33 @@ target_sources(
           ${UNWINDSTACK_ROOT}/Unwinder.cpp
           ${UNWINDSTACK_ROOT}/tests/LogFake.cpp
 )
+
+add_executable(UnwindstackTests)
+
+target_sources(UnwindstackTests PRIVATE
+  ${UNWINDSTACK_ROOT}/tests/ElfTestUtils.h
+  ${UNWINDSTACK_ROOT}/tests/ElfTestUtils.cpp
+  ${UNWINDSTACK_ROOT}/tests/CoffTest.cpp)
+
+target_include_directories(
+  UnwindstackTests
+  PUBLIC ${UNWINDSTACK_ROOT}/include
+         ${ANDROID_BASE_ROOT}/include
+         # ${ANDROID_CORE_ROOT}/include
+         ${ANDROID_CORE_ROOT}/liblog/include
+         ${ANDROID_CORE_ROOT}/libprocinfo/include)
+
+target_link_libraries(
+  UnwindstackTests
+  PRIVATE
+  unwindstack
+  GTest::Main)
+
+add_custom_command(TARGET UnwindstackTests POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${UNWINDSTACK_ROOT}/tests/files
+  $<TARGET_FILE_DIR:UnwindstackTests>/files)
+
+register_test(UnwindstackTests)
 
 if(${CMAKE_SYSTEM_PROCESSOR} MATCHES x86_64)
   target_sources(unwindstack PRIVATE ${UNWINDSTACK_ROOT}/AsmGetRegsX86_64.S)

@@ -25,6 +25,10 @@
 
 #include <android-base/stringprintf.h>
 
+#define LOG_TAG "unwind"
+#include <log/log.h>
+
+#include <unwindstack/Coff.h>
 #include <unwindstack/Elf.h>
 #include <unwindstack/MapInfo.h>
 #include <unwindstack/Maps.h>
@@ -190,6 +194,26 @@ Memory* MapInfo::CreateMemory(const std::shared_ptr<Memory>& process_memory) {
 
   memory_backed_elf = true;
   return ranges;
+}
+
+Memory* CreateCoffMemory(const std::string& filename) {
+  std::unique_ptr<MemoryFileAtOffset> memory(new MemoryFileAtOffset);
+  if (memory->Init(filename, 0)) {
+    return memory.release();
+  }
+  return nullptr;
+}
+
+Coff* MapInfo::GetCoff() {
+  ALOGI("GetCoff");
+  std::lock_guard<std::mutex> guard(mutex_);
+  Memory* memory = CreateCoffMemory(name);
+  assert(memory != nullptr);
+
+  coff.reset(new Coff(memory));
+  coff->Init();
+
+  return coff.get();
 }
 
 Elf* MapInfo::GetElf(const std::shared_ptr<Memory>& process_memory, ArchEnum expected_arch) {
