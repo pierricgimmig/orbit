@@ -185,7 +185,9 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
       if (Suffix(map_info->name) == "dll") {
         ALOGI("MapsInfo name: %s", map_info->name.c_str());
         coff = map_info->GetCoff();
-        // TODO: Actually unwind using the COFF file.
+        step_pc = regs_->pc();
+        bool finished = false;
+        coff->Step(step_pc, regs_, process_memory_.get(), &finished);
         break;
       } else {
         elf = map_info->GetElf(process_memory_, arch);

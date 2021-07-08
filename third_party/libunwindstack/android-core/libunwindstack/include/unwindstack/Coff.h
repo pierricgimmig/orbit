@@ -5,7 +5,6 @@
 #include <mutex>
 #include <vector>
 
-#include <unwindstack/CoffInterface.h>
 #include <unwindstack/Error.h>
 #include <unwindstack/Memory.h>
 
@@ -22,11 +21,49 @@ struct DosHeader {
 };
 
 struct CoffHeader {
+  uint16_t machine;
   uint16_t nsects;
   uint16_t hdrsize;
 };
 
-struct CoffOptionalHeader {};
+struct DataDirectory {
+  uint32_t vmaddr;
+  uint32_t vmsize;
+};
+
+struct CoffOptionalHeader {
+  uint16_t magic = 0;
+  uint8_t major_linker_version = 0;
+  uint8_t minor_linker_version = 0;
+  uint32_t code_size = 0;
+  uint32_t data_size = 0;
+  uint32_t bss_size = 0;
+  uint32_t entry = 0;
+  uint32_t code_offset = 0;
+  uint32_t data_offset = 0;
+  uint64_t image_base = 0;
+  uint32_t sect_alignment = 0;
+  uint32_t file_alignment = 0;
+  uint16_t major_os_system_version = 0;
+  uint16_t minor_os_system_version = 0;
+  uint16_t major_image_version = 0;
+  uint16_t minor_image_version = 0;
+  uint16_t major_subsystem_version = 0;
+  uint16_t minor_subsystem_version = 0;
+  uint32_t reserved1 = 0;
+  uint32_t image_size = 0;
+  uint32_t header_size = 0;
+  uint32_t checksum = 0;
+  uint16_t subsystem = 0;
+  uint16_t dll_flags = 0;
+  uint64_t stack_reserve_size = 0;
+  uint64_t stack_commit_size = 0;
+  uint64_t heap_reserve_size = 0;
+  uint64_t heap_commit_size = 0;
+  uint32_t loader_flags = 0;
+  uint32_t	num_data_dir_entries;
+  std::vector<DataDirectory> data_dirs;  // will contain num_data_dir_entries entries
+};
 
 struct SectionHeader {
   char name[8];
@@ -51,8 +88,8 @@ class Coff {
 
   /*
   bool StepIfSignalHandler(uint64_t rel_pc, Regs* regs, Memory* process_memory);
-  bool Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished);
   */
+  bool Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished);
 
   int64_t GetLoadBias() { return load_bias_; }
 
@@ -68,6 +105,7 @@ class Coff {
  protected:
   bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset);
   bool ParseHeaders(Memory* memory);
+  bool ParseExceptionTableExperimental(Memory* memory);
 
   bool valid_ = false;
   int64_t load_bias_ = 0;
