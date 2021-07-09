@@ -78,6 +78,14 @@ struct SectionHeader {
   uint32_t flags;
 };
 
+struct Section {
+  std::string name;
+  uint32_t vmsize;
+  uint32_t vmaddr;
+  uint32_t size;  // Size in file
+  uint32_t offset;  // Offset in file
+};
+
 class Coff {
  public:
   Coff(Memory* memory) : memory_(memory) {}
@@ -104,12 +112,17 @@ class Coff {
 
  protected:
   bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset);
+  void InitializeSections();
   bool ParseHeaders(Memory* memory);
-  bool ParseExceptionTableExperimental(Memory* memory);
+  bool ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva);
 
   bool valid_ = false;
   int64_t load_bias_ = 0;
   std::unique_ptr<Memory> memory_;
+
+  std::vector<Section> sections_;
+  Section pdata_section_;
+  Section xdata_section_;
 
   // Parsed data
   std::vector<SectionHeader> section_headers_;

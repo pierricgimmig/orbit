@@ -199,6 +199,8 @@ bool Coff::ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, ui
         !Get32(memory, offset, &section_header.flags)) {
       return false;
     }
+    ALOGI("section rva: %x", section_header.vmaddr);
+    ALOGI("section offset: %x", section_header.offset);
     section_headers_.emplace_back(section_header);
   }
   return true;
@@ -232,14 +234,79 @@ bool Coff::ParseHeaders(Memory* memory) {
   return true;
 }
 
-struct Function {
+template <class T, std::size_t N>
+constexpr inline size_t LengthOfArray(T (&)[N]) {
+  return N;
+}
+
+void Coff::InitializeSections() {
+  for (const auto& section_header : section_headers_) {
+    Section section;
+    std::string header_name(section_header.name, LengthOfArray(section_header.name));
+    std::string name_trimmed = header_name.substr(0, header_name.find('\0'));
+    // TODO: Names that start with "/" need to be looked up at an offset.
+    section.name = name_trimmed;
+    section.vmaddr = section_header.vmaddr;
+    section.vmsize = section_header.vmsize;
+    section.size = section_header.size;
+    section.offset = section_header.offset;
+    sections_.emplace_back(section);
+  }
+
+  for (const auto& section : sections_) {
+    if (section.name == ".pdata") {
+      ALOGI(".pdata found");
+      pdata_section_ = section;
+    }
+    if (section.name == ".xdata") {
+      ALOGI(".xdata found");
+      xdata_section_ = section;
+    }
+  }
+}
+
+// Data from RUNTIMEFUNCTION array.
+struct RuntimeFunction {
   uint32_t start_address;
   uint32_t end_address;
   uint32_t unwind_info_offset;
 };
 
+uint64_t MapFromRVAToFileOffset(const Section& section, uint64_t rva) {
+  ALOGI("section vmaddr: %x", section.vmaddr);
+  ALOGI("section offset: %x", section.offset);
+  return rva - section.vmaddr + section.offset;
+}
+
+struct UnwindCode {
+  uint8_t code_offset;
+  uint8_t unwind_op_and_op_info;
+
+  uint8_t GetUnwindOp() const { return unwind_op_and_op_info & 0x0f; }
+  uint8_t GetOpInfo() const { return (unwind_op_and_op_info >> 4) & 0x0f; }
+};
+
+// UNWIND_INFO struct
+struct UnwindInfo {
+  // First 3 bits are the version, other 5 bits are the flags.
+  uint8_t version_and_flags;
+  uint8_t prolog_size;
+  uint8_t num_codes;
+  // First 4 bits frame register, second 4 bits frame register offset
+  uint8_t frame_register_and_offset;
+  std::vector<UnwindCode> unwind_codes;
+
+  uint8_t GetVersion() const { return version_and_flags & 0x07; }
+
+  uint8_t GetFlags() const { return (version_and_flags >> 3) & 0x1f; }
+
+  uint8_t GetFrameRegister() const { return frame_register_and_offset & 0x0f; }
+
+  uint8_t GetFrameOffset() const { return (frame_register_and_offset >> 4) & 0x0f; }
+};
+
 // Experimental code for trying out stuff.
-bool Coff::ParseExceptionTableExperimental(Memory* memory) {
+bool Coff::ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva) {
   constexpr int kCoffDataDirExceptionTableIndex = 3;
   if (kCoffDataDirExceptionTableIndex >= coff_optional_header_.data_dirs.size()) {
     ALOGI("No exception table found.");
@@ -261,20 +328,81 @@ bool Coff::ParseExceptionTableExperimental(Memory* memory) {
   ALOGI("Exception table rva: %x", rva);
   ALOGI("Exception table size: %x", size);
 
+  uint64_t pdata_file_offset = MapFromRVAToFileOffset(pdata_section_, rva);
+  ALOGI("Exception table file offset: %lx", pdata_file_offset);
+  ALOGI("Exception table size: %x", size);
+
+  uint64_t end = pdata_file_offset + size;
+  // TODO: Can do binary search, but we just do linear search for simplicity for now.
+  RuntimeFunction function_at_pc;
+  for (uint64_t offset = pdata_file_offset; offset < end;) {
+    RuntimeFunction function;
+    if (!Get32(memory, &offset, &(function.start_address)) ||
+        !Get32(memory, &offset, &(function.end_address)) ||
+        !Get32(memory, &offset, &(function.unwind_info_offset))) {
+      ALOGI("ERROR: Unexpected read error.");
+      break;
+    }
+
+    if (pc_rva >= function.start_address && pc_rva <= function.end_address) {
+      function_at_pc = function;
+    }
+  }
+
+  ALOGI("function start address: %x", function_at_pc.start_address);
+  ALOGI("function end address: %x", function_at_pc.end_address);
+  ALOGI("function unwind info offset: %x", function_at_pc.unwind_info_offset);
+
+  uint64_t xdata_file_offset =
+      MapFromRVAToFileOffset(xdata_section_, function_at_pc.unwind_info_offset);
+  ALOGI("xdata info file offset: %lx", xdata_file_offset);
+
+  UnwindInfo unwind_info;
+  if (!Get8(memory, &xdata_file_offset, &(unwind_info.version_and_flags)) ||
+      !Get8(memory, &xdata_file_offset, &(unwind_info.prolog_size)) ||
+      !Get8(memory, &xdata_file_offset, &(unwind_info.num_codes)) ||
+      !Get8(memory, &xdata_file_offset, &(unwind_info.frame_register_and_offset))) {
+    return false;
+  }
+
+  ALOGI("count of unwind codes: %u", unwind_info.num_codes);
+  ALOGI("unwind code version: %u", unwind_info.GetVersion());
+
+  // TODO: Handle versions?
+  assert(unwind_info.GetVersion() == 0x01);
+
+  // TODO: Handle flags.
+  assert(unwind_info.GetFlags() == 0x00);
+
+  for (uint8_t code_idx = 0; code_idx < unwind_info.num_codes; ++code_idx) {
+    UnwindCode unwind_code;
+    if (!Get8(memory, &xdata_file_offset, &(unwind_code.code_offset)) ||
+        !Get8(memory, &xdata_file_offset, &(unwind_code.unwind_op_and_op_info))) {
+      return false;
+    }
+    ALOGI("unwind code_offset: %x", unwind_code.code_offset);
+    ALOGI("unwind op info: %u", unwind_code.GetOpInfo());
+    ALOGI("unwind code: %u", unwind_code.GetUnwindOp());
+    unwind_info.unwind_codes.emplace_back(unwind_code);
+  }
+
   return true;
 }
 
-bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished) {
+bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* memory, bool* finished) {
   ALOGI("Coff::Step() call");
   ALOGI("Rel pc: %lx", rel_pc);
   ALOGI("Image base: %lx", coff_optional_header_.image_base);
+  uint64_t pc_rva = rel_pc - coff_optional_header_.image_base;
+  ParseExceptionTableExperimental(memory, pc_rva);
+
   return true;
 }
 
 bool Coff::Init() {
   ALOGI("Coff::Init()");
   ParseHeaders(memory_.get());
-  ParseExceptionTableExperimental(memory_.get());
+  InitializeSections();
   return true;
 }
 
