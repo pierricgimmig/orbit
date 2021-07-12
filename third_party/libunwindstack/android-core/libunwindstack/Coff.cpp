@@ -1,6 +1,9 @@
 
 #include <unwindstack/Coff.h>
 
+#include <unwindstack/MachineX86_64.h>
+#include <unwindstack/Regs.h>
+
 #define LOG_TAG "unwind"
 #include <log/log.h>
 
@@ -265,13 +268,6 @@ void Coff::InitializeSections() {
   }
 }
 
-// Data from RUNTIMEFUNCTION array.
-struct RuntimeFunction {
-  uint32_t start_address;
-  uint32_t end_address;
-  uint32_t unwind_info_offset;
-};
-
 uint64_t MapFromRVAToFileOffset(const Section& section, uint64_t rva) {
   ALOGI("section vmaddr: %x", section.vmaddr);
   ALOGI("section offset: %x", section.offset);
@@ -286,15 +282,27 @@ struct UnwindCode {
   uint8_t GetOpInfo() const { return (unwind_op_and_op_info >> 4) & 0x0f; }
 };
 
+// Data from RUNTIMEFUNCTION array.
+// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-runtime_function
+struct RuntimeFunction {
+  uint32_t start_address;
+  uint32_t end_address;
+  uint32_t unwind_info_offset;
+};
+
 // UNWIND_INFO struct
+// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-unwind_info
 struct UnwindInfo {
   // First 3 bits are the version, other 5 bits are the flags.
   uint8_t version_and_flags;
   uint8_t prolog_size;
   uint8_t num_codes;
-  // First 4 bits frame register, second 4 bits frame register offset
+  // First 4 bits frame register, second 4 bits frame register offset.
   uint8_t frame_register_and_offset;
   std::vector<UnwindCode> unwind_codes;
+
+  // TODO: There's potentially more data after the unwind codes, which can be either a language
+  // specific exception handler or chained unwind info (which we have to follow in case it exists).
 
   uint8_t GetVersion() const { return version_and_flags & 0x07; }
 
@@ -305,8 +313,26 @@ struct UnwindInfo {
   uint8_t GetFrameOffset() const { return (frame_register_and_offset >> 4) & 0x0f; }
 };
 
+// The order of registers in PE/COFF unwind information is different from the libunwindstack
+// register order, so we have to map them to the right values.
+// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#operation-info
+static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
+  static uint16_t kMachineToUnwindstackRegister[] = {
+      X86_64_REG_RAX, X86_64_REG_RCX, X86_64_REG_RDX, X86_64_REG_RBX,
+      X86_64_REG_RSP, X86_64_REG_RBP, X86_64_REG_RSI, X86_64_REG_RDI,
+      X86_64_REG_R8,  X86_64_REG_R9,  X86_64_REG_R10, X86_64_REG_R11,
+      X86_64_REG_R12, X86_64_REG_R13, X86_64_REG_R14, X86_64_REG_R15};
+
+  if (op_info_register >= LengthOfArray(kMachineToUnwindstackRegister)) {
+    return X86_64_REG_LAST;
+  }
+
+  return kMachineToUnwindstackRegister[op_info_register];
+}
+
 // Experimental code for trying out stuff.
-bool Coff::ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva) {
+bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
+                                           Regs* regs, uint64_t pc_rva) {
   constexpr int kCoffDataDirExceptionTableIndex = 3;
   if (kCoffDataDirExceptionTableIndex >= coff_optional_header_.data_dirs.size()) {
     ALOGI("No exception table found.");
@@ -337,9 +363,9 @@ bool Coff::ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva) {
   RuntimeFunction function_at_pc;
   for (uint64_t offset = pdata_file_offset; offset < end;) {
     RuntimeFunction function;
-    if (!Get32(memory, &offset, &(function.start_address)) ||
-        !Get32(memory, &offset, &(function.end_address)) ||
-        !Get32(memory, &offset, &(function.unwind_info_offset))) {
+    if (!Get32(object_file_memory, &offset, &(function.start_address)) ||
+        !Get32(object_file_memory, &offset, &(function.end_address)) ||
+        !Get32(object_file_memory, &offset, &(function.unwind_info_offset))) {
       ALOGI("ERROR: Unexpected read error.");
       break;
     }
@@ -358,10 +384,10 @@ bool Coff::ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva) {
   ALOGI("xdata info file offset: %lx", xdata_file_offset);
 
   UnwindInfo unwind_info;
-  if (!Get8(memory, &xdata_file_offset, &(unwind_info.version_and_flags)) ||
-      !Get8(memory, &xdata_file_offset, &(unwind_info.prolog_size)) ||
-      !Get8(memory, &xdata_file_offset, &(unwind_info.num_codes)) ||
-      !Get8(memory, &xdata_file_offset, &(unwind_info.frame_register_and_offset))) {
+  if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_info.version_and_flags)) ||
+      !Get8(object_file_memory, &xdata_file_offset, &(unwind_info.prolog_size)) ||
+      !Get8(object_file_memory, &xdata_file_offset, &(unwind_info.num_codes)) ||
+      !Get8(object_file_memory, &xdata_file_offset, &(unwind_info.frame_register_and_offset))) {
     return false;
   }
 
@@ -376,8 +402,8 @@ bool Coff::ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva) {
 
   for (uint8_t code_idx = 0; code_idx < unwind_info.num_codes; ++code_idx) {
     UnwindCode unwind_code;
-    if (!Get8(memory, &xdata_file_offset, &(unwind_code.code_offset)) ||
-        !Get8(memory, &xdata_file_offset, &(unwind_code.unwind_op_and_op_info))) {
+    if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_code.code_offset)) ||
+        !Get8(object_file_memory, &xdata_file_offset, &(unwind_code.unwind_op_and_op_info))) {
       return false;
     }
     ALOGI("unwind code_offset: %x", unwind_code.code_offset);
@@ -386,15 +412,61 @@ bool Coff::ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva) {
     unwind_info.unwind_codes.emplace_back(unwind_code);
   }
 
+  uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
+  ALOGI("current offset from start: %lx", current_offset_from_start);
+  int start_op_idx;
+  for (start_op_idx = 0; start_op_idx < unwind_info.num_codes; ++start_op_idx) {
+    if (unwind_info.unwind_codes[start_op_idx].code_offset <= current_offset_from_start) {
+      break;
+    }
+  }
+  ALOGI("current start index: %d", start_op_idx);
+
+  RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
+
+  // Process op codes.
+  for (int op_idx = start_op_idx; op_idx < unwind_info.num_codes; ++op_idx) {
+    UnwindCode unwind_code = unwind_info.unwind_codes[op_idx];
+    switch (unwind_code.GetUnwindOp()) {
+      case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
+        uint64_t register_value;
+        cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+        ALOGI("stack pointer: %lx", cur_regs->sp());
+        if (!process_memory->Read64(cur_regs->sp(), &register_value)) {
+          ALOGI("Failed to read memory");
+          return false;
+        }
+        uint8_t op_info = unwind_code.GetOpInfo();
+        uint16_t reg = MapToUnwindstackRegister(op_info);
+        ALOGI("op_info: %x", op_info);
+        (*cur_regs)[reg] = register_value;
+        break;
+      }
+      // TODO: Support all op codes.
+      default: {
+        break;
+      }
+    }
+  }
+  cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+  ALOGI("stack pointer: %lx", regs->sp());
+
+  uint64_t return_address;
+  if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
+    return false;
+  }
+  cur_regs->set_pc(return_address);
+
   return true;
 }
 
-bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* memory, bool* finished) {
+bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished) {
   ALOGI("Coff::Step() call");
   ALOGI("Rel pc: %lx", rel_pc);
   ALOGI("Image base: %lx", coff_optional_header_.image_base);
+
   uint64_t pc_rva = rel_pc - coff_optional_header_.image_base;
-  ParseExceptionTableExperimental(memory, pc_rva);
+  ParseExceptionTableExperimental(memory_.get(), process_memory, regs, pc_rva);
 
   return true;
 }

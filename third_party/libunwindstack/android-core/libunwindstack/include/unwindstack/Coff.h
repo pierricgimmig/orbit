@@ -61,7 +61,7 @@ struct CoffOptionalHeader {
   uint64_t heap_reserve_size = 0;
   uint64_t heap_commit_size = 0;
   uint32_t loader_flags = 0;
-  uint32_t	num_data_dir_entries;
+  uint32_t num_data_dir_entries;
   std::vector<DataDirectory> data_dirs;  // will contain num_data_dir_entries entries
 };
 
@@ -82,7 +82,7 @@ struct Section {
   std::string name;
   uint32_t vmsize;
   uint32_t vmaddr;
-  uint32_t size;  // Size in file
+  uint32_t size;    // Size in file
   uint32_t offset;  // Offset in file
 };
 
@@ -114,21 +114,23 @@ class Coff {
   bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset);
   void InitializeSections();
   bool ParseHeaders(Memory* memory);
-  bool ParseExceptionTableExperimental(Memory* memory, uint64_t pc_rva);
+  bool ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
+                                       Regs* regs, uint64_t pc_rva);
 
   bool valid_ = false;
   int64_t load_bias_ = 0;
   std::unique_ptr<Memory> memory_;
-
-  std::vector<Section> sections_;
-  Section pdata_section_;
-  Section xdata_section_;
 
   // Parsed data
   std::vector<SectionHeader> section_headers_;
   DosHeader dos_header_;
   CoffHeader coff_header_;
   CoffOptionalHeader coff_optional_header_;
+
+  // Initialized from parsed data
+  std::vector<Section> sections_;
+  Section pdata_section_;
+  Section xdata_section_;
 };
 
 }  // namespace unwindstack

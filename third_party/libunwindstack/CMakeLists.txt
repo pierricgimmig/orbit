@@ -70,6 +70,7 @@ add_executable(UnwindstackTests)
 target_sources(UnwindstackTests PRIVATE
   ${UNWINDSTACK_ROOT}/tests/ElfTestUtils.h
   ${UNWINDSTACK_ROOT}/tests/ElfTestUtils.cpp
+  ${UNWINDSTACK_ROOT}/tests/MemoryFake.cpp
   ${UNWINDSTACK_ROOT}/tests/CoffTest.cpp)
 
 target_include_directories(
