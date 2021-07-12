@@ -62,7 +62,7 @@ class MemoryFake : public Memory {
     SetMemory(addr, string.c_str(), string.size() + 1);
   }
 
-  void Clear() { data_.clear(); }
+  void Clear() override { data_.clear(); }
 
  private:
   std::unordered_map<uint64_t, uint8_t> data_;
