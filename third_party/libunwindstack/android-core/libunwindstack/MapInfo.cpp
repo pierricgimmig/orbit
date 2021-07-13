@@ -207,6 +207,7 @@ Memory* CreateCoffMemory(const std::string& filename) {
 Coff* MapInfo::GetCoff() {
   ALOGI("GetCoff");
   std::lock_guard<std::mutex> guard(mutex_);
+
   Memory* memory = CreateCoffMemory(name);
   assert(memory != nullptr);
 
