@@ -1,6 +1,7 @@
 #ifndef _LIBUNWINDSTACK_COFF_H
 #define _LIBUNWINDSTACK_COFF_H
 
+#include <array>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -66,7 +67,7 @@ struct CoffOptionalHeader {
 };
 
 struct SectionHeader {
-  char name[8];
+  std::array<char, 8> name;
   uint32_t vmsize;
   uint32_t vmaddr;
   uint32_t size;
@@ -92,7 +93,6 @@ class Coff {
   virtual ~Coff() = default;
 
   bool Init();
-  void Invalidate();
 
   /*
   bool StepIfSignalHandler(uint64_t rel_pc, Regs* regs, Memory* process_memory);
@@ -107,7 +107,6 @@ class Coff {
   ErrorCode GetLastErrorCode();
   uint64_t GetLastErrorAddress();
 
-  bool valid() { return valid_; }
   Memory* memory() { return memory_.get(); }
 
  protected:
@@ -117,7 +116,6 @@ class Coff {
   bool ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
                                        Regs* regs, uint64_t pc_rva);
 
-  bool valid_ = false;
   int64_t load_bias_ = 0;
   std::unique_ptr<Memory> memory_;
 
@@ -131,6 +129,9 @@ class Coff {
   std::vector<Section> sections_;
   Section pdata_section_;
   Section xdata_section_;
+
+  // Protect calls that can modify internal state of the interface object.
+  std::mutex lock_;
 };
 
 }  // namespace unwindstack

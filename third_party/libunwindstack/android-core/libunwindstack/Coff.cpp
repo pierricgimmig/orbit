@@ -189,7 +189,7 @@ bool Coff::ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, ui
     if (!memory->ReadFully(*offset, static_cast<void*>(&section_header.name[0]), 8)) {
       return false;
     }
-    ALOGI("section name: %s", section_header.name);
+    ALOGI("section name: %s", section_header.name.data());
     *offset += 8 * sizeof(char);
     if (!Get32(memory, offset, &section_header.vmsize) ||
         !Get32(memory, offset, &section_header.vmaddr) ||
@@ -237,15 +237,10 @@ bool Coff::ParseHeaders(Memory* memory) {
   return true;
 }
 
-template <class T, std::size_t N>
-constexpr inline size_t LengthOfArray(T (&)[N]) {
-  return N;
-}
-
 void Coff::InitializeSections() {
   for (const auto& section_header : section_headers_) {
     Section section;
-    std::string header_name(section_header.name, LengthOfArray(section_header.name));
+    std::string header_name(section_header.name.data(), section_header.name.size());
     std::string name_trimmed = header_name.substr(0, header_name.find('\0'));
     // TODO: Names that start with "/" need to be looked up at an offset.
     section.name = name_trimmed;
@@ -282,7 +277,7 @@ struct UnwindCode {
   uint8_t GetOpInfo() const { return (unwind_op_and_op_info >> 4) & 0x0f; }
 };
 
-// Data from RUNTIMEFUNCTION array.
+// Data from RUNTIME_FUNCTION array.
 // https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-runtime_function
 struct RuntimeFunction {
   uint32_t start_address;
@@ -317,13 +312,13 @@ struct UnwindInfo {
 // register order, so we have to map them to the right values.
 // https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#operation-info
 static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
-  static uint16_t kMachineToUnwindstackRegister[] = {
+  std::array<uint16_t, 16> kMachineToUnwindstackRegister = {
       X86_64_REG_RAX, X86_64_REG_RCX, X86_64_REG_RDX, X86_64_REG_RBX,
       X86_64_REG_RSP, X86_64_REG_RBP, X86_64_REG_RSI, X86_64_REG_RDI,
       X86_64_REG_R8,  X86_64_REG_R9,  X86_64_REG_R10, X86_64_REG_R11,
       X86_64_REG_R12, X86_64_REG_R13, X86_64_REG_R14, X86_64_REG_R15};
 
-  if (op_info_register >= LengthOfArray(kMachineToUnwindstackRegister)) {
+  if (op_info_register >= kMachineToUnwindstackRegister.size()) {
     return X86_64_REG_LAST;
   }
 
@@ -349,6 +344,8 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
     return false;
   }
 
+  ALOGI("PC relative virtual address: %lx", pc_rva);
+
   uint32_t rva = data_directory.vmaddr;
   uint32_t size = data_directory.vmsize;
   ALOGI("Exception table rva: %x", rva);
@@ -361,6 +358,7 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
   uint64_t end = pdata_file_offset + size;
   // TODO: Can do binary search, but we just do linear search for simplicity for now.
   RuntimeFunction function_at_pc;
+  bool runtime_function_found = false;
   for (uint64_t offset = pdata_file_offset; offset < end;) {
     RuntimeFunction function;
     if (!Get32(object_file_memory, &offset, &(function.start_address)) ||
@@ -370,14 +368,29 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
       break;
     }
 
+    // TODO: Is end address inclusive?
     if (pc_rva >= function.start_address && pc_rva <= function.end_address) {
       function_at_pc = function;
+      runtime_function_found = true;
     }
   }
 
-  ALOGI("function start address: %x", function_at_pc.start_address);
-  ALOGI("function end address: %x", function_at_pc.end_address);
-  ALOGI("function unwind info offset: %x", function_at_pc.unwind_info_offset);
+  if (!runtime_function_found) {
+    ALOGI("No RUNTIME_FUNCTION found.");
+    RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
+
+    uint64_t return_address;
+    if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
+      return false;
+    }
+    cur_regs->set_pc(return_address);
+    cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+    return true;
+  }
+
+  ALOGI("function found start address: %x", function_at_pc.start_address);
+  ALOGI("function found end address: %x", function_at_pc.end_address);
+  ALOGI("function found unwind info offset: %x", function_at_pc.unwind_info_offset);
 
   uint64_t xdata_file_offset =
       MapFromRVAToFileOffset(xdata_section_, function_at_pc.unwind_info_offset);
@@ -422,56 +435,78 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
   }
   ALOGI("current start index: %d", start_op_idx);
 
+  // TODO: Handle this case.
+  if (!unwind_info.unwind_codes.empty() &&
+      current_offset_from_start > unwind_info.unwind_codes.begin()->code_offset) {
+    // We are past the prolog, which means we could be in the epilog, which we can't unwind at
+    // the moment. To avoid mistakes, we do not unwind at all in this case.
+    return false;
+  }
+
   RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
 
-  // Process op codes.
+  // // Process op codes.
   for (int op_idx = start_op_idx; op_idx < unwind_info.num_codes; ++op_idx) {
     UnwindCode unwind_code = unwind_info.unwind_codes[op_idx];
     switch (unwind_code.GetUnwindOp()) {
       case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
         uint64_t register_value;
-        cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
         ALOGI("stack pointer: %lx", cur_regs->sp());
         if (!process_memory->Read64(cur_regs->sp(), &register_value)) {
           ALOGI("Failed to read memory");
           return false;
         }
+        cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+
         uint8_t op_info = unwind_code.GetOpInfo();
         uint16_t reg = MapToUnwindstackRegister(op_info);
         ALOGI("op_info: %x", op_info);
         (*cur_regs)[reg] = register_value;
         break;
       }
-      // TODO: Support all op codes.
       default: {
-        break;
+        // TODO: Support all op codes.
+        return false;
       }
     }
   }
-  cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
-  ALOGI("stack pointer: %lx", regs->sp());
-
   uint64_t return_address;
   if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
     return false;
   }
+  cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+  ALOGI("stack pointer: %lx", cur_regs->sp());
   cur_regs->set_pc(return_address);
 
   return true;
 }
 
 bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished) {
+  // Lock during the step which can update information in the object.
+  std::lock_guard<std::mutex> guard(lock_);
+
   ALOGI("Coff::Step() call");
   ALOGI("Rel pc: %lx", rel_pc);
   ALOGI("Image base: %lx", coff_optional_header_.image_base);
 
   uint64_t pc_rva = rel_pc - coff_optional_header_.image_base;
-  ParseExceptionTableExperimental(memory_.get(), process_memory, regs, pc_rva);
+  if (!ParseExceptionTableExperimental(memory_.get(), process_memory, regs, pc_rva)) {
+    ALOGI("Coff unwinding step failed.");
+    *finished = true;
+    return false;
+  }
+
+  ALOGI("PC after step: %lx", regs->pc());
+  *finished = (regs->pc() == 0) ? true : false;
+
+  assert(false);
 
   return true;
 }
 
 bool Coff::Init() {
+  std::lock_guard<std::mutex> guard(lock_);
+
   ALOGI("Coff::Init()");
   ParseHeaders(memory_.get());
   InitializeSections();

@@ -96,6 +96,33 @@ void Unwinder::FillInDexFrame() {
 #endif
 }
 
+FrameData* Unwinder::FillInFrameCoff(MapInfo* map_info, Coff* coff, uint64_t rel_pc,
+                                     uint64_t pc_adjustment) {
+  size_t frame_num = frames_.size();
+  frames_.resize(frame_num + 1);
+  FrameData* frame = &frames_.at(frame_num);
+  frame->num = frame_num;
+  frame->sp = regs_->sp();
+  frame->rel_pc = rel_pc - pc_adjustment;
+  frame->pc = regs_->pc() - pc_adjustment;
+
+  if (map_info == nullptr) {
+    // Nothing else to update.
+    return nullptr;
+  }
+
+  if (resolve_names_) {
+    frame->map_name = map_info->name;
+  }
+  frame->map_elf_start_offset = map_info->elf_start_offset;
+  frame->map_exact_offset = map_info->offset;
+  frame->map_start = map_info->start;
+  frame->map_end = map_info->end;
+  frame->map_flags = map_info->flags;
+  // frame->map_load_bias = elf->GetLoadBias();
+  return frame;
+}
+
 FrameData* Unwinder::FillInFrame(MapInfo* map_info, Elf* elf, uint64_t rel_pc,
                                  uint64_t pc_adjustment) {
   size_t frame_num = frames_.size();
@@ -172,8 +199,11 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
     uint64_t pc_adjustment = 0;
     uint64_t step_pc;
     uint64_t rel_pc;
+
     Elf* elf;
     Coff* coff;
+    bool is_coff = false;
+
     if (map_info == nullptr) {
       step_pc = regs_->pc();
       rel_pc = step_pc;
@@ -186,103 +216,119 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
         ALOGI("MapsInfo name: %s", map_info->name.c_str());
         coff = map_info->GetCoff();
         step_pc = regs_->pc();
-        bool finished = false;
-        coff->Step(step_pc, regs_, process_memory_.get(), &finished);
-        break;
+        rel_pc = step_pc;
+        is_coff = true;
       } else {
         elf = map_info->GetElf(process_memory_, arch);
-      }
-      // If this elf is memory backed, and there is a valid file, then set
-      // an indicator that we couldn't open the file.
-      if (!elf_from_memory_not_file_ && map_info->memory_backed_elf && !map_info->name.empty() &&
-          map_info->name[0] != '[' && !android::base::StartsWith(map_info->name, "/memfd:")) {
-        elf_from_memory_not_file_ = true;
-      }
-      step_pc = regs_->pc();
-      rel_pc = elf->GetRelPc(step_pc, map_info);
-      // Everyone except elf data in gdb jit debug maps uses the relative pc.
-      if (!(map_info->flags & MAPS_FLAGS_JIT_SYMFILE_MAP)) {
-        step_pc = rel_pc;
-      }
-      if (adjust_pc) {
-        pc_adjustment = regs_->GetPcAdjustment(rel_pc, elf);
-      } else {
-        pc_adjustment = 0;
-      }
-      step_pc -= pc_adjustment;
+        // If this elf is memory backed, and there is a valid file, then set
+        // an indicator that we couldn't open the file.
+        if (!elf_from_memory_not_file_ && map_info->memory_backed_elf && !map_info->name.empty() &&
+            map_info->name[0] != '[' && !android::base::StartsWith(map_info->name, "/memfd:")) {
+          elf_from_memory_not_file_ = true;
+        }
+        step_pc = regs_->pc();
+        rel_pc = elf->GetRelPc(step_pc, map_info);
+        // Everyone except elf data in gdb jit debug maps uses the relative pc.
+        if (!(map_info->flags & MAPS_FLAGS_JIT_SYMFILE_MAP)) {
+          step_pc = rel_pc;
+        }
+        if (adjust_pc) {
+          pc_adjustment = regs_->GetPcAdjustment(rel_pc, elf);
+        } else {
+          pc_adjustment = 0;
+        }
+        step_pc -= pc_adjustment;
 
-      // If the pc is in an invalid elf file, try and get an Elf object
-      // using the jit debug information.
-      if (!elf->valid() && jit_debug_ != nullptr) {
-        uint64_t adjusted_jit_pc = regs_->pc() - pc_adjustment;
-        Elf* jit_elf = jit_debug_->GetElf(maps_, adjusted_jit_pc);
-        if (jit_elf != nullptr) {
-          // The jit debug information requires a non relative adjusted pc.
-          step_pc = adjusted_jit_pc;
-          elf = jit_elf;
+        // If the pc is in an invalid elf file, try and get an Elf object
+        // using the jit debug information.
+        if (!elf->valid() && jit_debug_ != nullptr) {
+          uint64_t adjusted_jit_pc = regs_->pc() - pc_adjustment;
+          Elf* jit_elf = jit_debug_->GetElf(maps_, adjusted_jit_pc);
+          if (jit_elf != nullptr) {
+            // The jit debug information requires a non relative adjusted pc.
+            step_pc = adjusted_jit_pc;
+            elf = jit_elf;
+          }
         }
       }
     }
 
     FrameData* frame = nullptr;
-    if (map_info == nullptr || initial_map_names_to_skip == nullptr ||
-        std::find(initial_map_names_to_skip->begin(), initial_map_names_to_skip->end(),
-                  basename(map_info->name.c_str())) == initial_map_names_to_skip->end()) {
-      if (regs_->dex_pc() != 0) {
-        // Add a frame to represent the dex file.
-        FillInDexFrame();
-        // Clear the dex pc so that we don't repeat this frame later.
-        regs_->set_dex_pc(0);
-
-        // Make sure there is enough room for the real frame.
-        if (frames_.size() == max_frames_) {
-          last_error_.code = ERROR_MAX_FRAMES_EXCEEDED;
-          break;
-        }
-      }
-
-      frame = FillInFrame(map_info, elf, rel_pc, pc_adjustment);
+    if (is_coff) {
+      frame = FillInFrameCoff(map_info, coff, rel_pc, pc_adjustment);
 
       // Once a frame is added, stop skipping frames.
       initial_map_names_to_skip = nullptr;
+    } else {
+      if (map_info == nullptr || initial_map_names_to_skip == nullptr ||
+          std::find(initial_map_names_to_skip->begin(), initial_map_names_to_skip->end(),
+                    basename(map_info->name.c_str())) == initial_map_names_to_skip->end()) {
+        if (regs_->dex_pc() != 0) {
+          // Add a frame to represent the dex file.
+          FillInDexFrame();
+          // Clear the dex pc so that we don't repeat this frame later.
+          regs_->set_dex_pc(0);
+
+          // Make sure there is enough room for the real frame.
+          if (frames_.size() == max_frames_) {
+            last_error_.code = ERROR_MAX_FRAMES_EXCEEDED;
+            break;
+          }
+        }
+
+        frame = FillInFrame(map_info, elf, rel_pc, pc_adjustment);
+
+        // Once a frame is added, stop skipping frames.
+        initial_map_names_to_skip = nullptr;
+      }
     }
     adjust_pc = true;
 
     bool stepped = false;
     bool in_device_map = false;
     bool finished = false;
+
     if (map_info != nullptr) {
-      if (map_info->flags & MAPS_FLAGS_DEVICE_MAP) {
-        // Do not stop here, fall through in case we are
-        // in the speculative unwind path and need to remove
-        // some of the speculative frames.
-        in_device_map = true;
+      if (is_coff) {
+        if (coff->Step(step_pc, regs_, process_memory_.get(), &finished)) {
+          ALOGI("Coff step succeeded.");
+          stepped = true;
+        }
       } else {
-        MapInfo* sp_info = maps_->Find(regs_->sp());
-        if (sp_info != nullptr && sp_info->flags & MAPS_FLAGS_DEVICE_MAP) {
+        if (map_info->flags & MAPS_FLAGS_DEVICE_MAP) {
           // Do not stop here, fall through in case we are
           // in the speculative unwind path and need to remove
           // some of the speculative frames.
           in_device_map = true;
         } else {
-          if (elf->StepIfSignalHandler(rel_pc, regs_, process_memory_.get())) {
-            stepped = true;
-            if (frame != nullptr) {
-              // Need to adjust the relative pc because the signal handler
-              // pc should not be adjusted.
-              frame->rel_pc = rel_pc;
-              frame->pc += pc_adjustment;
-              step_pc = rel_pc;
+          MapInfo* sp_info = maps_->Find(regs_->sp());
+          if (sp_info != nullptr && sp_info->flags & MAPS_FLAGS_DEVICE_MAP) {
+            // Do not stop here, fall through in case we are
+            // in the speculative unwind path and need to remove
+            // some of the speculative frames.
+            in_device_map = true;
+          } else {
+            if (elf->StepIfSignalHandler(rel_pc, regs_, process_memory_.get())) {
+              stepped = true;
+              if (frame != nullptr) {
+                // Need to adjust the relative pc because the signal handler
+                // pc should not be adjusted.
+                frame->rel_pc = rel_pc;
+                frame->pc += pc_adjustment;
+                step_pc = rel_pc;
+              }
+            } else if (elf->Step(step_pc, regs_, process_memory_.get(), &finished)) {
+              stepped = true;
             }
-          } else if (elf->Step(step_pc, regs_, process_memory_.get(), &finished)) {
-            stepped = true;
+            elf->GetLastError(&last_error_);
           }
-          elf->GetLastError(&last_error_);
         }
       }
     }
 
-    if (frame != nullptr) {
+    // TODO: Resolve name for COFF.
+
+    if (frame != nullptr && !is_coff) {
       if (!resolve_names_ ||
           !elf->GetFunctionName(step_pc, &frame->function_name, &frame->function_offset)) {
         frame->function_name = "";
@@ -329,6 +375,8 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
       break;
     }
   }
+
+  ALOGI("Unwind function call done");
 }
 
 std::string Unwinder::FormatFrame(const FrameData& frame) const {

@@ -119,6 +119,7 @@ class Unwinder {
 
   void FillInDexFrame();
   FrameData* FillInFrame(MapInfo* map_info, Elf* elf, uint64_t rel_pc, uint64_t pc_adjustment);
+  FrameData* FillInFrameCoff(MapInfo* map_info, Coff* elf, uint64_t rel_pc, uint64_t pc_adjustment);
 
   size_t max_frames_;
   Maps* maps_;
