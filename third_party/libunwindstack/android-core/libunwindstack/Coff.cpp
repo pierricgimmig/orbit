@@ -269,45 +269,6 @@ uint64_t MapFromRVAToFileOffset(const Section& section, uint64_t rva) {
   return rva - section.vmaddr + section.offset;
 }
 
-struct UnwindCode {
-  uint8_t code_offset;
-  uint8_t unwind_op_and_op_info;
-
-  uint8_t GetUnwindOp() const { return unwind_op_and_op_info & 0x0f; }
-  uint8_t GetOpInfo() const { return (unwind_op_and_op_info >> 4) & 0x0f; }
-};
-
-// Data from RUNTIME_FUNCTION array.
-// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-runtime_function
-struct RuntimeFunction {
-  uint32_t start_address;
-  uint32_t end_address;
-  uint32_t unwind_info_offset;
-};
-
-// UNWIND_INFO struct
-// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-unwind_info
-struct UnwindInfo {
-  // First 3 bits are the version, other 5 bits are the flags.
-  uint8_t version_and_flags;
-  uint8_t prolog_size;
-  uint8_t num_codes;
-  // First 4 bits frame register, second 4 bits frame register offset.
-  uint8_t frame_register_and_offset;
-  std::vector<UnwindCode> unwind_codes;
-
-  // TODO: There's potentially more data after the unwind codes, which can be either a language
-  // specific exception handler or chained unwind info (which we have to follow in case it exists).
-
-  uint8_t GetVersion() const { return version_and_flags & 0x07; }
-
-  uint8_t GetFlags() const { return (version_and_flags >> 3) & 0x1f; }
-
-  uint8_t GetFrameRegister() const { return frame_register_and_offset & 0x0f; }
-
-  uint8_t GetFrameOffset() const { return (frame_register_and_offset >> 4) & 0x0f; }
-};
-
 // The order of registers in PE/COFF unwind information is different from the libunwindstack
 // register order, so we have to map them to the right values.
 // https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#operation-info
@@ -323,6 +284,102 @@ static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
   }
 
   return kMachineToUnwindstackRegister[op_info_register];
+}
+
+bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
+                                uint64_t current_code_offset) {
+  ALOGI("current offset from start: %lx", current_code_offset);
+  int start_op_idx;
+  // TODO: Need to handle correctly those unwind ops that are actually offsets.
+  for (start_op_idx = 0; start_op_idx < unwind_info.num_codes; ++start_op_idx) {
+    if (unwind_info.unwind_codes[start_op_idx].code_and_op.code_offset <= current_code_offset) {
+      break;
+    }
+  }
+  ALOGI("current start index: %d", start_op_idx);
+
+  // TODO: Handle this case.
+  if (!unwind_info.unwind_codes.empty() &&
+      current_code_offset > unwind_info.unwind_codes.begin()->code_and_op.code_offset) {
+    // We are past the prolog, which means we could be in the epilog, which we can't unwind at
+    // the moment. To avoid mistakes, we do not unwind at all in this case.
+    return false;
+  }
+
+  RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
+
+  // // Process op codes.
+  for (int op_idx = start_op_idx; op_idx < unwind_info.num_codes;) {
+    UnwindCode unwind_code = unwind_info.unwind_codes[op_idx];
+    switch (unwind_code.GetUnwindOp()) {
+      case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
+        uint64_t register_value;
+        ALOGI("stack pointer: %lx", cur_regs->sp());
+        if (!process_memory->Read64(cur_regs->sp(), &register_value)) {
+          ALOGI("Failed to read memory");
+          return false;
+        }
+        cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+
+        uint8_t op_info = unwind_code.GetOpInfo();
+        uint16_t reg = MapToUnwindstackRegister(op_info);
+        ALOGI("op_info: %x", op_info);
+        (*cur_regs)[reg] = register_value;
+
+        op_idx++;
+        break;
+      }
+      case 1: {  // UWOP_ALLOC_LARGE
+        uint8_t op_info = unwind_code.GetOpInfo();
+        uint32_t allocation_size = 0;
+
+        if (op_info == 0) {
+          if (op_idx + 1 >= unwind_info.num_codes) {
+            ALOGI("Error parsing unwind info.");
+            return false;
+          }
+          UnwindCode offset = unwind_info.unwind_codes[op_idx + 1];
+          allocation_size = static_cast<uint32_t>(offset.frame_offset);
+          op_idx += 1;
+        } else if (op_info == 1) {
+          if (op_idx + 2 >= unwind_info.num_codes) {
+            ALOGI("Error parsing unwind info.");
+            return false;
+          }
+          UnwindCode offset1 = unwind_info.unwind_codes[op_idx + 1];
+          UnwindCode offset2 = unwind_info.unwind_codes[op_idx + 2];
+
+          allocation_size = static_cast<uint32_t>(offset1.frame_offset) +
+                            (static_cast<uint32_t>(offset2.frame_offset) << 16);
+          op_idx += 2;
+        }
+
+        cur_regs->set_sp(cur_regs->sp() + allocation_size);
+
+        break;
+      }
+      case 2: {  // UWOP_ALLOC_SMALL
+        uint8_t op_info = unwind_code.GetOpInfo();
+        uint32_t allocation_size = static_cast<uint32_t>(op_info) * 8 + 8;
+        cur_regs->set_sp(cur_regs->sp() + allocation_size);
+        op_idx += 1;
+        break;
+      }
+      default: {
+        // TODO: Support all op codes.
+        return false;
+      }
+    }
+  }
+
+  uint64_t return_address;
+  if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
+    return false;
+  }
+  cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+  ALOGI("stack pointer: %lx", cur_regs->sp());
+  cur_regs->set_pc(return_address);
+  return true;
 }
 
 // Experimental code for trying out stuff.
@@ -415,68 +472,23 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
 
   for (uint8_t code_idx = 0; code_idx < unwind_info.num_codes; ++code_idx) {
     UnwindCode unwind_code;
-    if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_code.code_offset)) ||
-        !Get8(object_file_memory, &xdata_file_offset, &(unwind_code.unwind_op_and_op_info))) {
+    if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_code.code_and_op.code_offset)) ||
+        !Get8(object_file_memory, &xdata_file_offset,
+              &(unwind_code.code_and_op.unwind_op_and_op_info))) {
       return false;
     }
-    ALOGI("unwind code_offset: %x", unwind_code.code_offset);
+    ALOGI("unwind code_offset: %x", unwind_code.code_and_op.code_offset);
     ALOGI("unwind op info: %u", unwind_code.GetOpInfo());
     ALOGI("unwind code: %u", unwind_code.GetUnwindOp());
     unwind_info.unwind_codes.emplace_back(unwind_code);
   }
 
   uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
-  ALOGI("current offset from start: %lx", current_offset_from_start);
-  int start_op_idx;
-  for (start_op_idx = 0; start_op_idx < unwind_info.num_codes; ++start_op_idx) {
-    if (unwind_info.unwind_codes[start_op_idx].code_offset <= current_offset_from_start) {
-      break;
-    }
-  }
-  ALOGI("current start index: %d", start_op_idx);
 
-  // TODO: Handle this case.
-  if (!unwind_info.unwind_codes.empty() &&
-      current_offset_from_start > unwind_info.unwind_codes.begin()->code_offset) {
-    // We are past the prolog, which means we could be in the epilog, which we can't unwind at
-    // the moment. To avoid mistakes, we do not unwind at all in this case.
+  if (!ProcessUnwindOpCodes(process_memory, regs, unwind_info, current_offset_from_start)) {
+    ALOGI("Failed to process unwind op codes.");
     return false;
   }
-
-  RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
-
-  // // Process op codes.
-  for (int op_idx = start_op_idx; op_idx < unwind_info.num_codes; ++op_idx) {
-    UnwindCode unwind_code = unwind_info.unwind_codes[op_idx];
-    switch (unwind_code.GetUnwindOp()) {
-      case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
-        uint64_t register_value;
-        ALOGI("stack pointer: %lx", cur_regs->sp());
-        if (!process_memory->Read64(cur_regs->sp(), &register_value)) {
-          ALOGI("Failed to read memory");
-          return false;
-        }
-        cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
-
-        uint8_t op_info = unwind_code.GetOpInfo();
-        uint16_t reg = MapToUnwindstackRegister(op_info);
-        ALOGI("op_info: %x", op_info);
-        (*cur_regs)[reg] = register_value;
-        break;
-      }
-      default: {
-        // TODO: Support all op codes.
-        return false;
-      }
-    }
-  }
-  uint64_t return_address;
-  if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
-    return false;
-  }
-  cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
-  ALOGI("stack pointer: %lx", cur_regs->sp());
-  cur_regs->set_pc(return_address);
 
   return true;
 }
