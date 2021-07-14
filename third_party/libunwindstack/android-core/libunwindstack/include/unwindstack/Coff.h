@@ -87,6 +87,48 @@ struct Section {
   uint32_t offset;  // Offset in file
 };
 
+union UnwindCode {
+  struct {
+    uint8_t code_offset;
+    uint8_t unwind_op_and_op_info;
+  } code_and_op;
+  uint16_t frame_offset;
+
+  uint8_t GetUnwindOp() const { return code_and_op.unwind_op_and_op_info & 0x0f; }
+  uint8_t GetOpInfo() const { return (code_and_op.unwind_op_and_op_info >> 4) & 0x0f; }
+};
+
+// Data from RUNTIME_FUNCTION array.
+// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-runtime_function
+struct RuntimeFunction {
+  uint32_t start_address;
+  uint32_t end_address;
+  uint32_t unwind_info_offset;
+};
+
+// UNWIND_INFO struct
+// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#struct-unwind_info
+struct UnwindInfo {
+  // First 3 bits are the version, other 5 bits are the flags.
+  uint8_t version_and_flags;
+  uint8_t prolog_size;
+  uint8_t num_codes;
+  // First 4 bits frame register, second 4 bits frame register offset.
+  uint8_t frame_register_and_offset;
+  std::vector<UnwindCode> unwind_codes;
+
+  // TODO: There's potentially more data after the unwind codes, which can be either a language
+  // specific exception handler or chained unwind info (which we have to follow in case it exists).
+
+  uint8_t GetVersion() const { return version_and_flags & 0x07; }
+
+  uint8_t GetFlags() const { return (version_and_flags >> 3) & 0x1f; }
+
+  uint8_t GetFrameRegister() const { return frame_register_and_offset & 0x0f; }
+
+  uint8_t GetFrameOffset() const { return (frame_register_and_offset >> 4) & 0x0f; }
+};
+
 class Coff {
  public:
   Coff(Memory* memory) : memory_(memory) {}
@@ -115,6 +157,8 @@ class Coff {
   bool ParseHeaders(Memory* memory);
   bool ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
                                        Regs* regs, uint64_t pc_rva);
+  bool ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
+                            uint64_t current_code_offset);
 
   int64_t load_bias_ = 0;
   std::unique_ptr<Memory> memory_;
