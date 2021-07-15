@@ -6,6 +6,8 @@
 #include <mutex>
 #include <vector>
 
+#include <capstone/capstone.h>
+
 #include <unwindstack/Error.h>
 #include <unwindstack/Memory.h>
 
@@ -132,7 +134,7 @@ struct UnwindInfo {
 class Coff {
  public:
   Coff(Memory* memory) : memory_(memory) {}
-  virtual ~Coff() = default;
+  ~Coff() { cs_close(&capstone_handle_); }
 
   bool Init();
 
@@ -160,6 +162,11 @@ class Coff {
   bool ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
                             uint64_t current_code_offset);
 
+  bool InitCapstone();
+  bool DetectAndHandleEpilog(uint64_t start_address, uint64_t end_address,
+                             uint64_t current_offset_from_start, Memory* process_memory,
+                             Regs* regs);
+
   int64_t load_bias_ = 0;
   std::unique_ptr<Memory> memory_;
 
@@ -173,6 +180,9 @@ class Coff {
   std::vector<Section> sections_;
   Section pdata_section_;
   Section xdata_section_;
+
+  // For disassembling
+  csh capstone_handle_;
 
   // Protect calls that can modify internal state of the interface object.
   std::mutex lock_;

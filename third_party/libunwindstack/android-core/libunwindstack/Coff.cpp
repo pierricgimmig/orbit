@@ -1,6 +1,9 @@
 
 #include <unwindstack/Coff.h>
 
+#include <capstone/capstone.h>
+#include <capstone/x86.h>
+
 #include <unwindstack/MachineX86_64.h>
 #include <unwindstack/Regs.h>
 
@@ -10,6 +13,8 @@
 #include <array>
 
 namespace unwindstack {
+
+bool kVerboseLogging = false;
 
 namespace {
 
@@ -79,14 +84,13 @@ bool GetMax64(Memory* memory, uint64_t* offset, uint64_t size, uint64_t* value) 
 }
 
 bool ParseDosHeader(Memory* memory, DosHeader* header) {
-  ALOGI("ParseDosHeader");
   uint64_t offset = 0x0;
   if (!Get16(memory, &offset, &(header->magic))) {
     return false;
   }
   uint32_t kImageDosSignature = 0x5A4d;
-  ALOGI("DOS signature read: %x", header->magic);
-  ALOGI("DOS signature expected: %x", kImageDosSignature);
+  ALOGI_IF(kVerboseLogging, "DOS signature read: %x", header->magic);
+  ALOGI_IF(kVerboseLogging, "DOS signature expected: %x", kImageDosSignature);
 
   offset += 29 * sizeof(uint16_t);
   if (!Get32(memory, &offset, &(header->lfanew))) {
@@ -109,7 +113,7 @@ bool ParseCoffHeader(Memory* memory, uint64_t* offset, CoffHeader* header) {
 
 bool ParseCoffOptionalHeader(const CoffHeader& coff_header, Memory* memory, uint64_t* offset,
                              CoffOptionalHeader* header) {
-  ALOGI("ParseCoffOptionalHeader");
+  ALOGI_IF(kVerboseLogging, "ParseCoffOptionalHeader");
   uint64_t end_offset = *offset + coff_header.hdrsize;
   if (*offset < end_offset) {
     if (!Get16(memory, offset, &(header->magic)) ||
@@ -164,7 +168,7 @@ bool ParseCoffOptionalHeader(const CoffHeader& coff_header, Memory* memory, uint
     }
     header->data_dirs.clear();
     header->data_dirs.resize(header->num_data_dir_entries);
-    ALOGI("num_data_dir_entries: %u", header->num_data_dir_entries);
+    ALOGI_IF(kVerboseLogging, "num_data_dir_entries: %u", header->num_data_dir_entries);
     for (uint32_t i = 0; i < header->num_data_dir_entries; ++i) {
       if (!Get32(memory, offset, &(header->data_dirs[i].vmaddr)) ||
           !Get32(memory, offset, &(header->data_dirs[i].vmsize))) {
@@ -179,17 +183,17 @@ bool ParseCoffOptionalHeader(const CoffHeader& coff_header, Memory* memory, uint
 }  // namespace
 
 bool Coff::ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset) {
-  ALOGI("ParseSectionHeaders");
+  ALOGI_IF(kVerboseLogging, "ParseSectionHeaders");
 
   uint32_t num_sections = coff_header.nsects;
-  ALOGI("Number of sections: %u", num_sections);
+  ALOGI_IF(kVerboseLogging, "Number of sections: %u", num_sections);
 
   for (uint32_t idx = 0; idx < num_sections; ++idx) {
     SectionHeader section_header;
     if (!memory->ReadFully(*offset, static_cast<void*>(&section_header.name[0]), 8)) {
       return false;
     }
-    ALOGI("section name: %s", section_header.name.data());
+    ALOGI_IF(kVerboseLogging, "section name: %s", section_header.name.data());
     *offset += 8 * sizeof(char);
     if (!Get32(memory, offset, &section_header.vmsize) ||
         !Get32(memory, offset, &section_header.vmaddr) ||
@@ -202,8 +206,8 @@ bool Coff::ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, ui
         !Get32(memory, offset, &section_header.flags)) {
       return false;
     }
-    ALOGI("section rva: %x", section_header.vmaddr);
-    ALOGI("section offset: %x", section_header.offset);
+    ALOGI_IF(kVerboseLogging, "section rva: %x", section_header.vmaddr);
+    ALOGI_IF(kVerboseLogging, "section offset: %x", section_header.offset);
     section_headers_.emplace_back(section_header);
   }
   return true;
@@ -219,8 +223,8 @@ bool Coff::ParseHeaders(Memory* memory) {
     return false;
   }
   uint32_t kImagePeSignature = 0x00004550;
-  ALOGI("PE signature read: %x", pe_signature);
-  ALOGI("PE signature expected: %x", kImagePeSignature);
+  ALOGI_IF(kVerboseLogging, "PE signature read: %x", pe_signature);
+  ALOGI_IF(kVerboseLogging, "PE signature expected: %x", kImagePeSignature);
 
   if (!ParseCoffHeader(memory, &offset, &coff_header_)) {
     return false;
@@ -253,19 +257,19 @@ void Coff::InitializeSections() {
 
   for (const auto& section : sections_) {
     if (section.name == ".pdata") {
-      ALOGI(".pdata found");
+      ALOGI_IF(kVerboseLogging, ".pdata found");
       pdata_section_ = section;
     }
     if (section.name == ".xdata") {
-      ALOGI(".xdata found");
+      ALOGI_IF(kVerboseLogging, ".xdata found");
       xdata_section_ = section;
     }
   }
 }
 
 uint64_t MapFromRVAToFileOffset(const Section& section, uint64_t rva) {
-  ALOGI("section vmaddr: %x", section.vmaddr);
-  ALOGI("section offset: %x", section.offset);
+  ALOGI_IF(kVerboseLogging, "section vmaddr: %x", section.vmaddr);
+  ALOGI_IF(kVerboseLogging, "section offset: %x", section.offset);
   return rva - section.vmaddr + section.offset;
 }
 
@@ -286,9 +290,10 @@ static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
   return kMachineToUnwindstackRegister[op_info_register];
 }
 
+// Pre-condition: We know we are not in the epilog.
 bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
                                 uint64_t current_code_offset) {
-  ALOGI("current offset from start: %lx", current_code_offset);
+  ALOGI_IF(kVerboseLogging, "current offset from start: %lx", current_code_offset);
   int start_op_idx;
   // TODO: Need to handle correctly those unwind ops that are actually offsets.
   for (start_op_idx = 0; start_op_idx < unwind_info.num_codes; ++start_op_idx) {
@@ -296,17 +301,11 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
       break;
     }
   }
-  ALOGI("current start index: %d", start_op_idx);
-
-  // TODO: Handle this case.
-  if (!unwind_info.unwind_codes.empty() &&
-      current_code_offset > unwind_info.unwind_codes.begin()->code_and_op.code_offset) {
-    // We are past the prolog, which means we could be in the epilog, which we can't unwind at
-    // the moment. To avoid mistakes, we do not unwind at all in this case.
-    return false;
-  }
+  ALOGI_IF(kVerboseLogging, "current start index: %d", start_op_idx);
 
   RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
+
+  ALOGI_IF(kVerboseLogging, "stack pointer start: %lx", cur_regs->sp());
 
   // // Process op codes.
   for (int op_idx = start_op_idx; op_idx < unwind_info.num_codes;) {
@@ -314,16 +313,20 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
     switch (unwind_code.GetUnwindOp()) {
       case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
         uint64_t register_value;
-        ALOGI("stack pointer: %lx", cur_regs->sp());
         if (!process_memory->Read64(cur_regs->sp(), &register_value)) {
-          ALOGI("Failed to read memory");
+          ALOGI_IF(kVerboseLogging, "Failed to read memory");
           return false;
         }
         cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
+        ALOGI("stack pointer: %lx", cur_regs->sp());
+
+        uint64_t value;
+        process_memory->Read64(cur_regs->sp(), &value);
+        ALOGI("value at sp: %lx", value);
 
         uint8_t op_info = unwind_code.GetOpInfo();
         uint16_t reg = MapToUnwindstackRegister(op_info);
-        ALOGI("op_info: %x", op_info);
+        ALOGI("setting register: %x", reg);
         (*cur_regs)[reg] = register_value;
 
         op_idx++;
@@ -334,16 +337,16 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         uint32_t allocation_size = 0;
 
         if (op_info == 0) {
-          if (op_idx + 1 >= unwind_info.num_codes) {
-            ALOGI("Error parsing unwind info.");
+          if (op_idx + 1 > unwind_info.num_codes) {
+            ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
             return false;
           }
           UnwindCode offset = unwind_info.unwind_codes[op_idx + 1];
-          allocation_size = static_cast<uint32_t>(offset.frame_offset);
+          allocation_size = 8 * static_cast<uint32_t>(offset.frame_offset);
           op_idx += 1;
         } else if (op_info == 1) {
-          if (op_idx + 2 >= unwind_info.num_codes) {
-            ALOGI("Error parsing unwind info.");
+          if (op_idx + 2 > unwind_info.num_codes) {
+            ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
             return false;
           }
           UnwindCode offset1 = unwind_info.unwind_codes[op_idx + 1];
@@ -354,14 +357,31 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
           op_idx += 2;
         }
 
+        ALOGI("UWOP_ALLOC_LARGE allocation size: %x", allocation_size);
+
         cur_regs->set_sp(cur_regs->sp() + allocation_size);
+        ALOGI("stack pointer: %lx", cur_regs->sp());
+
+        uint64_t value;
+        process_memory->Read64(cur_regs->sp(), &value);
+        ALOGI("value at sp: %lx", value);
+
+        op_idx += 1;
 
         break;
       }
       case 2: {  // UWOP_ALLOC_SMALL
         uint8_t op_info = unwind_code.GetOpInfo();
         uint32_t allocation_size = static_cast<uint32_t>(op_info) * 8 + 8;
+        ALOGI_IF(kVerboseLogging, "UWOP_ALLOC_SMALL allocation size: %x", allocation_size);
+
         cur_regs->set_sp(cur_regs->sp() + allocation_size);
+        ALOGI("stack pointer: %lx", cur_regs->sp());
+
+        uint64_t value;
+        process_memory->Read64(cur_regs->sp(), &value);
+        ALOGI("value at sp: %lx", value);
+
         op_idx += 1;
         break;
       }
@@ -382,35 +402,112 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
   return true;
 }
 
+bool Coff::DetectAndHandleEpilog(uint64_t start_address, uint64_t end_address,
+                                 uint64_t current_offset_from_start, Memory* process_memory,
+                                 Regs* regs) {
+  ALOGI_IF(kVerboseLogging, "Coff::DetectAndHandleEpilog");
+  cs_insn* instruction = cs_malloc(capstone_handle_);
+  size_t code_size = end_address - start_address - current_offset_from_start;
+  std::vector<uint8_t> code_from_process;
+  code_from_process.resize(code_size);
+  // TODO: Use the map base address, not the one from the optional header?
+  if (!process_memory->ReadFully(
+          coff_optional_header_.image_base + start_address + current_offset_from_start,
+          static_cast<void*>(&code_from_process[0]), code_size)) {
+    ALOGI_IF(kVerboseLogging, "Reading from process memory failed");
+    cs_free(instruction, 1);
+    return false;
+  }
+  uint64_t current_offset = 0;
+  const uint8_t* code_pointer = code_from_process.data();
+
+  uint64_t rsp_adjustment = 0;
+
+  bool is_first_iteration = true;
+
+  while (code_size > 0) {
+    ALOGI_IF(kVerboseLogging, "code size: %lx", code_size);
+    ALOGI_IF(kVerboseLogging, "code vector size: %lx", code_from_process.size());
+    ALOGI_IF(kVerboseLogging, "current_offset: %lx", current_offset);
+
+    if (!cs_disasm_iter(capstone_handle_, &code_pointer, &code_size, &current_offset,
+                        instruction)) {
+      ALOGI_IF(kVerboseLogging, "Disassembling failed");
+      cs_free(instruction, 1);
+      return false;
+    }
+
+    // The instructions 'lea' and 'add' are only legal as the first instruction of the epilog,
+    // so we can only see them in the first iteration of this loop if we are indeed in the
+    // epilog (and in which case we are actually at the start of the epilog).
+    if (is_first_iteration && instruction->id == X86_INS_LEA) {
+      ALOGI_IF(kVerboseLogging, "lea instruction op string: %s", instruction->op_str);
+      // TODO: Set rsp accordingly.
+    } else if (is_first_iteration && instruction->id == X86_INS_ADD) {
+      // TODO: Add proper value to rsp.
+      ALOGI_IF(kVerboseLogging, "add instruction op string: %s", instruction->op_str);
+    } else if (instruction->id == X86_INS_POP) {
+      ALOGI_IF(kVerboseLogging, "pop instruction");
+      // TODO: Set register accordingly.
+      rsp_adjustment += 8;
+    } else if (instruction->id == X86_INS_RET) {
+      ALOGI_IF(kVerboseLogging, "return instruction");
+      // This is the last instruction of the epilog.
+      break;
+    } else {
+      cs_free(instruction, 1);
+      return false;
+    }
+
+    is_first_iteration = false;
+
+    ALOGI_IF(kVerboseLogging, "Instruction address: %lx", instruction->address);
+    ALOGI_IF(kVerboseLogging, "Instruction mnemonic: %s", instruction->mnemonic);
+    ALOGI_IF(kVerboseLogging, "Instruction op string: %s", instruction->op_str);
+    ALOGI_IF(kVerboseLogging, "Instruction name: %s",
+             cs_insn_name(capstone_handle_, instruction->id));
+
+    current_offset += instruction->size;
+  }
+
+  RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
+  cur_regs->set_sp(cur_regs->sp() + rsp_adjustment);
+  ALOGI("stack pointer (epilog handling): %lx", cur_regs->sp());
+
+  cs_free(instruction, 1);
+
+  return true;
+}
+
 // Experimental code for trying out stuff.
 bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
                                            Regs* regs, uint64_t pc_rva) {
   constexpr int kCoffDataDirExceptionTableIndex = 3;
   if (kCoffDataDirExceptionTableIndex >= coff_optional_header_.data_dirs.size()) {
-    ALOGI("No exception table found.");
+    ALOGI_IF(kVerboseLogging, "No exception table found.");
     return false;
   }
   DataDirectory data_directory = coff_optional_header_.data_dirs[kCoffDataDirExceptionTableIndex];
   if (data_directory.vmaddr == 0) {
-    ALOGI("No exception table found.");
+    ALOGI_IF(kVerboseLogging, "No exception table found.");
     return false;
   }
   constexpr uint16_t kImageFileMachineAmd64 = 0x8664;
   if (coff_header_.machine != kImageFileMachineAmd64) {
-    ALOGI("Unsupported machine type.");
+    ALOGI_IF(kVerboseLogging, "Unsupported machine type.");
     return false;
   }
 
-  ALOGI("PC relative virtual address: %lx", pc_rva);
+  ALOGI_IF(kVerboseLogging, "PC relative virtual address: %lx", pc_rva);
 
   uint32_t rva = data_directory.vmaddr;
   uint32_t size = data_directory.vmsize;
-  ALOGI("Exception table rva: %x", rva);
-  ALOGI("Exception table size: %x", size);
+  ALOGI_IF(kVerboseLogging, "Exception table rva: %x", rva);
+  ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
 
   uint64_t pdata_file_offset = MapFromRVAToFileOffset(pdata_section_, rva);
-  ALOGI("Exception table file offset: %lx", pdata_file_offset);
-  ALOGI("Exception table size: %x", size);
+  ALOGI_IF(kVerboseLogging, "Exception table file offset: %lx", pdata_file_offset);
+  ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
 
   uint64_t end = pdata_file_offset + size;
   // TODO: Can do binary search, but we just do linear search for simplicity for now.
@@ -421,7 +518,7 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
     if (!Get32(object_file_memory, &offset, &(function.start_address)) ||
         !Get32(object_file_memory, &offset, &(function.end_address)) ||
         !Get32(object_file_memory, &offset, &(function.unwind_info_offset))) {
-      ALOGI("ERROR: Unexpected read error.");
+      ALOGI_IF(kVerboseLogging, "ERROR: Unexpected read error.");
       break;
     }
 
@@ -433,7 +530,7 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
   }
 
   if (!runtime_function_found) {
-    ALOGI("No RUNTIME_FUNCTION found.");
+    ALOGI_IF(kVerboseLogging, "No RUNTIME_FUNCTION found.");
     RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
 
     uint64_t return_address;
@@ -445,13 +542,14 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
     return true;
   }
 
-  ALOGI("function found start address: %x", function_at_pc.start_address);
-  ALOGI("function found end address: %x", function_at_pc.end_address);
-  ALOGI("function found unwind info offset: %x", function_at_pc.unwind_info_offset);
+  ALOGI_IF(kVerboseLogging, "function found start address: %x", function_at_pc.start_address);
+  ALOGI_IF(kVerboseLogging, "function found end address: %x", function_at_pc.end_address);
+  ALOGI_IF(kVerboseLogging, "function found unwind info offset: %x",
+           function_at_pc.unwind_info_offset);
 
   uint64_t xdata_file_offset =
       MapFromRVAToFileOffset(xdata_section_, function_at_pc.unwind_info_offset);
-  ALOGI("xdata info file offset: %lx", xdata_file_offset);
+  ALOGI_IF(kVerboseLogging, "xdata info file offset: %lx", xdata_file_offset);
 
   UnwindInfo unwind_info;
   if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_info.version_and_flags)) ||
@@ -461,8 +559,16 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
     return false;
   }
 
-  ALOGI("count of unwind codes: %u", unwind_info.num_codes);
-  ALOGI("unwind code version: %u", unwind_info.GetVersion());
+  uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
+
+  if (  // current_offset_from_start > function_at_pc.start_address + unwind_info.prolog_size &&
+      DetectAndHandleEpilog(function_at_pc.start_address, function_at_pc.end_address,
+                            current_offset_from_start, process_memory, regs)) {
+    return true;
+  }
+
+  ALOGI_IF(kVerboseLogging, "count of unwind codes: %u", unwind_info.num_codes);
+  ALOGI_IF(kVerboseLogging, "unwind code version: %u", unwind_info.GetVersion());
 
   // TODO: Handle versions?
   assert(unwind_info.GetVersion() == 0x01);
@@ -477,16 +583,15 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
               &(unwind_code.code_and_op.unwind_op_and_op_info))) {
       return false;
     }
-    ALOGI("unwind code_offset: %x", unwind_code.code_and_op.code_offset);
-    ALOGI("unwind op info: %u", unwind_code.GetOpInfo());
+    ALOGI_IF(kVerboseLogging, "unwind code_offset: %x", unwind_code.code_and_op.code_offset);
+
     ALOGI("unwind code: %u", unwind_code.GetUnwindOp());
+    ALOGI("unwind op info: %u", unwind_code.GetOpInfo());
     unwind_info.unwind_codes.emplace_back(unwind_code);
   }
 
-  uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
-
   if (!ProcessUnwindOpCodes(process_memory, regs, unwind_info, current_offset_from_start)) {
-    ALOGI("Failed to process unwind op codes.");
+    ALOGI_IF(kVerboseLogging, "Failed to process unwind op codes.");
     return false;
   }
 
@@ -497,18 +602,22 @@ bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finis
   // Lock during the step which can update information in the object.
   std::lock_guard<std::mutex> guard(lock_);
 
-  ALOGI("Coff::Step() call");
-  ALOGI("Rel pc: %lx", rel_pc);
-  ALOGI("Image base: %lx", coff_optional_header_.image_base);
+  ALOGI("PC before step: %lx", regs->pc());
+  ALOGI("SP before step: %lx", regs->sp());
+
+  ALOGI_IF(kVerboseLogging, "Coff::Step() call");
+  ALOGI_IF(kVerboseLogging, "Rel pc: %lx", rel_pc);
+  ALOGI_IF(kVerboseLogging, "Image base: %lx", coff_optional_header_.image_base);
 
   uint64_t pc_rva = rel_pc - coff_optional_header_.image_base;
   if (!ParseExceptionTableExperimental(memory_.get(), process_memory, regs, pc_rva)) {
-    ALOGI("Coff unwinding step failed.");
+    ALOGI_IF(kVerboseLogging, "Coff unwinding step failed.");
     *finished = true;
     return false;
   }
 
   ALOGI("PC after step: %lx", regs->pc());
+  ALOGI("SP after step: %lx", regs->sp());
   *finished = (regs->pc() == 0) ? true : false;
 
   assert(false);
@@ -516,12 +625,23 @@ bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finis
   return true;
 }
 
+bool Coff::InitCapstone() {
+  // TODO: Support 32-bit mode.
+  cs_err err = cs_open(CS_ARCH_X86, CS_MODE_64, &capstone_handle_);
+  if (err) {
+    ALOGI_IF(kVerboseLogging, "Failed to initialize Capstone library.");
+    return false;
+  }
+  return true;
+}
+
 bool Coff::Init() {
   std::lock_guard<std::mutex> guard(lock_);
 
-  ALOGI("Coff::Init()");
+  ALOGI_IF(kVerboseLogging, "Coff::Init()");
   ParseHeaders(memory_.get());
   InitializeSections();
+  InitCapstone();
   return true;
 }
 
