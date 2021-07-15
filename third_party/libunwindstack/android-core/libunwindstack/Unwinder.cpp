@@ -293,6 +293,9 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
         if (coff->Step(step_pc, regs_, process_memory_.get(), &finished)) {
           ALOGI("Coff step succeeded.");
           stepped = true;
+        } else {
+          // Do not continue unwinding if we failed in COFF unwinding.
+          break;
         }
       } else {
         if (map_info->flags & MAPS_FLAGS_DEVICE_MAP) {
