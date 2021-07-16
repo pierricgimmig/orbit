@@ -7,6 +7,8 @@
 #include <unwindstack/MachineX86_64.h>
 #include <unwindstack/Regs.h>
 
+#include <map>
+
 #define LOG_TAG "unwind"
 #include <log/log.h>
 
@@ -14,7 +16,7 @@
 
 namespace unwindstack {
 
-bool kVerboseLogging = false;
+bool kVerboseLogging = true;
 
 namespace {
 
@@ -320,10 +322,6 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
         ALOGI("stack pointer: %lx", cur_regs->sp());
 
-        uint64_t value;
-        process_memory->Read64(cur_regs->sp(), &value);
-        ALOGI("value at sp: %lx", value);
-
         uint8_t op_info = unwind_code.GetOpInfo();
         uint16_t reg = MapToUnwindstackRegister(op_info);
         ALOGI("setting register: %x", reg);
@@ -402,36 +400,44 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
   return true;
 }
 
-bool Coff::DetectAndHandleEpilog(uint64_t start_address, uint64_t end_address,
-                                 uint64_t current_offset_from_start, Memory* process_memory,
-                                 Regs* regs) {
-  ALOGI_IF(kVerboseLogging, "Coff::DetectAndHandleEpilog");
-  cs_insn* instruction = cs_malloc(capstone_handle_);
-  size_t code_size = end_address - start_address - current_offset_from_start;
-  std::vector<uint8_t> code_from_process;
-  code_from_process.resize(code_size);
-  // TODO: Use the map base address, not the one from the optional header?
-  if (!process_memory->ReadFully(
-          coff_optional_header_.image_base + start_address + current_offset_from_start,
-          static_cast<void*>(&code_from_process[0]), code_size)) {
-    ALOGI_IF(kVerboseLogging, "Reading from process memory failed");
-    cs_free(instruction, 1);
-    return false;
+static uint16_t MapToUnwindstackRegister(x86_reg capstone_reg) {
+  std::map<x86_reg, uint16_t> kMapToUnwindstackRegister = {
+      {X86_REG_RAX, X86_64_REG_RAX}, {X86_REG_RCX, X86_64_REG_RCX}, {X86_REG_RDX, X86_64_REG_RDX},
+      {X86_REG_RBX, X86_64_REG_RBX}, {X86_REG_RSP, X86_64_REG_RSP}, {X86_REG_RBP, X86_64_REG_RBP},
+      {X86_REG_RSI, X86_64_REG_RSI}, {X86_REG_RDI, X86_64_REG_RDI}, {X86_REG_R8, X86_64_REG_R8},
+      {X86_REG_R9, X86_64_REG_R9},   {X86_REG_R10, X86_64_REG_R10}, {X86_REG_R11, X86_64_REG_R11},
+      {X86_REG_R12, X86_64_REG_R12}, {X86_REG_R13, X86_64_REG_R13}, {X86_REG_R14, X86_64_REG_R14},
+      {X86_REG_R15, X86_64_REG_R15}};
+  auto it = kMapToUnwindstackRegister.find(capstone_reg);
+  if (it != kMapToUnwindstackRegister.end()) {
+    return it->second;
   }
+  return X86_64_REG_LAST;
+}
+
+bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t>& machine_code,
+                           Memory* process_memory, Regs* regs) {
   uint64_t current_offset = 0;
-  const uint8_t* code_pointer = code_from_process.data();
-
+  size_t code_size = machine_code.size();
+  const uint8_t* code_pointer = machine_code.data();
   uint64_t rsp_adjustment = 0;
-
   bool is_first_iteration = true;
+  cs_insn* instruction = cs_malloc(capstone_handle);
+
+  // We need to copy registers to make sure we don't overwrite values incorrectly when after some
+  // instructions we find out we are actually not in the epilog.
+
+  std::unique_ptr<Regs> cloned_regs(regs->Clone());
+  RegsImpl<uint64_t>* updated_regs = reinterpret_cast<RegsImpl<uint64_t>*>(cloned_regs.get());
+
+  ALOGI("Stack pointer before: %lx", cloned_regs->sp());
 
   while (code_size > 0) {
     ALOGI_IF(kVerboseLogging, "code size: %lx", code_size);
-    ALOGI_IF(kVerboseLogging, "code vector size: %lx", code_from_process.size());
+    ALOGI_IF(kVerboseLogging, "code vector size: %lx", machine_code.size());
     ALOGI_IF(kVerboseLogging, "current_offset: %lx", current_offset);
 
-    if (!cs_disasm_iter(capstone_handle_, &code_pointer, &code_size, &current_offset,
-                        instruction)) {
+    if (!cs_disasm_iter(capstone_handle, &code_pointer, &code_size, &current_offset, instruction)) {
       ALOGI_IF(kVerboseLogging, "Disassembling failed");
       cs_free(instruction, 1);
       return false;
@@ -443,15 +449,59 @@ bool Coff::DetectAndHandleEpilog(uint64_t start_address, uint64_t end_address,
     if (is_first_iteration && instruction->id == X86_INS_LEA) {
       ALOGI_IF(kVerboseLogging, "lea instruction op string: %s", instruction->op_str);
       // TODO: Set rsp accordingly.
+
+      // Note that this instruction is only legal as the first instruction if frame pointers
+      // are being used.
+
     } else if (is_first_iteration && instruction->id == X86_INS_ADD) {
-      // TODO: Add proper value to rsp.
-      ALOGI_IF(kVerboseLogging, "add instruction op string: %s", instruction->op_str);
+      ALOGI("add instruction op string: %s", instruction->op_str);
+      ALOGI("op count: %u", instruction->detail->x86.op_count);
+      assert(instruction->detail->x86.op_count == 2);
+      cs_x86_op operand0 = instruction->detail->x86.operands[0];
+      cs_x86_op operand1 = instruction->detail->x86.operands[1];
+      if (operand0.type != X86_OP_REG || operand1.type != X86_OP_IMM) {
+        // The 'add' instruction must be adding an immediate value to a register, o/w
+        // we are not in the epilog.
+        cs_free(instruction, 1);
+        return false;
+      }
+      x86_reg reg = operand0.reg;
+      if (reg != X86_REG_RSP) {
+        // The register that we add to must be rsp, o/w we are not in the epilog.
+        return false;
+      }
+      int64_t immediate_value = operand1.imm;
+      if (immediate_value < 0) {
+        // The immediate value represents the stack allocation size, so it must be non-negative.
+        return false;
+      }
+      updated_regs->set_sp(updated_regs->sp() + static_cast<uint64_t>(immediate_value));
     } else if (instruction->id == X86_INS_POP) {
-      ALOGI_IF(kVerboseLogging, "pop instruction");
-      // TODO: Set register accordingly.
-      rsp_adjustment += 8;
+      ALOGI("pop instruction");
+      ALOGI("op count: %u", instruction->detail->x86.op_count);
+      assert(instruction->detail->x86.op_count == 1);
+      cs_x86_op operand = instruction->detail->x86.operands[0];
+      assert(operand.type == X86_OP_REG);
+      x86_reg reg = operand.reg;
+      uint16_t unwindstack_reg = MapToUnwindstackRegister(reg);
+
+      uint64_t value;
+      if (!process_memory->Read64(updated_regs->sp(), &value)) {
+        return false;
+      }
+      updated_regs->set_sp(updated_regs->sp() + sizeof(uint64_t));
+
+      (*updated_regs)[unwindstack_reg] = value;
     } else if (instruction->id == X86_INS_RET) {
       ALOGI_IF(kVerboseLogging, "return instruction");
+
+      uint64_t return_address;
+      if (!process_memory->Read64(updated_regs->sp(), &return_address)) {
+        return false;
+      }
+      updated_regs->set_sp(updated_regs->sp() + sizeof(uint64_t));
+      updated_regs->set_pc(return_address);
+
       // This is the last instruction of the epilog.
       break;
     } else {
@@ -460,23 +510,38 @@ bool Coff::DetectAndHandleEpilog(uint64_t start_address, uint64_t end_address,
     }
 
     is_first_iteration = false;
-
-    ALOGI_IF(kVerboseLogging, "Instruction address: %lx", instruction->address);
-    ALOGI_IF(kVerboseLogging, "Instruction mnemonic: %s", instruction->mnemonic);
-    ALOGI_IF(kVerboseLogging, "Instruction op string: %s", instruction->op_str);
-    ALOGI_IF(kVerboseLogging, "Instruction name: %s",
-             cs_insn_name(capstone_handle_, instruction->id));
-
-    current_offset += instruction->size;
   }
 
-  RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
-  cur_regs->set_sp(cur_regs->sp() + rsp_adjustment);
-  ALOGI("stack pointer (epilog handling): %lx", cur_regs->sp());
+  RegsImpl<uint64_t>* current_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
+
+  for (uint16_t reg = 0; reg < X86_64_REG_LAST; ++reg) {
+    (*current_regs)[reg] = (*updated_regs)[reg];
+  }
+
+  ALOGI("Stack pointer after: %lx", regs->sp());
 
   cs_free(instruction, 1);
-
   return true;
+}
+
+bool DetectAndHandleEpilog(const csh& capstone_handle, uint64_t image_base,
+                           uint64_t function_start_address, uint64_t function_end_address,
+                           uint64_t current_offset_from_start_of_function, Memory* process_memory,
+                           Regs* regs) {
+  ALOGI_IF(kVerboseLogging, "DetectAndHandleEpilog");
+  size_t code_size =
+      function_end_address - function_start_address - current_offset_from_start_of_function;
+  std::vector<uint8_t> code_from_process;
+  code_from_process.resize(code_size);
+  // TODO: Use the map base address, not the one from the optional header?
+  if (!process_memory->ReadFully(
+          image_base + function_start_address + current_offset_from_start_of_function,
+          static_cast<void*>(&code_from_process[0]), code_size)) {
+    ALOGI_IF(kVerboseLogging, "Reading from process memory failed");
+    return false;
+  }
+
+  return DetectAndHandleEpilog(capstone_handle, code_from_process, process_memory, regs);
 }
 
 // Experimental code for trying out stuff.
@@ -562,7 +627,8 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
   uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
 
   if (  // current_offset_from_start > function_at_pc.start_address + unwind_info.prolog_size &&
-      DetectAndHandleEpilog(function_at_pc.start_address, function_at_pc.end_address,
+      DetectAndHandleEpilog(capstone_handle_, coff_optional_header_.image_base,
+                            function_at_pc.start_address, function_at_pc.end_address,
                             current_offset_from_start, process_memory, regs)) {
     return true;
   }
@@ -630,6 +696,11 @@ bool Coff::InitCapstone() {
   cs_err err = cs_open(CS_ARCH_X86, CS_MODE_64, &capstone_handle_);
   if (err) {
     ALOGI_IF(kVerboseLogging, "Failed to initialize Capstone library.");
+    return false;
+  }
+  err = cs_option(capstone_handle_, CS_OPT_DETAIL, CS_OPT_ON);
+  if (err) {
+    ALOGI_IF(kVerboseLogging, "Failed to set CS_OPT_DETAIL option in Capstone");
     return false;
   }
   return true;
