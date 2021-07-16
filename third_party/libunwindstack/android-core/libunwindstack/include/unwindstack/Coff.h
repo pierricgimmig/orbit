@@ -131,6 +131,14 @@ struct UnwindInfo {
   uint8_t GetFrameOffset() const { return (frame_register_and_offset >> 4) & 0x0f; }
 };
 
+bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t>& machine_code,
+                           Memory* process_memory, Regs* regs);
+
+bool DetectAndHandleEpilog(const csh& capstone_handle, uint64_t image_base,
+                           uint64_t function_start_address, uint64_t function_end_address,
+                           uint64_t current_offset_from_start_of_function, Memory* process_memory,
+                           Regs* regs);
+
 class Coff {
  public:
   Coff(Memory* memory) : memory_(memory) {}
@@ -163,9 +171,6 @@ class Coff {
                             uint64_t current_code_offset);
 
   bool InitCapstone();
-  bool DetectAndHandleEpilog(uint64_t start_address, uint64_t end_address,
-                             uint64_t current_offset_from_start, Memory* process_memory,
-                             Regs* regs);
 
   int64_t load_bias_ = 0;
   std::unique_ptr<Memory> memory_;
