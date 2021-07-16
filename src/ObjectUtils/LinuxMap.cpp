@@ -89,13 +89,26 @@ ErrorMessageOr<std::vector<ModuleInfo>> ParseMaps(std::string_view proc_maps_dat
 
   std::vector<ModuleInfo> result;
 
+  std::string last_seen_filename;
+
   for (const std::string& line : proc_maps) {
     std::vector<std::string> tokens = absl::StrSplit(line, ' ', absl::SkipEmpty());
+    if (tokens.size() < 5) {
+      continue;
+    }
     // tokens[4] is the inode column. If inode equals 0, then the memory is not
     // mapped to a file (might be heap, stack or something else)
-    if (tokens.size() != 6 || tokens[4] == "0") continue;
+    if (last_seen_filename.empty() && (tokens.size() != 6 || tokens[4] == "0")) continue;
 
-    const std::string& module_path = tokens[5];
+    // HACK to also get modules for executable sections that omit the filename but
+    // actually belong to a file.
+    std::string module_path;
+    if (tokens.size() == 6) {
+      module_path = tokens[5];
+      last_seen_filename = module_path;
+    } else {
+      module_path = last_seen_filename;
+    }
 
     std::vector<std::string> addresses = absl::StrSplit(tokens[0], '-');
     if (addresses.size() != 2) continue;
