@@ -16,7 +16,7 @@
 
 namespace unwindstack {
 
-bool kVerboseLogging = true;
+bool kVerboseLogging = false;
 
 namespace {
 
@@ -320,11 +320,11 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
           return false;
         }
         cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
-        ALOGI("stack pointer: %lx", cur_regs->sp());
+        ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
 
         uint8_t op_info = unwind_code.GetOpInfo();
         uint16_t reg = MapToUnwindstackRegister(op_info);
-        ALOGI("setting register: %x", reg);
+        ALOGI_IF(kVerboseLogging, "setting register: %x", reg);
         (*cur_regs)[reg] = register_value;
 
         op_idx++;
@@ -355,14 +355,14 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
           op_idx += 2;
         }
 
-        ALOGI("UWOP_ALLOC_LARGE allocation size: %x", allocation_size);
+        ALOGI_IF(kVerboseLogging, "UWOP_ALLOC_LARGE allocation size: %x", allocation_size);
 
         cur_regs->set_sp(cur_regs->sp() + allocation_size);
-        ALOGI("stack pointer: %lx", cur_regs->sp());
+        ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
 
         uint64_t value;
         process_memory->Read64(cur_regs->sp(), &value);
-        ALOGI("value at sp: %lx", value);
+        ALOGI_IF(kVerboseLogging, "value at sp: %lx", value);
 
         op_idx += 1;
 
@@ -374,11 +374,11 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         ALOGI_IF(kVerboseLogging, "UWOP_ALLOC_SMALL allocation size: %x", allocation_size);
 
         cur_regs->set_sp(cur_regs->sp() + allocation_size);
-        ALOGI("stack pointer: %lx", cur_regs->sp());
+        ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
 
         uint64_t value;
         process_memory->Read64(cur_regs->sp(), &value);
-        ALOGI("value at sp: %lx", value);
+        ALOGI_IF(kVerboseLogging, "value at sp: %lx", value);
 
         op_idx += 1;
         break;
@@ -395,7 +395,7 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
     return false;
   }
   cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
-  ALOGI("stack pointer: %lx", cur_regs->sp());
+  ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
   cur_regs->set_pc(return_address);
   return true;
 }
@@ -430,7 +430,7 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
   std::unique_ptr<Regs> cloned_regs(regs->Clone());
   RegsImpl<uint64_t>* updated_regs = reinterpret_cast<RegsImpl<uint64_t>*>(cloned_regs.get());
 
-  ALOGI("Stack pointer before: %lx", cloned_regs->sp());
+  ALOGI_IF(kVerboseLogging, "Stack pointer before: %lx", cloned_regs->sp());
 
   while (code_size > 0) {
     ALOGI_IF(kVerboseLogging, "code size: %lx", code_size);
@@ -454,8 +454,8 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
       // are being used.
 
     } else if (is_first_iteration && instruction->id == X86_INS_ADD) {
-      ALOGI("add instruction op string: %s", instruction->op_str);
-      ALOGI("op count: %u", instruction->detail->x86.op_count);
+      ALOGI_IF(kVerboseLogging, "add instruction op string: %s", instruction->op_str);
+      ALOGI_IF(kVerboseLogging, "op count: %u", instruction->detail->x86.op_count);
       assert(instruction->detail->x86.op_count == 2);
       cs_x86_op operand0 = instruction->detail->x86.operands[0];
       cs_x86_op operand1 = instruction->detail->x86.operands[1];
@@ -477,8 +477,8 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
       }
       updated_regs->set_sp(updated_regs->sp() + static_cast<uint64_t>(immediate_value));
     } else if (instruction->id == X86_INS_POP) {
-      ALOGI("pop instruction");
-      ALOGI("op count: %u", instruction->detail->x86.op_count);
+      ALOGI_IF(kVerboseLogging, "pop instruction");
+      ALOGI_IF(kVerboseLogging, "op count: %u", instruction->detail->x86.op_count);
       assert(instruction->detail->x86.op_count == 1);
       cs_x86_op operand = instruction->detail->x86.operands[0];
       assert(operand.type == X86_OP_REG);
@@ -518,7 +518,7 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
     (*current_regs)[reg] = (*updated_regs)[reg];
   }
 
-  ALOGI("Stack pointer after: %lx", regs->sp());
+  ALOGI_IF(kVerboseLogging, "Stack pointer after: %lx", regs->sp());
 
   cs_free(instruction, 1);
   return true;
@@ -651,8 +651,8 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
     }
     ALOGI_IF(kVerboseLogging, "unwind code_offset: %x", unwind_code.code_and_op.code_offset);
 
-    ALOGI("unwind code: %u", unwind_code.GetUnwindOp());
-    ALOGI("unwind op info: %u", unwind_code.GetOpInfo());
+    ALOGI_IF(kVerboseLogging, "unwind code: %u", unwind_code.GetUnwindOp());
+    ALOGI_IF(kVerboseLogging, "unwind op info: %u", unwind_code.GetOpInfo());
     unwind_info.unwind_codes.emplace_back(unwind_code);
   }
 
