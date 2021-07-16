@@ -22,12 +22,13 @@
 #include <algorithm>
 #include <cctype>
 
-#include "../concurrentqueue.h"
+#include "../blockingconcurrentqueue.h"
 #include "lockbasedqueue.h"
 #include "simplelockfree.h"
 #include "boostqueue.h"
 #include "tbbqueue.h"
 #include "stdqueue.h"
+#include "dlibqueue.h"
 #include "../tests/common/simplethread.h"
 #include "../tests/common/systemtime.h"
 #include "cpuid.h"
@@ -186,40 +187,47 @@ int BENCHMARK_THREADS[BENCHMARK_TYPE_COUNT][9] = {
 enum queue_id_t
 {
 	queue_moodycamel_ConcurrentQueue,
+	queue_moodycamel_BlockingConcurrentQueue,
 	queue_boost,
 	queue_tbb,
 	queue_simplelockfree,
 	queue_lockbased,
 	queue_std,
-	
+	queue_dlib,
 	QUEUE_COUNT
 };
 
 const char QUEUE_NAMES[QUEUE_COUNT][64] = {
 	"moodycamel::ConcurrentQueue",
+	"moodycamel::BlockingConcurrentQueue",
 	"boost::lockfree::queue",
 	"tbb::concurrent_queue",
 	"SimpleLockFreeQueue",
 	"LockBasedQueue",
 	"std::queue",
+	"dlib::pipe"
 };
 
 const char QUEUE_SUMMARY_NOTES[QUEUE_COUNT][128] = {
+	"including bulk",
 	"including bulk",
 	"",
 	"",
 	"",
 	"",
 	"single thread only",
+	""
 };
 
 const bool QUEUE_TOKEN_SUPPORT[QUEUE_COUNT] = {
+	true,
 	true,
 	false,
 	false,
 	false,
 	false,
 	false,
+	false
 };
 
 const int QUEUE_MAX_THREADS[QUEUE_COUNT] = {
@@ -228,16 +236,20 @@ const int QUEUE_MAX_THREADS[QUEUE_COUNT] = {
 	-1,
 	-1,
 	-1,
+	-1,
 	1,
+	-1
 };
 
 const bool QUEUE_BENCH_SUPPORT[QUEUE_COUNT][BENCHMARK_TYPE_COUNT] = {
+	{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
 	{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
 	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
 	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
 	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
 	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
 	{ 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0 },
+	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 }
 };
 
 
@@ -289,7 +301,7 @@ counter_t adjustForThreads(counter_t suggestedOps, int nthreads)
 }
 
 
-template<typename TQueue>
+template<typename TQueue, typename item_t>
 counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, unsigned int randSeed)
 {
 	switch (benchmark) {
@@ -300,9 +312,10 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 			std::uniform_int_distribution<int> rand(0, 20);
 			double total = 0;
 			SystemTime start;
+			item_t item = 1;
 			for (counter_t i = 0; i != ops; ++i) {
 				start = getSystemTime();
-				q.enqueue(i);
+				q.enqueue(item);
 				total += getTimeDelta(start);
 			}
 			return total;
@@ -313,9 +326,10 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_mostly_enqueue: {
 		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
 			TQueue q;
+			item_t item = 1;
 			auto start = getSystemTime();
 			for (counter_t i = 0; i != ops; ++i) {
-				q.enqueue(i);
+				q.enqueue(item);
 			}
 			return getTimeDelta(start);
 		}), nthreads);
@@ -327,13 +341,14 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_mpsc: {
 		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
 			TQueue q;
+			item_t item = 1;
 			for (counter_t i = 0; i != ops; ++i) {
-				q.enqueue(i);
+				q.enqueue(item);
 			}
-			int item;
+			item_t item_rec;
 			auto start = getSystemTime();
 			for (counter_t i = 0; i != ops; ++i) {
-				q.try_dequeue(item);
+				q.try_dequeue(item_rec);
 			}
 			return getTimeDelta(start);
 		}), nthreads);
@@ -341,7 +356,7 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_only_enqueue_bulk:
 	case bench_only_enqueue_bulk_prealloc:
 	case bench_mostly_enqueue_bulk: {
-		std::vector<counter_t> data;
+		std::vector<item_t> data;
 		for (counter_t i = 0; i != BULK_BATCH_SIZE; ++i) {
 			data.push_back(i);
 		}
@@ -358,7 +373,7 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_mostly_dequeue_bulk: {
 		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
 			TQueue q;
-			std::vector<int> data(BULK_BATCH_SIZE);
+			std::vector<item_t> data(BULK_BATCH_SIZE);
 			for (counter_t i = 0; i != ops; ++i) {
 				q.enqueue_bulk(data.cbegin(), data.size());
 			}
@@ -373,10 +388,10 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_empty_dequeue: {
 		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
 			TQueue q;
-			int item;
+			item_t item_rec;
 			auto start = getSystemTime();
 			for (counter_t i = 0; i != ops; ++i) {
-				q.try_dequeue(item);
+				q.try_dequeue(item_rec);
 			}
 			return getTimeDelta(start);
 		}), nthreads);
@@ -384,11 +399,12 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_enqueue_dequeue_pairs: {
 		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
 			TQueue q;
-			int item;
+			item_t item = 1;
+			item_t item_rec;
 			auto start = getSystemTime();
 			for (counter_t i = 0; i != ops; ++i) {
-				q.enqueue(i);
-				q.try_dequeue(item);
+				q.enqueue(item);
+				q.try_dequeue(item_rec);
 			}
 			return getTimeDelta(start);
 		}), nthreads);
@@ -397,11 +413,12 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 	case bench_heavy_concurrent: {
 		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
 			TQueue q;
-			int item;
+			item_t item=1;
+			item_t item_rec;
 			auto start = getSystemTime();
 			for (counter_t i = 0; i != ops; ++i) {
-				q.enqueue(i);
-				q.try_dequeue(item);
+				q.enqueue(item);
+				q.try_dequeue(item_rec);
 			}
 			return getTimeDelta(start);
 		}), nthreads);
@@ -415,7 +432,7 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 
 
 // Returns time elapsed, in (fractional) milliseconds
-template<typename TQueue>
+template<typename TQueue, typename item_t>
 double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, unsigned int randSeed, counter_t maxOps, int maxThreads, counter_t& out_opCount)
 {
 	double result = 0;
@@ -429,13 +446,14 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		std::vector<counter_t> ops(nthreads);
 		std::vector<double> times(nthreads);
 		std::atomic<int> ready(0);
+		item_t item_rec;
+		item_t item = 1;
 		for (int tid = 0; tid != nthreads; ++tid) {
 			threads[tid] = SimpleThread([&](int id) {
 				ready.fetch_add(1, std::memory_order_relaxed);
 				while (ready.load(std::memory_order_relaxed) != nthreads)
 					continue;
 				
-				int item;
 				SystemTime start;
 				RNG_t rng(randSeed * (id + 1));
 				std::uniform_int_distribution<int> rand(0, 20);
@@ -443,24 +461,25 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				times[id] = 0;
 				typename TQueue::consumer_token_t consTok(q);
 				typename TQueue::producer_token_t prodTok(q);
-			
+
+				
 				for (counter_t i = 0; i != maxOps; ++i) {
 					if (rand(rng) == 0) {
 						start = getSystemTime();
 						if ((i & 1) == 0) {
 							if (useTokens) {
-								q.try_dequeue(consTok, item);
+								q.try_dequeue(consTok, item_rec);
 							}
 							else {
-								q.try_dequeue(item);
+								q.try_dequeue(item_rec);
 							}
 						}
 						else {
 							if (useTokens) {
-								q.enqueue(prodTok, i);
+								q.enqueue(prodTok, item);
 							}
 							else {
-								q.enqueue(i);
+								q.enqueue(item);
 							}
 						}
 						times[id] += getTimeDelta(start);
@@ -476,8 +495,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			out_opCount += ops[tid];
 			result += times[tid];
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
@@ -485,23 +503,26 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		out_opCount = maxOps * nthreads;
 		
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		{
 			// Enqueue opcount elements first, then dequeue them; this
 			// will "stretch out" the queue, letting implementatations
 			// that re-use memory internally avoid having to allocate
 			// more later during the timed enqueue operations.
 			std::vector<SimpleThread> threads(nthreads);
+			
 			for (int tid = 0; tid != nthreads; ++tid) {
 				threads[tid] = SimpleThread([&](int id) {
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 				}, tid);
@@ -511,8 +532,8 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			}
 			
 			// Now empty the queue
-			int item;
-			while (q.try_dequeue(item))
+			
+			while (q.try_dequeue(item_rec))
 				continue;
 		}
 		
@@ -522,12 +543,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			if (useTokens) {
 				typename TQueue::producer_token_t tok(q);
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.enqueue(tok, i);
+					q.enqueue(tok, item);
 				}
 			}
 			else {
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.enqueue(i);
+					q.enqueue(item);
 				}	
 			}
 			result = getTimeDelta(start);
@@ -546,12 +567,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 					timings[id] = getTimeDelta(start);
@@ -563,8 +584,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				result += timings[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
@@ -572,18 +592,20 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		out_opCount = maxOps * nthreads;
 		
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		if (nthreads == 1) {
 			// No contention -- measures raw single-item enqueue speed
 			auto start = getSystemTime();
 			if (useTokens) {
 				typename TQueue::producer_token_t tok(q);
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.enqueue(tok, i);
+					q.enqueue(tok, item);
 				}
 			}
 			else {
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.enqueue(i);
+					q.enqueue(item);
 				}	
 			}
 			result = getTimeDelta(start);
@@ -602,12 +624,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 					timings[id] = getTimeDelta(start);
@@ -619,8 +641,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				result += timings[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
@@ -629,6 +650,8 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		out_opCount = maxOps * nthreads;
 		
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		{
 			// Fill up the queue first
 			std::vector<SimpleThread> threads(benchmark == bench_spmc_preproduced ? 1 : nthreads);
@@ -638,12 +661,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != itemsPerThread; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != itemsPerThread; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 				}, tid);
@@ -655,17 +678,16 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		
 		if (nthreads == 1) {
 			// No contention -- measures raw single-item dequeue speed
-			int item;
 			auto start = getSystemTime();
 			if (useTokens) {
 				typename TQueue::consumer_token_t tok(q);
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.try_dequeue(tok, item);
+					q.try_dequeue(tok, item_rec);
 				}
 			}
 			else {
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.try_dequeue(item);
+					q.try_dequeue(item_rec);
 				}	
 			}
 			result = getTimeDelta(start);
@@ -680,17 +702,16 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					while (ready.load(std::memory_order_relaxed) != nthreads)
 						continue;
 					
-					int item;
 					auto start = getSystemTime();
 					if (useTokens) {
 						typename TQueue::consumer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.try_dequeue(tok, item);
+							q.try_dequeue(tok, item_rec);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.try_dequeue(item);
+							q.try_dequeue(item_rec);
 						}
 					}
 					timings[id] = getTimeDelta(start);
@@ -702,14 +723,15 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				result += timings[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_mostly_enqueue: {
 		// Measures the average operation speed when most threads are enqueueing
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		out_opCount = maxOps * nthreads;
 		std::vector<SimpleThread> threads(nthreads);
 		std::vector<double> timings(nthreads);
@@ -725,12 +747,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				if (useTokens) {
 					typename TQueue::producer_token_t tok(q);
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.enqueue(tok, i);
+						q.enqueue(tok, item);
 					}
 				}
 				else {
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.enqueue(i);
+						q.enqueue(item);
 					}
 				}
 				timings[id] = getTimeDelta(start);
@@ -742,17 +764,16 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				while (ready.load(std::memory_order_relaxed) != nthreads)
 					continue;
 				
-				int item;
 				auto start = getSystemTime();
 				if (useTokens) {
 					typename TQueue::consumer_token_t tok(q);
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.try_dequeue(tok, item);
+						q.try_dequeue(tok, item_rec);
 					}
 				}
 				else {
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.try_dequeue(item);
+						q.try_dequeue(item_rec);
 					}
 				}
 				timings[id] = getTimeDelta(start);
@@ -763,14 +784,15 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			threads[tid].join();
 			result += timings[tid];
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_mostly_dequeue: {
 		// Measures the average operation speed when most threads are dequeueing
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		out_opCount = maxOps * nthreads;
 		std::vector<SimpleThread> threads(nthreads);
 		std::vector<double> timings(nthreads);
@@ -783,12 +805,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 				}, tid);
@@ -804,17 +826,16 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				while (ready.load(std::memory_order_relaxed) != nthreads)
 					continue;
 				
-				int item;
 				auto start = getSystemTime();
 				if (useTokens) {
 					typename TQueue::consumer_token_t tok(q);
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.try_dequeue(tok, item);
+						q.try_dequeue(tok, item_rec);
 					}
 				}
 				else {
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.try_dequeue(item);
+						q.try_dequeue(item_rec);
 					}
 				}
 				timings[id] = getTimeDelta(start);
@@ -830,12 +851,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				if (useTokens) {
 					typename TQueue::producer_token_t tok(q);
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.enqueue(tok, i);
+						q.enqueue(tok, item);
 					}
 				}
 				else {
 					for (counter_t i = 0; i != maxOps; ++i) {
-						q.enqueue(i);
+						q.enqueue(item);
 					}
 				}
 				timings[id] = getTimeDelta(start);
@@ -846,13 +867,14 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			threads[tid].join();
 			result += timings[tid];
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_only_enqueue_bulk_prealloc: {
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		{
 			// Enqueue opcount elements first, then dequeue them; this
 			// will "stretch out" the queue, letting implementatations
@@ -864,12 +886,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 				}, tid);
@@ -879,8 +901,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			}
 			
 			// Now empty the queue
-			int item;
-			while (q.try_dequeue(item))
+			while (q.try_dequeue(item_rec))
 				continue;
 		}
 		
@@ -936,13 +957,14 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				result += timings[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_only_enqueue_bulk: {
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		std::vector<counter_t> data;
 		for (counter_t i = 0; i != BULK_BATCH_SIZE; ++i) {
 			data.push_back(i);
@@ -995,14 +1017,15 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				result += timings[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_mostly_enqueue_bulk: {
 		// Measures the average speed of enqueueing in bulk under light contention
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		std::vector<counter_t> data;
 		for (counter_t i = 0; i != BULK_BATCH_SIZE; ++i) {
 			data.push_back(i);
@@ -1070,14 +1093,15 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				out_opCount += ops[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_only_dequeue_bulk: {
 		// Measures the average speed of dequeueing in bulk when all threads are consumers
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		{
 			// Fill up the queue first
 			std::vector<int> data(BULK_BATCH_SIZE);
@@ -1160,14 +1184,15 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				out_opCount += ops[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_mostly_dequeue_bulk: {
 		// Measures the average speed of dequeueing in bulk under light contention
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		auto enqueueThreads = std::max(1, nthreads / 4);
 		out_opCount = maxOps * BULK_BATCH_SIZE * enqueueThreads;
 		std::vector<SimpleThread> threads(nthreads);
@@ -1254,8 +1279,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				out_opCount += ops[tid];
 			}
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
@@ -1263,6 +1287,8 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		counter_t elementsToDequeue = maxOps * (nthreads - 1);
 		
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		std::vector<SimpleThread> threads(nthreads - 1);
 		std::vector<double> timings(nthreads - 1);
 		std::vector<counter_t> ops(nthreads - 1);
@@ -1291,7 +1317,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				}
 				else {
 					while (true) {
-						if (q.try_dequeue(item)) {
+						if (q.try_dequeue(item_rec)) {
 							totalDequeued.fetch_add(1, std::memory_order_relaxed);
 						}
 						else if (totalDequeued.load(std::memory_order_relaxed) == elementsToDequeue) {
@@ -1307,7 +1333,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		
 		lynchpin.store(true, std::memory_order_seq_cst);
 		for (counter_t i = 0; i != elementsToDequeue; ++i) {
-			q.enqueue(i);
+			q.enqueue(item);
 		}
 		
 		result = 0;
@@ -1317,13 +1343,14 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			result += timings[tid];
 			out_opCount += ops[tid];
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_mpsc: {
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		counter_t elementsToDequeue = maxOps * (nthreads - 1);
 		std::vector<SimpleThread> threads(nthreads);
 		std::atomic<int> ready(0);
@@ -1347,7 +1374,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					}
 					else {
 						for (counter_t i = 0; i != elementsToDequeue;) {
-							i += q.try_dequeue(item) ? 1 : 0;
+							i += q.try_dequeue(item_rec) ? 1 : 0;
 							++out_opCount;
 						}
 					}
@@ -1363,12 +1390,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 				}, tid);
@@ -1378,14 +1405,15 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		for (int tid = 0; tid != nthreads; ++tid) {
 			threads[tid].join();
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
 	case bench_empty_dequeue: {
 		// Measures the average speed of attempting to dequeue from an empty queue
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		// Fill up then empty the queue first
 		{
 			std::vector<SimpleThread> threads(maxThreads > 0 ? maxThreads : 8);
@@ -1394,12 +1422,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					if (useTokens) {
 						typename TQueue::producer_token_t tok(q);
 						for (counter_t i = 0; i != 10000; ++i) {
-							q.enqueue(tok, i);
+							q.enqueue(tok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != 10000; ++i) {
-							q.enqueue(i);
+							q.enqueue(item);
 						}
 					}
 				}, tid);
@@ -1409,8 +1437,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			}
 			
 			// Empty the queue
-			int item;
-			while (q.try_dequeue(item))
+			while (q.try_dequeue(item_rec))
 				continue;
 		}
 		
@@ -1427,11 +1454,11 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			}
 			else {
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.try_dequeue(item);
+					q.try_dequeue(item_rec);
 				}
 			}
 			result = getTimeDelta(start);
-			forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+			forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		}
 		else {
 			out_opCount = maxOps * nthreads;
@@ -1454,7 +1481,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.try_dequeue(item);
+							q.try_dequeue(item_rec);
 						}
 					}
 					timings[id] = getTimeDelta(start);
@@ -1465,8 +1492,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				threads[tid].join();
 				result += timings[tid];
 			}
-			int item;
-			forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+			forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		}
 		break;
 	}
@@ -1476,26 +1502,28 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		// (that eight separate threads had at one point enqueued to)
 		out_opCount = maxOps * 2 * nthreads;
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		if (nthreads == 1) {
 			// No contention -- measures speed of immediately dequeueing the item that was just enqueued
 			int item;
 			auto start = getSystemTime();
 			if (useTokens) {
-				typename TQueue::producer_token_t ptok(q);
-				typename TQueue::consumer_token_t ctok(q);
+				typename TQueue::producer_token_t prodTok(q);
+				typename TQueue::consumer_token_t consTok(q);
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.enqueue(ptok, i);
-					q.try_dequeue(ctok, item);
+					q.enqueue(prodTok, item);
+					q.try_dequeue(consTok, item);
 				}
 			}
 			else {
 				for (counter_t i = 0; i != maxOps; ++i) {
-					q.enqueue(i);
-					q.try_dequeue(item);
+					q.enqueue(item);
+					q.try_dequeue(item_rec);
 				}
 			}
 			result = getTimeDelta(start);
-			forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+			forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		}
 		else {
 			std::vector<SimpleThread> threads(nthreads);
@@ -1510,17 +1538,17 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 					int item;
 					auto start = getSystemTime();
 					if (useTokens) {
-						typename TQueue::producer_token_t ptok(q);
-						typename TQueue::consumer_token_t ctok(q);
+						typename TQueue::producer_token_t prodTok(q);
+						typename TQueue::consumer_token_t consTok(q);
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(ptok, i);
-							q.try_dequeue(ctok, item);
+							q.enqueue(prodTok, item);
+							q.try_dequeue(consTok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps; ++i) {
-							q.enqueue(i);
-							q.try_dequeue(item);
+							q.enqueue(item);
+							q.try_dequeue(item_rec);
 						}
 					}
 					timings[id] = getTimeDelta(start);
@@ -1531,8 +1559,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 				threads[tid].join();
 				result += timings[tid];
 			}
-			int item;
-			forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+			forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		}
 		break;
 	}
@@ -1541,6 +1568,8 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		// Measures the average operation speed with many threads under heavy load
 		out_opCount = maxOps * nthreads;
 		TQueue q;
+		item_t item = 1;
+		item_t item_rec;
 		std::vector<SimpleThread> threads(nthreads);
 		std::vector<double> timings(nthreads);
 		std::atomic<int> ready(0);
@@ -1560,13 +1589,13 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 						
 						for (counter_t i = 0; i != maxOps / 2; ++i) {
 							q.try_dequeue(consTok, item);
-							q.enqueue(prodTok, i);
+							q.enqueue(prodTok, item);
 						}
 					}
 					else {
 						for (counter_t i = 0; i != maxOps / 2; ++i) {
-							q.try_dequeue(item);
-							q.enqueue(i);
+							q.try_dequeue(item_rec);
+							q.enqueue(item);
 						}
 					}
 				}
@@ -1576,12 +1605,12 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 						if (useTokens) {
 							typename TQueue::producer_token_t prodTok(q);
 							for (counter_t i = 0; i != maxOps; ++i) {
-								q.enqueue(prodTok, i);
+								q.enqueue(prodTok, item);
 							}
 						}
 						else {
 							for (counter_t i = 0; i != maxOps; ++i) {
-								q.enqueue(i);
+								q.enqueue(item);
 							}
 						}
 					}
@@ -1596,7 +1625,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 						}
 						else {
 							for (counter_t i = 0; i != maxOps; ++i) {
-								q.try_dequeue(item);
+								q.try_dequeue(item_rec);
 							}
 						}
 					}
@@ -1609,8 +1638,7 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 			threads[tid].join();
 			result += timings[tid];
 		}
-		int item;
-		forceNoOptimizeDummy = q.try_dequeue(item) ? 1 : 0;
+		forceNoOptimizeDummy = q.try_dequeue(item_rec) ? 1 : 0;
 		break;
 	}
 	
@@ -1958,22 +1986,28 @@ int main(int argc, char** argv)
 					counter_t maxOps;
 					switch ((queue_id_t)queue) {
 					case queue_moodycamel_ConcurrentQueue:
-						maxOps = determineMaxOpsForBenchmark<moodycamel::ConcurrentQueue<int, Traits>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						maxOps = determineMaxOpsForBenchmark<moodycamel::ConcurrentQueue<int, Traits>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						break;
+					case queue_moodycamel_BlockingConcurrentQueue:
+						maxOps = determineMaxOpsForBenchmark<moodycamel::BlockingConcurrentQueue<int, Traits>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
 						break;
 					case queue_lockbased:
-						maxOps = determineMaxOpsForBenchmark<LockBasedQueue<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						maxOps = determineMaxOpsForBenchmark<LockBasedQueue<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
 						break;
 					case queue_simplelockfree:
-						maxOps = determineMaxOpsForBenchmark<SimpleLockFreeQueue<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						maxOps = determineMaxOpsForBenchmark<SimpleLockFreeQueue<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
 						break;
 					case queue_boost:
-						maxOps = determineMaxOpsForBenchmark<BoostQueueWrapper<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						maxOps = determineMaxOpsForBenchmark<BoostQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
 						break;
 					case queue_tbb:
-						maxOps = determineMaxOpsForBenchmark<TbbQueueWrapper<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						maxOps = determineMaxOpsForBenchmark<TbbQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
 						break;
 					case queue_std:
-						maxOps = determineMaxOpsForBenchmark<StdQueueWrapper<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						maxOps = determineMaxOpsForBenchmark<StdQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
+						break;
+					case queue_dlib:
+						maxOps = determineMaxOpsForBenchmark<DlibQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed);
 						break;
 					default:
 						assert(false && "There should be a case here for every queue in the benchmarks!");
@@ -1988,22 +2022,28 @@ int main(int argc, char** argv)
 						
 						switch ((queue_id_t)queue) {
 						case queue_moodycamel_ConcurrentQueue:
-							elapsed = runBenchmark<moodycamel::ConcurrentQueue<int, Traits>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							elapsed = runBenchmark<moodycamel::ConcurrentQueue<int, Traits>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							break;
+						case queue_moodycamel_BlockingConcurrentQueue:
+							elapsed = runBenchmark<moodycamel::BlockingConcurrentQueue<int, Traits>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
 							break;
 						case queue_lockbased:
-							elapsed = runBenchmark<LockBasedQueue<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							elapsed = runBenchmark<LockBasedQueue<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
 							break;
 						case queue_simplelockfree:
-							elapsed = runBenchmark<SimpleLockFreeQueue<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							elapsed = runBenchmark<SimpleLockFreeQueue<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
 							break;
 						case queue_boost:
-							elapsed = runBenchmark<BoostQueueWrapper<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							elapsed = runBenchmark<BoostQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
 							break;
 						case queue_tbb:
-							elapsed = runBenchmark<TbbQueueWrapper<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							elapsed = runBenchmark<TbbQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
 							break;
 						case queue_std:
-							elapsed = runBenchmark<StdQueueWrapper<int>>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							elapsed = runBenchmark<StdQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
+							break;
+						case queue_dlib:
+							elapsed = runBenchmark<DlibQueueWrapper<int>, int>((benchmark_type_t)benchmark, nthreads, (bool)useTokens, seed, maxOps, maxThreads, ops);
 							break;
 						default:
 							assert(false && "There should be a case here for every queue in the benchmarks!");

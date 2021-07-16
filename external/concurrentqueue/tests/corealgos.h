@@ -76,6 +76,10 @@ private:
 // Thread local hash map
 ////////////////////////////////////////////////////////////////////////////////
 
+#if defined(__APPLE__)
+#include "TargetConditionals.h" // Needed for TARGET_OS_IPHONE
+#endif
+
 // Platform-specific definitions of a numeric thread ID type and an invalid value
 #if defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
 // No sense pulling in windows.h in a header, we'll manually declare the function
@@ -86,6 +90,12 @@ namespace moodycamel { namespace corealgos { namespace details {
 	typedef std::uint32_t thread_id_t;
 	static const thread_id_t invalid_thread_id = 0;		// See http://blogs.msdn.com/b/oldnewthing/archive/2004/02/23/78395.aspx
 	static inline thread_id_t thread_id() { return static_cast<thread_id_t>(::GetCurrentThreadId()); }
+} } }
+#elif defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+namespace moodycamel { namespace corealgos { namespace details {
+	typedef std::uintptr_t thread_id_t;
+	static const thread_id_t invalid_thread_id = 0;
+	static inline thread_id_t thread_id() { return std::hash<std::thread::id>()(std::this_thread::get_id()); }
 } } }
 #else
 // Use a nice trick from this answer: http://stackoverflow.com/a/8438730/21475
@@ -267,7 +277,7 @@ struct ThreadLocal
 				auto raw = static_cast<char*>(corealgos_allocator::malloc(sizeof(InnerHash) + std::alignment_of<KeyValuePair>::value - 1 + sizeof(KeyValuePair) * newCapacity));
 				if (raw == nullptr) {
 					// Allocation failed
-					currentHashCount.fetch_add(-1, std::memory_order_relaxed);
+					currentHashCount.fetch_add((uint32_t)-1, std::memory_order_relaxed);
 					resizeInProgress.clear(std::memory_order_relaxed);
 					return nullptr;
 				}
@@ -424,7 +434,7 @@ struct FreeList
            		assert((head->freeListRefs.load(std::memory_order_relaxed) & SHOULD_BE_ON_FREELIST) == 0);
 
                 // Decrease refcount twice, once for our ref, and once for the list's ref
-                head->freeListRefs.fetch_add(-2, std::memory_order_release);
+                head->freeListRefs.fetch_add(-2u, std::memory_order_release);
                 return head;
             }
 
@@ -432,7 +442,7 @@ struct FreeList
             // increased.
             // Note that we don't need to release any memory effects, but we do need to ensure that the reference
 			// count decrement happens-after the CAS on the head.
-            refs = prevHead->freeListRefs.fetch_add(-1, std::memory_order_acq_rel);
+            refs = prevHead->freeListRefs.fetch_add(-1u, std::memory_order_acq_rel);
             if (refs == SHOULD_BE_ON_FREELIST + 1) {
                 add_knowing_refcount_is_zero(prevHead);
             }

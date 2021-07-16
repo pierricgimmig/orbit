@@ -7,7 +7,7 @@ include makefile.inc
 BASE_OPTS = -pthread
 
 DEBUG_OPTS = -g -O0   # -DMOODYCAMEL_QUEUE_INTERNAL_DEBUG
-RELEASE_OPTS = -O3 -g -DNDEBUG
+RELEASE_OPTS = -O2 -g -DNDEBUG
 
 ifeq ($(OS),Windows_NT)
 	PLATFORM_OPTS = -static
@@ -29,9 +29,10 @@ tests: bin/unittests$(EXT) bin/fuzztests$(EXT)
 	
 benchmarks: bin/benchmarks$(EXT)
 
-bin/unittests$(EXT): ../concurrentqueue.h ../blockingconcurrentqueue.h ../tests/unittests/unittests.cpp ../tests/unittests/mallocmacro.cpp ../tests/common/simplethread.h ../tests/common/simplethread.cpp ../tests/common/systemtime.h ../tests/common/systemtime.cpp ../tests/corealgos.h ../tests/unittests/minitest.h makefile
+bin/unittests$(EXT): ../concurrentqueue.h ../blockingconcurrentqueue.h ../lightweightsemaphore.h ../tests/unittests/unittests.cpp ../tests/unittests/mallocmacro.cpp ../tests/common/simplethread.h ../tests/common/simplethread.cpp ../tests/common/systemtime.h ../tests/common/systemtime.cpp ../tests/corealgos.h ../tests/unittests/minitest.h ../c_api/blockingconcurrentqueue.cpp ../c_api/concurrentqueue.cpp makefile
 	test -d bin || mkdir bin
-	g++ -std=c++11 -Wall -pedantic-errors -Wpedantic -Wconversion $(OPTS) -fno-elide-constructors ../tests/common/simplethread.cpp ../tests/common/systemtime.cpp ../tests/unittests/unittests.cpp -o bin/unittests$(EXT) $(LD_OPTS)
+	g++ -c -std=c++11 -Wall -pedantic-errors -Wpedantic -Wconversion -DMOODYCAMEL_STATIC $(OPTS) -fno-elide-constructors -fno-exceptions ../c_api/blockingconcurrentqueue.cpp ../c_api/concurrentqueue.cpp
+	g++ -std=c++11 -Wall -pedantic-errors -Wpedantic -Wconversion -DMOODYCAMEL_STATIC $(OPTS) -fno-elide-constructors ../tests/common/simplethread.cpp ../tests/common/systemtime.cpp ../tests/unittests/unittests.cpp blockingconcurrentqueue.o concurrentqueue.o -o bin/unittests$(EXT) $(LD_OPTS)
 
 bin/fuzztests$(EXT): ../concurrentqueue.h ../tests/fuzztests/fuzztests.cpp ../tests/common/simplethread.h ../tests/common/simplethread.cpp ../tests/common/systemtime.h ../tests/common/systemtime.cpp ../tests/corealgos.h makefile
 	test -d bin || mkdir bin
@@ -43,6 +44,6 @@ bin/benchmarks$(EXT): bin/libtbb.a ../concurrentqueue.h ../benchmarks/benchmarks
 	
 bin/libtbb.a: makefile
 	test -d bin || mkdir bin
-	g++ -std=c++11 -O3 -DNDEBUG -D__TBB_BUILD=1 $(TBB_PLATFORM_OPTS) -I../benchmarks -c ../benchmarks/tbb/cache_aligned_allocator.cpp ../benchmarks/tbb/concurrent_monitor.cpp ../benchmarks/tbb/concurrent_queue.cpp ../benchmarks/tbb/dynamic_link.cpp ../benchmarks/tbb/tbb_misc.cpp
+	g++ -std=c++11 -O2 -DNDEBUG -D__TBB_BUILD=1 $(TBB_PLATFORM_OPTS) -I../benchmarks -c ../benchmarks/tbb/cache_aligned_allocator.cpp ../benchmarks/tbb/concurrent_monitor.cpp ../benchmarks/tbb/concurrent_queue.cpp ../benchmarks/tbb/dynamic_link.cpp ../benchmarks/tbb/tbb_misc.cpp
 	ar -rc bin/libtbb.a cache_aligned_allocator.o concurrent_monitor.o concurrent_queue.o dynamic_link.o tbb_misc.o
 	rm -f cache_aligned_allocator.o concurrent_monitor.o concurrent_queue.o dynamic_link.o tbb_misc.o
