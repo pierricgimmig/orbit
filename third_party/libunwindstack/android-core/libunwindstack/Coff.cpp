@@ -255,27 +255,20 @@ void Coff::InitializeSections() {
     section.name = name_trimmed;
     section.vmaddr = section_header.vmaddr;
     section.vmsize = section_header.vmsize;
-    section.size = section_header.size;
     section.offset = section_header.offset;
+    section.size = section_header.size;
     sections_.emplace_back(section);
-  }
-
-  for (const auto& section : sections_) {
-    if (section.name == ".pdata") {
-      ALOGI_IF(kVerboseLogging, ".pdata found");
-      pdata_section_ = section;
-    }
-    if (section.name == ".xdata") {
-      ALOGI_IF(kVerboseLogging, ".xdata found");
-      xdata_section_ = section;
-    }
   }
 }
 
-uint64_t MapFromRVAToFileOffset(const Section& section, uint64_t rva) {
-  ALOGI_IF(kVerboseLogging, "section vmaddr: %x", section.vmaddr);
-  ALOGI_IF(kVerboseLogging, "section offset: %x", section.offset);
-  return rva - section.vmaddr + section.offset;
+uint64_t Coff::MapFromRVAToFileOffset(uint64_t rva) {
+  for (auto& section : sections_) {
+    if (section.vmaddr <= rva && rva < section.vmaddr + section.vmsize ) {
+      return rva - section.vmaddr + section.offset;
+    }
+  }
+  // TODO: Return an error here.
+  return 0;
 }
 
 // The order of registers in PE/COFF unwind information is different from the libunwindstack
@@ -389,6 +382,7 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
       }
       default: {
         // TODO: Support all op codes.
+        ALOGI_IF(kVerboseLogging, "Unwind op code not supported.");
         return false;
       }
     }
@@ -606,7 +600,7 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
            function_at_pc.unwind_info_offset);
 
   uint64_t xdata_file_offset =
-      MapFromRVAToFileOffset(xdata_section_, function_at_pc.unwind_info_offset);
+      MapFromRVAToFileOffset(function_at_pc.unwind_info_offset);
   ALOGI_IF(kVerboseLogging, "xdata info file offset: %lx", xdata_file_offset);
 
   UnwindInfo unwind_info;
@@ -640,6 +634,7 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
     if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_code.code_and_op.code_offset)) ||
         !Get8(object_file_memory, &xdata_file_offset,
               &(unwind_code.code_and_op.unwind_op_and_op_info))) {
+      ALOGI_IF(kVerboseLogging, "Failed to parse unwind op codes.");
       return false;
     }
     ALOGI_IF(kVerboseLogging, "unwind code_offset: %x", unwind_code.code_and_op.code_offset);
@@ -680,8 +675,6 @@ bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finis
   ALOGI_IF(kVerboseLogging, "PC after step: %lx", regs->pc());
   ALOGI_IF(kVerboseLogging, "SP after step: %lx", regs->sp());
   *finished = (regs->pc() == 0) ? true : false;
-
-  assert(false);
 
   return true;
 }
@@ -730,7 +723,7 @@ bool Coff::Init() {
   ALOGI_IF(kVerboseLogging, "Exception table rva: %x", rva);
   ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
 
-  uint64_t pdata_file_offset = MapFromRVAToFileOffset(pdata_section_, rva);
+  uint64_t pdata_file_offset = MapFromRVAToFileOffset(rva);
   ALOGI_IF(kVerboseLogging, "Exception table file offset: %lx", pdata_file_offset);
   ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
 
