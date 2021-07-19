@@ -165,10 +165,11 @@ class Coff {
   bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset);
   void InitializeSections();
   bool ParseHeaders(Memory* memory);
-  bool ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
-                                       Regs* regs, uint64_t pc_rva);
+  bool StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* regs, uint64_t pc_rva);
   bool ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
                             uint64_t current_code_offset);
+
+  bool ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin, uint64_t pdata_end);
 
   bool InitCapstone();
 
@@ -180,6 +181,8 @@ class Coff {
   DosHeader dos_header_;
   CoffHeader coff_header_;
   CoffOptionalHeader coff_optional_header_;
+
+  std::vector<RuntimeFunction> runtime_functions_;
 
   // Initialized from parsed data
   std::vector<Section> sections_;

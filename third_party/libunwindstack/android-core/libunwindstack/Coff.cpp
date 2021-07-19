@@ -14,6 +14,9 @@
 
 #include <array>
 
+// TODO: Orbit dependency, this must be removed.
+#include "Introspection/Introspection.h"
+
 namespace unwindstack {
 
 bool kVerboseLogging = false;
@@ -295,6 +298,7 @@ static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
 // Pre-condition: We know we are not in the epilog.
 bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
                                 uint64_t current_code_offset) {
+  ORBIT_SCOPE("ProcessUnwindOpCodes");
   ALOGI_IF(kVerboseLogging, "current offset from start: %lx", current_code_offset);
   int start_op_idx;
   // TODO: Need to handle correctly those unwind ops that are actually offsets.
@@ -417,6 +421,7 @@ static uint16_t MapToUnwindstackRegister(x86_reg capstone_reg) {
 
 bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t>& machine_code,
                            Memory* process_memory, Regs* regs) {
+  ORBIT_SCOPE("DetectAndHandleEpilog");
   uint64_t current_offset = 0;
   size_t code_size = machine_code.size();
   const uint8_t* code_pointer = machine_code.data();
@@ -528,6 +533,8 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, uint64_t image_base,
                            uint64_t function_start_address, uint64_t function_end_address,
                            uint64_t current_offset_from_start_of_function, Memory* process_memory,
                            Regs* regs) {
+  ORBIT_SCOPE("DetectAndHandleEpilog (outer)");
+
   ALOGI_IF(kVerboseLogging, "DetectAndHandleEpilog");
   size_t code_size =
       function_end_address - function_start_address - current_offset_from_start_of_function;
@@ -544,55 +551,41 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, uint64_t image_base,
   return DetectAndHandleEpilog(capstone_handle, code_from_process, process_memory, regs);
 }
 
-// Experimental code for trying out stuff.
-bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* process_memory,
-                                           Regs* regs, uint64_t pc_rva) {
-  constexpr int kCoffDataDirExceptionTableIndex = 3;
-  if (kCoffDataDirExceptionTableIndex >= coff_optional_header_.data_dirs.size()) {
-    ALOGI_IF(kVerboseLogging, "No exception table found.");
-    return false;
-  }
-  DataDirectory data_directory = coff_optional_header_.data_dirs[kCoffDataDirExceptionTableIndex];
-  if (data_directory.vmaddr == 0) {
-    ALOGI_IF(kVerboseLogging, "No exception table found.");
-    return false;
-  }
-  constexpr uint16_t kImageFileMachineAmd64 = 0x8664;
-  if (coff_header_.machine != kImageFileMachineAmd64) {
-    ALOGI_IF(kVerboseLogging, "Unsupported machine type.");
-    return false;
-  }
-
-  ALOGI_IF(kVerboseLogging, "PC relative virtual address: %lx", pc_rva);
-
-  uint32_t rva = data_directory.vmaddr;
-  uint32_t size = data_directory.vmsize;
-  ALOGI_IF(kVerboseLogging, "Exception table rva: %x", rva);
-  ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
-
-  uint64_t pdata_file_offset = MapFromRVAToFileOffset(pdata_section_, rva);
-  ALOGI_IF(kVerboseLogging, "Exception table file offset: %lx", pdata_file_offset);
-  ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
-
-  uint64_t end = pdata_file_offset + size;
-  // TODO: Can do binary search, but we just do linear search for simplicity for now.
-  RuntimeFunction function_at_pc;
-  bool runtime_function_found = false;
-  for (uint64_t offset = pdata_file_offset; offset < end;) {
+bool Coff::ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin,
+                                 uint64_t pdata_end) {
+  for (uint64_t offset = pdata_begin; offset < pdata_end;) {
     RuntimeFunction function;
     if (!Get32(object_file_memory, &offset, &(function.start_address)) ||
         !Get32(object_file_memory, &offset, &(function.end_address)) ||
         !Get32(object_file_memory, &offset, &(function.unwind_info_offset))) {
       ALOGI_IF(kVerboseLogging, "ERROR: Unexpected read error.");
-      break;
+      return false;
     }
+    runtime_functions_.emplace_back(function);
+  }
+  return true;
+}
 
-    // TODO: Is end address inclusive?
+bool FindRuntimeFunction(uint64_t pc_rva, const std::vector<RuntimeFunction>& functions,
+                         RuntimeFunction* runtime_function) {
+  ORBIT_SCOPE("FindRuntimeFunction (new)");
+  for (const auto& function : functions) {
     if (pc_rva >= function.start_address && pc_rva <= function.end_address) {
-      function_at_pc = function;
-      runtime_function_found = true;
+      *runtime_function = function;
+      return true;
     }
   }
+  return false;
+}
+
+bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* regs,
+                    uint64_t pc_rva) {
+  ORBIT_SCOPE("StepImpl");
+
+  ALOGI_IF(kVerboseLogging, "PC relative virtual address: %lx", pc_rva);
+
+  RuntimeFunction function_at_pc;
+  bool runtime_function_found = FindRuntimeFunction(pc_rva, runtime_functions_, &function_at_pc);
 
   if (!runtime_function_found) {
     ALOGI_IF(kVerboseLogging, "No RUNTIME_FUNCTION found.");
@@ -665,25 +658,27 @@ bool Coff::ParseExceptionTableExperimental(Memory* object_file_memory, Memory* p
 }
 
 bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished) {
+  ORBIT_SCOPE("Coff::Step");
+
   // Lock during the step which can update information in the object.
   std::lock_guard<std::mutex> guard(lock_);
 
-  ALOGI("PC before step: %lx", regs->pc());
-  ALOGI("SP before step: %lx", regs->sp());
+  ALOGI_IF(kVerboseLogging, "PC before step: %lx", regs->pc());
+  ALOGI_IF(kVerboseLogging, "SP before step: %lx", regs->sp());
 
   ALOGI_IF(kVerboseLogging, "Coff::Step() call");
   ALOGI_IF(kVerboseLogging, "Rel pc: %lx", rel_pc);
   ALOGI_IF(kVerboseLogging, "Image base: %lx", coff_optional_header_.image_base);
 
   uint64_t pc_rva = rel_pc - coff_optional_header_.image_base;
-  if (!ParseExceptionTableExperimental(memory_.get(), process_memory, regs, pc_rva)) {
+  if (!StepImpl(memory_.get(), process_memory, regs, pc_rva)) {
     ALOGI_IF(kVerboseLogging, "Coff unwinding step failed.");
     *finished = true;
     return false;
   }
 
-  ALOGI("PC after step: %lx", regs->pc());
-  ALOGI("SP after step: %lx", regs->sp());
+  ALOGI_IF(kVerboseLogging, "PC after step: %lx", regs->pc());
+  ALOGI_IF(kVerboseLogging, "SP after step: %lx", regs->sp());
   *finished = (regs->pc() == 0) ? true : false;
 
   assert(false);
@@ -713,6 +708,38 @@ bool Coff::Init() {
   ParseHeaders(memory_.get());
   InitializeSections();
   InitCapstone();
+
+  constexpr int kCoffDataDirExceptionTableIndex = 3;
+  if (kCoffDataDirExceptionTableIndex >= coff_optional_header_.data_dirs.size()) {
+    ALOGI_IF(kVerboseLogging, "No exception table found.");
+    return false;
+  }
+  DataDirectory data_directory = coff_optional_header_.data_dirs[kCoffDataDirExceptionTableIndex];
+  if (data_directory.vmaddr == 0) {
+    ALOGI_IF(kVerboseLogging, "No exception table found.");
+    return false;
+  }
+  constexpr uint16_t kImageFileMachineAmd64 = 0x8664;
+  if (coff_header_.machine != kImageFileMachineAmd64) {
+    ALOGI_IF(kVerboseLogging, "Unsupported machine type.");
+    return false;
+  }
+
+  uint32_t rva = data_directory.vmaddr;
+  uint32_t size = data_directory.vmsize;
+  ALOGI_IF(kVerboseLogging, "Exception table rva: %x", rva);
+  ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
+
+  uint64_t pdata_file_offset = MapFromRVAToFileOffset(pdata_section_, rva);
+  ALOGI_IF(kVerboseLogging, "Exception table file offset: %lx", pdata_file_offset);
+  ALOGI_IF(kVerboseLogging, "Exception table size: %x", size);
+
+  uint64_t pdata_file_end = pdata_file_offset + size;
+
+  if (!ParseRuntimeFunctions(memory_.get(), pdata_file_offset, pdata_file_end)) {
+    return false;
+  }
+
   return true;
 }
 

@@ -209,10 +209,9 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
       rel_pc = step_pc;
       last_error_.code = ERROR_INVALID_MAP;
     } else {
-
       if (map_info->name == "") {
         MapInfo* info_iterator = map_info;
-        while(info_iterator->prev_map != nullptr && info_iterator->name == "") {
+        while (info_iterator->prev_map != nullptr && info_iterator->name == "") {
           info_iterator = info_iterator->prev_map;
         }
         if (info_iterator != nullptr && info_iterator->name != "") {
@@ -224,7 +223,7 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
       if (ShouldStop(map_suffixes_to_ignore, map_info->name)) {
         break;
       }
-      if (Suffix(map_info->name) == "dll") {
+      if (Suffix(map_info->name) == "dll" || Suffix(map_info->name) == "exe") {
         // ALOGI("MapsInfo name: %s", map_info->name.c_str());
         coff = map_info->GetCoff();
         step_pc = regs_->pc();
