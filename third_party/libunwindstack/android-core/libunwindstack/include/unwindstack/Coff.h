@@ -82,6 +82,8 @@ struct SectionHeader {
 };
 
 struct Section {
+  Section() : name(""), vmsize(0), vmaddr(0), size(0), offset(0) {}
+
   std::string name;
   uint32_t vmsize;
   uint32_t vmaddr;
@@ -169,6 +171,7 @@ class Coff {
   bool ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
                             uint64_t current_code_offset);
 
+  uint64_t MapFromRVAToFileOffset(uint64_t rva);
   bool ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin, uint64_t pdata_end);
 
   bool InitCapstone();
@@ -186,8 +189,6 @@ class Coff {
 
   // Initialized from parsed data
   std::vector<Section> sections_;
-  Section pdata_section_;
-  Section xdata_section_;
 
   // For disassembling
   csh capstone_handle_;
