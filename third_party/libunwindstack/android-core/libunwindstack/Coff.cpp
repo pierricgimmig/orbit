@@ -1,10 +1,10 @@
-
 #include <unwindstack/Coff.h>
 
 #include <capstone/capstone.h>
 #include <capstone/x86.h>
 
 #include <unwindstack/MachineX86_64.h>
+#include <unwindstack/MapInfo.h>
 #include <unwindstack/Regs.h>
 
 #include <map>
@@ -246,6 +246,14 @@ bool Coff::ParseHeaders(Memory* memory) {
   return true;
 }
 
+uint64_t Coff::GetRelPc(uint64_t pc) const {
+  return pc - map_start_ + coff_optional_header_.image_base + executable_offset_;
+}
+
+uint64_t Coff::GetAbsPc(uint64_t rel_pc) const {
+  return rel_pc - coff_optional_header_.image_base - executable_offset_ + map_start_;
+}
+
 void Coff::InitializeSections() {
   for (const auto& section_header : section_headers_) {
     Section section;
@@ -259,11 +267,17 @@ void Coff::InitializeSections() {
     section.size = section_header.size;
     sections_.emplace_back(section);
   }
+
+  for (const auto& section : sections_) {
+    if (section.name == ".text") {
+      executable_offset_ = section.vmaddr;
+    }
+  }
 }
 
 uint64_t Coff::MapFromRVAToFileOffset(uint64_t rva) {
   for (auto& section : sections_) {
-    if (section.vmaddr <= rva && rva < section.vmaddr + section.vmsize ) {
+    if (section.vmaddr <= rva && rva < section.vmaddr + section.vmsize) {
       return rva - section.vmaddr + section.offset;
     }
   }
@@ -523,26 +537,25 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
   return true;
 }
 
-bool DetectAndHandleEpilog(const csh& capstone_handle, uint64_t image_base,
-                           uint64_t function_start_address, uint64_t function_end_address,
-                           uint64_t current_offset_from_start_of_function, Memory* process_memory,
-                           Regs* regs) {
+bool Coff::DetectAndHandleEpilog(uint64_t function_start_address, uint64_t function_end_address,
+                                 uint64_t current_offset_from_start_of_function,
+                                 Memory* process_memory, Regs* regs) {
   ORBIT_SCOPE("DetectAndHandleEpilog (outer)");
 
   ALOGI_IF(kVerboseLogging, "DetectAndHandleEpilog");
   size_t code_size =
       function_end_address - function_start_address - current_offset_from_start_of_function;
-  std::vector<uint8_t> code_from_process;
-  code_from_process.resize(code_size);
-  // TODO: Use the map base address, not the one from the optional header?
-  if (!process_memory->ReadFully(
-          image_base + function_start_address + current_offset_from_start_of_function,
-          static_cast<void*>(&code_from_process[0]), code_size)) {
+  std::vector<uint8_t> code;
+  code.resize(code_size);
+  uint64_t rel_address = function_start_address + current_offset_from_start_of_function +
+                         coff_optional_header_.image_base;
+  uint64_t process_address = GetAbsPc(rel_address);
+  if (!process_memory->ReadFully(process_address, static_cast<void*>(&code[0]), code_size)) {
     ALOGI_IF(kVerboseLogging, "Reading from process memory failed");
     return false;
   }
 
-  return DetectAndHandleEpilog(capstone_handle, code_from_process, process_memory, regs);
+  return ::unwindstack::DetectAndHandleEpilog(capstone_handle_, code, process_memory, regs);
 }
 
 bool Coff::ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin,
@@ -599,8 +612,7 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
   ALOGI_IF(kVerboseLogging, "function found unwind info offset: %x",
            function_at_pc.unwind_info_offset);
 
-  uint64_t xdata_file_offset =
-      MapFromRVAToFileOffset(function_at_pc.unwind_info_offset);
+  uint64_t xdata_file_offset = MapFromRVAToFileOffset(function_at_pc.unwind_info_offset);
   ALOGI_IF(kVerboseLogging, "xdata info file offset: %lx", xdata_file_offset);
 
   UnwindInfo unwind_info;
@@ -614,8 +626,7 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
   uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
 
   if (  // current_offset_from_start > function_at_pc.start_address + unwind_info.prolog_size &&
-      DetectAndHandleEpilog(capstone_handle_, coff_optional_header_.image_base,
-                            function_at_pc.start_address, function_at_pc.end_address,
+      DetectAndHandleEpilog(function_at_pc.start_address, function_at_pc.end_address,
                             current_offset_from_start, process_memory, regs)) {
     return true;
   }
@@ -654,7 +665,6 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
 
 bool Coff::Step(uint64_t rel_pc, Regs* regs, Memory* process_memory, bool* finished) {
   ORBIT_SCOPE("Coff::Step");
-
   // Lock during the step which can update information in the object.
   std::lock_guard<std::mutex> guard(lock_);
 
@@ -694,8 +704,10 @@ bool Coff::InitCapstone() {
   return true;
 }
 
-bool Coff::Init() {
+bool Coff::Init(uint64_t map_start) {
   std::lock_guard<std::mutex> guard(lock_);
+
+  map_start_ = map_start;
 
   ALOGI_IF(kVerboseLogging, "Coff::Init()");
   ParseHeaders(memory_.get());
