@@ -214,7 +214,7 @@ Coff* MapInfo::GetCoff() {
   assert(memory != nullptr);
 
   coff.reset(new Coff(memory));
-  coff->Init();
+  coff->Init(start);
 
   return coff.get();
 }

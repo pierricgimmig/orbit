@@ -146,7 +146,7 @@ class Coff {
   Coff(Memory* memory) : memory_(memory) {}
   ~Coff() { cs_close(&capstone_handle_); }
 
-  bool Init();
+  bool Init(uint64_t map_start);
 
   /*
   bool StepIfSignalHandler(uint64_t rel_pc, Regs* regs, Memory* process_memory);
@@ -163,6 +163,9 @@ class Coff {
 
   Memory* memory() { return memory_.get(); }
 
+  uint64_t GetRelPc(uint64_t pc) const;
+  uint64_t GetAbsPc(uint64_t rel_pc) const;
+
  protected:
   bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset);
   void InitializeSections();
@@ -174,9 +177,14 @@ class Coff {
   uint64_t MapFromRVAToFileOffset(uint64_t rva);
   bool ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin, uint64_t pdata_end);
 
+  bool DetectAndHandleEpilog(uint64_t function_start_address, uint64_t function_end_address,
+                             uint64_t current_offset_from_start_of_function, Memory* process_memory,
+                             Regs* regs);
+
   bool InitCapstone();
 
   int64_t load_bias_ = 0;
+  uint64_t map_start_ = 0;
   std::unique_ptr<Memory> memory_;
 
   // Parsed data
@@ -189,6 +197,7 @@ class Coff {
 
   // Initialized from parsed data
   std::vector<Section> sections_;
+  uint64_t executable_offset_ = 0;
 
   // For disassembling
   csh capstone_handle_;

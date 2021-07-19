@@ -21,7 +21,7 @@ TEST(Coff, LoadDll) {
   ALOGI("dllname: %s", dllname.c_str());
   unwindstack::Memory* memory = unwindstack::CreateCoffMemory(dllname);
   unwindstack::Coff coff(memory);
-  coff.Init();
+  coff.Init(0);
 
   // Example function starts like this:
   // 0000000062641010: 41 55              push        r13
