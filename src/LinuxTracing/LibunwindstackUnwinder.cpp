@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 
+#include "Introspection/Introspection.h"
 #include "OrbitBase/Logging.h"  // IWYU pragma: keep
 
 namespace orbit_linux_tracing {
@@ -86,6 +87,7 @@ const std::array<size_t, unwindstack::X86_64_REG_LAST>
 LibunwindstackResult LibunwindstackUnwinderImpl::Unwind(
     pid_t pid, unwindstack::Maps* maps, const std::array<uint64_t, PERF_REG_X86_64_MAX>& perf_regs,
     const void* stack_dump, uint64_t stack_dump_size, bool offline_memory_only, size_t max_frames) {
+  ORBIT_SCOPE("Unwind");
   unwindstack::RegsX86_64 regs{};
   for (size_t perf_reg = 0; perf_reg < unwindstack::X86_64_REG_LAST; ++perf_reg) {
     regs[perf_reg] = perf_regs.at(kUnwindstackRegsToPerfRegs[perf_reg]);

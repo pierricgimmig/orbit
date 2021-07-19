@@ -99,6 +99,6 @@ elseif(${CMAKE_SYSTEM_PROCESSOR} MATCHES x86)
   target_sources(unwindstack PRIVATE ${UNWINDSTACK_ROOT}/AsmGetRegsX86.S)
 endif()
 
-target_link_libraries(unwindstack PUBLIC CONAN_PKG::lzma_sdk CONAN_PKG::capstone)
+target_link_libraries(unwindstack PUBLIC Introspection CONAN_PKG::lzma_sdk CONAN_PKG::capstone)
 
 target_compile_features(unwindstack PUBLIC cxx_std_17)
