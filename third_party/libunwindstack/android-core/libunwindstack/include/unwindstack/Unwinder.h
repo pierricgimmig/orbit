@@ -113,6 +113,7 @@ class Unwinder {
 
   ErrorCode LastErrorCode() { return last_error_.code; }
   uint64_t LastErrorAddress() { return last_error_.address; }
+  std::string LastErrorMessage(){return last_error_.message; };
 
  protected:
   Unwinder(size_t max_frames) : max_frames_(max_frames) { frames_.reserve(max_frames); }

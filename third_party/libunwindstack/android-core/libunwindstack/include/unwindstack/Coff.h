@@ -121,6 +121,9 @@ struct UnwindInfo {
   uint8_t frame_register_and_offset;
   std::vector<UnwindCode> unwind_codes;
 
+  uint64_t exception_handler_address;
+  RuntimeFunction chained_info;
+
   // TODO: There's potentially more data after the unwind codes, which can be either a language
   // specific exception handler or chained unwind info (which we have to follow in case it exists).
 
@@ -134,12 +137,7 @@ struct UnwindInfo {
 };
 
 bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t>& machine_code,
-                           Memory* process_memory, Regs* regs);
-
-bool DetectAndHandleEpilog(const csh& capstone_handle, uint64_t image_base,
-                           uint64_t function_start_address, uint64_t function_end_address,
-                           uint64_t current_offset_from_start_of_function, Memory* process_memory,
-                           Regs* regs);
+                           Memory* process_memory, Regs* regs, ErrorData* error);
 
 class Coff {
  public:
@@ -157,7 +155,7 @@ class Coff {
 
   bool IsValidPc(uint64_t pc);
 
-  void GetLastError(ErrorData* data);
+  void GetLastError(ErrorData* data) { *data = last_error_; }
   ErrorCode GetLastErrorCode();
   uint64_t GetLastErrorAddress();
 
@@ -171,11 +169,14 @@ class Coff {
   void InitializeSections();
   bool ParseHeaders(Memory* memory);
   bool StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* regs, uint64_t pc_rva);
-  bool ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
-                            uint64_t current_code_offset);
+  bool ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memory, Regs* regs,
+                            const UnwindInfo& unwind_info, uint64_t current_code_offset);
 
   uint64_t MapFromRVAToFileOffset(uint64_t rva);
   bool ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin, uint64_t pdata_end);
+
+  bool ParseUnwindInfoAtOffset(Memory* object_file_memory, uint64_t offset,
+                               UnwindInfo* unwind_info);
 
   bool DetectAndHandleEpilog(uint64_t function_start_address, uint64_t function_end_address,
                              uint64_t current_offset_from_start_of_function, Memory* process_memory,
@@ -186,6 +187,8 @@ class Coff {
   int64_t load_bias_ = 0;
   uint64_t map_start_ = 0;
   std::unique_ptr<Memory> memory_;
+
+  ErrorData last_error_;
 
   // Parsed data
   std::vector<SectionHeader> section_headers_;

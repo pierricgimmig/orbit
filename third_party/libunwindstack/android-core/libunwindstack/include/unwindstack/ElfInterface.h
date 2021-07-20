@@ -165,7 +165,7 @@ class ElfInterface {
   uint8_t soname_type_ = SONAME_UNKNOWN;
   std::string soname_;
 
-  ErrorData last_error_{ERROR_NONE, 0};
+  ErrorData last_error_{ERROR_NONE, "", 0};
 
   std::unique_ptr<DwarfSection> eh_frame_;
   std::unique_ptr<DwarfSection> debug_frame_;

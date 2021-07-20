@@ -309,6 +309,7 @@ void Unwinder::Unwind(const std::vector<std::string>* initial_map_names_to_skip,
           stepped = true;
         } else {
           // Do not continue unwinding if we failed in COFF unwinding.
+          coff->GetLastError(&last_error_);
           break;
         }
       } else {

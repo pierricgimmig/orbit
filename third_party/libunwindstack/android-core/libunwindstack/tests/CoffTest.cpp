@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <unwindstack/Coff.h>
+#include <unwindstack/Error.h>
 #include <unwindstack/MachineX86_64.h>
 #include <unwindstack/MapInfo.h>
 #include <unwindstack/Memory.h>
@@ -85,7 +86,10 @@ TEST(Coff, DetectAndHandleEpilog) {
   uint64_t KReturnAddressValue = 0x626412ff;
   process_memory.SetData64(0x1068, KReturnAddressValue);
 
-  EXPECT_TRUE(DetectAndHandleEpilog(capstone_handle, machine_code, &process_memory, &regs));
+  unwindstack::ErrorData error{unwindstack::ERROR_NONE, "", 0};
+  EXPECT_TRUE(DetectAndHandleEpilog(capstone_handle, machine_code, &process_memory, &regs, &error));
+
+  EXPECT_EQ(unwindstack::ERROR_NONE, error.code);
 
   EXPECT_EQ(0x1, regs[unwindstack::X86_64_REG_RBX]);
   EXPECT_EQ(0x2, regs[unwindstack::X86_64_REG_RSI]);
