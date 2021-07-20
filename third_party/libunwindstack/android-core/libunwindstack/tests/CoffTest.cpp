@@ -100,3 +100,30 @@ TEST(Coff, DetectAndHandleEpilog) {
 
   cs_close(&capstone_handle);
 }
+
+TEST(Coff, DetectAndHandleReturn) {
+  std::vector<uint8_t> machine_code = {0xc3};
+
+  csh capstone_handle;
+  cs_err err = cs_open(CS_ARCH_X86, CS_MODE_64, &capstone_handle);
+  ASSERT_EQ(err, CS_ERR_OK);
+  err = cs_option(capstone_handle, CS_OPT_DETAIL, CS_OPT_ON);
+  ASSERT_EQ(err, CS_ERR_OK);
+
+  unwindstack::RegsX86_64 regs;
+  unwindstack::MemoryFake process_memory;
+  regs.set_sp(0x1000);
+
+  uint64_t kReturnAddressValue = 0x626412ff;
+  process_memory.SetData64(0x1000, 0x626412ff);
+
+  unwindstack::ErrorData error{unwindstack::ERROR_NONE, "", 0};
+
+  EXPECT_TRUE(DetectAndHandleEpilog(capstone_handle, machine_code, &process_memory, &regs, &error));
+
+  EXPECT_EQ(unwindstack::ERROR_NONE, error.code);
+  EXPECT_EQ(kReturnAddressValue, regs.pc());
+  EXPECT_EQ(0x1008, regs[unwindstack::X86_64_REG_RSP]);
+
+  cs_close(&capstone_handle);
+}

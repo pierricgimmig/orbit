@@ -423,6 +423,21 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         op_idx += 1;
         break;
       }
+      case 3: {  // UWOP_SET_FPREG
+        uint8_t frame_register = unwind_info.GetFrameRegister();
+        if (frame_register == 0) {
+          last_error_.code = ERROR_COFF_UNWIND_INFO;
+          last_error_.message = "Invalid frame register";
+          last_error_.address = 0;
+        }
+        uint16_t reg = MapToUnwindstackRegister(frame_register);
+        uint32_t frame_offset = 16 * static_cast<uint32_t>(unwind_info.GetFrameOffset());
+
+        (*cur_regs)[reg] = cur_regs->sp() + frame_offset;
+
+        op_idx += 1;
+        break;
+      }
       case 4: {  // UWOP_SAVE_NONVOL
         if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
           op_idx += 2;
@@ -493,7 +508,7 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
       // We have to chain all unwind operations that are in the chained info, so we pass the max
       // uint32_t value as code offset.
       return ProcessUnwindOpCodes(object_file_memory, process_memory, regs, chained_info,
-                                  std::numeric_limits<uint32_t>::max());
+                                  std::numeric_limits<uint64_t>::max());
     }
   }
 
@@ -648,7 +663,7 @@ bool Coff::DetectAndHandleEpilog(uint64_t function_start_address, uint64_t funct
 
   ALOGI_IF(kVerboseLogging, "DetectAndHandleEpilog");
   size_t code_size =
-      function_end_address - function_start_address - current_offset_from_start_of_function;
+      function_end_address - (function_start_address + current_offset_from_start_of_function);
   std::vector<uint8_t> code;
   code.resize(code_size);
   uint64_t rel_address = function_start_address + current_offset_from_start_of_function +
@@ -688,7 +703,7 @@ bool FindRuntimeFunction(uint64_t pc_rva, const std::vector<RuntimeFunction>& fu
                          RuntimeFunction* runtime_function) {
   ORBIT_SCOPE("FindRuntimeFunction (new)");
   for (const auto& function : functions) {
-    if (pc_rva >= function.start_address && pc_rva <= function.end_address) {
+    if (pc_rva >= function.start_address && pc_rva < function.end_address) {
       *runtime_function = function;
       return true;
     }
