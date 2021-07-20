@@ -108,12 +108,12 @@ LibunwindstackResult LibunwindstackUnwinderImpl::Unwind(
   // Careful: regs are modified. Use regs.Clone() if you need to reuse regs later.
   unwinder.Unwind();
 
-#ifndef NDEBUG
+  //#ifndef NDEBUG
   if (unwinder.LastErrorCode() != 0) {
-    ERROR("%s at %#016lx", LibunwindstackErrorString(unwinder.LastErrorCode()),
-          unwinder.LastErrorAddress());
+    ERROR("%s at %#016lx, message: %s", LibunwindstackErrorString(unwinder.LastErrorCode()),
+          unwinder.LastErrorAddress(), unwinder.LastErrorMessage());
   }
-#endif
+  //#endif
 
   return LibunwindstackResult{unwinder.ConsumeFrames(), unwinder.LastErrorCode()};
 }
@@ -125,10 +125,18 @@ std::unique_ptr<LibunwindstackUnwinder> LibunwindstackUnwinder::Create() {
 }
 
 std::string LibunwindstackUnwinder::LibunwindstackErrorString(unwindstack::ErrorCode error_code) {
-  static const std::vector<const char*> kErrorNames{
-      "ERROR_NONE",           "ERROR_MEMORY_INVALID", "ERROR_UNWIND_INFO",
-      "ERROR_UNSUPPORTED",    "ERROR_INVALID_MAP",    "ERROR_MAX_FRAMES_EXCEEDED",
-      "ERROR_REPEATED_FRAME", "ERROR_INVALID_ELF"};
+  static const std::vector<const char*> kErrorNames{"ERROR_NONE",
+                                                    "ERROR_MEMORY_INVALID",
+                                                    "ERROR_UNWIND_INFO",
+                                                    "ERROR_UNSUPPORTED",
+                                                    "ERROR_INVALID_MAP",
+                                                    "ERROR_MAX_FRAMES_EXCEEDED",
+                                                    "ERROR_REPEATED_FRAME",
+                                                    "ERROR_INVALID_ELF",
+                                                    "ERROR_COFF_MEMORY_INVALID",
+                                                    "ERROR_COFF_UNWIND_INFO",
+                                                    "ERROR_COFF_UNSUPPORTED"};
+
   return kErrorNames[error_code];
 }
 

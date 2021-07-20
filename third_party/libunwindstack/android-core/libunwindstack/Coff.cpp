@@ -7,7 +7,9 @@
 #include <unwindstack/MapInfo.h>
 #include <unwindstack/Regs.h>
 
+#include <limits>
 #include <map>
+#include <sstream>
 
 #define LOG_TAG "unwind"
 #include <log/log.h>
@@ -303,31 +305,30 @@ static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
 }
 
 // Pre-condition: We know we are not in the epilog.
-bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const UnwindInfo& unwind_info,
-                                uint64_t current_code_offset) {
+bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memory, Regs* regs,
+                                const UnwindInfo& unwind_info, uint64_t current_code_offset) {
   ORBIT_SCOPE("ProcessUnwindOpCodes");
   ALOGI_IF(kVerboseLogging, "current offset from start: %lx", current_code_offset);
-  int start_op_idx;
-  // TODO: Need to handle correctly those unwind ops that are actually offsets.
-  for (start_op_idx = 0; start_op_idx < unwind_info.num_codes; ++start_op_idx) {
-    if (unwind_info.unwind_codes[start_op_idx].code_and_op.code_offset <= current_code_offset) {
-      break;
-    }
-  }
-  ALOGI_IF(kVerboseLogging, "current start index: %d", start_op_idx);
 
   RegsImpl<uint64_t>* cur_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
 
   ALOGI_IF(kVerboseLogging, "stack pointer start: %lx", cur_regs->sp());
 
   // // Process op codes.
-  for (int op_idx = start_op_idx; op_idx < unwind_info.num_codes;) {
+  for (int op_idx = 0; op_idx < unwind_info.num_codes;) {
     UnwindCode unwind_code = unwind_info.unwind_codes[op_idx];
     switch (unwind_code.GetUnwindOp()) {
       case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
+        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+          op_idx += 1;
+          continue;
+        }
         uint64_t register_value;
         if (!process_memory->Read64(cur_regs->sp(), &register_value)) {
           ALOGI_IF(kVerboseLogging, "Failed to read memory");
+          last_error_.code = ERROR_COFF_MEMORY_INVALID;
+          last_error_.message = "";
+          last_error_.address = cur_regs->sp();
           return false;
         }
         cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
@@ -348,7 +349,14 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         if (op_info == 0) {
           if (op_idx + 1 > unwind_info.num_codes) {
             ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
+            last_error_.code = ERROR_COFF_UNWIND_INFO;
+            last_error_.message = "";
             return false;
+          }
+          if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+            // Must be the total number of indices we have to increase by.
+            op_idx += 2;
+            continue;
           }
           UnwindCode offset = unwind_info.unwind_codes[op_idx + 1];
           allocation_size = 8 * static_cast<uint32_t>(offset.frame_offset);
@@ -356,7 +364,14 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         } else if (op_info == 1) {
           if (op_idx + 2 > unwind_info.num_codes) {
             ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
+            last_error_.code = ERROR_COFF_UNWIND_INFO;
+            last_error_.message = "";
             return false;
+          }
+          if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+            // Must be the total number of indices we have to increase by.
+            op_idx += 3;
+            continue;
           }
           UnwindCode offset1 = unwind_info.unwind_codes[op_idx + 1];
           UnwindCode offset2 = unwind_info.unwind_codes[op_idx + 2];
@@ -372,7 +387,12 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
 
         uint64_t value;
-        process_memory->Read64(cur_regs->sp(), &value);
+        if (!process_memory->Read64(cur_regs->sp(), &value)) {
+          last_error_.code = ERROR_COFF_MEMORY_INVALID;
+          last_error_.message = "";
+          last_error_.address = cur_regs->sp();
+          return false;
+        }
         ALOGI_IF(kVerboseLogging, "value at sp: %lx", value);
 
         op_idx += 1;
@@ -380,6 +400,10 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         break;
       }
       case 2: {  // UWOP_ALLOC_SMALL
+        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+          op_idx += 1;
+          continue;
+        }
         uint8_t op_info = unwind_code.GetOpInfo();
         uint32_t allocation_size = static_cast<uint32_t>(op_info) * 8 + 8;
         ALOGI_IF(kVerboseLogging, "UWOP_ALLOC_SMALL allocation size: %x", allocation_size);
@@ -388,22 +412,96 @@ bool Coff::ProcessUnwindOpCodes(Memory* process_memory, Regs* regs, const Unwind
         ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
 
         uint64_t value;
-        process_memory->Read64(cur_regs->sp(), &value);
+        if (!process_memory->Read64(cur_regs->sp(), &value)) {
+          last_error_.code = ERROR_COFF_MEMORY_INVALID;
+          last_error_.message = "";
+          last_error_.address = cur_regs->sp();
+          return false;
+        }
         ALOGI_IF(kVerboseLogging, "value at sp: %lx", value);
 
         op_idx += 1;
         break;
       }
+      case 4: {  // UWOP_SAVE_NONVOL
+        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+          op_idx += 2;
+          continue;
+        }
+
+        if (op_idx + 1 > unwind_info.num_codes) {
+          ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
+          last_error_.code = ERROR_COFF_UNWIND_INFO;
+          last_error_.message = "";
+          return false;
+        }
+
+        UnwindCode offset = unwind_info.unwind_codes[op_idx + 1];
+        uint32_t save_offset = 8 * static_cast<uint32_t>(offset.frame_offset);
+
+        uint8_t op_info = unwind_code.GetOpInfo();
+        uint16_t reg = MapToUnwindstackRegister(op_info);
+
+        uint64_t value;
+        if (!process_memory->Read64(cur_regs->sp() + save_offset, &value)) {
+          last_error_.code = ERROR_COFF_MEMORY_INVALID;
+          last_error_.message = "";
+          last_error_.address = cur_regs->sp() + save_offset;
+          return false;
+        }
+
+        (*cur_regs)[reg] = value;
+
+        op_idx += 2;
+        break;
+      }
+      case 8: {  // UWOP_SAVE_XMM128
+        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+          op_idx += 2;
+          continue;
+        }
+
+        op_idx += 2;
+        break;
+      }
       default: {
         // TODO: Support all op codes.
         ALOGI_IF(kVerboseLogging, "Unwind op code not supported.");
+        last_error_.code = ERROR_COFF_UNSUPPORTED;
+        std::stringstream message_str;
+        message_str << "Unsupported coff unwind code: "
+                    << static_cast<int>(unwind_code.GetUnwindOp());
+        last_error_.message = message_str.str();
         return false;
       }
+    }
+
+    uint8_t flags = unwind_info.GetFlags();
+    if (flags & 0x04) {  // Chained info.
+      ALOGI_IF(kVerboseLogging, "chained info offset RVA: %x",
+               unwind_info.chained_info.unwind_info_offset);
+      uint64_t chained_unwind_info_offset =
+          MapFromRVAToFileOffset(unwind_info.chained_info.unwind_info_offset);
+      UnwindInfo chained_info;
+      if (!ParseUnwindInfoAtOffset(object_file_memory, chained_unwind_info_offset, &chained_info)) {
+        last_error_.code = ERROR_COFF_MEMORY_INVALID;
+        last_error_.message = "Parsing chained info failed";
+        last_error_.address = chained_unwind_info_offset;
+        return false;
+      }
+
+      // We have to chain all unwind operations that are in the chained info, so we pass the max
+      // uint32_t value as code offset.
+      return ProcessUnwindOpCodes(object_file_memory, process_memory, regs, chained_info,
+                                  std::numeric_limits<uint32_t>::max());
     }
   }
 
   uint64_t return_address;
   if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
+    last_error_.code = ERROR_COFF_MEMORY_INVALID;
+    last_error_.message = "";
+    last_error_.address = cur_regs->sp();
     return false;
   }
   cur_regs->set_sp(cur_regs->sp() + sizeof(uint64_t));
@@ -428,7 +526,7 @@ static uint16_t MapToUnwindstackRegister(x86_reg capstone_reg) {
 }
 
 bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t>& machine_code,
-                           Memory* process_memory, Regs* regs) {
+                           Memory* process_memory, Regs* regs, ErrorData* error) {
   ORBIT_SCOPE("DetectAndHandleEpilog");
   uint64_t current_offset = 0;
   size_t code_size = machine_code.size();
@@ -452,6 +550,7 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
 
     if (!cs_disasm_iter(capstone_handle, &code_pointer, &code_size, &current_offset, instruction)) {
       ALOGI_IF(kVerboseLogging, "Disassembling failed");
+      error->code = ERROR_COFF_UNSUPPORTED;
       cs_free(instruction, 1);
       return false;
     }
@@ -462,7 +561,8 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
     if (is_first_iteration && instruction->id == X86_INS_LEA) {
       ALOGI_IF(kVerboseLogging, "lea instruction op string: %s", instruction->op_str);
       // TODO: Set rsp accordingly.
-
+      error->code = ERROR_COFF_UNSUPPORTED;
+      return false;
       // Note that this instruction is only legal as the first instruction if frame pointers
       // are being used.
 
@@ -500,6 +600,8 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
 
       uint64_t value;
       if (!process_memory->Read64(updated_regs->sp(), &value)) {
+        error->code = ERROR_COFF_MEMORY_INVALID;
+        error->address = updated_regs->sp();
         return false;
       }
       updated_regs->set_sp(updated_regs->sp() + sizeof(uint64_t));
@@ -510,6 +612,8 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
 
       uint64_t return_address;
       if (!process_memory->Read64(updated_regs->sp(), &return_address)) {
+        error->code = ERROR_COFF_MEMORY_INVALID;
+        error->address = updated_regs->sp();
         return false;
       }
       updated_regs->set_sp(updated_regs->sp() + sizeof(uint64_t));
@@ -552,10 +656,14 @@ bool Coff::DetectAndHandleEpilog(uint64_t function_start_address, uint64_t funct
   uint64_t process_address = GetAbsPc(rel_address);
   if (!process_memory->ReadFully(process_address, static_cast<void*>(&code[0]), code_size)) {
     ALOGI_IF(kVerboseLogging, "Reading from process memory failed");
+    last_error_.code = ERROR_COFF_MEMORY_INVALID;
+    last_error_.message = "";
+    last_error_.address = process_address;
     return false;
   }
 
-  return ::unwindstack::DetectAndHandleEpilog(capstone_handle_, code, process_memory, regs);
+  return ::unwindstack::DetectAndHandleEpilog(capstone_handle_, code, process_memory, regs,
+                                              &last_error_);
 }
 
 bool Coff::ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin,
@@ -566,6 +674,9 @@ bool Coff::ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begi
         !Get32(object_file_memory, &offset, &(function.end_address)) ||
         !Get32(object_file_memory, &offset, &(function.unwind_info_offset))) {
       ALOGI_IF(kVerboseLogging, "ERROR: Unexpected read error.");
+      last_error_.code = ERROR_COFF_MEMORY_INVALID;
+      last_error_.message = "";
+      last_error_.address = offset;
       return false;
     }
     runtime_functions_.emplace_back(function);
@@ -585,6 +696,74 @@ bool FindRuntimeFunction(uint64_t pc_rva, const std::vector<RuntimeFunction>& fu
   return false;
 }
 
+bool Coff::ParseUnwindInfoAtOffset(Memory* object_file_memory, uint64_t offset,
+                                   UnwindInfo* unwind_info) {
+  uint64_t base_offset = offset;
+  if (!Get8(object_file_memory, &offset, &(unwind_info->version_and_flags)) ||
+      !Get8(object_file_memory, &offset, &(unwind_info->prolog_size)) ||
+      !Get8(object_file_memory, &offset, &(unwind_info->num_codes)) ||
+      !Get8(object_file_memory, &offset, &(unwind_info->frame_register_and_offset))) {
+    last_error_.code = ERROR_COFF_MEMORY_INVALID;
+    last_error_.message = "";
+    last_error_.address = offset;
+    return false;
+  }
+
+  ALOGI_IF(kVerboseLogging, "count of unwind codes: %u", unwind_info->num_codes);
+  ALOGI_IF(kVerboseLogging, "unwind code version: %u", unwind_info->GetVersion());
+
+  // TODO: Handle versions.
+  assert(unwind_info->GetVersion() == 0x01);
+  if (unwind_info->GetVersion() != 0x01) {
+    last_error_.code = ERROR_COFF_UNSUPPORTED;
+    last_error_.message = "Versions not supported";
+    return false;
+  }
+
+  for (uint8_t code_idx = 0; code_idx < unwind_info->num_codes; ++code_idx) {
+    UnwindCode unwind_code;
+    if (!Get8(object_file_memory, &offset, &(unwind_code.code_and_op.code_offset)) ||
+        !Get8(object_file_memory, &offset, &(unwind_code.code_and_op.unwind_op_and_op_info))) {
+      ALOGI_IF(kVerboseLogging, "Failed to parse unwind op codes.");
+      last_error_.code = ERROR_COFF_MEMORY_INVALID;
+      last_error_.message = "";
+      last_error_.address = offset;
+      return false;
+    }
+    ALOGI_IF(kVerboseLogging, "unwind code_offset: %x", unwind_code.code_and_op.code_offset);
+    ALOGI_IF(kVerboseLogging, "unwind code: %u", unwind_code.GetUnwindOp());
+    ALOGI_IF(kVerboseLogging, "unwind op info: %u", unwind_code.GetOpInfo());
+    unwind_info->unwind_codes.emplace_back(unwind_code);
+  }
+
+  if (unwind_info->GetFlags() & 0x04) {
+    // The "4" is for the first 4 bytes of the UnwindInfo struct.
+    uint64_t runtime_function_offset =
+        base_offset + 4 + ((unwind_info->num_codes + 1) & ~1) * sizeof(UnwindCode);
+
+    ALOGI_IF(kVerboseLogging, "runtime_function_offset: %lx", runtime_function_offset);
+
+    if (!Get32(object_file_memory, &runtime_function_offset,
+               &(unwind_info->chained_info.start_address)) ||
+        !Get32(object_file_memory, &runtime_function_offset,
+               &(unwind_info->chained_info.end_address)) ||
+        !Get32(object_file_memory, &runtime_function_offset,
+               &(unwind_info->chained_info.unwind_info_offset))) {
+      last_error_.code = ERROR_COFF_MEMORY_INVALID;
+      last_error_.message = "";
+      last_error_.address = offset;
+      return false;
+    }
+
+    ALOGI_IF(kVerboseLogging, "chained function start: %x",
+             unwind_info->chained_info.start_address);
+    ALOGI_IF(kVerboseLogging, "chained function end: %x", unwind_info->chained_info.end_address);
+    ALOGI_IF(kVerboseLogging, "chained function offset: %x",
+             unwind_info->chained_info.unwind_info_offset);
+  }
+  return true;
+}
+
 bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* regs,
                     uint64_t pc_rva) {
   ORBIT_SCOPE("StepImpl");
@@ -600,6 +779,9 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
 
     uint64_t return_address;
     if (!process_memory->Read64(cur_regs->sp(), &return_address)) {
+      last_error_.code = ERROR_COFF_MEMORY_INVALID;
+      last_error_.message = "";
+      last_error_.address = cur_regs->sp();
       return false;
     }
     cur_regs->set_pc(return_address);
@@ -612,17 +794,6 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
   ALOGI_IF(kVerboseLogging, "function found unwind info offset: %x",
            function_at_pc.unwind_info_offset);
 
-  uint64_t xdata_file_offset = MapFromRVAToFileOffset(function_at_pc.unwind_info_offset);
-  ALOGI_IF(kVerboseLogging, "xdata info file offset: %lx", xdata_file_offset);
-
-  UnwindInfo unwind_info;
-  if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_info.version_and_flags)) ||
-      !Get8(object_file_memory, &xdata_file_offset, &(unwind_info.prolog_size)) ||
-      !Get8(object_file_memory, &xdata_file_offset, &(unwind_info.num_codes)) ||
-      !Get8(object_file_memory, &xdata_file_offset, &(unwind_info.frame_register_and_offset))) {
-    return false;
-  }
-
   uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
 
   if (  // current_offset_from_start > function_at_pc.start_address + unwind_info.prolog_size &&
@@ -631,31 +802,17 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
     return true;
   }
 
-  ALOGI_IF(kVerboseLogging, "count of unwind codes: %u", unwind_info.num_codes);
-  ALOGI_IF(kVerboseLogging, "unwind code version: %u", unwind_info.GetVersion());
+  uint64_t xdata_file_offset = MapFromRVAToFileOffset(function_at_pc.unwind_info_offset);
+  ALOGI_IF(kVerboseLogging, "xdata info file offset: %lx", xdata_file_offset);
 
-  // TODO: Handle versions?
-  assert(unwind_info.GetVersion() == 0x01);
-
-  // TODO: Handle flags.
-  assert(unwind_info.GetFlags() == 0x00);
-
-  for (uint8_t code_idx = 0; code_idx < unwind_info.num_codes; ++code_idx) {
-    UnwindCode unwind_code;
-    if (!Get8(object_file_memory, &xdata_file_offset, &(unwind_code.code_and_op.code_offset)) ||
-        !Get8(object_file_memory, &xdata_file_offset,
-              &(unwind_code.code_and_op.unwind_op_and_op_info))) {
-      ALOGI_IF(kVerboseLogging, "Failed to parse unwind op codes.");
-      return false;
-    }
-    ALOGI_IF(kVerboseLogging, "unwind code_offset: %x", unwind_code.code_and_op.code_offset);
-
-    ALOGI_IF(kVerboseLogging, "unwind code: %u", unwind_code.GetUnwindOp());
-    ALOGI_IF(kVerboseLogging, "unwind op info: %u", unwind_code.GetOpInfo());
-    unwind_info.unwind_codes.emplace_back(unwind_code);
+  UnwindInfo unwind_info;
+  if (!ParseUnwindInfoAtOffset(object_file_memory, xdata_file_offset, &unwind_info)) {
+    ALOGI_IF(kVerboseLogging, "Failed to parse unwind info");
+    return false;
   }
 
-  if (!ProcessUnwindOpCodes(process_memory, regs, unwind_info, current_offset_from_start)) {
+  if (!ProcessUnwindOpCodes(object_file_memory, process_memory, regs, unwind_info,
+                            current_offset_from_start)) {
     ALOGI_IF(kVerboseLogging, "Failed to process unwind op codes.");
     return false;
   }
