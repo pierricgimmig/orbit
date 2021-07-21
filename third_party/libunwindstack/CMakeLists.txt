@@ -89,9 +89,9 @@ target_link_libraries(
 
 add_custom_command(TARGET UnwindstackTests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${UNWINDSTACK_ROOT}/tests/files
-  $<TARGET_FILE_DIR:UnwindstackTests>/files)
+  $<TARGET_FILE_DIR:UnwindstackTests>/tests/files)
 
-register_test(UnwindstackTests)
+  register_test(UnwindstackTests)
 
 if(${CMAKE_SYSTEM_PROCESSOR} MATCHES x86_64)
   target_sources(unwindstack PRIVATE ${UNWINDSTACK_ROOT}/AsmGetRegsX86_64.S)

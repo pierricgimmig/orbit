@@ -170,7 +170,8 @@ class Coff {
   bool ParseHeaders(Memory* memory);
   bool StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* regs, uint64_t pc_rva);
   bool ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memory, Regs* regs,
-                            const UnwindInfo& unwind_info, uint64_t current_code_offset);
+                            const UnwindInfo& unwind_info, uint64_t current_code_offset,
+                            uint64_t* frame_pointer, bool* frame_pointer_used);
 
   uint64_t MapFromRVAToFileOffset(uint64_t rva);
   bool ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begin, uint64_t pdata_end);
