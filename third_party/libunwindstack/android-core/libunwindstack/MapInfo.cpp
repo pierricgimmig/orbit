@@ -19,6 +19,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <cassert>
 #include <memory>
 #include <mutex>
 #include <string>
