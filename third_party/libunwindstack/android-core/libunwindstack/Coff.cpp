@@ -935,16 +935,7 @@ bool Coff::InitCapstone() {
   return true;
 }
 
-bool Coff::Init(uint64_t map_start) {
-  std::lock_guard<std::mutex> guard(lock_);
-
-  map_start_ = map_start;
-
-  ALOGI_IF(kVerboseLogging, "Coff::Init()");
-  ParseHeaders(memory_.get());
-  InitializeSections();
-  InitCapstone();
-
+bool Coff::InitRuntimeFunctions() {
   constexpr int kCoffDataDirExceptionTableIndex = 3;
   if (kCoffDataDirExceptionTableIndex >= coff_optional_header_.data_dirs.size()) {
     ALOGI_IF(kVerboseLogging, "No exception table found.");
@@ -972,7 +963,23 @@ bool Coff::Init(uint64_t map_start) {
 
   uint64_t pdata_file_end = pdata_file_offset + size;
 
-  if (!ParseRuntimeFunctions(memory_.get(), pdata_file_offset, pdata_file_end)) {
+  return ParseRuntimeFunctions(memory_.get(), pdata_file_offset, pdata_file_end);
+}
+
+bool Coff::Init(uint64_t map_start) {
+  std::lock_guard<std::mutex> guard(lock_);
+  map_start_ = map_start;
+
+  if (!ParseHeaders(memory_.get())) {
+    return false;
+  }
+
+  InitializeSections();
+
+  if (!InitCapstone()) {
+    return false;
+  }
+  if (!InitRuntimeFunctions()) {
     return false;
   }
 

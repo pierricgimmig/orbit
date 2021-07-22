@@ -183,6 +183,7 @@ class Coff {
                              Regs* regs);
 
   bool InitCapstone();
+  bool InitRuntimeFunctions();
 
   int64_t load_bias_ = 0;
   uint64_t map_start_ = 0;
