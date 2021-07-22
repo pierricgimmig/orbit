@@ -546,9 +546,6 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         MapFromRVAToFileOffset(unwind_info.chained_info.unwind_info_offset);
     UnwindInfo chained_info;
     if (!ParseUnwindInfoAtOffset(object_file_memory, chained_unwind_info_offset, &chained_info)) {
-      last_error_.code = ERROR_COFF_MEMORY_INVALID;
-      last_error_.message = "Parsing chained info failed";
-      last_error_.address = chained_unwind_info_offset;
       return false;
     }
 
