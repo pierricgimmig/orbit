@@ -736,9 +736,9 @@ bool Coff::ParseRuntimeFunctions(Memory* object_file_memory, uint64_t pdata_begi
   return true;
 }
 
-bool FindRuntimeFunction(uint64_t pc_rva, const std::vector<RuntimeFunction>& functions,
-                         RuntimeFunction* runtime_function) {
-  ORBIT_SCOPE("FindRuntimeFunction (new)");
+static bool FindRuntimeFunction(uint64_t pc_rva, const std::vector<RuntimeFunction>& functions,
+                                RuntimeFunction* runtime_function) {
+  ORBIT_SCOPE("FindRuntimeFunction");
   for (const auto& function : functions) {
     if (pc_rva >= function.start_address && pc_rva < function.end_address) {
       *runtime_function = function;
@@ -847,14 +847,6 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
   ALOGI_IF(kVerboseLogging, "function found unwind info offset: %x",
            function_at_pc.unwind_info_offset);
 
-  uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
-
-  if (  // current_offset_from_start > function_at_pc.start_address + unwind_info.prolog_size &&
-      DetectAndHandleEpilog(function_at_pc.start_address, function_at_pc.end_address,
-                            current_offset_from_start, process_memory, regs)) {
-    return true;
-  }
-
   uint64_t xdata_file_offset = MapFromRVAToFileOffset(function_at_pc.unwind_info_offset);
   ALOGI_IF(kVerboseLogging, "xdata info file offset: %lx", xdata_file_offset);
 
@@ -862,6 +854,14 @@ bool Coff::StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* re
   if (!ParseUnwindInfoAtOffset(object_file_memory, xdata_file_offset, &unwind_info)) {
     ALOGI_IF(kVerboseLogging, "Failed to parse unwind info");
     return false;
+  }
+
+  uint64_t current_offset_from_start = pc_rva - function_at_pc.start_address;
+
+  if (current_offset_from_start > unwind_info.prolog_size &&
+      DetectAndHandleEpilog(function_at_pc.start_address, function_at_pc.end_address,
+                            current_offset_from_start, process_memory, regs)) {
+    return true;
   }
 
   uint64_t frame_pointer;
