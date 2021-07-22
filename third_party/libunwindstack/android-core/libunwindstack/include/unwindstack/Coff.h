@@ -165,9 +165,8 @@ class Coff {
   uint64_t GetAbsPc(uint64_t rel_pc) const;
 
  protected:
-  bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset);
-  void InitializeSections();
   bool ParseHeaders(Memory* memory);
+  void InitializeSections();
   bool StepImpl(Memory* object_file_memory, Memory* process_memory, Regs* regs, uint64_t pc_rva);
   bool ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memory, Regs* regs,
                             const UnwindInfo& unwind_info, uint64_t current_code_offset,

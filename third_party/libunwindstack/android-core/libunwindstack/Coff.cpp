@@ -188,9 +188,8 @@ bool ParseCoffOptionalHeader(const CoffHeader& coff_header, Memory* memory, uint
   return true;
 }
 
-}  // namespace
-
-bool Coff::ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset) {
+bool ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, uint64_t* offset,
+                         std::vector<SectionHeader>* section_headers) {
   ALOGI_IF(kVerboseLogging, "ParseSectionHeaders");
 
   uint32_t num_sections = coff_header.nsects;
@@ -216,10 +215,12 @@ bool Coff::ParseSectionHeaders(const CoffHeader& coff_header, Memory* memory, ui
     }
     ALOGI_IF(kVerboseLogging, "section rva: %x", section_header.vmaddr);
     ALOGI_IF(kVerboseLogging, "section offset: %x", section_header.offset);
-    section_headers_.emplace_back(section_header);
+    section_headers->emplace_back(section_header);
   }
   return true;
 }
+
+}  // namespace
 
 bool Coff::ParseHeaders(Memory* memory) {
   if (!ParseDosHeader(memory, &dos_header_)) {
@@ -231,8 +232,10 @@ bool Coff::ParseHeaders(Memory* memory) {
     return false;
   }
   uint32_t kImagePeSignature = 0x00004550;
-  ALOGI_IF(kVerboseLogging, "PE signature read: %x", pe_signature);
-  ALOGI_IF(kVerboseLogging, "PE signature expected: %x", kImagePeSignature);
+  if (pe_signature != kImagePeSignature) {
+    ALOGI_IF(kVerboseLogging, "Did not find PE signature in COFF file.");
+    return false;
+  }
 
   if (!ParseCoffHeader(memory, &offset, &coff_header_)) {
     return false;
@@ -242,7 +245,7 @@ bool Coff::ParseHeaders(Memory* memory) {
       return false;
     }
   }
-  if (!ParseSectionHeaders(coff_header_, memory, &offset)) {
+  if (!ParseSectionHeaders(coff_header_, memory, &offset, &section_headers_)) {
     return false;
   }
 
@@ -305,6 +308,21 @@ static uint16_t MapToUnwindstackRegister(uint8_t op_info_register) {
   return kMachineToUnwindstackRegister[op_info_register];
 }
 
+// Unwind operation codes as specified on:
+// https://docs.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-160#unwind-operation-code
+enum UnwindOpCodes : uint8_t {
+  UWOP_PUSH_NONVOL = 0,
+  UWOP_ALLOC_LARGE = 1,
+  UWOP_ALLOC_SMALL = 2,
+  UWOP_SET_FPREG = 3,
+  UWOP_SAVE_NONVOL = 4,
+  UWOP_SAVE_NONVOL_FAR = 5,
+  // There are no codes 6 and 7
+  UWOP_SAVE_XMM128 = 8,
+  UWOP_SAVE_XMM128_FAR = 9,
+  UWOP_PUSH_MACHFRAME = 10
+};
+
 // Pre-condition: We know we are not in the epilog.
 bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memory, Regs* regs,
                                 const UnwindInfo& unwind_info, uint64_t current_code_offset,
@@ -316,12 +334,11 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
 
   ALOGI_IF(kVerboseLogging, "stack pointer start: %lx", cur_regs->sp());
 
-  // Process op codes.
   for (int op_idx = 0; op_idx < unwind_info.num_codes;) {
     UnwindCode unwind_code = unwind_info.unwind_codes[op_idx];
     switch (unwind_code.GetUnwindOp()) {
-      case 0: {  // UWOP_PUSH_NONVOL; TODO: create enum/names.
-        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+      case UWOP_PUSH_NONVOL: {
+        if (unwind_code.code_and_op.code_offset > current_code_offset) {
           op_idx += 1;
           continue;
         }
@@ -344,36 +361,36 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         op_idx++;
         break;
       }
-      case 1: {  // UWOP_ALLOC_LARGE
+      case UWOP_ALLOC_LARGE: {
         uint8_t op_info = unwind_code.GetOpInfo();
         uint32_t allocation_size = 0;
 
         if (op_info == 0) {
+          if (unwind_code.code_and_op.code_offset > current_code_offset) {
+            // Must be the total number of indices we have to increase by.
+            op_idx += 2;
+            continue;
+          }
           if (op_idx + 1 > unwind_info.num_codes) {
             ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
             last_error_.code = ERROR_COFF_UNWIND_INFO;
             last_error_.message = "";
             return false;
           }
-          if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
-            // Must be the total number of indices we have to increase by.
-            op_idx += 2;
-            continue;
-          }
           UnwindCode offset = unwind_info.unwind_codes[op_idx + 1];
           allocation_size = 8 * static_cast<uint32_t>(offset.frame_offset);
           op_idx += 1;
         } else if (op_info == 1) {
+          if (unwind_code.code_and_op.code_offset > current_code_offset) {
+            // Must be the total number of indices we have to increase by.
+            op_idx += 3;
+            continue;
+          }
           if (op_idx + 2 > unwind_info.num_codes) {
             ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
             last_error_.code = ERROR_COFF_UNWIND_INFO;
             last_error_.message = "";
             return false;
-          }
-          if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
-            // Must be the total number of indices we have to increase by.
-            op_idx += 3;
-            continue;
           }
           UnwindCode offset1 = unwind_info.unwind_codes[op_idx + 1];
           UnwindCode offset2 = unwind_info.unwind_codes[op_idx + 2];
@@ -384,25 +401,15 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         }
 
         ALOGI_IF(kVerboseLogging, "UWOP_ALLOC_LARGE allocation size: %x", allocation_size);
-
         cur_regs->set_sp(cur_regs->sp() + allocation_size);
         ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
-
-        uint64_t value;
-        if (!process_memory->Read64(cur_regs->sp(), &value)) {
-          last_error_.code = ERROR_COFF_MEMORY_INVALID;
-          last_error_.message = "";
-          last_error_.address = cur_regs->sp();
-          return false;
-        }
-        ALOGI_IF(kVerboseLogging, "value at sp: %lx", value);
 
         op_idx += 1;
 
         break;
       }
-      case 2: {  // UWOP_ALLOC_SMALL
-        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+      case UWOP_ALLOC_SMALL: {
+        if (unwind_code.code_and_op.code_offset > current_code_offset) {
           op_idx += 1;
           continue;
         }
@@ -413,19 +420,10 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         cur_regs->set_sp(cur_regs->sp() + allocation_size);
         ALOGI_IF(kVerboseLogging, "stack pointer: %lx", cur_regs->sp());
 
-        uint64_t value;
-        if (!process_memory->Read64(cur_regs->sp(), &value)) {
-          last_error_.code = ERROR_COFF_MEMORY_INVALID;
-          last_error_.message = "";
-          last_error_.address = cur_regs->sp();
-          return false;
-        }
-        ALOGI_IF(kVerboseLogging, "value at sp: %lx", value);
-
         op_idx += 1;
         break;
       }
-      case 3: {  // UWOP_SET_FPREG
+      case UWOP_SET_FPREG: {
         uint8_t frame_register = unwind_info.GetFrameRegister();
         if (frame_register == 0) {
           last_error_.code = ERROR_COFF_UNWIND_INFO;
@@ -441,8 +439,8 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         op_idx += 1;
         break;
       }
-      case 4: {  // UWOP_SAVE_NONVOL
-        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
+      case UWOP_SAVE_NONVOL: {
+        if (unwind_code.code_and_op.code_offset > current_code_offset) {
           op_idx += 2;
           continue;
         }
@@ -473,28 +471,68 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
         op_idx += 2;
         break;
       }
-      case 8: {  // UWOP_SAVE_XMM128
-        if (unwind_info.unwind_codes[op_idx].code_and_op.code_offset > current_code_offset) {
-          op_idx += 2;
+      case UWOP_SAVE_NONVOL_FAR: {
+        if (unwind_code.code_and_op.code_offset > current_code_offset) {
+          op_idx += 3;
           continue;
         }
+        if (op_idx + 2 > unwind_info.num_codes) {
+          ALOGI_IF(kVerboseLogging, "Error parsing unwind info.");
+          last_error_.code = ERROR_COFF_UNWIND_INFO;
+          last_error_.message = "";
+          return false;
+        }
+        UnwindCode offset1 = unwind_info.unwind_codes[op_idx + 1];
+        UnwindCode offset2 = unwind_info.unwind_codes[op_idx + 2];
 
-        // TODO: Clarify the following.
-        // Do we actually have to do anything here if we are only interested in the callstack in the
-        // end? XMM registers are not read by other unwind operations (true?), so setting them here
-        // has only informational purposes in a debugger.
+        uint32_t save_offset = static_cast<uint32_t>(offset1.frame_offset) +
+                               (static_cast<uint32_t>(offset2.frame_offset) << 16);
 
+        uint8_t op_info = unwind_code.GetOpInfo();
+        uint16_t reg = MapToUnwindstackRegister(op_info);
+
+        uint64_t value;
+        if (!process_memory->Read64(cur_regs->sp() + save_offset, &value)) {
+          last_error_.code = ERROR_COFF_MEMORY_INVALID;
+          last_error_.message = "";
+          last_error_.address = cur_regs->sp() + save_offset;
+          return false;
+        }
+
+        (*cur_regs)[reg] = value;
+
+        break;
+      }
+      case UWOP_SAVE_XMM128: {
+        // We do not actually have to save the XMM registers here and in the UWOP_SAVE_XMM128_FAR
+        // case, we just have to skip the unwind codes. XMM registers are not read by other unwind
+        // operations, so they do not influence the actual frame unwinding. Setting them here has
+        // only informational purposes if we want to display the contents of the registers (e.g. in
+        // a debugger).
         op_idx += 2;
         break;
       }
-      default: {
+      case UWOP_SAVE_XMM128_FAR: {
+        // See comment for UWOP_SAVE_XMM128.
+        op_idx += 3;
+      }
+      case UWOP_PUSH_MACHFRAME: {
         // TODO: Support all op codes.
-        ALOGI_IF(kVerboseLogging, "Unwind op code not supported.");
         last_error_.code = ERROR_COFF_UNSUPPORTED;
         std::stringstream message_str;
-        message_str << "Unsupported coff unwind code: "
+        message_str << "Unsupported COFF unwind code: "
                     << static_cast<int>(unwind_code.GetUnwindOp());
         last_error_.message = message_str.str();
+        last_error_.address = 0;
+        return false;
+      }
+      default: {
+        last_error_.code = ERROR_COFF_UNWIND_INFO;
+        std::stringstream message_str;
+        message_str << "Invalid COFF unwind code found: "
+                    << static_cast<int>(unwind_code.GetUnwindOp());
+        last_error_.message = message_str.str();
+        last_error_.address = 0;
         return false;
       }
     }
