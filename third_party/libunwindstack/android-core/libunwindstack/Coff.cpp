@@ -586,11 +586,12 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
 
   // We need to copy registers to make sure we don't overwrite values incorrectly when after some
   // instructions we find out we are actually not in the epilog.
-
   std::unique_ptr<Regs> cloned_regs(regs->Clone());
   RegsImpl<uint64_t>* updated_regs = reinterpret_cast<RegsImpl<uint64_t>*>(cloned_regs.get());
 
   ALOGI_IF(kVerboseLogging, "Stack pointer before: %lx", cloned_regs->sp());
+
+  bool have_seen_ret_or_jmp = false;
 
   while (code_size > 0) {
     ALOGI_IF(kVerboseLogging, "code size: %lx", code_size);
@@ -606,15 +607,44 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
 
     // The instructions 'lea' and 'add' are only legal as the first instruction of the epilog,
     // so we can only see them in the first iteration of this loop if we are indeed in the
-    // epilog (and in which case we are actually at the start of the epilog).
+    // epilog. In this case we are actually at the start of the epilog.
     if (is_first_iteration && instruction->id == X86_INS_LEA) {
       ALOGI_IF(kVerboseLogging, "lea instruction op string: %s", instruction->op_str);
-      // TODO: Set rsp accordingly.
-      error->code = ERROR_COFF_UNSUPPORTED;
-      return false;
       // Note that this instruction is only legal as the first instruction if frame pointers
       // are being used.
+      // TODO: Do we need to check that this frame is using a frame pointer? Can be seen in the
+      // unwind info. I believe this has no impact on unwinding itself and would thus only be
+      // a check that the compiler actually emitted instructions correctly. Probably not worth
+      // it to check here.
+      assert(instruction->detail->x86.op_count == 2);
+      cs_x86_op operand0 = instruction->detail->x86.operands[0];
+      if (operand0.type != X86_OP_REG) {
+        cs_free(instruction, 1);
+        return false;
+      }
+      x86_reg reg = operand0.reg;
+      if (reg != X86_REG_RSP) {
+        // The register that we set must be rsp, o/w we are not in the epilog.
+        return false;
+      }
+      cs_x86_op operand1 = instruction->detail->x86.operands[1];
+      if (operand1.type != X86_OP_MEM) {
+        // Second operand must always be a mem operand for 'lea' instructions.
+        cs_free(instruction, 1);
+        return false;
+      }
+      if (operand1.mem.segment != X86_REG_INVALID) {
+        // Only instructions such as lea rsp, constant[frame_pointer_register] are legal. This
+        // excludes using a segment register.
+        cs_free(instruction, 1);
+        return false;
+      }
 
+      x86_reg base_reg = operand1.mem.base;
+      uint16_t unwindstack_base_reg = MapToUnwindstackRegister(base_reg);
+      uint64_t effective_address = (*updated_regs)[unwindstack_base_reg] +
+                                   operand1.mem.index * operand1.mem.scale + operand1.mem.disp;
+      updated_regs->set_sp(effective_address);
     } else if (is_first_iteration && instruction->id == X86_INS_ADD) {
       ALOGI_IF(kVerboseLogging, "add instruction op string: %s", instruction->op_str);
       ALOGI_IF(kVerboseLogging, "op count: %u", instruction->detail->x86.op_count);
@@ -669,7 +699,16 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
       updated_regs->set_pc(return_address);
 
       // This is the last instruction of the epilog.
+      have_seen_ret_or_jmp = true;
       break;
+    } else if (instruction->id == X86_INS_JMP) {
+      // TODO: Must adjust PC according to jmp statement.
+      // This is the last instruction of the epilog.
+      have_seen_ret_or_jmp = true;
+      error->code = ERROR_COFF_UNSUPPORTED;
+      error->message = "jmp instruction in epilog not handled";
+      error->address = 0x0;
+      return false;
     } else {
       cs_free(instruction, 1);
       return false;
@@ -677,9 +716,13 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
 
     is_first_iteration = false;
   }
+  if (!have_seen_ret_or_jmp) {
+    return false;
+  }
 
+  // If we get here, then we indeed were in the epilog and must update all proper
+  // register to the updated registers that followed the epilog instructions.
   RegsImpl<uint64_t>* current_regs = reinterpret_cast<RegsImpl<uint64_t>*>(regs);
-
   for (uint16_t reg = 0; reg < X86_64_REG_LAST; ++reg) {
     (*current_regs)[reg] = (*updated_regs)[reg];
   }
