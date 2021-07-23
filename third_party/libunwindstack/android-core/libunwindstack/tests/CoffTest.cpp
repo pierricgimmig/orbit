@@ -9,6 +9,7 @@
 #include <unwindstack/RegsX86_64.h>
 
 #include <capstone/capstone.h>
+#include <capstone/x86.h>
 
 #include "ElfTestUtils.h"
 #include "MemoryFake.h"
@@ -99,6 +100,42 @@ TEST(Coff, DetectAndHandleEpilog) {
   EXPECT_EQ(0x1070, regs[unwindstack::X86_64_REG_RSP]);
 
   cs_close(&capstone_handle);
+}
+
+TEST(Coff, DetectAndHandleEpilogWithLea) {
+  std::vector<uint8_t> machine_code = {
+      0x48, 0x8d, 0xa5, 0xa1, 0x00, 0x00, 0x00,  // lea rsp, [rbp + 0xa1]
+      0x5e,                                      // pop rsi
+      0x5f,                                      // pop rdi
+      0xc3                                       // ret
+  };
+
+  csh capstone_handle;
+  cs_err err = cs_open(CS_ARCH_X86, CS_MODE_64, &capstone_handle);
+  ASSERT_EQ(err, CS_ERR_OK);
+  err = cs_option(capstone_handle, CS_OPT_DETAIL, CS_OPT_ON);
+  ASSERT_EQ(err, CS_ERR_OK);
+
+  unwindstack::RegsX86_64 regs;
+  unwindstack::MemoryFake process_memory;
+  regs.set_sp(0x4000);
+  regs[unwindstack::X86_64_REG_RBP] = 0x1000 - 0xa1;
+  process_memory.SetData64(0x1000, 0x1);
+  process_memory.SetData64(0x1008, 0x2);
+
+  uint64_t KReturnAddressValue = 0x626412ff;
+  process_memory.SetData64(0x1010, KReturnAddressValue);
+
+  unwindstack::ErrorData error{unwindstack::ERROR_NONE, "", 0};
+  EXPECT_TRUE(DetectAndHandleEpilog(capstone_handle, machine_code, &process_memory, &regs, &error));
+
+  EXPECT_EQ(unwindstack::ERROR_NONE, error.code);
+  EXPECT_EQ(0x0, error.address);
+
+  EXPECT_EQ(0x1, regs[unwindstack::X86_64_REG_RSI]);
+  EXPECT_EQ(0x2, regs[unwindstack::X86_64_REG_RDI]);
+  EXPECT_EQ(KReturnAddressValue, regs.pc());
+  EXPECT_EQ(0x1018, regs[unwindstack::X86_64_REG_RSP]);
 }
 
 TEST(Coff, DetectAndHandleReturn) {
