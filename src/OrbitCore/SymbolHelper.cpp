@@ -18,9 +18,12 @@
 #include <set>
 #include <string_view>
 #include <system_error>
+#include <iostream>
+#include <fstream>
 
 #include "ObjectUtils/ElfFile.h"
 #include "ObjectUtils/ObjectFile.h"
+#include "ObjectUtils/PdbFile.h"
 #include "OrbitBase/ExecutablePath.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ReadFileToString.h"
@@ -32,10 +35,13 @@
 
 using orbit_grpc_protos::ModuleSymbols;
 
+#pragma optimize("", off)
+
 namespace fs = std::filesystem;
 using ::orbit_object_utils::CreateObjectFile;
 using ::orbit_object_utils::ElfFile;
 using ::orbit_object_utils::ObjectFile;
+using ::orbit_object_utils::PdbFile;
 
 namespace {
 
@@ -227,12 +233,13 @@ ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsWithSymbolsPathFile(
   filename_plus_debug_extension.replace_extension(filename.extension().string() + debug_extension);
 
   std::vector<fs::path> search_paths;
-  for (const auto& directory : symbols_file_directories_) {
+  auto search_directories = symbols_file_directories_;
+  search_directories.push_back(module_path.parent_path().string());
+  for (const auto& directory : search_directories) {
     search_paths.push_back(directory / filename_dot_debug_extension);
     search_paths.push_back(directory / filename_plus_debug_extension);
     search_paths.push_back(directory / filename);
   }
-  search_paths.push_back(module_path.string());
 
   LOG("Trying to find symbols for module: \"%s\"", module_path.string());
   for (const auto& symbols_path : search_paths) {
@@ -278,14 +285,40 @@ ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsWithSymbolsPathFile(
   return cache_file_path;
 }
 
+void OutputModuleSymbols(const orbit_grpc_protos::ModuleSymbols& module_symbols, const char* file_name) {
+  std::ofstream output_file;
+  output_file.open(file_name);
+  for (const orbit_grpc_protos::SymbolInfo& symbol_info : module_symbols.symbol_infos()) {
+    output_file << "name: " << symbol_info.name();
+    output_file << " demangled_name: " << symbol_info.demangled_name();
+    output_file << " address: " << symbol_info.address();
+    output_file << " size: " << symbol_info.size() << std::endl;
+  }
+
+  output_file.close();
+}
+
 ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> SymbolHelper::LoadSymbolsFromPdb(
     const fs::path& file_path) {
-  ORBIT_SCOPE_FUNCTION;
-  SCOPED_TIMED_LOG("LoadSymbolsFromPdb: %s", file_path.string());
-  orbit_grpc_protos::ModuleSymbols module_symbols;
-
   DebugInfoListener debug_info_listener;
-  orbit_lib::ListFunctions(file_path.string().c_str(), &debug_info_listener);
+
+  {
+    ORBIT_SCOPE("LoadPdb DIA");
+    SCOPED_TIMED_LOG("LoadPdb DIA: %s", file_path.string());
+    orbit_lib::ListFunctions(file_path.string().c_str(), &debug_info_listener);
+  }
+
+  OutputModuleSymbols(debug_info_listener.module_symbols, "module_symbols_DIA");
+
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  {
+    ORBIT_SCOPE("LoadPdb LLVM");
+    SCOPED_TIMED_LOG("LoadPdb LLVM: %s", file_path.string());
+    ErrorMessageOr<std::unique_ptr<PdbFile>> pdb_file = orbit_object_utils::CreatePdbFile(file_path);
+    module_symbols = std::move(pdb_file.value()->LoadDebugSymbols().value());
+  }
+
+  OutputModuleSymbols(module_symbols, "module_symbols_LLVM");
 
   if (!debug_info_listener.error_message.empty())
     return ErrorMessage(debug_info_listener.error_message);
