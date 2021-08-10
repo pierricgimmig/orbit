@@ -279,8 +279,10 @@ QAccessibleInterface* OrbitGlWidgetAccessible::child(int index) const {
 QAccessibleInterface* GlAccessibilityFactory(const QString& classname, QObject* object) {
   QAccessibleInterface* iface = nullptr;
   if (classname == QLatin1String("OrbitGLWidget") && object->isWidgetType()) {
+    OrbitGLWidget* gl_widget = static_cast<OrbitGLWidget*>(object);
+    if (gl_widget->GetCanvas() == nullptr) return nullptr;
     iface = static_cast<QAccessibleInterface*>(
-        new OrbitGlWidgetAccessible(static_cast<OrbitGLWidget*>(object)));
+        new OrbitGlWidgetAccessible(gl_widget));
   }
 
   return iface;

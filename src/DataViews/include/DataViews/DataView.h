@@ -42,9 +42,9 @@ class DataView {
   struct Column {
     Column() : Column{"", .0f, SortingOrder::kAscending} {}
     Column(std::string header, float ratio, SortingOrder initial_order)
-        : header{std::move(header)}, ratio{ratio}, initial_order{initial_order} {}
+        : header{std::move(header)}, initial_ratio{ratio}, initial_order{initial_order} {}
     std::string header;
-    float ratio;
+    float initial_ratio;
     SortingOrder initial_order;
   };
 

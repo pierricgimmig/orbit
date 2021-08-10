@@ -159,14 +159,17 @@ OrbitMainWindow::OrbitMainWindow(TargetConfiguration target_configuration,
       ui(new Ui::OrbitMainWindow),
       command_line_flags_(command_line_flags),
       target_configuration_(std::move(target_configuration)),
-      metrics_uploader_(metrics_uploader) {
-  SetupMainWindow();
+      metrics_uploader_(metrics_uploader) { 
+    ui->setupUi(this);
+}
+
+void OrbitMainWindow::SetupMainWindow() {
+  DataViewFactory* data_view_factory = app_.get();
 
   SetupTargetLabel();
   SetupStatusBarLogButton();
   SetupHintFrame();
 
-  DataViewFactory* data_view_factory = app_.get();
   ui->ModulesList->Initialize(data_view_factory->GetOrCreateDataView(DataViewType::kModules),
                               SelectionType::kExtended, FontType::kDefault);
   ui->FunctionsList->Initialize(data_view_factory->GetOrCreateDataView(DataViewType::kFunctions),
@@ -176,10 +179,6 @@ OrbitMainWindow::OrbitMainWindow(TargetConfiguration target_configuration,
                               /*is_main_instance=*/true, /*uniform_row_height=*/false,
                               /*text_alignment=*/Qt::AlignTop | Qt::AlignLeft);
 
-  std::visit([this](const auto& target) { SetTarget(target); }, target_configuration_);
-
-  app_->PostInit(is_connected_);
-
   app_->SetSamplesPerSecond(absl::GetFlag(FLAGS_sampling_rate));
   uint16_t stack_dump_size = absl::GetFlag(FLAGS_stack_dump_size);
   CHECK(stack_dump_size <= 65000 && stack_dump_size > 0);
@@ -188,20 +187,8 @@ OrbitMainWindow::OrbitMainWindow(TargetConfiguration target_configuration,
                                ? orbit_grpc_protos::UnwindingMethod::kFramePointerUnwinding
                                : orbit_grpc_protos::UnwindingMethod::kDwarfUnwinding);
 
-  SaveCurrentTabLayoutAsDefaultInMemory();
-
-  UpdateCaptureStateDependentWidgets();
-
-  LoadCaptureOptionsIntoApp();
-
   metrics_uploader_->SendLogEvent(
       orbit_metrics_uploader::OrbitLogEvent_LogEventType_ORBIT_MAIN_WINDOW_OPEN);
-}
-
-void OrbitMainWindow::SetupMainWindow() {
-  DataViewFactory* data_view_factory = app_.get();
-
-  ui->setupUi(this);
 
   ui->splitter_2->setSizes({5000, 5000});
 
@@ -361,6 +348,17 @@ void OrbitMainWindow::SetupMainWindow() {
   if (!absl::GetFlag(FLAGS_devmode)) {
     ui->actionIntrospection->setVisible(false);
   }
+
+    SaveCurrentTabLayoutAsDefaultInMemory();
+
+  UpdateCaptureStateDependentWidgets();
+
+  LoadCaptureOptionsIntoApp();
+
+    std::visit([this](const auto& target) { SetTarget(target); }, target_configuration_);
+
+  // set timer selected
+  app_->PostInit(is_connected_);
 }
 
 static QWidget* CreateSpacer(QWidget* parent) {

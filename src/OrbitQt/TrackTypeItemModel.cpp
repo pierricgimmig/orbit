@@ -105,12 +105,15 @@ Qt::ItemFlags TrackTypeItemModel::flags(const QModelIndex& index) const {
 }
 
 void TrackTypeItemModel::SetTrackManager(TrackManager* track_manager) {
-  beginRemoveRows({}, 0, rowCount() - 1);
+  //beginRemoveRows({}, 0, std::max(rowCount() - 1, 0));
   track_manager_ = nullptr;
-  endRemoveRows();
-  beginInsertRows({}, 0, known_track_types_.size() - 1);
+  //endRemoveRows();
+
+  //const size_t num_known_track_types = known_track_types_.size();
+  //int max_row_index = num_known_track_types > 0 ? num_known_track_types - 1 : 0;
+  ///beginInsertRows({}, 0, max_row_index);
   track_manager_ = track_manager;
-  endInsertRows();
+  //endInsertRows();
 }
 
 QString TrackTypeItemModel::GetTrackTypeDisplayName(Track::Type track_type) const {

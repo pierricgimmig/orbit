@@ -163,17 +163,20 @@ void OrbitTreeView::Refresh(RefreshMode refresh_mode) {
   model_->GetDataView()->OnRefresh(visible_selected_indices, refresh_mode);
 }
 
-void OrbitTreeView::resizeEvent(QResizeEvent* event) {
+int OrbitTreeView::sizeHintForColumn(int column) const {
   if (auto_resize_ && model_ != nullptr && model_->GetDataView()) {
     QSize header_size = size();
-    for (size_t i = 0; i < model_->GetDataView()->GetColumns().size(); ++i) {
-      float ratio = model_->GetDataView()->GetColumns()[i].ratio;
-      if (ratio > 0.f) {
-        header()->resizeSection(i, static_cast<int>(header_size.width() * ratio));
-      }
+    int header_width = static_cast<int>(header_size.width());
+    LOG("header_width = %i", header_width);
+    float ratio = model_->GetDataView()->GetColumns()[column].initial_ratio;
+    if (ratio > 0.f) {
+        return static_cast<int>(header_width * ratio);
     }
   }
+  return -1;
+}
 
+void OrbitTreeView::resizeEvent(QResizeEvent* event) {
   QTreeView::resizeEvent(event);
 }
 

@@ -63,6 +63,7 @@ class OrbitMainWindow final : public QMainWindow, public orbit_gl::MainWindowInt
                            orbit_metrics_uploader::MetricsUploader* metrics_uploader = nullptr,
                            const QStringList& command_line_flags = QStringList());
   ~OrbitMainWindow() override;
+  void SetupMainWindow();
 
   void RegisterGlWidget(OrbitGLWidget* widget) { gl_widgets_.push_back(widget); }
   void UnregisterGlWidget(OrbitGLWidget* widget) {
@@ -154,7 +155,6 @@ class OrbitMainWindow final : public QMainWindow, public orbit_gl::MainWindowInt
  private:
   void StartMainTimer();
   void SetupCaptureToolbar();
-  void SetupMainWindow();
   void SetupHintFrame();
   void SetupTargetLabel();
   void SetupStatusBarLogButton();

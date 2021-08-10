@@ -52,6 +52,9 @@ class OrbitTreeView : public QTreeView {
   void SetIsInternalRefresh(bool status) { is_internal_refresh_ = status; }
   void SetIsMultiSelection(bool status) { is_multi_selection_ = status; }
 
+  protected:
+  int sizeHintForColumn(int column) const override;
+
  public slots:
   void columnResized(int column, int oldSize, int newSize);
 
