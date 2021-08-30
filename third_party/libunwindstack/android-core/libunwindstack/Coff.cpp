@@ -147,7 +147,7 @@ bool ParseCoffOptionalHeader(const CoffHeader& coff_header, Memory* memory, uint
   }
   // TODO: Do not assume this is a 64-bit binary.
   uint64_t addr_byte_size = 8;
-  constexpr uint32_t kOptionalHeaderMagicPE32Plus = 0x020b;
+  //constexpr uint32_t kOptionalHeaderMagicPE32Plus = 0x020b;
   assert(header->magic == kOptionalHeaderMagicPE32Plus);
 
   if (*offset < end_offset) {
@@ -515,6 +515,7 @@ bool Coff::ProcessUnwindOpCodes(Memory* object_file_memory, Memory* process_memo
       case UWOP_SAVE_XMM128_FAR: {
         // See comment for UWOP_SAVE_XMM128.
         op_idx += 3;
+        ABSL_FALLTHROUGH_INTENDED;
       }
       case UWOP_PUSH_MACHFRAME: {
         // TODO: Support all op codes.
@@ -580,7 +581,7 @@ bool DetectAndHandleEpilog(const csh& capstone_handle, const std::vector<uint8_t
   uint64_t current_offset = 0;
   size_t code_size = machine_code.size();
   const uint8_t* code_pointer = machine_code.data();
-  uint64_t rsp_adjustment = 0;
+  //uint64_t rsp_adjustment = 0;
   bool is_first_iteration = true;
   cs_insn* instruction = cs_malloc(capstone_handle);
 
