@@ -13,11 +13,12 @@ target_sources(
   ObjectUtils
   PUBLIC include/ObjectUtils/CoffFile.h
          include/ObjectUtils/ElfFile.h
+         include/ObjectUtils/PdbFile.h
          include/ObjectUtils/LinuxMap.h)
 
 target_sources(
   ObjectUtils
-  PRIVATE CoffFile.cpp ElfFile.cpp ObjectFile.cpp)
+  PRIVATE CoffFile.cpp ElfFile.cpp ObjectFile.cpp PdbFile.cpp)
 
 if (NOT WIN32)
 target_sources(ObjectUtils PRIVATE LinuxMap.cpp)
