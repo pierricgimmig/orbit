@@ -17,8 +17,9 @@ namespace orbit_linux_tracing {
 
 class Tracer : public orbit_tracing_interface::Tracer {
  public:
-  explicit Tracer(orbit_grpc_protos::CaptureOptions capture_options)
-      : orbit_tracing_interface::Tracer(std::move(capture_options)) {}
+  explicit Tracer(orbit_grpc_protos::CaptureOptions capture_options,
+                  orbit_tracing_interface::TracerListener* listener)
+      : orbit_tracing_interface::Tracer(std::move(capture_options), listener) {}
 
   ~Tracer() { Stop(); }
 

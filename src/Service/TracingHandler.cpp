@@ -28,8 +28,8 @@ using orbit_grpc_protos::kLinuxTracingProducerId;
 
 void TracingHandler::Start(CaptureOptions capture_options) {
   CHECK(tracer_ == nullptr);
-  tracer_ = std::make_unique<orbit_linux_tracing::Tracer>(std::move(capture_options));
-  tracer_->SetListener(this);
+  tracer_ =
+      std::make_unique<orbit_linux_tracing::Tracer>(std::move(capture_options), /*listener=*/this);
   tracer_->Start();
 }
 

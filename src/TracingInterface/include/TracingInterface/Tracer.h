@@ -15,19 +15,16 @@ namespace orbit_tracing_interface {
 
 class Tracer {
  public:
-  explicit Tracer(orbit_grpc_protos::CaptureOptions capture_options)
-      : capture_options_{std::move(capture_options)} {}
+  explicit Tracer(orbit_grpc_protos::CaptureOptions capture_options, TracerListener* listener)
+      : capture_options_{std::move(capture_options)}, listener_(listener) {}
 
   virtual ~Tracer() = default;
-
-  void SetListener(TracerListener* listener) { listener_ = listener; }
 
   virtual void Start() = 0;
   virtual void Stop() = 0;
 
  protected:
   orbit_grpc_protos::CaptureOptions capture_options_;
-
   TracerListener* listener_ = nullptr;
 };
 

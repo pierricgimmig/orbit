@@ -358,9 +358,8 @@ class LinuxTracingIntegrationTestFixture {
       CHECK(capture_options.trace_context_switches());
     }
 
-    tracer_.emplace(std::move(capture_options));
     listener_.emplace();
-    tracer_->SetListener(&*listener_);
+    tracer_.emplace(std::move(capture_options), &*listener_);
     tracer_->Start();
 
     if (IsRunningAsRoot()) {
