@@ -39,3 +39,19 @@ target_link_libraries(WindowsTracing PUBLIC
         CONAN_PKG::abseil
         CONAN_PKG::grpc
         CONAN_PKG::outcome)
+
+add_executable(WindowsTracingTests)
+
+target_sources(WindowsTracingTests PRIVATE
+        ContextSwitchTest.cpp
+        MockTracerListener.h)
+
+target_link_libraries(WindowsTracingTests PRIVATE
+        TracingInterface
+        WindowsTracing
+        GTest::GTest
+        GTest::Main)
+
+SET_TARGET_PROPERTIES(WindowsTracingTests PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+
+register_test(WindowsTracingTests)
