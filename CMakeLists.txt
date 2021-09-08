@@ -36,7 +36,8 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
                       -Werror=unused-variable
                       -Werror=writable-strings
                       -Werror=sign-compare
-                      -Werror=thread-safety)
+                      -Werror=thread-safety
+                      -Wno-format-nonliteral)
 
   if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 8)
     add_compile_options(-Werror=defaulted-function-deleted

@@ -113,18 +113,14 @@ class UprobesUnwindingVisitorTest : public ::testing::Test {
   static inline const std::string kNonExecutableName = "data";
 
   static inline unwindstack::MapInfo kUprobesMapInfo{
-      nullptr, nullptr, kUprobesMapsStart, kUprobesMapsEnd, 0, PROT_EXEC | PROT_READ, kUprobesName};
+      nullptr, kUprobesMapsStart, kUprobesMapsEnd, 0, PROT_EXEC | PROT_READ, kUprobesName};
 
-  static inline unwindstack::MapInfo kTargetMapInfo{
-      nullptr, nullptr, kTargetMapsStart, kTargetMapsEnd, 0, PROT_EXEC | PROT_READ, kTargetName};
+  static inline unwindstack::MapInfo kTargetMapInfo{nullptr, kTargetMapsStart,      kTargetMapsEnd,
+                                                    0,       PROT_EXEC | PROT_READ, kTargetName};
 
-  static inline unwindstack::MapInfo non_executable_map_info_{nullptr,
-                                                              nullptr,
-                                                              kNonExecutableMapsStart,
-                                                              kNonExecutableMapsEnd,
-                                                              0,
-                                                              PROT_EXEC | PROT_READ,
-                                                              kNonExecutableName};
+  static inline unwindstack::MapInfo non_executable_map_info_{
+      nullptr, kNonExecutableMapsStart, kNonExecutableMapsEnd,
+      0,       PROT_EXEC | PROT_READ,   kNonExecutableName};
 
   static inline unwindstack::FrameData kFrame1{
       .pc = kTargetAddress1,
@@ -778,7 +774,7 @@ TEST_F(UprobesUnwindingVisitorTest, VisitCallchainSampleWithUprobeSendsCompleteC
 
   EXPECT_CALL(maps_, Find).WillRepeatedly(Return(&kTargetMapInfo));
   auto fake_patch_callchain = [](pid_t /*tid*/, uint64_t* callchain, uint64_t callchain_size,
-                                 orbit_linux_tracing::LibunwindstackMaps *
+                                 orbit_linux_tracing::LibunwindstackMaps*
                                  /*maps*/) -> bool {
     CHECK(callchain != nullptr);
     CHECK(callchain_size == 4);
@@ -891,7 +887,7 @@ TEST_F(UprobesUnwindingVisitorTest,
 
   auto fake_patch_caller_of_leaf_function = [](CallchainSamplePerfEvent* event,
                                                LibunwindstackMaps* /*maps*/,
-                                               orbit_linux_tracing::LibunwindstackUnwinder *
+                                               orbit_linux_tracing::LibunwindstackUnwinder*
                                                /*unwinder*/) -> Callstack::CallstackType {
     CHECK(event != nullptr);
     std::vector<uint64_t> patched_callchain;

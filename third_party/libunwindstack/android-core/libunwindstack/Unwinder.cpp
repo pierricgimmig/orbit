@@ -96,7 +96,7 @@ void Unwinder::FillInDexFrame() {
 #endif
 }
 
-FrameData* Unwinder::FillInFrameCoff(MapInfo* map_info, Coff* coff, uint64_t rel_pc,
+FrameData* Unwinder::FillInFrameCoff(MapInfo* map_info, Coff* /*coff*/, uint64_t rel_pc,
                                      uint64_t pc_adjustment) {
   size_t frame_num = frames_.size();
   frames_.resize(frame_num + 1);

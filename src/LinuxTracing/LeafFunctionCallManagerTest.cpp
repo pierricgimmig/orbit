@@ -80,13 +80,13 @@ class LeafFunctionCallManagerTest : public ::testing::Test {
   static inline const std::string kNonExecutableName = "data";
 
   static inline unwindstack::MapInfo kUprobesMapInfo{
-      nullptr, nullptr, kUprobesMapsStart, kUprobesMapsEnd, 0, PROT_EXEC | PROT_READ, kUprobesName};
+      nullptr, kUprobesMapsStart, kUprobesMapsEnd, 0, PROT_EXEC | PROT_READ, kUprobesName};
 
   static inline unwindstack::MapInfo kTargetMapInfo{
-      nullptr, nullptr, kTargetMapsStart, kTargetMapsEnd, 0, PROT_EXEC | PROT_READ, kTargetName};
+      nullptr, kTargetMapsStart, kTargetMapsEnd, 0, PROT_EXEC | PROT_READ, kTargetName};
 
   static inline unwindstack::MapInfo kNonExecutableMapInfo{
-      nullptr, nullptr,   kNonExecutableMapsStart, kNonExecutableMapsEnd,
+      nullptr, kNonExecutableMapsStart, kNonExecutableMapsEnd,
       0,       PROT_READ, kNonExecutableName};
 
   static inline unwindstack::FrameData kFrame1{
