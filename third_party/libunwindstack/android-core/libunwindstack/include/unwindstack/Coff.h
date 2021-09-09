@@ -204,7 +204,7 @@ class Coff {
   uint64_t executable_offset_ = 0;
 
   // For disassembling
-  csh capstone_handle_;
+  csh capstone_handle_ = 0;
 
   // Protect calls that can modify internal state of the interface object.
   std::mutex lock_;
