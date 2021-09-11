@@ -4,8 +4,8 @@
 
 #include "WindowsTracing/Tracer.h"
 
+#include "KrabsTracer.h"
 #include "OrbitBase/Logging.h"
-#include "WindowsTracing/KrabsTracer.h"
 
 namespace orbit_windows_tracing {
 

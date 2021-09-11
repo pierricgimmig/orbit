@@ -2,19 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "WindowsTracing/KrabsTracer.h"
+#include "KrabsTracer.h"
 
+#include <optional>
+
+#include "ClockUtils.h"
+#include "EventTypes.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ThreadUtils.h"
-#include "WindowsTracing/ClockUtils.h"
-#include "WindowsTracing/EventTypes.h"
 
 namespace orbit_windows_tracing {
+
+using orbit_grpc_protos::SchedulingSlice;
 
 KrabsTracer::KrabsTracer(orbit_grpc_protos::CaptureOptions capture_options,
                          orbit_tracing_interface::TracerListener* listener)
     : orbit_tracing_interface::Tracer(std::move(capture_options), listener),
       trace_(KERNEL_LOGGER_NAME) {
+  SetTraceProperties();
+  EnableProviders();
+};
+
+void KrabsTracer::SetTraceProperties() {
+  // https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
+  EVENT_TRACE_PROPERTIES properties = {0};
+  properties.BufferSize = 256;
+  properties.MinimumBuffers = 12;
+  properties.MaximumBuffers = 48;
+  properties.FlushTimer = 1;
+  properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+  trace_.set_trace_properties(&properties);
+}
+
+void KrabsTracer::EnableProviders() {
   thread_provider_.add_on_event_callback(
       [this](const auto& record, const auto& context) { OnThreadEvent(record, context); });
   trace_.enable(thread_provider_);
@@ -22,9 +42,16 @@ KrabsTracer::KrabsTracer(orbit_grpc_protos::CaptureOptions capture_options,
   context_switch_provider_.add_on_event_callback(
       [this](const auto& record, const auto& context) { OnThreadEvent(record, context); });
   trace_.enable(context_switch_provider_);
-};
+}
+
+void KrabsTracer::SetContextSwitchManager(std::shared_ptr<ContextSwitchManager> manager) {
+  context_switch_manager_ = manager;
+}
 
 void KrabsTracer::Start() {
+  if (context_switch_manager_ == nullptr) {
+    context_switch_manager_ = std::make_shared<ContextSwitchManager>();
+  }
   CHECK(thread_ == nullptr);
   thread_ = std::make_unique<std::thread>(&KrabsTracer::Run, this);
 }
@@ -33,8 +60,9 @@ void KrabsTracer::Stop() {
   CHECK(thread_ != nullptr && thread_->joinable());
   trace_.stop();
   thread_->join();
+  OutputStats();
   thread_ = nullptr;
-  tracing_context_ = TracingContext();
+  context_switch_manager_ = nullptr;
 }
 
 void KrabsTracer::Run() {
@@ -47,14 +75,14 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
     case Thread_TypeGroup1::kOpcodeStart:
     case Thread_TypeGroup1::kOpcodeDcStart:
     case Thread_TypeGroup1::kOpcodeDcEnd: {
-      // Populate a pid_by_tid map using thread events. The Start event type corresponds to a
-      // thread's creation. The DCStart and DCEnd event types enumerate the threads that are
-      // currently running at the time the kernel session starts and ends, respectively.
+      // The Start event type corresponds to a thread's creation. The DCStart and DCEnd event types
+      // enumerate the threads that are currently running at the time the kernel session starts and
+      // ends, respectively.
       krabs::schema schema(record, context.schema_locator);
       krabs::parser parser(schema);
-      uint32_t pid = parser.parse<uint32_t>(L"ProcessId");
       uint32_t tid = parser.parse<uint32_t>(L"TThreadId");
-      tracing_context_.pid_by_tid[tid] = pid;
+      uint32_t pid = parser.parse<uint32_t>(L"ProcessId");
+      context_switch_manager_->ProcessThreadEvent(tid, pid);
       break;
     }
     case Thread_CSwitch::kOpcodeCSwitch:
@@ -65,42 +93,36 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
   }
 }
 
-// Generate scheduling slices by listening to context switch events. We use the pid_by_tid map
-// populated by the thread events to access pid information which is not available
-// directly from the switch event. We also maintain a last_cpu_event_by_cpu map to retrieve
-// the start time of a scheduling slice corresponding to the current swap-out event.
 void KrabsTracer::OnContextSwitch(const EVENT_RECORD& record, const krabs::trace_context& context) {
   krabs::schema schema(record, context.schema_locator);
   krabs::parser parser(schema);
-  CpuEvent new_cpu_event;
-  new_cpu_event.old_tid = parser.parse<uint32_t>(L"OldThreadId");
-  new_cpu_event.new_tid = parser.parse<uint32_t>(L"NewThreadId");
-  new_cpu_event.timestamp_ns = ClockUtils::RawTimestampToNs(record.EventHeader.TimeStamp.QuadPart);
+  uint32_t old_tid = parser.parse<uint32_t>(L"OldThreadId");
+  uint32_t new_tid = parser.parse<uint32_t>(L"NewThreadId");
+  uint64_t timestamp_ns = ClockUtils::RawTimestampToNs(record.EventHeader.TimeStamp.QuadPart);
+  uint16_t cpu = record.BufferContext.ProcessorIndex;
 
-  uint16_t processor_index = record.BufferContext.ProcessorIndex;
-  if (tracing_context_.last_cpu_event_by_cpu.count(processor_index) > 0) {
-    CpuEvent& last_cpu_event = tracing_context_.last_cpu_event_by_cpu[processor_index];
-    uint32_t in_tid = last_cpu_event.new_tid;
-    uint32_t out_tid = new_cpu_event.old_tid;
+  std::optional<SchedulingSlice> scheduling_slice =
+      context_switch_manager_->ProcessCpuEvent(cpu, old_tid, new_tid, timestamp_ns);
 
-    if (in_tid == out_tid) {
-      CHECK(new_cpu_event.timestamp_ns >= last_cpu_event.timestamp_ns);
-      orbit_grpc_protos::SchedulingSlice scheduling_slice;
-      uint32_t old_pid = tracing_context_.pid_by_tid[new_cpu_event.old_tid];
-      scheduling_slice.set_pid(old_pid);
-      scheduling_slice.set_tid(out_tid);
-      scheduling_slice.set_core(processor_index);
-      scheduling_slice.set_duration_ns(new_cpu_event.timestamp_ns - last_cpu_event.timestamp_ns);
-      scheduling_slice.set_out_timestamp_ns(new_cpu_event.timestamp_ns);
-      listener_->OnSchedulingSlice(std::move(scheduling_slice));
-    } else {
-      // We probably missed events. TODO-PG: handle missed events.
-      static uint64_t count = 0;
-      if (++count % 100 == 0) LOG("OnContextSwitch: out_tid != in_tid %lu", count);
+  if (scheduling_slice.has_value()) {
+    if (scheduling_slice->pid() == orbit_base::kInvalidProcessId) {
+      ERROR("SchedulingSlice with unknown pid");
     }
+    listener_->OnSchedulingSlice(std::move(scheduling_slice.value()));
   }
+}
 
-  tracing_context_.last_cpu_event_by_cpu[processor_index] = new_cpu_event;
+void KrabsTracer::OutputStats() {
+  krabs::trace_stats trace_stats = trace_.query_stats();
+  LOG("--- ETW stats ---");
+  LOG("Number of buffers: %u", trace_stats.buffersCount);
+  LOG("Free buffers: %u", trace_stats.buffersFree);
+  LOG("Buffers written: %u", trace_stats.buffersWritten);
+  LOG("Buffers lost: %u", trace_stats.buffersLost);
+  LOG("Events total (handled+lost): %lu", trace_stats.eventsTotal);
+  LOG("Events handled: %lu", trace_stats.eventsHandled);
+  LOG("Events lost: %u", trace_stats.eventsLost);
+  context_switch_manager_->OutputStats();
 }
 
 }  // namespace orbit_windows_tracing

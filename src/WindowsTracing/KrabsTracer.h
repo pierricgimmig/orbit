@@ -9,9 +9,9 @@
 #include <memory>
 #include <thread>
 
+#include "ContextSwitchManager.h"
 #include "TracingInterface/Tracer.h"
 #include "TracingInterface/TracerListener.h"
-#include "WindowsTracing/TracingContext.h"
 
 namespace orbit_windows_tracing {
 
@@ -22,14 +22,19 @@ class KrabsTracer : public orbit_tracing_interface::Tracer {
   KrabsTracer() = delete;
   void Start() override;
   void Stop() override;
+  
+  void SetContextSwitchManager(std::shared_ptr<ContextSwitchManager> manager);
 
- private:
+ protected:
+  void SetTraceProperties();
+  void EnableProviders();
   void Run();
   void OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
-  void OnContextSwitch(const EVENT_RECORD& record, const krabs::trace_context& context);
+  void OnContextSwitch(const EVENT_RECORD& record, const krabs::trace_context& context); 
+  void OutputStats();
 
  private:
-  TracingContext tracing_context_;
+  std::shared_ptr<ContextSwitchManager> context_switch_manager_;
   std::unique_ptr<std::thread> thread_;
 
   krabs::kernel_trace trace_;

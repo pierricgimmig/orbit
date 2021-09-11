@@ -19,14 +19,15 @@ target_include_directories(WindowsTracing PUBLIC
 target_include_directories(WindowsTracing PRIVATE
         ${CMAKE_CURRENT_LIST_DIR})
 
-target_sources(WindowsTracing PRIVATE
-        include/WindowsTracing/ClockUtils.h
-        include/WindowsTracing/KrabsTracer.h
-        include/WindowsTracing/Tracer.h
-        include/WindowsTracing/TracingContext.h)
+target_sources(WindowsTracing PUBLIC
+        include/WindowsTracing/Tracer.h)
 
 target_sources(WindowsTracing PRIVATE
+        ClockUtils.h
+        ContextSwitchManager.cpp
+        ContextSwitchManager.h
         KrabsTracer.cpp
+        KrabsTracer.h
         Tracer.cpp)
 
 target_include_directories(WindowsTracing INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -44,6 +45,7 @@ add_executable(WindowsTracingTests)
 
 target_sources(WindowsTracingTests PRIVATE
         ContextSwitchTest.cpp
+        KrabsTracerTest.cpp
         MockTracerListener.h)
 
 target_link_libraries(WindowsTracingTests PRIVATE

@@ -5,10 +5,13 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "ContextSwitchManager.h"
 #include "MockTracerListener.h"
 #include "OrbitBase/Logging.h"
 #include "WindowsTracing/Tracer.h"
 #include "capture.pb.h"
+
+namespace orbit_windows_tracing {
 
 TEST(Scheduling, ListenerCalledAtLeastOnce) {
   orbit_grpc_protos::CaptureOptions capture_options;
@@ -21,3 +24,5 @@ TEST(Scheduling, ListenerCalledAtLeastOnce) {
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   tracer.Stop();
 }
+
+}  // namespace orbit_windows_tracing
