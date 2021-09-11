@@ -35,12 +35,6 @@ TEST(KrabsTracer, ContextSwitches) {
 
   // Test that we have received thread events which are needed for retrieve pid from tid.
   EXPECT_GT(stats.num_processed_thread_events_, 0);
-
-  // Test that in the if there are no lost events, all context switches processed are linked by the
-  // same thread id, i.e. a new event's "old" tid corresponds to the previous event's "new" tid.
-  if (trace_stats.eventsLost == 0) {
-    EXPECT_EQ(stats.num_tid_mismatches_, 0);
-  }
 }
 
 }  // namespace orbit_windows_tracing

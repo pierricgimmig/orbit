@@ -43,7 +43,7 @@ std::optional<orbit_grpc_protos::SchedulingSlice> ContextSwitchManager::ProcessC
     scheduling_slice.set_out_timestamp_ns(new_cpu_event.timestamp_ns);
     return scheduling_slice;
   } else {
-    ERROR("Context switch mismatch, we might be losing events.");
+    // Can happen on thread creation or if we are losing events.
     ++stats_.num_tid_mismatches_;
   }
 
