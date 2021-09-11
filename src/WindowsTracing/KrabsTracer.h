@@ -22,7 +22,7 @@ class KrabsTracer : public orbit_tracing_interface::Tracer {
   KrabsTracer() = delete;
   void Start() override;
   void Stop() override;
-  
+
   void SetContextSwitchManager(std::shared_ptr<ContextSwitchManager> manager);
 
  protected:
@@ -30,7 +30,7 @@ class KrabsTracer : public orbit_tracing_interface::Tracer {
   void EnableProviders();
   void Run();
   void OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
-  void OnContextSwitch(const EVENT_RECORD& record, const krabs::trace_context& context); 
+  void OnContextSwitch(const EVENT_RECORD& record, const krabs::trace_context& context);
   void OutputStats();
 
  private:

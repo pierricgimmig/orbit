@@ -6,9 +6,9 @@
 #include <gtest/gtest.h>
 
 #include "ContextSwitchManager.h"
+#include "KrabsTracer.h"
 #include "MockTracerListener.h"
 #include "OrbitBase/Logging.h"
-#include "KrabsTracer.h"
 #include "capture.pb.h"
 
 namespace orbit_windows_tracing {
