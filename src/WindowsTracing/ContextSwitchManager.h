@@ -22,12 +22,19 @@ class ContextSwitchManager {
  public:
   ContextSwitchManager() = default;
 
-  virtual std::optional<orbit_grpc_protos::SchedulingSlice> ProcessCpuEvent(uint16_t cpu,
-                                                                            uint32_t old_tid,
-                                                                            uint32_t new_tid,
-                                                                            uint64_t timestamp_ns);
-  virtual void ProcessThreadEvent(uint32_t tid, uint32_t pid);
-  virtual void OutputStats();
+  std::optional<orbit_grpc_protos::SchedulingSlice> ProcessCpuEvent(uint16_t cpu, uint32_t old_tid,
+                                                                    uint32_t new_tid,
+                                                                    uint64_t timestamp_ns);
+  void ProcessThreadEvent(uint32_t tid, uint32_t pid);
+  void OutputStats();
+
+  struct Stats {
+    uint64_t num_processed_cpu_events_ = 0;
+    uint64_t num_processed_thread_events_ = 0;
+    uint64_t num_tid_mismatches_ = 0;
+  };
+
+  const Stats& GetStats() { return stats_; }
 
  protected:
   struct CpuEvent {
@@ -38,7 +45,7 @@ class ContextSwitchManager {
 
   absl::flat_hash_map<uint32_t, uint32_t> pid_by_tid_;
   absl::flat_hash_map<uint32_t, CpuEvent> last_cpu_event_by_cpu_;
-  uint64_t num_tid_mismatches_ = 0;
+  Stats stats_;
 };
 
 }  // namespace orbit_windows_tracing

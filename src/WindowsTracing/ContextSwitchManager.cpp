@@ -17,6 +17,7 @@ using orbit_grpc_protos::SchedulingSlice;
 std::optional<orbit_grpc_protos::SchedulingSlice> ContextSwitchManager::ProcessCpuEvent(
     uint16_t cpu, uint32_t old_tid, uint32_t new_tid, uint64_t timestamp_ns) {
   std::optional<CpuEvent> last_cpu_event = std::nullopt;
+  ++stats_.num_processed_cpu_events_;
   auto last_cpu_event_it = last_cpu_event_by_cpu_.find(cpu);
   if (last_cpu_event_it != last_cpu_event_by_cpu_.end()) {
     last_cpu_event = last_cpu_event_it->second;
@@ -43,19 +44,22 @@ std::optional<orbit_grpc_protos::SchedulingSlice> ContextSwitchManager::ProcessC
     return scheduling_slice;
   } else {
     ERROR("Context switch mismatch, we might be losing events.");
-    ++num_tid_mismatches_;
+    ++stats_.num_tid_mismatches_;
   }
 
   return std::nullopt;
 }
 
 void ContextSwitchManager::ProcessThreadEvent(uint32_t tid, uint32_t pid) {
+  ++stats_.num_processed_thread_events_;
   pid_by_tid_[tid] = pid;
 }
 
 void ContextSwitchManager::OutputStats() {
   LOG("--- ContextSwitchManager stats ---");
-  LOG("Number of thread mismatches: %u", num_tid_mismatches_);
+  LOG("Number of processed cpu events: %u", stats_.num_processed_cpu_events_);
+  LOG("Number of processed thread events: %u", stats_.num_processed_thread_events_);
+  LOG("Number of thread mismatches: %u", stats_.num_tid_mismatches_);
 }
 
 }  // namespace orbit_windows_tracing
