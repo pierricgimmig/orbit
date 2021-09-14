@@ -156,15 +156,19 @@ ErrorMessageOr<void> SymbolHelper::VerifySymbolsFile(const fs::path& symbols_pat
 
   const std::unique_ptr<SymbolsFile>& symbols_file{symbols_file_or_error.value()};
 
-  if (symbols_file->GetBuildId().empty()) {
-    return ErrorMessage(
-        absl::StrFormat("Symbols file \"%s\" does not have a build id", symbols_path.string()));
-  }
+  bool is_pdb = symbols_path.extension() == ".pdb";
 
-  if (symbols_file->GetBuildId() != build_id) {
-    return ErrorMessage(
-        absl::StrFormat(R"(Symbols file "%s" has a different build id: "%s" != "%s")",
-                        symbols_path.string(), build_id, symbols_file->GetBuildId()));
+  if (!is_pdb) {
+    if (symbols_file->GetBuildId().empty()) {
+      return ErrorMessage(
+          absl::StrFormat("Symbols file \"%s\" does not have a build id", symbols_path.string()));
+    }
+
+    if (symbols_file->GetBuildId() != build_id) {
+      return ErrorMessage(
+          absl::StrFormat(R"(Symbols file "%s" has a different build id: "%s" != "%s")",
+                          symbols_path.string(), build_id, symbols_file->GetBuildId()));
+    }
   }
 
   return outcome::success();

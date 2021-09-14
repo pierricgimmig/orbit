@@ -29,17 +29,21 @@ ErrorMessageOr<std::unique_ptr<SymbolsFile>> CreateSymbolsFile(
     return ErrorMessage{error_message};
   }
 
-  ErrorMessageOr<std::unique_ptr<ObjectFile>> object_file_or_error = CreateObjectFile(file_path);
-  if (object_file_or_error.has_value()) {
-    if (object_file_or_error.value()->HasDebugSymbols()) {
-      return std::move(object_file_or_error.value());
-    }
-    error_message.append("\n* File does not contain symbols.");
-    return ErrorMessage{error_message};
-  }
+  bool is_pdb = file_path.extension() == ".pdb";
 
-  error_message.append(absl::StrFormat("\n* File cannot be read as an object file, error: %s",
-                                       object_file_or_error.error().message()));
+  if (!is_pdb) {
+    ErrorMessageOr<std::unique_ptr<ObjectFile>> object_file_or_error = CreateObjectFile(file_path);
+    if (object_file_or_error.has_value()) {
+      if (object_file_or_error.value()->HasDebugSymbols()) {
+        return std::move(object_file_or_error.value());
+      }
+      error_message.append("\n* File does not contain symbols.");
+      return ErrorMessage{error_message};
+    }
+
+    error_message.append(absl::StrFormat("\n* File cannot be read as an object file, error: %s",
+                                         object_file_or_error.error().message()));
+  }
 
   ErrorMessageOr<std::unique_ptr<PdbFile>> pdb_file_or_error =
       CreatePdbFile(file_path, object_file_info);

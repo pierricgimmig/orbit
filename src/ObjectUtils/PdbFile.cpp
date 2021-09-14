@@ -28,6 +28,10 @@
 #include "OrbitBase/Result.h"
 #include "symbol.pb.h"
 
+#ifdef _WIN32
+#include "OrbitLib/OrbitLib.h"
+#endif
+
 using orbit_grpc_protos::ModuleSymbols;
 using orbit_grpc_protos::SymbolInfo;
 
@@ -67,6 +71,28 @@ class SymbolInfoVisitor : public llvm::codeview::SymbolVisitorCallbacks {
   ObjectFileInfo object_file_info_;
 };
 
+#ifdef _WIN32
+struct DebugInfoListener : public orbit_lib::DebugInfoListener {
+  void OnError(const char* message) override {
+    error_message = message;
+  }
+
+  void OnFunction(const char* module_path, const char* function_name, uint64_t relative_address,
+                  uint64_t size, const char* /*file_name*/, int line) override {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(function_name);
+    symbol_info->set_demangled_name(function_name);
+    symbol_info->set_address(relative_address + object_file_info_->load_bias 
+                             /*+object_file_info_->executable_segment_offset*/);
+    symbol_info->set_size(size);
+  }
+
+  ObjectFileInfo* object_file_info_;
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  std::string error_message;
+};
+#endif
+
 class PdbFileImpl : public PdbFile {
  public:
   PdbFileImpl(std::filesystem::path file_path, const ObjectFileInfo& object_file_info,
@@ -102,6 +128,25 @@ PdbFileImpl::PdbFileImpl(std::filesystem::path file_path, const ObjectFileInfo& 
       session_(std::move(session)) {}
 
 [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileImpl::LoadDebugSymbols() {
+#ifdef _WIN32
+  bool use_orbit_lib = true;
+  if (use_orbit_lib) {
+    DebugInfoListener debug_info_listener;
+    debug_info_listener.object_file_info_ = &object_file_info_;
+    {
+      SCOPED_TIMED_LOG("LoadPdb DIA (OrbitLib): %s", file_path_.string());
+      orbit_lib::ListFunctions(file_path_.string().c_str(), &debug_info_listener);
+    }
+
+    if (!debug_info_listener.error_message.empty())
+      return ErrorMessage(debug_info_listener.error_message);
+    
+    debug_info_listener.module_symbols.set_load_bias(object_file_info_.load_bias);
+    debug_info_listener.module_symbols.set_symbols_file_path(file_path_.string());
+    return std::move(debug_info_listener.module_symbols);
+  }
+#endif
+
   ModuleSymbols module_symbols;
   module_symbols.set_load_bias(object_file_info_.load_bias);
   module_symbols.set_symbols_file_path(file_path_.string());
@@ -167,14 +212,15 @@ PdbFileImpl::PdbFileImpl(std::filesystem::path file_path, const ObjectFileInfo& 
 ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFile(const std::filesystem::path& file_path,
                                                        const ObjectFileInfo& object_file_info) {
   std::string file_path_string = file_path.string();
-  llvm::StringRef pdb_path{file_path_string};
+  /*llvm::StringRef pdb_path{file_path_string};
   std::unique_ptr<llvm::pdb::IPDBSession> session;
   llvm::Error error =
       llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native, pdb_path, session);
   if (error) {
     return ErrorMessage(absl::StrFormat("Unable to load PDB file %s with error: %s",
                                         file_path.string(), llvm::toString(std::move(error))));
-  }
+  }*/
+  std::unique_ptr<llvm::pdb::IPDBSession> session;
   return std::make_unique<PdbFileImpl>(file_path, object_file_info, std::move(session));
 }
 }  // namespace orbit_object_utils

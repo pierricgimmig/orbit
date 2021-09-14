@@ -41,6 +41,12 @@ target_link_libraries(
          CONAN_PKG::abseil
          CONAN_PKG::llvm-core)
 
+if (WIN32)
+target_link_libraries(
+  ObjectUtils
+  PUBLIC OrbitLib)
+endif()
+
 add_executable(ObjectUtilsTests)
 
 target_sources(ObjectUtilsTests PRIVATE
