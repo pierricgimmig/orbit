@@ -5,6 +5,7 @@
 #include "ContextSwitchManager.h"
 
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/ThreadUtils.h"
 
 namespace orbit_windows_tracing {
 
@@ -35,12 +36,22 @@ std::optional<orbit_grpc_protos::SchedulingSlice> ContextSwitchManager::ProcessC
   if (last_cpu_event->new_tid == new_cpu_event.old_tid) {
     orbit_grpc_protos::SchedulingSlice scheduling_slice;
     uint32_t tid = last_cpu_event->new_tid;
-    uint32_t pid = pid_by_tid_[tid];
+    auto pid_it = pid_by_tid_.find(tid);
+    uint32_t pid = pid_it != pid_by_tid_.end() ? pid_it->second : orbit_base::kInvalidProcessId;
     scheduling_slice.set_pid(pid);
     scheduling_slice.set_tid(tid);
     scheduling_slice.set_core(cpu);
     scheduling_slice.set_duration_ns(new_cpu_event.timestamp_ns - last_cpu_event->timestamp_ns);
     scheduling_slice.set_out_timestamp_ns(new_cpu_event.timestamp_ns);
+
+    ++stats_.num_scheduling_slices;
+    if (pid == orbit_base::kInvalidProcessId) {
+      ++stats_.num_scheduling_slices_with_invalid_pid;
+      if (debug_log_) {
+        ERROR("SchedulingSlice with unknown pid for tid %u", tid);
+      }
+    }
+
     return scheduling_slice;
   } else {
     // Can happen on thread creation or if we are losing events.
@@ -60,6 +71,9 @@ void ContextSwitchManager::OutputStats() {
   LOG("Number of processed cpu events: %u", stats_.num_processed_cpu_events_);
   LOG("Number of processed thread events: %u", stats_.num_processed_thread_events_);
   LOG("Number of thread mismatches: %u", stats_.num_tid_mismatches_);
+  LOG("Number of scheduling slices: %u", stats_.num_scheduling_slices);
+  LOG("Number of scheduling slices with invalid pid: %u",
+      stats_.num_scheduling_slices_with_invalid_pid);
 }
 
 }  // namespace orbit_windows_tracing

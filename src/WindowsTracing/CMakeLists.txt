@@ -26,8 +26,15 @@ target_sources(WindowsTracing PRIVATE
         ClockUtils.h
         ContextSwitchManager.cpp
         ContextSwitchManager.h
+        EventTypes.h
+        EtwUtils.h
+        EtwUtils.cpp
+        KrabsStackWalkProvider.h
         KrabsTracer.cpp
         KrabsTracer.h
+        KrabsUtils.h
+        Os.h
+        Os.cpp
         Tracer.cpp)
 
 target_include_directories(WindowsTracing INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -53,7 +60,18 @@ target_link_libraries(WindowsTracingTests PRIVATE
         WindowsTracing
         GTest::GTest
         GTest::Main)
+        
+register_test(WindowsTracingTests)
 
 SET_TARGET_PROPERTIES(WindowsTracingTests PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
 
-register_test(WindowsTracingTests)
+add_executable(WindowsSamplingTestApp)
+
+SET_TARGET_PROPERTIES(WindowsSamplingTestApp PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+
+target_link_libraries(WindowsSamplingTestApp PRIVATE
+        TracingInterface
+        WindowsTracing)
+
+target_sources(WindowsSamplingTestApp PRIVATE
+        main.cpp)

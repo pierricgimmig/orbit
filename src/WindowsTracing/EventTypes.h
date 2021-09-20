@@ -5,6 +5,8 @@
 #ifndef WINDOWS_TRACING_EVENT_TYPES_H_
 #define WINDOWS_TRACING_EVENT_TYPES_H_
 
+#include <cstdint>
+
 // https://docs.microsoft.com/en-us/windows/win32/etw/thread-typegroup1
 // [EventType{ 1, 2, 3, 4 }, EventTypeName{ "Start", "End", "DCStart", "DCEnd" }]
 struct Thread_TypeGroup1 {
@@ -85,5 +87,12 @@ struct FileIo_ReadWrite {
 struct StackWalk_Event {
   static constexpr uint8_t kOpcodeStack = 32;
 };
+
+// From "Windows Performance Toolkit/KernelTraceControl.h"
+typedef struct _STACK_TRACING_EVENT_ID {
+  GUID EventGuid;
+  uint8_t Type;
+  uint8_t Reserved[7];
+} STACK_TRACING_EVENT_ID, *PSTACK_TRACING_EVENT_ID;
 
 #endif  // WINDOWS_TRACING_EVENT_TYPES_H_

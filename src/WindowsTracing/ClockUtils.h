@@ -7,6 +7,8 @@
 
 #include <profileapi.h>
 
+#include <cstdint>
+
 namespace orbit_windows_tracing {
 
 class ClockUtils {

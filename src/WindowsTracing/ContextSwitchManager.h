@@ -32,6 +32,8 @@ class ContextSwitchManager {
     uint64_t num_processed_cpu_events_ = 0;
     uint64_t num_processed_thread_events_ = 0;
     uint64_t num_tid_mismatches_ = 0;
+    uint64_t num_scheduling_slices = 0;
+    uint64_t num_scheduling_slices_with_invalid_pid = 0;
   };
 
   const Stats& GetStats() { return stats_; }
@@ -46,6 +48,7 @@ class ContextSwitchManager {
   absl::flat_hash_map<uint32_t, uint32_t> pid_by_tid_;
   absl::flat_hash_map<uint32_t, CpuEvent> last_cpu_event_by_cpu_;
   Stats stats_;
+  bool debug_log_ = false;
 };
 
 }  // namespace orbit_windows_tracing
