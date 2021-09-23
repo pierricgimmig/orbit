@@ -17,6 +17,8 @@
 #include <evntrace.h>
 #include <evntcons.h>
 
+#pragma optimize("", off)
+
 namespace krabs { namespace details {
 
     // The ETW API requires that we reserve enough memory behind
@@ -40,13 +42,6 @@ namespace krabs { namespace details {
     class trace_manager {
     public:
         trace_manager(T &trace);
-
-        /**
-         * <summary>
-         * Registers the ETW trace identified by the info in the trace type.
-         * </summary>
-         */
-        TRACEHANDLE register_trace();
 
         /**
          * <summary>
@@ -86,6 +81,13 @@ namespace krabs { namespace details {
 
         /**
          * <summary>
+         * Configures the ETW trace session settings.
+         * </summary>
+         */
+        void set_trace_information(TRACE_INFO_CLASS informationClass, PVOID traceInformation, ULONG informationLength);
+
+        /**
+         * <summary>
          * Notifies the underlying trace of the buffers that were processed.
          * </summary>
          */
@@ -102,6 +104,7 @@ namespace krabs { namespace details {
         trace_info fill_trace_info();
         EVENT_TRACE_LOGFILE fill_logfile();
         void close_trace();
+        void register_trace();
         EVENT_TRACE_PROPERTIES query_trace();
         void stop_trace();
         EVENT_TRACE_LOGFILE open_trace();
@@ -174,9 +177,7 @@ namespace krabs { namespace details {
     template <typename T>
     EVENT_TRACE_LOGFILE trace_manager<T>::open()
     {
-        if (trace_.registrationHandle_ == INVALID_PROCESSTRACE_HANDLE) {
-            (void)register_trace();
-        }
+        (void)register_trace();
         enable_providers();
         return open_trace();
     }
@@ -191,6 +192,18 @@ namespace krabs { namespace details {
     EVENT_TRACE_PROPERTIES trace_manager<T>::query()
     {
         return query_trace();
+    }
+
+    template <typename T>
+    void trace_manager<T>::set_trace_information(TRACE_INFO_CLASS informationClass, PVOID traceInformation, ULONG informationLength)
+    {
+        ULONG status = TraceSetInformation(
+            trace_.registrationHandle_, 
+            informationClass, 
+            traceInformation, 
+            informationLength);
+
+        error_check_common_conditions(status);
     }
 
     template <typename T>
@@ -288,7 +301,7 @@ namespace krabs { namespace details {
     }
 
     template <typename T>
-    TRACEHANDLE trace_manager<T>::register_trace()
+    void trace_manager<T>::register_trace()
     {
         trace_info info = fill_trace_info();
 
@@ -325,7 +338,6 @@ namespace krabs { namespace details {
         }
 
         error_check_common_conditions(status);
-        return trace_.registrationHandle_;
     }
 
     template <typename T>

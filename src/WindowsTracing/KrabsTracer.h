@@ -41,7 +41,7 @@ class KrabsTracer : public orbit_tracing_interface::Tracer {
   void OnStackWalkEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
   void OutputStats();
 
-  void SetupStackTracing(TRACEHANDLE trace_handle);
+  void SetupStackTracing();
 
   struct Stats {
     uint64_t num_thread_events = 0;

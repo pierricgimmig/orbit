@@ -57,17 +57,26 @@ void KrabsTracer::EnableSystemProfilePrivilege(bool value) {
   if (result.has_error()) ERROR("%s", result.error().message());
 }
 
-void KrabsTracer::SetupStackTracing(TRACEHANDLE trace_handle) {
-  // Set sampling frequency for ETW trace.
-  float frequency = static_cast<float>(capture_options_.samples_per_second());
-  auto result = etw_utils::SetSamplingFrequencyHz(trace_handle, frequency);
-  if (result.has_error()) ERROR("%s", result.error().message());
+void KrabsTracer::SetupStackTracing() {
 
-  // Initialize stack ETW stack tracing.
-  etw_utils::StackTracingInitializer initializer(trace_handle);
-  initializer.AddEvents(krabs::guids::perf_info, {PerfInfo_SampledProfile::kOpcodeSampleProfile});
-  auto init_result = initializer.Init();
-  if (init_result.has_error()) ERROR("%s", init_result.error().message());
+  trace_.open();
+  // Set sampling frequency for ETW trace. Note that the session handle must be 0.
+  float frequency = static_cast<float>(capture_options_.samples_per_second());
+  LOG("FREQUENCY = %f", frequency);
+  TRACE_PROFILE_INTERVAL interval = {0};
+  interval.Interval = ULONG(10'000.f * (1'000.f / frequency));
+  ULONG status = TraceSetInformation(/*SessionHandle=*/0, TraceSampledProfileIntervalInfo,
+                                     (void*)&interval, sizeof(TRACE_PROFILE_INTERVAL));
+  CHECK(status == ERROR_SUCCESS);
+
+  // Initialize ETW stack tracing.
+  STACK_TRACING_EVENT_ID event_id = {0};
+  event_id.EventGuid = krabs::guids::perf_info;
+  event_id.Type = PerfInfo_SampledProfile::kOpcodeSampleProfile;
+  trace_.set_trace_information(TraceStackTracingInfo, &event_id, sizeof(STACK_TRACING_EVENT_ID));
+
+  krabs::kernel_provider stack_walk_provider(EVENT_TRACE_FLAG_PROFILE, krabs::guids::stack_walk);
+  trace_.enable(stack_walk_provider);
 }
 
 void KrabsTracer::SetContextSwitchManager(std::shared_ptr<ContextSwitchManager> manager) {
@@ -80,8 +89,7 @@ void KrabsTracer::Start() {
     context_switch_manager_ = std::make_shared<ContextSwitchManager>();
   }
   EnableSystemProfilePrivilege(true);
-  TRACEHANDLE trace_handle = trace_.create();
-  SetupStackTracing(trace_handle);
+  SetupStackTracing();
   thread_ = std::make_unique<std::thread>(&KrabsTracer::Run, this);
 }
 
@@ -97,7 +105,7 @@ void KrabsTracer::Stop() {
 
 void KrabsTracer::Run() {
   orbit_base::SetCurrentThreadName("KrabsTrace::Run");
-  trace_.start();
+  trace_.process();
 }
 
 void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_context& context) {
