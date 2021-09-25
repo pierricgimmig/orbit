@@ -15,26 +15,26 @@
 
 namespace orbit_lib {
 
-    struct ErrorHandler {
+    struct BaseListener {
         virtual void OnError(const char* error_message) = 0;
     };
 
-    struct ProcessListener : public ErrorHandler {
+    struct ProcessListener : public BaseListener {
         virtual void OnProcess(const char* process_path, uint32_t pid, bool is_64_bit, float cpu_usage) = 0;
     };
 
-    struct ModuleListener : public ErrorHandler {
+    struct ModuleListener : public BaseListener {
         virtual void OnModule(const char* module_path, uint64_t start_address, uint64_t end_address,
             uint64_t file_size) = 0;
     };
 
-    struct DebugInfoListener : public ErrorHandler {
+    struct DebugInfoListener : public BaseListener {
       virtual void OnFunction(const char* module_path, const char* function_name,
                               uint64_t relative_address, uint64_t size, const char* file_name,
                               int line) = 0;
     };
 
-    struct CaptureListener : public ErrorHandler {
+    struct CaptureListener : public BaseListener {
         virtual void OnTimer(uint64_t absolute_address, uint64_t start, uint64_t end, uint32_t tid,
             uint32_t pid) = 0;
     };

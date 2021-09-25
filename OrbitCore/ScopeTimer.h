@@ -51,7 +51,8 @@ public:
         ZONE,
         ALLOC,
         FREE,
-        FILE_IO
+        FILE_IO,
+        PER_THREAD_UNIQUE_CALL,
     };
 
     Type GetType() const { return m_Type; }
@@ -67,11 +68,11 @@ public:
     int8_t      m_SessionID;
     Type        m_Type;
     int8_t      m_Processor;
-    DWORD64     m_CallstackHash;
-    DWORD64     m_FunctionAddress;
-    DWORD64     m_UserData[2];
-    TickType    m_Start;
-    TickType    m_End;
+    uint64_t    m_CallstackHash;
+    uint64_t    m_FunctionAddress;
+    uint64_t    m_UserData[2];
+    uint64_t    m_Start;
+    uint64_t    m_End;
 };
 
 //-----------------------------------------------------------------------------

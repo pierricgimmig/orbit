@@ -118,6 +118,16 @@ extern "C" {
     //   ppOriginal [out] A pointer to the trampoline function, which will be
     //                    used to call the original target function.
     //                    This parameter can be NULL.
+    MH_STATUS WINAPI MH_Orbit_CreateHookPrologOnly(LPVOID pTarget, LPVOID pPrologCallback);
+
+    // Creates a Hook for the specified target function, in disabled state.
+    // Parameters:
+    //   pTarget    [in]  A pointer to the target function, which will be
+    //                    overridden by the detour function.
+    //   pCallback  [in]  A pointer to the callback function called in the prolog
+    //   ppOriginal [out] A pointer to the trampoline function, which will be
+    //                    used to call the original target function.
+    //                    This parameter can be NULL.
     MH_STATUS WINAPI MH_Orbit_CreateHookPrologEpilog(LPVOID pTarget, LPVOID pPrologCallback, LPVOID pEpilogCallback, LPVOID pReturnAddressCallback);
 
     // Creates a Hook for the specified API function, in disabled state.

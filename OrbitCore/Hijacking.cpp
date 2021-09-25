@@ -26,6 +26,20 @@
 
 const unsigned int MAX_DEPTH = 64;
 
+#define PLATFORM_ABORT() \
+  do {                   \
+    __debugbreak();      \
+    abort();             \
+  } while (0)
+
+#define CHECK(assertion)        \
+  do {                          \
+    if ((!(assertion))) {       \
+      PLATFORM_ABORT();         \
+    }                           \
+  } while (0)
+
+
 [[nodiscard]] std::string GetFileNameFromHandle(HANDLE file_handle) {
   std::string path;
   path.resize(FILENAME_MAX);
@@ -57,25 +71,59 @@ struct ContextScope
 #define SSE_SCOPE
 #endif
 
+struct FrameData {
+  ReturnAddress return_address;
+  Timer timer;
+  Context* context = nullptr;  // points to structure on the stack.
+  uint64_t callstack_id = 0;
+  bool is_internal = false;
+};
+
+// POD so that we don't use win32 api when resizing to avoid reentrency issues
+// when those api's are hooked.
+class FrameStack {
+ public:
+  FrameData& Push() {
+    CHECK(size_ < MAX_DEPTH);
+    return frames_[size_++];
+  };
+  void Pop() {
+    CHECK(size_ > 0);
+    --size_;
+  }
+  size_t size() const { return size_; }
+  void Reset() { size_ = 0; }
+  FrameData& Top() {
+    CHECK(size_ > 0);
+    return frames_[size_-1];
+  }
+
+ private:
+  FrameData frames_[MAX_DEPTH];
+  size_t size_ = 0;
+};
+
 //-----------------------------------------------------------------------------
 struct ThreadLocalData
 {
     ThreadLocalData()
     {
-        m_Timers.reserve( MAX_DEPTH );
+        /*m_Timers.reserve( MAX_DEPTH );
         m_ReturnAdresses.reserve( MAX_DEPTH );
         m_Contexts.reserve( MAX_DEPTH );
-        m_SentCallstacks.reserve( 1024 );
+        m_SentCallstacks.reserve( 1024 );*/
         m_SessionID = -1;
         m_ThreadID = GetCurrentThreadId();
         m_ZoneStack = 0;
-        m_ReentryFlag = false;
     }
 
     __forceinline void CheckSessionId()
     {
         if( m_SessionID != Message::GSessionID )
         {
+            frame_data_.Reset();
+            counter_ = 0;
+
             m_SentCallstacks.clear();
             m_SentLiterals.clear();
             m_SentActorNames.clear();
@@ -94,7 +142,9 @@ struct ThreadLocalData
     int                             m_SessionID;
     DWORD                           m_ThreadID;
     int                             m_ZoneStack;
-    bool                            m_ReentryFlag;
+
+    FrameStack frame_data_;
+    uint64_t counter_;
 };
 
 //-----------------------------------------------------------------------------
@@ -111,6 +161,10 @@ namespace Hijacking
     void  PrologSendData    ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
     void  PrologUnrealActor ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
     void  PrologFree        ( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize );
+
+    // No associated epilog.
+    void PrologPerThreadCounter(void* original_function_address, Context* a_Context,
+                             unsigned a_ContextSize);
     
     void* Epilog();
     void* EpilogEmpty();
@@ -123,9 +177,10 @@ namespace Hijacking
     __forceinline void* GetReturnAddress();
     __forceinline FunctionArgInfo* GetArgInfo( void* a_Address );
 
-    thread_local ThreadLocalData* TlsData;
+    thread_local ThreadLocalData TlsData;
 
-    __forceinline void CheckTls(){ if( !TlsData ){ TlsData = new ThreadLocalData(); } TlsData->CheckSessionId(); }
+    __forceinline void CheckTls(){ TlsData.CheckSessionId(); }
+    inline void CheckStackDepth();
     __forceinline void PushContext( const Context* a_Context, void* a_OriginalFunction );
     __forceinline void PushZoneContext( const Context* a_Context, void* a_OriginalFunction );
     __forceinline void PopContext();
@@ -153,6 +208,7 @@ namespace Hijacking
 //-----------------------------------------------------------------------------
 __forceinline CallstackID Hijacking::SendCallstack( void* a_OriginalFunctionAddress, void** a_ReturnAddressLocation )
 {
+  CHECK(0);
     /*bool needsCallstack = m_SendCallstacks.find( reinterpret_cast<ULONG64>( a_OriginalFunctionAddress ) ) != m_SendCallstacks.end();
     if( needsCallstack )*/
     {
@@ -161,9 +217,9 @@ __forceinline CallstackID Hijacking::SendCallstack( void* a_OriginalFunctionAddr
         SetOverridenReturnAddresses();
 
         // Send callstack once (*per thread* for now, we should have a concurrent set or hashmap...)
-        if( TlsData->m_SentCallstacks.find( cs.m_Hash ) == TlsData->m_SentCallstacks.end() )
+        if( TlsData.m_SentCallstacks.find( cs.m_Hash ) == TlsData.m_SentCallstacks.end() )
         {
-            TlsData->m_SentCallstacks.insert( cs.m_Hash );
+            TlsData.m_SentCallstacks.insert( cs.m_Hash );
             GTcpClient->Send( Msg_Callstack, (void*)&cs, cs.GetSizeInBytes() );
         }
 
@@ -173,69 +229,147 @@ __forceinline CallstackID Hijacking::SendCallstack( void* a_OriginalFunctionAddr
     return 0;
 }
 
-//-----------------------------------------------------------------------------
-void Hijacking::Prolog( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
-{
-    SSE_SCOPE;
-    CheckTls();
-    
-    // Prevent infinite recursion when instrumenting function that could be called by the prolog.
-    if (TlsData->m_ReentryFlag) return;
-    TlsData->m_ReentryFlag = true;
+/*
+* struct FrameData {
+  ReturnAddress return_address;
+  Timer timer;
+  Context* context = nullptr;  // points to structure on the stack.
+  CallstackID callstack_id = 0;
+  bool is_internal = false;
+};
+*/
 
-    PushContext( a_Context, a_OriginalFunctionAddress );
-    PushReturnAddress( &a_Context->m_RET.m_Ptr );
+thread_local bool in_prolog_or_epilog = false;
 
-    TlsData->m_Timers.push_back( Timer() );
-    TlsData->m_Timers.back().m_FunctionAddress = reinterpret_cast<ULONG64>( a_OriginalFunctionAddress );
-    TlsData->m_Timers.back().m_CallstackHash = SendCallstack( a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr );
-    TlsData->m_Timers.back().Start();
-    TlsData->m_ReentryFlag = false;
+struct ReentryScope {
+  ReentryScope() {
+    initial_state_ = in_prolog_or_epilog;
+    in_prolog_or_epilog = true;
+  }
+  ~ReentryScope() { in_prolog_or_epilog = initial_state_; }
+  bool IsInternalScope() const { return initial_state_; }
+  bool initial_state_ = false;
+};
+
+inline void Hijacking::CheckStackDepth() {
+  if (TlsData.frame_data_.size() > MAX_DEPTH) {
+    static volatile bool do_break = true;
+    if (do_break) {
+      __debugbreak();
+    }
+  }
 }
 
-void Hijacking::PrologFileIO(void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize) {
+//-----------------------------------------------------------------------------
+void Hijacking::Prolog( void* original_function_address, Context* context, unsigned context_size )
+{
+    CheckStackDepth();
     SSE_SCOPE;
-    CheckTls();
+    ReentryScope reentry_scope;
+
+    FrameData& frame = TlsData.frame_data_.Push();
+    frame.context = context;
+    frame.return_address.m_AddressOfReturnAddress = &context->m_RET.m_Ptr;
+    frame.return_address.m_OriginalReturnAddress = context->m_RET.m_Ptr;
+    frame.timer.m_FunctionAddress = reinterpret_cast<uint64_t>(original_function_address);
+    frame.is_internal = reentry_scope.IsInternalScope();
 
     // Prevent infinite recursion when instrumenting function that could be called by the prolog.
-    if (TlsData->m_ReentryFlag) return;
-    TlsData->m_ReentryFlag = true;
+    if (frame.is_internal) {
+      return;
+    }
+    
+    //frame.timer.m_CallstackHash = SendCallstack(original_function_address, &context->m_RET.m_Ptr);
+    frame.timer.Start();
+}
 
-    // FileWrite and FileRead functions take a HANDLE as first parameter.
-    HANDLE handle = static_cast<HANDLE>(a_Context->m_RCX.m_Ptr);
-    GTcpClient->Send(GetFileNameFromHandle(handle));
+//-----------------------------------------------------------------------------
+void* Hijacking::Epilog() {
+  SSE_SCOPE;
+  ReentryScope reentry_scope;
+  FrameData& frame = TlsData.frame_data_.Top();
 
-    PushContext(a_Context, a_OriginalFunctionAddress);
-    PushReturnAddress(&a_Context->m_RET.m_Ptr);
+  if (!frame.is_internal) {
+    // Send timer
+    frame.timer.Stop();
+    GTimerManager->Add(frame.timer);
+  }
 
-    TlsData->m_Timers.push_back(Timer());
-    TlsData->m_Timers.back().m_FunctionAddress = reinterpret_cast<ULONG64>(a_OriginalFunctionAddress);
-    TlsData->m_Timers.back().m_CallstackHash =
-        SendCallstack(a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr);
-    TlsData->m_Timers.back().Start();
-    TlsData->m_ReentryFlag = false;
+  void* original_return_address = frame.return_address.m_OriginalReturnAddress;
+  TlsData.frame_data_.Pop();
+  return original_return_address;
+}
+
+//-----------------------------------------------------------------------------
+void Hijacking::PrologPerThreadCounter(void* original_function_address, Context* context,
+                              unsigned context_size) {
+  SSE_SCOPE;
+  ReentryScope reentry_scope;
+  ++TlsData.counter_;
+
+  // Prevent infinite recursion when instrumenting function that could be called by the prolog.
+  if (reentry_scope.IsInternalScope()) {
+    return;
+  }
+
+  if (TlsData.counter_ > 1) return;
+
+  Timer timer;
+  timer.m_FunctionAddress = reinterpret_cast<uint64_t>(original_function_address);
+  timer.m_Start = 0;
+  timer.m_End = 0;
+  //timer.m_Type = Timer::PER_THREAD_UNIQUE_CALL;
+  GTimerManager->Add(timer);
+}
+
+void Hijacking::PrologFileIO(void* original_function_address, Context* context,
+                             unsigned context_size) {
+  CheckStackDepth();
+  SSE_SCOPE;
+  ReentryScope reentry_scope;
+
+  FrameData& frame = TlsData.frame_data_.Push();
+  frame.context = context;
+  frame.return_address.m_AddressOfReturnAddress = &context->m_RET.m_Ptr;
+  frame.return_address.m_OriginalReturnAddress = context->m_RET.m_Ptr;
+  frame.timer.m_FunctionAddress = reinterpret_cast<uint64_t>(original_function_address);
+  frame.is_internal = reentry_scope.IsInternalScope();
+
+  // Prevent infinite recursion when instrumenting function that could be called by the prolog.
+  if (frame.is_internal) {
+    return;
+  }
+
+  // frame.timer.m_CallstackHash = SendCallstack(original_function_address, &context->m_RET.m_Ptr);
+  // FileWrite and FileRead functions take a HANDLE as first parameter.
+  HANDLE handle = static_cast<HANDLE>(context->m_RCX.m_Ptr);
+  std::string file_name = GetFileNameFromHandle(handle);
+  GTcpClient->Send(file_name);
+  frame.timer.Start();
 }
 
 //-----------------------------------------------------------------------------
 void Hijacking::PrologZoneStart( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
 {
+  CHECK(0);
     SSE_SCOPE;
     CheckTls();
 
     PushZoneContext( a_Context, a_OriginalFunctionAddress );
     PushReturnAddress( &a_Context->m_RET.m_Ptr );
 
-    ++TlsData->m_ZoneStack;
+    ++TlsData.m_ZoneStack;
 
-    TlsData->m_Timers.push_back( Timer() );
-    TlsData->m_Timers.back().m_FunctionAddress = reinterpret_cast<ULONG64>( a_OriginalFunctionAddress );
-    TlsData->m_Timers.back().m_CallstackHash = SendCallstack( a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr );
-    TlsData->m_Timers.back().Start();
+    TlsData.m_Timers.push_back( Timer() );
+    TlsData.m_Timers.back().m_FunctionAddress = reinterpret_cast<ULONG64>( a_OriginalFunctionAddress );
+    TlsData.m_Timers.back().m_CallstackHash = SendCallstack( a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr );
+    TlsData.m_Timers.back().Start();
 }
 
 //-----------------------------------------------------------------------------
 void Hijacking::PrologZoneStop( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
 {
+  CHECK(0);
     SSE_SCOPE;
     CheckTls();
     PushReturnAddress( &a_Context->m_RET.m_Ptr );
@@ -244,6 +378,7 @@ void Hijacking::PrologZoneStop( void* a_OriginalFunctionAddress, Context* a_Cont
 //-----------------------------------------------------------------------------
 void Hijacking::PrologOutputDbg( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
 {
+  CHECK(0);
     SSE_SCOPE;
     CheckTls();
     OrbitLogEntry entry;
@@ -255,7 +390,7 @@ void Hijacking::PrologOutputDbg( void* a_OriginalFunctionAddress, Context* a_Con
     entry.m_Text = *((char**)&a_Context->m_Stack[0]);
 #endif
 
-    entry.m_ThreadId = TlsData->m_ThreadID;
+    entry.m_ThreadId = TlsData.m_ThreadID;
 
     PushReturnAddress( &a_Context->m_RET.m_Ptr );
     
@@ -266,6 +401,7 @@ void Hijacking::PrologOutputDbg( void* a_OriginalFunctionAddress, Context* a_Con
 //-----------------------------------------------------------------------------
 void Hijacking::PrologSendData( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
 {
+  CHECK(0);
     SSE_SCOPE;
     CheckTls();
     Orbit::UserData entry;
@@ -280,7 +416,7 @@ void Hijacking::PrologSendData( void* a_OriginalFunctionAddress, Context* a_Cont
     entry.m_Data = *( (char**)&a_Context->m_Stack[0] );
     entry.m_NumBytes = *( (int*)&a_Context->m_Stack[4] ); //order ??
 #endif
-    entry.m_ThreadId = TlsData->m_ThreadID;
+    entry.m_ThreadId = TlsData.m_ThreadID;
 
     PushReturnAddress( &a_Context->m_RET.m_Ptr );
 
@@ -295,6 +431,7 @@ GetDisplayNameEntryFunction GetDisplayNameEntry;
 //-----------------------------------------------------------------------------
 void Hijacking::PrologUnrealActor( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
 {
+  CHECK(0);
     SSE_SCOPE;
     CheckTls();
     
@@ -308,8 +445,8 @@ void Hijacking::PrologUnrealActor( void* a_OriginalFunctionAddress, Context* a_C
 #endif
     SendUObjectName( uobject );
 
-    TlsData->m_Timers.push_back( Timer() );
-    Timer & timer = TlsData->m_Timers.back();
+    TlsData.m_Timers.push_back( Timer() );
+    Timer & timer = TlsData.m_Timers.back();
     timer.m_Type = Timer::UNREAL_OBJECT;
     timer.m_FunctionAddress = reinterpret_cast<ULONG64>( a_OriginalFunctionAddress );
     timer.m_UserData[0] = (DWORD64)uobject;
@@ -321,13 +458,14 @@ void Hijacking::PrologUnrealActor( void* a_OriginalFunctionAddress, Context* a_C
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::SendUObjectName( void* a_UObject )
 {
+  CHECK(0);
     if( a_UObject )
     {
         void* FName = (char*)a_UObject + m_UnrealInfo.m_UobjectNameOffset;
         void* Entry = GetDisplayNameEntry( FName );
         char* actorName = (char*)Entry + m_UnrealInfo.m_EntryNameOffset;
 
-        if( TlsData->m_SentActorNames.find( actorName ) == TlsData->m_SentActorNames.end() )
+        if( TlsData.m_SentActorNames.find( actorName ) == TlsData.m_SentActorNames.end() )
         {
             int   Index = *(int*)( (char*)Entry + m_UnrealInfo.m_EntryIndexOffset );
             bool  IsWide = ( Index & NAME_WIDE_MASK );
@@ -352,7 +490,7 @@ __forceinline void Hijacking::SendUObjectName( void* a_UObject )
                 GTcpClient->Send( msg );
             }
 
-            TlsData->m_SentActorNames.insert( actorName );
+            TlsData.m_SentActorNames.insert( actorName );
         }
     }
 }
@@ -360,14 +498,15 @@ __forceinline void Hijacking::SendUObjectName( void* a_UObject )
 //-----------------------------------------------------------------------------
 void  Hijacking::PrologFree( void* a_OriginalFunctionAddress, Context* a_Context, unsigned a_ContextSize )
 {
+  CHECK(0);
     SSE_SCOPE;
     CheckTls();
 
     PushContext( a_Context, a_OriginalFunctionAddress );
     PushReturnAddress( &a_Context->m_RET.m_Ptr );
 
-    TlsData->m_Timers.push_back( Timer() );
-    Timer & timer = TlsData->m_Timers.back();
+    TlsData.m_Timers.push_back( Timer() );
+    Timer & timer = TlsData.m_Timers.back();
     timer.m_FunctionAddress = reinterpret_cast<ULONG64>( a_OriginalFunctionAddress );
     timer.m_CallstackHash = SendCallstack( a_OriginalFunctionAddress, &a_Context->m_RET.m_Ptr );
 #ifdef _WIN64
@@ -386,10 +525,10 @@ __forceinline void Hijacking::SetOriginalReturnAddresses()
     // another hooked function using a jmp instruction and not a proper call.
     // In that case, the return address location is the same for both functions.  
     // Make sure we don't interpret the last written address as an overwritten address.
-
+  CHECK(0);
     void* lastWritten = nullptr;
 
-    for( ReturnAddress & ret : TlsData->m_ReturnAdresses )
+    for( ReturnAddress & ret : TlsData.m_ReturnAdresses )
     {
         ret.m_EpilogAddress = *ret.m_AddressOfReturnAddress;
         
@@ -404,9 +543,10 @@ __forceinline void Hijacking::SetOriginalReturnAddresses()
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::SetOverridenReturnAddresses()
 {
+  CHECK(0);
     void* lastWritten = nullptr;
 
-    for (ReturnAddress & ret : TlsData->m_ReturnAdresses)
+    for (ReturnAddress & ret : TlsData.m_ReturnAdresses)
     {
         if( ret.m_AddressOfReturnAddress != lastWritten )
         {
@@ -417,51 +557,27 @@ __forceinline void Hijacking::SetOverridenReturnAddresses()
 }
 
 //-----------------------------------------------------------------------------
-void* Hijacking::Epilog()
-{
-    SSE_SCOPE;
-
-    Timer & timer = TlsData->m_Timers.back();
-    timer.Stop();
-    
-    // Send timer
-    GTimerManager->Add( timer );
-
-    // Pop timer
-    TlsData->m_Timers.pop_back();
-
-    // Get stack context
-    void * stackAddress = _AddressOfReturnAddress();
-    EpilogContext* epilogContext = (EpilogContext*)((char*)stackAddress + s_StackOffset );
-    
-    SendContext(TlsData->m_Contexts.back(), epilogContext);
-    PopContext();
-
-    void* ReturnAddress = TlsData->m_ReturnAdresses.back().m_OriginalReturnAddress;
-    TlsData->m_ReturnAdresses.pop_back();
-    return ReturnAddress;
-}
-
-//-----------------------------------------------------------------------------
 void* Hijacking::EpilogEmpty()
 {
+  CHECK(0);
     SSE_SCOPE;
-    void* ReturnAddress = TlsData->m_ReturnAdresses.back().m_OriginalReturnAddress;
-    TlsData->m_ReturnAdresses.pop_back();
+    void* ReturnAddress = TlsData.m_ReturnAdresses.back().m_OriginalReturnAddress;
+    TlsData.m_ReturnAdresses.pop_back();
     return ReturnAddress;
 }
 
 //-----------------------------------------------------------------------------
 void* Hijacking::EpilogZoneStop()
 {
+  CHECK(0);
     SSE_SCOPE;
-    if( TlsData->m_ZoneStack > 0 )
+    if( TlsData.m_ZoneStack > 0 )
     {
-        Timer & timer = TlsData->m_Timers.back();
+        Timer & timer = TlsData.m_Timers.back();
         timer.Stop();
 
         // Send string literal address as function address
-        const Context* context = TlsData->m_Contexts.back();
+        const Context* context = TlsData.m_Contexts.back();
 #ifdef _WIN64
         char* zoneName = (char*)context->m_RCX.m_Ptr;
         timer.m_FunctionAddress = context->m_RCX.m_Reg64;
@@ -472,7 +588,7 @@ void* Hijacking::EpilogZoneStop()
         timer.SetType(Timer::ZONE);
 
         // Send string once (per thread)
-        if( TlsData->m_SentLiterals.find( zoneName ) == TlsData->m_SentLiterals.end() )
+        if( TlsData.m_SentLiterals.find( zoneName ) == TlsData.m_SentLiterals.end() )
         {
             size_t numChars = std::min( strlen( zoneName ), size_t( OrbitZoneName::NUM_CHAR - 1 ) );
             OrbitZoneName zone;
@@ -485,37 +601,38 @@ void* Hijacking::EpilogZoneStop()
             zone.m_Data[numChars] = 0;
 
             GTcpClient->Send( Msg_OrbitZoneName, zone );
-            TlsData->m_SentLiterals.insert( zoneName );
+            TlsData.m_SentLiterals.insert( zoneName );
         }
 
         // Send timer
         GTimerManager->Add( timer );
 
         // Pop timer
-        TlsData->m_Timers.pop_back();
+        TlsData.m_Timers.pop_back();
 
         PopContext();
-        --TlsData->m_ZoneStack;
+        --TlsData.m_ZoneStack;
     }
 
-    void* ReturnAddress = TlsData->m_ReturnAdresses.back().m_OriginalReturnAddress;
-    TlsData->m_ReturnAdresses.pop_back();
+    void* ReturnAddress = TlsData.m_ReturnAdresses.back().m_OriginalReturnAddress;
+    TlsData.m_ReturnAdresses.pop_back();
     return ReturnAddress;
 }
 
 //-----------------------------------------------------------------------------
 void* Hijacking::EpilogAlloc()
 {
+  CHECK(0);
     SSE_SCOPE;
 
     // Get stack context
     void * stackAddress = _AddressOfReturnAddress();
     EpilogContext* epilogContext = (EpilogContext*)( (char*)stackAddress + s_StackOffset );
 
-    Timer & timer = TlsData->m_Timers.back();
+    Timer & timer = TlsData.m_Timers.back();
     timer.Stop();
 
-    const Context* prologContext = TlsData->m_Contexts.back();
+    const Context* prologContext = TlsData.m_Contexts.back();
 
     timer.m_UserData[0] = epilogContext->GetReturnValue(); // Pointer
 
@@ -530,40 +647,44 @@ void* Hijacking::EpilogAlloc()
     GTimerManager->Add( timer );
 
     // Pop timer
-    TlsData->m_Timers.pop_back();
+    TlsData.m_Timers.pop_back();
 
     SendContext( prologContext, epilogContext );
     PopContext();
 
-    void* ReturnAddress = TlsData->m_ReturnAdresses.back().m_OriginalReturnAddress;
-    TlsData->m_ReturnAdresses.pop_back();
+    void* ReturnAddress = TlsData.m_ReturnAdresses.back().m_OriginalReturnAddress;
+    TlsData.m_ReturnAdresses.pop_back();
     return ReturnAddress;
 }
 
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::PushReturnAddress( void** a_AddressOfReturnAddress )
 {   
+    CHECK(0);
     ReturnAddress returnAddress;
     returnAddress.m_AddressOfReturnAddress = a_AddressOfReturnAddress;
     returnAddress.m_OriginalReturnAddress = *a_AddressOfReturnAddress;
-    TlsData->m_ReturnAdresses.push_back( returnAddress );
+    TlsData.m_ReturnAdresses.push_back( returnAddress );
 }
 
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::PopReturnAddress()
 {
-    TlsData->m_ReturnAdresses.pop_back();
+  CHECK(0);
+    TlsData.m_ReturnAdresses.pop_back();
 }
 
 //-----------------------------------------------------------------------------
 __forceinline void* Hijacking::GetReturnAddress()
 {
-    return TlsData->m_ReturnAdresses.back().m_OriginalReturnAddress;
+  CHECK(0);
+    return TlsData.m_ReturnAdresses.back().m_OriginalReturnAddress;
 }
 
 //-----------------------------------------------------------------------------
 __forceinline FunctionArgInfo* Hijacking::GetArgInfo( void* a_Address )
 {
+  CHECK(0);
     auto it = m_FunctionArgsMap.find( (ULONG64)a_Address );
     return it != m_FunctionArgsMap.end() ? &it->second : nullptr;
 }
@@ -571,7 +692,8 @@ __forceinline FunctionArgInfo* Hijacking::GetArgInfo( void* a_Address )
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::PushContext( const Context* a_Context, void* a_OriginalFunction )
 {
-    TlsData->m_Contexts.push_back( a_Context );
+  CHECK(0);
+    TlsData.m_Contexts.push_back( a_Context );
 
     // Note: disabled argument tracking in favor of better perf.  It required work anyway, will re-enable.
     // FunctionArgInfo* argInfo = GetArgInfo( a_OriginalFunction );
@@ -583,18 +705,21 @@ __forceinline void Hijacking::PushContext( const Context* a_Context, void* a_Ori
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::PushZoneContext( const Context* a_Context, void* a_OriginalFunction )
 {
-    TlsData->m_Contexts.push_back( a_Context );
+  CHECK(0);
+    TlsData.m_Contexts.push_back( a_Context );
 }
 
 //-----------------------------------------------------------------------------
 __forceinline void Hijacking::PopContext()
 {
-    TlsData->m_Contexts.pop_back();
+  CHECK(0);
+    TlsData.m_Contexts.pop_back();
 }
 
 //-----------------------------------------------------------------------------
 inline void Hijacking::SendContext( const Context * a_Context, EpilogContext* a_EpilogContext )
 {
+  CHECK(0);
     return;
 
     void* address = a_Context->GetRet();
@@ -654,7 +779,11 @@ bool Hijacking::Deinitialize()
 //-----------------------------------------------------------------------------
 bool Hijacking::CreateHook( void* a_FunctionAddress )
 {
-    return CreateHook( a_FunctionAddress, &Prolog, &Epilog );
+  return CreateHook(a_FunctionAddress, &Prolog, &Epilog);
+}
+
+bool Hijacking::CreateHookPrologOnly(void* a_FunctionAddress) {
+  return CreatePrologHook(a_FunctionAddress, &PrologPerThreadCounter);
 }
 
 //-----------------------------------------------------------------------------
@@ -709,6 +838,13 @@ bool Hijacking::CreateHook(void* a_FunctionAddress, void* a_PrologCallback, void
     Initialize();
     MH_STATUS MinHookError = MH_Orbit_CreateHookPrologEpilog( a_FunctionAddress, a_PrologCallback, a_EpilogCallback, &GetReturnAddress );
     return MinHookError == MH_OK;
+}
+
+//-----------------------------------------------------------------------------
+bool Hijacking::CreatePrologHook(void* a_FunctionAddress, void* a_PrologCallback) {
+  Initialize();
+  MH_STATUS MinHookError = MH_Orbit_CreateHookPrologOnly(a_FunctionAddress, a_PrologCallback);
+  return MinHookError == MH_OK;
 }
 
 //-----------------------------------------------------------------------------

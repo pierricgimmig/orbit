@@ -19,7 +19,6 @@ public:
     TcpPacket(){}
     explicit TcpPacket( const Message & a_Message
                       , const void* a_Payload )
-                      : m_Data( new std::vector<char>() )
     {
         m_Data->resize( sizeof( Message ) + a_Message.m_Size + 4 );
         memcpy( m_Data->data(), &a_Message, sizeof( Message ) );
@@ -37,7 +36,7 @@ public:
     std::shared_ptr< std::vector<char> > Data() { return m_Data; };
 
 private:
-    std::shared_ptr< std::vector<char> > m_Data;
+    std::shared_ptr<std::vector<char>> m_Data = std::make_shared<std::vector<char>>();
 };
 
 //-----------------------------------------------------------------------------

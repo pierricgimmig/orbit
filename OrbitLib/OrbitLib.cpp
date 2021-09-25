@@ -144,7 +144,6 @@ int StartCapture(uint32_t pid, FunctionHook* function_hooks, size_t num_hooks,
          break;
     }
   }
-  
 
   return 0;
 }

@@ -69,6 +69,52 @@ OrbitPrologAsm PROC
     mov     R11, 0FFFFFFFFFFFFFFFh  ;// Dummy function delimiter, never executed
 OrbitPrologAsm  ENDP
 
+OrbitPrologOnlyAsm PROC
+     sub     RSP, 8                  ;// will hold address of trampoline
+    push    RBP                     
+    mov     RBP, RSP
+    
+    push    RAX                     ;// Save volatile registers
+    push    RCX
+    push    RDX
+    push    R8
+    push    R9
+    push    R10
+    push    R11
+
+    mov     RDX, RSP                ;// pointer to context structure
+    mov     R8,  RBP                ;// compute size of context for sanity check
+    sub     R8,  RSP
+
+    sub     RSP, 20h                ;// Shadow space - NOTE: stack pointer needs to be aligned on 16 bytes at this point                
+
+                                    ;// CALL USER PROLOG - void Prolog( void* a_OriginalFunctionAddress, void* a_Context, unsigned a_ContextSize );
+    mov     RCX, 0123456789ABCDEFh  ;// Pass in address of original function
+    mov     RAX, 0123456789ABCDEFh  ;// Will be ovewritten with callback address
+    call    RAX                     ;// User prolog function  
+
+    add     RSP, 20h
+                                    ;// OVERWRITE RETURN ADDRESS
+    mov     R10, 0123456789ABCDEFh  ;// will be overwritten with epilog address
+    ;// mov     qword ptr[RBP+16], R10  ;// overwrite return address with epilog address
+
+
+    mov     R11, 0123456789ABCDEFh  ;// Will be ovewritten with address of trampoline to original function
+    mov     qword ptr[RBP+8], R11   ;// Write address of trampoline for ret instruction
+
+    pop     R11
+    pop     R10
+    pop     R9
+    pop     R8
+    pop     RDX
+    pop     RCX
+    pop     RAX
+
+    pop     RBP
+    ret                             ;// Jump to orignial function through trampoline
+    mov     R11, 0FFFFFFFFFFFFFFFh  ;// Dummy function delimiter, never executed
+OrbitPrologOnlyAsm  ENDP
+
 
 OrbitEpilogAsm PROC
     push    RAX                     ;// Save RAX (return value)

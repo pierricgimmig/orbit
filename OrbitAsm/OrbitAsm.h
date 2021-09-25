@@ -50,6 +50,7 @@ struct OrbitSSEContext
 extern "C" void OrbitGetSSEContext( OrbitSSEContext * a_Context );
 extern "C" void OrbitSetSSEContext( OrbitSSEContext * a_Context );
 extern "C" void OrbitPrologAsm();
+extern "C" void OrbitPrologOnlyAsm();
 extern "C" void OrbitEpilogAsm();
 #else
 //-----------------------------------------------------------------------------

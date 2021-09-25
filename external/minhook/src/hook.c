@@ -632,6 +632,103 @@ MH_STATUS WINAPI MH_CreateHook(LPVOID pTarget, LPVOID pDetour, LPVOID *ppOrigina
 }
 
 //-------------------------------------------------------------------------
+MH_STATUS WINAPI MH_Orbit_CreateHookPrologOnly(LPVOID pTarget, LPVOID pPrologCallback){
+ MH_STATUS status = MH_OK;
+
+    EnterSpinLock();
+
+    if (g_hHeap != NULL)
+    {
+        if (IsExecutableAddress(pTarget) /*&& IsExecutableAddress(pDetour)*/)
+        {
+            UINT pos = FindHookEntry(pTarget);
+            if (pos == INVALID_HOOK_POS)
+            {
+                LPVOID pBuffer = AllocateBuffer(pTarget);
+                if (pBuffer != NULL)
+                {
+                    TRAMPOLINE ct;
+
+                    ct.pTarget = pTarget;
+                    ct.pDetour = NULL;
+                    ct.pTrampoline = pBuffer;
+                    ct.pPrologCallback = pPrologCallback;
+                    //ct.pEpilogCallback = pEpilogCallback;
+                    //ct.pReturnAddressCb = pReturnAddressCallback;
+                    if (CreatePrologFunction(&ct))
+                    {
+                        PHOOK_ENTRY pHook = AddHookEntry();
+                        if (pHook != NULL)
+                        {
+                            pHook->pTarget = ct.pTarget;
+#ifdef _M_X64
+                            pHook->pDetour = ct.pRelay;
+#else
+                            pHook->pDetour = ct.pDetour;
+#endif
+                            pHook->pTrampoline = ct.pTrampoline;
+                            pHook->patchAbove = ct.patchAbove;
+                            pHook->isEnabled = FALSE;
+                            pHook->queueEnable = FALSE;
+                            pHook->nIP = ct.nIP;
+                            memcpy(pHook->oldIPs, ct.oldIPs, ARRAYSIZE(ct.oldIPs));
+                            memcpy(pHook->newIPs, ct.newIPs, ARRAYSIZE(ct.newIPs));
+
+                            // Back up the target function.
+
+                            if (ct.patchAbove)
+                            {
+                                memcpy(
+                                    pHook->backup,
+                                    (LPBYTE)pTarget - sizeof(JMP_REL),
+                                    sizeof(JMP_REL) + sizeof(JMP_REL_SHORT));
+                            }
+                            else
+                            {
+                                memcpy(pHook->backup, pTarget, sizeof(JMP_REL));
+                            }
+                        }
+                        else
+                        {
+                            status = MH_ERROR_MEMORY_ALLOC;
+                        }
+                    }
+                    else
+                    {
+                        status = MH_ERROR_UNSUPPORTED_FUNCTION;
+                    }
+
+                    if (status != MH_OK)
+                    {
+                        FreeBuffer(pBuffer);
+                    }
+                }
+                else
+                {
+                    status = MH_ERROR_MEMORY_ALLOC;
+                }
+            }
+            else
+            {
+                status = MH_ERROR_ALREADY_CREATED;
+            }
+        }
+        else
+        {
+            status = MH_ERROR_NOT_EXECUTABLE;
+        }
+    }
+    else
+    {
+        status = MH_ERROR_NOT_INITIALIZED;
+    }
+
+    LeaveSpinLock();
+
+    return status;
+}
+
+//-------------------------------------------------------------------------
 MH_STATUS WINAPI MH_Orbit_CreateHookPrologEpilog(LPVOID pTarget, LPVOID pPrologCallback, LPVOID pEpilogCallback, LPVOID pReturnAddressCallback)
 {
     MH_STATUS status = MH_OK;

@@ -10,6 +10,7 @@ struct OrbitUnrealInfo;
 namespace Hijacking
 {
     bool CreateHook( void* a_FunctionAddress );
+    bool CreateHookPrologOnly(void* a_FunctionAddress);
     bool CreateFileIoHook(void* a_FunctionAddress);
     bool CreateZoneStartHook( void* a_FunctionAddress );
     bool CreateZoneStopHook( void* a_FunctionAddress );
@@ -20,6 +21,7 @@ namespace Hijacking
     bool CreateFreeHook( void* a_FunctionAddress );
 
     bool CreateHook( void* a_FunctionAddress, void* a_PrologCallback, void* a_EpilogCallback );
+    bool CreatePrologHook(void* a_FunctionAddress, void* a_PrologCallback);
     bool EnableHook( void* a_FunctionAddress );
     void EnableHooks( DWORD64* a_Addresses, int a_NumAddresses );
     bool DisableHook( void* a_FunctionAddress );
