@@ -1,0 +1,22 @@
+// Generated from symbol.proto
+
+namespace orbit_grpc_protos.fbs;
+
+table ModuleSymbols {
+  load_bias:ulong;
+  symbols_file_path:string;
+  symbol_infos:[orbit_grpc_protos.fbs.SymbolInfo];
+}
+
+table SymbolInfo {
+  name:string;
+  demangled_name:string;
+  address:ulong;
+  size:ulong;
+}
+
+table LineInfo {
+  source_file:string;
+  source_line:uint;
+}
+

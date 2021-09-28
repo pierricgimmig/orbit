@@ -1,0 +1,316 @@
+// Generated from capture.proto
+
+include "module.fbs";
+include "tracepoint.fbs";
+
+namespace orbit_grpc_protos.fbs.CaptureOptions_;
+
+enum UnwindingMethod : int {
+  kUndefined = 0,
+  kFramePointers = 1,
+  kDwarf = 2,
+}
+
+namespace orbit_grpc_protos.fbs.CaptureOptions_.InstrumentedFunction_;
+
+enum FunctionType : int {
+  kRegular = 0,
+  kTimerStart = 1,
+  kTimerStop = 2,
+}
+
+namespace orbit_grpc_protos.fbs.ThreadStateSlice_;
+
+enum ThreadState : int {
+  kRunning = 0,
+  kRunnable = 1,
+  kInterruptibleSleep = 2,
+  kUninterruptibleSleep = 3,
+  kStopped = 4,
+  kTraced = 5,
+  kDead = 6,
+  kZombie = 7,
+  kParked = 8,
+  kIdle = 9,
+}
+
+namespace orbit_grpc_protos.fbs;
+
+table CaptureOptions {
+  trace_context_switches:bool;
+  pid:int;
+  sampling_rate:double;
+  unwinding_method:orbit_grpc_protos.fbs.CaptureOptions_.UnwindingMethod;
+  instrumented_functions:[orbit_grpc_protos.fbs.CaptureOptions_.InstrumentedFunction];
+  trace_thread_state:bool;
+  trace_gpu_driver:bool;
+  instrumented_tracepoint:[orbit_grpc_protos.fbs.TracepointInfo];
+  enable_introspection:bool;
+  max_local_marker_depth_per_command_buffer:ulong;
+  collect_memory_info:bool;
+  memory_sampling_period_ns:ulong;
+  bulk_capture_events:bool;
+}
+
+namespace orbit_grpc_protos.fbs.CaptureOptions_;
+
+table InstrumentedFunction {
+  file_path:string;
+  file_offset:ulong;
+  function_id:ulong;
+  function_type:orbit_grpc_protos.fbs.CaptureOptions_.InstrumentedFunction_.FunctionType;
+}
+
+namespace orbit_grpc_protos.fbs;
+
+table SchedulingSlice {
+  pid:int;
+  tid:int;
+  core:int;
+  duration_ns:ulong;
+  out_timestamp_ns:ulong;
+}
+
+table FunctionCall {
+  pid:int;
+  tid:int;
+  function_id:ulong;
+  duration_ns:ulong;
+  end_timestamp_ns:ulong;
+  depth:int;
+  return_value:ulong;
+  registers:[ulong];
+}
+
+table IntrospectionScope {
+  pid:int;
+  tid:int;
+  duration_ns:ulong;
+  end_timestamp_ns:ulong;
+  depth:int;
+  registers:[ulong];
+}
+
+table ApiEvent {
+  num_raw_events:ulong;
+  raw_data:[ulong];
+}
+
+table ApiEventFixed {
+  timestamp_ns:ulong;
+  pid:int;
+  tid:int;
+  type:uint;
+  color:uint;
+  data:ulong;
+  d0:ulong;
+  d1:ulong;
+  d2:ulong;
+  d3:ulong;
+  d4:ulong;
+}
+
+table Callstack {
+  pcs:[ulong];
+}
+
+table InternedCallstack {
+  key:ulong;
+  intern:orbit_grpc_protos.fbs.Callstack;
+}
+
+table CallstackSample {
+  pid:int;
+  tid:int;
+  callstack_id:ulong;
+  timestamp_ns:ulong;
+}
+
+table FullCallstackSample {
+  pid:int;
+  tid:int;
+  callstack:orbit_grpc_protos.fbs.Callstack;
+  timestamp_ns:ulong;
+}
+
+table InternedString {
+  key:ulong;
+  intern:string;
+}
+
+table InternedTracepointInfo {
+  key:ulong;
+  intern:orbit_grpc_protos.fbs.TracepointInfo;
+}
+
+table TracepointEvent {
+  pid:int;
+  tid:int;
+  timestamp_ns:ulong;
+  cpu:int;
+  tracepoint_info_key:ulong;
+}
+
+table FullTracepointEvent {
+  pid:int;
+  tid:int;
+  timestamp_ns:ulong;
+  cpu:int;
+  tracepoint_info:orbit_grpc_protos.fbs.TracepointInfo;
+}
+
+table FullGpuJob {
+  pid:int;
+  tid:int;
+  context:uint;
+  seqno:uint;
+  depth:int;
+  amdgpu_cs_ioctl_time_ns:ulong;
+  amdgpu_sched_run_job_time_ns:ulong;
+  gpu_hardware_start_time_ns:ulong;
+  dma_fence_signaled_time_ns:ulong;
+  timeline:string;
+}
+
+table GpuJob {
+  pid:int;
+  tid:int;
+  context:uint;
+  seqno:uint;
+  depth:int;
+  amdgpu_cs_ioctl_time_ns:ulong;
+  amdgpu_sched_run_job_time_ns:ulong;
+  gpu_hardware_start_time_ns:ulong;
+  dma_fence_signaled_time_ns:ulong;
+  timeline_key:ulong;
+}
+
+table GpuQueueSubmission {
+  meta_info:orbit_grpc_protos.fbs.GpuQueueSubmissionMetaInfo;
+  submit_infos:[orbit_grpc_protos.fbs.GpuSubmitInfo];
+  completed_markers:[orbit_grpc_protos.fbs.GpuDebugMarker];
+  num_begin_markers:int;
+}
+
+table GpuQueueSubmissionMetaInfo {
+  tid:int;
+  pre_submission_cpu_timestamp:ulong;
+  post_submission_cpu_timestamp:ulong;
+}
+
+table GpuSubmitInfo {
+  command_buffers:[orbit_grpc_protos.fbs.GpuCommandBuffer];
+}
+
+table GpuCommandBuffer {
+  begin_gpu_timestamp_ns:ulong;
+  end_gpu_timestamp_ns:ulong;
+}
+
+table GpuDebugMarkerBeginInfo {
+  meta_info:orbit_grpc_protos.fbs.GpuQueueSubmissionMetaInfo;
+  gpu_timestamp_ns:ulong;
+}
+
+table GpuDebugMarker {
+  begin_marker:orbit_grpc_protos.fbs.GpuDebugMarkerBeginInfo;
+  end_gpu_timestamp_ns:ulong;
+  text_key:ulong;
+  depth:int;
+  color:orbit_grpc_protos.fbs.Color;
+}
+
+table Color {
+  red:float;
+  green:float;
+  blue:float;
+  alpha:float;
+}
+
+table ThreadName {
+  pid:int;
+  tid:int;
+  name:string;
+  timestamp_ns:ulong;
+}
+
+table ThreadStateSlice {
+  pid:int;
+  tid:int;
+  thread_state:orbit_grpc_protos.fbs.ThreadStateSlice_.ThreadState;
+  duration_ns:ulong;
+  end_timestamp_ns:ulong;
+}
+
+table AddressInfo {
+  absolute_address:ulong;
+  offset_in_function:ulong;
+  function_name_key:ulong;
+  module_name_key:ulong;
+}
+
+table FullAddressInfo {
+  absolute_address:ulong;
+  offset_in_function:ulong;
+  function_name:string;
+  module_name:string;
+}
+
+table ModuleUpdateEvent {
+  pid:int;
+  timestamp_ns:ulong;
+  module:orbit_grpc_protos.fbs.ModuleInfo;
+}
+
+table SystemMemoryUsage {
+  timestamp_ns:ulong;
+  total_kb:long;
+  free_kb:long;
+  available_kb:long;
+  buffers_kb:long;
+  cached_kb:long;
+}
+
+union ClientCaptureEvent {
+  address_info:orbit_grpc_protos.fbs.AddressInfo,
+  api_event:orbit_grpc_protos.fbs.ApiEvent,
+  api_event_fixed:orbit_grpc_protos.fbs.ApiEventFixed,
+  callstack_sample:orbit_grpc_protos.fbs.CallstackSample,
+  function_call:orbit_grpc_protos.fbs.FunctionCall,
+  gpu_job:orbit_grpc_protos.fbs.GpuJob,
+  gpu_queue_submission:orbit_grpc_protos.fbs.GpuQueueSubmission,
+  interned_callstack:orbit_grpc_protos.fbs.InternedCallstack,
+  interned_string:orbit_grpc_protos.fbs.InternedString,
+  interned_tracepoint_info:orbit_grpc_protos.fbs.InternedTracepointInfo,
+  introspection_scope:orbit_grpc_protos.fbs.IntrospectionScope,
+  module_update_event:orbit_grpc_protos.fbs.ModuleUpdateEvent,
+  scheduling_slice:orbit_grpc_protos.fbs.SchedulingSlice,
+  system_memory_usage:orbit_grpc_protos.fbs.SystemMemoryUsage,
+  thread_name:orbit_grpc_protos.fbs.ThreadName,
+  thread_state_slice:orbit_grpc_protos.fbs.ThreadStateSlice,
+  tracepoint_event:orbit_grpc_protos.fbs.TracepointEvent
+}
+
+namespace orbit_grpc_protos.fbs;
+
+table ProducerCaptureEvent {
+  api_event:orbit_grpc_protos.fbs.ApiEvent;
+  api_event_fixed:orbit_grpc_protos.fbs.ApiEventFixed;
+  callstack_sample:orbit_grpc_protos.fbs.CallstackSample;
+  full_callstack_sample:orbit_grpc_protos.fbs.FullCallstackSample;
+  full_address_info:orbit_grpc_protos.fbs.FullAddressInfo;
+  full_gpu_job:orbit_grpc_protos.fbs.FullGpuJob;
+  full_tracepoint_event:orbit_grpc_protos.fbs.FullTracepointEvent;
+  function_call:orbit_grpc_protos.fbs.FunctionCall;
+  gpu_queue_submission:orbit_grpc_protos.fbs.GpuQueueSubmission;
+  interned_callstack:orbit_grpc_protos.fbs.InternedCallstack;
+  interned_string:orbit_grpc_protos.fbs.InternedString;
+  introspection_scope:orbit_grpc_protos.fbs.IntrospectionScope;
+  module_update_event:orbit_grpc_protos.fbs.ModuleUpdateEvent;
+  scheduling_slice:orbit_grpc_protos.fbs.SchedulingSlice;
+  system_memory_usage:orbit_grpc_protos.fbs.SystemMemoryUsage;
+  thread_name:orbit_grpc_protos.fbs.ThreadName;
+  thread_state_slice:orbit_grpc_protos.fbs.ThreadStateSlice;
+}
+
+root_type ProducerCaptureEvent;

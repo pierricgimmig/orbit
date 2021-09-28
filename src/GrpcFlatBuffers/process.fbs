@@ -1,0 +1,13 @@
+// Generated from process.proto
+
+namespace orbit_grpc_protos.fbs;
+
+table ProcessInfo {
+  pid:int;
+  name:string;
+  cpu_usage:double;
+  full_path:string;
+  command_line:string;
+  is_64_bit:bool;
+}
+
