@@ -4,7 +4,14 @@
 
 extern "C" {
 
-__declspec(dllexport) bool __cdecl OrbitHookApi(const char* function_name, const char* module,
-                                                const char* name_space);
+struct OrbitShimFunctionInfo {
+  // Function to be called instead of the original function.
+  void* detour_function;
+  // Memory location of a function pointer which can be used to call the original API function from
+  // within a shim function.
+  void** original_function_relay;
+};
 
+__declspec(dllexport) bool __cdecl GetOrbitShimFunctionInfo(
+    const char* function_name, const char* module, OrbitShimFunctionInfo& out_function_info);
 }
