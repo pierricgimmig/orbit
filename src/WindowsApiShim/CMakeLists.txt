@@ -7,7 +7,11 @@ cmake_minimum_required(VERSION 3.15)
 project(WindowsApiShim)
 
 add_executable(WindowsApiShimGenerator)
+
 target_compile_features(WindowsApiShimGenerator PUBLIC cxx_std_17)
+
+# So that we can use the same relative paths when running the executable as when debugging.
+set_property(TARGET WindowsApiShimGenerator PROPERTY VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
 target_sources(WindowsApiShimGenerator PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShimGenerator.cpp)
@@ -80,6 +84,8 @@ add_definitions(/bigobj)
 add_library(WindowsApiShimDll SHARED)
 
 target_compile_features(WindowsApiShimDll PUBLIC cxx_std_17)
+
+set_target_properties(WindowsApiShimDll PROPERTIES OUTPUT_NAME "OrbitWindowsApiShim")
 
 target_sources(WindowsApiShimDll PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include/WindowsApiShim/WindowsApiShim.h)

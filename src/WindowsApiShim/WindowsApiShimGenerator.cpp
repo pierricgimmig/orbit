@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// NOTE: This file is an adaptation of Microsoft's main.cpp from
+// https://github.com/microsoft/cppwin32.
+
 #include <cppwin32/base.h>
 #include <cppwin32/winmd/winmd_reader.h>
 
@@ -15,7 +18,29 @@
 #include <cppwin32/file_writers.h>
 #include <unordered_set>
 
+#include <absl/flags/flag.h>
+#include <absl/flags/internal/flag.h>
+#include <absl/flags/parse.h>
+
+#pragma optimize("", off)
+
+ABSL_FLAG(std::vector<std::string>, input, {}, "Metadata files to consume");
+ABSL_FLAG(std::string, output, "", "Output directory for generated code");
+ABSL_FLAG(std::string, base_dir, "", "Directory containing base.h");
+
 using namespace std::filesystem;
+
+static const std::filesystem::path GetCppWin32Dir() {
+  return std::filesystem::absolute("../../third_party/cppwin32/");
+}
+
+static const std::filesystem::path GetMetadataDir() {
+  return std::filesystem::absolute("../../third_party/winmd/");
+}
+
+static const std::filesystem::path GetOutputDir() {
+  return std::filesystem::absolute("../src/WindowsApiShim/generated/");
+}
 
 namespace cppwin32 {
 settings_type settings;
@@ -141,31 +166,7 @@ static auto get_files_to_cache() {
   return files;
 }
 
-void dump_namespace_from_cache(const cache& c) {
-  for (const database& db : c.databases()) {
-    PRINT_VAR(db.get_table<Module>().size());
-    PRINT_VAR(db.get_table<Module>()[0].Name());
-    PRINT_VAR(db.get_table<ModuleRef>().size());
-    PRINT_VAR(db.get_table<MethodDef>().size());
-    PRINT_VAR(db.get_table<ImplMap>().size());
-
-    for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
-      PRINT_VAR(impl_map.ImportName());
-      PRINT_VAR(impl_map.ImportScope().index());
-      std::string_view module_name =
-          db.get_table<ModuleRef>()[impl_map.ImportScope().index()].Name();
-      PRINT_VAR(module_name);
-    }
-
-    for (const ModuleRef& module_ref : db.get_table<ModuleRef>()) {
-      PRINT_VAR(module_ref.Name());
-    }
-  }
-}
-
-// -input "C:/git/win32metadata/bin/Windows.Win32.winmd" "C:/git/win32metadata/bin/Windows.Win32.Interop.winmd" 
-// -output "C:/git/cppwin32/output"
-static int run(int const argc, char* argv[]) {
+static int run(int const argc, const char* argv[]) {
   int result{};
   writer w;
 
@@ -184,13 +185,13 @@ static int run(int const argc, char* argv[]) {
 
     w.flush_to_console();
 
-    // dump_namespace_from_cache(c);
-
     for (auto&& [ns, members] : c.namespaces()) {
+      if (ns == "") {
+        continue;
+      }
       group.add([&, &ns = ns, &members = members] {
         write_namespace_0_h(ns, members);
         write_namespace_1_h(ns, members);
-        // write_namespace_2_h(ns, members);
         write_namespace_h_no_impl(ns, members);
         write_namespace_cpp(ns, members);
       });
@@ -199,7 +200,8 @@ static int run(int const argc, char* argv[]) {
     group.add([&c] { write_complex_interfaces_h(c); });
     group.add([&c] { write_manifest_h(c); });
 
-    std::filesystem::copy_file("C:\\git\\orbit\\third_party\\cppwin32\\cppwin32\\base.h", settings.output_folder + "win32/" + "base.h",
+    std::filesystem::path base_h_file_name = GetCppWin32Dir() / "cppwin32" / "base.h";
+    std::filesystem::copy_file(base_h_file_name, settings.output_folder + "win32/" + "base.h",
                                std::filesystem::copy_options::overwrite_existing);
   } catch (usage_exception const&) {
     print_usage(w);
@@ -213,10 +215,14 @@ static int run(int const argc, char* argv[]) {
 }
 }
 
-// -input "C:/git/win32metadata/bin/Windows.Win32.winmd" "C:/git/win32metadata/bin/Windows.Win32.Interop.winmd" 
-// -output "C:/git/cppwin32/output"
 int main(int const argc, char* argv[]) {
-  char* args[] = {"blah", "-input", "C:/git/win32metadata/bin/Windows.Win32.winmd",
-                        "C:/git/win32metadata/bin/Windows.Win32.Interop.winmd", "-output", "generated"};
+  std::string win32_metadata_file_name = (GetMetadataDir() / "Windows.Win32.winmd").string();
+  std::string win32_interop_file_name = (GetMetadataDir() / "Windows.Win32.Interop.winmd").string();
+  std::string output_dir = GetOutputDir().string();
+  
+  const char* args[] = {argv[0],
+                  "-input",
+                  win32_metadata_file_name.c_str(), win32_interop_file_name.c_str(),
+                  "-output", output_dir.c_str()};
     cppwin32::run(sizeof(args)/sizeof(args[0]), args);
 }
