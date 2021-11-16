@@ -1,6 +1,7 @@
 #pragma once
 
 #include "type_writers.h"
+#include "type_dependency_graph.h"
 
 #include <unordered_set>
 

@@ -4,26 +4,23 @@
 
 #include "WindowsApiShim/WindowsApiShim.h"
 
-#include <win32/Windows.Win32.Storage.FileSystem.h>
 #include <win32/manifest.h>
+#include <win32/NamespaceDispatcher.h>
 
 #include <unordered_map>
 
 extern "C" {
 // A function_key is of the form "module_name.function_name".
-__declspec(dllexport) bool __cdecl GetOrbitShimFunctionInfo(
-    const char* function_key, OrbitShimFunctionInfo& out_function_info) {
-  uint32_t num_bytes_written = 0;
-  win32::Windows::Win32::Storage::FileSystem::ORBIT_IMPL_WriteFile({}, nullptr, 0,
-                                                                   &num_bytes_written, nullptr);
+__declspec(dllexport) bool __cdecl GetOrbitShimFunction(
+    const char* function_key, OrbitShimFunction& out_hookable_function) {
 
-  out_function_info.detour_function =
-      &win32::Windows::Win32::Storage::FileSystem::ORBIT_IMPL_WriteFile;
-  out_function_info.original_function_relay =
-      reinterpret_cast<void**>(&win32::Windows::Win32::Storage::FileSystem::g_api_table.WriteFile);
+  OrbitShimFunctionInfo function_info = {};
+  if (!orbit_windows_api_shim::GetOrbitShimFunctionInfo(function_key, function_info)) {
+    return false;
+  }
 
-  // Todo: generate dispatch code for all namespaces
-  //
+  out_hookable_function.detour_function = function_info.detour_function;
+  out_hookable_function.original_function_relay = function_info.original_function_relay;
   return false;
 }
 }

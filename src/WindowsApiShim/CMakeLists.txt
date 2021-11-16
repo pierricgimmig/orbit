@@ -13,7 +13,9 @@ target_compile_features(WindowsApiShimGenerator PUBLIC cxx_std_17)
 # So that we can use the same relative paths when running the executable as when debugging.
 set_property(TARGET WindowsApiShimGenerator PROPERTY VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
-target_sources(WindowsApiShimGenerator PUBLIC
+target_sources(WindowsApiShimGenerator PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/FileWriter.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/FileWriter.h
         ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShimGenerator.cpp)
 
 target_link_libraries(WindowsApiShimGenerator PUBLIC
