@@ -23,8 +23,8 @@ class FileWriter {
   void WriteNamespaceCpp(std::string_view const& ns,
                          winmd::reader::cache::namespace_members const& members);
 
-  std::map<winmd::reader::MethodDef, winmd::reader::ModuleRef> method_def_to_module_ref_map;
-  const winmd::reader::cache* cache_ = nullptr;
+  std::map<winmd::reader::MethodDef, winmd::reader::ModuleRef> method_def_to_module_ref_map_;
+  std::unique_ptr<winmd::reader::cache> cache_ = nullptr;
   const winmd::reader::database* win32_database_ = nullptr;
 };
 
