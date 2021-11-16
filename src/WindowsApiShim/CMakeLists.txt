@@ -24,6 +24,7 @@ target_link_libraries(WindowsApiShimGenerator PUBLIC
         CONAN_PKG::outcome
         cppwin32::cppwin32)
 
+if (WIN32)
 add_library(WindowsApiShim STATIC)
 
 target_compile_features(WindowsApiShim PUBLIC cxx_std_17)
@@ -98,3 +99,4 @@ target_sources(WindowsApiShimDll PRIVATE
 target_link_libraries(WindowsApiShimDll PUBLIC
         WindowsApiShim)
 
+endif()

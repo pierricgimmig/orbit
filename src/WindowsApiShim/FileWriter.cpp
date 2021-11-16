@@ -2,7 +2,7 @@
 
 #include <cppwin32/code_writers.h>
 #include <cppwin32/file_writers.h>
-//#include <cppwin32/settings.h>
+#include <cppwin32/settings.h>
 #include <cppwin32/task_group.h>
 #include <cppwin32/text_writer.h>
 #include <cppwin32/type_dependency_graph.h>
@@ -21,7 +21,6 @@ using winmd::reader::MethodDef;
 using winmd::reader::ModuleRef;
 using winmd::reader::TypeDef;
 
-// Dummy global to fix linking error.
 namespace cppwin32 {
 settings_type settings;
 }
@@ -92,11 +91,7 @@ void write_class_impl(cppwin32::writer& w, TypeDef const& type) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
-  w.write(R"(extern "C"
-{
-)");
-  //        auto const format = R"xyz(% __stdcall ORBIT_IMPL_%(%) noexcept {
-  //)xyz";
+  w.write("(extern \"C\"\n{\n)");
 
   for (auto&& method : type.MethodList()) {
     if (!is_x64_arch(method)) continue;
@@ -104,9 +99,7 @@ void write_class_impl(cppwin32::writer& w, TypeDef const& type) {
     write_class_method_with_orbit_instrumentation(w, signature);
     w.write("\n");
   }
-  w.write(R"(}
-)");
-  w.write("\n");
+  w.write("(}\n)\n");
 }
 
 void write_class_api_table(cppwin32::writer& w, TypeDef const& type) {
@@ -115,12 +108,6 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type) {
   w.write("\nstruct ApiTable {\n");
   for (auto&& method : type.MethodList()) {
     if (!is_x64_arch(method)) continue;
-
-    auto generic_param = method.GenericParam();
-    for (auto i = generic_param.first; i != generic_param.second; ++i) {
-      PRINT_VAR(i.Name());
-      // PRINT_VAR(i.TypeNamespaceAndName().second);
-    }
 
     if (method.Flags().Access() == winmd::reader::MemberAccess::Public) {
       method_signature signature{method};
@@ -134,21 +121,25 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type) {
       "out_function_info);\n");
 }
 
-void write_class_abi(cppwin32::writer& w, TypeDef const& type) {
+void write_class_abi(cppwin32::writer& w, TypeDef const& type,
+                     const std::map<winmd::reader::MethodDef, winmd::reader::ModuleRef>&
+                         method_def_to_module_ref_map) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
   w.write(R"(extern "C"
 {
 )");
-  auto const format = R"xyz(    % __stdcall ORBIT_IMPL_%(%) noexcept;
+  auto const format = R"xyz(    % __stdcall ORBIT_IMPL_%_%(%) noexcept;
 )xyz";
 
-  for (auto&& method : type.MethodList()) {
+  for (const winmd::reader::MethodDef& method : type.MethodList()) {
     if (method.Flags().Access() == winmd::reader::MemberAccess::Public && is_x64_arch(method)) {
       method_signature signature{method};
+      winmd::reader::ModuleRef module_ref = method_def_to_module_ref_map.at(method);
+      std::string module_name(module_ref.Name());
       w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
-              method.Name(), cppwin32::bind<cppwin32::write_abi_params>(signature));
+              module_name, method.Name(), cppwin32::bind<cppwin32::write_abi_params>(signature));
     }
   }
   w.write(R"(}
@@ -182,8 +173,15 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
 
 FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem::path output_dir) {
   std::filesystem::create_directories(output_dir / "win32/impl");
+
+  std::vector<std::string> input_files;
+  cppwin32::settings.output_folder = output_dir.string();
+  for (const auto& path : input) {
+    input_files.emplace_back(path.string());
+  }
+  cache_ = std::make_unique<winmd::reader::cache>(input_files);
   win32_database_ = GetWin32Database();
-  method_def_to_module_ref_map = GetMethodDeftoModuleRefMap(*win32_database_);
+  method_def_to_module_ref_map_ = GetMethodDeftoModuleRefMap(*win32_database_);
 }
 
 void FileWriter::WriteCodeFiles() {
@@ -223,7 +221,7 @@ void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
   {
     auto wrap = wrap_type_namespace(w, ns);
     w.write("#pragma region methods\n");
-    w.write_each<cppwin32::write_class_abi>(members.classes);
+    w.write_each<write_class_abi>(members.classes, method_def_to_module_ref_map_);
     w.write("#pragma endregion methods\n\n");
   }
 

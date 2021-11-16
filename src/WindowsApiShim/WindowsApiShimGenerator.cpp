@@ -25,6 +25,7 @@ const std::filesystem::path GetOutputDir() {
 }
 
 void CopyFile(std::filesystem::path source, std::filesystem::path dest) {
+  std::filesystem::create_directories(dest.parent_path());
   std::filesystem::copy_file(source, dest, std::filesystem::copy_options::overwrite_existing);
 }
 
