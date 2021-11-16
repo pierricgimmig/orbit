@@ -4,7 +4,7 @@
 
 extern "C" {
 
-struct OrbitShimFunctionInfo {
+struct OrbitShimFunction {
   // Function to be called instead of the original function.
   void* detour_function;
   // Memory location of a function pointer which can be used to call the original API function from
@@ -12,6 +12,8 @@ struct OrbitShimFunctionInfo {
   void** original_function_relay;
 };
 
-__declspec(dllexport) bool __cdecl GetOrbitShimFunctionInfo(
-    const char* function_name, const char* module, OrbitShimFunctionInfo& out_function_info);
+// Fills "orbit_shim_function" object with appropriate data if function_key is found.
+// Return value: true if "function_key" is found, false otherwise.
+__declspec(dllexport) bool __cdecl GetOrbitShimFunction(const char* function_key, OrbitShimFunction& orbit_shim_function);
+
 }

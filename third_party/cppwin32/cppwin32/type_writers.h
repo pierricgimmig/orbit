@@ -3,6 +3,7 @@
 #include <winmd_reader.h>
 #include "text_writer.h"
 #include "helpers.h"
+#include "settings.h"
 
 namespace cppwin32
 {
