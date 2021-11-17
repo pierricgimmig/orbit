@@ -6,19 +6,19 @@
 
 namespace {
 
-const std::filesystem::path GetCppWin32Dir() {
+[[nodiscard]] const std::filesystem::path GetCppWin32Dir() {
   return std::filesystem::absolute("../../third_party/cppwin32/");
 }
 
-const std::filesystem::path GetMetadataDir() {
+[[nodiscard]] const std::filesystem::path GetMetadataDir() {
   return std::filesystem::absolute("../../third_party/winmd/");
 }
 
-const std::filesystem::path GetSourceDir() {
+[[nodiscard]] const std::filesystem::path GetSourceDir() {
   return std::filesystem::absolute("../../src/WindowsApiShim/");
 }
 
-const std::filesystem::path GetOutputDir() {
+[[nodiscard]] const std::filesystem::path GetOutputDir() {
   return std::filesystem::absolute("../src/WindowsApiShim/generated/");
 }
 
@@ -29,7 +29,7 @@ void CopyFile(std::filesystem::path source, std::filesystem::path dest) {
 
 }  // namespace
 
-std::vector<std::filesystem::path> GetInputFiles() {
+[[nodiscard]] std::vector<std::filesystem::path> GetInputFiles() {
   return {GetMetadataDir() / "Windows.Win32.winmd",
           GetMetadataDir() / "Windows.Win32.Interop.winmd"};
 }
