@@ -16,7 +16,7 @@
 
 namespace orbit_windows_api_shim {
 
-std::string GetConciseNamespace(const char* name_space) {
+inline std::string GetConciseNamespace(const char* name_space) {
   return absl::StrReplaceAll(name_space, {{"::", "_"}});
 }
 
