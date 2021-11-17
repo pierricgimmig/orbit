@@ -1,4 +1,11 @@
+// Copyright (c) 2021 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include "FileWriter.h"
+
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_format.h>
 
 #include <cppwin32/code_writers.h>
 #include <cppwin32/file_writers.h>
@@ -7,6 +14,8 @@
 #include <cppwin32/text_writer.h>
 #include <cppwin32/type_dependency_graph.h>
 #include <cppwin32/type_writers.h>
+
+#include "OrbitBase/Logging.h"
 
 using cppwin32::method_signature;
 using cppwin32::task_group;
@@ -48,26 +57,17 @@ bool is_x64_arch(const MethodDef& method) {
     const FixedArgSig& fixed_arg = attr_sig.FixedArgs()[0];
     const ElemSig& elem_sig = std::get<ElemSig>(fixed_arg.value);
     const ElemSig::EnumValue& enum_value = std::get<ElemSig::EnumValue>(elem_sig.value);
-    int32_t const arch_flags = std::get<int32_t>(enum_value.value);
-    method_signature signature{method};
+    int32_t const arch_flags = std::get<int32_t>(enum_value.value);    
+    // None = 0, X86 = 1, X64 = 2, Arm64 = 4.
     constexpr const int32_t kX64 = 2;
     if ((arch_flags & kX64) == 0) return false;
   }
   return true;
 }
 
-std::map<MethodDef, ModuleRef> GetMethodDeftoModuleRefMap(const database& db) {
-  std::map<MethodDef, ModuleRef> method_to_module_map;
-  for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
-    ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
-    const MethodDef& method_def = db.get_table<MethodDef>()[impl_map.MemberForwarded().index()];
-    method_to_module_map.emplace(method_def, module_ref);
-  }
-  return method_to_module_map;
-}
-
 void write_class_method_with_orbit_instrumentation(cppwin32::writer& w,
-                                                   method_signature const& method_signature) {
+                                                   method_signature const& method_signature,
+                                                   const MetaDataHelper& metadata_helper) {
   auto const format = R"(    % __stdcall ORBIT_IMPL_%(%) noexcept
     {
         %
@@ -76,33 +76,34 @@ void write_class_method_with_orbit_instrumentation(cppwin32::writer& w,
     }
 )";
   w.write(format, cppwin32::bind<cppwin32::write_method_return>(method_signature),
-          method_signature.method().Name(),
+          metadata_helper.GetFunctionNameFromMethodDef(method_signature.method()),
           cppwin32::bind<cppwin32::write_method_params>(method_signature),
           cppwin32::bind<cppwin32::write_orbit_instrumentation>(method_signature),
           cppwin32::bind<cppwin32::write_consume_return_type>(method_signature),
-          method_signature.method().Name(),
+          metadata_helper.GetFunctionNameFromMethodDef(method_signature.method()),
           cppwin32::bind<cppwin32::write_method_args>(method_signature),
           cppwin32::bind<cppwin32::write_orbit_instrumentation_ret>(method_signature),
           cppwin32::bind<cppwin32::write_consume_return_statement>(method_signature));
 }
 
-// Orbit
-void write_class_impl(cppwin32::writer& w, TypeDef const& type) {
+void write_class_impl(cppwin32::writer& w, TypeDef const& type,
+                      const MetaDataHelper& metadata_helper) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
-  w.write("(extern \"C\"\n{\n)");
+  w.write("extern \"C\"\n{\n");
 
   for (auto&& method : type.MethodList()) {
     if (!is_x64_arch(method)) continue;
     method_signature signature{method};
-    write_class_method_with_orbit_instrumentation(w, signature);
+    write_class_method_with_orbit_instrumentation(w, signature, metadata_helper);
     w.write("\n");
   }
-  w.write("(}\n)\n");
+  w.write("}\n\n");
 }
 
-void write_class_api_table(cppwin32::writer& w, TypeDef const& type) {
+void write_class_api_table(cppwin32::writer& w, TypeDef const& type,
+                           const MetaDataHelper& metadata_helper) {
   auto const format = R"xyz(    % (__stdcall *%)(%) noexcept;
 )xyz";
   w.write("\nstruct ApiTable {\n");
@@ -112,7 +113,7 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type) {
     if (method.Flags().Access() == winmd::reader::MemberAccess::Public) {
       method_signature signature{method};
       w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
-              method.Name(), cppwin32::bind<cppwin32::write_abi_params>(signature));
+              metadata_helper.GetFunctionNameFromMethodDef(method), cppwin32::bind<cppwin32::write_abi_params>(signature));
     }
   }
   w.write("};\nextern ApiTable g_api_table;\n\n");
@@ -122,46 +123,46 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type) {
 }
 
 void write_class_abi(cppwin32::writer& w, TypeDef const& type,
-                     const std::map<winmd::reader::MethodDef, winmd::reader::ModuleRef>&
-                         method_def_to_module_ref_map) {
+                     const MetaDataHelper& metadata_helper) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
   w.write(R"(extern "C"
 {
 )");
-  auto const format = R"xyz(    % __stdcall ORBIT_IMPL_%_%(%) noexcept;
+  auto const format = R"xyz(    % __stdcall ORBIT_IMPL_%(%) noexcept;
 )xyz";
 
   for (const winmd::reader::MethodDef& method : type.MethodList()) {
     if (method.Flags().Access() == winmd::reader::MemberAccess::Public && is_x64_arch(method)) {
       method_signature signature{method};
-      winmd::reader::ModuleRef module_ref = method_def_to_module_ref_map.at(method);
-      std::string module_name(module_ref.Name());
+      std::string function_name = metadata_helper.GetFunctionNameFromMethodDef(method);
       w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
-              module_name, method.Name(), cppwin32::bind<cppwin32::write_abi_params>(signature));
+              function_name, cppwin32::bind<cppwin32::write_abi_params>(signature));
     }
   }
   w.write(R"(}
 )");
 
-  write_class_api_table(w, type);
+  write_class_api_table(w, type, metadata_helper);
   w.write("\n");
 }
 
-void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& type) {
+void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& type,
+                                            const MetaDataHelper& metadata_helper) {
   w.write(
       "\nbool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
       "out_function_info)\n{\n");
   w.write(
       "  static std::unordered_map<std::string, std::function<void(OrbitShimFunctionInfo&)>> "
       "function_dispatcher = {\n");
+
   for (auto&& method : type.MethodList()) {
     if (!is_x64_arch(method)) continue;
-    w.write("    ORBIT_DISPATCH_ENTRY(%),\n", method.Name());
+    w.write("    ORBIT_DISPATCH_ENTRY(%),\n", metadata_helper.GetFunctionNameFromMethodDef(method));
   }
-  w.write("  };\n\n");
 
+  w.write("  };\n\n");
   w.write("  auto it = function_dispatcher.find(function_key);\n");
   w.write("  if(it != function_dispatcher.end()) {\n");
   w.write("    it->second(out_function_info);\n    return true;\n  }\n\n");
@@ -169,7 +170,175 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
   w.write("  return false;\n}\n\n");
 }
 
+const database* FindWin32Database(const cache& cache) {
+  constexpr const char* kWin32MetaDataFileName  = "Windows.Win32.winmd";
+  for (const database& db : cache.databases()) {
+    std::filesystem::path path(db.path());
+    if (path.filename() == kWin32MetaDataFileName) {
+      return &db;
+    }
+  }
+
+  ERROR("Could not find win32 metadata database \"%s\"", kWin32MetaDataFileName);
+  return nullptr;
+}
+
+
+inline const char* GetWindowsApiFunctionDefinition() {
+  return R"(struct WindowsApiFunction {
+  const char* function_key = nullptr;
+  const char* name_space = nullptr;
+};
+
+)";
+}
+
+struct FunctionInfo {
+  std::string name;
+  std::string module;
+  std::string name_space;
+};
+
+static void write_manifest_h(cache const& c) {
+  cppwin32::writer w;
+
+  w.write("#pragma once\n\n");
+  w.write("#include <array>\n\n");
+  w.write(GetWindowsApiFunctionDefinition());
+
+  std::map<const MethodDef, std::string> method_def_to_namespace;
+
+  for (auto&& [ns, members] : c.namespaces()) {
+    for (const TypeDef& c : members.classes) {
+      for (const MethodDef& method : c.MethodList()) {
+        if (method.Flags().Access() == winmd::reader::MemberAccess::Public) {
+          method_def_to_namespace.emplace(method, std::string(ns));
+          // check emplace took place
+        }
+      }
+    }
+  }
+
+  for (const database& db : c.databases()) {
+    std::filesystem::path path(db.path());
+    if (path.filename() != "Windows.Win32.winmd") continue;
+
+    std::map<std::string, FunctionInfo> function_key_to_info;
+    for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
+      std::string function_name(impl_map.ImportName());
+      ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
+      std::string module_name = absl::AsciiStrToLower(module_ref.Name());
+      std::string function_key = module_name + "_" + function_name;
+
+      const MethodDef& method_def = db.get_table<MethodDef>()[impl_map.MemberForwarded().index()];
+
+      FunctionInfo& function_info = function_key_to_info[function_key];
+      // Check insertion took place.
+      function_info.name = function_name;
+      function_info.module = module_name;
+      function_info.name_space = method_def_to_namespace.at(method_def);
+    }
+
+    w.write("// num namespaces: %\n", c.namespaces().size());
+    w.write("// num modules: %\n\n", db.get_table<ModuleRef>().size());
+    w.write("constexpr std::array<const WindowsApiFunction, %> kFunctions = {{\n",
+            db.get_table<ImplMap>().size());
+    for (const auto& [key, function_info] : function_key_to_info) {
+      w.write("  {\"%_%\", \"%\"},\n", function_info.module, function_info.name,
+              function_info.name_space);
+    }
+
+    w.write("}};\n\n");
+  }
+
+  w.flush_to_file(cppwin32::settings.output_folder + "win32/manifest.h");
+}
+
+constexpr const char* namespace_dispatcher_header =
+    R"(// Copyright (c) 2021 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "NamespaceDispatcher.h"
+)";
+
+constexpr const char* namespace_dispatcher_0 = R"(
+
+// NOTE: This file was generated by Orbit's WindowsApiShimGenerator.
+
+namespace orbit_windows_api_shim {
+
+  bool GetOrbitShimFunctionInfo(const char* function_key,
+                                OrbitShimFunctionInfo& out_function_info) {
+    std::optional<std::string> name_space = FunctionKeyToNamespace(function_key);
+    if (!name_space.has_value()) return false;
+    typedef std::function<bool(const char* function_key,
+                                 OrbitShimFunctionInfo& out_function_info)>
+          FunctionType;
+
+      static const std::unordered_map<std::string, FunctionType> dispatcher = {{
+          // NAMESPACE_DISPATCH_ENTRIES
+)";
+
+constexpr const char* namespace_dispatcher_1 = R"(
+      }};
+
+      const auto function_it = dispatcher.find(name_space.value());
+      if (function_it == dispatcher.end()) return false;
+      return function_it->second(function_key, out_function_info);
+    }
+}  // namespace orbit_windows_api_shim
+)";
+
+void write_namespace_dispatch_cpp(cache const& c) {
+  cppwin32::writer w;
+  w.write(namespace_dispatcher_header);
+
+  // Include all namespace headers.
+  for (auto&& [ns, members] : c.namespaces()) {
+    if (ns == "") continue;
+    w.write("#include \"win32/%.h\"\n", ns);
+  }
+
+  w.write(namespace_dispatcher_0);
+
+  // function_to_namespace
+  for (auto&& [ns, members] : c.namespaces()) {
+    if (ns == "") continue;
+    if (members.classes.size() == 0) continue;
+    std::string name_space = absl::StrReplaceAll(ns, {{".", "::"}});
+    w.write("ADD_NAMESPACE_DISPATCH_ENTRY(win32::%),\n", name_space);
+  }
+
+  w.write(namespace_dispatcher_1);
+
+  w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/NamespaceDispatcher.cpp");
+}
+
 }  // namespace
+
+MetaDataHelper::MetaDataHelper(const database& db) {
+  // Populate a map of method_def to module_ref.
+  for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
+    ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
+    const MethodDef& method_def = db.get_table<MethodDef>()[impl_map.MemberForwarded().index()];
+    method_def_to_module_ref_map_.emplace(method_def, module_ref);
+  }
+}
+
+std::string MetaDataHelper::GetFunctionNameFromMethodDef(
+    const winmd::reader::MethodDef& method_def) const {
+  // Include the module name so that all function names are globally unique.
+  std::string_view module_name =
+      absl::StrReplaceAll(GetModuleNameFromMethodDef(method_def), {{".", "_"}, {"-", "_"}});
+  std::string_view function_name = method_def.Name();
+  return absl::StrFormat("%s__%s", absl::AsciiStrToLower(module_name), function_name);
+}
+
+std::string_view MetaDataHelper::GetModuleNameFromMethodDef(
+    const winmd::reader::MethodDef& method_def) const {
+  return method_def_to_module_ref_map_.at(method_def).Name();
+}
 
 FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem::path output_dir) {
   std::filesystem::create_directories(output_dir / "win32/impl");
@@ -180,8 +349,8 @@ FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem
     input_files.emplace_back(path.string());
   }
   cache_ = std::make_unique<winmd::reader::cache>(input_files);
-  win32_database_ = GetWin32Database();
-  method_def_to_module_ref_map_ = GetMethodDeftoModuleRefMap(*win32_database_);
+  win32_database_ = FindWin32Database(*cache_);
+  win32_metadata_helper_ = std::make_unique<MetaDataHelper>(*win32_database_);
 }
 
 void FileWriter::WriteCodeFiles() {
@@ -200,18 +369,8 @@ void FileWriter::WriteCodeFiles() {
 
   group.add([this] { cppwin32::write_complex_structs_h(*cache_); });
   group.add([this] { cppwin32::write_complex_interfaces_h(*cache_); });
-  group.add([this] { cppwin32::write_manifest_h(*cache_); });
-  group.add([this] { cppwin32::write_namespace_dispatch_cpp(*cache_); });
-}
-
-const database* FileWriter::GetWin32Database() {
-  for (const database& db : cache_->databases()) {
-    std::filesystem::path path(db.path());
-    if (path.filename() == "Windows.Win32.winmd") {
-      return &db;
-    }
-  }
-  return nullptr;
+  group.add([this] { write_manifest_h(*cache_); });
+  group.add([this] { write_namespace_dispatch_cpp(*cache_); });
 }
 
 void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
@@ -221,7 +380,7 @@ void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
   {
     auto wrap = wrap_type_namespace(w, ns);
     w.write("#pragma region methods\n");
-    w.write_each<write_class_abi>(members.classes, method_def_to_module_ref_map_);
+    w.write_each<write_class_abi>(members.classes, *win32_metadata_helper_);
     w.write("#pragma endregion methods\n\n");
   }
 
@@ -250,11 +409,11 @@ void FileWriter::WriteNamespaceCpp(std::string_view const& ns,
 
     if (!members.classes.empty()) w.write("ApiTable g_api_table;\n\n");
     w.write("#pragma region abi_methods\n");
-    w.write_each<write_class_impl>(members.classes);
+    w.write_each<write_class_impl>(members.classes, *win32_metadata_helper_);
     w.write("#pragma endregion abi_methods\n\n");
 
     // HookFunction dispatch.
-    w.write_each<WriteNamespaceGetOrbitShimFunctionInfo>(members.classes);
+    w.write_each<WriteNamespaceGetOrbitShimFunctionInfo>(members.classes, *win32_metadata_helper_);
   }
 
   write_close_file_guard(w);

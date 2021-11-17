@@ -2,12 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// NOTE: This file is an adaptation of Microsoft's main.cpp from
-// https://github.com/microsoft/cppwin32.
-
 #include "FileWriter.h"
 
 namespace {
+
 const std::filesystem::path GetCppWin32Dir() {
   return std::filesystem::absolute("../../third_party/cppwin32/");
 }
