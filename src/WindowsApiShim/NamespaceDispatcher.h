@@ -16,21 +16,63 @@
 
 namespace orbit_windows_api_shim {
 
-inline std::unordered_map<std::string, std::string> BuildFunctionKeyToNamespaceMap() {
-  std::unordered_map<std::string, std::string> function_to_namespace_map;
-  for (const WindowsApiFunction& api_function : kFunctions) {
-    function_to_namespace_map.emplace(api_function.function_key, api_function.name_space);
+class WindowsApiHelper {
+ public:
+  static const WindowsApiHelper& Get() {
+    static WindowsApiHelper api_helper;
+    return api_helper;
   }
-}
 
-inline std::optional<std::string> FunctionKeyToNamespace(const std::string& function_key) {
-  static const std::unordered_map<std::string, std::string> function_key_to_namespace =
-      BuildFunctionKeyToNamespaceMap();
-  auto it = function_key_to_namespace.find(function_key);
-  if (it != function_key_to_namespace.end()) return it->second;
-  ORBIT_ERROR("Could not find namespace associated with function key %s", function_key);
-  return std::nullopt;
-}
+  [[nodiscard]] std::optional<std::string> GetNamespaceFromFunctionKey(
+      const std::string& function_key) const {
+    auto it = function_key_to_namespace_map_.find(function_key);
+    if (it != function_key_to_namespace_map_.end()) return it->second;
+    ERROR("Could not find namespace associated with function key %s", function_key);
+    return std::nullopt;
+  }
+
+  [[nodiscsard]] std::optional<std::vector<std::string>> GetFunctionKeysFromNamespace(const std::string& name_space) const {
+    auto it = namespace_to_functions_keys_map_.find(name_space);
+    if (it != namespace_to_functions_keys_map_.end()) return it->second;
+    ERROR("Could not find function keys associated with namespace %s", name_space);
+    return std::nullopt;
+  }
+
+  [[nodiscard]] std::optional<std::string> GetModuleFromFunctionKey(
+      const std::string_view function_key) {
+    std::vector<std::string> tokens = absl::StrSplit(function_key, "__");
+    if (tokens.empty()) return std::nullopt;
+    return tokens[0];
+  }
+
+  [[nodiscard]] std::optional<std::string> GetFunctionFromFunctionKey(
+      const std::string_view function_key){
+    std::vector<std::string> tokens = absl::StrSplit(function_key, "__");
+    if (tokens.size() < 2) return std::nullopt;
+    return tokens[1];
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, std::string>& GetFunctionKeyToNamespaceMap() {
+    return function_key_to_namespace_map_;
+  }
+
+  [[nodiscard]] const std::unordered_map<std::string, std::vector<std::string>>&
+  GetNamespaceToFunctionKeysMap() {
+    return namespace_to_functions_keys_map_;
+  }
+
+ private:
+  WindowsApiHelper() {
+    for (const WindowsApiFunction& api_function : kFunctions) {
+      function_key_to_namespace_map_.emplace(api_function.function_key, api_function.name_space);
+      namespace_to_functions_keys_map_[api_function.name_space].push_back(
+          api_function.function_key);
+    }
+  }
+
+  std::unordered_map<std::string, std::string> function_key_to_namespace_map_;
+  std::unordered_map<std::string, std::vector<std::string>> namespace_to_functions_keys_map_;
+};
 
 #define ADD_NAMESPACE_DISPATCH_ENTRY(ns)                                           \
   {                                                                                \

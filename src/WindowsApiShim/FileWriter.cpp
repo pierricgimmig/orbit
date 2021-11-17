@@ -263,7 +263,7 @@ static void write_manifest_h(cache const& c) {
     w.write("constexpr std::array<const WindowsApiFunction, %> kFunctions = {{\n",
             db.get_table<ImplMap>().size());
     for (const auto& [key, function_info] : function_key_to_info) {
-      w.write("  {\"%_%\", \"%\"},\n", function_info.module, function_info.name,
+      w.write("  {\"%__%\", \"%\"},\n", function_info.module, function_info.name,
               function_info.name_space);
     }
 
