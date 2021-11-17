@@ -7,8 +7,8 @@ extern "C" {
 struct OrbitShimFunction {
   // Function to be called instead of the original function.
   void* detour_function;
-  // Memory location of a function pointer which can be used to call the original API function from
-  // within a shim function.
+  // Memory location of a function pointer which can be used to call the original unhooked API
+  // function. The value of the relay is set externally by the dynamic instrumentation mechanism.
   void** original_function_relay;
 };
 

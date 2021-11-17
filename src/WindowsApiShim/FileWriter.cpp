@@ -65,6 +65,11 @@ bool is_x64_arch(const MethodDef& method) {
   return true;
 }
 
+template <typename T>
+bool IsListEmpty(const T& list) {
+  return list.first == list.second;
+}
+
 void write_class_method_with_orbit_instrumentation(cppwin32::writer& w,
                                                    method_signature const& method_signature,
                                                    const MetaDataHelper& metadata_helper) {
@@ -106,20 +111,21 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type,
                            const MetaDataHelper& metadata_helper) {
   auto const format = R"xyz(    % (__stdcall *%)(%) noexcept;
 )xyz";
-  w.write("\nstruct ApiTable {\n");
-  for (auto&& method : type.MethodList()) {
-    if (!is_x64_arch(method)) continue;
 
-    if (method.Flags().Access() == winmd::reader::MemberAccess::Public) {
-      method_signature signature{method};
-      w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
-              metadata_helper.GetFunctionNameFromMethodDef(method), cppwin32::bind<cppwin32::write_abi_params>(signature));
+  if (!IsListEmpty(type.MethodList())) {
+    w.write("\nstruct ApiTable {\n");
+    for (auto&& method : type.MethodList()) {
+      if (!is_x64_arch(method)) continue;
+
+      if (method.Flags().Access() == winmd::reader::MemberAccess::Public) {
+        method_signature signature{method};
+        w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
+                metadata_helper.GetFunctionNameFromMethodDef(method),
+                cppwin32::bind<cppwin32::write_abi_params>(signature));
+      }
     }
+    w.write("};\nextern ApiTable g_api_table;\n\n");
   }
-  w.write("};\nextern ApiTable g_api_table;\n\n");
-  w.write(
-      "bool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
-      "out_function_info);\n");
 }
 
 void write_class_abi(cppwin32::writer& w, TypeDef const& type,
@@ -127,25 +133,32 @@ void write_class_abi(cppwin32::writer& w, TypeDef const& type,
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
-  w.write(R"(extern "C"
+  if (!IsListEmpty(type.MethodList())) {
+    w.write(R"(extern "C"
 {
 )");
-  auto const format = R"xyz(    % __stdcall ORBIT_IMPL_%(%) noexcept;
+    auto const format = R"xyz(    % __stdcall ORBIT_IMPL_%(%) noexcept;
 )xyz";
 
-  for (const winmd::reader::MethodDef& method : type.MethodList()) {
-    if (method.Flags().Access() == winmd::reader::MemberAccess::Public && is_x64_arch(method)) {
-      method_signature signature{method};
-      std::string function_name = metadata_helper.GetFunctionNameFromMethodDef(method);
-      w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
-              function_name, cppwin32::bind<cppwin32::write_abi_params>(signature));
+    for (const winmd::reader::MethodDef& method : type.MethodList()) {
+      if (method.Flags().Access() == winmd::reader::MemberAccess::Public && is_x64_arch(method)) {
+        method_signature signature{method};
+        std::string function_name = metadata_helper.GetFunctionNameFromMethodDef(method);
+        w.write(format, cppwin32::bind<cppwin32::write_abi_return>(signature.return_signature()),
+                function_name, cppwin32::bind<cppwin32::write_abi_params>(signature));
+      }
     }
-  }
-  w.write(R"(}
+    w.write(R"(}
 )");
 
-  write_class_api_table(w, type, metadata_helper);
-  w.write("\n");
+    write_class_api_table(w, type, metadata_helper);
+
+    w.write("\n");
+  }
+
+  w.write(
+      "  bool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
+      "out_function_info);\n");
 }
 
 void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& type,
@@ -153,19 +166,25 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
   w.write(
       "\nbool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
       "out_function_info)\n{\n");
-  w.write(
-      "  static std::unordered_map<std::string, std::function<void(OrbitShimFunctionInfo&)>> "
-      "function_dispatcher = {\n");
+  
+  if (!IsListEmpty(type.MethodList())) {
 
-  for (auto&& method : type.MethodList()) {
-    if (!is_x64_arch(method)) continue;
-    w.write("    ORBIT_DISPATCH_ENTRY(%),\n", metadata_helper.GetFunctionNameFromMethodDef(method));
+      w.write(
+        "  static std::unordered_map<std::string, std::function<void(OrbitShimFunctionInfo&)>> "
+        "function_dispatcher = {\n");
+
+    for (auto&& method : type.MethodList()) {
+      if (!is_x64_arch(method)) continue;
+      w.write("    ORBIT_DISPATCH_ENTRY(%),\n",
+              metadata_helper.GetFunctionNameFromMethodDef(method));
+    }
+
+    w.write("  };\n\n");
+    w.write("  auto it = function_dispatcher.find(function_key);\n");
+    w.write("  if(it != function_dispatcher.end()) {\n");
+    w.write("    it->second(out_function_info);\n    return true;\n  }\n\n");
   }
 
-  w.write("  };\n\n");
-  w.write("  auto it = function_dispatcher.find(function_key);\n");
-  w.write("  if(it != function_dispatcher.end()) {\n");
-  w.write("    it->second(out_function_info);\n    return true;\n  }\n\n");
   w.write("  ORBIT_ERROR(\"Could not find function %s in current namespace\", function_key);\n");
   w.write("  return false;\n}\n\n");
 }
@@ -377,11 +396,11 @@ void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
                                       cache::namespace_members const& members) {
   cppwin32::writer w;
   w.type_namespace = ns;
+
+  if (!members.classes.empty())
   {
     auto wrap = wrap_type_namespace(w, ns);
-    w.write("#pragma region methods\n");
     w.write_each<write_class_abi>(members.classes, *win32_metadata_helper_);
-    w.write("#pragma endregion methods\n\n");
   }
 
   write_close_file_guard(w);
@@ -399,6 +418,13 @@ void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
   w.save_header();
 }
 
+bool HasMethods(const std::vector<winmd::reader::TypeDef>& classes) {
+  for (const auto& type : classes) {
+    if (!IsListEmpty(type.MethodList())) return true;
+  }
+  return false;
+}
+
 void FileWriter::WriteNamespaceCpp(std::string_view const& ns,
                                    cache::namespace_members const& members) {
   cppwin32::writer w;
@@ -407,10 +433,12 @@ void FileWriter::WriteNamespaceCpp(std::string_view const& ns,
   {
     auto wrap = wrap_type_namespace(w, ns);
 
-    if (!members.classes.empty()) w.write("ApiTable g_api_table;\n\n");
-    w.write("#pragma region abi_methods\n");
-    w.write_each<write_class_impl>(members.classes, *win32_metadata_helper_);
-    w.write("#pragma endregion abi_methods\n\n");
+    if (HasMethods(members.classes)) {
+      w.write("ApiTable g_api_table;\n\n");
+      w.write("#pragma region abi_methods\n");
+      w.write_each<write_class_impl>(members.classes, *win32_metadata_helper_);
+      w.write("#pragma endregion abi_methods\n\n");
+    }
 
     // HookFunction dispatch.
     w.write_each<WriteNamespaceGetOrbitShimFunctionInfo>(members.classes, *win32_metadata_helper_);
