@@ -1,6 +1,11 @@
 #pragma once
 
-namespace cppwin32
+#include <absl/strings/str_replace.h>
+
+#include <algorithm>
+#include <filesystem>
+
+namespace cppwin32 
 {
     static void write_namespace_0_h(std::string_view const& ns, cache::namespace_members const& members)
     {
@@ -80,6 +85,30 @@ namespace cppwin32
         writer w;
         w.type_namespace = ns;
 
+  w.write("#include \"win32/impl/complex_interfaces.h\"\n");
+
+  {
+    // No namespace
+    w.write("#pragma region abi_methods\n");
+    w.write_each<write_class_abi>(members.classes);
+    w.write("#pragma endregion abi_methods\n\n");
+  }
+
+  write_close_file_guard(w);
+  w.swap();
+  write_preamble(w);
+  write_open_file_guard(w, ns, '2');
+
+        w.write_depends(w.type_namespace, '1');
+        // Workaround for https://github.com/microsoft/cppwin32/issues/2
+        for (auto&& extern_depends : w.extern_depends)
+        {
+            auto guard = wrap_type_namespace(w, extern_depends.first);
+            w.write_each<write_extern_forward>(extern_depends.second);
+        }
+        w.save_header('2');
+    }
+
     static void write_namespace_h(std::string_view const& ns, cache::namespace_members const& members)
     {
         writer w;
@@ -129,60 +158,15 @@ inline bool is_x64_struct(const TypeDef& method) {
   return true;
 }
 
-        write_close_file_guard(w);
-        w.swap();
-        write_preamble(w);
-        write_open_file_guard(w, ns, '2');
+static void write_complex_structs_h(cache const& c) {
+  writer w;
 
-        w.write_depends(w.type_namespace, '1');
-        // Workaround for https://github.com/microsoft/cppwin32/issues/2
-        for (auto&& extern_depends : w.extern_depends)
-        {
-            auto guard = wrap_type_namespace(w, extern_depends.first);
-            w.write_each<write_extern_forward>(extern_depends.second);
-        }
-        w.save_header('2');
+  type_dependency_graph graph;
+  for (auto&& [ns, members] : c.namespaces()) {
+    for (auto&& s : members.structs) {
+      if (is_x64_struct(s)) graph.add_struct(s);
     }
   }
-
-    static void write_namespace_h(std::string_view const& ns, cache::namespace_members const& members)
-    {
-        writer w;
-        w.type_namespace = ns;
-        {
-            auto wrap = wrap_type_namespace(w, ns);
-
-  write_close_file_guard(w);
-  w.swap();
-
-        write_close_file_guard(w);
-        w.swap();
-        write_preamble(w);
-        write_open_file_guard(w, ns);
-        write_version_assert(w);
-
-        w.write_depends(w.type_namespace, '2');
-        // Workaround for https://github.com/microsoft/cppwin32/issues/2
-        for (auto&& extern_depends : w.extern_depends)
-        {
-            auto guard = wrap_type_namespace(w, extern_depends.first);
-            w.write_each<write_extern_forward>(extern_depends.second);
-        }
-        w.save_header();
-    }
-
-    static void write_complex_structs_h(cache const& c)
-    {
-        writer w;
-
-        type_dependency_graph graph;
-        for (auto&& [ns, members] : c.namespaces())
-        {
-            for (auto&& s : members.structs)
-            {
-                graph.add_struct(s);
-            }
-        }
 
         graph.walk_graph([&](TypeDef const& type)
             {
@@ -193,52 +177,21 @@ inline bool is_x64_struct(const TypeDef& method) {
                 }
             });
 
-  w.write("#pragma once\n\n");
-  w.write("#include <array>\n\n");
-  w.write(GetWindowsApiFunctionDefinition());
+  write_close_file_guard(w);
+  w.swap();
 
-  std::map<const MethodDef, std::string> method_def_to_namespace;
+  write_preamble(w);
+  write_open_file_guard(w, "complex_structs");
 
-        for (auto&& depends : w.depends)
-        {
-            w.write_depends(depends.first, '0');
-        }
-      }
-    }
+  for (auto&& depends : w.depends) {
+    w.write_depends(depends.first, '0');
   }
 
-  for (const database& db : c.databases()) {
-    std::filesystem::path path(db.path());
-    if (path.filename() != "Windows.Win32.winmd") continue;
+  w.flush_to_file(settings.output_folder + "win32/impl/complex_structs.h");
+}
 
-    std::map<std::string, FunctionInfo> function_key_to_info;
-    for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
-      std::string function_name(impl_map.ImportName());
-      ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
-      std::string module_name = ToLower(module_ref.Name());
-      std::string function_key = module_name + "_" + function_name;
-
-      const MethodDef& method_def = db.get_table<MethodDef>()[impl_map.MemberForwarded().index()];
-
-      FunctionInfo& function_info = function_key_to_info[function_key];
-      // Check insertion took place.
-      function_info.name = function_name;
-      function_info.module = module_name;
-      function_info.name_space = method_def_to_namespace.at(method_def);
-    }
-
-    w.write("// num namespaces: %\n", c.namespaces().size());
-    w.write("// num modules: %\n\n", db.get_table<ModuleRef>().size());
-    w.write("constexpr std::array<const WindowsApiFunction, %> kFunctions = {{\n",
-            db.get_table<ImplMap>().size());
-    for (const auto& [key, function_info] : function_key_to_info) {
-      w.write("  {\"%_%\", \"%\"},\n", function_info.module, function_info.name,
-              function_info.name_space);
-    }
-
-    static void write_complex_interfaces_h(cache const& c)
-    {
-        writer w;
+static void write_complex_interfaces_h(cache const& c) {
+  writer w;
 
         type_dependency_graph graph;
         for (auto&& [ns, members] : c.namespaces())
@@ -258,13 +211,11 @@ inline bool is_x64_struct(const TypeDef& method) {
                 }
             });
 
-constexpr const char* namespace_dispatcher_header =
-    R"(// Copyright (c) 2021 The Orbit Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+  write_close_file_guard(w);
+  w.swap();
 
-#include "NamespaceDispatcher.h"
-)";
+  write_preamble(w);
+  write_open_file_guard(w, "complex_interfaces");
 
         for (auto&& depends : w.depends)
         {

@@ -5,6 +5,8 @@
 
 #include <unordered_set>
 
+#define CPPWIN32_VERSION_STRING "0.0.0.1"
+
 namespace cppwin32
 {
     struct separator
@@ -59,6 +61,8 @@ namespace cppwin32
     static void write_version_assert(writer& w)
     {
         w.write_root_include("base");
+        w.write("#include \"win32/impl/complex_structs.h\"\n");
+        w.write("#include \"win32/impl/complex_interfaces.h\"\n");
         auto format = R"(static_assert(win32::check_version(CPPWIN32_VERSION, "%"), "Mismatched C++/Win32 headers.");
 #define CPPWIN32_VERSION "%"
 )";
@@ -566,7 +570,26 @@ namespace cppwin32
         w.write("auto % = ", signature.return_param_name());
     }
 
-    void write_consume_return_statement(writer& w, method_signature const& signature)
+    void write_orbit_instrumentation(writer &w, method_signature const &signature)
+    {
+        w.write("ORBIT_SCOPE_FUNCTION();\n");
+        for (auto &&[param, param_signature] : signature.params())
+        {
+            w.write("        ORBIT_TRACK_PARAM(%);\n", param.Name());
+        }
+    }
+
+    void write_orbit_instrumentation_ret(writer &w, method_signature const &signature)
+    {
+        if (!signature.return_signature())
+        {
+            return;
+        }
+
+        w.write("ORBIT_TRACK_RET(%);", signature.return_param_name());
+    }
+
+    void write_consume_return_statement(writer &w, method_signature const &signature)
     {
         if (!signature.return_signature())
         {
