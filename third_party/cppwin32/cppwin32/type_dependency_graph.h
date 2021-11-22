@@ -105,7 +105,10 @@ namespace cppwin32
                     }
                 }
             };
-            add_param(method_signature.return_signature().Type());
+
+            const auto& sig = method_signature.return_signature();
+            if(sig)
+                add_param(method_signature.return_signature().Type());
             for (auto const& [param, param_sig] : method_signature.params())
             {
                 add_param(param_sig->Type());
