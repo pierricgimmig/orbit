@@ -6,7 +6,6 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_format.h>
-
 #include <cppwin32/code_writers.h>
 #include <cppwin32/file_writers.h>
 #include <cppwin32/settings.h>
@@ -57,7 +56,7 @@ bool is_x64_arch(const MethodDef& method) {
     const FixedArgSig& fixed_arg = attr_sig.FixedArgs()[0];
     const ElemSig& elem_sig = std::get<ElemSig>(fixed_arg.value);
     const ElemSig::EnumValue& enum_value = std::get<ElemSig::EnumValue>(elem_sig.value);
-    int32_t const arch_flags = std::get<int32_t>(enum_value.value);    
+    int32_t const arch_flags = std::get<int32_t>(enum_value.value);
     // None = 0, X86 = 1, X64 = 2, Arm64 = 4.
     constexpr const int32_t kX64 = 2;
     if ((arch_flags & kX64) == 0) return false;
@@ -166,10 +165,9 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
   w.write(
       "\nbool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
       "out_function_info)\n{\n");
-  
-  if (!IsListEmpty(type.MethodList())) {
 
-      w.write(
+  if (!IsListEmpty(type.MethodList())) {
+    w.write(
         "  static std::unordered_map<std::string, std::function<void(OrbitShimFunctionInfo&)>> "
         "function_dispatcher = {\n");
 
@@ -185,12 +183,12 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
     w.write("    it->second(out_function_info);\n    return true;\n  }\n\n");
   }
 
-  w.write("  ORBIT_ERROR(\"Could not find function %s in current namespace\", function_key);\n");
+  w.write("  ERROR(\"Could not find function %s in current namespace\", function_key);\n");
   w.write("  return false;\n}\n\n");
 }
 
 const database* FindWin32Database(const cache& cache) {
-  constexpr const char* kWin32MetaDataFileName  = "Windows.Win32.winmd";
+  constexpr const char* kWin32MetaDataFileName = "Windows.Win32.winmd";
   for (const database& db : cache.databases()) {
     std::filesystem::path path(db.path());
     if (path.filename() == kWin32MetaDataFileName) {
@@ -201,7 +199,6 @@ const database* FindWin32Database(const cache& cache) {
   ERROR("Could not find win32 metadata database \"%s\"", kWin32MetaDataFileName);
   return nullptr;
 }
-
 
 inline const char* GetWindowsApiFunctionDefinition() {
   return R"(struct WindowsApiFunction {
@@ -289,7 +286,7 @@ namespace orbit_windows_api_shim {
 
   bool GetOrbitShimFunctionInfo(const char* function_key,
                                 OrbitShimFunctionInfo& out_function_info) {
-    std::optional<std::string> name_space = FunctionKeyToNamespace(function_key);
+    std::optional<std::string> name_space = WindowsApiHelper::Get().GetNamespaceFromFunctionKey(function_key);
     if (!name_space.has_value()) return false;
     typedef std::function<bool(const char* function_key,
                                  OrbitShimFunctionInfo& out_function_info)>
@@ -397,8 +394,7 @@ void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
   cppwin32::writer w;
   w.type_namespace = ns;
 
-  if (!members.classes.empty())
-  {
+  if (!members.classes.empty()) {
     auto wrap = wrap_type_namespace(w, ns);
     w.write_each<write_class_abi>(members.classes, *win32_metadata_helper_);
   }
