@@ -6,6 +6,7 @@
 #define WINDOWS_API_SHIM_NAMESPACE_DISPATCHER_H_
 
 #include <absl/strings/str_replace.h>
+#include <absl/strings/str_split.h>
 
 #include <functional>
 #include <optional>
