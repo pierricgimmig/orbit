@@ -11,6 +11,7 @@
 #include <functional>
 #include <optional>
 #include <unordered_map>
+#include <iostream>
 
 #include "win32/base.h"
 #include "win32/manifest.h"
@@ -64,7 +65,15 @@ class WindowsApiHelper {
 
  private:
   WindowsApiHelper() {
+    for (int i = 0; i < kFunctions.size(); ++i) {
+      const auto& api_function = kFunctions[i];
+      if (api_function.function_key == nullptr || api_function.name_space == nullptr) {
+        std::cout << "Found null function data";
+        error_indices_.push_back(i);
+      }
+    }
     for (const WindowsApiFunction& api_function : kFunctions) {
+      if (api_function.function_key == nullptr || api_function.name_space == nullptr) continue;
       function_key_to_namespace_map_.emplace(api_function.function_key, api_function.name_space);
       namespace_to_functions_keys_map_[api_function.name_space].push_back(
           api_function.function_key);
@@ -73,11 +82,12 @@ class WindowsApiHelper {
 
   std::unordered_map<std::string, std::string> function_key_to_namespace_map_;
   std::unordered_map<std::string, std::vector<std::string>> namespace_to_functions_keys_map_;
+  std::vector<size_t> error_indices_;
 };
 
 #define ADD_NAMESPACE_DISPATCH_ENTRY(ns)                                           \
   {                                                                                \
-    absl::StrReplaceAll(#ns, {{"::", "_"}}),                                       \
+    absl::StrReplaceAll(#ns, {{"::", "."}}),                                       \
         [](const char* function_key, OrbitShimFunctionInfo& out_function_info) {   \
           return ns## ::GetOrbitShimFunctionInfo(function_key, out_function_info); \
         }                                                                          \
