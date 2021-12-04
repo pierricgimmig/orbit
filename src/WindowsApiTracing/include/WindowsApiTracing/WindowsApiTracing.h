@@ -14,13 +14,20 @@
 
 namespace orbit_windows_api_tracing {
 
+struct ApiFunction {
+  std::string module;
+  std::string function;
+};
+
 class WindowsApiTracer {
  public:
   WindowsApiTracer();
   ~WindowsApiTracer();
-  ErrorMessageOr<void> Trace(std::vector<std::string> api_function_keys);
+  ErrorMessageOr<void> Trace(std::vector<ApiFunction> api_function_keys);
+  void DisableTracing();
 
  private:
+  std::vector<void*> target_functions_;
 };
 
 }  // namespace orbit_windows_api_tracing

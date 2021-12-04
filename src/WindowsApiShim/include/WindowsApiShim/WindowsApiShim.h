@@ -4,16 +4,13 @@
 
 extern "C" {
 
-struct OrbitShimFunction {
-  // Function to be called instead of the original function.
-  void* detour_function;
-  // Memory location of a function pointer which can be used to call the original unhooked API
-  // function. The value of the relay is set externally by the dynamic instrumentation mechanism.
-  void** original_function_relay;
-};
-
-// Fills "orbit_shim_function" object with appropriate data if function_key is found.
-// Return value: true if "function_key" is found, false otherwise.
-__declspec(dllexport) bool __cdecl GetOrbitShimFunction(const char* function_key, OrbitShimFunction& orbit_shim_function);
-
+// Find a Windows API wrapper function in the OrbitWindowsApiShim using a Windows module and
+// function as identifier. If found, then detour_function and original_function_relay are filled.
+// The "detour_function" is the function to be called instead of the original function.
+// The "original_function_relay" is the memory location of a function pointer which can be used to
+// call the original unhooked API function. The value of the relay is set externally by the dynamic
+// instrumentation mechanism.
+__declspec(dllexport) bool __cdecl FindFunction(const char* module, const char* function,
+                                                void*& detour_function,
+                                                void**& original_function_relay);
 }
