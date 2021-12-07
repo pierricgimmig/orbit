@@ -44,7 +44,9 @@ class MinHookInitializer {
   }
 
  private:
-  MinHookInitializer() { MH_Initialize(); }
+  MinHookInitializer() { 
+      MH_Initialize(); 
+  }
 };
 
 ErrorMessageOr<void> CheckMinHookStatus(MH_STATUS status) {

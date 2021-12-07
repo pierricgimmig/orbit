@@ -299,7 +299,7 @@ namespace orbit_windows_api_shim {
 constexpr const char* namespace_dispatcher_1 = R"(
       }};
 
-      const auto function_it = dispatcher.find(name_space.value());
+      const auto function_it = dispatcher.find("win32." + name_space.value());
       if (function_it == dispatcher.end()) return false;
       return function_it->second(function_key, out_function_info);
     }
@@ -323,7 +323,7 @@ void write_namespace_dispatch_cpp(cache const& c) {
     if (ns == "") continue;
     if (members.classes.size() == 0) continue;
     std::string name_space = absl::StrReplaceAll(ns, {{".", "::"}});
-    w.write("ADD_NAMESPACE_DISPATCH_ENTRY(win32::%),\n", name_space);
+    w.write("          ADD_NAMESPACE_DISPATCH_ENTRY(win32::%),\n", name_space);
   }
 
   w.write(namespace_dispatcher_1);
@@ -389,6 +389,13 @@ void FileWriter::WriteCodeFiles() {
   group.add([this] { write_manifest_h(*cache_); });
 }
 
+static void WriteIncludes(cppwin32::writer& w) {
+  w.write_root_include("base");
+  w.write("#include \"win32/impl/complex_structs.h\"\n");
+  w.write("#include \"win32/impl/complex_interfaces.h\"\n");
+  w.write("#include \"WindowsApiShimUtils.h\"\n");
+}
+
 void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
                                       cache::namespace_members const& members) {
   cppwin32::writer w;
@@ -403,7 +410,7 @@ void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
   w.swap();
   write_preamble(w);
   write_open_file_guard(w, ns);
-  write_version_assert(w);
+  WriteIncludes(w);
   w.write_depends(w.type_namespace, '0');
 
   // Workaround for https://github.com/microsoft/cppwin32/issues/2
