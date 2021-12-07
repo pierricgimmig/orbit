@@ -16,6 +16,8 @@
 #include "win32/base.h"
 #include "win32/manifest.h"
 
+#include "WindowsApiShimUtils.h"
+
 namespace orbit_windows_api_shim {
 
 class WindowsApiHelper {
@@ -68,7 +70,7 @@ class WindowsApiHelper {
     for (int i = 0; i < kFunctions.size(); ++i) {
       const auto& api_function = kFunctions[i];
       if (api_function.function_key == nullptr || api_function.name_space == nullptr) {
-        std::cout << "Found null function data";
+        std::cout << "Found null function data" << std::endl;
         error_indices_.push_back(i);
       }
     }
