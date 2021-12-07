@@ -11,9 +11,9 @@
 
 extern "C" {
 
-__declspec(dllexport) bool __cdecl FindFunction(const char* module, const char* function,
-                                                void*& detour_function,
-                                                void**& original_function_relay) {
+__declspec(dllexport) bool __cdecl FindShimFunction(const char* module, const char* function,
+                                                    void*& detour_function,
+                                                    void**& original_function_relay) {
   OrbitShimFunctionInfo function_info = {};
 
   std::string function_key = std::string(module) + "__" + std::string(function);

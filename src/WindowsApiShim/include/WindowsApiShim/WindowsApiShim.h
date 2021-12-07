@@ -10,7 +10,7 @@ extern "C" {
 // The "original_function_relay" is the memory location of a function pointer which can be used to
 // call the original unhooked API function. The value of the relay is set externally by the dynamic
 // instrumentation mechanism.
-__declspec(dllexport) bool __cdecl FindFunction(const char* module, const char* function,
-                                                void*& detour_function,
-                                                void**& original_function_relay);
+__declspec(dllexport) bool __cdecl FindShimFunction(const char* module, const char* function,
+                                                    void*& detour_function,
+                                                    void**& original_function_relay);
 }

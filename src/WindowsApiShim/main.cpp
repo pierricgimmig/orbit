@@ -3,23 +3,28 @@
 // found in the LICENSE file.
 
 #include "FileWriter.h"
+#include "OrbitBase/ExecutablePath.h"
 
 namespace {
 
+[[nodiscard]] const std::filesystem::path GetExeDir() {
+  return orbit_base::GetExecutablePath().parent_path();
+}
+
 [[nodiscard]] const std::filesystem::path GetCppWin32Dir() {
-  return std::filesystem::absolute("../../third_party/cppwin32/");
+  return std::filesystem::absolute(GetExeDir() / "../../third_party/cppwin32/");
 }
 
 [[nodiscard]] const std::filesystem::path GetMetadataDir() {
-  return std::filesystem::absolute("../../third_party/winmd/");
+  return std::filesystem::absolute(GetExeDir() / "../../third_party/winmd/");
 }
 
 [[nodiscard]] const std::filesystem::path GetSourceDir() {
-  return std::filesystem::absolute("../../src/WindowsApiShim/");
+  return GetExeDir() / "../../src/WindowsApiShim/";
 }
 
 [[nodiscard]] const std::filesystem::path GetOutputDir() {
-  return std::filesystem::absolute("../src/WindowsApiShim/generated/");
+  return std::filesystem::absolute(GetExeDir() / "../src/WindowsApiShim/generated/");
 }
 
 void CopyFile(std::filesystem::path source, std::filesystem::path dest) {

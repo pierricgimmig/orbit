@@ -385,8 +385,8 @@ void FileWriter::WriteCodeFiles() {
 
   group.add([this] { cppwin32::write_complex_structs_h(*cache_); });
   group.add([this] { cppwin32::write_complex_interfaces_h(*cache_); });
-  group.add([this] { write_manifest_h(*cache_); });
   group.add([this] { write_namespace_dispatch_cpp(*cache_); });
+  group.add([this] { write_manifest_h(*cache_); });
 }
 
 void FileWriter::WriteNamespaceHeader(std::string_view const& ns,

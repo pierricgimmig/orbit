@@ -5,6 +5,7 @@
 #include "WindowsApiTracing/WindowsApiTracing.h"
 
 #include <absl/strings/str_split.h>
+
 #include "MinHook.h"
 #include "OrbitBase/Logging.h"
 #include "WindowsUtils/DllInjection.h"
@@ -58,26 +59,24 @@ WindowsApiTracer::WindowsApiTracer() {
   MinHookInitializer::Get();
 }
 
-WindowsApiTracer::~WindowsApiTracer() {
-  DisableTracing();
-}
+WindowsApiTracer::~WindowsApiTracer() { DisableTracing(); }
 
 ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_function_keys) {
   // Inject OrbitWindowsApiShim.dll if not already present.
   const std::filesystem::path api_shim_full_path = GetShimPath();
- 
+
   const std::string shim_file_name = api_shim_full_path.filename().string();
   uint32_t pid = GetCurrentProcessId();
-  //if (!orbit_windows_utils::FindModule(pid, shim_file_name).has_value())
-    OUTCOME_TRY(orbit_windows_utils::InjectDll(pid, api_shim_full_path.string()));
+  // if (!orbit_windows_utils::FindModule(pid, shim_file_name).has_value())
+  OUTCOME_TRY(orbit_windows_utils::InjectDll(pid, api_shim_full_path.string()));
 
-  // Find "FindFunction" function.
-    static auto get_orbit_shim_function =
-        GetProcAddress<bool(__cdecl*)(const char*, const char*, void*&, void**&)>(shim_file_name,
-                                                                                  "FindFunction");
+  // Find "FindShimFunction" function.
+  static auto get_orbit_shim_function =
+      GetProcAddress<bool(__cdecl*)(const char*, const char*, void*&, void**&)>(shim_file_name,
+                                                                                "FindShimFunction");
 
   // Hook api functions.
-  for (const ApiFunction& api_function : api_function_keys) {    
+  for (const ApiFunction& api_function : api_function_keys) {
     void* detour_function = nullptr;
     void** original_function_relay = nullptr;
     bool result =
@@ -90,12 +89,13 @@ ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_functi
     }
 
     void* original_function = GetProcAddress(api_function.module, api_function.function);
-    if(original_function == nullptr) {
+    if (original_function == nullptr) {
       ERROR("Could not find function %s in module %s", api_function.function, api_function.module);
       continue;
     }
 
-    MH_STATUS hook_result = MH_CreateHook(original_function, detour_function, original_function_relay);
+    MH_STATUS hook_result =
+        MH_CreateHook(original_function, detour_function, original_function_relay);
     if (hook_result != MH_OK) {
       ERROR("Calling MH_CreateHook: %s", MH_StatusToString(hook_result));
       continue;
@@ -119,8 +119,8 @@ ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_functi
   return outcome::success();
 }
 
-void WindowsApiTracer::DisableTracing() { 
-  for(void* target : target_functions_) {
+void WindowsApiTracer::DisableTracing() {
+  for (void* target : target_functions_) {
     MH_QueueDisableHook(target);
   }
 
