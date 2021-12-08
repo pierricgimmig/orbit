@@ -12,12 +12,15 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
 
 #include "ApiInterface/Orbit.h"
 #include "OrbitBase/ThreadUtils.h"
+#include "WindowsUtils/DllInjection.h"
+
 ORBIT_API_INSTANTIATE;
 
 #if __linux__

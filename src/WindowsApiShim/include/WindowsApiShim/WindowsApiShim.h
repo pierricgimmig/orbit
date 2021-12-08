@@ -13,4 +13,7 @@ extern "C" {
 __declspec(dllexport) bool __cdecl FindShimFunction(const char* module, const char* function,
                                                     void*& detour_function,
                                                     void**& original_function_relay);
+
+__declspec(dllexport) bool __cdecl EnableShim();
+__declspec(dllexport) bool __cdecl DisableShim();
 }

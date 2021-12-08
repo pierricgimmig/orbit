@@ -149,6 +149,14 @@ ErrorMessageOr<void> InjectDll(uint32_t pid, std::filesystem::path dll_path) {
   return outcome::success();
 }
 
+ErrorMessageOr<void> EnsureDllIsLoaded(uint32_t pid, std::filesystem::path dll_path) {
+  ErrorMessageOr<Module> module = FindModule(pid, dll_path.filename().string());
+  if(module.has_value()) {
+    return outcome::success();
+  }
+  return InjectDll(pid, dll_path);
+}
+
 ErrorMessageOr<void> CreateRemoteThread(uint32_t pid, std::string_view module_name,
                                         std::string_view function_name,
                                         std::vector<uint8_t> parameter) {

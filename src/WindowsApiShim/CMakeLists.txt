@@ -72,10 +72,12 @@ target_sources(WindowsApiShim PUBLIC
         ${WINDOWS_API_SHIM_HEADERS})
 
 target_sources(WindowsApiShim PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShimUtils.h
         ${GENERATOR_MANIFEST_FILE}
         ${WINDOWS_API_SHIM_SOURCES})
 
 target_link_libraries(WindowsApiShim PUBLIC
+        ApiInterface
         OrbitBase
         CONAN_PKG::abseil)
 

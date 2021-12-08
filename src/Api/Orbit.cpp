@@ -41,7 +41,8 @@ void orbit_api_start_v1(const char* name, orbit_api_color color, uint64_t group_
 
 [[deprecated]] void orbit_api_start(const char* name, orbit_api_color color) {
   uint64_t return_address = ORBIT_GET_CALLER_PC();
-  EnqueueApiEvent<orbit_api::ApiScopeStart>(name, color, kOrbitDefaultGroupId, return_address);
+  EnqueueApiEvent<orbit_api::ApiScopeStart>(
+      name, color, static_cast<uint64_t>(kOrbitDefaultGroupId), return_address);
 }
 
 void orbit_api_stop() { EnqueueApiEvent<orbit_api::ApiScopeStop>(); }
@@ -239,9 +240,10 @@ extern "C" {
 // The "orbit_api_set_enabled" function is called remotely by OrbitService on every capture start
 // for all api function tables. It is also called on every capture stop to disable the api so that
 // the api calls early out at the call site.
-void orbit_api_set_enabled(uint64_t address, uint64_t api_version, bool enabled) {
+ORBIT_EXPORT void orbit_api_set_enabled(uint64_t address, uint64_t api_version, bool enabled) {
   ORBIT_LOG("%s Orbit API at address %#x, version %u", enabled ? "Enabling" : "Disabling", address,
-            api_version);
+      api_version);
+      
   if (api_version > kOrbitApiVersion) {
     ORBIT_ERROR(
         "Orbit API version in tracee (%u) is newer than the max supported version (%u). "

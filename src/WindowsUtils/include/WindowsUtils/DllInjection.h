@@ -13,8 +13,12 @@
 
 namespace orbit_windows_utils {
 
-// Injects a dll in a remote process identified by "pid".
+// Injects a dll in the remote process identified by "pid".
 [[nodiscard]] ErrorMessageOr<void> InjectDll(uint32_t pid, std::filesystem::path dll_path);
+
+// Ensures that a dll is loaded in the remote process identified by "pid". If it is not loaded, this
+// function calls InjectDll.
+[[nodiscard]] ErrorMessageOr<void> EnsureDllIsLoaded(uint32_t pid, std::filesystem::path dll_path);
 
 // Create a thread in a remote process and call specified the function. The "parameter" byte buffer
 // is copied to the target's memory and its address is passed to the thread function as argument.
