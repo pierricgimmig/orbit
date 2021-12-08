@@ -248,7 +248,7 @@ extern "C" {
 ORBIT_EXPORT void orbit_api_set_enabled(uint64_t address, uint64_t api_version, bool enabled) {
   ORBIT_LOG("%s Orbit API at address %#x, version %u", enabled ? "Enabling" : "Disabling", address,
             api_version);
-
+            
   if (api_version > kOrbitApiVersion) {
     ORBIT_ERROR(
         "Orbit API version in tracee (%u) is newer than the max supported version (%u). "

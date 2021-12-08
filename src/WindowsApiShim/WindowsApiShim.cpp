@@ -7,7 +7,15 @@
 #include <win32/NamespaceDispatcher.h>
 #include <win32/manifest.h>
 
+#include "ApiInterface/Orbit.h"
+
+#include <absl/base/casts.h>
+
+ORBIT_API_INSTANTIATE;
+
 #include <unordered_map>
+
+#include "OrbitBase/GetProcAddress.h"
 
 extern "C" {
 
@@ -25,4 +33,23 @@ __declspec(dllexport) bool __cdecl FindShimFunction(const char* module, const ch
   original_function_relay = function_info.original_function_relay;
   return true;
 }
+
+static bool EnableApi(bool enable) {
+  // void orbit_api_set_enabled(uint64_t address, uint64_t api_version, bool enabled)
+  // Orbit.dll needs to be loaded at this point.
+  auto set_api_enabled_function = orbit_base::GetProcAddress<void (*)(uint64_t, uint64_t, bool)>(
+      "orbit.dll", "orbit_api_set_enabled");
+  if (set_api_enabled_function == nullptr) {
+    return false;
+  }
+
+  set_api_enabled_function(absl::bit_cast<uint64_t>(&g_orbit_api_v1), kOrbitApiVersion, enable);
+
+  return true;
+}
+
+__declspec(dllexport) bool __cdecl EnableShim() { return EnableApi(true); }
+
+__declspec(dllexport) bool __cdecl DisableShim() { return EnableApi(false); }
+
 }

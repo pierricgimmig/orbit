@@ -13,6 +13,8 @@ target_link_libraries(OrbitTest PRIVATE Threads::Threads ApiInterface PUBLIC Orb
 
 if (NOT WIN32)
 target_link_libraries(OrbitTest PRIVATE dl)
+else()
+target_link_libraries(OrbitTest PRIVATE WindowsUtils)
 endif()
 
 add_executable(OrbitTestShortLivedThreads)

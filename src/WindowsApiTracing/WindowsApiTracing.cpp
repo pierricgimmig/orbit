@@ -7,6 +7,7 @@
 #include <absl/strings/str_split.h>
 
 #include "MinHook.h"
+#include "OrbitBase/GetProcAddress.h"
 #include "OrbitBase/Logging.h"
 #include "WindowsUtils/DllInjection.h"
 #include "WindowsUtils/ListModules.h"
@@ -17,23 +18,14 @@ namespace orbit_windows_api_tracing {
 
 namespace {
 
-void* GetProcAddress(const std::string module, const std::string function) {
-  HMODULE module_handle = LoadLibraryA(module.c_str());
-  if (module_handle == nullptr) {
-    ERROR("Could not find function %s in %s", function, module);
-    return nullptr;
-  }
-  return ::GetProcAddress(module_handle, function.c_str());
-}
-
-template <typename FunctionPrototypeT>
-static FunctionPrototypeT GetProcAddress(const std::string& module, const std::string& function) {
-  return reinterpret_cast<FunctionPrototypeT>(GetProcAddress(module, function));
-}
-
 std::filesystem::path GetShimPath() {
   return "C:/git/orbit/build_msvc2019_relwithdebinfo/bin/OrbitWindowsApiShim.dll";
 }
+
+std::filesystem::path GetOrbitDllPath() {
+  return "C:/git/orbit/build_msvc2019_relwithdebinfo/bin/orbit.dll";
+}
+
 
 class MinHookInitializer {
  public:
@@ -64,17 +56,24 @@ WindowsApiTracer::WindowsApiTracer() {
 WindowsApiTracer::~WindowsApiTracer() { DisableTracing(); }
 
 ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_function_keys) {
-  // Inject OrbitWindowsApiShim.dll if not already present.
-  const std::filesystem::path api_shim_full_path = GetShimPath();
-
-  const std::string shim_file_name = api_shim_full_path.filename().string();
   uint32_t pid = GetCurrentProcessId();
-  // if (!orbit_windows_utils::FindModule(pid, shim_file_name).has_value())
-  OUTCOME_TRY(orbit_windows_utils::InjectDll(pid, api_shim_full_path.string()));
+
+  // Inject OrbitWindowsApiShim.dll if not already loaded.
+  OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, GetOrbitDllPath()));
+
+  // Inject OrbitWindowsApiShim.dll if not already loaded.
+  const std::filesystem::path api_shim_full_path = GetShimPath();
+  const std::string shim_file_name = api_shim_full_path.filename().string();
+  OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, api_shim_full_path));
+
+  // Find "EnableShim" function.
+  static auto enable_shim_function =
+      orbit_base::GetProcAddress<bool(__cdecl*)()>(shim_file_name, "EnableShim");
+  enable_shim_function();
 
   // Find "FindShimFunction" function.
   static auto get_orbit_shim_function =
-      GetProcAddress<bool(__cdecl*)(const char*, const char*, void*&, void**&)>(shim_file_name,
+      orbit_base::GetProcAddress<bool(__cdecl*)(const char*, const char*, void*&, void**&)>(shim_file_name,
                                                                                 "FindShimFunction");
 
   // Hook api functions.
@@ -90,7 +89,7 @@ ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_functi
       continue;
     }
 
-    void* original_function = GetProcAddress(api_function.module, api_function.function);
+    void* original_function = orbit_base::GetProcAddress(api_function.module, api_function.function);
     if (original_function == nullptr) {
       ERROR("Could not find function %s in module %s", api_function.function, api_function.module);
       continue;
