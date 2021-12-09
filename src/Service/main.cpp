@@ -82,18 +82,15 @@ std::filesystem::path GetLogFilePath() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  orbit_base::InitLogFile(GetLogFilePath());
+  orbit_base::InitLogFile(orbit_service::OrbitService::GetLogFilePath());
 
   absl::SetProgramUsageMessage("Orbit CPU Profiler Service");
   absl::SetFlagsUsageConfig(absl::FlagsUsageConfig{{}, {}, {}, &orbit_version::GetBuildReport, {}});
   absl::ParseCommandLine(argc, argv);
 
-  InstallSigintHandler();
-
   uint16_t grpc_port = absl::GetFlag(FLAGS_grpc_port);
   bool dev_mode = absl::GetFlag(FLAGS_devmode);
 
-  exit_requested = false;
   orbit_service::OrbitService service{grpc_port, dev_mode};
-  return service.Run(&exit_requested);
+  return service.Run();
 }
