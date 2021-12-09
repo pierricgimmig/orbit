@@ -27,6 +27,7 @@ class OrbitService {
         dev_mode_{dev_mode} {}
 
   ErrorMessageOr<void> Run(std::atomic<bool>* exit_requested);
+  [[nodiscard]] static std::string GetLogFilePath();
 
  private:
   [[nodiscard]] bool IsSshWatchdogActive() { return last_stdin_message_ != std::nullopt; }

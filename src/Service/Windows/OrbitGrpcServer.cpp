@@ -21,7 +21,7 @@
 
 ABSL_DECLARE_FLAG(bool, devmode);
 
-namespace orbit_windows_service {
+namespace orbit_service {
 
 using orbit_capture_service::CaptureStartStopListener;
 using orbit_windows_capture_service::WindowsCaptureService;
@@ -78,7 +78,8 @@ void OrbitGrpcServerImpl::RemoveCaptureStartStopListener(CaptureStartStopListene
 
 }  // namespace
 
-std::unique_ptr<OrbitGrpcServer> OrbitGrpcServer::Create(std::string_view server_address) {
+std::unique_ptr<OrbitGrpcServer> OrbitGrpcServer::Create(std::string_view server_address,
+                                                         bool /*dev_mode*/) {
   std::unique_ptr<OrbitGrpcServerImpl> server_impl = std::make_unique<OrbitGrpcServerImpl>();
 
   if (!server_impl->Init(server_address)) {
@@ -88,4 +89,4 @@ std::unique_ptr<OrbitGrpcServer> OrbitGrpcServer::Create(std::string_view server
   return std::move(server_impl);
 }
 
-}  // namespace orbit_windows_service
+}  // namespace orbit_service

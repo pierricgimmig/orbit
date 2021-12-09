@@ -14,6 +14,13 @@ target_sources(OrbitServiceLib PRIVATE
         OrbitGrpcServer.h
         OrbitService.cpp
         OrbitService.h)
+        #OrbitService.h
+        #ProducerSideServer.cpp
+        #ProducerSideServer.h
+        #ProducerSideServiceImpl.cpp
+        #ProducerSideServiceImpl.h
+        #${PLATFORM_DIR}/OrbitGrpcServer.cpp
+        #${PLATFORM_DIR}/OrbitService.cpp)
 
 target_include_directories(OrbitServiceLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
