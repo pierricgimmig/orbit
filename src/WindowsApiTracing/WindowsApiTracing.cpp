@@ -26,7 +26,6 @@ std::filesystem::path GetOrbitDllPath() {
   return "C:/git/orbit/build_msvc2019_relwithdebinfo/bin/orbit.dll";
 }
 
-
 class MinHookInitializer {
  public:
   ~MinHookInitializer() { MH_Uninitialize(); };
@@ -36,9 +35,7 @@ class MinHookInitializer {
   }
 
  private:
-  MinHookInitializer() { 
-      MH_Initialize(); 
-  }
+  MinHookInitializer() { MH_Initialize(); }
 };
 
 ErrorMessageOr<void> CheckMinHookStatus(MH_STATUS status) {
@@ -73,8 +70,8 @@ ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_functi
 
   // Find "FindShimFunction" function.
   static auto get_orbit_shim_function =
-      orbit_base::GetProcAddress<bool(__cdecl*)(const char*, const char*, void*&, void**&)>(shim_file_name,
-                                                                                "FindShimFunction");
+      orbit_base::GetProcAddress<bool(__cdecl*)(const char*, const char*, void*&, void**&)>(
+          shim_file_name, "FindShimFunction");
 
   // Hook api functions.
   for (const ApiFunction& api_function : api_function_keys) {
@@ -89,7 +86,8 @@ ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_functi
       continue;
     }
 
-    void* original_function = orbit_base::GetProcAddress(api_function.module, api_function.function);
+    void* original_function =
+        orbit_base::GetProcAddress(api_function.module, api_function.function);
     if (original_function == nullptr) {
       ERROR("Could not find function %s in module %s", api_function.function, api_function.module);
       continue;

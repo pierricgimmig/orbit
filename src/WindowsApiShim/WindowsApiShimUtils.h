@@ -6,10 +6,13 @@
 #define ORBIT_WINDOWS_API_SHIM_WINDOWS_API_SHIM_UTILS_H_
 
 #include <iostream>
+
 #include "ApiInterface/Orbit.h"
 
 // Orbit
-#define ORBIT_SCOPE_FUNCTION() std::cout << "Intercepted " << __FUNCTION__ << std::endl; ORBIT_SCOPE(__FUNCTION__)
+#define ORBIT_SCOPE_FUNCTION()                              \
+  std::cout << "Intercepted " << __FUNCTION__ << std::endl; \
+  ORBIT_SCOPE(__FUNCTION__)
 #define ORBIT_TRACK_PARAM(x)
 #define ORBIT_TRACK_RET(x)
 #define ERROR(x)

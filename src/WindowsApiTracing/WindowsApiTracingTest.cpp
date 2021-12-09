@@ -10,9 +10,9 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ReadFileToString.h"
 #include "OrbitBase/Result.h"
-#include "WindowsApiTracing/WindowsApiTracing.h"
 #include "Test/Path.h"
 #include "TestUtils/TestUtils.h"
+#include "WindowsApiTracing/WindowsApiTracing.h"
 
 namespace orbit_windows_api_tracing {
 
@@ -24,11 +24,11 @@ using orbit_test_utils::HasNoError;
   return test_directory / "file.txt";
 }
 
-std::string ReadFile(std::filesystem::path file_path) { 
+std::string ReadFile(std::filesystem::path file_path) {
   OFSTRUCT buffer = {0};
   HANDLE file_handle = (HANDLE)OpenFile(file_path.string().c_str(), &buffer, OF_READ);
   uint64_t file_size = ::GetFileSize(file_handle, 0);
-  
+
   std::string result(file_size, '\0');
   DWORD num_bytes_read = 0;
   ::ReadFile(file_handle, result.data(), file_size, &num_bytes_read, /*lpOverlapped*/ nullptr);
@@ -37,7 +37,6 @@ std::string ReadFile(std::filesystem::path file_path) {
 }
 
 void ReadFileInLoop(bool* exit_requested) {
-
   while (!*exit_requested) {
     std::string file_content = ReadFile(GetTestFilePath());
     absl::SleepFor(absl::Milliseconds(100));
