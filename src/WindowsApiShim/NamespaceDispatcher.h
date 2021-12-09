@@ -9,14 +9,13 @@
 #include <absl/strings/str_split.h>
 
 #include <functional>
+#include <iostream>
 #include <optional>
 #include <unordered_map>
-#include <iostream>
-
-#include "win32/base.h"
-#include "win32/manifest.h"
 
 #include "WindowsApiShimUtils.h"
+#include "win32/base.h"
+#include "win32/manifest.h"
 
 namespace orbit_windows_api_shim {
 
@@ -35,7 +34,8 @@ class WindowsApiHelper {
     return std::nullopt;
   }
 
-  [[nodiscsard]] std::optional<std::vector<std::string>> GetFunctionKeysFromNamespace(const std::string& name_space) const {
+  [[nodiscsard]] std::optional<std::vector<std::string>> GetFunctionKeysFromNamespace(
+      const std::string& name_space) const {
     auto it = namespace_to_functions_keys_map_.find(name_space);
     if (it != namespace_to_functions_keys_map_.end()) return it->second;
     ERROR("Could not find function keys associated with namespace %s", name_space);
@@ -50,7 +50,7 @@ class WindowsApiHelper {
   }
 
   [[nodiscard]] std::optional<std::string> GetFunctionFromFunctionKey(
-      const std::string_view function_key){
+      const std::string_view function_key) {
     std::vector<std::string> tokens = absl::StrSplit(function_key, "__");
     if (tokens.size() < 2) return std::nullopt;
     return tokens[1];

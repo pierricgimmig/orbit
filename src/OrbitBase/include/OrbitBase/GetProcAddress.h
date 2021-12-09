@@ -11,7 +11,6 @@
 
 #include "Logging.h"
 
-
 // clang-format off
 #include <libloaderapi.h>
 // clang-format on

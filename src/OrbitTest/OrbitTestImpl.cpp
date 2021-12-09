@@ -19,7 +19,6 @@
 
 #include "ApiInterface/Orbit.h"
 #include "OrbitBase/ThreadUtils.h"
-#include "WindowsUtils/DllInjection.h"
 
 ORBIT_API_INSTANTIATE;
 

@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <cppwin32/winmd/winmd_reader.h>
 #include <cppwin32/cmd_reader.h>
-#include <string_view>
-#include <memory>
+#include <cppwin32/winmd/winmd_reader.h>
+
 #include <map>
+#include <memory>
+#include <string_view>
 
 namespace orbit_windows_api_shim {
 

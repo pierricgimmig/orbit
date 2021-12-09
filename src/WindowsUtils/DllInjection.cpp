@@ -151,7 +151,7 @@ ErrorMessageOr<void> InjectDll(uint32_t pid, std::filesystem::path dll_path) {
 
 ErrorMessageOr<void> EnsureDllIsLoaded(uint32_t pid, std::filesystem::path dll_path) {
   ErrorMessageOr<Module> module = FindModule(pid, dll_path.filename().string());
-  if(module.has_value()) {
+  if (module.has_value()) {
     return outcome::success();
   }
   return InjectDll(pid, dll_path);

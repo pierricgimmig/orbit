@@ -4,12 +4,11 @@
 
 #include "WindowsApiShim/WindowsApiShim.h"
 
+#include <absl/base/casts.h>
 #include <win32/NamespaceDispatcher.h>
 #include <win32/manifest.h>
 
 #include "ApiInterface/Orbit.h"
-
-#include <absl/base/casts.h>
 
 ORBIT_API_INSTANTIATE;
 
@@ -51,5 +50,4 @@ static bool EnableApi(bool enable) {
 __declspec(dllexport) bool __cdecl EnableShim() { return EnableApi(true); }
 
 __declspec(dllexport) bool __cdecl DisableShim() { return EnableApi(false); }
-
 }
