@@ -58,6 +58,7 @@ class KrabsTracer {
   void OnStackWalkEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
   void OnImageLoadEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
   void OutputStats();
+  static void OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file);
 
   struct Stats {
     uint64_t num_thread_events = 0;
