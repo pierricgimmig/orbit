@@ -42,7 +42,7 @@ static bool EnableApi(bool enable) {
     return false;
   }
 
-  set_api_enabled_function(absl::bit_cast<uint64_t>(&g_orbit_api_v1), kOrbitApiVersion, enable);
+  set_api_enabled_function(absl::bit_cast<uint64_t>(&g_orbit_api), kOrbitApiVersion, enable);
 
   return true;
 }
