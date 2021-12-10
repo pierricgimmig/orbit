@@ -165,7 +165,6 @@ void orbit_api_initialize_v2(orbit_api_v2* api_v2) {
 }
 
 #ifdef __linux
-
 // The functions that follow, with `__attribute__((ms_abi))`, are used to fill the function table
 // `g_orbit_api` when the target was built for Windows and is running on Wine. They simply forward
 // to the Linux versions, and the compiler takes care of converting between calling conventions.
