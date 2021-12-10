@@ -53,7 +53,7 @@ void KrabsTracer::SetTraceProperties() {
   properties.MinimumBuffers = 12;
   properties.MaximumBuffers = 48;
   properties.FlushTimer = 1;
-  properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+  properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_NO_PER_PROCESSOR_BUFFERING;
   kernel_trace_.set_trace_properties(&properties);
 }
 
@@ -184,6 +184,12 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
       krabs::parser parser(schema);
       uint32_t old_tid = parser.parse<uint32_t>(L"OldThreadId");
       uint32_t new_tid = parser.parse<uint32_t>(L"NewThreadId");
+      static uint32_t count;
+      if(++count%1000 == 0){
+        LOG("KRABS raw timestamp: %u", record.EventHeader.TimeStamp.QuadPart);
+        LOG("KRABS timestamp ns: %u",
+            orbit_windows_utils::RawTimestampToNs(record.EventHeader.TimeStamp.QuadPart));
+      }
       uint64_t timestamp_ns =
           orbit_base::PerformanceCounterToNs(record.EventHeader.TimeStamp.QuadPart);
       uint16_t cpu = record.BufferContext.ProcessorIndex;

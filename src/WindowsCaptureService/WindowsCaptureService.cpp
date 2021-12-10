@@ -23,6 +23,8 @@ using orbit_grpc_protos::CaptureOptions;
 using orbit_grpc_protos::CaptureRequest;
 using orbit_grpc_protos::CaptureResponse;
 
+using orbit_capture_service::CaptureStartStopListener;
+
 grpc::Status WindowsCaptureService::Capture(
     grpc::ServerContext*,
     grpc::ServerReaderWriter<CaptureResponse, CaptureRequest>* reader_writer) {
@@ -70,7 +72,13 @@ grpc::Status WindowsCaptureService::Capture(
   }
 
   tracing_handler.Stop();
-  FinalizeEventProcessing(stop_capture_reason);
+
+  for (CaptureStartStopListener* listener : capture_start_stop_listeners_) {
+      listener->OnCaptureStopRequested();
+      LOG("CaptureStartStopListener stopped: one or more producers finished capturing");
+  }
+
+  FinalizeEventProcessing(StopCaptureReason::kClientStop);
 
   TerminateCapture();
 
