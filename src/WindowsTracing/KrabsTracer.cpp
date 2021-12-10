@@ -13,6 +13,7 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
 #include "OrbitBase/ThreadUtils.h"
+#include "OrbitBase/Profiling.h"
 #include "WindowsUtils/AdjustTokenPrivilege.h"
 
 namespace orbit_windows_tracing {
@@ -40,7 +41,7 @@ void KrabsTracer::SetTraceProperties() {
   properties.MinimumBuffers = 12;
   properties.MaximumBuffers = 48;
   properties.FlushTimer = 1;
-  properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_NO_PER_PROCESSOR_BUFFERING;
+  properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
   trace_.set_trace_properties(&properties);
 }
 
@@ -88,7 +89,8 @@ void KrabsTracer::Start() {
   ORBIT_CHECK(trace_thread_ == nullptr);
   context_switch_manager_ = std::make_unique<ContextSwitchManager>(listener_);
   SetIsSystemProfilePrivilegeEnabled(true);
-  trace_.open();
+  log_file_ = trace_.open();
+  OutputLogFileInfo(log_file_);
   SetupStackTracing();
   trace_thread_ = std::make_unique<std::thread>(&KrabsTracer::Run, this);
 }
@@ -130,12 +132,6 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
       krabs::parser parser(schema);
       uint32_t old_tid = parser.parse<uint32_t>(L"OldThreadId");
       uint32_t new_tid = parser.parse<uint32_t>(L"NewThreadId");
-      static uint32_t count;
-      if(++count%1000 == 0){
-        LOG("KRABS raw timestamp: %u", record.EventHeader.TimeStamp.QuadPart);
-        LOG("KRABS timestamp ns: %u",
-            orbit_windows_utils::RawTimestampToNs(record.EventHeader.TimeStamp.QuadPart));
-      }
       uint64_t timestamp_ns =
           orbit_base::PerformanceCounterToNs(record.EventHeader.TimeStamp.QuadPart);
       uint16_t cpu = record.BufferContext.ProcessorIndex;
@@ -200,6 +196,41 @@ void KrabsTracer::OutputStats() {
   ORBIT_LOG("Number of stack events: %u", stats_.num_stack_events);
   ORBIT_LOG("Number of stack events for target pid: %u", stats_.num_stack_events_for_target_pid);
   context_switch_manager_->OutputStats();
+}
+
+#define PRINT_VAR(x) LOG(#x " = %s", std::to_string(x))
+void KrabsTracer::OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file) { 
+  LOG("--- ETW Logfile info ---");
+  LOG("log_file.LoggerName = %s", log_file.LoggerName);
+  PRINT_VAR(log_file.CurrentTime);
+  PRINT_VAR(log_file.BuffersRead);
+  PRINT_VAR(log_file.BufferSize);
+  PRINT_VAR(log_file.Filled);
+  PRINT_VAR(log_file.EventsLost);
+  PRINT_VAR(log_file.IsKernelTrace);
+
+  const TRACE_LOGFILE_HEADER& header = log_file.LogfileHeader;
+  PRINT_VAR(header.VersionDetail.MajorVersion);
+  PRINT_VAR(header.VersionDetail.MinorVersion);
+  PRINT_VAR(header.VersionDetail.SubVersion);
+  PRINT_VAR(header.VersionDetail.SubMinorVersion);
+  PRINT_VAR(header.ProviderVersion);
+  PRINT_VAR(header.EndTime.QuadPart);
+  PRINT_VAR(header.TimerResolution);
+  PRINT_VAR(header.MaximumFileSize);
+  PRINT_VAR(header.LogFileMode);
+  PRINT_VAR(header.BuffersWritten);
+  PRINT_VAR(header.StartBuffers);
+  PRINT_VAR(header.PointerSize);
+  PRINT_VAR(header.EventsLost);
+  PRINT_VAR(header.CpuSpeedInMHz);
+  LOG("header.LoggerName = %s", header.LoggerName);
+  LOG("header.LogFileName = %s", header.LogFileName);
+  PRINT_VAR(header.BootTime.QuadPart);
+  PRINT_VAR(header.PerfFreq.QuadPart);
+  PRINT_VAR(header.StartTime.QuadPart);
+  LOG("header.ReservedFlags (ClockType) = %u", header.ReservedFlags);
+  PRINT_VAR(header.BuffersLost);
 }
 
 }  // namespace orbit_windows_tracing

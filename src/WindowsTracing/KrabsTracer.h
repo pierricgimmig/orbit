@@ -36,6 +36,7 @@ class KrabsTracer {
   void OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
   void OnStackWalkEvent(const EVENT_RECORD& record, const krabs::trace_context& context);
   void OutputStats();
+  static void OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file);
 
   struct Stats {
     uint64_t num_thread_events = 0;
@@ -56,6 +57,7 @@ class KrabsTracer {
   krabs::kernel::thread_provider thread_provider_;
   krabs::kernel::context_switch_provider context_switch_provider_;
   krabs::kernel_provider stack_walk_provider_;
+  EVENT_TRACE_LOGFILE log_file_ = {0};
 };
 
 }  // namespace orbit_windows_tracing
