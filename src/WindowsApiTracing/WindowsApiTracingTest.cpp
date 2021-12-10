@@ -56,7 +56,7 @@ TEST(WindowsApiTracing, HookReadFile) {
 
   EXPECT_EQ(test_file_content, test_file_content_when_tracing);
 
-  absl::SleepFor(absl::Milliseconds(2000));
+  absl::SleepFor(absl::Seconds(60*60));
   exit_requested = true;
   t.join();
 }
