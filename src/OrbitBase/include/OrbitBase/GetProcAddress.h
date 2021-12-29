@@ -17,13 +17,15 @@
 
 namespace orbit_base {
 
-inline void* GetProcAddress(const std::string module, const std::string function) {
+inline void* GetProcAddress(const std::string& module, const std::string& function) {
   HMODULE module_handle = LoadLibraryA(module.c_str());
   if (module_handle == nullptr) {
     ERROR("Could not find function %s in %s", function, module);
     return nullptr;
   }
-  return ::GetProcAddress(module_handle, function.c_str());
+  void* address = ::GetProcAddress(module_handle, function.c_str());
+  FreeLibrary(module_handle);
+  return address;
 }
 
 template <typename FunctionPrototypeT>
