@@ -26,7 +26,7 @@ class OrbitService {
         start_producer_side_server_{start_producer_side_server},
         dev_mode_{dev_mode} {}
 
-  ErrorMessageOr<void> Run(std::atomic<bool>* exit_requested);
+  [[nodiscard]] int Run(std::atomic<bool>* exit_requested);
   [[nodiscard]] static std::string GetLogFilePath();
 
  private:

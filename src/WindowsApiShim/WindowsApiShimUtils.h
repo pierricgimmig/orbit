@@ -15,7 +15,7 @@
   ORBIT_SCOPE(__FUNCTION__)
 #define ORBIT_TRACK_PARAM(x)
 #define ORBIT_TRACK_RET(x)
-#define ERROR(x)
+#define ORBIT_ERROR(x, ...)
 
 struct OrbitShimFunctionInfo {
   // Function to be called instead of the original function.

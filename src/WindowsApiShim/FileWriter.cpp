@@ -5,6 +5,7 @@
 #include "FileWriter.h"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_format.h>
 #include <cppwin32/code_writers.h>
 #include <cppwin32/file_writers.h>
@@ -183,7 +184,7 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
     w.write("    it->second(out_function_info);\n    return true;\n  }\n\n");
   }
 
-  w.write("  ERROR(\"Could not find function %s in current namespace\", function_key);\n");
+  w.write("  ORBIT_ERROR(\"Could not find function %s in current namespace\", function_key);\n");
   w.write("  return false;\n}\n\n");
 }
 
@@ -345,15 +346,17 @@ MetaDataHelper::MetaDataHelper(const database& db) {
 std::string MetaDataHelper::GetFunctionNameFromMethodDef(
     const winmd::reader::MethodDef& method_def) const {
   // Include the module name so that all function names are globally unique.
-  std::string_view module_name =
+
+  std::string module_name =
       absl::StrReplaceAll(GetModuleNameFromMethodDef(method_def), {{".", "_"}, {"-", "_"}});
+
   std::string_view function_name = method_def.Name();
   return absl::StrFormat("%s__%s", absl::AsciiStrToLower(module_name), function_name);
 }
 
-std::string_view MetaDataHelper::GetModuleNameFromMethodDef(
+std::string MetaDataHelper::GetModuleNameFromMethodDef(
     const winmd::reader::MethodDef& method_def) const {
-  return method_def_to_module_ref_map_.at(method_def).Name();
+  return std::string(method_def_to_module_ref_map_.at(method_def).Name());
 }
 
 FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem::path output_dir) {
@@ -369,12 +372,95 @@ FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem
   win32_metadata_helper_ = std::make_unique<MetaDataHelper>(*win32_database_);
 }
 
+bool ShouldSkipNamespace(std::string_view name_space) {
+  std::vector<std::string> tokens = {"Direct3D",  "Graphics", "Foundation", "Media", "Security", "System.Com", "System.PropertiesSystem", "UI", "Win32"};
+
+  for (const std::string& token : tokens) {
+    if (absl::StrContains(name_space, token)) {
+      return false;
+    }
+  }
+
+  if (name_space == "") {
+    return true;
+  }
+
+  return true;
+}
+
+static void write_complex_structs_h(cache const& c) {
+  cppwin32::writer w;
+
+  cppwin32::type_dependency_graph graph;
+  for (auto&& [ns, members] : c.namespaces()) {
+    if (ShouldSkipNamespace(ns)) continue;
+    for (auto&& s : members.structs) {
+      if (cppwin32::is_x64_struct(s)) graph.add_struct(s);
+    }
+  }
+
+  graph.walk_graph([&](TypeDef const& type) {
+    if (!is_nested(type)) {
+      auto guard = wrap_type_namespace(w, type.TypeNamespace());
+      write_struct(w, type);
+    }
+  });
+
+  write_close_file_guard(w);
+  w.swap();
+
+  write_preamble(w);
+  write_open_file_guard(w, "complex_structs");
+
+  for (auto&& depends : w.depends) {
+    w.write_depends(depends.first, '0');
+  }
+
+  w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/complex_structs.h");
+}
+
+static void write_complex_interfaces_h(cache const& c) {
+  cppwin32::writer w;
+
+  cppwin32::type_dependency_graph graph;
+  for (auto&& [ns, members] : c.namespaces()) {
+    if (ShouldSkipNamespace(ns)) continue;
+    for (auto&& s : members.interfaces) {
+      graph.add_interface(s);
+    }
+  }
+
+  graph.walk_graph([&](TypeDef const& type) {
+    if (!is_nested(type)) {
+      auto guard = wrap_type_namespace(w, type.TypeNamespace());
+      write_interface(w, type);
+    }
+  });
+
+  write_close_file_guard(w);
+  w.swap();
+
+  write_preamble(w);
+  write_open_file_guard(w, "complex_interfaces");
+
+  for (auto&& depends : w.depends) {
+    w.write_depends(depends.first, '1');
+  }
+  // Workaround for https://github.com/microsoft/cppwin32/issues/2
+  for (auto&& extern_depends : w.extern_depends) {
+    auto guard = wrap_type_namespace(w, extern_depends.first);
+    w.write_each<cppwin32::write_extern_forward>(extern_depends.second);
+  }
+
+  w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/complex_interfaces.h");
+}
+
+
 void FileWriter::WriteCodeFiles() {
   task_group group;
   for (auto&& [ns, members] : cache_->namespaces()) {
-    if (ns == "") {
-      continue;
-    }
+    if (ShouldSkipNamespace(ns)) continue;
+
     group.add([&, &ns = ns, &members = members] {
       cppwin32::write_namespace_0_h(ns, members);
       cppwin32::write_namespace_1_h(ns, members);
@@ -383,8 +469,8 @@ void FileWriter::WriteCodeFiles() {
     });
   }
 
-  group.add([this] { cppwin32::write_complex_structs_h(*cache_); });
-  group.add([this] { cppwin32::write_complex_interfaces_h(*cache_); });
+  group.add([this] { write_complex_structs_h(*cache_); });
+  group.add([this] { write_complex_interfaces_h(*cache_); });
   group.add([this] { write_namespace_dispatch_cpp(*cache_); });
   group.add([this] { write_manifest_h(*cache_); });
 }

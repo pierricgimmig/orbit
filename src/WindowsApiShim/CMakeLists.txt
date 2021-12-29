@@ -59,10 +59,12 @@ target_include_directories(WindowsApiShim PRIVATE
 
 file(GLOB WINDOWS_API_SHIM_HEADERS
         ${GENERATED_DIR}/win32/*.h)
+source_group("Generated Headers" FILES ${WINDOWS_API_SHIM_HEADERS})
 
 file(GLOB WINDOWS_API_SHIM_SOURCES
         ${GENERATED_DIR}/win32/impl/*.h
         ${GENERATED_DIR}/win32/impl/*.cpp)
+source_group("Generated Sources" FILES ${WINDOWS_API_SHIM_SOURCES})
 
 target_include_directories(WindowsApiShim PUBLIC
         ${GENERATED_DIR}/
