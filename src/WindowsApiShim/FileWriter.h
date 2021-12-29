@@ -18,7 +18,7 @@ class MetaDataHelper {
 
   [[nodiscard]] std::string GetFunctionNameFromMethodDef(
       const winmd::reader::MethodDef& method_def) const;
-  [[nodiscard]] std::string_view GetModuleNameFromMethodDef(
+  [[nodiscard]] std::string GetModuleNameFromMethodDef(
       const winmd::reader::MethodDef& method_def) const;
 
  private:

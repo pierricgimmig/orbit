@@ -22,10 +22,6 @@ template <typename Event, typename... Types>
 void EnqueueApiEvent(Types... args) {
   orbit_api::LockFreeApiEventProducer& producer = GetCaptureEventProducer();
 
-  uint64_t raw_timestamp = orbit_base::RawTimestamp();
-  LOG("raw timestamp: %u", raw_timestamp);
-  LOG("timestamp ns: %u", orbit_base::RawTimestampToNs(raw_timestamp));
-
   if (!producer.IsCapturing()) return;
 
   static uint32_t pid = orbit_base::GetCurrentProcessId();
