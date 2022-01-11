@@ -47,6 +47,8 @@ class ProcessManagerImpl final : public ProcessManager {
       const std::string& module_path,
       absl::Span<const std::string> additional_search_directories) override;
 
+  ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse> GetPlatformApiInfo() override;
+
   void Start();
   void ShutdownAndWait() override;
 
@@ -84,6 +86,11 @@ ErrorMessageOr<std::vector<ModuleInfo>> ProcessManagerImpl::LoadModuleList(uint3
 ErrorMessageOr<orbit_base::NotFoundOr<std::filesystem::path>> ProcessManagerImpl::FindDebugInfoFile(
     const std::string& module_path, absl::Span<const std::string> additional_search_directories) {
   return process_client_->FindDebugInfoFile(module_path, additional_search_directories);
+}
+
+ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>
+ProcessManagerImpl::GetPlatformApiInfo() {
+  return process_client_->GetPlatformApiInfo();
 }
 
 void ProcessManagerImpl::Start() {

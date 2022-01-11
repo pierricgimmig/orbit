@@ -25,6 +25,8 @@ using orbit_grpc_protos::GetDebugInfoFileRequest;
 using orbit_grpc_protos::GetDebugInfoFileResponse;
 using orbit_grpc_protos::GetModuleListRequest;
 using orbit_grpc_protos::GetModuleListResponse;
+using orbit_grpc_protos::GetPlatformApiInfoRequest;
+using orbit_grpc_protos::GetPlatformApiInfoResponse;
 using orbit_grpc_protos::GetProcessListRequest;
 using orbit_grpc_protos::GetProcessListResponse;
 using orbit_grpc_protos::GetProcessMemoryRequest;
@@ -141,6 +143,23 @@ ErrorMessageOr<std::string> ProcessClient::LoadProcessMemory(uint32_t pid, uint6
   }
 
   return std::move(*response.mutable_memory());
+}
+
+[[nodiscard]] ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>
+ProcessClient::GetPlatformApiInfo() {
+  ORBIT_SCOPE_FUNCTION;
+  GetPlatformApiInfoRequest request;
+  GetPlatformApiInfoResponse response;
+
+  std::unique_ptr<grpc::ClientContext> context = CreateContext();
+  grpc::Status status = process_service_->GetPlatformApiInfo(context.get(), request, &response);
+
+  if (!status.ok()) {
+    ERROR("gRPC call to GetPlatformApiInfo failed: %s", status.error_message());
+    return ErrorMessage(status.error_message());
+  }
+
+  return std::move(response);
 }
 
 }  // namespace orbit_client_services

@@ -67,14 +67,14 @@ class WindowsApiHelper {
 
  private:
   WindowsApiHelper() {
-    for (int i = 0; i < kFunctions.size(); ++i) {
-      const auto& api_function = kFunctions[i];
+    for (int i = 0; i < kWindowsApiFunctions.size(); ++i) {
+      const auto& api_function = kWindowsApiFunctions[i];
       if (api_function.function_key == nullptr || api_function.name_space == nullptr) {
         std::cout << "Found null function data" << std::endl;
         error_indices_.push_back(i);
       }
     }
-    for (const WindowsApiFunction& api_function : kFunctions) {
+    for (const WindowsApiFunction& api_function : kWindowsApiFunctions) {
       if (api_function.function_key == nullptr || api_function.name_space == nullptr) continue;
       function_key_to_namespace_map_.emplace(api_function.function_key, api_function.name_space);
       namespace_to_functions_keys_map_[api_function.name_space].push_back(

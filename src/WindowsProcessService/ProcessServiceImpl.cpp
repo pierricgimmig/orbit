@@ -13,17 +13,23 @@
 #include <string>
 #include <vector>
 
+#include "GrpcProtos/Constants.h"
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/process.pb.h"
+#include "GrpcProtos/symbol.pb.h"
 #include "ObjectUtils/ObjectFile.h"
 #include "OrbitBase/File.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Result.h"
 #include "WindowsTracing/ListModulesETW.h"
+#include "OrbitPaths/Paths.h"
 #include "WindowsUtils/FindDebugSymbols.h"
 #include "WindowsUtils/ListModules.h"
 #include "WindowsUtils/ProcessList.h"
 #include "WindowsUtils/ReadProcessMemory.h"
+#include "win32/manifest.h"
+
+#pragma optimize("", off)
 
 namespace orbit_windows_process_service {
 
@@ -40,6 +46,7 @@ using orbit_grpc_protos::GetProcessListResponse;
 using orbit_grpc_protos::GetProcessMemoryRequest;
 using orbit_grpc_protos::GetProcessMemoryResponse;
 using orbit_grpc_protos::ModuleInfo;
+using orbit_grpc_protos::PlatformApiFunction;
 using orbit_grpc_protos::ProcessInfo;
 
 using orbit_windows_utils::Module;
@@ -76,6 +83,14 @@ Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRe
   return Status::OK;
 }
 
+static void FillWindowsApiModuleInfo(ModuleInfo* module_info) {
+  module_info->set_name(orbit_grpc_protos::kWindowsApiFakeModuleName);
+  module_info->set_file_path(orbit_grpc_protos::kWindowsApiFakeModuleName);
+  // module_info->set_address_start(0);
+  // module_info->set_address_end(0);
+  module_info->set_build_id("");
+}
+
 Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
                                          const GetModuleListRequest* request,
                                          GetModuleListResponse* response) {
@@ -102,6 +117,9 @@ Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
       *module_info->add_object_segments() = section;
     }
   }
+
+  ModuleInfo* windows_api_module_info = response->add_modules();
+  FillWindowsApiModuleInfo(windows_api_module_info);
 
   return Status::OK;
 }
@@ -132,6 +150,28 @@ Status ProcessServiceImpl::GetDebugInfoFile(ServerContext*, const GetDebugInfoFi
   }
 
   response->set_debug_info_file_path(symbols_path.value().string());
+  return Status::OK;
+}
+
+[[nodiscard]] grpc::Status ProcessServiceImpl::GetPlatformApiInfo(
+    grpc::ServerContext* context, const orbit_grpc_protos::GetPlatformApiInfoRequest* request,
+    orbit_grpc_protos::GetPlatformApiInfoResponse* response) {
+  constexpr const char* kPlatformDesc = "Windows";
+  response->set_platform_description(kPlatformDesc);
+
+  static volatile uint32_t max_entries = 200;
+  uint32_t counter = 0;
+  for (const WindowsApiFunction& function : kWindowsApiFunctions) {
+    PlatformApiFunction* api_function = response->add_functions();
+    if(function.function_key == nullptr) {
+      LOG("key == nullptr");
+      continue;
+    }
+    api_function->set_key(function.function_key);
+    api_function->set_name_space(function.name_space);
+    //if (++counter >= max_entries) break;
+  }
+  LOG("GetPlatformApiInfo size: %u", response->ByteSize());
   return Status::OK;
 }
 

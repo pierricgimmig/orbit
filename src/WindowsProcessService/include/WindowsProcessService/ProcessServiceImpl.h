@@ -32,11 +32,15 @@ class ProcessServiceImpl final : public orbit_grpc_protos::ProcessService::Servi
       grpc::ServerContext* context, const orbit_grpc_protos::GetDebugInfoFileRequest* request,
       orbit_grpc_protos::GetDebugInfoFileResponse* response) override;
 
+  [[nodiscard]] grpc::Status GetPlatformApiInfo(
+      grpc::ServerContext* context, const orbit_grpc_protos::GetPlatformApiInfoRequest* request,
+      orbit_grpc_protos::GetPlatformApiInfoResponse* response) override;
+
  private:
   absl::Mutex mutex_;
   std::unique_ptr<orbit_windows_utils::ProcessList> process_list_;
 
-  static constexpr size_t kMaxGetProcessMemoryResponseSize = 8 * 1024 * 1024;
+  static constexpr size_t kMaxGetProcessMemoryResponseSize = 8 * 1024 * 1024;  
 };
 
 }  // namespace orbit_windows_process_service

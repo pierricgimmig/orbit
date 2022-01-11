@@ -21,6 +21,7 @@
 #include "GrpcProtos/process.pb.h"
 #include "GrpcProtos/symbol.pb.h"
 #include "OrbitBase/NotFoundOr.h"
+#include "GrpcProtos/services.pb.h"
 #include "OrbitBase/Result.h"
 #include "absl/synchronization/mutex.h"
 
@@ -60,6 +61,8 @@ class ProcessManager {
   virtual ErrorMessageOr<orbit_base::NotFoundOr<std::filesystem::path>> FindDebugInfoFile(
       const std::string& module_path,
       absl::Span<const std::string> additional_search_directories) = 0;
+
+  virtual ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse> GetPlatformApiInfo() = 0;
 
   // Note that this method waits for the worker thread to stop, which could
   // take up to refresh_timeout.

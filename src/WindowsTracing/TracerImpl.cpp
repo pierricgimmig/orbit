@@ -10,6 +10,7 @@
 #include "WindowsTracing/ListModulesETW.h"
 #include "WindowsUtils/ListModules.h"
 #include "WindowsUtils/ListThreads.h"
+#include "win32/manifest.h"
 
 using orbit_grpc_protos::ModuleInfo;
 using orbit_grpc_protos::ModulesSnapshot;

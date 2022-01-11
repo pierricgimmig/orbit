@@ -42,6 +42,8 @@ class ProcessClient {
   [[nodiscard]] ErrorMessageOr<std::string> LoadProcessMemory(uint32_t pid, uint64_t address,
                                                               uint64_t size);
 
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse> GetPlatformApiInfo();
+
  private:
   std::unique_ptr<orbit_grpc_protos::ProcessService::Stub> process_service_;
 };

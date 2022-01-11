@@ -1894,7 +1894,7 @@ Future<void> OrbitApp::LoadSymbolsManually(absl::Span<const ModuleData* const> m
 
     // Explicitly do not handle the result.
     Future<void> future = RetrieveModuleAndLoadSymbolsAndHandleError(module).Then(
-        &immediate_executor, [](const SymbolLoadingAndErrorHandlingResult & /*result*/) -> void {});
+        &immediate_executor, [](const SymbolLoadingAndErrorHandlingResult& /*result*/) -> void {});
     futures.emplace_back(std::move(future));
   }
   orbit_client_symbols::QSettingsBasedStorageManager storage_manager;
@@ -1952,6 +1952,66 @@ Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
 
 Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
     const ModuleIdentifier& module_id) {
+  // TODO: make async
+  auto result = GetPlatformApiInfo(module).Get();
+  if (result.has_error()) {
+    return result.error();
+  }
+
+  const orbit_grpc_protos::GetPlatformApiInfoResponse& response = result.value();
+  LOG("Platform description: %s", response.platform_description());
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  uint32_t counter = 0;
+  for (const auto& api_function : response.functions()) {
+    if (api_function.key().empty()) continue;
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(api_function.key());
+    symbol_info->set_demangled_name(api_function.key());
+    symbol_info->set_address(++counter);
+    LOG("api_function.key(): %s", api_function.key());
+  }
+
+  ModuleData* module_data =
+      GetMutableModuleByPathAndBuildId(orbit_grpc_protos::kWindowsApiFakeModuleName, "");
+  CHECK(module_data == module);
+  module_data->AddSymbols(module_symbols);
+
+  const ProcessData* selected_process = GetTargetProcess();
+
+  functions_data_view_->AddFunctions(module_data->GetFunctions());
+  LOG("Added loaded function symbols for module \"%s\" to the functions tab",
+      module_data->file_path());
+
+  UpdateAfterSymbolLoading();
+  FireRefreshCallbacks();
+
+  return outcome::success();
+}
+
+orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveModuleAndLoadSymbols(
+    const ModuleData* module) {
+  if (module->name() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
+    return RetrieveAndLoadPlatformApiInfo(module);
+  }
+  return RetrieveModuleAndLoadSymbols(module->file_path(), module->build_id());
+}
+
+orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
+OrbitApp::GetPlatformApiInfo(const orbit_client_data::ModuleData* module) {
+  ScopedStatus scoped_status =
+      CreateScopedStatus("Retrieving platform api info on remote instance...");
+
+  orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
+      get_platform_api_info_on_remote =
+          thread_pool_->Schedule([process_manager = GetProcessManager()]() {
+            return process_manager->GetPlatformApiInfo();
+          });
+
+  return std::move(get_platform_api_info_on_remote);
+}
+
+orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveModuleAndLoadSymbols(
+    const std::string& module_path, const std::string& build_id) {
   ORBIT_SCOPE_FUNCTION;
   ORBIT_CHECK(main_thread_id_ == std::this_thread::get_id());
 
@@ -2529,6 +2589,39 @@ Future<ErrorMessageOr<void>> OrbitApp::LoadPreset(const PresetFile& preset_file)
                         preset_file.file_path().string(), convertion_result.error().message());
           }
         }
+        // Then - when all modules are loaded or failed to load - we update the UI and potentially
+        // show an error message.
+        /*auto results = orbit_base::JoinFutures(absl::MakeConstSpan(load_module_results));
+        results.Then(main_thread_executor_, [this, metric = std::move(metric), preset_file](
+                                                std::vector<std::string> module_paths_not_found)
+        mutable { size_t tried_to_load_amount = module_paths_not_found.size();
+          module_paths_not_found.erase(
+              std::remove_if(module_paths_not_found.begin(), module_paths_not_found.end(),
+                             [](const std::string& path) { return path.empty(); }),
+              module_paths_not_found.end());
+
+          if (tried_to_load_amount == module_paths_not_found.size()) {
+            metric.SetStatusCode(orbit_metrics_uploader::OrbitLogEvent::INTERNAL_ERROR);
+            SendErrorToUi("Preset loading failed",
+                          absl::StrFormat("None of the modules of the preset were loaded:\n* %s",
+                                          absl::StrJoin(module_paths_not_found, "\n* ")));
+            return;
+          }
+
+          if (!module_paths_not_found.empty()) {
+            SendWarningToUi("Preset only partially loaded",
+                            absl::StrFormat("The following modules were not loaded:\n* %s",
+                                            absl::StrJoin(module_paths_not_found, "\n* ")));
+          } else {
+            // Then if load was successful and the preset is in old format - convert it to new
+            // one.
+            auto convertion_result = ConvertPresetToNewFormatIfNecessary(preset_file);
+            if (convertion_result.has_error()) {
+              ORBIT_ERROR("Unable to convert preset file \"%s\" to new file format: %s",
+                          preset_file.file_path().string(), convertion_result.error().message());
+            }
+          }
+          */
 
         FireRefreshCallbacks();
         return outcome::success();
@@ -2558,8 +2651,8 @@ void OrbitApp::ShowPresetInExplorer(const PresetFile& preset) {
   const QStringList arguments = {
       QString::fromStdString(absl::StrFormat("/select,%s", preset.file_path().string()))};
 #endif  // defined(__linux)
-  // QProcess::startDetached starts the program `program` with the arguments `arguments` in a new
-  // process, and detaches from it. Returns true on success; otherwise returns false.
+  // QProcess::startDetached starts the program `program` with the arguments `arguments` in a
+  // new process, and detaches from it. Returns true on success; otherwise returns false.
   if (QProcess::startDetached(program, arguments)) return;
 
   SendErrorToUi("%s", "Unable to show preset file in explorer.");
