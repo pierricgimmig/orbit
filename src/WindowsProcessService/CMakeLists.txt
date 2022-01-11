@@ -21,5 +21,7 @@ target_link_libraries(WindowsProcessService PUBLIC
         GrpcProtos
         ObjectUtils
         OrbitBase
+        OrbitPaths
+        WindowsApiShim
         WindowsUtils)
 

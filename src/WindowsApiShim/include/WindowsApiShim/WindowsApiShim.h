@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef ORBIT_WINDOWS_API_SHIM_WINDOWS_API_SHIM_H_
+#define ORBIT_WINDOWS_API_SHIM_WINDOWS_API_SHIM_H_
+
 extern "C" {
 
 // Find a Windows API wrapper function in the OrbitWindowsApiShim using a Windows module and
@@ -17,3 +20,5 @@ __declspec(dllexport) bool __cdecl FindShimFunction(const char* module, const ch
 __declspec(dllexport) bool __cdecl EnableShim();
 __declspec(dllexport) bool __cdecl DisableShim();
 }
+
+#endif

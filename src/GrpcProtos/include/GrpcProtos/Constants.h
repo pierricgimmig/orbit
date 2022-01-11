@@ -21,6 +21,8 @@ constexpr uint64_t kIntrospectionProducerId = 3;
 constexpr uint64_t kWindowsTracingProducerId = 4;
 constexpr uint64_t kExternalProducerStartingId = 1024;
 
+constexpr const char* kWindowsApiFakeModuleName = "[Windows Api]";
+
 }  // namespace orbit_grpc_protos
 
 #endif  // GRPC_PROTOS_CONSTANTS_H_

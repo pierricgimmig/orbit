@@ -19,8 +19,8 @@ class TracerImpl : public Tracer {
   TracerImpl() = delete;
   virtual ~TracerImpl() {}
 
-  virtual void Start();
-  virtual void Stop();
+  void Start() override;
+  void Stop() override;
 
  private:
   void SendModulesSnapshot();

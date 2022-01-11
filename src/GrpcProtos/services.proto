@@ -10,6 +10,7 @@ import "capture.proto";
 import "code_block.proto";
 import "module.proto";
 import "process.proto";
+import "symbol.proto";
 import "tracepoint.proto";
 
 option cc_enable_arenas = true;
@@ -67,6 +68,14 @@ message GetDebugInfoFileResponse {
   string debug_info_file_path = 1;
 }
 
+message GetPlatformApiInfoRequest {
+}
+
+message GetPlatformApiInfoResponse {
+  string platform_description = 1;
+  repeated PlatformApiFunction functions = 2;
+}
+
 service ProcessService {
   rpc GetProcessList(GetProcessListRequest) returns (GetProcessListResponse) {}
 
@@ -77,6 +86,9 @@ service ProcessService {
 
   rpc GetDebugInfoFile(GetDebugInfoFileRequest)
       returns (GetDebugInfoFileResponse) {}
+
+  rpc GetPlatformApiInfo(GetPlatformApiInfoRequest)
+      returns (GetPlatformApiInfoResponse) {}
 }
 
 service TracepointService {

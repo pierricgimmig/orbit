@@ -55,7 +55,7 @@ WindowsApiTracer::~WindowsApiTracer() { DisableTracing(); }
 ErrorMessageOr<void> WindowsApiTracer::Trace(std::vector<ApiFunction> api_function_keys) {
   uint32_t pid = GetCurrentProcessId();
 
-  // Inject OrbitWindowsApiShim.dll if not already loaded.
+  // Inject orbit.dll if not already loaded.
   OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, GetOrbitDllPath()));
 
   // Inject OrbitWindowsApiShim.dll if not already loaded.

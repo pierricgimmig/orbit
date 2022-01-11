@@ -344,6 +344,11 @@ class OrbitApp final : public DataViewFactory,
   orbit_base::Future<ErrorMessageOr<void>> RetrieveModuleAndLoadSymbols(
       const std::string& module_path, const std::string& build_id);
 
+  orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveAndLoadPlatformApiInfo(
+      const orbit_client_data::ModuleData* module);
+  orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
+  GetPlatformApiInfo(const orbit_client_data::ModuleData* module);
+
   // This method is pretty similar to `RetrieveModule`, but it also requires debug information to be
   // present.
   orbit_base::Future<ErrorMessageOr<std::filesystem::path>> RetrieveModuleWithDebugInfo(

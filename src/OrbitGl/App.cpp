@@ -88,6 +88,8 @@
 #include "Symbols/SymbolHelper.h"
 #include "TimeGraph.h"
 
+#pragma optimize("", off)
+
 using orbit_base::Future;
 
 using orbit_capture_client::CaptureClient;
@@ -1695,9 +1697,64 @@ orbit_base::Future<void> OrbitApp::RetrieveModulesAndLoadSymbols(
   return orbit_base::JoinFutures(futures);
 }
 
+orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveAndLoadPlatformApiInfo(
+    const ModuleData* module) {
+  // TODO: make async
+  auto result = GetPlatformApiInfo(module).Get();
+  if (result.has_error()) {
+    return result.error();
+  }
+
+  const orbit_grpc_protos::GetPlatformApiInfoResponse& response = result.value();
+  LOG("Platform description: %s", response.platform_description());
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  uint32_t counter = 0;
+  for (const auto& api_function : response.functions()) {
+    if (api_function.key().empty()) continue;
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(api_function.key());
+    symbol_info->set_demangled_name(api_function.key());
+    symbol_info->set_address(++counter);
+    LOG("api_function.key(): %s", api_function.key());
+  }
+
+  ModuleData* module_data =
+      GetMutableModuleByPathAndBuildId(orbit_grpc_protos::kWindowsApiFakeModuleName, "");
+  CHECK(module_data == module);
+  module_data->AddSymbols(module_symbols);
+
+  const ProcessData* selected_process = GetTargetProcess();
+
+  functions_data_view_->AddFunctions(module_data->GetFunctions());
+  LOG("Added loaded function symbols for module \"%s\" to the functions tab",
+      module_data->file_path());
+
+  UpdateAfterSymbolLoading();
+  FireRefreshCallbacks();
+
+  return outcome::success();
+}
+
 orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveModuleAndLoadSymbols(
     const ModuleData* module) {
+  if (module->name() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
+    return RetrieveAndLoadPlatformApiInfo(module);
+  }
   return RetrieveModuleAndLoadSymbols(module->file_path(), module->build_id());
+}
+
+orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
+OrbitApp::GetPlatformApiInfo(const orbit_client_data::ModuleData* module) {
+  ScopedStatus scoped_status =
+      CreateScopedStatus("Retrieving platform api info on remote instance...");
+
+  orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
+      get_platform_api_info_on_remote =
+          thread_pool_->Schedule([process_manager = GetProcessManager()]() {
+            return process_manager->GetPlatformApiInfo();
+          });
+
+  return std::move(get_platform_api_info_on_remote);
 }
 
 orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveModuleAndLoadSymbols(
@@ -2106,8 +2163,8 @@ void OrbitApp::LoadPreset(const PresetFile& preset_file) {
     load_module_results.emplace_back(std::move(future));
   }
 
-  // Then - when all modules are loaded or failed to load - we update the UI and potentially show an
-  // error message.
+  // Then - when all modules are loaded or failed to load - we update the UI and potentially
+  // show an error message.
   auto results = orbit_base::JoinFutures(absl::MakeConstSpan(load_module_results));
   results.Then(main_thread_executor_, [this, metric = std::move(metric), preset_file](
                                           std::vector<std::string> module_paths_not_found) mutable {
@@ -2130,7 +2187,8 @@ void OrbitApp::LoadPreset(const PresetFile& preset_file) {
                       absl::StrFormat("The following modules were not loaded:\n* %s",
                                       absl::StrJoin(module_paths_not_found, "\n* ")));
     } else {
-      // Then if load was successful and the preset is in old format - convert it to new one.
+      // Then if load was successful and the preset is in old format - convert it to new
+      // one.
       auto convertion_result = ConvertPresetToNewFormatIfNecessary(preset_file);
       if (convertion_result.has_error()) {
         ORBIT_ERROR("Unable to convert preset file \"%s\" to new file format: %s",
@@ -2165,8 +2223,8 @@ void OrbitApp::ShowPresetInExplorer(const PresetFile& preset) {
   const QStringList arguments = {
       QString::fromStdString(absl::StrFormat("/select,%s", preset.file_path().string()))};
 #endif  // defined(__linux)
-  // QProcess::startDetached starts the program `program` with the arguments `arguments` in a new
-  // process, and detaches from it. Returns true on success; otherwise returns false.
+  // QProcess::startDetached starts the program `program` with the arguments `arguments` in a
+  // new process, and detaches from it. Returns true on success; otherwise returns false.
   if (QProcess::startDetached(program, arguments)) return;
 
   SendErrorToUi("%s", "Unable to show preset file in explorer.");
@@ -2679,7 +2737,8 @@ void OrbitApp::AddFrameTrack(uint64_t instrumented_function_id) {
     constexpr const char* kDontShowAgainEmptyFrameTrackWarningKey = "EmptyFrameTrackWarning";
     const std::string title = "Frame track not added";
     const std::string message = absl::StrFormat(
-        "Frame track enabled for function \"%s\", but since the function does not have any hits in "
+        "Frame track enabled for function \"%s\", but since the function does not have any "
+        "hits in "
         "the current capture, a frame track was not added to the capture.",
         function->function_name());
     main_window_->ShowWarningWithDontShowAgainCheckboxIfNeeded(
