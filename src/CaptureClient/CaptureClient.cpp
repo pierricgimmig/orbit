@@ -39,6 +39,7 @@ using orbit_grpc_protos::CaptureRequest;
 using orbit_grpc_protos::CaptureResponse;
 using orbit_grpc_protos::ClientCaptureEvent;
 using orbit_grpc_protos::InstrumentedFunction;
+using orbit_grpc_protos::PlatformApiFunction;
 using orbit_grpc_protos::TracepointInfo;
 using DynamicInstrumentationMethod =
     orbit_grpc_protos::CaptureOptions::DynamicInstrumentationMethod;
@@ -114,15 +115,20 @@ std::vector<ApiFunction> FindApiFunctions(const orbit_client_data::ModuleManager
 
   capture_options.set_collect_memory_info(options.collect_memory_info);
   constexpr const uint64_t kMsToNs = 1'000'000;
-  capture_options.set_memory_sampling_period_ns(options.memory_sampling_period_ms * kMsToNs);
-
-  capture_options.set_trace_thread_state(options.collect_thread_states);
-  capture_options.set_trace_gpu_driver(options.collect_gpu_jobs);
-  capture_options.set_max_local_marker_depth_per_command_buffer(
-      options.max_local_marker_depth_per_command_buffer);
 
   for (const auto& [function_id, function] : options.selected_functions) {
     InstrumentedFunction* instrumented_function = capture_options.add_instrumented_functions();
+    
+    if (function.module_path() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
+      // TODO: fill other fields or remove them.
+      PlatformApiFunction* platform_api_function = capture_options->add_platform_api_functions();
+      platform_api_function->set_key(function.name());
+      platform_api_function->set_name("");
+      platform_api_function->set_module("");
+      platform_api_function->set_name_space("");
+      continue;
+    }
+
     instrumented_function->set_file_path(function.module_path());
     const ModuleData* module = module_manager.GetModuleByModuleIdentifier(function.module_id());
     ORBIT_CHECK(module != nullptr);

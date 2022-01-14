@@ -51,7 +51,7 @@ TEST(WindowsApiTracing, HookReadFile) {
   std::string test_file_content = ReadFile(GetTestFilePath());
 
   WindowsApiTracer tracer;
-  tracer.Trace({{"kernel32", "GetFileSize"}, {"kernel32", "OpenFile"}, {"kernel32", "ReadFile"}});
+  tracer.Trace({{"kernel32", "GetFileSize"}, {"kernel32", "OpenFile"}, {"kernel32", "ReadFile"}}, GetCurrentProcessId());
   std::string test_file_content_when_tracing = ReadFile(GetTestFilePath());
 
   EXPECT_EQ(test_file_content, test_file_content_when_tracing);

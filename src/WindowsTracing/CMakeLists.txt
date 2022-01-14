@@ -35,7 +35,9 @@ target_sources(WindowsTracing PRIVATE
         ListModulesEtw.cpp
         Tracer.cpp
         TracerImpl.h
-        TracerImpl.cpp)
+        TracerImpl.cpp
+        WindowsApiTracing.cpp
+        WindowsApiTracing.h)
 
 target_include_directories(WindowsTracing INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

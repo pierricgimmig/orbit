@@ -22,7 +22,6 @@ target_sources(WindowsApiTracing PRIVATE
 target_link_libraries(WindowsApiTracing PUBLIC
         OrbitBase
         WindowsUtils
-        minhook
         CONAN_PKG::abseil)
 
 add_executable(WindowsApiTracingTests)
