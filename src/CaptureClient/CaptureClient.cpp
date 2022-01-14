@@ -39,6 +39,7 @@ using orbit_grpc_protos::CaptureRequest;
 using orbit_grpc_protos::CaptureResponse;
 using orbit_grpc_protos::ClientCaptureEvent;
 using orbit_grpc_protos::InstrumentedFunction;
+using orbit_grpc_protos::PlatformApiFunction;
 using orbit_grpc_protos::TracepointInfo;
 using DynamicInstrumentationMethod =
     orbit_grpc_protos::CaptureOptions::DynamicInstrumentationMethod;
@@ -159,6 +160,16 @@ ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
       max_local_marker_depth_per_command_buffer);
   absl::flat_hash_map<uint64_t, InstrumentedFunction> instrumented_functions;
   for (const auto& [function_id, function] : selected_functions) {
+    if (function.module_path() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
+      // TODO: fill other fields or remove them.
+      PlatformApiFunction* platform_api_function = capture_options->add_platform_api_functions();
+      platform_api_function->set_key(function.name());
+      platform_api_function->set_name("");
+      platform_api_function->set_module("");
+      platform_api_function->set_name_space("");
+      continue;
+    }
+    
     InstrumentedFunction* instrumented_function = capture_options->add_instrumented_functions();
     instrumented_function->set_file_path(function.module_path());
     const ModuleData* module = module_manager.GetModuleByPathAndBuildId(function.module_path(),

@@ -21,7 +21,7 @@ message InstrumentedFunction {
   uint64 function_id = 3;
   uint64 function_size = 7;
   string function_name = 5;
-
+  
   bool record_arguments = 8;
   bool record_return_value = 9;
 }
@@ -38,7 +38,15 @@ message ApiFunction {
   uint64 api_version = 5;
 }
 
-// NextId: 19
+// PlatformApiFunction represent a function of the Windows/Linux api.
+message PlatformApiFunction {
+  string key = 1;
+  string name = 2;
+  string module = 3;
+  string name_space = 4;
+}
+
+// NextId: 21
 message CaptureOptions {
   reserved 17;
 
@@ -78,8 +86,11 @@ message CaptureOptions {
   uint64 memory_sampling_period_ns = 12;
 
   repeated ApiFunction api_functions = 13;
-
   bool enable_api = 14;
+
+  repeated PlatformApiFunction platform_api_functions = 19;
+  bool enable_platform_api = 20;
+
 }
 
 // For CaptureEvents with a duration, excluding for now GPU-related ones, we

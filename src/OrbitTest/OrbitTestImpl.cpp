@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -30,6 +31,37 @@ ORBIT_API_INSTANTIATE;
 
 #define ORBIT_SCOPE_FUNCTION ORBIT_SCOPE(__FUNCTION__)
 
+namespace {
+
+std::string ReadFile(std::filesystem::path file_path) {
+  OFSTRUCT buffer = {0};
+  HANDLE file_handle = (HANDLE)OpenFile(file_path.string().c_str(), &buffer, OF_READ);
+  uint64_t file_size = ::GetFileSize(file_handle, 0);
+
+  std::string result(file_size, '\0');
+  DWORD num_bytes_read = 0;
+  ::ReadFile(file_handle, result.data(), file_size, &num_bytes_read, /*lpOverlapped*/ nullptr);
+  CloseHandle(file_handle);
+  return result;
+}
+
+void ReadFileInLoop(bool* exit_requested) {
+  constexpr const char* file_path = "orbit_test_dummy.txt";
+  std::ofstream of(file_path);
+  if(of.fail()) {
+    return;
+  }
+  of << "The quick brown fox jumped over the lazy dog..." << std::endl;
+  of.close();
+
+  while (!*exit_requested) {
+    std::string file_content = ReadFile(file_path);
+    absl::SleepFor(absl::Milliseconds(100));
+  }
+}
+
+}
+
 OrbitTestImpl::OrbitTestImpl() { Init(); }
 
 OrbitTestImpl::OrbitTestImpl(uint32_t num_threads, uint32_t recurse_depth, uint32_t sleep_us)
@@ -41,7 +73,10 @@ void OrbitTestImpl::Init() {
   const size_t kMinNumWorkers = 10;
   const size_t kMaxNumWorkers = 100;
   thread_pool_ =
-      orbit_base::ThreadPool::Create(kMinNumWorkers, kMaxNumWorkers, absl::Milliseconds(500));
+      orbit_base::ThreadPool::Create(kMinNumWorkers, kMaxNumWorkers, absl::Milliseconds(500));  
+
+  auto thread = std::make_shared<std::thread>(&ReadFileInLoop, &exit_requested_);
+  threads_.push_back(thread);
 }
 
 OrbitTestImpl::~OrbitTestImpl() {

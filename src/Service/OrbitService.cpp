@@ -167,8 +167,8 @@ std::unique_ptr<ProducerSideServer> BuildAndStartProducerSideServer() {
 #else
 
 std::unique_ptr<ProducerSideServer> BuildAndStartProducerSideServer() {
-  constexpr const char* kProducerSideServerUri = "127.0.0.1:1789";
-  return BuildAndStartProducerSideServerWithUri(kProducerSideServerUri);
+  std::string uri(orbit_producer_side_channel::kProducerSideWindowsServerAddress);
+  return BuildAndStartProducerSideServerWithUri(uri);
 }
 
 #endif

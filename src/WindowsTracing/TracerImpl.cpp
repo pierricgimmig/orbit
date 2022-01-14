@@ -9,6 +9,7 @@
 #include "OrbitBase/Profiling.h"
 #include "WindowsUtils/ListModules.h"
 #include "WindowsUtils/ListThreads.h"
+#include "WindowsApiTracing.h"
 #include "win32/manifest.h"
 
 using orbit_grpc_protos::ModuleInfo;
@@ -21,7 +22,9 @@ using orbit_windows_utils::Thread;
 namespace orbit_windows_tracing {
 
 TracerImpl::TracerImpl(orbit_grpc_protos::CaptureOptions capture_options, TracerListener* listener)
-    : capture_options_(std::move(capture_options)), listener_(listener) {}
+    : capture_options_(std::move(capture_options)), listener_(listener) {
+  InitializeWindowsApiTracing();
+}
 
 void TracerImpl::Start() {
   ORBIT_CHECK(krabs_tracer_ == nullptr);
@@ -81,6 +84,17 @@ void TracerImpl::SendThreadNamesSnapshot() {
   }
 
   listener_->OnThreadNamesSnapshot(std::move(thread_names_snapshot));
+}
+
+void TracerImpl::InitializeWindowsApiTracing() {
+  // TODO: properly initialize "enable_platform_api" bool.
+  bool platform_api_active = capture_options_.enable_platform_api() || true;
+  if(platform_api_active) {
+    auto result = InitializeWinodwsApiTracingInTarget(capture_options_.pid());
+    if(result.has_error()) {
+      ERROR("Initializing Windows Api tracing: %s", result.error().message());
+    }
+  }
 }
 
 }  // namespace orbit_windows_tracing

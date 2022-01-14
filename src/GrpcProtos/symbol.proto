@@ -24,10 +24,3 @@ message LineInfo {
   string source_file = 1;
   uint32 source_line = 2;
 }
-
-message PlatformApiFunction {
-  string key = 1;
-  string name = 2;
-  string module = 3;
-  string name_space = 4;
-}
