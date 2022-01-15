@@ -184,7 +184,7 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
     w.write("    it->second(out_function_info);\n    return true;\n  }\n\n");
   }
 
-  w.write("  ORBIT_ERROR(\"Could not find function %s in current namespace\", function_key);\n");
+  w.write("  ORBIT_ERROR(\"Could not find function \"%s\" in current namespace\", function_key);\n");
   w.write("  return false;\n}\n\n");
 }
 

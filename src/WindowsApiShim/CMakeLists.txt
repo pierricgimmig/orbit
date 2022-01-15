@@ -50,6 +50,7 @@ if (WIN32)
 
 # WindowsApiShim
 add_library(WindowsApiShim STATIC)
+enable_language(ASM_MASM)
 
 target_compile_features(WindowsApiShim PUBLIC cxx_std_17)
 
@@ -76,6 +77,7 @@ target_sources(WindowsApiShim PUBLIC
 target_sources(WindowsApiShim PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/CaptureController.cpp
         ${CMAKE_CURRENT_LIST_DIR}/CaptureController.h
+        ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShim.asm
         ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShimUtils.h
         ${GENERATOR_MANIFEST_FILE}
         ${WINDOWS_API_SHIM_SOURCES})

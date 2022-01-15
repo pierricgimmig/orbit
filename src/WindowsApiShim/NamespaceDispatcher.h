@@ -42,14 +42,14 @@ class WindowsApiHelper {
     return std::nullopt;
   }
 
-  [[nodiscard]] std::optional<std::string> GetModuleFromFunctionKey(
+  [[nodiscard]] static std::optional<std::string> GetModuleFromFunctionKey(
       const std::string_view function_key) {
     std::vector<std::string> tokens = absl::StrSplit(function_key, "__");
     if (tokens.empty()) return std::nullopt;
     return tokens[0];
   }
 
-  [[nodiscard]] std::optional<std::string> GetFunctionFromFunctionKey(
+  [[nodiscard]] static std::optional<std::string> GetFunctionFromFunctionKey(
       const std::string_view function_key) {
     std::vector<std::string> tokens = absl::StrSplit(function_key, "__");
     if (tokens.size() < 2) return std::nullopt;
