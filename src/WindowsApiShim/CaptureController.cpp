@@ -95,7 +95,7 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 
     void* original_function = orbit_base::GetProcAddress(module, function_name);
     if (original_function == nullptr) {
-      ERROR("Could not find function %s in module %s", function_name, module);
+      ERROR("Could not find function \"%s\" in module \"%s\"", function_name, module);
       continue;
     }
 
@@ -125,6 +125,7 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 }
 
 void CaptureController::OnCaptureStop() {
+  uint64_t gs = GetGsRegister();
   LOG("ShimCaptureController::OnCaptureStop");
 
   // Disable all hooks on capture stop.
