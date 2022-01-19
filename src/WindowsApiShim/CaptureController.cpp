@@ -125,7 +125,7 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 }
 
 void CaptureController::OnCaptureStop() {
-  uint64_t gs = GetGsRegister();
+  uint64_t gs = GetThreadLocalStoragePointer();
   LOG("ShimCaptureController::OnCaptureStop");
 
   // Disable all hooks on capture stop.
