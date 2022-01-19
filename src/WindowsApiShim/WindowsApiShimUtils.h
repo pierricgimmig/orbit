@@ -39,7 +39,7 @@ inline void FillOrbitShimFunctionInfo(FunctionType detour, FunctionType* origina
   }
 
 // Implementation in WindowsApiShim.asm
-extern "C" uint64_t GetThreadLocalStoragePointer();
+extern "C" void* GetThreadLocalStoragePointer();
 
 [[nodiscard]] inline bool IsTlsValid() { return GetThreadLocalStoragePointer() != 0; }
 
@@ -59,6 +59,8 @@ class ReentryGuard {
  private:
   uint32_t* tls_counter_;
 };
+
+
 
 /*
     void __stdcall
