@@ -79,6 +79,8 @@ target_sources(WindowsApiShim PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/CaptureController.h
         ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShim.asm
         ${CMAKE_CURRENT_LIST_DIR}/WindowsApiShimUtils.h
+        ${CMAKE_CURRENT_LIST_DIR}/WindowsApiCallManager.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/WindowsApiCallManager.h
         ${GENERATOR_MANIFEST_FILE}
         ${WINDOWS_API_SHIM_SOURCES})
 
