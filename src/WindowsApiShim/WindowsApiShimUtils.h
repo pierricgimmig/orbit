@@ -43,47 +43,5 @@ extern "C" void* GetThreadLocalStoragePointer();
 
 [[nodiscard]] inline bool IsTlsValid() { return GetThreadLocalStoragePointer() != 0; }
 
-class ReentryGuard {
- public:
-  ReentryGuard() = delete;
-  ReentryGuard(uint32_t* tls_counter) : tls_counter_(tls_counter) {
-    if (tls_counter_) ++*tls_counter;
-  }
-  ~ReentryGuard() {
-    if (tls_counter_) --*tls_counter_;
-  }
-  [[nodiscard]] bool IsReenteringOrTlsInvalid() const {
-    return tls_counter_ == nullptr || (*tls_counter_ > 1);
-  }
-
- private:
-  uint32_t* tls_counter_;
-};
-
-
-
-/*
-    void __stdcall
-   ORBIT_IMPL_kernel32__EnterCriticalSection(win32::Windows::Win32::System::SystemServices::RTL_CRITICAL_SECTION*
-   lpCriticalSection) noexcept
-    {
-        thread_local uint32_t tls_counter = 0;
-      uint64_t gs = GetThreadLocalStoragePointer();
-      bool is_tls_valid = IsTlsValid();
-        ReentryGuard reentry_guard(gs!=0 ? &tls_counter : nullptr);
-
-        if(reentry_guard.IsReenteringOrTlsInvalid()) {
-            g_api_table.kernel32__EnterCriticalSection(lpCriticalSection);
-            return;
-        }
-
-        ORBIT_SCOPE_FUNCTION();
-        ORBIT_TRACK_PARAM(lpCriticalSection);
-
-        g_api_table.kernel32__EnterCriticalSection(lpCriticalSection);
-
-    }
-*/
-
 #endif  // ORBIT_WINDOWS_API_SHIM_WINDOWS_API_SHIM_UTILS_H_
 

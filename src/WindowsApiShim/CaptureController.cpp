@@ -12,6 +12,7 @@
 #include "OrbitBase/Logging.h"
 #include "WindowsApiShim/WindowsApiShim.h"
 #include "WindowsApiShimUtils.h"
+#include "WindowsApiCallManager.h"
 #include <win32/NamespaceDispatcher.h>
 
 ORBIT_API_INSTANTIATE;
@@ -127,6 +128,9 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 void CaptureController::OnCaptureStop() {
   void* gs = GetThreadLocalStoragePointer();
   LOG("ShimCaptureController::OnCaptureStop");
+  LOG("Windows API call count report:\n%s", ApiFunctionCallManager::Get().GetSummary());
+  std::cout << "WINDOWS API CALL COUNT:\n"
+            << ApiFunctionCallManager::Get().GetSummary() << std::endl;
 
   // Disable all hooks on capture stop.
   for (void* target : target_functions_) {

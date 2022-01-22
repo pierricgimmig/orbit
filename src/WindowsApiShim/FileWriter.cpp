@@ -480,6 +480,7 @@ static void WriteIncludes(cppwin32::writer& w) {
   w.write("#include \"win32/impl/complex_structs.h\"\n");
   w.write("#include \"win32/impl/complex_interfaces.h\"\n");
   w.write("#include \"WindowsApiShimUtils.h\"\n");
+  w.write("#include \"WindowsApiCallManager.h\"\n");
 }
 
 void FileWriter::WriteNamespaceHeader(std::string_view const& ns,
