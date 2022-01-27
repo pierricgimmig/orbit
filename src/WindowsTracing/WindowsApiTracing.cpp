@@ -4,6 +4,7 @@
 
 #include "WindowsApiTracing.h"
 
+#include "OrbitBase/ExecutablePath.h"
 #include "OrbitBase/Logging.h"
 #include "WindowsUtils/DllInjection.h"
 
@@ -12,11 +13,11 @@ namespace orbit_windows_tracing {
 namespace {
 
 std::filesystem::path GetShimPath() {
-  return "C:/git/orbit/build_msvc2019_debug/bin/OrbitWindowsApiShim.dll";
+  return orbit_base::GetExecutableDir() / "OrbitWindowsApiShim.dll";
 }
 
 std::filesystem::path GetOrbitDllPath() {
-  return "C:/git/orbit/build_msvc2019_debug/bin/orbit.dll";
+  return orbit_base::GetExecutableDir() / "orbit.dll";
 }
 
 }  // namespace
