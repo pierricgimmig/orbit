@@ -6,6 +6,9 @@ cmake_minimum_required(VERSION 3.15)
 
 project(WindowsApiShim)
 
+#set(CMAKE_MSVC_RUNTIME_LIBRARY "")
+enable_language(ASM_MASM)
+
 # WindowsApiShimGenerator
 add_executable(WindowsApiShimGenerator)
 target_compile_features(WindowsApiShimGenerator PUBLIC cxx_std_17)
@@ -50,7 +53,6 @@ if (WIN32)
 
 # WindowsApiShim
 add_library(WindowsApiShim STATIC)
-enable_language(ASM_MASM)
 
 target_compile_features(WindowsApiShim PUBLIC cxx_std_17)
 
@@ -88,6 +90,7 @@ target_link_libraries(WindowsApiShim PUBLIC
         ApiInterface
         CaptureEventProducer
         OrbitBase
+        WindowsUtils
         minhook
         CONAN_PKG::abseil)
 

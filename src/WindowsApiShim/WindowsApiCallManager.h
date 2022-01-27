@@ -10,13 +10,13 @@
 #include <absl/synchronization/mutex.h>
 
 #include "WindowsApiShimUtils.h"
+#include "win32/manifest.h"
 
 namespace orbit_windows_api_shim {
 
 // Thread-specific Api function data.
 struct ApiFunctionData {
-  // Function name, must be a string literal.
-  const char* function_name;
+  std::string function_name;
   // Accessed only by the owning thread, no need to protect access.
   uint32_t reentry_count = 0;
   // Pointer to an atomic counter owned by the ApiFunctionCallManager.
@@ -24,7 +24,7 @@ struct ApiFunctionData {
 
   // Unique identifier for ApiFunctionData which can be used as hash map key.
   struct Key {
-    const char* function_name;  // Must be a string literal.
+    std::string function_name;
     uint32_t tid;
 
     bool operator==(const Key& key) const {
@@ -33,7 +33,7 @@ struct ApiFunctionData {
 
     struct Hash {
       size_t operator()(const Key& key) const {
-        size_t function_hash = std::hash<uint64_t>{}(absl::bit_cast<uint64_t>(key.function_name));
+        size_t function_hash = std::hash<std::string>{}(key.function_name);
         size_t tid_hash = std::hash<uint32_t>{}(key.tid);
         return function_hash * 37 + tid_hash * 37;
       }
@@ -50,7 +50,7 @@ struct ApiFunctionCallCounter {
 
 // Object used to centralize thread local data into a single TLS slot.
 struct TlsData {
-  absl::flat_hash_map<const char*, ApiFunctionData*> function_name_to_api_function_data;
+  absl::flat_hash_map<std::string, ApiFunctionData*> function_name_to_api_function_data;
   static TlsData& Get() {
     thread_local TlsData tls_data;
     return tls_data;
@@ -61,65 +61,58 @@ struct TlsData {
 class ApiFunctionCallManager {
  public:
   [[nodiscard]] static ApiFunctionCallManager& Get();
-
-  // Returns a thread local mutable reference to an "ApiFunctionData" object.Note that this the
-  // function name needs to be a string literal so that we can use its address as a key.
-  ApiFunctionData* GetTlsApiFunctionData(const char* function_name);
+  void Reset();
+  void OnFunctionCalled(uint32_t function_id) {
+    if (function_id >= api_counters_.size()) return;
+    ++api_counters_[function_id].call_count;
+  }
 
   [[nodiscard]] std::string GetSummary();
 
  private:
-  [[nodiscard]] ApiFunctionData* CreateApiFunctionData(const char* function_name,
-                                                       uint32_t thread_id);
-
-  [[nodiscard]] std::atomic<uint64_t>* GetOrCreateFunctionCallCounterForFunction(
-      const char* function_name);
-
-  absl::Mutex function_data_mutex_;
-  absl::flat_hash_map<ApiFunctionData::Key, std::unique_ptr<ApiFunctionData>,
-                      ApiFunctionData::Key::Hash>
-      key_to_api_function_data_;
-
-  absl::Mutex call_counter_mutex_;
-  absl::flat_hash_map<const char*, std::unique_ptr<ApiFunctionCallCounter>>
-      function_name_to_call_counter_;
+  std::array<ApiFunctionCallCounter, kWindowsApiFunctions.size()> api_counters_;
 };
 
 // Utility scoped object to control ApiFunctionData stats. It increments/decrements the TLS reentry
-// counter on creation/destruction and increments the global atomic function call count.
+// counter on creation/destruction and notifies the ApiFunctionCallManager of an Api function call.
 class ApiFunctionScope {
  public:
-  ApiFunctionScope(const char* function_name) {
-    thread_local bool prevent_reentry = false;
-    if (!IsTlsValid() || prevent_reentry) return;
-    prevent_reentry = true;
-    api_function_data_ = ApiFunctionCallManager::Get().GetTlsApiFunctionData(function_name);
-    ++api_function_data_->reentry_count;
-    ++(*api_function_data_->call_count_ptr);
+  ApiFunctionScope(const char* function_name, uint32_t function_id = 0) {
+    if (!IsTlsValid()) return;
+    reentry_counter_ = GetGlobalTlsReentryCounter();
+    ++(*reentry_counter_);
+    if ((*reentry_counter_) > 1) return;
+
+    ApiFunctionCallManager::Get().OnFunctionCalled(function_id);
     if (tracing_type_ == TracingType::Full) ORBIT_START(function_name);
-    prevent_reentry = false;
   }
 
   ~ApiFunctionScope() {
-    if (api_function_data_) {
-      --api_function_data_->reentry_count;
-      if (tracing_type_ == TracingType::Full) ORBIT_STOP();
-    }
+    if (reentry_counter_ == nullptr) return;
+    --(*reentry_counter_);
+    if ((*reentry_counter_) == 0 && tracing_type_ == TracingType::Full) ORBIT_STOP();
   }
 
-  [[nodiscard]] bool IsReenteringOrTlsInvalid() const {
-    return api_function_data_ == nullptr || (api_function_data_->reentry_count > 1);
+  uint32_t* GetGlobalTlsReentryCounter() {
+    thread_local uint32_t reentry_counter = 0;
+    return &reentry_counter;
   }
 
   [[nodiscard]] bool IsTracingArguments() const {
-    return (tracing_type_ == TracingType::Full) && !IsReenteringOrTlsInvalid();
+    return (tracing_type_ == TracingType::Full) && IsTlsValid();
+  }
+
+  [[nodiscard]] bool IsTracingReturnValue() const {
+    return (tracing_type_ == TracingType::Full) && IsTlsValid();
   }
 
   enum class TracingType { Full, CountOnly, None };
 
  private:
-  ApiFunctionData* api_function_data_ = nullptr;
-  TracingType tracing_type_ = TracingType::Full;
+  static constexpr uint32_t kInvalidFunctionId = -1;
+  uint32_t function_id = kInvalidFunctionId;
+  TracingType tracing_type_ = TracingType::CountOnly;
+  uint32_t* reentry_counter_ = nullptr;
 };
 
 }  // namespace orbit_windows_api_shim

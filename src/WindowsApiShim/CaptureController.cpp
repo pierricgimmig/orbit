@@ -6,18 +6,22 @@
 
 #include <MinHook.h>
 #include <absl/base/casts.h>
+#include <absl/container/flat_hash_set.h>
+#include <win32/NamespaceDispatcher.h>
 
 #include "ApiInterface/Orbit.h"
 #include "OrbitBase/GetProcAddress.h"
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/ThreadUtils.h"
+#include "WindowsApiCallManager.h"
 #include "WindowsApiShim/WindowsApiShim.h"
 #include "WindowsApiShimUtils.h"
-#include "WindowsApiCallManager.h"
-#include <win32/NamespaceDispatcher.h>
+#include "WindowsUtils/ListModules.h"
 
 ORBIT_API_INSTANTIATE;
 
 using orbit_grpc_protos::PlatformApiFunction;
+using orbit_windows_utils::Module;
 
 namespace {
 class MinHookInitializer {
@@ -66,23 +70,42 @@ bool FindShimFunction(const char* module, const char* function, void*& detour_fu
   return true;
 }
 
+absl::flat_hash_set<std::string> GetLoadedModulesSetLowerCase() {
+  std::vector<Module> modules = orbit_windows_utils::ListModules(orbit_base::GetCurrentProcessId());
+  absl::flat_hash_set<std::string> modules_set;
+  for (const Module& module : modules) {
+    // Transform to lower case and strip extension.
+    std::filesystem::path module_name = absl::AsciiStrToLower(module.name);
+    std::string lower_case_module_name_no_extension = module_name.replace_extension().string();
+    LOG("lower_case_module_name_no_extension = %s", lower_case_module_name_no_extension);
+    modules_set.insert(lower_case_module_name_no_extension);
+  }
+  return modules_set;
+}
+
 }  // namespace
 
 namespace orbit_windows_api_shim {
 
 void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture_options) {
+  capture_options_ = capture_options;
   LOG("ShimCaptureController::OnCaptureStart");
 
   // Make sure MinHook has been initialized.
   MinHookInitializer::Get();
   EnableApi(true);
 
+  absl::flat_hash_set loaded_modules_set = GetLoadedModulesSetLowerCase();
+
   // Install api hooks based on capture options.
   for (const PlatformApiFunction& api_function : capture_options.platform_api_functions()) {
     const std::string& function_key = api_function.key();
-    std::string function_name = WindowsApiHelper::GetFunctionFromFunctionKey(function_key).value();
-    std::string module = WindowsApiHelper::GetModuleFromFunctionKey(function_key).value();
 
+    // Don't try to hook into module that is not currently loaded.
+    std::string module = WindowsApiHelper::GetModuleFromFunctionKey(function_key).value();
+    if (loaded_modules_set.find(module) == loaded_modules_set.end()) continue;
+
+    std::string function_name = WindowsApiHelper::GetFunctionFromFunctionKey(function_key).value();
     void* detour_function = nullptr;
     void** original_function_relay = nullptr;
 
@@ -126,11 +149,11 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 }
 
 void CaptureController::OnCaptureStop() {
-  void* gs = GetThreadLocalStoragePointer();
   LOG("ShimCaptureController::OnCaptureStop");
-  LOG("Windows API call count report:\n%s", ApiFunctionCallManager::Get().GetSummary());
-  std::cout << "WINDOWS API CALL COUNT:\n"
-            << ApiFunctionCallManager::Get().GetSummary() << std::endl;
+  LOG("\n================\nWINDOWS API CALL COUNT REPORT:\nNum functions requested: %u\nNum "
+      "functions instrumented: %u\n%s",
+      capture_options_.platform_api_functions().size(), target_functions_.size(),
+      ApiFunctionCallManager::Get().GetSummary());
 
   // Disable all hooks on capture stop.
   for (void* target : target_functions_) {
@@ -140,6 +163,7 @@ void CaptureController::OnCaptureStop() {
   MH_ApplyQueued();
 
   EnableApi(false);
+  target_functions_.clear();
 }
 
 void CaptureController::OnCaptureFinished() { LOG("ShimCaptureController::OnCaptureFinished"); }

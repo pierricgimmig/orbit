@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <absl/container/flat_hash_map.h>
 #include <cppwin32/cmd_reader.h>
 #include <cppwin32/winmd/winmd_reader.h>
 
@@ -10,6 +11,32 @@
 #include <string_view>
 
 namespace orbit_windows_api_shim {
+
+class FunctionIdGenerator {
+ public:
+  uint32_t GetOrCreateFunctionIdFromKey(const std::string& function_key) {
+    auto it = function_name_to_id_.find(function_key);
+    if (it != function_name_to_id_.end()) return it->second;
+    uint32_t new_id = next_id_++;
+    function_name_to_id_[function_key] = new_id;
+    return new_id;
+  }
+
+  std::optional<uint32_t> GetFunctionIdFromKey(const std::string& function_key) const {
+    auto it = function_name_to_id_.find(function_key);
+    if (it == function_name_to_id_.end()) return std::nullopt;
+    return it->second;
+  }
+
+  void Reset() {
+    function_name_to_id_.clear();
+    next_id_ = 0;
+  }
+
+ private:
+  absl::flat_hash_map<std::string, uint32_t> function_name_to_id_;
+  uint32_t next_id_ = 0;
+};
 
 class MetaDataHelper {
  public:
@@ -40,6 +67,7 @@ class FileWriter {
   std::unique_ptr<winmd::reader::cache> cache_ = nullptr;
   const winmd::reader::database* win32_database_ = nullptr;
   std::unique_ptr<MetaDataHelper> win32_metadata_helper_;
+  FunctionIdGenerator function_id_generator_;
 };
 
 }  // namespace orbit_windows_api_shim

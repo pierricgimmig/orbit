@@ -570,32 +570,6 @@ namespace cppwin32
         w.write("auto % = ", signature.return_param_name());
     }
 
-    void write_orbit_instrumentation(writer &w, method_signature const &signature)
-    {
-        w.write("orbit_windows_api_shim::ApiFunctionScope orbit_scope(__FUNCTION__);\n");
-
-        if(signature.params().size()) {
-          w.write("if(orbit_scope.IsTracingArguments()) {\n");
-
-          for (auto &&[param, param_signature] : signature.params())
-          {
-              w.write("        ORBIT_TRACK_PARAM(%);\n", param.Name());
-          }
-
-          w.write("}\n");
-        }
-    }
-
-    void write_orbit_instrumentation_ret(writer &w, method_signature const &signature)
-    {
-        if (!signature.return_signature())
-        {
-            return;
-        }
-
-        w.write("ORBIT_TRACK_RET(%);", signature.return_param_name());
-    }
-
     void write_consume_return_statement(writer &w, method_signature const &signature)
     {
         if (!signature.return_signature())

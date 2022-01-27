@@ -35,6 +35,7 @@ class CaptureController : public orbit_capture_event_producer::CaptureEventProdu
 
   private:
   std::vector<void*> target_functions_;
+   orbit_grpc_protos::CaptureOptions capture_options_;
 };
 
 }  // namespace orbit_windows_api_shim
