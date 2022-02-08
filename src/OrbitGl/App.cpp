@@ -1706,7 +1706,7 @@ orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveAndLoadPlatformApiInf
   }
 
   const orbit_grpc_protos::GetPlatformApiInfoResponse& response = result.value();
-  LOG("Platform description: %s", response.platform_description());
+  ORBIT_LOG("Platform description: %s", response.platform_description());
   orbit_grpc_protos::ModuleSymbols module_symbols;
   uint32_t counter = 0;
   for (const auto& api_function : response.functions()) {
@@ -1715,18 +1715,18 @@ orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveAndLoadPlatformApiInf
     symbol_info->set_name(api_function.key());
     symbol_info->set_demangled_name(api_function.key());
     symbol_info->set_address(++counter);
-    LOG("api_function.key(): %s", api_function.key());
+    ORBIT_LOG("api_function.key(): %s", api_function.key());
   }
 
   ModuleData* module_data =
       GetMutableModuleByPathAndBuildId(orbit_grpc_protos::kWindowsApiFakeModuleName, "");
-  CHECK(module_data == module);
+  ORBIT_CHECK(module_data == module);
   module_data->AddSymbols(module_symbols);
 
   const ProcessData* selected_process = GetTargetProcess();
 
   functions_data_view_->AddFunctions(module_data->GetFunctions());
-  LOG("Added loaded function symbols for module \"%s\" to the functions tab",
+  ORBIT_LOG("Added loaded function symbols for module \"%s\" to the functions tab",
       module_data->file_path());
 
   UpdateAfterSymbolLoading();

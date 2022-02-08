@@ -77,7 +77,7 @@ absl::flat_hash_set<std::string> GetLoadedModulesSetLowerCase() {
     // Transform to lower case and strip extension.
     std::filesystem::path module_name = absl::AsciiStrToLower(module.name);
     std::string lower_case_module_name_no_extension = module_name.replace_extension().string();
-    LOG("lower_case_module_name_no_extension = %s", lower_case_module_name_no_extension);
+    ORBIT_LOG("lower_case_module_name_no_extension = %s", lower_case_module_name_no_extension);
     modules_set.insert(lower_case_module_name_no_extension);
   }
   return modules_set;
@@ -89,7 +89,7 @@ namespace orbit_windows_api_shim {
 
 void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture_options) {
   capture_options_ = capture_options;
-  LOG("ShimCaptureController::OnCaptureStart");
+  ORBIT_LOG("ShimCaptureController::OnCaptureStart");
 
   // Make sure MinHook has been initialized.
   MinHookInitializer::Get();
@@ -112,30 +112,31 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
     bool result = FindShimFunction(module.c_str(), function_name.c_str(), detour_function,
                                    original_function_relay);
     if (!result) {
-      ERROR("Could not retrieve api function information for function %s in module %s",
+      ORBIT_ERROR("Could not retrieve api function information for function %s in module %s",
             function_name, module);
       continue;
     }
 
     void* original_function = orbit_base::GetProcAddress(module, function_name);
     if (original_function == nullptr) {
-      ERROR("Could not find function \"%s\" in module \"%s\"", function_name, module);
+      ORBIT_ERROR("Could not find function \"%s\" in module \"%s\"", function_name, module);
       continue;
     }
 
     MH_STATUS hook_result =
         MH_CreateHook(original_function, detour_function, original_function_relay);
     if (hook_result != MH_OK && hook_result != MH_ERROR_ALREADY_CREATED) {
-      ERROR("Calling MH_CreateHook: %s", MH_StatusToString(hook_result));
+      ORBIT_ERROR("Calling MH_CreateHook: %s", MH_StatusToString(hook_result));
       continue;
     }
 
-    LOG("Found api function \"%d\" from module \"%s\"", function_name, module);
-    LOG("detour_function=%x, original_function_relay=%x", detour_function, original_function_relay);
+    ORBIT_LOG("Found api function \"%d\" from module \"%s\"", function_name, module);
+    ORBIT_LOG("detour_function=%x, original_function_relay=%x", detour_function,
+              original_function_relay);
 
     MH_STATUS enable_result = MH_QueueEnableHook(original_function);
     if (enable_result != MH_OK) {
-      ERROR("Calling MH_QueueEnableHook: %s", MH_StatusToString(enable_result));
+      ORBIT_ERROR("Calling MH_QueueEnableHook: %s", MH_StatusToString(enable_result));
       continue;
     }
 
@@ -144,13 +145,14 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 
   MH_STATUS queue_result = MH_ApplyQueued();
   if (queue_result != MH_OK) {
-    ERROR("Calling MH_ApplyQueued: %s", MH_StatusToString(queue_result));
+    ORBIT_ERROR("Calling MH_ApplyQueued: %s", MH_StatusToString(queue_result));
   }
 }
 
 void CaptureController::OnCaptureStop() {
-  LOG("ShimCaptureController::OnCaptureStop");
-  LOG("\n================\nWINDOWS API CALL COUNT REPORT:\nNum functions requested: %u\nNum "
+  ORBIT_LOG("ShimCaptureController::OnCaptureStop");
+  ORBIT_LOG(
+      "\n================\nWINDOWS API CALL COUNT REPORT:\nNum functions requested: %u\nNum "
       "functions instrumented: %u\n%s",
       capture_options_.platform_api_functions().size(), target_functions_.size(),
       ApiFunctionCallManager::Get().GetSummary());
@@ -166,6 +168,8 @@ void CaptureController::OnCaptureStop() {
   target_functions_.clear();
 }
 
-void CaptureController::OnCaptureFinished() { LOG("ShimCaptureController::OnCaptureFinished"); }
+void CaptureController::OnCaptureFinished() {
+  ORBIT_LOG("ShimCaptureController::OnCaptureFinished");
+}
 
 }  // namespace orbit_windows_api_shim

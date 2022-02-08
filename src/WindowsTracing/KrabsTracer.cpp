@@ -198,10 +198,10 @@ void KrabsTracer::OutputStats() {
   context_switch_manager_->OutputStats();
 }
 
-#define PRINT_VAR(x) LOG(#x " = %s", std::to_string(x))
+#define PRINT_VAR(x) ORBIT_LOG(#x " = %s", std::to_string(x))
 void KrabsTracer::OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file) { 
-  LOG("--- ETW Logfile info ---");
-  LOG("log_file.LoggerName = %s", log_file.LoggerName);
+  ORBIT_LOG("--- ETW Logfile info ---");
+  ORBIT_LOG("log_file.LoggerName = %s", log_file.LoggerName);
   PRINT_VAR(log_file.CurrentTime);
   PRINT_VAR(log_file.BuffersRead);
   PRINT_VAR(log_file.BufferSize);
@@ -224,12 +224,12 @@ void KrabsTracer::OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file) {
   PRINT_VAR(header.PointerSize);
   PRINT_VAR(header.EventsLost);
   PRINT_VAR(header.CpuSpeedInMHz);
-  LOG("header.LoggerName = %s", header.LoggerName);
-  LOG("header.LogFileName = %s", header.LogFileName);
+  ORBIT_LOG("header.LoggerName = %s", header.LoggerName);
+  ORBIT_LOG("header.LogFileName = %s", header.LogFileName);
   PRINT_VAR(header.BootTime.QuadPart);
   PRINT_VAR(header.PerfFreq.QuadPart);
   PRINT_VAR(header.StartTime.QuadPart);
-  LOG("header.ReservedFlags (ClockType) = %u", header.ReservedFlags);
+  ORBIT_LOG("header.ReservedFlags (ClockType) = %u", header.ReservedFlags);
   PRINT_VAR(header.BuffersLost);
 }
 

@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.15)
 
 project(WindowsApiShim)
 
-#set(CMAKE_MSVC_RUNTIME_LIBRARY "")
+set(CMAKE_MSVC_RUNTIME_LIBRARY "")
 enable_language(ASM_MASM)
 
 # WindowsApiShimGenerator
