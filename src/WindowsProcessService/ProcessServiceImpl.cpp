@@ -164,14 +164,14 @@ Status ProcessServiceImpl::GetDebugInfoFile(ServerContext*, const GetDebugInfoFi
   for (const WindowsApiFunction& function : kWindowsApiFunctions) {
     PlatformApiFunction* api_function = response->add_functions();
     if(function.function_key == nullptr) {
-      LOG("key == nullptr");
+      ORBIT_LOG("key == nullptr");
       continue;
     }
     api_function->set_key(function.function_key);
     api_function->set_name_space(function.name_space);
     //if (++counter >= max_entries) break;
   }
-  LOG("GetPlatformApiInfo size: %u", response->ByteSize());
+  ORBIT_LOG("GetPlatformApiInfo size: %u", response->ByteSize());
   return Status::OK;
 }
 
