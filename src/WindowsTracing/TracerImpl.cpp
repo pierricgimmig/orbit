@@ -90,7 +90,7 @@ void TracerImpl::InitializeWindowsApiTracing() {
   // TODO: properly initialize "enable_platform_api" bool.
   bool platform_api_active = capture_options_.enable_platform_api() || true;
   if(platform_api_active) {
-    auto result = InitializeWinodwsApiTracingInTarget(capture_options_.pid());
+    auto result = InitializeWindowsApiTracingInTarget(capture_options_.pid());
     if(result.has_error()) {
       ERROR("Initializing Windows Api tracing: %s", result.error().message());
     }

@@ -41,6 +41,7 @@ target_link_libraries(WindowsTracing PUBLIC
         GrpcProtos
         ObjectUtils
         OrbitBase
+        OrbitPaths
         WindowsApiShim
         WindowsUtils
         krabsetw

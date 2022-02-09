@@ -11,6 +11,7 @@
 
 #include "OrbitBase/File.h"
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/ExecutablePath.h"
 
 #ifdef _WIN32
 #include <KnownFolders.h>
@@ -142,5 +143,20 @@ std::filesystem::path CreateOrGetLogDir() {
 std::filesystem::path GetLogFilePath() {
   return CreateOrGetLogDir() / orbit_base::GetLogFileName();
 }
+
+#ifdef WIN32
+
+std::filesystem::path GetWindowsApiShimPath() {
+  constexpr const char* kWindowsApiShimDllName = "OrbitWindowsApiShim.dll";
+  return orbit_base::GetExecutableDir() / kWindowsApiShimDllName;
+}
+
+
+std::filesystem::path GetOrbitDllPath() {
+  constexpr const char* kWindowsOrbitDllName = "orbit.dll";
+  return orbit_base::GetExecutableDir() / kWindowsOrbitDllName;
+}
+
+#endif
 
 }  // namespace orbit_paths

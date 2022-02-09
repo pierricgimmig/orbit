@@ -11,7 +11,7 @@
 
 namespace orbit_windows_tracing {
 
-ErrorMessageOr<void> InitializeWinodwsApiTracingInTarget(uint32_t pid);
+ErrorMessageOr<void> InitializeWindowsApiTracingInTarget(uint32_t pid);
 
 }  // namespace orbit_windows_tracing
 
