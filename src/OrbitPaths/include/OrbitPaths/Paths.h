@@ -53,6 +53,11 @@ ErrorMessageOr<std::filesystem::path> GetPresetDirPriorTo1_66();
 [[nodiscard, deprecated]] std::filesystem::path GetCaptureDirPriorTo1_66Unsafe();
 ErrorMessageOr<std::filesystem::path> GetCaptureDirPriorTo1_66();
 
+#ifdef WIN32
+[[nodiscard]] std::filesystem::path GetWindowsApiShimPath();
+[[nodiscard]] std::filesystem::path GetOrbitDllPath();
+#endif
+
 }  // namespace orbit_paths
 
 #endif  // ORBIT_PATHS_PATHS_H_

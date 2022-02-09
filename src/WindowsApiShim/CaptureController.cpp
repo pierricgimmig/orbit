@@ -150,10 +150,12 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 }
 
 void CaptureController::OnCaptureStop() {
-  ORBIT_LOG("ShimCaptureController::OnCaptureStop");
   ORBIT_LOG(
-      "\n================\nWINDOWS API CALL COUNT REPORT:\nNum functions requested: %u\nNum "
-      "functions instrumented: %u\n%s",
+      "\n================\n"
+      "WINDOWS API CALL COUNT REPORT:\n"
+      "Num functions requested: %u\n"
+      "Num functions instrumented: %u\n"
+      "%s\n",
       capture_options_.platform_api_functions().size(), target_functions_.size(),
       ApiFunctionCallManager::Get().GetSummary());
 

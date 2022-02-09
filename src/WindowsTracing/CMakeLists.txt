@@ -47,6 +47,7 @@ target_link_libraries(WindowsTracing PUBLIC
         ObjectUtils
         OrbitBase
         PresentMon
+        OrbitPaths
         WindowsApiShim
         WindowsUtils
         krabsetw
