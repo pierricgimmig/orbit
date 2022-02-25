@@ -33,7 +33,9 @@ target_sources(
   ObjectUtils
   PRIVATE PdbFileDia.h
           PdbFileDia.cpp
-          PdbUtilsDia.cpp)
+          PdbUtilsDia.cpp
+          PdbFileRaw.h
+          PdbFileRaw.cpp)
 target_sources(
   ObjectUtils
   PUBLIC include/ObjectUtils/PdbUtilsDia.h)
@@ -50,7 +52,10 @@ target_link_libraries(
          CONAN_PKG::llvm-core)
 
 if (WIN32)
-target_link_libraries(ObjectUtils PUBLIC DIASDK::DIASDK)
+target_link_libraries(
+  ObjectUtils 
+  PUBLIC DIASDK::DIASDK
+         raw_pdb)
 
 add_custom_command(TARGET ObjectUtils POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${DIASDK_DLL} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
@@ -67,9 +72,19 @@ target_sources(ObjectUtilsTests PRIVATE
         SymbolsFileTest.cpp
         WindowsBuildIdUtilsTest.cpp)
 
+<<<<<<< HEAD
 if (WIN32)
 target_sources(ObjectUtilsTests PRIVATE
         PdbFileDiaTest.cpp)
+=======
+if (NOT WIN32)
+target_sources(ObjectUtilsTests PRIVATE 
+        LinuxMapTest.cpp)
+else()
+target_sources(ObjectUtilsTests PRIVATE 
+        PdbFileDiaTest.cpp 
+        PdbFileRawTest.cpp)
+>>>>>>> f78e360d9 (Integrate raw_pdb as new pdb parser on Windows)
 endif()
 
 target_link_libraries(
