@@ -36,7 +36,9 @@ else()
 target_sources(
   ObjectUtils
   PRIVATE PdbFileDia.h
-          PdbFileDia.cpp)
+          PdbFileDia.cpp
+          PdbFileRaw.h
+          PdbFileRaw.cpp)
 endif()
 
 target_include_directories(ObjectUtils PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include)
@@ -49,7 +51,10 @@ target_link_libraries(
          CONAN_PKG::llvm-core)
 
 if (WIN32)
-target_link_libraries(ObjectUtils PUBLIC DIASDK::DIASDK)
+target_link_libraries(
+  ObjectUtils 
+  PUBLIC DIASDK::DIASDK
+         raw_pdb)
 
 add_custom_command(TARGET ObjectUtils POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${DIASDK_DLL} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
@@ -69,9 +74,12 @@ target_sources(ObjectUtilsTests PRIVATE
 )
 
 if (NOT WIN32)
-target_sources(ObjectUtilsTests PRIVATE LinuxMapTest.cpp)
+target_sources(ObjectUtilsTests PRIVATE 
+        LinuxMapTest.cpp)
 else()
-target_sources(ObjectUtilsTests PRIVATE PdbFileDiaTest.cpp)
+target_sources(ObjectUtilsTests PRIVATE 
+        PdbFileDiaTest.cpp 
+        PdbFileRawTest.cpp)
 endif()
 
 target_link_libraries(
