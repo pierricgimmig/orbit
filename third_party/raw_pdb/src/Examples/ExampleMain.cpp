@@ -77,12 +77,17 @@ namespace
 // declare all examples
 extern void ExampleSymbols(const PDB::RawFile&, const PDB::DBIStream&);
 extern void ExampleContributions(const PDB::RawFile&, const PDB::DBIStream&);
+extern void ExampleFunctionSymbols(const PDB::RawFile&, const PDB::DBIStream&);
 
 
 int main(void)
 {
-	const wchar_t* const pdbPath = LR"(C:\Qt\5.15.2\msvc2019\bin\Qt5WebEngineCored.pdb)";
-	
+#ifdef _DEBUG
+	const wchar_t* const pdbPath = LR"(..\bin\x64\Debug\Examples.pdb)";
+#else
+	const wchar_t* const pdbPath = LR"(..\bin\x64\Release\Examples.pdb)";
+#endif
+
 	printf("Opening PDB file %ls\n", pdbPath);
 
 	// try to open the PDB file and check whether all the data we need is available
@@ -118,6 +123,7 @@ int main(void)
 	// run all examples
 	ExampleContributions(rawPdbFile, dbiStream);
 	ExampleSymbols(rawPdbFile, dbiStream);
+	ExampleFunctionSymbols(rawPdbFile, dbiStream);
 
 	MemoryMappedFile::Close(pdbFile);
 
