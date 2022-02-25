@@ -1,11 +1,15 @@
 project(Examples)
 
 set(SOURCES
+    ExampleContributions.cpp
+    ExampleMain.cpp
     ExampleMemoryMappedFile.cpp
     ExampleMemoryMappedFile.h
     ExampleSymbols.cpp
     Examples_PCH.cpp
     Examples_PCH.h
+    ExampleTimedScope.cpp
+    ExampleTimedScope.h
 )
 
 source_group(src FILES
