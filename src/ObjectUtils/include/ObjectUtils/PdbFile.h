@@ -24,8 +24,15 @@ class PdbFile : public SymbolsFile {
   [[nodiscard]] virtual uint32_t GetAge() const = 0;
 };
 
+enum class PdbParser {
+    Llvm, Dia, Raw
+};
+
 ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFile(const std::filesystem::path& file_path,
                                                        const ObjectFileInfo& object_file_info);
+
+ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFile(const std::filesystem::path& file_path,
+                                                       const ObjectFileInfo& object_file_info, PdbParser parser);
 
 }  // namespace orbit_object_utils
 

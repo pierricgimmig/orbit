@@ -94,3 +94,18 @@ register_test(ObjectUtilsTests)
 
 add_fuzzer(ElfFileLoadSymbolsFuzzer ElfFileLoadSymbolsFuzzer.cpp)
 target_link_libraries(ElfFileLoadSymbolsFuzzer FuzzingUtils ObjectUtils)
+
+if (WIN32) 
+add_executable(PdbBenchmark)
+
+target_sources(PdbBenchmark PRIVATE
+        PdbBenchmarkMain.cpp
+)
+
+target_link_libraries(
+  PdbBenchmark
+  PRIVATE ObjectUtils
+          CONAN_PKG::llvm-core
+          CONAN_PKG::abseil)
+
+endif()
