@@ -81,9 +81,9 @@ class SymbolInfoVisitor : public llvm::codeview::SymbolVisitorCallbacks {
     // on any simple type. So we check for all simple types here, instead of only for "<no type>".
     if (proc.FunctionType.isSimple()) {
       llvm::StringRef function_type = type_collection.getTypeName(proc.FunctionType);
-      ORBIT_ERROR(
+      /*ORBIT_ERROR(
           "Unable to retrieve parameter list for function \"%s\"; The function type is \"%s\"",
-          proc.Name.data(), function_type.data());
+          proc.Name.data(), function_type.data());*/
       return "";
     }
 
@@ -95,10 +95,10 @@ class SymbolInfoVisitor : public llvm::codeview::SymbolVisitorCallbacks {
             llvm::codeview::TypeDeserializer::deserializeAs<llvm::codeview::ProcedureRecord>(
                 function_type, procedure_record);
         if (error) {
-          ORBIT_ERROR(
+          /*ORBIT_ERROR(
               "Unable to retrieve parameter list for function \"%s\"; The function is of type "
               "\"LF_PROCEDURE\", but we can not deserialize it to a \"ProcedureRecord\".",
-              proc.Name.data());
+              proc.Name.data());*/
           return "";
         }
 
@@ -111,10 +111,10 @@ class SymbolInfoVisitor : public llvm::codeview::SymbolVisitorCallbacks {
             llvm::codeview::TypeDeserializer::deserializeAs<llvm::codeview::MemberFunctionRecord>(
                 function_type, member_function_record);
         if (error) {
-          ORBIT_ERROR(
+          /*ORBIT_ERROR(
               "Unable to retrieve parameter list for function \"%s\"; The function is of type "
               "\"LF_MFUNCTION\", but we can not deserialize it to a \"MemberFunctionRecord\".",
-              proc.Name.data());
+              proc.Name.data());*/
           return "";
         }
 

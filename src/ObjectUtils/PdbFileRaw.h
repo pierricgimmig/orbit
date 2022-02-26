@@ -5,7 +5,6 @@
 #ifndef OBJECT_UTILS_PDB_FILE_RAW_H_
 #define OBJECT_UTILS_PDB_FILE_RAW_H_
 
-
 #include <array>
 #include <filesystem>
 #include <string>
@@ -15,6 +14,8 @@
 #include "ObjectUtils/SymbolsFile.h"
 #include "ObjectUtils/WindowsBuildIdUtils.h"
 #include "OrbitBase/Result.h"
+#include "PDB_DBIStream.h"
+#include "PDB_RawFile.h"
 
 namespace orbit_object_utils {
 
@@ -36,6 +37,8 @@ class PdbFileRaw : public PdbFile {
  private:
   PdbFileRaw(std::filesystem::path file_path, const ObjectFileInfo& object_file_info);
   ErrorMessageOr<void> RetrieveAgeAndGuid();
+  ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> RetrieveFunctionSymbols(
+      const PDB::RawFile& raw_pdb_file, const PDB::DBIStream& dbi_stream);
 
   std::filesystem::path file_path_;
   std::wstring pdb_file_path_w_;

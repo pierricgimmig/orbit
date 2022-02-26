@@ -2,6 +2,7 @@ project(Examples)
 
 set(SOURCES
     ExampleContributions.cpp
+    ExampleFunctionSymbols.cpp
     ExampleMain.cpp
     ExampleMemoryMappedFile.cpp
     ExampleMemoryMappedFile.h
