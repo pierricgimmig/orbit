@@ -5,6 +5,8 @@
 #ifndef OBJECT_UTILS_SYMBOLS_FILE_H_
 #define OBJECT_UTILS_SYMBOLS_FILE_H_
 
+#include <llvm/Demangle/Demangle.h>
+
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -23,6 +25,23 @@ struct ObjectFileInfo {
   uint64_t executable_segment_offset = 0;
 };
 
+struct FunctionSymbol {
+  std::string name;
+  std::string demangled_name;
+  uint32_t rva;
+  uint32_t size;
+};
+
+struct DebugSymbols {
+  DebugSymbols() = default;
+  DebugSymbols(DebugSymbols&& debug_symbols) = default;
+  DebugSymbols& operator=(DebugSymbols&& debug_symbols) = default;
+
+  std::string symbols_file_path;
+  uint64_t load_bias;
+  std::vector<FunctionSymbol> function_symbols;
+};
+
 class SymbolsFile {
  public:
   SymbolsFile() = default;
@@ -30,12 +49,22 @@ class SymbolsFile {
 
   // For ELF files, the string returned by GetBuildId() is the standard build id that can be found
   // in the .note.gnu.build-id section, formatted as a human readable string.
-  // PE/COFF object files are uniquely identfied by the PDB debug info consisting of a GUID and age.
-  // The build id is formed from these to provide a string that uniquely identifies this object file
-  // and the corresponding PDB debug info. The build id for PDB files is formed in the same way.
+  // PE/COFF object files are uniquely identified by the PDB debug info consisting of a GUID and
+  // age. The build id is formed from these to provide a string that uniquely identifies this object
+  // file and the corresponding PDB debug info. The build id for PDB files is formed in the same
+  // way.
   [[nodiscard]] virtual std::string GetBuildId() const = 0;
-  [[nodiscard]] virtual ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() = 0;
+
   [[nodiscard]] virtual const std::filesystem::path& GetFilePath() const = 0;
+
+  [[nodiscard]] virtual ErrorMessageOr<DebugSymbols> LoadDebugSymbolsInternal() = 0;
+
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols(
+      google::protobuf::Arena* arena);
+
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() {
+    return LoadDebugSymbols(nullptr);
+  };
 };
 
 // Create a symbols file from the file at symbol_file_path. Additional info about the corresponding

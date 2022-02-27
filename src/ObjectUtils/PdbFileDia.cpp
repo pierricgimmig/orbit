@@ -81,7 +81,7 @@ ErrorMessageOr<void> PdbFileDia::LoadDataForPDB() {
   return outcome::success();
 }
 
-ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() {
+ErrorMessageOr<DebugSymbols> PdbFileDia::LoadDebugSymbolsInternal() {
   HRESULT result = 0;
   CComPtr<IDiaEnumSymbols> dia_enum_symbols;
   result = dia_global_scope_symbol_->findChildren(SymTagFunction, NULL, nsNone, &dia_enum_symbols);
@@ -90,9 +90,10 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() 
         absl::StrFormat("findChildren failed for %s (%u)", file_path_.string(), result)};
   }
 
-  ModuleSymbols module_symbols;
-  module_symbols.set_load_bias(object_file_info_.load_bias);
-  module_symbols.set_symbols_file_path(file_path_.string());
+  DebugSymbols debug_symbols;
+  debug_symbols.symbols_file_path = file_path_.string();
+  debug_symbols.load_bias = object_file_info_.load_bias;
+
   IDiaSymbol* dia_symbol = nullptr;
   ULONG celt = 0;
 
@@ -102,23 +103,24 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() 
 
     BSTR function_name = {};
     if (dia_symbol->get_name(&function_name) != S_OK) continue;
+
+    FunctionSymbol& function_symbol = debug_symbols.function_symbols.emplace_back();
+
+    // Todo: wstring to string conversion.
     std::wstring name(function_name);
-    symbol_info.set_name(std::string(name.begin(), name.end()));
-    symbol_info.set_demangled_name(llvm::demangle(symbol_info.name()));
+    function_symbol.name = std::string(name.begin(), name.end());
     SysFreeString(function_name);
 
     DWORD relative_virtual_address = 0;
     if (dia_symbol->get_relativeVirtualAddress(&relative_virtual_address) != S_OK) continue;
-    symbol_info.set_address(relative_virtual_address + object_file_info_.load_bias);
+    function_symbol.rva = relative_virtual_address + object_file_info_.load_bias;
 
     ULONGLONG length = 0;
     if (dia_symbol->get_length(&length) != S_OK) continue;
-    symbol_info.set_size(length);
-
-    *module_symbols.add_symbol_infos() = std::move(symbol_info);
+    function_symbol.size = length;
   }
 
-  return module_symbols;
+  return debug_symbols;
 }
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> PdbFileDia::CreatePdbFile(

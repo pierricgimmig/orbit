@@ -21,7 +21,7 @@ namespace orbit_object_utils {
 
 class PdbFileRaw : public PdbFile {
  public:
-  ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() override;
+  ErrorMessageOr<DebugSymbols> PdbFileRaw::LoadDebugSymbolsInternal() override;
 
   [[nodiscard]] const std::filesystem::path& GetFilePath() const override { return file_path_; }
 
@@ -37,8 +37,7 @@ class PdbFileRaw : public PdbFile {
  private:
   PdbFileRaw(std::filesystem::path file_path, const ObjectFileInfo& object_file_info);
   ErrorMessageOr<void> RetrieveAgeAndGuid();
-  ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> RetrieveFunctionSymbols(
-      const PDB::RawFile& raw_pdb_file, const PDB::DBIStream& dbi_stream);
+  static void SetDemangledNames(orbit_grpc_protos::ModuleSymbols* module_symbols);
 
   std::filesystem::path file_path_;
   std::wstring pdb_file_path_w_;
