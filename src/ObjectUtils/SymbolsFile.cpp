@@ -54,4 +54,35 @@ ErrorMessageOr<std::unique_ptr<SymbolsFile>> CreateSymbolsFile(
   return ErrorMessage{error_message};
 }
 
+static void DemangleSymbols(std::vector<FunctionSymbol>& function_symbols) {
+  for (FunctionSymbol& function_symbol : function_symbols) {
+    if (function_symbol.demangled_name.empty()) {
+      function_symbol.demangled_name = llvm::demangle(function_symbol.name);
+    }
+  }
+}
+
+ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> SymbolsFile::LoadDebugSymbols(
+    google::protobuf::Arena* arena) {
+  OUTCOME_TRY(DebugSymbols debug_symbols, LoadDebugSymbolsInternal());
+  DemangleSymbols(debug_symbols.function_symbols);
+
+  orbit_grpc_protos::ModuleSymbols* module_symbols =
+      google::protobuf::Arena::Create<orbit_grpc_protos::ModuleSymbols>(arena);
+  module_symbols->set_load_bias(debug_symbols.load_bias);
+  module_symbols->set_symbols_file_path(debug_symbols.symbols_file_path);
+
+  std::vector<FunctionSymbol>& function_symbols = debug_symbols.function_symbols;
+  auto* symbol_infos = module_symbols->mutable_symbol_infos();
+  symbol_infos->Reserve(function_symbols.size());
+
+  for (FunctionSymbol& function_symbol : function_symbols) {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols->add_symbol_infos();
+    symbol_info->set_name(std::move(function_symbol.name));
+    symbol_info->set_demangled_name(std::move(function_symbol.demangled_name));
+    symbol_info->set_address(function_symbol.rva + debug_symbols.load_bias);
+    symbol_info->set_size(function_symbol.size);
+  }
+}
+
 }  // namespace orbit_object_utils

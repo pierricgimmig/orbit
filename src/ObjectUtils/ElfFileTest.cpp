@@ -22,6 +22,13 @@
 #include "absl/strings/str_format.h"
 
 using orbit_grpc_protos::SymbolInfo;
+<<<<<<< HEAD
+=======
+using orbit_object_utils::CreateElfFile;
+using orbit_object_utils::CreateElfFileFromBuffer;
+using orbit_object_utils::ElfFile;
+using orbit_object_utils::FunctionSymbol;
+>>>>>>> 0a276442d (Extract proto creation out of debug symbol parsing)
 using orbit_test_utils::HasError;
 using orbit_test_utils::HasNoError;
 
@@ -80,8 +87,7 @@ TEST(ElfFile, LoadSymbolsFromDynsym) {
   const auto symbols_result = elf_file->LoadSymbolsFromDynsym();
   ASSERT_THAT(symbols_result, HasNoError());
 
-  std::vector<SymbolInfo> symbol_infos(symbols_result.value().symbol_infos().begin(),
-                                       symbols_result.value().symbol_infos().end());
+  const std::vector<FunctionSymbol>& symbol_infos = symbols_result.value().function_symbols;
   EXPECT_EQ(symbol_infos.size(), 8);
 
   SymbolInfo& symbol_info = symbol_infos[7];

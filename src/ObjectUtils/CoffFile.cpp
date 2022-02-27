@@ -36,6 +36,7 @@ class CoffFileImpl : public CoffFile {
                llvm::object::OwningBinary<llvm::object::ObjectFile>&& owning_binary);
 
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() override;
+  [[nodiscard]] ErrorMessageOr<DebugSymbols> LoadDebugSymbolsInternal() override;
   [[nodiscard]] bool HasDebugSymbols() const override;
   [[nodiscard]] std::string GetName() const override;
   [[nodiscard]] const std::filesystem::path& GetFilePath() const override;
@@ -194,6 +195,11 @@ void CoffFileImpl::AddNewDebugSymbolsFromCoffSymbolTable(
                        std::make_move_iterator(new_symbol_infos.end()));
 }
 
+/*
+static void FillDebugSymbolsFromDWARF(llvm::DWARFContext* dwarf_context,
+                                      DebugSymbols* debug_symbols) {
+*/
+
 void FillDebugSymbolsFromDwarf(llvm::DWARFContext* dwarf_context,
                                std::vector<SymbolInfo>* symbol_infos) {
   for (const auto& info_section : dwarf_context->compile_units()) {
@@ -217,6 +223,13 @@ void FillDebugSymbolsFromDwarf(llvm::DWARFContext* dwarf_context,
         symbol_info.set_demangled_name(llvm::demangle(name));
         symbol_info.set_address(low_pc);
         symbol_info.set_size(high_pc - low_pc);
+
+        /*
+        FunctionSymbol& function_symbol = debug_symbols->function_symbols.emplace_back();
+        function_symbol.name = name;
+        function_symbol.rva = low_pc;
+        function_symbol.size = high_pc - low_pc;
+        */
       }
     }
   }
@@ -283,6 +296,26 @@ ErrorMessageOr<ModuleSymbols> CoffFileImpl::LoadDebugSymbols() {
     *module_symbols.add_symbol_infos() = std::move(symbol_info);
   }
   return module_symbols;
+}
+
+ErrorMessageOr<DebugSymbols> CoffFileImpl::LoadDebugSymbolsInternal() {
+  const auto dwarf_context = llvm::DWARFContext::create(*owning_binary_.getBinary());
+  if (dwarf_context == nullptr) {
+    return ErrorMessage("Could not create DWARF context.");
+  }
+
+  DebugSymbols debug_symbols;
+  debug_symbols.symbols_file_path = file_path_.string();
+  // debug_symbols.load_bias = object_file_info_.load_bias;
+
+  FillDebugSymbolsFromDWARF(dwarf_context.get(), &debug_symbols);
+
+  if (debug_symbols.function_symbols.empty()) {
+    return ErrorMessage(
+        "Unable to load symbols from object file, not even a single symbol of "
+        "type function found.");
+  }
+  return debug_symbols;
 }
 
 bool CoffFileImpl::HasDebugSymbols() const { return has_debug_info_ && !AreDebugSymbolsEmpty(); }

@@ -31,8 +31,12 @@ PdbFileRaw::PdbFileRaw(std::filesystem::path file_path, const ObjectFileInfo& ob
   pdb_file_path_w_ = std::wstring(pdb_file_path.begin(), pdb_file_path.end());
 }
 
-ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::LoadDebugSymbols() {
-  //ORBIT_SCOPED_TIMED_LOG("PdbFileRaw::LoadDebugSymbols");
+ErrorMessageOr<DebugSymbols> PdbFileRaw::LoadDebugSymbolsInternal()
+{
+  // ORBIT_SCOPED_TIMED_LOG("PdbFileRaw::LoadDebugSymbols");
+  DebugSymbols debug_symbols;
+  debug_symbols.symbols_file_path = file_path_.string();
+  debug_symbols.load_bias = object_file_info_.load_bias;
 
   MemoryMappedFile::Handle raw_pdb_file_handle_ = MemoryMappedFile::Open(pdb_file_path_w_.c_str());
   if (raw_pdb_file_handle_.baseAddress == nullptr) {
@@ -65,74 +69,31 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::LoadDebugSymbols() 
     return ErrorMessage("DBI stream has invalid section contribution stream");
   }
 
-  return RetrieveFunctionSymbols(raw_pdb_file_, dbi_stream);
-}
-
-ErrorMessageOr<void> PdbFileRaw::RetrieveAgeAndGuid() {
-  //ORBIT_SCOPED_TIMED_LOG("PdbFileRaw::RetrieveAgeAndGuid");
-
-  MemoryMappedFile::Handle raw_pdb_file_handle = MemoryMappedFile::Open(pdb_file_path_w_.c_str());
-  if (raw_pdb_file_handle.baseAddress == nullptr) {
-    return ErrorMessage("Could not create memory mapped pdb file.");
-  }
-
-  orbit_base::unique_resource pdb_file_closer(raw_pdb_file_handle, MemoryMappedFile::Close);
-
-  if (PDB::ValidateFile(raw_pdb_file_handle.baseAddress) != PDB::ErrorCode::Success) {
-    return ErrorMessage("Failed raw_pdb file validation");
-  }
-
-  PDB::RawFile raw_pdb_file_ = PDB::CreateRawFile(raw_pdb_file_handle.baseAddress);
-  PDB::InfoStream pdb_info_stream(raw_pdb_file_);
-  age_ = pdb_info_stream.GetHeader()->age;
-  static_assert(sizeof(guid_) == sizeof(GUID));
-  std::memcpy(guid_.data(), &pdb_info_stream.GetHeader()->guid, sizeof(GUID));
-
-  return outcome::success();
-}
-
-namespace {
-// in this example, we are only interested in function symbols: function name, RVA, and size.
-// this is what most profilers need, they aren't interested in any other data.
-struct FunctionSymbol {
-  std::string name;
-  uint32_t rva;
-  uint32_t size;
-};
-}  // namespace
-
-ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSymbols(
-    const PDB::RawFile& raw_pdb_file, const PDB::DBIStream& dbi_stream) {
-  ModuleSymbols module_symbols;
-  module_symbols.set_load_bias(object_file_info_.load_bias);
-  module_symbols.set_symbols_file_path(file_path_.string());
-  //ORBIT_SCOPED_TIMED_LOG("PdbFileRaw::RetrieveFunctionSymbols");
-
-  // in order to keep the example easy to understand, we load the PDB data serially.
+    // in order to keep the example easy to understand, we load the PDB data serially.
   // note that this can be improved a lot by reading streams concurrently.
 
   // prepare the image section stream first. it is needed for converting section + offset into an
   // RVA
   const PDB::ImageSectionStream imageSectionStream =
-      dbi_stream.CreateImageSectionStream(raw_pdb_file);
+      dbi_stream.CreateImageSectionStream(raw_pdb_file_);
 
   // prepare the module info stream for grabbing function symbols from modules
-  const PDB::ModuleInfoStream moduleInfoStream = dbi_stream.CreateModuleInfoStream(raw_pdb_file);
+  const PDB::ModuleInfoStream moduleInfoStream = dbi_stream.CreateModuleInfoStream(raw_pdb_file_);
 
   // prepare symbol record stream needed by the public stream
   const PDB::CoalescedMSFStream symbolRecordStream =
-      dbi_stream.CreateSymbolRecordStream(raw_pdb_file);
+      dbi_stream.CreateSymbolRecordStream(raw_pdb_file_);
 
   // note that we only use unordered_set in order to keep the example code easy to understand.
   // using other hash set implementations like e.g. abseil's Swiss Tables
   // (https://abseil.io/about/design/swisstables) is *much* faster.
-  std::vector<FunctionSymbol> functionSymbols;
+  std::vector<FunctionSymbol>& functionSymbols = debug_symbols.function_symbols;
   std::unordered_set<uint32_t> seenFunctionRVAs;
 
   // start by reading the module stream, grabbing every function symbol we can find.
   // in most cases, this gives us ~90% of all function symbols already, along with their size.
   {
-    //ORBIT_SCOPED_TIMED_LOG("Storing function symbols from modules");
+    // ORBIT_SCOPED_TIMED_LOG("Storing function symbols from modules");
 
     const PDB::ArrayView<PDB::ModuleInfoStream::Module> modules = moduleInfoStream.GetModules();
 
@@ -141,7 +102,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
         continue;
       }
 
-      const PDB::ModuleSymbolStream moduleSymbolStream = module.CreateSymbolStream(raw_pdb_file);
+      const PDB::ModuleSymbolStream moduleSymbolStream = module.CreateSymbolStream(raw_pdb_file_);
       moduleSymbolStream.ForEachSymbol([&functionSymbols, &seenFunctionRVAs, &imageSectionStream](
                                            const PDB::CodeView::DBI::Record* record) {
         // only grab function symbols from the module streams
@@ -192,7 +153,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
           return;
         }
 
-        functionSymbols.push_back(FunctionSymbol{name, rva, size});
+        functionSymbols.push_back(FunctionSymbol{name, "",  rva, size});
         seenFunctionRVAs.emplace(rva);
       });
     }
@@ -206,9 +167,9 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
 
   // read public symbols
   const PDB::PublicSymbolStream publicSymbolStream =
-      dbi_stream.CreatePublicSymbolStream(raw_pdb_file);
+      dbi_stream.CreatePublicSymbolStream(raw_pdb_file_);
   {
-    //ORBIT_SCOPED_TIMED_LOG("Storing public function symbols");
+    // ORBIT_SCOPED_TIMED_LOG("Storing public function symbols");
 
     const PDB::ArrayView<PDB::HashRecord> hashRecords = publicSymbolStream.GetRecords();
     const size_t count = hashRecords.GetLength();
@@ -238,7 +199,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
 
       // this is a new function symbol, so store it.
       // note that we don't know its size yet.
-      functionSymbols.push_back(FunctionSymbol{record->data.S_PUB32.name, rva, 0u});
+      functionSymbols.push_back(FunctionSymbol{record->data.S_PUB32.name, "", rva, 0u});
     }
   }
 
@@ -246,7 +207,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
   // this can be deduced by sorting the symbols by their RVA, and then computing the distance
   // between the current and the next symbol. this works since functions are always mapped to
   // executable pages, so they aren't interleaved by any data symbols.
-  //ORBIT_SCOPED_TIMED_LOG("std::sort function symbols");
+  // ORBIT_SCOPED_TIMED_LOG("std::sort function symbols");
   {
     std::sort(
         functionSymbols.begin(), functionSymbols.end(),
@@ -255,7 +216,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
 
   const size_t symbolCount = functionSymbols.size();
   if (symbolCount != 0u) {
-    //ORBIT_SCOPED_TIMED_LOG("Computing function symbol sizes");
+    // ORBIT_SCOPED_TIMED_LOG("Computing function symbol sizes");
 
     size_t foundCount = 0u;
 
@@ -283,7 +244,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
       // bad luck, we can't deduce the last symbol's size, so have to consult the contributions
       // instead. we do a linear search in this case to keep the code simple.
       const PDB::SectionContributionStream sectionContributionStream =
-          dbi_stream.CreateSectionContributionStream(raw_pdb_file);
+          dbi_stream.CreateSectionContributionStream(raw_pdb_file_);
       const PDB::ArrayView<PDB::DBI::SectionContribution> sectionContributions =
           sectionContributionStream.GetContributions();
       for (const PDB::DBI::SectionContribution& contribution : sectionContributions) {
@@ -309,18 +270,36 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileRaw::RetrieveFunctionSym
     }
   }
 
-  {
-    //ORBIT_SCOPED_TIMED_LOG("Creating SymbolInfo objects");
-    for (FunctionSymbol& function_symbol : functionSymbols) {
-      SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
-      symbol_info->set_name(std::move(function_symbol.name));
-      symbol_info->set_demangled_name(llvm::demangle(symbol_info->name()));
-      symbol_info->set_address(function_symbol.rva + object_file_info_.load_bias);
-      symbol_info->set_size(function_symbol.size);
-    }
+  return debug_symbols;
+}
+
+ErrorMessageOr<void> PdbFileRaw::RetrieveAgeAndGuid() {
+  // ORBIT_SCOPED_TIMED_LOG("PdbFileRaw::RetrieveAgeAndGuid");
+
+  MemoryMappedFile::Handle raw_pdb_file_handle = MemoryMappedFile::Open(pdb_file_path_w_.c_str());
+  if (raw_pdb_file_handle.baseAddress == nullptr) {
+    return ErrorMessage("Could not create memory mapped pdb file.");
   }
 
-  return module_symbols;
+  orbit_base::unique_resource pdb_file_closer(raw_pdb_file_handle, MemoryMappedFile::Close);
+
+  if (PDB::ValidateFile(raw_pdb_file_handle.baseAddress) != PDB::ErrorCode::Success) {
+    return ErrorMessage("Failed raw_pdb file validation");
+  }
+
+  PDB::RawFile raw_pdb_file_ = PDB::CreateRawFile(raw_pdb_file_handle.baseAddress);
+  PDB::InfoStream pdb_info_stream(raw_pdb_file_);
+  age_ = pdb_info_stream.GetHeader()->age;
+  static_assert(sizeof(guid_) == sizeof(GUID));
+  std::memcpy(guid_.data(), &pdb_info_stream.GetHeader()->guid, sizeof(GUID));
+
+  return outcome::success();
+}
+
+void PdbFileRaw::SetDemangledNames(orbit_grpc_protos::ModuleSymbols* module_symbols) {
+  for (SymbolInfo& symbol_info : *module_symbols->mutable_symbol_infos()) {
+    symbol_info.set_demangled_name(llvm::demangle(symbol_info.name()));
+  }
 }
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> PdbFileRaw::CreatePdbFile(

@@ -62,8 +62,8 @@ class ElfFileImpl : public ElfFile {
   ErrorMessageOr<void> Initialize();
 
   // Loads symbols from the .symtab section.
-  [[nodiscard]] ErrorMessageOr<ModuleSymbols> LoadDebugSymbols() override;
-  [[nodiscard]] ErrorMessageOr<ModuleSymbols> LoadSymbolsFromDynsym() override;
+  [[nodiscard]] ErrorMessageOr<DebugSymbols> LoadDebugSymbolsInternal() override;
+  [[nodiscard]] ErrorMessageOr<DebugSymbols> LoadSymbolsFromDynsym() override;
   [[nodiscard]] uint64_t GetLoadBias() const override;
   [[nodiscard]] uint64_t GetExecutableSegmentOffset() const override;
   [[nodiscard]] uint64_t GetImageSize() const override;
@@ -90,7 +90,7 @@ class ElfFileImpl : public ElfFile {
   ErrorMessageOr<void> InitSections();
   ErrorMessageOr<void> InitProgramHeaders();
   ErrorMessageOr<void> InitDynamicEntries();
-  ErrorMessageOr<SymbolInfo> CreateSymbolInfo(const llvm::object::ELFSymbolRef& symbol_ref);
+  ErrorMessageOr<FunctionSymbol> CreateSymbolInfo(const llvm::object::ELFSymbolRef& symbol_ref);
 
   const std::filesystem::path file_path_;
   llvm::object::OwningBinary<llvm::object::ObjectFile> owning_binary_;
@@ -325,7 +325,7 @@ ErrorMessageOr<void> ElfFileImpl<ElfT>::InitSections() {
 }
 
 template <typename ElfT>
-ErrorMessageOr<SymbolInfo> ElfFileImpl<ElfT>::CreateSymbolInfo(
+ErrorMessageOr<FunctionSymbol> ElfFileImpl<ElfT>::CreateSymbolInfo(
     const llvm::object::ELFSymbolRef& symbol_ref) {
   std::string name;
   if (auto maybe_name = symbol_ref.getName(); maybe_name) name = maybe_name.get().str();
@@ -363,52 +363,63 @@ ErrorMessageOr<SymbolInfo> ElfFileImpl<ElfT>::CreateSymbolInfo(
                                         name, file_path_.string()));
   }
 
-  SymbolInfo symbol_info;
-  symbol_info.set_demangled_name(llvm::demangle(name));
-  symbol_info.set_address(maybe_value.get());
-  symbol_info.set_size(symbol_ref.getSize());
-  return symbol_info;
+  // SymbolInfo symbol_info;
+  // symbol_info.set_demangled_name(llvm::demangle(name));
+  // symbol_info.set_address(maybe_value.get());
+  // symbol_info.set_size(symbol_ref.getSize());
+  // return symbol_info;
+  FunctionSymbol function_symbol;
+  function_symbol.name = name;
+  function_symbol.rva = maybe_value.get();
+  function_symbol.size = symbol_ref.getSize();
+  return function_symbol;
 }
 
 template <typename ElfT>
-ErrorMessageOr<ModuleSymbols> ElfFileImpl<ElfT>::LoadDebugSymbols() {
+ErrorMessageOr<DebugSymbols> ElfFileImpl<ElfT>::LoadDebugSymbolsInternal() {
   if (!has_symtab_section_) {
     return ErrorMessage("ELF file does not have a .symtab section.");
   }
 
   ModuleSymbols module_symbols;
+  DebugSymbols debug_symbols;
+  debug_symbols.symbols_file_path = file_path_.string();
+  debug_symbols.load_bias = load_bias_;
 
   for (const llvm::object::ELFSymbolRef& symbol_ref : object_file_->symbols()) {
     auto symbol_or_error = CreateSymbolInfo(symbol_ref);
     if (symbol_or_error.has_value()) {
-      *module_symbols.add_symbol_infos() = std::move(symbol_or_error.value());
+      debug_symbols.function_symbols.emplace_back(std::move(symbol_or_error.value()));
     }
   }
 
-  if (module_symbols.symbol_infos_size() == 0) {
+  if (debug_symbols.function_symbols.empty()) {
     return ErrorMessage(
         "Unable to load symbols from ELF file, not even a single symbol of "
         "type function found.");
   }
-  return module_symbols;
+  return debug_symbols;
 }
 
 template <typename ElfT>
-ErrorMessageOr<ModuleSymbols> ElfFileImpl<ElfT>::LoadSymbolsFromDynsym() {
+ErrorMessageOr<DebugSymbols> ElfFileImpl<ElfT>::LoadSymbolsFromDynsym() {
   if (!has_dynsym_section_) {
     return ErrorMessage("ELF file does not have a .dynsym section.");
   }
 
   ModuleSymbols module_symbols;
+  DebugSymbols module_symbols;
+  module_symbols.load_bias = load_bias_;
+  module_symbols.symbols_file_path = file_path_.string();
 
   for (const llvm::object::ELFSymbolRef& symbol_ref : object_file_->getDynamicSymbolIterators()) {
     auto symbol_or_error = CreateSymbolInfo(symbol_ref);
     if (symbol_or_error.has_value()) {
-      *module_symbols.add_symbol_infos() = std::move(symbol_or_error.value());
+      module_symbols.function_symbols.emplace_back(std::move(symbol_or_error.value()));
     }
   }
 
-  if (module_symbols.symbol_infos_size() == 0) {
+  if (module_symbols.function_symbols.empty()) {
     return ErrorMessage(
         "Unable to load symbols from .dynsym section, not even a single symbol of type function "
         "found.");
