@@ -5,21 +5,25 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
+#include <fstream>
 #include <map>
 
 #include "ObjectUtils/PdbFile.h"
 #include "OrbitBase/Logging.h"
-#include "OrbitBase/Result.h"
 #include "OrbitBase/MakeUniqueForOverwrite.h"
+#include "OrbitBase/Result.h"
 
 using orbit_grpc_protos::ModuleSymbols;
+using orbit_object_utils::DebugSymbols;
+using orbit_object_utils::FunctionSymbol;
 using orbit_object_utils::ObjectFileInfo;
 using orbit_object_utils::PdbParser;
-using orbit_object_utils::DebugSymbols;
 
-ErrorMessageOr<DebugSymbols> CreatePdbFile(const std::filesystem::path pdb_path, PdbParser parser,
-                                            const std::string& parser_name,
-                                            google::protobuf::Arena* arena) {
+#pragma optimize("", off)
+
+ErrorMessageOr<orbit_object_utils::DebugSymbols> CreatePdbFile(const std::filesystem::path pdb_path,
+                                                               PdbParser parser,
+                                                               const std::string& parser_name) {
   ObjectFileInfo object_file_info;
   auto symbol_result = orbit_object_utils::CreatePdbFile(pdb_path, object_file_info, parser);
   if (symbol_result.has_error()) {
@@ -29,6 +33,40 @@ ErrorMessageOr<DebugSymbols> CreatePdbFile(const std::filesystem::path pdb_path,
 
   ORBIT_SCOPED_TIMED_LOG("%s - %s", pdb_path.string(), parser_name);
   return symbol_result.value()->LoadDebugSymbolsInternal();
+}
+
+// Outputs a text representation of the debug symbols sorted by rva.
+inline ErrorMessageOr<void> OutputSymbolsToTextFile(const DebugSymbols& module_symbols,
+                                          std::filesystem::path output_file_path) {
+  std::map<uint64_t, const FunctionSymbol*> symbols_by_rva;
+  for (const FunctionSymbol& function_symbol : module_symbols.function_symbols) {
+    if (symbols_by_rva.find(function_symbol.rva) != symbols_by_rva.end()) {
+      ORBIT_LOG("Duplicate symbol found");
+    }
+
+    symbols_by_rva[function_symbol.rva] = &function_symbol;
+  }
+
+  std::filesystem::path parent_path = output_file_path.parent_path();
+  if (!parent_path.empty()) {
+    std::filesystem::create_directories(parent_path);
+  }
+
+  std::ofstream ofs(output_file_path);
+
+  if (ofs.fail()) {
+    return ErrorMessage(absl::StrFormat("Could not create file \"%s\"", output_file_path.string()));
+  }
+
+  for (const auto& [rva, symbol] : symbols_by_rva) {
+    ofs << std::setw(16) << std::hex << rva << " " << symbol->name << ", "
+        << symbol->demangled_name << std::endl;
+  }
+
+  ofs.flush();
+  ofs.close();
+
+  return outcome::success();
 }
 
 int main(int argc, char* argv[]) {
@@ -62,7 +100,7 @@ int main(int argc, char* argv[]) {
   // first block for simplicity.
   arena_options.start_block_size = kArenaFixedBlockSize;
   arena_options.max_block_size = kArenaFixedBlockSize;
-  
+
   google::protobuf::Arena arena{arena_options};
 
   std::map<PdbParser, std::string> parser_sequence = {
@@ -73,11 +111,21 @@ int main(int argc, char* argv[]) {
     parser_sequence = {{PdbParser::Raw, "Raw"}};
   }
 
-    while (true) {
-      for (const std::filesystem::path& pdb_path : pdb_paths) {
-        for (const auto& [parser, parser_name] : parser_sequence) {
-          auto result = CreatePdbFile(pdb_path, parser, parser_name, &arena);
+  std::set<std::string> generated_files;
+
+  /*while (true)*/ {
+    for (const std::filesystem::path& pdb_path : pdb_paths) {
+      for (const auto& [parser, parser_name] : parser_sequence) {
+        auto result = CreatePdbFile(pdb_path, parser, parser_name);
+        std::string output_file_name =
+            absl::StrFormat("%s_%s.txt", pdb_path.filename().string(), parser_name);
+
+        // Output text representation once per pdb-parser pair.
+        if (generated_files.find(output_file_name) == generated_files.end()) {
+          generated_files.insert(output_file_name);
+          OutputSymbolsToTextFile(result.value(), output_file_name);
         }
       }
     }
+  }
 }
