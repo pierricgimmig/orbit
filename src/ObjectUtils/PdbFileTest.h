@@ -11,7 +11,6 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
-#include <fstream>
 
 #include "ObjectUtils/CoffFile.h"
 #include "ObjectUtils/PdbFile.h"
@@ -27,36 +26,6 @@ using orbit_object_utils::PdbFile;
 using orbit_test_utils::HasError;
 using orbit_test_utils::HasNoError;
 using ::testing::ElementsAre;
-
-// Outputs a text representation of the debug symbols sorted by rva.
-inline ErrorMessageOr<void> OutputSymbols(const orbit_grpc_protos::ModuleSymbols& module_symbols,
-                                          std::filesystem::path output_file_path) {
-  std::map<uint64_t, const orbit_grpc_protos::SymbolInfo*> symbols_by_rva;
-  for (const orbit_grpc_protos::SymbolInfo& symbol_info : module_symbols.symbol_infos()) {
-    if (symbols_by_rva.find(symbol_info.address()) != symbols_by_rva.end()) {
-      ORBIT_LOG("Duplicate symbol found");
-    }
-
-    symbols_by_rva[symbol_info.address()] = &symbol_info;
-  }
-
-  std::filesystem::create_directories(output_file_path.parent_path());
-
-  std::ofstream ofs(output_file_path);
-
-  if (ofs.fail()) {
-    return ErrorMessage(absl::StrFormat("Could not create file \"%s\"", output_file_path.string()));
-  }
-
-  for (const auto& [rva, symbol] : symbols_by_rva) {
-    ofs << std::setw(16) << std::hex << rva << " " << symbol->name() << ", "
-        << symbol->demangled_name() << std::endl;
-  }
-
-  ofs.close();
-
-  return outcome::success();
-}
 
 template <typename T>
 class PdbFileTest : public testing::Test {
@@ -90,8 +59,8 @@ TYPED_TEST_P(PdbFileTest, LoadDebugSymbols) {
     symbols_result = pdb_file->LoadDebugSymbols();
   }
 
-  std::filesystem::path file_path = file_name + ".txt";
-  EXPECT_EQ(OutputSymbols(symbols_result.value(), file_path), outcome::success());
+  /*std::filesystem::path file_path = file_name + ".txt";
+  EXPECT_EQ(OutputSymbols(symbols_result.value(), file_path), outcome::success());*/
 
   ASSERT_THAT(symbols_result, HasNoError());
 
