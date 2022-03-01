@@ -51,17 +51,28 @@ class SymbolInfoVisitor : public llvm::codeview::SymbolVisitorCallbacks {
     // The ProcSym's name does not contain an argument list. However, this information is required
     // when dealing with overloads and it is available in the type info stream. See:
     // https://llvm.org/docs/PDB/TpiStream.html
-    llvm::StringRef argument_list = RetrieveArgumentList(proc);
-    if (!argument_list.empty()) {
-      function_symbol.demangled_name = 
-          absl::StrCat(symbol_info.demangled_name(), argument_list.data());
-    }
+    //llvm::StringRef argument_list = RetrieveArgumentList(proc);
+    //if (!argument_list.empty()) {
+      /*function_symbol.demangled_name = 
+          absl::StrCat(symbol_info.demangled_name(), argument_list.data());*/
+    //}
 
     // The address in PDB files is a relative virtual address (RVA), to make the address compatible
     // with how we do the computation, we need to add both the load bias (ImageBase for COFF) and
     // the offset of the executable section.
+    static uint32_t count = 0;
+    if (++count < 0) {
+      ORBIT_ERROR("proc.CodeOffset = %x", proc.CodeOffset);
+      ORBIT_ERROR("object_file_info_.load_bias = %u", object_file_info_.load_bias);
+      ORBIT_ERROR("object_file_info_.executable_segment_offset = %u",
+                  object_file_info_.executable_segment_offset);
+      ORBIT_ERROR("getRelocationOffset = %u", proc.getRelocationOffset());
+      ORBIT_ERROR("Segment = %u", proc.Segment);
+    }
+
+    // TODO: Why do we need to add 0x1000 here to get rva's that match raw_pdb and DIA?
     function_symbol.rva = proc.CodeOffset + object_file_info_.load_bias +
-                            object_file_info_.executable_segment_offset;
+                            object_file_info_.executable_segment_offset + 0x1000;
     function_symbol.size = proc.CodeSize;
 
     ORBIT_CHECK(module_symbols_ != nullptr);

@@ -63,7 +63,7 @@ static void DemangleSymbols(std::vector<FunctionSymbol>& function_symbols) {
 ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> SymbolsFile::LoadDebugSymbols(
     google::protobuf::Arena* arena) {
   OUTCOME_TRY(DebugSymbols debug_symbols, LoadDebugSymbolsInternal());
-  DemangleSymbols(debug_symbols.function_symbols);
+  //DemangleSymbols(debug_symbols.function_symbols);
 
   orbit_grpc_protos::ModuleSymbols* module_symbols =
       google::protobuf::Arena::Create<orbit_grpc_protos::ModuleSymbols>(arena);

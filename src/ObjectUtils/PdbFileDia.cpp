@@ -82,34 +82,52 @@ ErrorMessageOr<void> PdbFileDia::LoadDataForPDB() {
 }
 
 ErrorMessageOr<DebugSymbols> PdbFileDia::LoadDebugSymbolsInternal() {
+  DebugSymbols debug_symbols;
+  debug_symbols.symbols_file_path = file_path_.string();
+  debug_symbols.load_bias = object_file_info_.load_bias;
+
+  OUTCOME_TRY(LoadProcSymbols(SymTagThunk, debug_symbols));
+  OUTCOME_TRY(LoadProcSymbols(SymTagFunction, debug_symbols));
+  OUTCOME_TRY(LoadProcSymbols(SymTagPublicSymbol, debug_symbols));
+  OUTCOME_TRY(LoadProcSymbols(SymTagBlock, debug_symbols));
+
+  return debug_symbols;
+}
+
+ErrorMessageOr<void> PdbFileDia::LoadProcSymbols(const enum SymTagEnum sym_tag,
+                                                 DebugSymbols& debug_symbols) {
   HRESULT result = 0;
   CComPtr<IDiaEnumSymbols> dia_enum_symbols;
-  result = dia_global_scope_symbol_->findChildren(SymTagFunction, NULL, nsNone, &dia_enum_symbols);
+  result = dia_global_scope_symbol_->findChildren(sym_tag, /*name=*/nullptr,
+                                                  NameSearchOptions::nsNone, &dia_enum_symbols);
   if (result != S_OK) {
     return ErrorMessage{
         absl::StrFormat("findChildren failed for %s (%u)", file_path_.string(), result)};
   }
-
-  DebugSymbols debug_symbols;
-  debug_symbols.symbols_file_path = file_path_.string();
-  debug_symbols.load_bias = object_file_info_.load_bias;
 
   IDiaSymbol* dia_symbol = nullptr;
   ULONG celt = 0;
 
   while (SUCCEEDED(dia_enum_symbols->Next(1, &dia_symbol, &celt)) && (celt == 1)) {
     CComPtr<IDiaSymbol> dia_symbol_com_ptr = dia_symbol;
-    SymbolInfo symbol_info;
 
     BSTR function_name = {};
     if (dia_symbol->get_name(&function_name) != S_OK) continue;
-
-    FunctionSymbol& function_symbol = debug_symbols.function_symbols.emplace_back();
-
     // Todo: wstring to string conversion.
     std::wstring name(function_name);
-    function_symbol.name = std::string(name.begin(), name.end());
     SysFreeString(function_name);
+
+    // Skip symbol if it is not a function.
+    BOOL is_function = FALSE;
+    if (dia_symbol->get_function(&is_function) != S_OK) continue;
+    if (is_function == FALSE) {
+      //ORBIT_ERROR("%s is not a function", std::string(name.begin(), name.end()));
+      continue;
+    }
+
+    FunctionSymbol& function_symbol = debug_symbols.function_symbols.emplace_back();
+    function_symbol.name = std::string(name.begin(), name.end());
+    function_symbol.name = llvm::demangle(function_symbol.name);
 
     DWORD relative_virtual_address = 0;
     if (dia_symbol->get_relativeVirtualAddress(&relative_virtual_address) != S_OK) continue;
@@ -120,7 +138,7 @@ ErrorMessageOr<DebugSymbols> PdbFileDia::LoadDebugSymbolsInternal() {
     function_symbol.size = length;
   }
 
-  return debug_symbols;
+  return outcome::success();
 }
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> PdbFileDia::CreatePdbFile(
