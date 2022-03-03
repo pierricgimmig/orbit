@@ -52,6 +52,10 @@ class BlockPrinter {
 PDB_NO_DISCARD PDB::ErrorCode PDB::ValidateFile(const void* data) PDB_NO_EXCEPT {
   // validate the super block
   const SuperBlock* superBlock = Pointer::Offset<const SuperBlock*>(data, 0u);
+  if (superBlock->blockSize == 0) {
+    return ErrorCode::InvalidSuperBlock;
+  }
+
   const uint32_t directoryBlockCount =
       ConvertSizeToBlockCount(superBlock->directorySize, superBlock->blockSize);
   {
@@ -61,6 +65,7 @@ PDB_NO_DISCARD PDB::ErrorCode PDB::ValidateFile(const void* data) PDB_NO_EXCEPT 
     }
 
     BlockPrinter block_printer(data, superBlock);
+    PRINT_VAR(superBlock->blockSize);
     // block_printer.PrintBlockAs<uint32_t>(0);
 
     // validate directory
