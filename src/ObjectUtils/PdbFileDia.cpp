@@ -141,13 +141,13 @@ ErrorMessageOr<void> PdbFileDia::LoadProcSymbols(const enum SymTagEnum sym_tag,
     BOOL is_function = FALSE;
     if (dia_symbol->get_function(&is_function) != S_OK) continue;
     if (is_function == FALSE) {
-      // ORBIT_ERROR("%s is not a function", std::string(name.begin(), name.end()));
+      ORBIT_ERROR("%s is not a function", std::string(name.begin(), name.end()));
       continue;
     }
 
     FunctionSymbol& function_symbol = debug_symbols.function_symbols.emplace_back();
     function_symbol.name = std::string(name.begin(), name.end());
-    function_symbol.name = llvm::demangle(function_symbol.name);
+    // function_symbol.name = llvm::demangle(function_symbol.name);
 
     DWORD relative_virtual_address = 0;
     if (dia_symbol->get_relativeVirtualAddress(&relative_virtual_address) != S_OK) continue;

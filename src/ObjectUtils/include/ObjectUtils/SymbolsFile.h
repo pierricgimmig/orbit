@@ -40,6 +40,9 @@ struct DebugSymbols {
   DebugSymbols& operator=(DebugSymbols&& debug_symbols) = default;
 
   std::string symbols_file_path;
+  std::string pdb_parser_name;
+  uint64_t parse_time_ms = 0;
+
   uint64_t load_bias;
   std::vector<FunctionSymbol> function_symbols;
 };
