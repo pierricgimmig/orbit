@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <map>
+#include <string>
 
 #include "ObjectUtils/PdbFile.h"
 #include "OrbitBase/ExecutablePath.h"
@@ -20,21 +21,44 @@ using orbit_object_utils::FunctionSymbol;
 using orbit_object_utils::ObjectFileInfo;
 using orbit_object_utils::PdbParser;
 
+std::vector<std::filesystem::path> PdbPathsFromFile(std::filesystem::path pdb_file_path) {
+  std::vector<std::filesystem::path> paths;
+  if (!std::filesystem::exists(pdb_file_path)) return {};
+  std::ifstream pdb_file(pdb_file_path);
+  if (pdb_file.fail()) return {};
+
+  std::string line;
+  while (std::getline(pdb_file, line)) {
+    std::filesystem::path pdb_path = line;
+    if (pdb_path.extension() == ".pdb" && std::filesystem::exists(pdb_path) &&
+        !std::filesystem::is_directory(pdb_path)) {
+      paths.push_back(line);
+    }
+  }
+  pdb_file.close();
+  return paths;
+}
+
 ErrorMessageOr<orbit_object_utils::DebugSymbols> LoadPdbFile(const std::filesystem::path pdb_path,
-                                                               PdbParser parser,
-                                                               const std::string& parser_name) {
+                                                             PdbParser parser,
+                                                             const std::string& parser_name) {
   ObjectFileInfo object_file_info;
   OUTCOME_TRY(auto pdb_file, orbit_object_utils::CreatePdbFile(pdb_path, object_file_info, parser));
 
-  uint64_t start_ns = orbit_base::CaptureTimestampNs();
-  OUTCOME_TRY(DebugSymbols debug_symbols, pdb_file->LoadDebugSymbolsInternal());
-  debug_symbols.parse_time_ms = (orbit_base::CaptureTimestampNs() - start_ns) * 0.000'0001;
-  debug_symbols.pdb_parser_name = parser_name;
+  static volatile bool parse_symbols = false;
+  if (parse_symbols) {
+    uint64_t start_ns = orbit_base::CaptureTimestampNs();
+    OUTCOME_TRY(DebugSymbols debug_symbols, pdb_file->LoadDebugSymbolsInternal());
+    debug_symbols.parse_time_ms = (orbit_base::CaptureTimestampNs() - start_ns) * 0.000'0001;
+    debug_symbols.pdb_parser_name = parser_name;
 
-  ORBIT_LOG("%s: Parsed %u functions in %u ms", parser_name, debug_symbols.function_symbols.size(),
-            debug_symbols.parse_time_ms );
+    ORBIT_LOG("%s: Parsed %u functions in %u ms", parser_name,
+              debug_symbols.function_symbols.size(), debug_symbols.parse_time_ms);
 
-  return debug_symbols;
+    return debug_symbols;
+  } else {
+    return DebugSymbols();
+  }
 }
 
 // Outputs a text representation of the debug symbols sorted by rva.
@@ -84,15 +108,7 @@ int main(int argc, char* argv[]) {
   std::vector<std::filesystem::path> pdb_paths;
 
   if (argc < 2) {
-    std::vector<std::filesystem::path> test_pdb_paths = {
-        orbit_base::GetExecutableDir()  / "Orbit.pdb",
-    };
-
-    for (std::filesystem::path& path : test_pdb_paths) {
-      if (std::filesystem::exists(path)) {
-        pdb_paths.push_back(path);
-      }
-    }
+    pdb_paths = PdbPathsFromFile(R"(C:\symbols\pdbs.txt)");
 
     if (pdb_paths.empty()) {
       ORBIT_ERROR("Please specify at least one path to a pdb file.");
@@ -117,21 +133,25 @@ int main(int argc, char* argv[]) {
   std::map<PdbParser, std::string> parser_sequence = {
       {PdbParser::Llvm, "Llvm"}, {PdbParser::Dia, "Dia"}, {PdbParser::Raw, "Raw"}};
 
-  bool raw_only = false;
+  bool raw_only = true;
   if (raw_only) {
     parser_sequence = {{PdbParser::Raw, "Raw"}};
   }
 
   std::set<std::string> generated_files;
+  std::vector<std::filesystem::path> pdbs_with_error;
 
+  uint32_t counter = 0;
   /*while (true)*/ {
     for (const std::filesystem::path& pdb_path : pdb_paths) {
-      ORBIT_LOG("%s (%u bytes):", pdb_path.string(), std::filesystem::file_size(pdb_path));
+      ORBIT_LOG("%u %s (%u bytes):", ++counter, pdb_path.string(),
+                std::filesystem::file_size(pdb_path));
       for (const auto& [parser, parser_name] : parser_sequence) {
         auto result = LoadPdbFile(pdb_path, parser, parser_name);
 
         if (result.has_error()) {
           ORBIT_ERROR("Creating pdb file: %s", result.error().message().c_str());
+          pdbs_with_error.push_back(pdb_path);
           continue;
         }
 
@@ -142,9 +162,11 @@ int main(int argc, char* argv[]) {
         if (generated_files.find(output_file_name) == generated_files.end()) {
           generated_files.insert(output_file_name);
           std::filesystem::path output_path = orbit_base::GetExecutableDir() / output_file_name;
-          //OutputSymbolsToTextFile(result.value(), output_path);
+          // OutputSymbolsToTextFile(result.value(), output_path);
         }
       }
     }
   }
+
+  ORBIT_LOG("%u/%u pdb loading errors", pdbs_with_error.size(), pdb_paths.size());
 }
