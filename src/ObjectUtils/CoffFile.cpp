@@ -32,7 +32,7 @@ class CoffFileImpl : public CoffFile {
  public:
   CoffFileImpl(std::filesystem::path file_path,
                llvm::object::OwningBinary<llvm::object::ObjectFile>&& owning_binary);
-  [[nodiscard]] ErrorMessageOr<DebugSymbols> LoadDebugSymbols() override;
+  [[nodiscard]] ErrorMessageOr<DebugSymbols> LoadRawDebugSymbols() override;
   [[nodiscard]] bool HasDebugSymbols() const override;
   [[nodiscard]] std::string GetName() const override;
   [[nodiscard]] const std::filesystem::path& GetFilePath() const override;
@@ -85,14 +85,14 @@ static void FillDebugSymbolsFromDWARF(llvm::DWARFContext* dwarf_context,
         ORBIT_CHECK(!name.empty());
         FunctionSymbol& function_symbol = debug_symbols->function_symbols.emplace_back();
         function_symbol.name = name;
-        function_symbol.rva = low_pc;
+        function_symbol.address = low_pc;
         function_symbol.size = high_pc - low_pc;
       }
     }
   }
 }
 
-ErrorMessageOr<DebugSymbols> CoffFileImpl::LoadDebugSymbols() {
+ErrorMessageOr<DebugSymbols> CoffFileImpl::LoadRawDebugSymbols() {
   const auto dwarf_context = llvm::DWARFContext::create(*owning_binary_.getBinary());
   if (dwarf_context == nullptr) {
     return ErrorMessage("Could not create DWARF context.");
