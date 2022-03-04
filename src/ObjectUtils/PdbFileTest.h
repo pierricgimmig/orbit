@@ -40,7 +40,7 @@ TYPED_TEST_P(PdbFileTest, LoadDebugSymbols) {
       TypeParam::CreatePdbFile(file_path_pdb, ObjectFileInfo{0x180000000, 0x1000});
   ASSERT_THAT(pdb_file_result, HasNoError());
   std::unique_ptr<orbit_object_utils::PdbFile> pdb_file = std::move(pdb_file_result.value());
-  auto symbols_result = pdb_file->LoadDebugSymbols();
+  auto symbols_result = pdb_file->LoadDebugSymbolsAsProto();
   ASSERT_THAT(symbols_result, HasNoError());
 
   auto symbols = std::move(symbols_result.value());
@@ -53,23 +53,25 @@ TYPED_TEST_P(PdbFileTest, LoadDebugSymbols) {
   EXPECT_EQ(symbol_infos_by_address.size(), 5469);
 
   {
-    const SymbolInfo& symbol = *symbol_infos_by_address[0x18000ef90];
-    EXPECT_EQ(symbol.name(), "PrintHelloWorldInternal");
+    const SymbolInfo* symbol = symbol_infos_by_address[0x18000ef90];
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->name(), "PrintHelloWorldInternal");
     // TODO(b/219413222): We actually also expect the parameter list (empty in this case), but the
     //  DIA SDK implementation does not support this yet.
-    EXPECT_TRUE(absl::StrContains(symbol.demangled_name(), "PrintHelloWorldInternal"));
-    EXPECT_EQ(symbol.address(), 0x18000ef90);
-    EXPECT_EQ(symbol.size(), 0x2b);
+    EXPECT_TRUE(absl::StrContains(symbol->demangled_name(), "PrintHelloWorldInternal"));
+    EXPECT_EQ(symbol->address(), 0x18000ef90);
+    EXPECT_EQ(symbol->size(), 0x2b);
   }
 
   {
-    const SymbolInfo& symbol = *symbol_infos_by_address[0x18000efd0];
-    EXPECT_EQ(symbol.name(), "PrintHelloWorld");
+    const SymbolInfo* symbol = symbol_infos_by_address[0x18000efd0];
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->name(), "PrintHelloWorld");
     // TODO(b/219413222): We actually also expect the parameter list (empty in this case), but the
     //  DIA SDK implementation does not support this yet.
-    EXPECT_TRUE(absl::StrContains(symbol.demangled_name(), "PrintHelloWorld"));
-    EXPECT_EQ(symbol.address(), 0x18000efd0);
-    EXPECT_EQ(symbol.size(), 0xe);
+    EXPECT_TRUE(absl::StrContains(symbol->demangled_name(), "PrintHelloWorld"));
+    EXPECT_EQ(symbol->address(), 0x18000efd0);
+    EXPECT_EQ(symbol->size(), 0xe);
   }
 }
 

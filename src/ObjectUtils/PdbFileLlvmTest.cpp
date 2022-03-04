@@ -18,7 +18,7 @@ TEST(PdbFileLlvmTest, LoadDebugSymbols) {
       PdbFileLlvm::CreatePdbFile(file_path_pdb, ObjectFileInfo{0x180000000, 0x1000});
   ASSERT_THAT(pdb_file_result, HasNoError());
   std::unique_ptr<orbit_object_utils::PdbFile> pdb_file = std::move(pdb_file_result.value());
-  auto symbols_result = pdb_file->LoadDebugSymbols();
+  auto symbols_result = pdb_file->LoadDebugSymbolsAsProto();
   ASSERT_THAT(symbols_result, HasNoError());
 
   auto symbols = std::move(symbols_result.value());
@@ -29,12 +29,14 @@ TEST(PdbFileLlvmTest, LoadDebugSymbols) {
   }
 
   {
-    const SymbolInfo& symbol = *symbol_infos_by_address[0x18000ef90];
-    EXPECT_EQ(symbol.demangled_name(), "PrintHelloWorldInternal()");
+    const SymbolInfo* symbol = symbol_infos_by_address[0x18000ef90];
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->demangled_name(), "PrintHelloWorldInternal()");
   }
 
   {
-    const SymbolInfo& symbol = *symbol_infos_by_address[0x18000efd0];
-    EXPECT_EQ(symbol.demangled_name(), "PrintHelloWorld()");
+    const SymbolInfo* symbol = symbol_infos_by_address[0x18000efd0];
+    ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->demangled_name(), "PrintHelloWorld()");
   }
 }
