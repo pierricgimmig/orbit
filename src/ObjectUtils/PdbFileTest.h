@@ -55,7 +55,6 @@ TYPED_TEST_P(PdbFileTest, LoadDebugSymbols) {
   {
     const SymbolInfo* symbol = symbol_infos_by_address[0x18000ef90];
     ASSERT_NE(symbol, nullptr);
-    EXPECT_EQ(symbol->name(), "PrintHelloWorldInternal");
     // TODO(b/219413222): We actually also expect the parameter list (empty in this case), but the
     //  DIA SDK implementation does not support this yet.
     EXPECT_TRUE(absl::StrContains(symbol->demangled_name(), "PrintHelloWorldInternal"));
@@ -66,7 +65,6 @@ TYPED_TEST_P(PdbFileTest, LoadDebugSymbols) {
   {
     const SymbolInfo* symbol = symbol_infos_by_address[0x18000efd0];
     ASSERT_NE(symbol, nullptr);
-    EXPECT_EQ(symbol->name(), "PrintHelloWorld");
     // TODO(b/219413222): We actually also expect the parameter list (empty in this case), but the
     //  DIA SDK implementation does not support this yet.
     EXPECT_TRUE(absl::StrContains(symbol->demangled_name(), "PrintHelloWorld"));
