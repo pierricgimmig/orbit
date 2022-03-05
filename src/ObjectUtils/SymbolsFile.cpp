@@ -64,12 +64,123 @@ void DemangleSymbols(std::vector<FunctionSymbol>& function_symbols) {
   }
 }
 
+void TestRawDebugSymbolsCreationTime(const DebugSymbols& debug_symbols) {
+  ORBIT_START("TestRawDebugSymbolsCreationTime");
+  DebugSymbols test_debug_symbols;
+  test_debug_symbols.load_bias = debug_symbols.load_bias;
+  test_debug_symbols.symbols_file_path = debug_symbols.symbols_file_path;
+
+  for(const FunctionSymbol& function_symbol : debug_symbols.function_symbols) {
+    test_debug_symbols.function_symbols.emplace_back(function_symbol);
+  }
+  ORBIT_STOP();
+  //ORBIT_LOG("Created raw debug symbols containing %u function symbols", debug_symbols.function_symbols.size());
+}
+
+void TestRawDebugSymbolsCopyTime(const DebugSymbols& debug_symbols) {
+  ORBIT_START("TestRawDebugSymbolsCopyTime");
+  DebugSymbols test_debug_symbols = debug_symbols;
+  ORBIT_STOP();
+  ORBIT_LOG("Copied raw debug symbols containing %u function symbols", debug_symbols.function_symbols.size());
+}
+
+void TestProtoDebugSymbolsNoReserve(const DebugSymbols& debug_symbols) {
+  ORBIT_START("ModuleSymbols protobuf creation no reserve");
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  module_symbols.set_load_bias(debug_symbols.load_bias);
+  module_symbols.set_symbols_file_path(debug_symbols.symbols_file_path);
+
+  const std::vector<FunctionSymbol>& function_symbols = debug_symbols.function_symbols;
+
+  for (const FunctionSymbol& function_symbol : function_symbols) {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(function_symbol.mangled_name);
+    symbol_info->set_demangled_name(function_symbol.demangled_name);
+    symbol_info->set_address(function_symbol.relative_virtual_address);
+    symbol_info->set_size(function_symbol.size);
+  }
+  ORBIT_STOP();
+  //ORBIT_LOG("TestProtoDebugSymbolsNoReserve raw debug symbols containing %u function symbols", debug_symbols.function_symbols.size());
+}
+
+void TestProtoDebugSymbolsReserve(const DebugSymbols& debug_symbols) {
+  ORBIT_START("ModuleSymbols protobuf creation WITH reserve");
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  module_symbols.set_load_bias(debug_symbols.load_bias);
+  module_symbols.set_symbols_file_path(debug_symbols.symbols_file_path);
+
+  const std::vector<FunctionSymbol>& function_symbols = debug_symbols.function_symbols;
+    auto* symbol_infos = module_symbols.mutable_symbol_infos();
+  symbol_infos->Reserve(function_symbols.size());
+
+  for (const FunctionSymbol& function_symbol : function_symbols) {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(function_symbol.mangled_name);
+    symbol_info->set_demangled_name(function_symbol.demangled_name);
+    symbol_info->set_address(function_symbol.relative_virtual_address);
+    symbol_info->set_size(function_symbol.size);
+  }
+  ORBIT_STOP();
+  //ORBIT_LOG("TestProtoDebugSymbolsNoReserve raw debug symbols containing %u function symbols", debug_symbols.function_symbols.size());
+}
+
+void TestProtoDebugSymbolsReserveMovingStrings(DebugSymbols debug_symbols) {
+  ORBIT_START("ModuleSymbols protobuf creation WITH reserve and MOVE");
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  module_symbols.set_load_bias(debug_symbols.load_bias);
+  module_symbols.set_symbols_file_path(debug_symbols.symbols_file_path);
+
+  const std::vector<FunctionSymbol>& function_symbols = debug_symbols.function_symbols;
+    auto* symbol_infos = module_symbols.mutable_symbol_infos();
+  symbol_infos->Reserve(function_symbols.size());
+
+  for (const FunctionSymbol& function_symbol : function_symbols) {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(std::move(function_symbol.mangled_name));
+    symbol_info->set_demangled_name(std::move(function_symbol.demangled_name));
+    symbol_info->set_address(function_symbol.relative_virtual_address);
+    symbol_info->set_size(function_symbol.size);
+  }
+  ORBIT_STOP();
+  //ORBIT_LOG("TestProtoDebugSymbolsNoReserve raw debug symbols containing %u function symbols", debug_symbols.function_symbols.size());
+}
+
+void TestProtoDebugSymbolsReserveNoMovingStringsCopiedParam(DebugSymbols debug_symbols) {
+  ORBIT_START("ModuleSymbols protobuf creation WITH reserve NO MOVE");
+  orbit_grpc_protos::ModuleSymbols module_symbols;
+  module_symbols.set_load_bias(debug_symbols.load_bias);
+  module_symbols.set_symbols_file_path(debug_symbols.symbols_file_path);
+
+  const std::vector<FunctionSymbol>& function_symbols = debug_symbols.function_symbols;
+    auto* symbol_infos = module_symbols.mutable_symbol_infos();
+  symbol_infos->Reserve(function_symbols.size());
+
+  for (const FunctionSymbol& function_symbol : function_symbols) {
+    orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
+    symbol_info->set_name(function_symbol.mangled_name);
+    symbol_info->set_demangled_name(function_symbol.demangled_name);
+    symbol_info->set_address(function_symbol.relative_virtual_address);
+    symbol_info->set_size(function_symbol.size);
+  }
+  ORBIT_STOP();
+  //ORBIT_LOG("TestProtoDebugSymbolsNoReserve raw debug symbols containing %u function symbols", debug_symbols.function_symbols.size());
+}
+
 // We centralize the creation of the ModuleSymbols proto, which is an expensive operation, so that
 // further optimizations can be done at this single point rather than having to modify all
 // SymbolsFile implementations.
 ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> SymbolsFile::LoadDebugSymbols() {
   ORBIT_SCOPE(absl::StrFormat("LoadDebugSymbols (%s)", GetFilePath().string()).c_str());
   OUTCOME_TRY(DebugSymbols debug_symbols, LoadRawDebugSymbols());
+
+  TestRawDebugSymbolsCreationTime(debug_symbols);
+  TestRawDebugSymbolsCopyTime(debug_symbols);
+  TestProtoDebugSymbolsNoReserve(debug_symbols);
+  TestProtoDebugSymbolsReserve(debug_symbols);
+  TestProtoDebugSymbolsReserveMovingStrings(debug_symbols);
+  TestProtoDebugSymbolsReserveNoMovingStringsCopiedParam(debug_symbols);
+  TestProtoDebugSymbolsReserveMovingStrings(debug_symbols);
+  TestRawDebugSymbolsCreationTime(debug_symbols);
 
   ORBIT_SCOPE("ModuleSymbols protobuf creation");
   orbit_grpc_protos::ModuleSymbols module_symbols;
