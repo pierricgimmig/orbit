@@ -122,7 +122,7 @@ std::vector<ApiFunction> FindApiFunctions(const orbit_client_data::ModuleManager
     if (function.module_path() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
       // TODO: fill other fields or remove them.
       PlatformApiFunction* platform_api_function = capture_options->add_platform_api_functions();
-      platform_api_function->set_key(function.name());
+      platform_api_function->set_key(function.pretty_name());
       platform_api_function->set_name("");
       platform_api_function->set_module("");
       platform_api_function->set_name_space("");

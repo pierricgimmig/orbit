@@ -111,7 +111,7 @@ void write_class_method_with_orbit_instrumentation(
   std::optional<uint32_t> function_id = function_id_generator.GetFunctionIdFromKey(function_name);
   
   if(!function_id.has_value()) {
-    ERROR("Could not find function id for \"%s\"", function_name);
+    ORBIT_ERROR("Could not find function id for \"%s\"", function_name);
   }
 
   w.write(format, cppwin32::bind<cppwin32::write_method_return>(method_signature),
@@ -232,7 +232,7 @@ const database* FindWin32Database(const cache& cache) {
     }
   }
 
-  ERROR("Could not find win32 metadata database \"%s\"", kWin32MetaDataFileName);
+  ORBIT_ERROR("Could not find win32 metadata database \"%s\"", kWin32MetaDataFileName);
   return nullptr;
 }
 

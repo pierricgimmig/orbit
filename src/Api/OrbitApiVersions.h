@@ -72,7 +72,6 @@ struct orbit_api_win_v2 {
   __attribute__((ms_abi)) void (*track_double)(const char* name, double value,
                                                orbit_api_color color);
 };
-#endif
 
 #endif  // __linux
 

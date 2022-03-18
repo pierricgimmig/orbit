@@ -56,6 +56,7 @@ message PlatformApiFunction {
   string name = 2;
   string module = 3;
   string name_space = 4;
+  bool is_hookable = 5;
 }
 
 // NextId: 25

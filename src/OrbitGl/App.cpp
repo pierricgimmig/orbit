@@ -1964,8 +1964,11 @@ Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
   uint32_t counter = 0;
   for (const auto& api_function : response.functions()) {
     if (api_function.key().empty()) continue;
+    if (!api_function.is_hookable()) {
+      ORBIT_LOG("Api function %s is not hookable, skipping.", api_function.key());
+      continue;
+    }
     orbit_grpc_protos::SymbolInfo* symbol_info = module_symbols.add_symbol_infos();
-    symbol_info->set_name(api_function.key());
     symbol_info->set_demangled_name(api_function.key());
     symbol_info->set_address(++counter);
     ORBIT_LOG("api_function.key(): %s", api_function.key());
@@ -2304,6 +2307,18 @@ static ErrorMessageOr<std::filesystem::path> FindModuleLocallyImpl(
         absl::StrFormat("Unable to find local symbols for module \"%s\", build id is empty",
                         module_data.file_path()));
   }
+
+  #ifdef _WIN32
+  ErrorMessageOr<std::filesystem::path> symbols_path = orbit_windows_utils::FindDebugSymbols(
+
+            module_data.file_path(), /*additional_search_directories=*/{});
+
+  if (symbols_path.has_value()) {
+    ORBIT_LOG("Found symbols for module \"%s\" locally. Symbols filename: \"%s\"",
+              module_data.file_path(), symbols_path.value().string());
+    return symbols_path.value();
+  }
+#endif
 
   std::string error_message;
   {

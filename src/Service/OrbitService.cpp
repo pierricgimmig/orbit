@@ -24,6 +24,7 @@
 #include "OrbitGrpcServer.h"
 #include "OrbitVersion/OrbitVersion.h"
 #include "ProducerSideService/BuildAndStartProducerSideServer.h"
+#include "ProducerSideChannel/ProducerSideChannel.h"
 #include "ProducerSideService/ProducerSideServer.h"
 
 using orbit_producer_side_service::ProducerSideServer;

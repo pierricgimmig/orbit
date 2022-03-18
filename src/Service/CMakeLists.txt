@@ -28,6 +28,7 @@ target_link_libraries(OrbitServiceLib PUBLIC
         GrpcProtos
         OrbitVersion
         ProducerSideService
+        ProducerSideChannel
 )
 
 if(WIN32)

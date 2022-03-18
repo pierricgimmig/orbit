@@ -5,6 +5,8 @@
 #include "WindowsProcessService/ProcessServiceImpl.h"
 
 #include <absl/base/casts.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 #include <stdint.h>
@@ -153,6 +155,32 @@ Status ProcessServiceImpl::GetDebugInfoFile(ServerContext*, const GetDebugInfoFi
   return Status::OK;
 }
 
+[[nodiscard]] bool IsPlatformApiHookable(std::string_view function_key) {
+  // clang-format off
+    static std::vector<std::string> tokens{
+      "exception", 
+      "Ndr64AsyncClientCall",
+      "NdrClientCall3"
+  };
+  // clang-format on
+
+  static std::vector<std::string> lower_tokens;
+  if (lower_tokens.empty()) {
+    for (std::string token : tokens) {
+      lower_tokens.push_back(absl::AsciiStrToLower(token));
+    }
+  }
+
+  std::string lower_key = absl::AsciiStrToLower(function_key);
+  for (const std::string& lower_token : lower_tokens) {
+    if (absl::StrContains(lower_key, lower_token)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 [[nodiscard]] grpc::Status ProcessServiceImpl::GetPlatformApiInfo(
     grpc::ServerContext* context, const orbit_grpc_protos::GetPlatformApiInfoRequest* request,
     orbit_grpc_protos::GetPlatformApiInfoResponse* response) {
@@ -163,13 +191,14 @@ Status ProcessServiceImpl::GetDebugInfoFile(ServerContext*, const GetDebugInfoFi
   uint32_t counter = 0;
   for (const WindowsApiFunction& function : kWindowsApiFunctions) {
     PlatformApiFunction* api_function = response->add_functions();
-    if(function.function_key == nullptr) {
+    if (function.function_key == nullptr) {
       ORBIT_LOG("key == nullptr");
       continue;
     }
     api_function->set_key(function.function_key);
     api_function->set_name_space(function.name_space);
-    //if (++counter >= max_entries) break;
+    api_function->set_is_hookable(IsPlatformApiHookable(function.function_key));
+    // if (++counter >= max_entries) break;
   }
   ORBIT_LOG("GetPlatformApiInfo size: %u", response->ByteSize());
   return Status::OK;

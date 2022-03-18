@@ -117,14 +117,14 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
       continue;
     }
 
-    void* original_function = orbit_base::GetProcAddress(module, function_name);
-    if (original_function == nullptr) {
+    ErrorMessageOr<void*> original_function = orbit_base::GetProcAddress(module, function_name);
+    if (original_function.has_error()) {
       ORBIT_ERROR("Could not find function \"%s\" in module \"%s\"", function_name, module);
       continue;
     }
 
     MH_STATUS hook_result =
-        MH_CreateHook(original_function, detour_function, original_function_relay);
+        MH_CreateHook(original_function.value(), detour_function, original_function_relay);
     if (hook_result != MH_OK && hook_result != MH_ERROR_ALREADY_CREATED) {
       ORBIT_ERROR("Calling MH_CreateHook: %s", MH_StatusToString(hook_result));
       continue;
@@ -134,13 +134,13 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
     ORBIT_LOG("detour_function=%x, original_function_relay=%x", detour_function,
               original_function_relay);
 
-    MH_STATUS enable_result = MH_QueueEnableHook(original_function);
+    MH_STATUS enable_result = MH_QueueEnableHook(original_function.value());
     if (enable_result != MH_OK) {
       ORBIT_ERROR("Calling MH_QueueEnableHook: %s", MH_StatusToString(enable_result));
       continue;
     }
 
-    target_functions_.push_back(original_function);
+    target_functions_.push_back(original_function.value());
   }
 
   MH_STATUS queue_result = MH_ApplyQueued();
