@@ -127,13 +127,6 @@ class InternalFuture : public orbit_base_internal::InternalFutureBase<T, Derived
     this->shared_state_->result.emplace(std::forward<Args>(args)...);
   }
 
-  T& Get() {
-    this->Wait();
-
-    absl::MutexLock lock{&this->shared_state_->mutex};
-    return this->shared_state_->result.value();
-  }
-
   const T& Get() const {
     this->Wait();
 

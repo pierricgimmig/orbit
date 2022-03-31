@@ -22,16 +22,16 @@
 namespace orbit_windows_utils {
 
 struct DebugEventListener {
-  virtual void OnCreateProcessDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnExitProcessDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnCreateThreadDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnExitThreadDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnLoadDllDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnUnLoadDllDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnBreakpointDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnOutputStringDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnExceptionDebugEvent(const DEBUG_EVENT& event) = 0;
-  virtual void OnRipEvent(const DEBUG_EVENT& event) = 0;
+  virtual void OnCreateProcessDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnExitProcessDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnCreateThreadDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnExitThreadDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnLoadDllDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnUnLoadDllDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnBreakpointDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnOutputStringDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnExceptionDebugEvent(const DEBUG_EVENT& event){};
+  virtual void OnRipEvent(const DEBUG_EVENT& event){};
 };
 
 class Debugger {
