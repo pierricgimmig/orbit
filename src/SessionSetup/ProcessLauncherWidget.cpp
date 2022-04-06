@@ -44,7 +44,26 @@ void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
 }
 
 void ProcessLauncherWidget::on_LaunchButton_clicked() {
-  // TODO(b/225906734): Windows Process Launcher
+  ORBIT_LOG("ProcessLauncherWidget::on_LaunchButton_clicked()");
+  QString process = ui->ProcessComboBox->lineEdit()->text();
+  QString workingDir = ui->WorkingDirComboBox->lineEdit()->text();
+  QString args = ui->ArgumentsComboBox->lineEdit()->text();
+  // GOrbitApp->OnLaunchProcess( process.toStdWString(), workingDir.toStdWString(),
+  // args.toStdWString() );
+}
+
+void ProcessLauncherWidget::on_PauseAtEntryPoingCheckBox_clicked(bool checked) {
+  ORBIT_LOG("ProcessLauncherWidget::on_checkBoxPause_clicked()");
+  /*GParams.m_StartPaused = checked;
+  GParams.Save();*/
+}
+
+void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
+  ORBIT_LOG("ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked()");
+  QString dir = QFileDialog::getExistingDirectory(
+      this, tr("Open Directory"), "/home",
+      QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+  ui->WorkingDirComboBox->lineEdit()->setText(dir);
 }
 
 }  // namespace orbit_session_setup
