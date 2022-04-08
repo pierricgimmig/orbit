@@ -8,23 +8,60 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
 #include "WindowsTracing/ListModulesETW.h"
+#include "WindowsApiTracing.h"
+#include "WindowsUtils/CreateProcess.h"
 #include "WindowsUtils/ListModules.h"
 #include "WindowsUtils/ListThreads.h"
-#include "WindowsApiTracing.h"
 #include "win32/manifest.h"
 
 using orbit_grpc_protos::ModuleInfo;
 using orbit_grpc_protos::ModulesSnapshot;
+using orbit_grpc_protos::ProcessToLaunch;
 using orbit_grpc_protos::ThreadName;
 using orbit_grpc_protos::ThreadNamesSnapshot;
+using orbit_windows_utils::BusyLoopInfo;
+using orbit_windows_utils::BusyLoopLauncher;
 using orbit_windows_utils::Module;
 using orbit_windows_utils::Thread;
 
 namespace orbit_windows_tracing {
 
+namespace {
+
+template <typename T>
+void LogIfError(const ErrorMessageOr<T>& result, std::string_view message) {
+  if (result.has_error()) {
+    ORBIT_LOG("%s %s", message, result.error().message());
+  }
+}
+
+}  // namespace
+
 TracerImpl::TracerImpl(orbit_grpc_protos::CaptureOptions capture_options, TracerListener* listener)
     : capture_options_(std::move(capture_options)), listener_(listener) {
+  LogIfError(LaunchProcessIfNeeded(), "Error launching process");
   InitializeWindowsApiTracing();
+}
+
+ErrorMessageOr<void> TracerImpl::ResumeProcessIfNeeded() {
+  if (busy_loop_launcher_ && busy_loop_launcher_->IsProcessSuspended()) {
+    OUTCOME_TRY(busy_loop_launcher_->ResumeMainThread());
+  }
+  return outcome::success();
+}
+
+ErrorMessageOr<void> TracerImpl::LaunchProcessIfNeeded() {
+  const ProcessToLaunch& process_to_launch = capture_options_.proces_to_launch();
+  if (process_to_launch.pause_on_entry_point()) {
+    busy_loop_launcher_ = std::make_unique<orbit_windows_utils::BusyLoopLauncher>();
+    OUTCOME_TRY(BusyLoopInfo busy_loop_info,
+                busy_loop_launcher_->StartWithBusyLoopAtEntryPoint(
+                    process_to_launch.executable_path(), process_to_launch.working_directory(),
+                    process_to_launch.arguments()));
+    launched_process_id_ = busy_loop_info.process_id;
+  } else {
+  }
+  return outcome::success();
 }
 
 void TracerImpl::Start() {
@@ -34,6 +71,7 @@ void TracerImpl::Start() {
   krabs_tracer_ = std::make_unique<KrabsTracer>(capture_options_.pid(),
                                                 capture_options_.samples_per_second(), listener_);
   krabs_tracer_->Start();
+  LogIfError(ResumeProcessIfNeeded(), "Error resuming process");
 }
 
 void TracerImpl::Stop() {
@@ -101,9 +139,9 @@ void TracerImpl::SendThreadNamesSnapshot() {
 void TracerImpl::InitializeWindowsApiTracing() {
   // TODO: properly initialize "enable_platform_api" bool.
   bool platform_api_active = capture_options_.enable_platform_api() || true;
-  if(platform_api_active) {
+  if (platform_api_active) {
     auto result = InitializeWindowsApiTracingInTarget(capture_options_.pid());
-    if(result.has_error()) {
+    if (result.has_error()) {
       ERROR("Initializing Windows Api tracing: %s", result.error().message());
     }
   }

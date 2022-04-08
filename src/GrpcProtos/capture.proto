@@ -59,7 +59,14 @@ message PlatformApiFunction {
   bool is_hookable = 5;
 }
 
-// NextId: 25
+message ProcessToLaunch {
+  string executable_path = 1;
+  string working_directory = 2;
+  string arguments = 3;
+  bool pause_on_entry_point = 4;
+}
+
+// NextId: 26
 message CaptureOptions {
   reserved 17;
 
@@ -120,6 +127,7 @@ message CaptureOptions {
   uint32 thread_state_change_callstack_stack_dump_size = 22;
   repeated PlatformApiFunction platform_api_functions = 23;
   bool enable_platform_api = 24;
+  ProcessToLaunch proces_to_launch = 25;
 }
 
 // For CaptureEvents with a duration, excluding for now GPU-related ones, we

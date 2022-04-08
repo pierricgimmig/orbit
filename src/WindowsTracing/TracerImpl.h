@@ -9,6 +9,7 @@
 #include "KrabsTracer.h"
 #include "WindowsTracing/Tracer.h"
 #include "WindowsTracing/TracerListener.h"
+#include "WindowsUtils/BusyLoopLauncher.h"
 
 namespace orbit_windows_tracing {
 
@@ -23,6 +24,8 @@ class TracerImpl : public Tracer {
   void Stop() override;
 
  private:
+  ErrorMessageOr<void> LaunchProcessIfNeeded();
+  ErrorMessageOr<void> ResumeProcessIfNeeded();
   void SendModulesSnapshot();
   void SendThreadNamesSnapshot();
   void InitializeWindowsApiTracing();
@@ -31,6 +34,8 @@ class TracerImpl : public Tracer {
   orbit_grpc_protos::CaptureOptions capture_options_;
   TracerListener* listener_ = nullptr;
   std::unique_ptr<KrabsTracer> krabs_tracer_;
+  std::unique_ptr<orbit_windows_utils::BusyLoopLauncher> busy_loop_launcher_;
+  uint32_t launched_process_id_ = 0;
 };
 
 }  // namespace orbit_windows_tracing
