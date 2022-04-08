@@ -22,6 +22,8 @@
 #include "OrbitBase/Attributes.h"
 #include "OrbitBase/ThreadUtils.h"
 
+#include <Windows.h>
+
 ORBIT_API_INSTANTIATE;
 
 #define ORBIT_SCOPE_FUNCTION ORBIT_SCOPE(__FUNCTION__)
