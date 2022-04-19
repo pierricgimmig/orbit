@@ -268,7 +268,7 @@ std::filesystem::path GetWindowsApiShimPath() {
 
 
 std::filesystem::path GetOrbitDllPath() {
-  constexpr const char* kWindowsOrbitDllName = "orbit.dll";
+  constexpr const char* kWindowsOrbitDllName = "OrbitApi.dll";
   return orbit_base::GetExecutableDir() / kWindowsOrbitDllName;
 }
 

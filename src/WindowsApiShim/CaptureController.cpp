@@ -10,6 +10,7 @@
 #include <win32/NamespaceDispatcher.h>
 
 #include "ApiInterface/Orbit.h"
+#include "Introspection/Introspection.h"
 #include "OrbitBase/GetProcAddress.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ThreadUtils.h"
@@ -38,9 +39,9 @@ class MinHookInitializer {
 
 bool EnableApi(bool enable) {
   // void orbit_api_set_enabled(uint64_t address, uint64_t api_version, bool enabled)
-  // Orbit.dll needs to be loaded at this point.
+  // OrbitApi.dll needs to be loaded at this point.
   auto set_api_enabled_function = orbit_base::GetProcAddress<void (*)(uint64_t, uint64_t, bool)>(
-      "orbit.dll", "orbit_api_set_enabled");
+      "OrbitApi.dll", "orbit_api_set_enabled");
   if (set_api_enabled_function == nullptr) {
     return false;
   }
@@ -71,6 +72,7 @@ bool FindShimFunction(const char* module, const char* function, void*& detour_fu
 }
 
 absl::flat_hash_set<std::string> GetLoadedModulesSetLowerCase() {
+  ORBIT_SCOPE_FUNCTION;
   std::vector<Module> modules = orbit_windows_utils::ListModules(orbit_base::GetCurrentProcessId());
   absl::flat_hash_set<std::string> modules_set;
   for (const Module& module : modules) {
@@ -90,10 +92,12 @@ namespace orbit_windows_api_shim {
 void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture_options) {
   capture_options_ = capture_options;
   ORBIT_LOG("ShimCaptureController::OnCaptureStart");
+  
+  EnableApi(true);
+  ORBIT_SCOPE_FUNCTION;
 
   // Make sure MinHook has been initialized.
   MinHookInitializer::Get();
-  EnableApi(true);
 
   absl::flat_hash_set loaded_modules_set = GetLoadedModulesSetLowerCase();
 
@@ -150,6 +154,7 @@ void CaptureController::OnCaptureStart(orbit_grpc_protos::CaptureOptions capture
 }
 
 void CaptureController::OnCaptureStop() {
+  ORBIT_SCOPE_FUNCTION;
   ORBIT_LOG(
       "\n================\n"
       "WINDOWS API CALL COUNT REPORT:\n"
@@ -160,11 +165,14 @@ void CaptureController::OnCaptureStop() {
       ApiFunctionCallManager::Get().GetSummary());
 
   // Disable all hooks on capture stop.
-  for (void* target : target_functions_) {
-    MH_QueueDisableHook(target);
-  }
+  {
+    ORBIT_SCOPE("Minhook disable");
+    for (void* target : target_functions_) {
+      MH_QueueDisableHook(target);
+    }
 
-  MH_ApplyQueued();
+    MH_ApplyQueued();
+  }
 
   EnableApi(false);
   target_functions_.clear();

@@ -25,6 +25,7 @@
 #include "OrbitBase/Result.h"
 #include "WindowsTracing/ListModulesETW.h"
 #include "OrbitPaths/Paths.h"
+#include "WindowsUtils/DllInjection.h"
 #include "WindowsUtils/FindDebugSymbols.h"
 #include "WindowsUtils/ListModules.h"
 #include "WindowsUtils/ProcessList.h"
@@ -97,7 +98,7 @@ grpc::Status ProcessServiceImpl::LaunchProcess(
     grpc::ServerContext* context, const orbit_grpc_protos::LaunchProcessRequest* request,
     orbit_grpc_protos::LaunchProcessResponse* response) {
   auto& process_to_launch = request->process_to_launch();
-  
+
   auto result = process_launcher_.LaunchProcess(
       process_to_launch.executable_path(), process_to_launch.working_directory(),
       process_to_launch.arguments(), process_to_launch.spin_at_entry_point());
@@ -120,9 +121,27 @@ grpc::Status ProcessServiceImpl::LaunchProcess(
   return Status::OK;
 }
 
+ErrorMessageOr<void> InitializeWindowsApiTracingInTarget(uint32_t pid) {
+  // Inject OrbitApi.dll if not already loaded.
+  OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, orbit_paths::GetOrbitDllPath()));
+
+  // Inject OrbitWindowsApiShim.dll if not already loaded.
+  const std::filesystem::path api_shim_full_path = orbit_paths::GetWindowsApiShimPath();
+  OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, api_shim_full_path));
+
+  // Call "InitializeShim" function in OrbitWindowsApiShim.dll through CreateRemoteThread.
+  const std::string shim_file_name = api_shim_full_path.filename().string();
+  OUTCOME_TRY(orbit_windows_utils::CreateRemoteThread(pid, shim_file_name, "InitializeShim", {}));
+
+  return outcome::success();
+}
+
 grpc::Status ProcessServiceImpl::SuspendProcess(
     grpc::ServerContext* context, const orbit_grpc_protos::SuspendProcessRequest* request,
     orbit_grpc_protos::SuspendProcessResponse* response) {
+  // Initialize Windows API tracing.
+  InitializeWindowsApiTracingInTarget(request->pid());
+
   auto result = process_launcher_.SuspendProcess(request->pid());
   if (result.has_error()) {
     return Status(StatusCode::NOT_FOUND, result.error().message());

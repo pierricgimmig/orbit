@@ -39,7 +39,7 @@ void LogIfError(const ErrorMessageOr<T>& result, std::string_view message) {
 
 TracerImpl::TracerImpl(orbit_grpc_protos::CaptureOptions capture_options, TracerListener* listener)
     : capture_options_(std::move(capture_options)), listener_(listener) {
-  InitializeWindowsApiTracing();
+  //InitializeWindowsApiTracing();
 }
 
 void TracerImpl::Start() {

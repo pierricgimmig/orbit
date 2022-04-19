@@ -10,7 +10,7 @@
 namespace orbit_windows_tracing {
 
 ErrorMessageOr<void> InitializeWindowsApiTracingInTarget(uint32_t pid) {
-  // Inject orbit.dll if not already loaded.
+  // Inject OrbitApi.dll if not already loaded.
   OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, orbit_paths::GetOrbitDllPath()));
 
   // Inject OrbitWindowsApiShim.dll if not already loaded.
