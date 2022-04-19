@@ -76,8 +76,34 @@ message GetPlatformApiInfoResponse {
   repeated PlatformApiFunction functions = 2;
 }
 
+message LaunchProcessRequest {
+  ProcessToLaunch process_to_launch = 1;
+}
+
+message LaunchProcessResponse {
+  ProcessInfo process_info = 1;
+}
+
+message SuspendProcessRequest {
+  uint32 pid = 1;
+}
+
+message SuspendProcessResponse {
+}
+
+message ResumeProcessRequest {
+  uint32 pid = 1;
+}
+
+message ResumeProcessResponse {
+}
+
 service ProcessService {
   rpc GetProcessList(GetProcessListRequest) returns (GetProcessListResponse) {}
+
+  rpc LaunchProcess(LaunchProcessRequest) returns (LaunchProcessResponse) {}
+  rpc SuspendProcess(SuspendProcessRequest) returns (SuspendProcessResponse) {}
+  rpc ResumeProcess(ResumeProcessRequest) returns (ResumeProcessResponse) {}
 
   rpc GetModuleList(GetModuleListRequest) returns (GetModuleListResponse) {}
 

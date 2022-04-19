@@ -12,6 +12,8 @@
 #include "ClientData/ProcessData.h"
 #include "ClientServices/ProcessManager.h"
 
+#include "ClientServices/ProcessManager.h"
+
 namespace Ui {
 class ProcessLauncherWidget;
 }

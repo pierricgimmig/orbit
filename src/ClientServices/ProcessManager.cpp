@@ -38,6 +38,11 @@ class ProcessManagerImpl final : public ProcessManager {
   void SetProcessListUpdateListener(
       const std::function<void(std::vector<orbit_grpc_protos::ProcessInfo>)>& listener) override;
 
+  ErrorMessageOr<orbit_grpc_protos::ProcessInfo> LaunchProcess(
+      const orbit_grpc_protos::ProcessToLaunch& process_to_launch) override;
+  ErrorMessageOr<void> SuspendProcess(uint32_t pid) override;
+  ErrorMessageOr<void> ResumeProcess(uint32_t pid) override;
+
   ErrorMessageOr<std::vector<ModuleInfo>> LoadModuleList(uint32_t pid) override;
 
   ErrorMessageOr<std::string> LoadProcessMemory(uint32_t pid, uint64_t address,
@@ -77,6 +82,19 @@ void ProcessManagerImpl::SetProcessListUpdateListener(
     const std::function<void(std::vector<orbit_grpc_protos::ProcessInfo>)>& listener) {
   absl::MutexLock lock(&process_list_update_listener_mutex_);
   process_list_update_listener_ = listener;
+}
+
+ErrorMessageOr<orbit_grpc_protos::ProcessInfo> ProcessManagerImpl::LaunchProcess(
+    const orbit_grpc_protos::ProcessToLaunch& process_to_launch) {
+  return process_client_->LaunchProcess(process_to_launch);
+}
+
+ErrorMessageOr<void> ProcessManagerImpl::SuspendProcess(uint32_t pid) {
+  return process_client_->SuspendProcess(pid);
+}
+
+ErrorMessageOr<void> ProcessManagerImpl::ResumeProcess(uint32_t pid) {
+  return process_client_->ResumeProcess(pid);
 }
 
 ErrorMessageOr<std::vector<ModuleInfo>> ProcessManagerImpl::LoadModuleList(uint32_t pid) {

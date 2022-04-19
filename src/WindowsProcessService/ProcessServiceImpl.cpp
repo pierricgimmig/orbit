@@ -31,8 +31,6 @@
 #include "WindowsUtils/ReadProcessMemory.h"
 #include "win32/manifest.h"
 
-#pragma optimize("", off)
-
 namespace orbit_windows_process_service {
 
 using grpc::ServerContext;
@@ -54,6 +52,22 @@ using orbit_grpc_protos::ProcessInfo;
 using orbit_windows_utils::Module;
 using orbit_windows_utils::Process;
 
+namespace {
+
+ProcessInfo ProcessInfoFromProcess(const Process* process, bool spin_at_entry_point) {
+  ProcessInfo process_info;
+  process_info.set_pid(process->pid);
+  process_info.set_name(process->name);
+  process_info.set_full_path(process->full_path);
+  process_info.set_build_id(process->build_id);
+  process_info.set_is_64_bit(process->is_64_bit);
+  process_info.set_cpu_usage(process->cpu_usage_percentage);
+  process_info.set_launched_spinning_at_entry_point(spin_at_entry_point);
+  return process_info;
+}
+
+}  // namespace
+
 Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRequest*,
                                           GetProcessListResponse* response) {
   std::vector<const Process*> processes;
@@ -73,13 +87,56 @@ Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRe
   }
 
   for (const Process* process : processes) {
-    ProcessInfo* process_info = response->add_processes();
-    process_info->set_pid(process->pid);
-    process_info->set_name(process->name);
-    process_info->set_full_path(process->full_path);
-    process_info->set_build_id(process->build_id);
-    process_info->set_is_64_bit(process->is_64_bit);
-    process_info->set_cpu_usage(process->cpu_usage_percentage);
+    *response->add_processes() = std::move(ProcessInfoFromProcess(process, /*is_paused=*/false));
+  }
+
+  return Status::OK;
+}
+
+grpc::Status ProcessServiceImpl::LaunchProcess(
+    grpc::ServerContext* context, const orbit_grpc_protos::LaunchProcessRequest* request,
+    orbit_grpc_protos::LaunchProcessResponse* response) {
+  auto& process_to_launch = request->process_to_launch();
+  
+  auto result = process_launcher_.LaunchProcess(
+      process_to_launch.executable_path(), process_to_launch.working_directory(),
+      process_to_launch.arguments(), process_to_launch.spin_at_entry_point());
+
+  if (result.has_error()) {
+    return Status(StatusCode::INVALID_ARGUMENT, result.error().message());
+  }
+
+  process_list_->Refresh();
+
+  uint32_t process_id = result.value();
+  std::optional<const Process*> process = process_list_->GetProcessByPid(process_id);
+  if (!process.has_value()) {
+    // The process might have already exited.
+    return Status(StatusCode::NOT_FOUND, "Launched process not found in process list");
+  }
+
+  *response->mutable_process_info() =
+      std::move(ProcessInfoFromProcess(*process, process_to_launch.spin_at_entry_point()));
+  return Status::OK;
+}
+
+grpc::Status ProcessServiceImpl::SuspendProcess(
+    grpc::ServerContext* context, const orbit_grpc_protos::SuspendProcessRequest* request,
+    orbit_grpc_protos::SuspendProcessResponse* response) {
+  auto result = process_launcher_.SuspendProcess(request->pid());
+  if (result.has_error()) {
+    return Status(StatusCode::NOT_FOUND, result.error().message());
+  }
+
+  return Status::OK;
+}
+
+grpc::Status ProcessServiceImpl::ResumeProcess(
+    grpc::ServerContext* context, const orbit_grpc_protos::ResumeProcessRequest* request,
+    orbit_grpc_protos::ResumeProcessResponse* response) {
+  auto result = process_launcher_.ResumeProcess(request->pid());
+  if (result.has_error()) {
+    return Status(StatusCode::NOT_FOUND, result.error().message());
   }
 
   return Status::OK;

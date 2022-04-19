@@ -841,7 +841,17 @@ void OrbitApp::PostInit(bool is_connected) {
     download_disabled_modules_ = storage_manager.LoadDisabledModulePaths();
 
     if (GetTargetProcess() != nullptr) {
-      std::ignore = UpdateProcessAndModuleList();
+      auto update_process_and_modules_future = UpdateProcessAndModuleList();
+
+      if (GetTargetProcess()->launched_spinning_at_entry_point()) {
+        // Initialize spinning process only after we've received module information and OrbitService
+        // has potentially injected shared libraries in the target process.
+        main_thread_executor_->ScheduleAfter(update_process_and_modules_future,
+                                             [this](const ErrorMessageOr<void>& result) {
+                                               uint32_t process_id = GetTargetProcess()->pid();
+                                               InitializeProcessSpinningAtEntryPoint(process_id);
+                                             });
+      }
     }
 
     frame_pointer_validator_client_ =
@@ -891,6 +901,13 @@ void OrbitApp::InitRemoteSymbolProviders() {
   }
 
   microsoft_symbol_provider_.emplace(&symbol_helper_, &*download_manager_);
+}
+
+void OrbitApp::InitializeProcessSpinningAtEntryPoint(uint32_t pid) {
+  // Apply presets?
+
+  // Suspend main thread instead of busy looping. Process will be resumed after capture start.
+  process_manager_->SuspendProcess(pid);
 }
 
 static std::vector<std::filesystem::path> ListRegularFilesWithExtension(
@@ -1595,6 +1612,7 @@ void OrbitApp::StartCapture() {
   }
 
   ClientCaptureOptions options;
+  options.process_id = process->pid();
   options.selected_tracepoints = data_manager_->selected_tracepoints();
   options.collect_scheduling_info = !IsDevMode() || data_manager_->collect_scheduler_info();
   options.collect_thread_states = data_manager_->collect_thread_states();
@@ -1667,6 +1685,12 @@ void OrbitApp::StartCapture() {
 
   Future<ErrorMessageOr<CaptureOutcome>> capture_result = capture_client_->Capture(
       thread_pool_.get(), std::move(capture_event_processor), *module_manager_, *process_, options);
+
+  // If process is suspended, resume it only after we've started capturing to make sure we catch
+  // events as early as possible in the process life cycle, i.e. before main is called.
+  if (process->launched_spinning_at_entry_point()) {
+    process_manager_->ResumeProcess(process->pid());
+  }
 
   // TODO(b/187250643): Refactor this to be more readable and maybe remove parts that are not needed
   // here (capture cancelled)
@@ -1983,7 +2007,7 @@ Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
 
   functions_data_view_->AddFunctions(module_data->GetFunctions());
   ORBIT_LOG("Added loaded function symbols for module \"%s\" to the functions tab",
-      module_data->file_path());
+            module_data->file_path());
 
   UpdateAfterSymbolLoading();
   FireRefreshCallbacks();
@@ -2308,10 +2332,10 @@ static ErrorMessageOr<std::filesystem::path> FindModuleLocallyImpl(
                         module_data.file_path()));
   }
 
-  #ifdef _WIN32
+#ifdef _WIN32
   ErrorMessageOr<std::filesystem::path> symbols_path = orbit_windows_utils::FindDebugSymbols(
 
-            module_data.file_path(), /*additional_search_directories=*/{});
+      module_data.file_path(), /*additional_search_directories=*/{});
 
   if (symbols_path.has_value()) {
     ORBIT_LOG("Found symbols for module \"%s\" locally. Symbols filename: \"%s\"",
@@ -2607,9 +2631,9 @@ Future<ErrorMessageOr<void>> OrbitApp::LoadPreset(const PresetFile& preset_file)
         // Then - when all modules are loaded or failed to load - we update the UI and potentially
         // show an error message.
         /*auto results = orbit_base::JoinFutures(absl::MakeConstSpan(load_module_results));
-        results.Then(main_thread_executor_, [this, metric = std::move(metric), preset_file](
-                                                std::vector<std::string> module_paths_not_found)
-        mutable { size_t tried_to_load_amount = module_paths_not_found.size();
+  results.Then(main_thread_executor_, [this, metric = std::move(metric), preset_file](
+                                          std::vector<std::string> module_paths_not_found) mutable {
+    size_t tried_to_load_amount = module_paths_not_found.size();
           module_paths_not_found.erase(
               std::remove_if(module_paths_not_found.begin(), module_paths_not_found.end(),
                              [](const std::string& path) { return path.empty(); }),

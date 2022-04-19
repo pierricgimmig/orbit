@@ -25,6 +25,12 @@ using orbit_grpc_protos::GetDebugInfoFileRequest;
 using orbit_grpc_protos::GetDebugInfoFileResponse;
 using orbit_grpc_protos::GetModuleListRequest;
 using orbit_grpc_protos::GetModuleListResponse;
+using orbit_grpc_protos::LaunchProcessRequest;
+using orbit_grpc_protos::LaunchProcessResponse;
+using orbit_grpc_protos::SuspendProcessRequest;
+using orbit_grpc_protos::SuspendProcessResponse;
+using orbit_grpc_protos::ResumeProcessRequest;
+using orbit_grpc_protos::ResumeProcessResponse;
 using orbit_grpc_protos::GetPlatformApiInfoRequest;
 using orbit_grpc_protos::GetPlatformApiInfoResponse;
 using orbit_grpc_protos::GetProcessListRequest;
@@ -64,6 +70,59 @@ ErrorMessageOr<std::vector<orbit_grpc_protos::ProcessInfo>> ProcessClient::GetPr
   const auto& processes = response.processes();
 
   return std::vector<ProcessInfo>(processes.begin(), processes.end());
+}
+
+[[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ProcessInfo> ProcessClient::LaunchProcess(
+    const orbit_grpc_protos::ProcessToLaunch& process_to_launch) {
+  LaunchProcessRequest request;
+  LaunchProcessResponse response;
+
+  *request.mutable_process_to_launch() = process_to_launch;
+
+  std::unique_ptr<grpc::ClientContext> context = CreateContext();
+  grpc::Status status = process_service_->LaunchProcess(context.get(), request, &response);
+
+  if (!status.ok()) {
+    ORBIT_ERROR("Grpc call failed: code=%d, message=%s", status.error_code(),
+                status.error_message());
+    return ErrorMessage(status.error_message());
+  }
+
+  return response.process_info();
+}
+
+ErrorMessageOr<void> ProcessClient::SuspendProcess(uint32_t pid) {
+  SuspendProcessRequest request;
+  SuspendProcessResponse response;
+  request.set_pid(pid);
+  
+  std::unique_ptr<grpc::ClientContext> context = CreateContext();
+  grpc::Status status = process_service_->SuspendProcess(context.get(), request, &response);
+
+  if (!status.ok()) {
+    ORBIT_ERROR("Grpc call failed: code=%d, message=%s", status.error_code(),
+                status.error_message());
+    return ErrorMessage(status.error_message());
+  }
+
+  return outcome::success();
+}
+
+ErrorMessageOr<void> ProcessClient::ResumeProcess(uint32_t pid) {
+  ResumeProcessRequest request;
+  ResumeProcessResponse response;
+  request.set_pid(pid);
+
+  std::unique_ptr<grpc::ClientContext> context = CreateContext();
+  grpc::Status status = process_service_->ResumeProcess(context.get(), request, &response);
+
+  if (!status.ok()) {
+    ORBIT_ERROR("Grpc call failed: code=%d, message=%s", status.error_code(),
+                status.error_message());
+    return ErrorMessage(status.error_message());
+  }
+
+  return outcome::success();
 }
 
 ErrorMessageOr<std::vector<ModuleInfo>> ProcessClient::LoadModuleList(uint32_t pid) {

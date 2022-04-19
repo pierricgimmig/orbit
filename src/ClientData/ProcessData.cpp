@@ -61,6 +61,11 @@ const std::string& ProcessData::build_id() const {
   return process_info_.build_id();
 }
 
+bool ProcessData::launched_spinning_at_entry_point() const {
+  absl::MutexLock lock(&mutex_);
+  return process_info_.launched_spinning_at_entry_point();
+}
+
 [[maybe_unused]] static bool IsModuleMapValid(
     const std::map<uint64_t, ModuleInMemory>& module_map) {
   // Check that modules do not intersect in the address space.

@@ -32,6 +32,12 @@ class ProcessClient {
       : process_service_(orbit_grpc_protos::ProcessService::NewStub(channel)) {}
 
   [[nodiscard]] ErrorMessageOr<std::vector<orbit_grpc_protos::ProcessInfo>> GetProcessList();
+  
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ProcessInfo> LaunchProcess(
+      const orbit_grpc_protos::ProcessToLaunch& process_to_launch);
+
+  ErrorMessageOr<void> SuspendProcess(uint32_t pid);
+  ErrorMessageOr<void> ResumeProcess(uint32_t pid);
 
   [[nodiscard]] ErrorMessageOr<std::vector<orbit_grpc_protos::ModuleInfo>> LoadModuleList(
       uint32_t pid);

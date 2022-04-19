@@ -14,4 +14,5 @@ message ProcessInfo {
   string command_line = 5;
   bool is_64_bit = 6;
   string build_id = 7;
+  bool launched_spinning_at_entry_point = 8;
 }

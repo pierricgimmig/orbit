@@ -71,6 +71,7 @@ class ProcessData final {
   [[nodiscard]] const std::string& command_line() const;
   [[nodiscard]] bool is_64_bit() const;
   [[nodiscard]] const std::string& build_id() const;
+  [[nodiscard]] bool launched_spinning_at_entry_point() const;
 
   void UpdateModuleInfos(absl::Span<const orbit_grpc_protos::ModuleInfo> module_infos);
 

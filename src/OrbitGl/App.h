@@ -30,6 +30,7 @@
 #include "CaptureClient/AppInterface.h"
 #include "CaptureClient/CaptureClient.h"
 #include "CaptureClient/CaptureListener.h"
+#include "CaptureClient/ClientCaptureOptions.h"
 #include "CaptureFile/CaptureFile.h"
 #include "CaptureFileInfo/Manager.h"
 #include "CaptureWindow.h"
@@ -582,6 +583,7 @@ class OrbitApp final : public DataViewFactory,
   void AddDefaultFrameTrackOrLogError();
 
  private:
+  void InitializeProcessSpinningAtEntryPoint(uint32_t pid);
   void UpdateModulesAbortCaptureIfModuleWithoutBuildIdNeedsReload(
       absl::Span<const orbit_grpc_protos::ModuleInfo> module_infos);
   void AddSymbols(const orbit_symbol_provider::ModuleIdentifier& module_id,

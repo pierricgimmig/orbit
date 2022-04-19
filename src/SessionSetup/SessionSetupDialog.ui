@@ -74,7 +74,7 @@
         <property name="lineWidth">
          <number>0</number>
         </property>
-        <layout class="QVBoxLayout" name="verticalLayout" stretch="1,0,1,0">
+        <layout class="QVBoxLayout" name="verticalLayout" stretch="1,0,1">
          <property name="rightMargin">
           <number>0</number>
          </property>
@@ -146,9 +146,6 @@
          </item>
          <item>
           <widget class="orbit_capture_file_info::LoadCaptureWidget" name="loadCaptureWidget" native="true"/>
-         </item>
-         <item>
-          <widget class="orbit_session_setup::ProcessLauncherWidget" name="widget" native="true"/>
          </item>
         </layout>
        </widget>

@@ -44,19 +44,24 @@ void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
 }
 
 void ProcessLauncherWidget::on_LaunchButton_clicked() {
-  ORBIT_LOG("ProcessLauncherWidget::on_LaunchButton_clicked()");
+  ORBIT_CHECK(process_manager_ != nullptr);
   QString process = ui->ProcessComboBox->lineEdit()->text();
-  QString workingDir = ui->WorkingDirComboBox->lineEdit()->text();
+  QString working_dir = ui->WorkingDirComboBox->lineEdit()->text();
   QString args = ui->ArgumentsComboBox->lineEdit()->text();
-  // GOrbitApp->OnLaunchProcess( process.toStdWString(), workingDir.toStdWString(),
-  // args.toStdWString() );
+  bool pause_on_entry_point = ui->PauseAtEntryPoingCheckBox->isChecked();
+
+  orbit_grpc_protos::ProcessToLaunch process_to_launch;
+  process_to_launch.set_executable_path(process.toStdString());
+  process_to_launch.set_working_directory(working_dir.toStdString());
+  process_to_launch.set_arguments(args.toStdString());
+  process_to_launch.set_spin_at_entry_point(pause_on_entry_point);
+
+  last_launched_process_or_error_ = process_manager_->LaunchProcess(process_to_launch);
+  if (last_launched_process_or_error_.has_error()) {
+    ui->ErrorLabel->setText(last_launched_process_or_error_.error().message().c_str());
+  }
 }
 
-void ProcessLauncherWidget::on_PauseAtEntryPoingCheckBox_clicked(bool checked) {
-  ORBIT_LOG("ProcessLauncherWidget::on_checkBoxPause_clicked()");
-  /*GParams.m_StartPaused = checked;
-  GParams.Save();*/
-}
 
 void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
   ORBIT_LOG("ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked()");
@@ -65,5 +70,7 @@ void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
       QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
   ui->WorkingDirComboBox->lineEdit()->setText(dir);
 }
+
+QPushButton* ProcessLauncherWidget::GetLaunchButton() { return ui->LaunchButton; }
 
 }  // namespace orbit_session_setup
