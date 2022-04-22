@@ -24,5 +24,6 @@ target_link_libraries(WindowsProcessService PUBLIC
         WindowsTracing
         OrbitPaths
         WindowsApiShim
+        WindowsTracing
         WindowsUtils)
 

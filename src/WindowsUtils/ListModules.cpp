@@ -14,6 +14,7 @@
 #include "ObjectUtils/CoffFile.h"
 #include "OrbitBase/GetLastError.h"
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/GetLastError.h"
 #include "OrbitBase/StringConversion.h"
 #include "OrbitBase/UniqueResource.h"
 #include "WindowsUtils/SafeHandle.h"

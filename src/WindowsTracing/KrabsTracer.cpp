@@ -16,7 +16,6 @@
 #include "OrbitBase/Profiling.h"
 #include "OrbitBase/StringConversion.h"
 #include "OrbitBase/ThreadUtils.h"
-#include "OrbitBase/Profiling.h"
 #include "WindowsUtils/AdjustTokenPrivilege.h"
 #include "WindowsUtils/PathConverter.h"
 
@@ -61,6 +60,8 @@ void KrabsTracer::SetTraceProperties() {
 bool KrabsTracer::IsProviderEnabled(ProviderFlags provider) const {
   return (providers_ & provider) != 0;
 }
+
+bool KrabsTracer::ProviderEnabled(ProviderFlags provider) { return (providers_ & provider) != 0; }
 
 void KrabsTracer::EnableProviders() {
   if (IsProviderEnabled(ProviderFlags::kThread)) {
@@ -122,19 +123,12 @@ void KrabsTracer::Start() {
   ORBIT_CHECK(user_trace_thread_ == nullptr);
   context_switch_manager_ = std::make_unique<ContextSwitchManager>(listener_);
   SetIsSystemProfilePrivilegeEnabled(true);
-<<<<<<< HEAD
   log_file_ = kernel_trace_.open();
   if (IsProviderEnabled(ProviderFlags::kStackWalk)) {
     SetupStackTracing();
   }
   kernel_trace_thread_ = std::make_unique<std::thread>(&KrabsTracer::KernelTraceThread, this);
   user_trace_thread_ = std::make_unique<std::thread>(&KrabsTracer::UserTraceThread, this);
-=======
-  log_file_ = trace_.open();
-  OutputLogFileInfo(log_file_);
-  SetupStackTracing();
-  trace_thread_ = std::make_unique<std::thread>(&KrabsTracer::Run, this);
->>>>>>> d8e6eac07 (Make etw timestamps match that of QueryPerformanceCounter())
 }
 
 void KrabsTracer::Stop() {
@@ -176,9 +170,9 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
     case kEtwThreadGroup1EventStart:
     case kEtwThreadGroup1EventDcStart:
     case kEtwThreadGroup1EventDcEnd: {
-      // The Start event type corresponds to a thread's creation. The DCStart and DCEnd event types
-      // enumerate the threads that are currently running at the time the kernel session starts and
-      // ends, respectively.
+      // The Start event type corresponds to a thread's creation. The DCStart and DCEnd event
+      // types enumerate the threads that are currently running at the time the kernel session
+      // starts and ends, respectively.
       krabs::schema schema(record, context.schema_locator);
       krabs::parser parser(schema);
       uint32_t tid = parser.parse<uint32_t>(L"TThreadId");
@@ -308,8 +302,7 @@ void KrabsTracer::OutputStats() {
   }
 }
 
-#define PRINT_VAR(x) ORBIT_LOG(#x " = %s", std::to_string(x))
-void KrabsTracer::OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file) { 
+void KrabsTracer::OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file) {
   ORBIT_LOG("--- ETW Logfile info ---");
   ORBIT_LOG("log_file.LoggerName = %s", log_file.LoggerName);
   PRINT_VAR(log_file.CurrentTime);

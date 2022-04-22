@@ -25,6 +25,7 @@
 #include "OrbitBase/Result.h"
 #include "WindowsTracing/ListModulesETW.h"
 #include "OrbitPaths/Paths.h"
+#include "WindowsTracing/ListModulesETW.h"
 #include "WindowsUtils/DllInjection.h"
 #include "WindowsUtils/FindDebugSymbols.h"
 #include "WindowsUtils/ListModules.h"
@@ -140,7 +141,7 @@ grpc::Status ProcessServiceImpl::SuspendProcess(
     grpc::ServerContext* context, const orbit_grpc_protos::SuspendProcessRequest* request,
     orbit_grpc_protos::SuspendProcessResponse* response) {
   // Initialize Windows API tracing.
-  InitializeWindowsApiTracingInTarget(request->pid());
+  //InitializeWindowsApiTracingInTarget(request->pid());
 
   auto result = process_launcher_.SuspendProcess(request->pid());
   if (result.has_error()) {
@@ -173,6 +174,11 @@ Status ProcessServiceImpl::GetModuleList(ServerContext* /*context*/,
                                          const GetModuleListRequest* request,
                                          GetModuleListResponse* response) {
   std::vector<Module> modules = orbit_windows_utils::ListModules(request->process_id());
+  if(modules.empty()) {
+    // Fallback etw module enumeration which involves more work.
+    modules = orbit_windows_tracing::ListModulesEtw(request->process_id());
+  }
+
   if (modules.empty()) {
     // Fallback on etw module enumeration which involves more work.
     modules = orbit_windows_tracing::ListModulesEtw(request->process_id());

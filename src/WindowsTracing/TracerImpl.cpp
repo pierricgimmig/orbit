@@ -9,6 +9,7 @@
 #include "OrbitBase/Profiling.h"
 #include "WindowsTracing/ListModulesETW.h"
 #include "WindowsApiTracing.h"
+#include "WindowsTracing/ListModulesETW.h"
 #include "WindowsUtils/CreateProcess.h"
 #include "WindowsUtils/ListModules.h"
 #include "WindowsUtils/ListThreads.h"
@@ -39,7 +40,7 @@ void LogIfError(const ErrorMessageOr<T>& result, std::string_view message) {
 
 TracerImpl::TracerImpl(orbit_grpc_protos::CaptureOptions capture_options, TracerListener* listener)
     : capture_options_(std::move(capture_options)), listener_(listener) {
-  //InitializeWindowsApiTracing();
+  InitializeWindowsApiTracing();
 }
 
 void TracerImpl::Start() {
