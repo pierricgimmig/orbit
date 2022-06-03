@@ -22,6 +22,7 @@
 #include <utility>
 
 #include "ApiInterface/Orbit.h"
+#include "FakeWorkload.h"
 #include "Function.h"
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/tracepoint.pb.h"
@@ -65,6 +66,7 @@ TracerImpl::TracerImpl(
     TracerListener* listener)
     : trace_context_switches_{capture_options.trace_context_switches()},
       introspection_enabled_{capture_options.enable_introspection()},
+      spawn_fake_workload_{capture_options.enable_introspection()},
       target_pid_{orbit_base::ToNativeProcessId(capture_options.pid())},
       unwinding_method_{capture_options.unwinding_method()},
       trace_thread_state_{capture_options.trace_thread_state()},
@@ -849,6 +851,9 @@ void TracerImpl::ProcessOneRecord(PerfEventRingBuffer* ring_buffer) {
 
 void TracerImpl::Run() {
   orbit_base::SetCurrentThreadName("Tracer::Run");
+
+  // Start a fake work load to profile OrbitService while it is processing profiling events.
+  auto fake_workload = spawn_fake_workload_ ? std::make_unique<FakeWorkload>() : nullptr;
 
   Startup();
 

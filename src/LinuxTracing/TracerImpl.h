@@ -138,6 +138,7 @@ class TracerImpl : public Tracer {
 
   bool trace_context_switches_;
   bool introspection_enabled_;
+  bool spawn_fake_workload_;
   pid_t target_pid_;
   std::optional<uint64_t> sampling_period_ns_;
   uint16_t stack_dump_size_;
