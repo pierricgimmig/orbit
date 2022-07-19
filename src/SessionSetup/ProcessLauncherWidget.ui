@@ -42,7 +42,7 @@
        <item row="0" column="0">
         <layout class="QVBoxLayout" name="verticalLayout">
          <item>
-          <layout class="QGridLayout" name="gridLayout_2">
+          <layout class="QGridLayout" name="gridLayout_2" columnstretch="0,90">
            <item row="0" column="0">
             <widget class="QLabel" name="LaunchProcessLabel">
              <property name="text">
@@ -54,6 +54,9 @@
             <widget class="QComboBox" name="ProcessComboBox">
              <property name="editable">
               <bool>true</bool>
+             </property>
+             <property name="placeholderText">
+              <string>Process</string>
              </property>
             </widget>
            </item>
@@ -69,6 +72,9 @@
              <property name="editable">
               <bool>true</bool>
              </property>
+             <property name="placeholderText">
+              <string>Working directory</string>
+             </property>
             </widget>
            </item>
            <item row="2" column="1">
@@ -82,6 +88,9 @@
             <widget class="QComboBox" name="ArgumentsComboBox">
              <property name="editable">
               <bool>true</bool>
+             </property>
+             <property name="placeholderText">
+              <string>Arguments</string>
              </property>
             </widget>
            </item>
@@ -122,7 +131,7 @@
            <item>
             <widget class="QLabel" name="ErrorLabel">
              <property name="text">
-              <string>ErrorLabel</string>
+              <string/>
              </property>
             </widget>
            </item>
