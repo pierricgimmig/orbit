@@ -61,8 +61,6 @@ bool KrabsTracer::IsProviderEnabled(ProviderFlags provider) const {
   return (providers_ & provider) != 0;
 }
 
-bool KrabsTracer::ProviderEnabled(ProviderFlags provider) { return (providers_ & provider) != 0; }
-
 void KrabsTracer::EnableProviders() {
   if (IsProviderEnabled(ProviderFlags::kThread)) {
     thread_provider_.add_on_event_callback(
@@ -170,9 +168,9 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
     case kEtwThreadGroup1EventStart:
     case kEtwThreadGroup1EventDcStart:
     case kEtwThreadGroup1EventDcEnd: {
-      // The Start event type corresponds to a thread's creation. The DCStart and DCEnd event
-      // types enumerate the threads that are currently running at the time the kernel session
-      // starts and ends, respectively.
+      // The Start event type corresponds to a thread's creation. The DCStart and DCEnd event types
+      // enumerate the threads that are currently running at the time the kernel session starts and
+      // ends, respectively.
       krabs::schema schema(record, context.schema_locator);
       krabs::parser parser(schema);
       uint32_t tid = parser.parse<uint32_t>(L"TThreadId");
@@ -300,40 +298,6 @@ void KrabsTracer::OutputStats() {
   if (graphics_etw_provider_ != nullptr) {
     graphics_etw_provider_->OutputStats();
   }
-}
-
-void KrabsTracer::OutputLogFileInfo(const EVENT_TRACE_LOGFILE& log_file) {
-  ORBIT_LOG("--- ETW Logfile info ---");
-  ORBIT_LOG("log_file.LoggerName = %s", log_file.LoggerName);
-  PRINT_VAR(log_file.CurrentTime);
-  PRINT_VAR(log_file.BuffersRead);
-  PRINT_VAR(log_file.BufferSize);
-  PRINT_VAR(log_file.Filled);
-  PRINT_VAR(log_file.EventsLost);
-  PRINT_VAR(log_file.IsKernelTrace);
-
-  const TRACE_LOGFILE_HEADER& header = log_file.LogfileHeader;
-  PRINT_VAR(header.VersionDetail.MajorVersion);
-  PRINT_VAR(header.VersionDetail.MinorVersion);
-  PRINT_VAR(header.VersionDetail.SubVersion);
-  PRINT_VAR(header.VersionDetail.SubMinorVersion);
-  PRINT_VAR(header.ProviderVersion);
-  PRINT_VAR(header.EndTime.QuadPart);
-  PRINT_VAR(header.TimerResolution);
-  PRINT_VAR(header.MaximumFileSize);
-  PRINT_VAR(header.LogFileMode);
-  PRINT_VAR(header.BuffersWritten);
-  PRINT_VAR(header.StartBuffers);
-  PRINT_VAR(header.PointerSize);
-  PRINT_VAR(header.EventsLost);
-  PRINT_VAR(header.CpuSpeedInMHz);
-  ORBIT_LOG("header.LoggerName = %s", header.LoggerName);
-  ORBIT_LOG("header.LogFileName = %s", header.LogFileName);
-  PRINT_VAR(header.BootTime.QuadPart);
-  PRINT_VAR(header.PerfFreq.QuadPart);
-  PRINT_VAR(header.StartTime.QuadPart);
-  ORBIT_LOG("header.ReservedFlags (ClockType) = %u", header.ReservedFlags);
-  PRINT_VAR(header.BuffersLost);
 }
 
 }  // namespace orbit_windows_tracing

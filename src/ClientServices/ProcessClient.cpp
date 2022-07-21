@@ -27,10 +27,10 @@ using orbit_grpc_protos::GetModuleListRequest;
 using orbit_grpc_protos::GetModuleListResponse;
 using orbit_grpc_protos::LaunchProcessRequest;
 using orbit_grpc_protos::LaunchProcessResponse;
-using orbit_grpc_protos::SuspendProcessRequest;
-using orbit_grpc_protos::SuspendProcessResponse;
-using orbit_grpc_protos::ResumeProcessRequest;
-using orbit_grpc_protos::ResumeProcessResponse;
+using orbit_grpc_protos::SuspendProcessSpinningAtEntryPointRequest;
+using orbit_grpc_protos::SuspendProcessSpinningAtEntryPointResponse;
+using orbit_grpc_protos::ResumeProcessSuspendedAtEntryPointRequest;
+using orbit_grpc_protos::ResumeProcessSuspendedAtEntryPointResponse;
 using orbit_grpc_protos::GetPlatformApiInfoRequest;
 using orbit_grpc_protos::GetPlatformApiInfoResponse;
 using orbit_grpc_protos::GetProcessListRequest;
@@ -80,7 +80,8 @@ ErrorMessageOr<std::vector<orbit_grpc_protos::ProcessInfo>> ProcessClient::GetPr
   *request.mutable_process_to_launch() = process_to_launch;
 
   std::unique_ptr<grpc::ClientContext> context = CreateContext();
-  grpc::Status status = process_service_->LaunchProcess(context.get(), request, &response);
+  grpc::Status status =
+      windows_process_launcher_service_->LaunchProcess(context.get(), request, &response);
 
   if (!status.ok()) {
     ORBIT_ERROR("Grpc call failed: code=%d, message=%s", status.error_code(),
@@ -92,12 +93,13 @@ ErrorMessageOr<std::vector<orbit_grpc_protos::ProcessInfo>> ProcessClient::GetPr
 }
 
 ErrorMessageOr<void> ProcessClient::SuspendProcess(uint32_t pid) {
-  SuspendProcessRequest request;
-  SuspendProcessResponse response;
+  SuspendProcessSpinningAtEntryPointRequest request;
+  SuspendProcessSpinningAtEntryPointResponse response;
   request.set_pid(pid);
   
   std::unique_ptr<grpc::ClientContext> context = CreateContext();
-  grpc::Status status = process_service_->SuspendProcess(context.get(), request, &response);
+  grpc::Status status = windows_process_launcher_service_->SuspendProcessSpinningAtEntryPoint(
+      context.get(), request, &response);
 
   if (!status.ok()) {
     ORBIT_ERROR("Grpc call failed: code=%d, message=%s", status.error_code(),
@@ -109,12 +111,13 @@ ErrorMessageOr<void> ProcessClient::SuspendProcess(uint32_t pid) {
 }
 
 ErrorMessageOr<void> ProcessClient::ResumeProcess(uint32_t pid) {
-  ResumeProcessRequest request;
-  ResumeProcessResponse response;
+  ResumeProcessSuspendedAtEntryPointRequest request;
+  ResumeProcessSuspendedAtEntryPointResponse response;
   request.set_pid(pid);
 
   std::unique_ptr<grpc::ClientContext> context = CreateContext();
-  grpc::Status status = process_service_->ResumeProcess(context.get(), request, &response);
+  grpc::Status status = windows_process_launcher_service_->ResumeProcessSuspendedAtEntryPoint(
+      context.get(), request, &response);
 
   if (!status.ok()) {
     ORBIT_ERROR("Grpc call failed: code=%d, message=%s", status.error_code(),

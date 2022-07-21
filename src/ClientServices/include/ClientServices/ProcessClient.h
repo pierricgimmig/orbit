@@ -52,6 +52,7 @@ class ProcessClient {
 
  private:
   std::unique_ptr<orbit_grpc_protos::ProcessService::Stub> process_service_;
+  std::unique_ptr<orbit_grpc_protos::WindowsProcessLauncherService::Stub> windows_process_launcher_service_;
 };
 
 }  // namespace orbit_client_services

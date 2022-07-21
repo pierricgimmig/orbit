@@ -45,10 +45,10 @@ void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
 
 void ProcessLauncherWidget::on_LaunchButton_clicked() {
   ORBIT_CHECK(process_manager_ != nullptr);
-  QString process = ui->ProcessComboBox->lineEdit()->text();
-  QString working_dir = ui->WorkingDirComboBox->lineEdit()->text();
-  QString args = ui->ArgumentsComboBox->lineEdit()->text();
-  bool pause_on_entry_point = ui->PauseAtEntryPoingCheckBox->isChecked();
+  QString process = ui_->ProcessComboBox->lineEdit()->text();
+  QString working_dir = ui_->WorkingDirComboBox->lineEdit()->text();
+  QString args = ui_->ArgumentsComboBox->lineEdit()->text();
+  bool pause_on_entry_point = ui_->PauseAtEntryPoingCheckBox->isChecked();
 
   orbit_grpc_protos::ProcessToLaunch process_to_launch;
   process_to_launch.set_executable_path(process.toStdString());
@@ -56,21 +56,10 @@ void ProcessLauncherWidget::on_LaunchButton_clicked() {
   process_to_launch.set_arguments(args.toStdString());
   process_to_launch.set_spin_at_entry_point(pause_on_entry_point);
 
-  last_launched_process_or_error_ = process_manager_->LaunchProcess(process_to_launch);
+  /*last_launched_process_or_error_ = process_manager_->LaunchProcess(process_to_launch);
   if (last_launched_process_or_error_.has_error()) {
-    ui->ErrorLabel->setText(last_launched_process_or_error_.error().message().c_str());
-  }
+    ui_->ErrorLabel->setText(last_launched_process_or_error_.error().message().c_str());
+  }*/
 }
-
-
-void ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked() {
-  ORBIT_LOG("ProcessLauncherWidget::on_BrowseWorkingDirButton_clicked()");
-  QString dir = QFileDialog::getExistingDirectory(
-      this, tr("Open Directory"), "/home",
-      QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-  ui->WorkingDirComboBox->lineEdit()->setText(dir);
-}
-
-QPushButton* ProcessLauncherWidget::GetLaunchButton() { return ui->LaunchButton; }
 
 }  // namespace orbit_session_setup

@@ -17,7 +17,6 @@
 
 using orbit_grpc_protos::ModuleInfo;
 using orbit_grpc_protos::ModulesSnapshot;
-using orbit_grpc_protos::ProcessToLaunch;
 using orbit_grpc_protos::ThreadName;
 using orbit_grpc_protos::ThreadNamesSnapshot;
 using orbit_windows_utils::BusyLoopInfo;

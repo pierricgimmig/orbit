@@ -89,3 +89,9 @@ class KrabsTracer {
 
   mutable absl::Mutex modules_mutex_;
   std::vector<orbit_windows_utils::Module> modules_ ABSL_GUARDED_BY(modules_mutex_);
+  std::unique_ptr<orbit_windows_utils::PathConverter> path_converter_;
+};
+
+}  // namespace orbit_windows_tracing
+
+#endif  // WINDOWS_TRACING_KRABS_TRACER_H_

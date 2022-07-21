@@ -2015,7 +2015,7 @@ Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
   return outcome::success();
 }
 
-orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveModuleAndLoadSymbols(
+orbit_base::Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
     const ModuleData* module) {
   if (module->name() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
     return RetrieveAndLoadPlatformApiInfo(module);
@@ -2037,7 +2037,8 @@ OrbitApp::GetPlatformApiInfo(const orbit_client_data::ModuleData* module) {
   return std::move(get_platform_api_info_on_remote);
 }
 
-orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveModuleAndLoadSymbols(
+orbit_base::Future<ErrorMessageOr<orbit_base::CanceledOr<void>>>
+OrbitApp::RetrieveModuleAndLoadSymbols(
     const std::string& module_path, const std::string& build_id) {
   ORBIT_SCOPE_FUNCTION;
   ORBIT_CHECK(main_thread_id_ == std::this_thread::get_id());
@@ -2331,18 +2332,6 @@ static ErrorMessageOr<std::filesystem::path> FindModuleLocallyImpl(
         absl::StrFormat("Unable to find local symbols for module \"%s\", build id is empty",
                         module_data.file_path()));
   }
-
-#ifdef _WIN32
-  ErrorMessageOr<std::filesystem::path> symbols_path = orbit_windows_utils::FindDebugSymbols(
-
-      module_data.file_path(), /*additional_search_directories=*/{});
-
-  if (symbols_path.has_value()) {
-    ORBIT_LOG("Found symbols for module \"%s\" locally. Symbols filename: \"%s\"",
-              module_data.file_path(), symbols_path.value().string());
-    return symbols_path.value();
-  }
-#endif
 
   std::string error_message;
   {

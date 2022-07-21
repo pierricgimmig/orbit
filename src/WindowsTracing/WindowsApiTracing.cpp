@@ -11,11 +11,11 @@ namespace orbit_windows_tracing {
 
 ErrorMessageOr<void> InitializeWindowsApiTracingInTarget(uint32_t pid) {
   // Inject OrbitApi.dll if not already loaded.
-  OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, orbit_paths::GetOrbitDllPath()));
+  OUTCOME_TRY(orbit_windows_utils::InjectDllIfNotLoaded(pid, orbit_paths::GetOrbitDllPath()));
 
   // Inject OrbitWindowsApiShim.dll if not already loaded.
   const std::filesystem::path api_shim_full_path = orbit_paths::GetWindowsApiShimPath();
-  OUTCOME_TRY(orbit_windows_utils::EnsureDllIsLoaded(pid, api_shim_full_path));
+  OUTCOME_TRY(orbit_windows_utils::InjectDllIfNotLoaded(pid, api_shim_full_path));
 
   // Call "InitializeShim" function in OrbitWindowsApiShim.dll through CreateRemoteThread.
   const std::string shim_file_name = api_shim_full_path.filename().string();

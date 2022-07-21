@@ -361,7 +361,8 @@ class OrbitApp final : public DataViewFactory,
   orbit_base::Future<ErrorMessageOr<orbit_base::CanceledOr<void>>> RetrieveModuleAndLoadSymbols(
       const orbit_symbol_provider::ModuleIdentifier& module_id);
 
-  orbit_base::Future<ErrorMessageOr<void>> OrbitApp::RetrieveAndLoadPlatformApiInfo(
+  orbit_base::Future<ErrorMessageOr<orbit_base::CanceledOr<void>>>
+  OrbitApp::RetrieveAndLoadPlatformApiInfo(
       const orbit_client_data::ModuleData* module);
   orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
   GetPlatformApiInfo(const orbit_client_data::ModuleData* module);
