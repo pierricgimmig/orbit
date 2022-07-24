@@ -21,24 +21,6 @@ struct ApiFunctionData {
   uint32_t reentry_count = 0;
   // Pointer to an atomic counter owned by the ApiFunctionCallManager.
   std::atomic<uint64_t>* call_count_ptr = nullptr;
-
-  // Unique identifier for ApiFunctionData which can be used as hash map key.
-  struct Key {
-    std::string function_name;
-    uint32_t tid;
-
-    bool operator==(const Key& key) const {
-      return (function_name == key.function_name && tid == key.tid);
-    }
-
-    struct Hash {
-      size_t operator()(const Key& key) const {
-        size_t function_hash = std::hash<std::string>{}(key.function_name);
-        size_t tid_hash = std::hash<uint32_t>{}(key.tid);
-        return function_hash * 37 + tid_hash * 37;
-      }
-    };
-  };
 };
 
 // Wrapper around an atomic counter which is aligned to the size of a cache line to avoid false
@@ -111,7 +93,7 @@ class ApiFunctionScope {
  private:
   static constexpr uint32_t kInvalidFunctionId = -1;
   uint32_t function_id = kInvalidFunctionId;
-  TracingType tracing_type_ = TracingType::CountOnly;
+  TracingType tracing_type_ = TracingType::Full;
   uint32_t* reentry_counter_ = nullptr;
 };
 
