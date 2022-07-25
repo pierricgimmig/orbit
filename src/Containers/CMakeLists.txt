@@ -9,7 +9,8 @@ add_library(Containers INTERFACE)
 
 target_sources(Containers INTERFACE
         include/Containers/BlockChain.h
-        include/Containers/ScopeTree.h)
+        include/Containers/ScopeTree.h
+        include/Containers/VirtualAllocVector.h)
 
 target_include_directories(Containers INTERFACE ${CMAKE_CURRENT_LIST_DIR}/include)
 
@@ -22,7 +23,8 @@ add_executable(ContainersTests)
 
 target_sources(ContainersTests PRIVATE
         BlockChainTest.cpp
-        ScopeTreeTest.cpp)
+        ScopeTreeTest.cpp
+        VirtualAllocVectorTest.cpp)
 
 target_link_libraries(
   ContainersTests

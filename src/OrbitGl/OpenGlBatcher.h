@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "Batcher.h"
-#include "Containers/BlockChain.h"
+#include "Containers/VirtualAllocVector.h"
 
 namespace orbit_gl {
 
@@ -26,10 +26,9 @@ struct LineBuffer {
     picking_colors_.Reset();
   }
 
-  static const int NUM_LINES_PER_BLOCK = 64 * 1024;
-  orbit_containers::BlockChain<Line, NUM_LINES_PER_BLOCK> lines_;
-  orbit_containers::BlockChain<Color, 2 * NUM_LINES_PER_BLOCK> colors_;
-  orbit_containers::BlockChain<Color, 2 * NUM_LINES_PER_BLOCK> picking_colors_;
+  orbit_containers::VirtualAllocVector<Line> lines_;
+  orbit_containers::VirtualAllocVector<Color> colors_;
+  orbit_containers::VirtualAllocVector<Color> picking_colors_;
 };
 
 struct BoxBuffer {
@@ -39,10 +38,9 @@ struct BoxBuffer {
     picking_colors_.Reset();
   }
 
-  static const int NUM_BOXES_PER_BLOCK = 64 * 1024;
-  orbit_containers::BlockChain<Quad, NUM_BOXES_PER_BLOCK> boxes_;
-  orbit_containers::BlockChain<Color, 4 * NUM_BOXES_PER_BLOCK> colors_;
-  orbit_containers::BlockChain<Color, 4 * NUM_BOXES_PER_BLOCK> picking_colors_;
+  orbit_containers::VirtualAllocVector<Quad> boxes_;
+  orbit_containers::VirtualAllocVector<Color> colors_;
+  orbit_containers::VirtualAllocVector<Color> picking_colors_;
 };
 
 struct TriangleBuffer {
@@ -52,10 +50,9 @@ struct TriangleBuffer {
     picking_colors_.Reset();
   }
 
-  static const int NUM_TRIANGLES_PER_BLOCK = 64 * 1024;
-  orbit_containers::BlockChain<Triangle, NUM_TRIANGLES_PER_BLOCK> triangles_;
-  orbit_containers::BlockChain<Color, 3 * NUM_TRIANGLES_PER_BLOCK> colors_;
-  orbit_containers::BlockChain<Color, 3 * NUM_TRIANGLES_PER_BLOCK> picking_colors_;
+  orbit_containers::VirtualAllocVector<Triangle> triangles_;
+  orbit_containers::VirtualAllocVector<Color> colors_;
+  orbit_containers::VirtualAllocVector<Color> picking_colors_;
 };
 
 struct PrimitiveBuffers {
