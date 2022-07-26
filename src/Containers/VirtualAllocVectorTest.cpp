@@ -6,6 +6,7 @@
 
 #include <string>
 #include <utility>
+#include <deque>
 
 #include "Containers/BlockChain.h"
 #include "Containers/VirtualAllocVector.h"
@@ -222,27 +223,51 @@ struct S {
 };
 
 template<typename VectorT>
-void CreateVector(size_t size, S s, std::string_view name) {
+void InsertElements(VectorT& vector, size_t size, S s, std::string_view name) {
   size_t vec_size = 0;
   {
     ORBIT_SCOPED_TIMED_LOG(name);
-    VectorT vector;
     for (size_t i = 0; i < size; ++i) {
       vector.emplace_back(s);
     }
     vec_size = vector.size();
   }
-  ORBIT_LOG("% size = %u",name, vec_size);
+  //ORBIT_LOG("%s size = %u",name, vec_size);
 }
 
 TEST(VirtualAllocVector, Performance) {
   constexpr size_t kNumElements = 100 * 1024 * 1024;
   static S s;
   s.m_0 = 777;
-  CreateVector<std::vector<S>>(kNumElements, s, "std::vector");
-  CreateVector<VirtualAllocVector<S>>(kNumElements, s, "VirtualAllocVector");
-  using BlockChainT = BlockChain<S, 64 * 1024>;
-  CreateVector<BlockChainT>(kNumElements, s, "BlockChain");
+  s.m_1 = 0xFFFFFFFFFFFFFFFF;
+  s.m_2 = 0xfefefefefefefefe;
+  s.m_3 = 0xC0C0C0C0CC0C0C0C;
+  s.m_4 = 0xABCDEFABCDEF0000;
+  s.m_5 = 0xFFFFFFFFFFFFFFFF;
+  s.m_6 = 0xfefefefefefefefe;
+  s.m_7 = 0xC0C0C0C0CC0C0C0C;
+  s.m_8 = 0xABCDEFABCDEF0000;
+  s.m_9 = 0xABCDEFABCDEF0000;
+
+  std::vector<S> reserved_std_vector;
+  reserved_std_vector.reserve(kNumElements);
+
+  for (size_t i = 0; i < 10; ++i) {
+    reserved_std_vector.clear();
+    InsertElements(reserved_std_vector, kNumElements, s, "Reserved std::vector");
+
+    VirtualAllocVector<S> virtual_alloc_vector;
+    InsertElements(virtual_alloc_vector, kNumElements, s, "VirtualAllocVector");
+
+    std::deque<S> std_deque;
+    InsertElements(std_deque, kNumElements, s, "std::deque");
+
+    std::vector<S> std_vector;
+    InsertElements(std_vector, kNumElements, s, "std::vector");
+
+    BlockChain<S, 64 * 1024> block_chain;
+    InsertElements(block_chain, kNumElements, s, "BlockChain");
+  }
 }
 
 }  // namespace orbit_containers
