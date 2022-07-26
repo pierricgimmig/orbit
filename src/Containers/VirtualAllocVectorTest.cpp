@@ -221,52 +221,28 @@ struct S {
   uint64_t m_9;
 };
 
-void CreateVector(size_t size, S s) {
+template<typename VectorT>
+void CreateVector(size_t size, S s, std::string_view name) {
   size_t vec_size = 0;
   {
-    ORBIT_SCOPED_TIMED_LOG("std::vector");
-    std::vector<S> vector;
+    ORBIT_SCOPED_TIMED_LOG(name);
+    VectorT vector;
     for (size_t i = 0; i < size; ++i) {
       vector.emplace_back(s);
     }
     vec_size = vector.size();
   }
-  ORBIT_LOG("Vector size = %u", vec_size);
-}
-
-void CreateVirtualAllocVector(size_t size, S s) {
-  size_t vec_size = 0;
-  {
-    ORBIT_SCOPED_TIMED_LOG("VirtualAllocVector");
-    VirtualAllocVector<S> vector;
-    for (size_t i = 0; i < size; ++i) {
-      vector.emplace_back(s);
-    }
-    vec_size = vector.size();
-  }
-  ORBIT_LOG("VirtualAllocVector size = %u", vec_size);
-}
-
-void CreateBlockChain(size_t size, S s) {
-  size_t vec_size = 0;
-  {
-    ORBIT_SCOPED_TIMED_LOG("BlockChain");
-    BlockChain<S, 64 * 1024> vector;
-    for (size_t i = 0; i < size; ++i) {
-      vector.emplace_back(s);
-    }
-    vec_size = vector.size();
-  }
-  ORBIT_LOG("BlockChain size = %u", vec_size);
+  ORBIT_LOG("% size = %u",name, vec_size);
 }
 
 TEST(VirtualAllocVector, Performance) {
   constexpr size_t kNumElements = 100 * 1024 * 1024;
   static S s;
   s.m_0 = 777;
-  CreateVector(kNumElements, s);
-  CreateVirtualAllocVector(kNumElements, s);
-  CreateBlockChain(kNumElements, s);
+  CreateVector<std::vector<S>>(kNumElements, s, "std::vector");
+  CreateVector<VirtualAllocVector<S>>(kNumElements, s, "VirtualAllocVector");
+  using BlockChainT = BlockChain<S, 64 * 1024>;
+  CreateVector<BlockChainT>(kNumElements, s, "BlockChain");
 }
 
 }  // namespace orbit_containers
