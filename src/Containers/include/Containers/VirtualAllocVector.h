@@ -17,7 +17,7 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ThreadPool.h"
 
-#include "C:\Users\pierric\Downloads\ORBIT_PROFILER_1.0.2\Orbit.h"
+//#include "C:\Users\pierric\Downloads\ORBIT_PROFILER_1.0.2\Orbit.h"
 
 #define VIRTUAL_ALLOC_VECTOR_ENABLE_PROFILING 0
 #if VIRTUAL_ALLOC_VECTOR_ENABLE_PROFILING
@@ -38,6 +38,11 @@ class VirtualAllocVector final {
     ReserveVirtualMemory();
   }
   ~VirtualAllocVector() { FreeVirtualMemory(); }
+
+  VirtualAllocVector(const VirtualAllocVector& other) = delete;
+  VirtualAllocVector& operator=(const VirtualAllocVector& other) = delete;
+  VirtualAllocVector(VirtualAllocVector&& other) = delete;
+  VirtualAllocVector& operator=(VirtualAllocVector&& other) = delete;
 
   template <class... Args>
   T& emplace_back(Args&&... args) {
@@ -117,7 +122,6 @@ void VirtualAllocVector<T>::ResetVirtualMemory() {
   ::VirtualAlloc((char*)data_, num_committed_bytes_, MEM_RESET, PAGE_READWRITE);
   num_committed_bytes_ = 0;
   committed_capacity_ = 0;
-  data_ = nullptr;
   size_ = 0;
 }
 

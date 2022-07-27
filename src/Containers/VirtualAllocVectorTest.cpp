@@ -251,19 +251,17 @@ TEST(VirtualAllocVector, Performance) {
 
   std::vector<S> reserved_std_vector;
   reserved_std_vector.reserve(kNumElements);
+  InsertElements(reserved_std_vector, kNumElements, s, "Reserved std::vector");
+
+  std::vector<S> std_vector;
+  InsertElements(std_vector, kNumElements, s, "std::vector");
+
+  /*std::deque<S> std_deque;
+    InsertElements(std_deque, kNumElements, s, "std::deque");*/
 
   for (size_t i = 0; i < 10; ++i) {
-    reserved_std_vector.clear();
-    InsertElements(reserved_std_vector, kNumElements, s, "Reserved std::vector");
-
     VirtualAllocVector<S> virtual_alloc_vector;
     InsertElements(virtual_alloc_vector, kNumElements, s, "VirtualAllocVector");
-
-    std::deque<S> std_deque;
-    InsertElements(std_deque, kNumElements, s, "std::deque");
-
-    std::vector<S> std_vector;
-    InsertElements(std_vector, kNumElements, s, "std::vector");
 
     BlockChain<S, 64 * 1024> block_chain;
     InsertElements(block_chain, kNumElements, s, "BlockChain");
