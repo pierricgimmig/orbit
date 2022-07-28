@@ -34,16 +34,37 @@ namespace orbit_containers {
 template <typename T>
 class VirtualAllocVector final {
  public:
-  VirtualAllocVector(size_t capacity = 1'000'000'000) : capacity_(capacity), size_(0) {
+  enum class MemoryInitialization{ForcePageFaults, DontForcePageFaults};
+  VirtualAllocVector() {
     ReserveVirtualMemory();
+    GrowCommittedVirtualMemory(capacity_*sizeof(T));
+  }
+  VirtualAllocVector(size_t capacity)
+      : capacity_(capacity) {
+    ReserveVirtualMemory();
+    GrowCommittedVirtualMemory(capacity_ * sizeof(T));
+  }
+  VirtualAllocVector(size_t capacity, MemoryInitialization memory_initialization)
+      : capacity_(capacity), memory_initialization_(memory_initialization) {
+    ReserveVirtualMemory();
+    GrowCommittedVirtualMemory(capacity_ * sizeof(T));
+  }
+  VirtualAllocVector(size_t capacity, size_t block_size) : capacity_(capacity), block_size_(block_size) {
+    ReserveVirtualMemory();
+    GrowCommittedVirtualMemory(capacity_ * sizeof(T));
   }
   ~VirtualAllocVector() { FreeVirtualMemory(); }
+
+  void SetOffloadAllocations(bool value) { offload_allocations_ = value; }
 
   template <class... Args>
   T& emplace_back(Args&&... args) {
     //ORBIT_CHECK(size_ < capacity_);
-    if (next_grow_check_size_ <= size_) GrowCommittedVirtualMemory();
-    T* new_item = ::new (&data_[size_]) T(std::forward<Args>(args)...);
+    //if (size_ == next_grow_check_size_) GrowCommittedVirtualMemory();
+    
+    //T* new_item = ::new (&data_[size_]) T(std::forward<Args>(args)...);
+    T* new_item = &data_[size_];
+    *new_item = T(std::forward<Args>(args)...);
     ++size_;
     return *new_item;
   }
@@ -81,6 +102,7 @@ class VirtualAllocVector final {
   void ResetVirtualMemory();
   void FreeVirtualMemory();
   void GrowCommittedVirtualMemory();
+  void GrowCommittedVirtualMemory(size_t size);
   void GrowCommittedVirtualMemoryExponentially();
   void ShrinkCommittedVirtualMemory();
 
@@ -90,12 +112,14 @@ class VirtualAllocVector final {
   T* data_ = nullptr;
   size_t num_committed_bytes_ = 0;
   orbit_base::Future<void> current_allocation_request;
-  std::atomic<size_t> next_grow_check_size_ = 0;
-  std::atomic<size_t> committed_capacity_ = 0;
-  size_t capacity_ = 0;
+  size_t next_grow_check_size_ = 0;
+  size_t committed_capacity_ = 0;
+  size_t capacity_ = 100*1024*1024;
   size_t size_ = 0;
   size_t num_allocs_ = 0;
-  size_t block_size_ = 4 * 1024 * 1024;
+  size_t block_size_ = 64 * 1024;
+  bool offload_allocations_ = true;
+  MemoryInitialization memory_initialization_ = MemoryInitialization::ForcePageFaults;
 };
 
 #ifdef _WIN32
@@ -130,34 +154,43 @@ void VirtualAllocVector<T>::FreeVirtualMemory() {
 }
 
 template <typename T>
+void VirtualAllocVector<T>::GrowCommittedVirtualMemory(size_t size) {
+  char* address = (char*)data_ + num_committed_bytes_;
+  ORB_SCOPE("VirtualAlloc MEM_COMMIT Call");
+  ::VirtualAlloc(address, size, MEM_COMMIT, PAGE_READWRITE);
+  num_committed_bytes_ += size;
+  committed_capacity_ = num_committed_bytes_ / sizeof(T);
+  ++num_allocs_;
+
+  // Touch all pages to trigger page-faults.
+  if (memory_initialization_ == MemoryInitialization::ForcePageFaults) {
+    ORBIT_SCOPED_TIMED_LOG("Touching memory for allocation of %u bytes", size);
+    for (char* current = address; current < address + size; current += 4 * 1024) {
+      *current = 0xFF;
+    }
+  }
+}
+
+template <typename T>
 void VirtualAllocVector<T>::GrowCommittedVirtualMemory() {
   // Grow the committed memory by "kGrowFactor". Note that committed memory is not mapped to
   // physical memory until it is touched.
   ORB_SCOPE("GrowCommittedVirtualMemory");
-
-  auto commit_function = [this](size_t size) {
-    char* address = (char*)data_ + num_committed_bytes_; 
-    ORB_SCOPE("VirtualAlloc MEM_COMMIT Call");
-    ::VirtualAlloc(address, size, MEM_COMMIT, PAGE_READWRITE);
-    num_committed_bytes_ += size;
-    committed_capacity_ = num_committed_bytes_ / sizeof(T);
-    ++num_allocs_;
-  };
 
   if (!current_allocation_request.IsFinished()) {
     ORB_SCOPE("VirtualAllocVector waiting for allocation");
     current_allocation_request.Wait();
   }
 
-  if (committed_capacity_ <= size_) {
+  if (!offload_allocations_ || committed_capacity_ <= size_) {
     // We want to always have an extra allocated block so the initial allocation allocates 2. This
     // will also allocate 2 blocks immediately if we fill the vector faster than we can create
     // allocate blocks.
-    commit_function(2 * block_size_);
+    GrowCommittedVirtualMemory(2 * block_size_);
   } else {
     // Pre-emptively allocate a new block on a separate thread.
     current_allocation_request = orbit_base::ThreadPool::GetDefaultThreadPool()->Schedule(
-        [this, commit_function] { commit_function(block_size_); });
+        [this] { GrowCommittedVirtualMemory(block_size_); });
   }
 
   next_grow_check_size_ += block_size_ / sizeof(T);

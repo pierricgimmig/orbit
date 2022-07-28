@@ -4,9 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <deque>
 #include <string>
 #include <utility>
-#include <deque>
 
 #include "Containers/BlockChain.h"
 #include "Containers/VirtualAllocVector.h"
@@ -198,7 +198,6 @@ TEST(VirtualAllocVector, Reset) {
 }
 
 TEST(VirtualAllocVector, MovableType) {
-  
   VirtualAllocVector<MovableType> chain(1024 * 1024);
   EXPECT_EQ(chain.size(), 0);
   chain.emplace_back(MovableType("v1"));
@@ -222,7 +221,7 @@ struct S {
   uint64_t m_9;
 };
 
-template<typename VectorT>
+template <typename VectorT>
 void InsertElements(VectorT& vector, size_t size, S s, std::string_view name) {
   size_t vec_size = 0;
   {
@@ -232,7 +231,18 @@ void InsertElements(VectorT& vector, size_t size, S s, std::string_view name) {
     }
     vec_size = vector.size();
   }
-  //ORBIT_LOG("%s size = %u",name, vec_size);
+  // ORBIT_LOG("%s size = %u",name, vec_size);
+}
+
+template <typename T>
+void ReserveAndTouch(std::vector<T>& vec, size_t size) {
+  ORBIT_SCOPED_TIMED_LOG("Touching %u std::vector", size);
+  vec.reserve(size);
+  constexpr size_t kPageSize = 4 * 1024;
+  char* begin = (char*)vec.data();
+  for (char* current = begin; current < begin + size * sizeof(T); current += kPageSize) {
+    *current = 0xFF;
+  }
 }
 
 TEST(VirtualAllocVector, Performance) {
@@ -248,25 +258,65 @@ TEST(VirtualAllocVector, Performance) {
   s.m_7 = 0xC0C0C0C0CC0C0C0C;
   s.m_8 = 0xABCDEFABCDEF0000;
   s.m_9 = 0xABCDEFABCDEF0000;
+  constexpr size_t kCapacity = 1'000'000'000;
+  static bool recycle = false;
 
-  std::vector<S> reserved_std_vector;
-  reserved_std_vector.reserve(kNumElements);
+  while(true) {
+    VirtualAllocVector<S> virtual_alloc_vector(
+        kNumElements, VirtualAllocVector<S>::MemoryInitialization::DontForcePageFaults);
+    InsertElements(virtual_alloc_vector, kNumElements/1000, s, "VirtualAllocVector Touching Pages");
+  }
+  if (recycle) {
+    std::vector<S> reserved_std_vector;
+    reserved_std_vector.reserve(kNumElements);
 
-  for (size_t i = 0; i < 10; ++i) {
-    reserved_std_vector.clear();
-    InsertElements(reserved_std_vector, kNumElements, s, "Reserved std::vector");
-
-    VirtualAllocVector<S> virtual_alloc_vector;
-    InsertElements(virtual_alloc_vector, kNumElements, s, "VirtualAllocVector");
-
-    std::deque<S> std_deque;
-    InsertElements(std_deque, kNumElements, s, "std::deque");
-
-    std::vector<S> std_vector;
-    InsertElements(std_vector, kNumElements, s, "std::vector");
+    std::vector<S> reserved_and_touched_std_vector;
+    reserved_and_touched_std_vector.emplace_back(s);
+    ReserveAndTouch(reserved_and_touched_std_vector, kNumElements);
 
     BlockChain<S, 64 * 1024> block_chain;
-    InsertElements(block_chain, kNumElements, s, "BlockChain");
+    VirtualAllocVector<S> virtual_alloc_vector(
+        kNumElements, VirtualAllocVector<S>::MemoryInitialization::ForcePageFaults);
+    VirtualAllocVector<S> virtual_alloc_vector_no_touch(
+        kNumElements, VirtualAllocVector<S>::MemoryInitialization::DontForcePageFaults);
+
+    while (true) {
+      reserved_std_vector.clear();
+      InsertElements(reserved_std_vector, kNumElements, s, "Reserved std::vector");
+      reserved_and_touched_std_vector.clear();
+      InsertElements(reserved_and_touched_std_vector, kNumElements, s,
+                     "Reserved and touched std::vector");
+      block_chain.clear();
+      InsertElements(block_chain, kNumElements, s, "BlockChain");
+      virtual_alloc_vector.clear();
+      InsertElements(virtual_alloc_vector, kNumElements, s, "VirtualAllocVector Touching Pages");
+      virtual_alloc_vector_no_touch.clear();
+      InsertElements(virtual_alloc_vector_no_touch, kNumElements, s,
+                     "VirtualAllocVector NOT Touching Pages");
+    }
+  } else {
+    while (true) {
+      std::vector<S> reserved_std_vector;
+      reserved_std_vector.reserve(kNumElements);
+      InsertElements(reserved_std_vector, kNumElements, s, "Reserved std::vector");
+
+      std::vector<S> reserved_and_touched_std_vector;
+      ReserveAndTouch(reserved_and_touched_std_vector, kNumElements);
+      InsertElements(reserved_and_touched_std_vector, kNumElements, s,
+                     "Reserved and touched std::vector");
+
+      BlockChain<S, 64 * 1024> block_chain;
+      InsertElements(block_chain, kNumElements, s, "BlockChain");
+
+      VirtualAllocVector<S> virtual_alloc_vector(
+          kNumElements, VirtualAllocVector<S>::MemoryInitialization::ForcePageFaults);
+      InsertElements(virtual_alloc_vector, kNumElements, s, "VirtualAllocVector Touching Pages");
+
+      VirtualAllocVector<S> virtual_alloc_vector_no_touch(
+          kNumElements, VirtualAllocVector<S>::MemoryInitialization::DontForcePageFaults);
+      InsertElements(virtual_alloc_vector_no_touch, kNumElements, s,
+                     "VirtualAllocVector NOT Touching Pages");
+    }
   }
 }
 
