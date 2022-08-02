@@ -299,15 +299,16 @@ std::vector<orbit_gl::CaptureViewElement*> ThreadTrack::GetAllChildren() const {
 std::string ThreadTrack::GetTimesliceText(const TimerInfo& timer_info) const {
   std::string time = GetDisplayTime(timer_info);
 
+  if (timer_info.type() == TimerInfo::kApiScope) {
+    std::string extra_info = GetExtraInfo(timer_info);
+    return absl::StrFormat("%s %s %s", timer_info.api_scope_name(), extra_info.c_str(), time);
+  }
+
   const InstrumentedFunction* func = app_->GetInstrumentedFunction(timer_info.function_id());
   if (func != nullptr) {
     std::string extra_info = GetExtraInfo(timer_info);
     const std::string& name = func->function_name();
     return absl::StrFormat("%s %s %s", name, extra_info.c_str(), time);
-  }
-  if (timer_info.type() == TimerInfo::kApiScope) {
-    std::string extra_info = GetExtraInfo(timer_info);
-    return absl::StrFormat("%s %s %s", timer_info.api_scope_name(), extra_info.c_str(), time);
   }
 
   ORBIT_ERROR("Unexpected case in ThreadTrack::SetTimesliceText: function=\"%s\", type=%d",

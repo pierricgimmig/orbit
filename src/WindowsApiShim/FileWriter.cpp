@@ -72,18 +72,19 @@ bool IsListEmpty(const T& list) {
 
 void write_orbit_instrumentation(cppwin32::writer& w, method_signature const& signature,
                                  std::optional<uint32_t> function_id) {
-  if(function_id.has_value()) {
-    w.write("orbit_windows_api_shim::ApiFunctionScope orbit_scope(__FUNCTION__, %);\n", function_id.value());
+  if (function_id.has_value()) {
+    w.write("orbit_windows_api_shim::ApiFunctionScope orbit_scope(__FUNCTION__, %);\n",
+            function_id.value());
   }
 
   if (signature.params().size()) {
-    //w.write("if(orbit_scope.IsTracingArguments()) {\n");
+    // w.write("if(orbit_scope.IsTracingArguments()) {\n");
 
     for (auto&& [param, param_signature] : signature.params()) {
       w.write("        ORBIT_TRACK_PARAM(%);\n", param.Name());
     }
 
-    //w.write("}\n");
+    // w.write("}\n");
   }
 }
 
@@ -109,13 +110,12 @@ void write_class_method_with_orbit_instrumentation(
   std::string function_name =
       metadata_helper.GetFunctionNameFromMethodDef(method_signature.method());
   std::optional<uint32_t> function_id = function_id_generator.GetFunctionIdFromKey(function_name);
-  
-  if(!function_id.has_value()) {
+
+  if (!function_id.has_value()) {
     ORBIT_ERROR("Could not find function id for \"%s\"", function_name);
   }
 
-  w.write(format, cppwin32::bind<cppwin32::write_method_return>(method_signature),
-          function_name,
+  w.write(format, cppwin32::bind<cppwin32::write_method_return>(method_signature), function_name,
           cppwin32::bind<cppwin32::write_method_params>(method_signature),
           cppwin32::bind<write_orbit_instrumentation>(method_signature, function_id),
           cppwin32::bind<cppwin32::write_consume_return_type>(method_signature),
@@ -126,7 +126,8 @@ void write_class_method_with_orbit_instrumentation(
 }
 
 void write_class_impl(cppwin32::writer& w, TypeDef const& type,
-                      const MetaDataHelper& metadata_helper, const FunctionIdGenerator& function_id_generator) {
+                      const MetaDataHelper& metadata_helper,
+                      const FunctionIdGenerator& function_id_generator) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
@@ -135,7 +136,8 @@ void write_class_impl(cppwin32::writer& w, TypeDef const& type,
   for (auto&& method : type.MethodList()) {
     if (!is_x64_arch(method)) continue;
     method_signature signature{method};
-    write_class_method_with_orbit_instrumentation(w, signature, metadata_helper, function_id_generator);
+    write_class_method_with_orbit_instrumentation(w, signature, metadata_helper,
+                                                  function_id_generator);
     w.write("\n");
   }
   w.write("}\n\n");
@@ -219,7 +221,8 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
   }
 
   w.write(
-      "  ORBIT_SHIM_ERROR(\"Could not find function \"%s\" in current namespace\", function_key);\n");
+      "  ORBIT_SHIM_ERROR(\"Could not find function \"%s\" in current namespace\", "
+      "function_key);\n");
   w.write("  return false;\n}\n\n");
 }
 
@@ -363,11 +366,18 @@ void write_namespace_dispatch_cpp(cache const& c) {
   cppwin32::writer w;
   w.write(namespace_dispatcher_header);
 
+  // Disable "enumerator value cannot be represented as 'int'
+  w.write("\n#pragma warning(push)");
+  w.write("\n#pragma warning(disable : 4369)\n");
+
   // Include all namespace headers.
   for (auto&& [ns, members] : c.namespaces()) {
     if (ns == "") continue;
     w.write("#include \"win32/%.h\"\n", ns);
   }
+
+  // Pop warning
+  w.write("#pragma warning(pop)\n\n");
 
   w.write(namespace_dispatcher_0);
 
@@ -434,6 +444,9 @@ bool ShouldSkipNamespace(std::string_view name_space) {
                                      "System.PropertiesSystem",
                                      "UI",
                                      "Win32"};
+  if (name_space.empty()) {
+    return true;
+  }
 
   for (const std::string& token : tokens) {
     if (absl::StrContains(name_space, token)) {
@@ -441,10 +454,7 @@ bool ShouldSkipNamespace(std::string_view name_space) {
     }
   }
 
-  if (name_space == "") {
-    return true;
-  }
-
+  ORBIT_LOG("Skipping namespace %s", name_space);
   return true;
 }
 
@@ -605,8 +615,12 @@ void FileWriter::WriteNamespaceCpp(std::string_view const& ns,
   write_preamble(w);
   write_open_file_guard(w, ns, '2');
 
+  w.write("\n#pragma warning(push)");
+  w.write("\n#pragma warning(disable : 4369)\n");
   w.write_depends(w.type_namespace);
   w.write_depends(w.type_namespace, '1');
+  w.write("#pragma warning(pop)\n\n");
+
   w.write_depends("manifest");
   w.write("\n#include <functional>\n");
   w.write("\n#include <unordered_map>\n");
