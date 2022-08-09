@@ -85,15 +85,23 @@ ErrorMessageOr<void> PdbFileDia::LoadDataForPDB() {
 }
 
 ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() {
+  ModuleSymbols module_symbols;
+  OUTCOME_TRY(LoadProcSymbols(SymTagFunction, module_symbols));
+  OUTCOME_TRY(LoadProcSymbols(SymTagPublicSymbol, module_symbols));
+  return module_symbols;
+}
+
+ErrorMessageOr<void> PdbFileDia::LoadProcSymbols(const enum SymTagEnum sym_tag,
+                                                 ModuleSymbols& module_symbols) {
   HRESULT result = 0;
   CComPtr<IDiaEnumSymbols> dia_enum_symbols;
-  result = dia_global_scope_symbol_->findChildren(SymTagFunction, NULL, nsNone, &dia_enum_symbols);
+  result = dia_global_scope_symbol_->findChildren(sym_tag, /*name=*/nullptr,
+                                                  NameSearchOptions::nsNone, &dia_enum_symbols);
   if (result != S_OK) {
     return ErrorMessage{
         absl::StrFormat("findChildren failed for %s (%u)", file_path_.string(), result)};
   }
 
-  ModuleSymbols module_symbols;
   IDiaSymbol* dia_symbol = nullptr;
   ULONG celt = 0;
 
@@ -125,7 +133,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() 
     *module_symbols.add_symbol_infos() = std::move(symbol_info);
   }
 
-  return module_symbols;
+  return outcome::success();
 }
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> PdbFileDia::CreatePdbFile(

@@ -37,6 +37,8 @@ class PdbFileDia : public PdbFile {
       const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info);
 
  private:
+  ErrorMessageOr<void> LoadProcSymbols(const enum SymTagEnum sym_tag,
+                                       orbit_grpc_protos::ModuleSymbols& module_symbols);
   PdbFileDia(std::filesystem::path file_path, const ObjectFileInfo& object_file_info);
   ErrorMessageOr<void> LoadDataForPDB();
   ErrorMessageOr<CComPtr<IDiaDataSource>> CreateDiaDataSource();

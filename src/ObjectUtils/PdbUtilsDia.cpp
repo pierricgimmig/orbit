@@ -208,7 +208,7 @@ ErrorMessageOr<std::string> PdbDiaParameterListAsString(IDiaSymbol* function_or_
   if (tag == SymTagBaseType) {
     return "";
   }
-  ORBIT_CHECK(tag == SymTagFunctionType);
+  ORBIT_CHECK(tag == SymTagFunctionType || tag == SymTagPublicSymbol);
 
   IDiaSymbol* function_type = function_or_function_type;
 
