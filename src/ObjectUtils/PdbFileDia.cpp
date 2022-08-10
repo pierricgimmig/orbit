@@ -108,8 +108,6 @@ ErrorMessageOr<void> PdbFileDia::LoadProcSymbols(const enum SymTagEnum sym_tag,
         absl::StrFormat("findChildren failed for %s (%u)", file_path_.string(), result)};
   }
 
-  ModuleSymbols module_symbols;
-  DebugSymbols debug_symbols;
   debug_symbols.symbols_file_path = file_path_.string();
   debug_symbols.load_bias = object_file_info_.load_bias;
 
@@ -121,32 +119,20 @@ ErrorMessageOr<void> PdbFileDia::LoadProcSymbols(const enum SymTagEnum sym_tag,
 
     BSTR function_name = {};
     if (dia_symbol->get_name(&function_name) != S_OK) continue;
-    symbol_info.set_demangled_name(orbit_base::ToStdString(function_name));
-    ErrorMessageOr<std::string> parameter_list_or_error = PdbDiaParameterListAsString(dia_symbol);
-    if (parameter_list_or_error.has_value()) {
-      symbol_info.set_demangled_name(symbol_info.demangled_name() +
-                                     parameter_list_or_error.value());
-    } else {
-      ORBIT_ERROR("Unable to retrieve parameter types of function %s. Error: %s",
-                  symbol_info.demangled_name(), parameter_list_or_error.error().message());
-    }
 
-    FunctionSymbol& function_symbol = debug_symbols.function_symbols.emplace_back();
-
-    // Todo: wstring to string conversion.
-    std::wstring name(function_name);
+    std::string name = orbit_base::ToStdString(function_name);
     SysFreeString(function_name);
 
     // Skip symbol if it is not a function.
     BOOL is_function = FALSE;
     if (dia_symbol->get_function(&is_function) != S_OK) continue;
     if (is_function == FALSE) {
-      ORBIT_ERROR("%s is not a function", std::string(name.begin(), name.end()));
-      continue;
+      ORBIT_ERROR("%s is not a function", name); //
+      continue; //
     }
 
     FunctionSymbol& function_symbol = debug_symbols.function_symbols.emplace_back();
-    function_symbol.name = std::string(name.begin(), name.end());
+    function_symbol.name = name;
     // function_symbol.name = llvm::demangle(function_symbol.name);
 
     DWORD relative_virtual_address = 0;

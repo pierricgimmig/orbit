@@ -407,7 +407,6 @@ ErrorMessageOr<DebugSymbols> ElfFileImpl<ElfT>::LoadSymbolsFromDynsym() {
     return ErrorMessage("ELF file does not have a .dynsym section.");
   }
 
-  ModuleSymbols module_symbols;
   DebugSymbols module_symbols;
   module_symbols.load_bias = load_bias_;
   module_symbols.symbols_file_path = file_path_.string();

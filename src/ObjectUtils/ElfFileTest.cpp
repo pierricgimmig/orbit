@@ -22,13 +22,10 @@
 #include "absl/strings/str_format.h"
 
 using orbit_grpc_protos::SymbolInfo;
-<<<<<<< HEAD
-=======
 using orbit_object_utils::CreateElfFile;
 using orbit_object_utils::CreateElfFileFromBuffer;
 using orbit_object_utils::ElfFile;
 using orbit_object_utils::FunctionSymbol;
->>>>>>> 0a276442d (Extract proto creation out of debug symbol parsing)
 using orbit_test_utils::HasError;
 using orbit_test_utils::HasNoError;
 
@@ -90,10 +87,11 @@ TEST(ElfFile, LoadSymbolsFromDynsym) {
   const std::vector<FunctionSymbol>& symbol_infos = symbols_result.value().function_symbols;
   EXPECT_EQ(symbol_infos.size(), 8);
 
-  SymbolInfo& symbol_info = symbol_infos[7];
-  EXPECT_EQ(symbol_info.demangled_name(), "UseTestLib");
-  EXPECT_EQ(symbol_info.address(), 0x2670);
-  EXPECT_EQ(symbol_info.size(), 591);
+  const FunctionSymbol& symbol_info = symbol_infos[7];
+  EXPECT_EQ(symbol_info.name, "UseTestLib");
+  EXPECT_EQ(symbol_info.demangled_name, "UseTestLib");
+  EXPECT_EQ(symbol_info.rva, 0x2670);
+  EXPECT_EQ(symbol_info.size, 591);
 }
 
 TEST(ElfFile, LoadBiasAndExecutableSegmentOffsetAndImageSize) {

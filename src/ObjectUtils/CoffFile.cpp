@@ -35,7 +35,6 @@ class CoffFileImpl : public CoffFile {
   CoffFileImpl(std::filesystem::path file_path,
                llvm::object::OwningBinary<llvm::object::ObjectFile>&& owning_binary);
 
-  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() override;
   [[nodiscard]] ErrorMessageOr<DebugSymbols> LoadDebugSymbolsInternal() override;
   [[nodiscard]] bool HasDebugSymbols() const override;
   [[nodiscard]] std::string GetName() const override;
@@ -270,32 +269,59 @@ void DeduceDebugSymbolMissingSizes(std::vector<SymbolInfo>* symbol_infos) {
 // slightly lower (e.g., by one instruction) that the one reported by the DWARF debug info. As we
 // don't have a simple way to deduce that the two addresses belong to the same function, such
 // function will appear twice in the symbol list. We accept this.
-ErrorMessageOr<ModuleSymbols> CoffFileImpl::LoadDebugSymbols() {
-  std::vector<SymbolInfo> symbol_infos;
+//ErrorMessageOr<ModuleSymbols> CoffFileImpl::LoadDebugSymbols() {
+//  std::vector<SymbolInfo> symbol_infos;
+//
+//  const std::unique_ptr<llvm::DWARFContext> dwarf_context =
+//      llvm::DWARFContext::create(*object_file_);
+//  if (dwarf_context != nullptr) {
+//    FillDebugSymbolsFromDwarf(dwarf_context.get(), &symbol_infos);
+//  }
+//
+//  if (object_file_->getSymbolTable() != 0 && object_file_->getNumberOfSymbols() != 0) {
+//    AddNewDebugSymbolsFromCoffSymbolTable(object_file_->symbols(), &symbol_infos);
+//  }
+//
+//  DeduceDebugSymbolMissingSizes(&symbol_infos);
+//
+//  if (symbol_infos.empty()) {
+//    return ErrorMessage(
+//        "Unable to load symbols from PE/COFF file, not even a single symbol of type function "
+//        "found.");
+//  }
+//
+//  ModuleSymbols module_symbols;
+//  for (SymbolInfo& symbol_info : symbol_infos) {
+//    *module_symbols.add_symbol_infos() = std::move(symbol_info);
+//  }
+//  return module_symbols;
+//}
 
-  const std::unique_ptr<llvm::DWARFContext> dwarf_context =
-      llvm::DWARFContext::create(*object_file_);
-  if (dwarf_context != nullptr) {
-    FillDebugSymbolsFromDwarf(dwarf_context.get(), &symbol_infos);
+static void FillDebugSymbolsFromDWARF(llvm::DWARFContext* dwarf_context,
+                                      DebugSymbols* debug_symbols) {
+  for (const auto& info_section : dwarf_context->compile_units()) {
+    for (uint32_t index = 0; index < info_section->getNumDIEs(); ++index) {
+      llvm::DWARFDie full_die = info_section->getDIEAtIndex(index);
+      // We only want symbols of functions, which are DIEs with isSubprogramDIR()
+      // and not of inlined functions, which are DIEs with isSubroutineDIE().
+      if (full_die.isSubprogramDIE()) {
+        uint64_t low_pc;
+        uint64_t high_pc;
+        uint64_t unused_section_index;
+        if (!full_die.getLowAndHighPC(low_pc, high_pc, unused_section_index)) {
+          continue;
+        }
+        // The method getName will fallback to ShortName if LinkageName is
+        // not present, so this should never return an empty name.
+        std::string name(full_die.getName(llvm::DINameKind::LinkageName));
+        ORBIT_CHECK(!name.empty());
+        FunctionSymbol& function_symbol = debug_symbols->function_symbols.emplace_back();
+        function_symbol.name = name;
+        function_symbol.rva = low_pc;
+        function_symbol.size = high_pc - low_pc;
+      }
+    }
   }
-
-  if (object_file_->getSymbolTable() != 0 && object_file_->getNumberOfSymbols() != 0) {
-    AddNewDebugSymbolsFromCoffSymbolTable(object_file_->symbols(), &symbol_infos);
-  }
-
-  DeduceDebugSymbolMissingSizes(&symbol_infos);
-
-  if (symbol_infos.empty()) {
-    return ErrorMessage(
-        "Unable to load symbols from PE/COFF file, not even a single symbol of type function "
-        "found.");
-  }
-
-  ModuleSymbols module_symbols;
-  for (SymbolInfo& symbol_info : symbol_infos) {
-    *module_symbols.add_symbol_infos() = std::move(symbol_info);
-  }
-  return module_symbols;
 }
 
 ErrorMessageOr<DebugSymbols> CoffFileImpl::LoadDebugSymbolsInternal() {

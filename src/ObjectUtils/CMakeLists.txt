@@ -72,19 +72,10 @@ target_sources(ObjectUtilsTests PRIVATE
         SymbolsFileTest.cpp
         WindowsBuildIdUtilsTest.cpp)
 
-<<<<<<< HEAD
 if (WIN32)
 target_sources(ObjectUtilsTests PRIVATE
-        PdbFileDiaTest.cpp)
-=======
-if (NOT WIN32)
-target_sources(ObjectUtilsTests PRIVATE 
-        LinuxMapTest.cpp)
-else()
-target_sources(ObjectUtilsTests PRIVATE 
-        PdbFileDiaTest.cpp 
+        PdbFileDiaTest.cpp
         PdbFileRawTest.cpp)
->>>>>>> f78e360d9 (Integrate raw_pdb as new pdb parser on Windows)
 endif()
 
 target_link_libraries(

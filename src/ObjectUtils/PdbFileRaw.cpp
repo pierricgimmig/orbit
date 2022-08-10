@@ -12,6 +12,8 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/UniqueResource.h"
 
+#include <Windows.h>
+
 // raw_pdb
 typedef void* HANDLE;
 #include <Examples/ExampleMemoryMappedFile.h>
@@ -298,7 +300,7 @@ ErrorMessageOr<void> PdbFileRaw::RetrieveAgeAndGuid() {
 
 void PdbFileRaw::SetDemangledNames(orbit_grpc_protos::ModuleSymbols* module_symbols) {
   for (SymbolInfo& symbol_info : *module_symbols->mutable_symbol_infos()) {
-    symbol_info.set_demangled_name(llvm::demangle(symbol_info.name()));
+    symbol_info.set_demangled_name(symbol_info.demangled_name());
   }
 }
 
