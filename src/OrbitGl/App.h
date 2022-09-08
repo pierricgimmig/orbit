@@ -365,7 +365,7 @@ class OrbitApp final : public DataViewFactory,
   OrbitApp::RetrieveAndLoadPlatformApiInfo(
       const orbit_client_data::ModuleData* module);
   orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
-  GetPlatformApiInfo(const orbit_client_data::ModuleData* module);
+  GetPlatformApiInfo();
 
   // This method is pretty similar to `RetrieveModule`, but it also requires debug information to be
   // present.

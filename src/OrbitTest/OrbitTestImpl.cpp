@@ -6,6 +6,7 @@
 
 #include <absl/strings/str_format.h>
 #include <absl/time/time.h>
+#include <absl/base/casts.h>
 #include <stdio.h>
 
 #include <algorithm>
@@ -32,7 +33,8 @@ namespace {
 
 std::string ReadFile(std::filesystem::path file_path) {
   OFSTRUCT buffer = {0};
-  HANDLE file_handle = (HANDLE)OpenFile(file_path.string().c_str(), &buffer, OF_READ);
+  int64_t h_file = OpenFile(file_path.string().c_str(), &buffer, OF_READ);
+  HANDLE file_handle = absl::bit_cast<HANDLE>(h_file);
   uint64_t file_size = ::GetFileSize(file_handle, 0);
 
   std::string result(file_size, '\0');

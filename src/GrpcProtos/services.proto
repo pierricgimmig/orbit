@@ -91,13 +91,6 @@ service ProcessService {
       returns (GetPlatformApiInfoResponse) {}
 }
 
-message ProcessToLaunch {
-  string executable_path = 1;
-  string working_directory = 2;
-  string arguments = 3;
-  bool spin_at_entry_point = 4;
-}
-
 message LaunchProcessRequest {
   ProcessToLaunch process_to_launch = 1;
 }

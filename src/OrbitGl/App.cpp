@@ -907,7 +907,7 @@ void OrbitApp::InitializeProcessSpinningAtEntryPoint(uint32_t pid) {
   // Apply presets?
 
   // Suspend main thread instead of busy looping. Process will be resumed after capture start.
-  process_manager_->SuspendProcess(pid);
+  std::ignore = process_manager_->SuspendProcess(pid);
 }
 
 static std::vector<std::filesystem::path> ListRegularFilesWithExtension(
@@ -1689,7 +1689,7 @@ void OrbitApp::StartCapture() {
   // If process is suspended, resume it only after we've started capturing to make sure we catch
   // events as early as possible in the process life cycle, i.e. before main is called.
   if (process->launched_spinning_at_entry_point()) {
-    process_manager_->ResumeProcess(process->pid());
+    std::ignore = process_manager_->ResumeProcess(process->pid());
   }
 
   // TODO(b/187250643): Refactor this to be more readable and maybe remove parts that are not needed
@@ -1974,10 +1974,10 @@ Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
   return RetrieveModuleAndLoadSymbols(module->module_id());
 }
 
-Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
-    const ModuleIdentifier& module_id) {
+orbit_base::Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveAndLoadPlatformApiInfo(
+    const ModuleData* module)  {
   // TODO: make async
-  auto result = GetPlatformApiInfo(module).Get();
+  auto result = GetPlatformApiInfo().Get();
   if (result.has_error()) {
     return result.error();
   }
@@ -1997,9 +1997,9 @@ Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
     symbol_info->set_address(++counter);
     ORBIT_LOG("api_function.key(): %s", api_function.key());
   }
-
+  
   ModuleData* module_data =
-      GetMutableModuleByPathAndBuildId(orbit_grpc_protos::kWindowsApiFakeModuleName, "");
+      GetMutableModuleByModuleIdentifier({orbit_grpc_protos::kWindowsApiFakeModuleName, ""});
   ORBIT_CHECK(module_data == module);
   module_data->AddSymbols(module_symbols);
 
@@ -2020,14 +2020,11 @@ orbit_base::Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAnd
   if (module->name() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
     return RetrieveAndLoadPlatformApiInfo(module);
   }
-  return RetrieveModuleAndLoadSymbols(module->file_path(), module->build_id());
+  return RetrieveModuleAndLoadSymbols({module->file_path(), module->build_id()});
 }
 
 orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
-OrbitApp::GetPlatformApiInfo(const orbit_client_data::ModuleData* module) {
-  ScopedStatus scoped_status =
-      CreateScopedStatus("Retrieving platform api info on remote instance...");
-
+OrbitApp::GetPlatformApiInfo() {
   orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
       get_platform_api_info_on_remote =
           thread_pool_->Schedule([process_manager = GetProcessManager()]() {
@@ -2038,8 +2035,7 @@ OrbitApp::GetPlatformApiInfo(const orbit_client_data::ModuleData* module) {
 }
 
 orbit_base::Future<ErrorMessageOr<orbit_base::CanceledOr<void>>>
-OrbitApp::RetrieveModuleAndLoadSymbols(
-    const std::string& module_path, const std::string& build_id) {
+OrbitApp::RetrieveModuleAndLoadSymbols(const orbit_symbol_provider::ModuleIdentifier& module_id) {
   ORBIT_SCOPE_FUNCTION;
   ORBIT_CHECK(main_thread_id_ == std::this_thread::get_id());
 

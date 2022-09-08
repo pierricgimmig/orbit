@@ -217,7 +217,7 @@ ProcessClient::GetPlatformApiInfo() {
   grpc::Status status = process_service_->GetPlatformApiInfo(context.get(), request, &response);
 
   if (!status.ok()) {
-    ERROR("gRPC call to GetPlatformApiInfo failed: %s", status.error_message());
+    ORBIT_ERROR("gRPC call to GetPlatformApiInfo failed: %s", status.error_message());
     return ErrorMessage(status.error_message());
   }
 
