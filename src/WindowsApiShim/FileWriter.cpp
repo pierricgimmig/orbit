@@ -5,7 +5,6 @@
 #include "FileWriter.h"
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 #include <absl/strings/str_format.h>
 #include <cppwin32/code_writers.h>
 #include <cppwin32/file_writers.h>
@@ -256,7 +255,9 @@ struct FunctionInfo {
   std::string name_space;
 };
 
-static void write_manifest_h(cache const& c, FunctionIdGenerator& function_id_generator) {
+static void write_manifest_h(
+    const FilteredCache& cache,
+    const winmd::reader::database* db, FunctionIdGenerator& function_id_generator) {
   cppwin32::writer w;
 
   w.write("#pragma once\n\n");
@@ -266,31 +267,34 @@ static void write_manifest_h(cache const& c, FunctionIdGenerator& function_id_ge
 
   std::map<const MethodDef, std::string> method_def_to_namespace;
 
-  for (auto&& [ns, members] : c.namespaces()) {
-    for (const TypeDef& c : members.classes) {
+  for (const auto& entry : cache.GetFilteredCacheEntries()) {
+    for (const TypeDef& c : entry.namespace_members->classes) {
       for (const MethodDef& method : c.MethodList()) {
         if (method.Flags().Access() == winmd::reader::MemberAccess::Public) {
-          method_def_to_namespace.emplace(method, std::string(ns));
+          method_def_to_namespace.emplace(method, std::string(entry.namespace_name));
           // check emplace took place
         }
       }
     }
   }
 
-  for (const database& db : c.databases()) {
-    std::filesystem::path path(db.path());
-    if (path.filename() != "Windows.Win32.winmd") continue;
-
+  {
     std::map<std::string, FunctionInfo> function_key_to_info;
     uint32_t impl_count = 0;
     std::string log;
-    for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
+    for (const ImplMap& impl_map : db->get_table<ImplMap>()) {
       std::string function_name(impl_map.ImportName());
-      ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
+      ModuleRef module_ref = db->get_table<ModuleRef>()[impl_map.ImportScope().index()];
       std::string module_name = absl::AsciiStrToLower(module_ref.Name());
       std::string function_key = absl::StrFormat("%s__%s", module_name, function_name);
 
-      const MethodDef& method_def = db.get_table<MethodDef>()[impl_map.MemberForwarded().index()];
+      const MethodDef& method_def =
+          db->get_table<MethodDef>()[impl_map.MemberForwarded().index()];
+
+      // Hack, we need to figure out how to iterate on functions of filtered namespaces.
+      if (method_def_to_namespace.count(method_def) == 0) {
+        continue;
+      }
 
       if (function_key_to_info.find(function_key) != function_key_to_info.end()) {
         log += function_key + "\n";
@@ -307,8 +311,8 @@ static void write_manifest_h(cache const& c, FunctionIdGenerator& function_id_ge
 
     w.write(
         "// DO NOT MODIFY Manifest.h, it is generated when building the WindowsApiShim project.\n");
-    w.write("// num namespaces: %\n", c.namespaces().size());
-    w.write("// num modules: %\n", db.get_table<ModuleRef>().size());
+    w.write("// num namespaces: %\n", cache.GetFilteredCacheEntries().size());
+    w.write("// num modules: %\n", db->get_table<ModuleRef>().size());
     w.write("// num functions: %\n", function_key_to_info.size());
     w.write("// num impl: %\n", impl_count);
     w.write("/*\n%\n*/", log);
@@ -340,7 +344,7 @@ constexpr const char* namespace_dispatcher_0 = R"(
 
 namespace orbit_windows_api_shim {
 
-  bool GetOrbitShimFunctionInfo(const char* function_key,
+  bool FindOrbitShimFunctionInfo(const char* function_key,
                                 OrbitShimFunctionInfo& out_function_info) {
     std::optional<std::string> name_space = WindowsApiHelper::Get().GetNamespaceFromFunctionKey(function_key);
     if (!name_space.has_value()) return false;
@@ -355,14 +359,15 @@ namespace orbit_windows_api_shim {
 constexpr const char* namespace_dispatcher_1 = R"(
       }};
 
-      const auto function_it = dispatcher.find("win32." + name_space.value());
+      std::string name_space_key = "win32." + name_space.value();
+      const auto function_it = dispatcher.find(name_space_key);
       if (function_it == dispatcher.end()) return false;
       return function_it->second(function_key, out_function_info);
     }
 }  // namespace orbit_windows_api_shim
 )";
 
-void write_namespace_dispatch_cpp(cache const& c) {
+void write_namespace_dispatch_cpp(const FilteredCache& c) {
   cppwin32::writer w;
   w.write(namespace_dispatcher_header);
 
@@ -371,9 +376,8 @@ void write_namespace_dispatch_cpp(cache const& c) {
   w.write("\n#pragma warning(disable : 4369)\n");
 
   // Include all namespace headers.
-  for (auto&& [ns, members] : c.namespaces()) {
-    if (ns == "") continue;
-    w.write("#include \"win32/%.h\"\n", ns);
+  for (auto& entry : c.GetFilteredCacheEntries()) {
+    w.write("#include \"win32/%.h\"\n", entry.namespace_name);
   }
 
   // Pop warning
@@ -382,10 +386,9 @@ void write_namespace_dispatch_cpp(cache const& c) {
   w.write(namespace_dispatcher_0);
 
   // function_to_namespace
-  for (auto&& [ns, members] : c.namespaces()) {
-    if (ns == "") continue;
-    if (members.classes.size() == 0) continue;
-    std::string name_space = absl::StrReplaceAll(ns, {{".", "::"}});
+  for (auto& entry : c.GetFilteredCacheEntries()) {
+    if (entry.namespace_members->classes.size() == 0) continue;
+    std::string name_space = absl::StrReplaceAll(entry.namespace_name, {{".", "::"}});
     w.write("          ADD_NAMESPACE_DISPATCH_ENTRY(win32::%),\n", name_space);
   }
 
@@ -434,37 +437,12 @@ FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem
   win32_metadata_helper_ = std::make_unique<MetaDataHelper>(*win32_database_);
 }
 
-bool ShouldSkipNamespace(std::string_view name_space) {
-  std::vector<std::string> tokens = {"Direct3D",
-                                     "Graphics",
-                                     "Foundation",
-                                     "Media",
-                                     "Security",
-                                     "System.Com",
-                                     "System.PropertiesSystem",
-                                     "UI",
-                                     "Win32"};
-  if (name_space.empty()) {
-    return true;
-  }
-
-  for (const std::string& token : tokens) {
-    if (absl::StrContains(name_space, token)) {
-      return false;
-    }
-  }
-
-  ORBIT_LOG("Skipping namespace %s", name_space);
-  return true;
-}
-
-static void write_complex_structs_h(cache const& c) {
+static void write_complex_structs_h(const FilteredCache& cache) {
   cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
-  for (auto&& [ns, members] : c.namespaces()) {
-    if (ShouldSkipNamespace(ns)) continue;
-    for (auto&& s : members.structs) {
+  for (auto& entry : cache.GetFilteredCacheEntries()) {
+    for (const auto& s : entry.namespace_members->structs) {
       if (cppwin32::is_x64_struct(s)) graph.add_struct(s);
     }
   }
@@ -489,14 +467,13 @@ static void write_complex_structs_h(cache const& c) {
   w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/complex_structs.h");
 }
 
-static void write_complex_interfaces_h(cache const& c) {
+static void write_complex_interfaces_h(const FilteredCache& c) {
   cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
-  for (auto&& [ns, members] : c.namespaces()) {
-    if (ShouldSkipNamespace(ns)) continue;
-    for (auto&& s : members.interfaces) {
-      graph.add_interface(s);
+  for (const auto& entry : c.GetFilteredCacheEntries()) {
+    for (auto& _interface : entry.namespace_members->interfaces) {
+      graph.add_interface(_interface);
     }
   }
 
@@ -513,11 +490,11 @@ static void write_complex_interfaces_h(cache const& c) {
   write_preamble(w);
   write_open_file_guard(w, "complex_interfaces");
 
-  for (auto&& depends : w.depends) {
+  for (auto& depends : w.depends) {
     w.write_depends(depends.first, '1');
   }
   // Workaround for https://github.com/microsoft/cppwin32/issues/2
-  for (auto&& extern_depends : w.extern_depends) {
+  for (auto& extern_depends : w.extern_depends) {
     auto guard = wrap_type_namespace(w, extern_depends.first);
     w.write_each<cppwin32::write_extern_forward>(extern_depends.second);
   }
@@ -526,28 +503,31 @@ static void write_complex_interfaces_h(cache const& c) {
 }
 
 void FileWriter::WriteCodeFiles() {
+
+  // Filter cache based on namespaces to be exported.
+  //std::set<std::string_view> namespace_names = {"Windows.Win32.System.Threading", "Windows.Win32.Storage.FileSystem"};
+  filtered_cache_ = std::make_unique<FilteredCache>(cache_.get());
+
   task_group group;
 
   // Writing the manifest assigns id to functions. This is executed before the async tasks below as
   // they depend on the function ids from the manifest generation.
   function_id_generator_.Reset();
 
-  write_manifest_h(*cache_, function_id_generator_);
+  write_manifest_h(*filtered_cache_, win32_database_, function_id_generator_);
 
-  for (auto&& [ns, members] : cache_->namespaces()) {
-    if (ShouldSkipNamespace(ns)) continue;
+    for (auto& entry : filtered_cache_->GetFilteredCacheEntries()) {
+      group.add([&, &ns = entry.namespace_name, &members = *entry.namespace_members] {
+        cppwin32::write_namespace_0_h(ns, members);
+        cppwin32::write_namespace_1_h(ns, members);
+        WriteNamespaceHeader(ns, members);
+        WriteNamespaceCpp(ns, members);
+      });
+    }
 
-    group.add([&, &ns = ns, &members = members] {
-      cppwin32::write_namespace_0_h(ns, members);
-      cppwin32::write_namespace_1_h(ns, members);
-      WriteNamespaceHeader(ns, members);
-      WriteNamespaceCpp(ns, members);
-    });
-  }
-
-  group.add([this] { write_complex_structs_h(*cache_); });
-  group.add([this] { write_complex_interfaces_h(*cache_); });
-  group.add([this] { write_namespace_dispatch_cpp(*cache_); });
+  group.add([this] { write_complex_structs_h(*filtered_cache_); });
+  group.add([this] { write_complex_interfaces_h(*filtered_cache_); });
+  group.add([this] { write_namespace_dispatch_cpp(*filtered_cache_); });
 }
 
 static void WriteIncludes(cppwin32::writer& w) {

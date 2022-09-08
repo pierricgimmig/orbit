@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/match.h>
 #include <cppwin32/cmd_reader.h>
 #include <cppwin32/winmd/winmd_reader.h>
 
@@ -52,6 +53,43 @@ class MetaDataHelper {
   std::map<winmd::reader::MethodDef, winmd::reader::ModuleRef> method_def_to_module_ref_map_;
 };
 
+class FilteredCache {
+ public:
+  struct CacheEntry {
+    std::string_view namespace_name;
+    const winmd::reader::cache::namespace_members* namespace_members;
+  };
+
+  FilteredCache(winmd::reader::cache* cache) : cache_(cache) {
+    for (auto& [ns, members] : cache_->namespaces()) {
+      if (!ns.empty()) {
+        filtered_cache_entries_.emplace_back(CacheEntry{ns, &members});
+      }
+    }
+  }
+
+  FilteredCache(winmd::reader::cache* cache, std::set<std::string_view> namespace_filters)
+      : cache_(cache) {
+    for (auto& [ns, members] : cache_->namespaces()) {
+      for (std::string_view filter : namespace_filters) {
+        if (absl::StrContains(ns, filter)) {
+          filtered_cache_entries_.emplace_back(CacheEntry{ns, &members});
+          break;
+        }
+      }
+    }
+
+    // TODO: Add dependencies.
+
+  }
+
+  const std::vector<CacheEntry>& GetFilteredCacheEntries() const { return filtered_cache_entries_; }
+
+ private:
+  std::vector<CacheEntry> filtered_cache_entries_;
+  winmd::reader::cache* cache_ = nullptr;
+};
+
 class FileWriter {
  public:
   FileWriter(std::vector<std::filesystem::path> input, std::filesystem::path output_dir);
@@ -65,6 +103,7 @@ class FileWriter {
                          winmd::reader::cache::namespace_members const& members);
 
   std::unique_ptr<winmd::reader::cache> cache_ = nullptr;
+  std::unique_ptr<FilteredCache> filtered_cache_ = nullptr;
   const winmd::reader::database* win32_database_ = nullptr;
   std::unique_ptr<MetaDataHelper> win32_metadata_helper_;
   FunctionIdGenerator function_id_generator_;

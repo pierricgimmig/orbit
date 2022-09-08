@@ -95,7 +95,7 @@ class WindowsApiHelper {
         }                                                                          \
   }
 
-bool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& out_function_info);
+bool FindOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& out_function_info);
 
 }  // namespace orbit_windows_api_shim
 

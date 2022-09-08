@@ -62,7 +62,7 @@ bool FindShimFunction(const char* module, const char* function, void*& detour_fu
   OrbitShimFunctionInfo function_info = {};
 
   std::string function_key = std::string(module) + "__" + std::string(function);
-  if (!orbit_windows_api_shim::GetOrbitShimFunctionInfo(function_key.c_str(), function_info)) {
+  if (!orbit_windows_api_shim::FindOrbitShimFunctionInfo(function_key.c_str(), function_info)) {
     return false;
   }
 
