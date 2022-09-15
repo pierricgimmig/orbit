@@ -48,7 +48,6 @@ target_link_libraries(WindowsTracing PUBLIC
         OrbitBase
         PresentMon
         OrbitPaths
-        WindowsApiShim
         WindowsUtils
         krabsetw
         CONAN_PKG::abseil

@@ -271,8 +271,6 @@ Status ProcessServiceImpl::GetDebugInfoFile(ServerContext*, const GetDebugInfoFi
   constexpr const char* kPlatformDesc = "Windows";
   response->set_platform_description(kPlatformDesc);
 
-  static volatile uint32_t max_entries = 200;
-  uint32_t counter = 0;
   for (const WindowsApiFunction& function : kWindowsApiFunctions) {
     PlatformApiFunction* api_function = response->add_functions();
     if (function.function_key == nullptr) {
