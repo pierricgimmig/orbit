@@ -87,14 +87,6 @@ class WindowsApiHelper {
   std::vector<size_t> error_indices_;
 };
 
-#define ADD_NAMESPACE_DISPATCH_ENTRY(ns)                                           \
-  {                                                                                \
-    absl::StrReplaceAll(#ns, {{"::", "."}}),                                       \
-        [](const char* function_key, OrbitShimFunctionInfo& out_function_info) {   \
-          return ns## ::GetOrbitShimFunctionInfo(function_key, out_function_info); \
-        }                                                                          \
-  }
-
 bool FindOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& out_function_info);
 
 }  // namespace orbit_windows_api_shim

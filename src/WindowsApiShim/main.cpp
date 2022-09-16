@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Orbit Authors. All rights reserved.
+// Copyright (c) 2022 The Orbit Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,18 +32,24 @@ void CopyFile(std::filesystem::path source, std::filesystem::path dest) {
   std::filesystem::copy_file(source, dest, std::filesystem::copy_options::overwrite_existing);
 }
 
-}  // namespace
-
 [[nodiscard]] std::vector<std::filesystem::path> GetInputFiles() {
   return {GetMetadataDir() / "Windows.Win32.winmd",
           GetMetadataDir() / "Windows.Win32.Interop.winmd"};
 }
 
-int main(int const argc, char* argv[]) {
-  CopyFile(GetCppWin32Dir() / "cppwin32" / "base.h", GetOutputDir() / "win32" / "base.h");
-  CopyFile(GetSourceDir() / "NamespaceDispatcher.h",
-           GetOutputDir() / "win32" / "NamespaceDispatcher.h");
+}  // namespace
 
-  orbit_windows_api_shim::FileWriter file_writer(GetInputFiles(), GetOutputDir());
+int main(int const argc, char* argv[]) {
+  // Remove existing output directory. 
+  std::filesystem::path output_dir = GetOutputDir();
+  std::filesystem::remove_all(output_dir);
+
+  // Copy files.
+  CopyFile(GetCppWin32Dir() / "cppwin32" / "base.h", output_dir / "win32" / "base.h");
+  CopyFile(GetSourceDir() / "NamespaceDispatcher.h",
+           output_dir / "win32" / "NamespaceDispatcher.h");
+
+  // Generate code.
+  orbit_windows_api_shim::FileWriter file_writer(GetInputFiles(), output_dir);
   file_writer.WriteCodeFiles();
 }

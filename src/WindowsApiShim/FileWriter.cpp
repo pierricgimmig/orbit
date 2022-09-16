@@ -389,19 +389,16 @@ namespace orbit_windows_api_shim {
                                 OrbitShimFunctionInfo& out_function_info) {
     std::optional<std::string> name_space = WindowsApiHelper::Get().GetNamespaceFromFunctionKey(function_key);
     if (!name_space.has_value()) return false;
-    typedef std::function<bool(const char* function_key,
-                                 OrbitShimFunctionInfo& out_function_info)>
-          FunctionType;
+    
+    typedef bool (*FunctionType)(const char* function_key, OrbitShimFunctionInfo& out_function_info);
 
-      static const std::unordered_map<std::string, FunctionType> dispatcher = {{
-          // NAMESPACE_DISPATCH_ENTRIES
+    static const std::unordered_map<std::string, FunctionType> dispatcher = {{
 )";
 
 constexpr const char* namespace_dispatcher_1 = R"(
       }};
 
-      std::string name_space_key = "win32." + name_space.value();
-      const auto function_it = dispatcher.find(name_space_key);
+      const auto function_it = dispatcher.find(name_space.value());
       if (function_it == dispatcher.end()) return false;
       return function_it->second(function_key, out_function_info);
     }
@@ -426,11 +423,11 @@ void write_namespace_dispatch_cpp(const FilteredCache& c) {
 
   w.write(namespace_dispatcher_0);
 
-  // function_to_namespace
   for (auto& entry : c.GetFilteredCacheEntries()) {
     if (entry.namespace_members->classes.size() == 0) continue;
-    std::string name_space = absl::StrReplaceAll(entry.namespace_name, {{".", "::"}});
-    w.write("          ADD_NAMESPACE_DISPATCH_ENTRY(win32::%),\n", name_space);
+    std::string shim_namespace = absl::StrFormat("%s", entry.namespace_name);
+    std::string cpp_namespace = absl::StrReplaceAll(shim_namespace, {{".", "::"}});
+    w.write("        {\"%\", &win32::%::GetOrbitShimFunctionInfo},\n", shim_namespace, cpp_namespace);
   }
 
   w.write(namespace_dispatcher_1);
@@ -547,15 +544,6 @@ void FileWriter::WriteCodeFiles() {
   static bool lean_test_output = true;
 
   if (lean_test_output) {
-    // Filter cache based on namespaces to be exported.
-    std::set<std::string_view> namespace_names = {"Windows.Win32.Foundation",
-                                                  "Windows.Win32.Security",
-                                                  "Windows.Win32.Storage.FileSystem",
-                                                  "Windows.Win32.System.Kernel",
-                                                  "Windows.Win32.System.SystemServices",
-                                                  "Windows.Win32.System.Threading",
-                                                  "Windows.Win32.System.WindowsProgramming"};
-
     std::set<std::string_view> lean_namespace_names = {"Windows.Win32.Foundation"};
 
     filtered_cache_ = std::make_unique<FilteredCache>(cache_.get(), lean_namespace_names);
@@ -563,7 +551,6 @@ void FileWriter::WriteCodeFiles() {
     filtered_cache_ = std::make_unique<FilteredCache>(cache_.get());
   }
 
-  // filtered_cache_ = std::make_unique<FilteredCache>(cache_.get());
   {
     task_group group;
 
