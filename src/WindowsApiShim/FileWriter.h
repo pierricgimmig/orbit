@@ -1,6 +1,9 @@
-// Copyright (c) 2021 The Orbit Authors. All rights reserved.
+// Copyright (c) 2022 The Orbit Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#ifndef ORBIT_WINDOWS_API_SHIM_FILE_WRITER_H_
+#define ORBIT_WINDOWS_API_SHIM_FILE_WRITER_H_
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/match.h>
@@ -102,11 +105,13 @@ class FileWriter {
   void WriteNamespaceCpp(std::string_view const& ns,
                          winmd::reader::cache::namespace_members const& members);
 
+  const winmd::reader::database* win32_database_ = nullptr;
   std::unique_ptr<winmd::reader::cache> cache_ = nullptr;
   std::unique_ptr<FilteredCache> filtered_cache_ = nullptr;
-  const winmd::reader::database* win32_database_ = nullptr;
   std::unique_ptr<MetaDataHelper> win32_metadata_helper_;
   FunctionIdGenerator function_id_generator_;
 };
 
 }  // namespace orbit_windows_api_shim
+
+#endif  // ORBIT_WINDOWS_API_SHIM_FILE_WRITER_H_

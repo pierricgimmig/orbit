@@ -27,14 +27,14 @@ namespace {
   return std::filesystem::absolute(GetExeDir() / "../src/WindowsApiShim/generated/");
 }
 
-void CopyFile(std::filesystem::path source, std::filesystem::path dest) {
-  std::filesystem::create_directories(dest.parent_path());
-  std::filesystem::copy_file(source, dest, std::filesystem::copy_options::overwrite_existing);
-}
-
 [[nodiscard]] std::vector<std::filesystem::path> GetInputFiles() {
   return {GetMetadataDir() / "Windows.Win32.winmd",
           GetMetadataDir() / "Windows.Win32.Interop.winmd"};
+}
+
+void CopyFile(std::filesystem::path source, std::filesystem::path dest) {
+  std::filesystem::create_directories(dest.parent_path());
+  std::filesystem::copy_file(source, dest, std::filesystem::copy_options::overwrite_existing);
 }
 
 }  // namespace
