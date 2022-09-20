@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "WindowsMetadataHelper.h"
+#include "WinMdHelper.h"
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
@@ -16,7 +16,7 @@ using winmd::reader::ImplMap;
 using winmd::reader::MethodDef;
 using winmd::reader::ModuleRef;
 
-WindowsMetadataHelper::WindowsMetadataHelper(const database& db) {
+WinMdHelper::WinMdHelper(const database& db) {
   // Populate a map of method_def to module_ref.
   for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
     ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
@@ -25,7 +25,7 @@ WindowsMetadataHelper::WindowsMetadataHelper(const database& db) {
   }
 }
 
-std::string WindowsMetadataHelper::GetFunctionNameFromMethodDef(
+std::string WinMdHelper::GetFunctionNameFromMethodDef(
     const winmd::reader::MethodDef& method_def) const {
   // Include the module name so that all function names are globally unique.
 
@@ -36,7 +36,7 @@ std::string WindowsMetadataHelper::GetFunctionNameFromMethodDef(
   return absl::StrFormat("%s__%s", absl::AsciiStrToLower(module_name), function_name);
 }
 
-std::string WindowsMetadataHelper::GetModuleNameFromMethodDef(
+std::string WinMdHelper::GetModuleNameFromMethodDef(
     const winmd::reader::MethodDef& method_def) const {
   return std::string(method_def_to_module_ref_map_.at(method_def).Name());
 }

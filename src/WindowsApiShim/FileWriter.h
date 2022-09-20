@@ -6,7 +6,8 @@
 #define ORBIT_WINDOWS_API_SHIM_FILE_WRITER_H_
 
 #include "FunctionIdGenerator.h"
-#include "WindowsMetadataHelper.h"
+#include "WinMdHelper.h"
+#include "WinMdCache.h"
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/match.h>
@@ -19,40 +20,6 @@
 
 namespace orbit_windows_api_shim {
 
-class FilteredCache {
- public:
-  struct CacheEntry {
-    std::string_view namespace_name;
-    const winmd::reader::cache::namespace_members* namespace_members;
-  };
-
-  FilteredCache(winmd::reader::cache* cache) : cache_(cache) {
-    for (auto& [ns, members] : cache_->namespaces()) {
-      if (!ns.empty()) {
-        filtered_cache_entries_.emplace_back(CacheEntry{ns, &members});
-      }
-    }
-  }
-
-  FilteredCache(winmd::reader::cache* cache, std::set<std::string_view> namespace_filters)
-      : cache_(cache) {
-    for (auto& [ns, members] : cache_->namespaces()) {
-      for (std::string_view filter : namespace_filters) {
-        if (absl::StrContains(ns, filter)) {
-          filtered_cache_entries_.emplace_back(CacheEntry{ns, &members});
-          break;
-        }
-      }
-    }
-  }
-
-  const std::vector<CacheEntry>& GetFilteredCacheEntries() const { return filtered_cache_entries_; }
-
- private:
-  std::vector<CacheEntry> filtered_cache_entries_;
-  winmd::reader::cache* cache_ = nullptr;
-};
-
 class FileWriter {
  public:
   FileWriter(std::vector<std::filesystem::path> input, std::filesystem::path output_dir);
@@ -60,15 +27,24 @@ class FileWriter {
   void WriteCodeFiles();
 
  private:
+  FunctionIdGenerator WriteManifestHeader(const WinMdCache& cache,
+                                          const winmd::reader::database* db);
   void WriteNamespaceHeader(std::string_view const& ns,
                             winmd::reader::cache::namespace_members const& members);
   void WriteNamespaceCpp(std::string_view const& ns,
                          winmd::reader::cache::namespace_members const& members);
+  void WriteCmakeFile(const WinMdCache& cache);
+
+  void WriteComplexInterfaceHeader(const WinMdCache& cache);
+
+  void WriteComplexStructsHeader(const WinMdCache& cache);
+
+  void WriteNamespaceDispatchCpp(const WinMdCache& cache);
 
   const winmd::reader::database* win32_database_ = nullptr;
   std::unique_ptr<winmd::reader::cache> cache_ = nullptr;
-  std::unique_ptr<FilteredCache> filtered_cache_ = nullptr;
-  std::unique_ptr<WindowsMetadataHelper> win32_metadata_helper_;
+  std::unique_ptr<WinMdCache> win_md_cache_ = nullptr;
+  std::unique_ptr<WinMdHelper> win32_metadata_helper_;
   FunctionIdGenerator function_id_generator_;
 };
 

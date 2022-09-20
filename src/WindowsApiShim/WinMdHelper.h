@@ -12,10 +12,10 @@
 
 namespace orbit_windows_api_shim {
 
-class WindowsMetadataHelper {
+class WinMdHelper {
  public:
-  WindowsMetadataHelper() = delete;
-  WindowsMetadataHelper(const winmd::reader::database& db);
+  WinMdHelper() = delete;
+  WinMdHelper(const winmd::reader::database& db);
 
   [[nodiscard]] std::string GetFunctionNameFromMethodDef(
       const winmd::reader::MethodDef& method_def) const;

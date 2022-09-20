@@ -21,9 +21,11 @@ target_sources(WindowsApiShimGenerator PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/FileWriter.h
         ${CMAKE_CURRENT_LIST_DIR}/FunctionIdGenerator.cpp
         ${CMAKE_CURRENT_LIST_DIR}/FunctionIdGenerator.h
-        ${CMAKE_CURRENT_LIST_DIR}/WindowsMetadataHelper.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/WindowsMetadataHelper.h
-        ${CMAKE_CURRENT_LIST_DIR}/main.cpp)
+        ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/WinMdCache.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/WinMdCache.h
+        ${CMAKE_CURRENT_LIST_DIR}/WinMdHelper.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/WinMdHelper.h)
 
 target_link_libraries(WindowsApiShimGenerator PUBLIC
         OrbitBase

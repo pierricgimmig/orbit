@@ -10,12 +10,13 @@
 
 namespace orbit_windows_api_shim {
 
+// FunctionIdGenerator assigns a unique id to a module-function pair (function_key).
+// This class is not thread-safe.
 class FunctionIdGenerator {
  public:
   FunctionIdGenerator() = default;
   uint32_t GetOrCreateFunctionIdFromKey(const std::string_view& function_key);
   std::optional<uint32_t> GetFunctionIdFromKey(const std::string_view& function_key) const;
-  void Reset();
 
  private:
   absl::flat_hash_map<std::string_view, uint32_t> function_name_to_id_;

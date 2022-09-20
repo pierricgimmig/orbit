@@ -10,7 +10,7 @@ uint32_t FunctionIdGenerator::GetOrCreateFunctionIdFromKey(const std::string_vie
   auto it = function_name_to_id_.find(function_key);
   if (it != function_name_to_id_.end()) return it->second;
   uint32_t new_id = next_id_++;
-  function_name_to_id_[function_key] = new_id;
+  function_name_to_id_.emplace(function_key, new_id);
   return new_id;
 }
 
@@ -19,11 +19,6 @@ std::optional<uint32_t> FunctionIdGenerator::GetFunctionIdFromKey(
   auto it = function_name_to_id_.find(function_key);
   if (it == function_name_to_id_.end()) return std::nullopt;
   return it->second;
-}
-
-void FunctionIdGenerator::Reset() {
-  function_name_to_id_.clear();
-  next_id_ = 0;
 }
 
 }  // namespace orbit_windows_api_shim
