@@ -1,0 +1,31 @@
+// Copyright (c) 2022 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef ORBIT_WINDOWS_API_SHIM_META_DATA_HELPER_H_
+#define ORBIT_WINDOWS_API_SHIM_META_DATA_HELPER_H_
+
+#include <absl/container/flat_hash_map.h>
+#include <string_view>
+#include <cppwin32/cmd_reader.h>
+#include <cppwin32/winmd/winmd_reader.h>
+
+namespace orbit_windows_api_shim {
+
+class WindowsMetadataHelper {
+ public:
+  WindowsMetadataHelper() = delete;
+  WindowsMetadataHelper(const winmd::reader::database& db);
+
+  [[nodiscard]] std::string GetFunctionNameFromMethodDef(
+      const winmd::reader::MethodDef& method_def) const;
+  [[nodiscard]] std::string GetModuleNameFromMethodDef(
+      const winmd::reader::MethodDef& method_def) const;
+
+ private:
+  std::map<winmd::reader::MethodDef, winmd::reader::ModuleRef> method_def_to_module_ref_map_;
+};
+
+}  // namespace orbit_windows_api_shim
+
+#endif  // ORBIT_WINDOWS_API_SHIM_META_DATA_HELPER_H_

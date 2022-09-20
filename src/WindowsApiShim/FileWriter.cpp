@@ -9,7 +9,6 @@
 #include <cppwin32/code_writers.h>
 #include <cppwin32/file_writers.h>
 #include <cppwin32/settings.h>
-#include <cppwin32/task_group.h>
 #include <cppwin32/text_writer.h>
 #include <cppwin32/type_dependency_graph.h>
 #include <cppwin32/type_writers.h>
@@ -18,9 +17,9 @@
 #include <sstream>
 
 #include "OrbitBase/Logging.h"
+#include "OrbitBase/TaskGroup.h"
 
 using cppwin32::method_signature;
-using cppwin32::task_group;
 using winmd::reader::cache;
 using winmd::reader::CustomAttribute;
 using winmd::reader::CustomAttributeSig;
@@ -54,8 +53,10 @@ bool IsX64(const MethodDef& method) {
     int32_t const arch_flags = std::get<int32_t>(enum_value.value);
     // None = 0, X86 = 1, X64 = 2, Arm64 = 4.
     constexpr const int32_t kX64 = 2;
-    if ((arch_flags & kX64) == 0) return false;
+    return ((arch_flags & kX64) != 0);
   }
+
+  // Assume method is x64.
   return true;
 }
 
@@ -71,16 +72,15 @@ bool HasMethods(const std::vector<winmd::reader::TypeDef>& classes) {
   return false;
 }
 
-const database* FindWin32Database(const cache& cache) {
-  constexpr const char* kWin32MetaDataFileName = "Windows.Win32.winmd";
+const database* FindDatabaseFromName(const cache& cache, std::string_view database_name) {
   for (const database& db : cache.databases()) {
     std::filesystem::path path(db.path());
-    if (path.filename() == kWin32MetaDataFileName) {
+    if (path.filename() == database_name) {
       return &db;
     }
   }
 
-  ORBIT_ERROR("Could not find win32 metadata database \"%s\"", kWin32MetaDataFileName);
+  ORBIT_ERROR("Could not find database \"%s\"", database_name);
   return nullptr;
 }
 
@@ -100,13 +100,6 @@ inline const char* GetWindowsApiFunctionDefinition() {
 
 )";
 }
-
-struct FunctionInfo {
-  std::string name;
-  std::string module;
-  std::string key;
-  std::string name_space;
-};
 
 constexpr const char* namespace_dispatcher_header =
     R"(// Copyright (c) 2022 The Orbit Authors. All rights reserved.
@@ -170,7 +163,7 @@ void write_orbit_instrumentation_ret(cppwin32::writer& w, method_signature const
 
 void write_class_method_with_orbit_instrumentation(
     cppwin32::writer& w, method_signature const& method_signature,
-    const MetaDataHelper& metadata_helper, const FunctionIdGenerator& function_id_generator) {
+    const WindowsMetadataHelper& metadata_helper, const FunctionIdGenerator& function_id_generator) {
   auto const format = R"(    % __stdcall ORBIT_IMPL_%(%) noexcept
     {
         %
@@ -198,7 +191,7 @@ void write_class_method_with_orbit_instrumentation(
 }
 
 void write_class_impl(cppwin32::writer& w, TypeDef const& type,
-                      const MetaDataHelper& metadata_helper,
+                      const WindowsMetadataHelper& metadata_helper,
                       const FunctionIdGenerator& function_id_generator) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
@@ -216,7 +209,7 @@ void write_class_impl(cppwin32::writer& w, TypeDef const& type,
 }
 
 void write_class_api_table(cppwin32::writer& w, TypeDef const& type,
-                           const MetaDataHelper& metadata_helper) {
+                           const WindowsMetadataHelper& metadata_helper) {
   auto const format = R"xyz(    % (__stdcall *%)(%) noexcept;
 )xyz";
 
@@ -237,7 +230,7 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type,
 }
 
 void write_class_abi(cppwin32::writer& w, TypeDef const& type,
-                     const MetaDataHelper& metadata_helper) {
+                     const WindowsMetadataHelper& metadata_helper) {
   auto abi_guard = w.push_abi_types(true);
   auto ns_guard = w.push_full_namespace(true);
 
@@ -270,7 +263,7 @@ void write_class_abi(cppwin32::writer& w, TypeDef const& type,
 }
 
 void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& type,
-                                            const MetaDataHelper& metadata_helper) {
+                                            const WindowsMetadataHelper& metadata_helper) {
   w.write(
       "\nbool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
       "out_function_info)\n{\n");
@@ -297,6 +290,13 @@ void WriteNamespaceGetOrbitShimFunctionInfo(cppwin32::writer& w, TypeDef const& 
       "function_key);\n");
   w.write("  return false;\n}\n\n");
 }
+
+struct FunctionInfo {
+  std::string name;
+  std::string module;
+  std::string key;
+  std::string name_space;
+};
 
 void write_manifest_h(const FilteredCache& cache, const winmd::reader::database* db,
                              FunctionIdGenerator& function_id_generator) {
@@ -403,7 +403,7 @@ void WriteCmakeFile(const FilteredCache& cache) {
   w.flush_to_file(cppwin32::settings.output_folder + "WindowsApiShim.cmake");
 }
 
-void write_namespace_dispatch_cpp(const FilteredCache& c) {
+void WriteNamespaceDispatchCpp(const FilteredCache& c) {
   cppwin32::writer w;
   w.write(namespace_dispatcher_header);
 
@@ -436,32 +436,7 @@ void write_namespace_dispatch_cpp(const FilteredCache& c) {
 
 }  // namespace
 
-MetaDataHelper::MetaDataHelper(const database& db) {
-  // Populate a map of method_def to module_ref.
-  for (const ImplMap& impl_map : db.get_table<ImplMap>()) {
-    ModuleRef module_ref = db.get_table<ModuleRef>()[impl_map.ImportScope().index()];
-    const MethodDef& method_def = db.get_table<MethodDef>()[impl_map.MemberForwarded().index()];
-    method_def_to_module_ref_map_.emplace(method_def, module_ref);
-  }
-}
-
-std::string MetaDataHelper::GetFunctionNameFromMethodDef(
-    const winmd::reader::MethodDef& method_def) const {
-  // Include the module name so that all function names are globally unique.
-
-  std::string module_name =
-      absl::StrReplaceAll(GetModuleNameFromMethodDef(method_def), {{".", "_"}, {"-", "_"}});
-
-  std::string_view function_name = method_def.Name();
-  return absl::StrFormat("%s__%s", absl::AsciiStrToLower(module_name), function_name);
-}
-
-std::string MetaDataHelper::GetModuleNameFromMethodDef(
-    const winmd::reader::MethodDef& method_def) const {
-  return std::string(method_def_to_module_ref_map_.at(method_def).Name());
-}
-
-static void write_complex_structs_h(const FilteredCache& cache) {
+static void WriteComplexStructsHeader(const FilteredCache& cache) {
   cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
@@ -491,7 +466,7 @@ static void write_complex_structs_h(const FilteredCache& cache) {
   w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/complex_structs.h");
 }
 
-static void write_complex_interfaces_h(const FilteredCache& c) {
+static void WriteComplexInterfaceHeader(const FilteredCache& c) {
   cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
@@ -535,8 +510,8 @@ FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem
     input_files.emplace_back(path.string());
   }
   cache_ = std::make_unique<winmd::reader::cache>(input_files);
-  win32_database_ = FindWin32Database(*cache_);
-  win32_metadata_helper_ = std::make_unique<MetaDataHelper>(*win32_database_);
+  win32_database_ = FindDatabaseFromName(*cache_, "Windows.Win32.winmd");
+  win32_metadata_helper_ = std::make_unique<WindowsMetadataHelper>(*win32_database_);
 }
 
 void FileWriter::WriteCodeFiles() {
@@ -551,7 +526,7 @@ void FileWriter::WriteCodeFiles() {
   }
 
   {
-    task_group group;
+    orbit_base::TaskGroup task_group;
 
     // Writing the manifest assigns id to functions. This is executed before the async tasks below
     // as they depend on the function ids from the manifest generation.
@@ -559,7 +534,7 @@ void FileWriter::WriteCodeFiles() {
     write_manifest_h(*filtered_cache_, win32_database_, function_id_generator_);
 
     for (auto& entry : filtered_cache_->GetFilteredCacheEntries()) {
-      group.add([&, &ns = entry.namespace_name, &members = *entry.namespace_members] {
+      task_group.AddTask([&, &ns = entry.namespace_name, &members = *entry.namespace_members] {
         cppwin32::write_namespace_0_h(ns, members);
         cppwin32::write_namespace_1_h(ns, members);
         WriteNamespaceHeader(ns, members);
@@ -567,9 +542,9 @@ void FileWriter::WriteCodeFiles() {
       });
     }
 
-    group.add([this] { write_complex_structs_h(*filtered_cache_); });
-    group.add([this] { write_complex_interfaces_h(*filtered_cache_); });
-    group.add([this] { write_namespace_dispatch_cpp(*filtered_cache_); });
+    task_group.AddTask([this] { WriteComplexStructsHeader(*filtered_cache_); });
+    task_group.AddTask([this] { WriteComplexInterfaceHeader(*filtered_cache_); });
+    task_group.AddTask([this] { WriteNamespaceDispatchCpp(*filtered_cache_); });
   }
 
   WriteCmakeFile(*filtered_cache_);

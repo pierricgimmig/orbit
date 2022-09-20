@@ -19,6 +19,10 @@ set_property(TARGET WindowsApiShimGenerator PROPERTY VS_DEBUGGER_WORKING_DIRECTO
 target_sources(WindowsApiShimGenerator PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/FileWriter.cpp
         ${CMAKE_CURRENT_LIST_DIR}/FileWriter.h
+        ${CMAKE_CURRENT_LIST_DIR}/FunctionIdGenerator.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/FunctionIdGenerator.h
+        ${CMAKE_CURRENT_LIST_DIR}/WindowsMetadataHelper.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/WindowsMetadataHelper.h
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp)
 
 target_link_libraries(WindowsApiShimGenerator PUBLIC
