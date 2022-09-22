@@ -6,7 +6,7 @@
 
 namespace orbit_windows_api_shim {
 
-uint32_t FunctionIdGenerator::GetOrCreateFunctionIdFromKey(const std::string_view& function_key) {
+uint32_t FunctionIdGenerator::GetOrCreateFunctionIdFromKey(const std::string& function_key) {
   auto it = function_name_to_id_.find(function_key);
   if (it != function_name_to_id_.end()) return it->second;
   uint32_t new_id = next_id_++;
@@ -15,7 +15,7 @@ uint32_t FunctionIdGenerator::GetOrCreateFunctionIdFromKey(const std::string_vie
 }
 
 std::optional<uint32_t> FunctionIdGenerator::GetFunctionIdFromKey(
-    const std::string_view& function_key) const {
+    const std::string& function_key) const {
   auto it = function_name_to_id_.find(function_key);
   if (it == function_name_to_id_.end()) return std::nullopt;
   return it->second;

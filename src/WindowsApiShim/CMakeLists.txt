@@ -25,7 +25,8 @@ target_sources(WindowsApiShimGenerator PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/WinMdCache.cpp
         ${CMAKE_CURRENT_LIST_DIR}/WinMdCache.h
         ${CMAKE_CURRENT_LIST_DIR}/WinMdHelper.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/WinMdHelper.h)
+        ${CMAKE_CURRENT_LIST_DIR}/WinMdHelper.h
+        ${CMAKE_CURRENT_LIST_DIR}/WinMdUtils.h)
 
 target_link_libraries(WindowsApiShimGenerator PUBLIC
         OrbitBase

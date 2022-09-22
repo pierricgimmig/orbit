@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ORBIT_WINDOWS_API_SHIM_META_DATA_HELPER_H_
-#define ORBIT_WINDOWS_API_SHIM_META_DATA_HELPER_H_
+#ifndef ORBIT_WINDOWS_API_SHIM_WIN_MD_HELPER_H_
+#define ORBIT_WINDOWS_API_SHIM_WIN_MD_HELPER_H_
 
 #include <absl/container/flat_hash_map.h>
 #include <string_view>
@@ -17,7 +17,7 @@ class WinMdHelper {
   WinMdHelper() = delete;
   WinMdHelper(const winmd::reader::database& db);
 
-  [[nodiscard]] std::string GetFunctionNameFromMethodDef(
+  [[nodiscard]] std::string GetFunctionKeyFromMethodDef(
       const winmd::reader::MethodDef& method_def) const;
   [[nodiscard]] std::string GetModuleNameFromMethodDef(
       const winmd::reader::MethodDef& method_def) const;
@@ -28,4 +28,4 @@ class WinMdHelper {
 
 }  // namespace orbit_windows_api_shim
 
-#endif  // ORBIT_WINDOWS_API_SHIM_META_DATA_HELPER_H_
+#endif  // ORBIT_WINDOWS_API_SHIM_WIN_MD_HELPER_H_

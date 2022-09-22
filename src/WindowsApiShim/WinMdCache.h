@@ -18,15 +18,15 @@ class WinMdCache {
   WinMdCache(winmd::reader::cache* winmd_cache);
   WinMdCache(winmd::reader::cache* winmd_cache, std::set<std::string_view> namespace_filters);
 
-  struct CacheEntry {
+  struct Entry {
     std::string_view namespace_name;
     const winmd::reader::cache::namespace_members* namespace_members;
   };
 
-  const std::vector<CacheEntry>& GetCacheEntries() const { return cache_entries_; }
+  const std::vector<Entry>& GetCacheEntries() const { return cache_entries_; }
 
  private:
-  std::vector<CacheEntry> cache_entries_;
+  std::vector<Entry> cache_entries_;
   winmd::reader::cache* winmd_cache_ = nullptr;
 };
 

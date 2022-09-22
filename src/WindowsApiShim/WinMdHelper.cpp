@@ -25,7 +25,7 @@ WinMdHelper::WinMdHelper(const database& db) {
   }
 }
 
-std::string WinMdHelper::GetFunctionNameFromMethodDef(
+std::string WinMdHelper::GetFunctionKeyFromMethodDef(
     const winmd::reader::MethodDef& method_def) const {
   // Include the module name so that all function names are globally unique.
 

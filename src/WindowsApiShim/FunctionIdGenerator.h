@@ -15,11 +15,11 @@ namespace orbit_windows_api_shim {
 class FunctionIdGenerator {
  public:
   FunctionIdGenerator() = default;
-  uint32_t GetOrCreateFunctionIdFromKey(const std::string_view& function_key);
-  std::optional<uint32_t> GetFunctionIdFromKey(const std::string_view& function_key) const;
+  uint32_t GetOrCreateFunctionIdFromKey(const std::string& function_key);
+  std::optional<uint32_t> GetFunctionIdFromKey(const std::string& function_key) const;
 
  private:
-  absl::flat_hash_map<std::string_view, uint32_t> function_name_to_id_;
+  absl::flat_hash_map<std::string, uint32_t> function_name_to_id_;
   uint32_t next_id_ = 0;
 };
 
