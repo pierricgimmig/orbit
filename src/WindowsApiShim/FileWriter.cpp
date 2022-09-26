@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 #include "FileWriter.h"
-#include "WinMdUtils.h"
 
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/TaskGroup.h"
+#include "WinMdUtils.h"
 
 // Cppwin32 expects an instance of a 'settings_type' object.
 namespace cppwin32 {
@@ -17,7 +17,7 @@ namespace orbit_windows_api_shim {
 
 namespace {
 constexpr const char* kWindowsApiFunctionDefinition =
-   R"(struct WindowsApiFunction {
+    R"(struct WindowsApiFunction {
   const char* function_key = nullptr;
   const char* name_space = nullptr;
   uint32_t function_id = 0;
@@ -96,8 +96,7 @@ void write_class_method_with_orbit_instrumentation(
           cppwin32::bind<cppwin32::write_method_return>(method_signature), function_key,
           cppwin32::bind<cppwin32::write_method_params>(method_signature),
           cppwin32::bind<write_orbit_instrumentation>(method_signature, function_id),
-          cppwin32::bind<cppwin32::write_consume_return_type>(method_signature),
-          function_key,
+          cppwin32::bind<cppwin32::write_consume_return_type>(method_signature), function_key,
           cppwin32::bind<cppwin32::write_method_args>(method_signature),
           cppwin32::bind<write_orbit_instrumentation_ret>(method_signature),
           cppwin32::bind<cppwin32::write_consume_return_statement>(method_signature));
@@ -137,7 +136,7 @@ void write_class_api_table(cppwin32::writer& w, TypeDef const& type,
                 cppwin32::bind<cppwin32::write_abi_params>(signature));
       }
     }
-    w.write("};\nextern ApiTable g_api_table;\n\n");
+    w.write("};\n\nextern ApiTable g_api_table;\n");
   }
 }
 
@@ -146,7 +145,7 @@ void write_class_abi(cppwin32::writer& w, TypeDef const& type, const WinMdHelper
   auto ns_guard = w.push_full_namespace(true);
 
   if (!IsWindMdListEmpty(type.MethodList())) {
-    w.write("extern \"C\"\n{");
+    w.write("extern \"C\"\n{\n");
 
     for (const winmd::reader::MethodDef& method : type.MethodList()) {
       if (method.Flags().Access() == winmd::reader::MemberAccess::Public && IsX64(method)) {
@@ -163,7 +162,7 @@ void write_class_abi(cppwin32::writer& w, TypeDef const& type, const WinMdHelper
   }
 
   w.write(
-      "  bool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
+      "bool GetOrbitShimFunctionInfo(const char* function_key, OrbitShimFunctionInfo& "
       "out_function_info);\n");
 }
 
@@ -388,10 +387,10 @@ void FileWriter::WriteNamespaceDispatchCpp() {
 }
 
 void FileWriter::WriteComplexStructsHeader() {
-   cppwin32::writer w;
+  cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
-   for (auto& entry : win_md_cache_->GetCacheEntries()) {
+  for (auto& entry : win_md_cache_->GetCacheEntries()) {
     for (const auto& s : entry.namespace_members->structs) {
       if (cppwin32::is_x64_struct(s)) graph.add_struct(s);
     }
@@ -417,10 +416,10 @@ void FileWriter::WriteComplexStructsHeader() {
 }
 
 void FileWriter::WriteComplexInterfaceHeader() {
-   cppwin32::writer w;
+  cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
-   for (const auto& entry : win_md_cache_->GetCacheEntries()) {
+  for (const auto& entry : win_md_cache_->GetCacheEntries()) {
     for (auto& _interface : entry.namespace_members->interfaces) {
       graph.add_interface(_interface);
     }
@@ -475,7 +474,7 @@ void FileWriter::WriteNamespaceHeader(const WinMdCache::Entry& cache_entry) {
   w.write("#include \"WindowsApiShimUtils.h\"\n");
   w.write("#include \"WindowsApiCallManager.h\"\n");
   w.write_depends(w.type_namespace, '0');
-  w.write("\n");
+  w.write("\n\n");
 
   // Workaround for https://github.com/microsoft/cppwin32/issues/2
   for (auto&& extern_depends : w.extern_depends) {
@@ -486,13 +485,13 @@ void FileWriter::WriteNamespaceHeader(const WinMdCache::Entry& cache_entry) {
 }
 
 void FileWriter::WriteNamespaceCpp(const WinMdCache::Entry& cache_entry) {
-    cppwin32::writer w;
-    w.type_namespace = cache_entry.namespace_name;
-    ORBIT_CHECK(cache_entry.namespace_members);
-    const winmd::reader::cache::namespace_members members = *cache_entry.namespace_members;
+  cppwin32::writer w;
+  w.type_namespace = cache_entry.namespace_name;
+  ORBIT_CHECK(cache_entry.namespace_members);
+  const winmd::reader::cache::namespace_members members = *cache_entry.namespace_members;
 
   {
-      auto wrap = wrap_type_namespace(w, cache_entry.namespace_name);
+    auto wrap = wrap_type_namespace(w, cache_entry.namespace_name);
 
     if (HasMethods(members.classes)) {
       w.write("ApiTable g_api_table;\n\n");
@@ -511,7 +510,7 @@ void FileWriter::WriteNamespaceCpp(const WinMdCache::Entry& cache_entry) {
   write_preamble(w);
   write_open_file_guard(w, cache_entry.namespace_name, '2');
 
-   w.write("\n#pragma warning(push)");
+  w.write("\n#pragma warning(push)");
   w.write("\n#pragma warning(disable : 4369)\n");
   w.write_depends(w.type_namespace);
   w.write_depends(w.type_namespace, '1');
