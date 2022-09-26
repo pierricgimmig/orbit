@@ -2015,14 +2015,6 @@ orbit_base::Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveAndLoadPl
   return outcome::success();
 }
 
-orbit_base::Future<ErrorMessageOr<CanceledOr<void>>> OrbitApp::RetrieveModuleAndLoadSymbols(
-    const ModuleData* module) {
-  if (module->name() == orbit_grpc_protos::kWindowsApiFakeModuleName) {
-    return RetrieveAndLoadPlatformApiInfo(module);
-  }
-  return RetrieveModuleAndLoadSymbols({module->file_path(), module->build_id()});
-}
-
 orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>
 OrbitApp::GetPlatformApiInfo() {
   orbit_base::Future<ErrorMessageOr<orbit_grpc_protos::GetPlatformApiInfoResponse>>

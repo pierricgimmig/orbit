@@ -61,7 +61,7 @@ constexpr const char* kNamespaceDispatcherFooter = R"(
 void write_orbit_instrumentation(cppwin32::writer& w, method_signature const& signature,
                                  std::optional<uint32_t> function_id) {
   if (function_id.has_value()) {
-    w.write("        orbit_windows_api_shim::ApiFunctionScope orbit_scope(__FUNCTION__, %);\n",
+    w.write("  orbit_windows_api_shim::ApiFunctionScope orbit_scope(__FUNCTION__, %);\n\n",
             function_id.value());
   } else {
     ORBIT_ERROR("No function id was provided");
@@ -69,7 +69,7 @@ void write_orbit_instrumentation(cppwin32::writer& w, method_signature const& si
 
   if (signature.params().size()) {
     for (auto&& [param, param_signature] : signature.params()) {
-      w.write("        ORBIT_TRACK_PARAM(%);\n", param.Name());
+      w.write("  ORBIT_TRACK_PARAM(%);\n", param.Name());
     }
   }
 }
@@ -79,7 +79,7 @@ void write_orbit_instrumentation_ret(cppwin32::writer& w, method_signature const
     return;
   }
 
-  w.write("ORBIT_TRACK_RET(%);", signature.return_param_name());
+  w.write("  ORBIT_TRACK_RET(%);", signature.return_param_name());
 }
 
 void write_class_method_with_orbit_instrumentation(
@@ -92,7 +92,7 @@ void write_class_method_with_orbit_instrumentation(
     ORBIT_LOG("Warning: Could not find function id for \"%s\"", function_key);
   }
 
-  w.write("    % __stdcall ORBIT_IMPL_%(%) noexcept {\n%\n%g_api_table.%(%);\n%%}",
+  w.write("% __stdcall ORBIT_IMPL_%(%) noexcept {\n%\n  %g_api_table.%(%);\n%%\n}\n",
           cppwin32::bind<cppwin32::write_method_return>(method_signature), function_key,
           cppwin32::bind<cppwin32::write_method_params>(method_signature),
           cppwin32::bind<write_orbit_instrumentation>(method_signature, function_id),
@@ -218,7 +218,7 @@ FileWriter::FileWriter(std::vector<std::filesystem::path> input, std::filesystem
 }
 
 void FileWriter::WriteCodeFiles() {
-  static bool lean_test_output = true;
+  static bool lean_test_output = false;
 
   if (lean_test_output) {
     std::set<std::string_view> lean_namespace_names = {"Windows.Win32.Foundation"};
@@ -388,22 +388,14 @@ void FileWriter::WriteNamespaceDispatchCpp() {
 }
 
 void FileWriter::WriteComplexStructsHeader() {
-  cppwin32::writer w;
-
-  write_preamble(w);
-  write_open_file_guard(w, "complex_structs");
-
-  for (auto&& depends : w.depends) {
-    w.write_depends(depends.first, '0');
-  }
+   cppwin32::writer w;
 
   cppwin32::type_dependency_graph graph;
-  for (auto& entry : win_md_cache_->GetCacheEntries()) {
+   for (auto& entry : win_md_cache_->GetCacheEntries()) {
     for (const auto& s : entry.namespace_members->structs) {
       if (cppwin32::is_x64_struct(s)) graph.add_struct(s);
     }
   }
-
   graph.walk_graph([&](TypeDef const& type) {
     if (!is_nested(type)) {
       auto guard = wrap_type_namespace(w, type.TypeNamespace());
@@ -412,13 +404,37 @@ void FileWriter::WriteComplexStructsHeader() {
   });
 
   write_close_file_guard(w);
+  w.swap();
+
+  write_preamble(w);
+  write_open_file_guard(w, "complex_structs");
+
+  for (auto&& depends : w.depends) {
+    w.write_depends(depends.first, '0');
+  }
+
   w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/complex_structs.h");
 }
 
 void FileWriter::WriteComplexInterfaceHeader() {
-  cppwin32::writer w;
+   cppwin32::writer w;
 
-  w.write(kOrbitHeader);
+  cppwin32::type_dependency_graph graph;
+   for (const auto& entry : win_md_cache_->GetCacheEntries()) {
+    for (auto& _interface : entry.namespace_members->interfaces) {
+      graph.add_interface(_interface);
+    }
+  }
+  graph.walk_graph([&](TypeDef const& type) {
+    if (!is_nested(type)) {
+      auto guard = wrap_type_namespace(w, type.TypeNamespace());
+      write_interface(w, type);
+    }
+  });
+
+  write_close_file_guard(w);
+  w.swap();
+
   write_preamble(w);
   write_open_file_guard(w, "complex_interfaces");
 
@@ -431,29 +447,23 @@ void FileWriter::WriteComplexInterfaceHeader() {
     w.write_each<cppwin32::write_extern_forward>(extern_depends.second);
   }
 
-  cppwin32::type_dependency_graph graph;
-  for (const auto& entry : win_md_cache_->GetCacheEntries()) {
-    for (auto& _interface : entry.namespace_members->interfaces) {
-      graph.add_interface(_interface);
-    }
-  }
-
-  graph.walk_graph([&](TypeDef const& type) {
-    if (!is_nested(type)) {
-      auto guard = wrap_type_namespace(w, type.TypeNamespace());
-      write_interface(w, type);
-    }
-  });
-
-  write_close_file_guard(w);
-
   w.flush_to_file(cppwin32::settings.output_folder + "win32/impl/complex_interfaces.h");
 }
 
 void FileWriter::WriteNamespaceHeader(const WinMdCache::Entry& cache_entry) {
   cppwin32::writer w;
-  w.type_namespace = cache_entry.namespace_name;
 
+  w.type_namespace = cache_entry.namespace_name;
+  ORBIT_CHECK(cache_entry.namespace_members);
+  const winmd::reader::cache::namespace_members members = *cache_entry.namespace_members;
+
+  if (!members.classes.empty()) {
+    auto wrap = wrap_type_namespace(w, cache_entry.namespace_name);
+    w.write_each<write_class_abi>(members.classes, *win32_metadata_helper_);
+  }
+
+  write_close_file_guard(w);
+  w.swap();
   w.write(kOrbitHeader);
   write_preamble(w);
   write_open_file_guard(w, cache_entry.namespace_name);
@@ -472,54 +482,49 @@ void FileWriter::WriteNamespaceHeader(const WinMdCache::Entry& cache_entry) {
     auto guard = wrap_type_namespace(w, extern_depends.first);
     w.write_each<cppwin32::write_extern_forward>(extern_depends.second);
   }
-
-  if (!cache_entry.namespace_members->classes.empty()) {
-    auto wrap = wrap_type_namespace(w, cache_entry.namespace_name);
-    w.write_each<write_class_abi>(cache_entry.namespace_members->classes, *win32_metadata_helper_);
-  }
-
-  write_close_file_guard(w);
   w.save_header();
 }
 
 void FileWriter::WriteNamespaceCpp(const WinMdCache::Entry& cache_entry) {
-  cppwin32::writer w;
-  w.type_namespace = cache_entry.namespace_name;
-
-  w.write(kOrbitHeader);
-  write_preamble(w);
-
-  w.write("\n#pragma warning(push)");
-  w.write("\n#pragma warning(disable : 4369)\n");
-  w.write_depends(w.type_namespace);
-  w.write_depends(w.type_namespace, '1');
-  w.write("#pragma warning(pop)\n\n");
-
-  w.write_depends("manifest");
-  w.write("\n#include <functional>\n");
-  w.write("\n#include <unordered_map>\n");
-  w.write("\n");
-  // Workaround for https://github.com/microsoft/cppwin32/issues/2
-  for (auto&& extern_depends : w.extern_depends) {
-    auto guard = wrap_type_namespace(w, extern_depends.first);
-    w.write_each<cppwin32::write_extern_forward>(extern_depends.second);
-  }
+    cppwin32::writer w;
+    w.type_namespace = cache_entry.namespace_name;
+    ORBIT_CHECK(cache_entry.namespace_members);
+    const winmd::reader::cache::namespace_members members = *cache_entry.namespace_members;
 
   {
-    auto wrap = wrap_type_namespace(w, cache_entry.namespace_name);
+      auto wrap = wrap_type_namespace(w, cache_entry.namespace_name);
 
-    if (HasMethods(cache_entry.namespace_members->classes)) {
+    if (HasMethods(members.classes)) {
       w.write("ApiTable g_api_table;\n\n");
       w.write("#pragma region abi_methods\n");
-      w.write_each<write_class_impl>(cache_entry.namespace_members->classes,
-                                     *win32_metadata_helper_,
+      w.write_each<write_class_impl>(members.classes, *win32_metadata_helper_,
                                      function_id_generator_);
       w.write("#pragma endregion abi_methods\n\n");
     }
 
     // HookFunction dispatch.
-    w.write_each<WriteNamespaceGetOrbitShimFunctionInfo>(cache_entry.namespace_members->classes,
-                                                         *win32_metadata_helper_);
+    w.write_each<WriteNamespaceGetOrbitShimFunctionInfo>(members.classes, *win32_metadata_helper_);
+  }
+
+  write_close_file_guard(w);
+  w.swap();
+  write_preamble(w);
+  write_open_file_guard(w, cache_entry.namespace_name, '2');
+
+   w.write("\n#pragma warning(push)");
+  w.write("\n#pragma warning(disable : 4369)\n");
+  w.write_depends(w.type_namespace);
+  w.write_depends(w.type_namespace, '1');
+  w.write("#pragma warning(pop)\n\n");
+  w.write_depends("manifest");
+  w.write("\n#include <functional>\n");
+  w.write("\n#include <unordered_map>\n");
+  w.write("\n");
+
+  // Workaround for https://github.com/microsoft/cppwin32/issues/2
+  for (auto&& extern_depends : w.extern_depends) {
+    auto guard = wrap_type_namespace(w, extern_depends.first);
+    w.write_each<cppwin32::write_extern_forward>(extern_depends.second);
   }
 
   w.save_cpp();

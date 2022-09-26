@@ -577,7 +577,7 @@ namespace cppwin32
             return;
         }
 
-        w.write("\n        return %;", signature.return_param_name());
+        w.write("\n  return %;", signature.return_param_name());
     }
 
     void write_class_abi(writer& w, TypeDef const& type)
