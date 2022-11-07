@@ -57,7 +57,6 @@ void Track::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_r
 
   const float x0 = GetPos()[0];
   const float y0 = GetPos()[1];
-  const float header_height = header_->GetHeight();
   const float track_z = GlCanvas::kZValueTrack;
 
   Color track_background_color = GetTrackBackgroundColor();
@@ -87,19 +86,11 @@ void Track::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_r
   // starting
   // there. This could be prevented by moving the track content into a separate child, but in the
   // end, the design of track and track header will need to influence each other...
-  Vec2 content_top_right(x0 + track_size[0], y0 + header_height);
-  Vec2 content_top_left(x0, y0 + header_height);
-
-  auto shared_this = shared_from_this();
-  orbit_gl::DrawTriangleFan(primitive_assembler, rounded_corner, content_bottom_left,
-                            GlCanvas::kBackgroundColor, 0, track_z, shared_this);
-  orbit_gl::DrawTriangleFan(primitive_assembler, rounded_corner, content_bottom_right,
-                            GlCanvas::kBackgroundColor, -90.f, track_z, shared_this);
-  orbit_gl::DrawTriangleFan(primitive_assembler, rounded_corner, content_top_right,
-                            GlCanvas::kBackgroundColor, 180.f, track_z, shared_this);
+  Vec2 content_top_right(x0 + track_size[0], y0);
+  Vec2 content_top_left(x0, y0);
 
   // Draw track's content background.
-  Quad box = MakeBox(content_top_left, Vec2(GetWidth(), GetHeight() - header_height));
+  Quad box = MakeBox(content_top_left, Vec2(GetWidth(), GetHeight()));
   primitive_assembler.AddBox(box, track_z, track_background_color, shared_from_this());
 }
 

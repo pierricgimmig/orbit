@@ -36,12 +36,12 @@ class CaptureViewElement : public Pickable, public AccessibleInterfaceProvider {
 
   [[nodiscard]] const orbit_gl::Viewport* GetViewport() const { return viewport_; }
 
-  void SetPos(float x, float y);
+  virtual void SetPos(float x, float y);
 
   // TODO(b/185854980): This should not be virtual as soon as we have meaningful track children.
   [[nodiscard]] virtual Vec2 GetPos() const { return pos_; }
 
-  void SetWidth(float width);
+  virtual void SetWidth(float width);
   // TODO(b/230442062): This method shouldn't be virtual. Fix it after refactoring sliders.
   [[nodiscard]] virtual float GetWidth() const { return width_; }
 

@@ -40,6 +40,8 @@
 #include "OrbitGl/ThreadTrack.h"
 #include "OrbitGl/TrackManager.h"
 
+#pragma optimize("", off)
+
 namespace orbit_gl {
 
 using orbit_client_data::CaptureData;
@@ -69,6 +71,19 @@ float TrackContainer::GetVisibleTracksTotalHeight() const {
     visible_tracks_total_height += (track->GetHeight() + layout_->GetSpaceBetweenTracks());
   }
   return visible_tracks_total_height;
+}
+
+void TrackContainer::SetHeight(float height) { 
+    static float coeff = 1.f;
+    height_ = height * coeff;
+}
+
+void TrackContainer::SetPos(float x, float y) {
+  CaptureViewElement::SetPos(x, y);
+}
+
+void TrackContainer::SetWidth(float width) { 
+    CaptureViewElement::SetWidth(width); 
 }
 
 void TrackContainer::VerticalZoom(float real_ratio, float mouse_screen_y_position) {

@@ -40,13 +40,13 @@ void TrackHeader::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& 
 
   const bool picking = draw_context.picking_mode != PickingMode::kNone;
 
-  const float x0 = GetPos()[0];
+  const float x0 = GetPos()[0] - layout_->GetThreadTrackHeaderWidth();
   const float y0 = GetPos()[1];
   const float track_z = GlCanvas::kZValueTrack;
   const float text_z = GlCanvas::kZValueTrackText;
 
   // Draw tab background
-  const float label_height = GetHeight();
+  const float label_height = GetParent()->GetHeight();
   const float half_label_height = 0.5f * label_height;
   const float label_width = GetWidth();
   const float half_label_width = 0.5f * label_width;
@@ -82,13 +82,13 @@ void TrackHeader::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& 
     Vec2 tab_top_right(top_left[0] + label_width, top_left[1]);
     Vec2 tab_bottom_right(top_left[0] + label_width, top_left[1] + label_height);
 
-    auto shared_this = shared_from_this();
+   /* auto shared_this = shared_from_this();
     DrawTriangleFan(primitive_assembler, rounded_corner, top_left, GlCanvas::kBackgroundColor, 90.f,
                     track_z, shared_this);
     DrawTriangleFan(primitive_assembler, rounded_corner, tab_top_right, GlCanvas::kBackgroundColor,
                     180.f, track_z, shared_this);
     DrawTriangleFan(primitive_assembler, rounded_corner, tab_bottom_right,
-                    track_->GetTrackBackgroundColor(), 0, track_z, shared_this);
+                    track_->GetTrackBackgroundColor(), 0, track_z, shared_this);*/
   }
 
   // Draw label.
