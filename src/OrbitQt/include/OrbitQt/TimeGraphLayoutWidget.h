@@ -73,6 +73,9 @@ class TimeGraphLayoutWidget : public orbit_config_widgets::PropertyConfigWidget,
   [[nodiscard]] float GetTextOffset() const override {
     return text_offset_.value() * scale_.value();
   }
+  [[nodiscard]] float GetLeftMargin() const override {
+    return left_margin_.value() * scale_.value();
+  }
   [[nodiscard]] float GetRightMargin() const override {
     return right_margin_.value() * scale_.value();
   }
@@ -232,6 +235,12 @@ class TimeGraphLayoutWidget : public orbit_config_widgets::PropertyConfigWidget,
   FloatProperty text_offset_{{
       .initial_value = 5.f,
       .label = "Text Offset:",
+  }};
+  FloatProperty left_margin_{{
+      .initial_value = 0.f,
+      .min = 0.f,
+      .max = 1000.f,
+      .label = "Left Margin:",
   }};
   FloatProperty right_margin_{{
       .initial_value = 10.f,
