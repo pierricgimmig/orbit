@@ -40,7 +40,7 @@ void TrackHeader::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& 
 
   const bool picking = draw_context.picking_mode != PickingMode::kNone;
 
-  const float x0 = GetPos()[0] - layout_->GetThreadTrackHeaderWidth();
+  const float x0 = GetPos()[0] - layout_->GetLeftMargin();
   const float y0 = GetPos()[1];
   const float track_z = GlCanvas::kZValueTrack;
   const float text_z = GlCanvas::kZValueTrackText;

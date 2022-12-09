@@ -889,18 +889,18 @@ void TimeGraph::DrawMarginsBetweenChildren(
                              GlCanvas::kZValueTimeBar, GlCanvas::kBackgroundColor);
 
   // Right margin mask for Timeline.
-  float right_margin_width = GetRightMargin();
-  float right_margin_height = GetHeight() - timeline_ui_->GetHeight();
-  Vec2 right_margin_pos{GetWidth() - right_margin_width, GetPos()[1]};
-  Quad right_margin_box = MakeBox(right_margin_pos, Vec2(right_margin_width, right_margin_height));
-  primitive_assembler.AddBox(right_margin_box, GlCanvas::kZValueMargin, GlCanvas::kBackgroundColor);
+  //float right_margin_width = GetRightMargin();
+  //float right_margin_height = GetHeight() - timeline_ui_->GetHeight();
+  //Vec2 right_margin_pos{GetWidth() - right_margin_width, GetPos()[1]};
+  //Quad right_margin_box = MakeBox(right_margin_pos, Vec2(right_margin_width, right_margin_height));
+  //primitive_assembler.AddBox(right_margin_box, GlCanvas::kZValueMargin, GlCanvas::kBackgroundColor);
 
-  // Left margin mask for Timeline.
-  float left_margin_width = layout_->GetLeftMargin();
-  float left_margin_height = GetHeight();
-  Vec2 left_margin_pos = GetPos();
-  Quad left_margin_box = MakeBox(left_margin_pos, Vec2(left_margin_width, left_margin_height));
-  primitive_assembler.AddBox(left_margin_box, GlCanvas::kZValueMargin, GlCanvas::kBackgroundColor);
+  //// Left margin mask for Timeline.
+  //float left_margin_width = layout_->GetLeftMargin();
+  //float left_margin_height = GetHeight();
+  //Vec2 left_margin_pos = GetPos();
+  //Quad left_margin_box = MakeBox(left_margin_pos, Vec2(left_margin_width, left_margin_height));
+  //primitive_assembler.AddBox(left_margin_box, GlCanvas::kZValueMargin, GlCanvas::kBackgroundColor);
 }
 
 void TimeGraph::DrawText(QPainter* painter, float layer) {
