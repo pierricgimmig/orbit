@@ -42,8 +42,8 @@ void TrackHeader::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& 
 
   const float x0 = GetPos()[0] - layout_->GetLeftMargin();
   const float y0 = GetPos()[1];
-  const float track_z = GlCanvas::kZValueTrack;
-  const float text_z = GlCanvas::kZValueTrackText;
+  const float track_z = GlCanvas::kZValueUi;
+  const float text_z = GlCanvas::kZValueUi + 0.01;
 
   // Draw tab background
   const float label_height = GetParent()->GetHeight();

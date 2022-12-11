@@ -234,7 +234,7 @@ class TimeGraphLayoutWidget : public orbit_config_widgets::PropertyConfigWidget,
       .label = "Text Offset:",
   }};
   FloatProperty left_margin_{{
-      .initial_value = 0.f,
+      .initial_value = 400.f,
       .min = 0.f,
       .max = 1000.f,
       .label = "Left Margin:",

@@ -40,8 +40,6 @@
 #include "OrbitGl/ThreadTrack.h"
 #include "OrbitGl/TrackManager.h"
 
-#pragma optimize("", off)
-
 namespace orbit_gl {
 
 using orbit_client_data::CaptureData;
