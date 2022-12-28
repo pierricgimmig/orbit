@@ -144,6 +144,8 @@
 #include "absl/flags/internal/flag.h"
 #include "ui_orbitmainwindow.h"
 
+#pragma optimize("", off)
+
 using orbit_capture_client::CaptureClient;
 using orbit_capture_client::CaptureListener;
 using orbit_client_data::ScopeId;
@@ -214,6 +216,16 @@ OrbitMainWindow::OrbitMainWindow(TargetConfiguration target_configuration,
   UpdateCaptureStateDependentWidgets();
 
   LoadCaptureOptionsIntoApp();
+
+  QList<QWidget*> widgets = findChildren<QWidget*>();
+  for (QWidget* widget : widgets) {
+    QSizePolicy policy = widget->sizePolicy();
+    policy.setHorizontalPolicy(QSizePolicy::Ignored);
+    widget->setSizePolicy(policy);
+    ORBIT_LOG("widget: %s %s %u policy: %u %u", widget->accessibleName().toStdString(),
+              widget->objectName().toStdString(), widget->minimumWidth(), policy.horizontalPolicy(),
+              policy.verticalPolicy());
+  }
 
   // SymbolPaths.txt deprecation code
 
