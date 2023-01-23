@@ -40,6 +40,16 @@ std::unique_ptr<orbit_accessibility::AccessibleInterface> Track::CreateAccessibl
   return std::make_unique<orbit_gl::AccessibleTrack>(this, layout_);
 }
 
+void DrawRectangleOutline(PrimitiveAssembler& primitive_assembler, Vec2 pos, Vec2 size, float outline_width, float z, Color color) {
+  Quad boxes[4] = {MakeBox(pos, {size[0], outline_width}), 
+                   MakeBox({pos[0], pos[1]+size[1]-outline_width}, {size[0], outline_width}),
+                   MakeBox(pos, {outline_width, size[1]}),
+                   MakeBox({pos[0]+size[0]-outline_width, pos[1]}, {outline_width, size[1]})};
+  for (Quad& box : boxes) {
+    primitive_assembler.AddBox(box, z, color);
+  }
+}
+
 void Track::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_renderer,
                    const DrawContext& draw_context) {
   CaptureViewElement::DoDraw(primitive_assembler, text_renderer, draw_context);
@@ -59,6 +69,12 @@ void Track::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_r
   const float track_z = GlCanvas::kZValueTrack;
 
   Color track_background_color = GetTrackBackgroundColor();
+  if (IsMouseOver()) {
+    Color highlight_color = Color(255, 255, 255, 255);
+    float z = GlCanvas::kZValueMargin;
+    DrawRectangleOutline(primitive_assembler, GetPos(), GetSize(), layout_->GetSpaceBetweenTracks(),
+                         z, highlight_color);
+  }
 
   Vec2 track_size = GetSize();
 
