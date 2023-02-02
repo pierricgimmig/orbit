@@ -37,23 +37,28 @@
 #endif
 
 #if defined(_M_X64) || defined(__x86_64__)
-    #include "./hde/hde64.h"
-    typedef hde64s HDE;
-    #define HDE_DISASM(code, hs) hde64_disasm(code, hs)
+#include "./hde/hde64.h"
+typedef hde64s HDE;
+#define HDE_DISASM(code, hs) hde64_disasm(code, hs)
 #else
-    #include "./hde/hde32.h"
-    typedef hde32s HDE;
-    #define HDE_DISASM(code, hs) hde32_disasm(code, hs)
+#include "./hde/hde32.h"
+typedef hde32s HDE;
+#define HDE_DISASM(code, hs) hde32_disasm(code, hs)
 #endif
 
 #include "trampoline.h"
 #include "buffer.h"
 
+MH_RelayBufferOverwriteCallback* g_relayBufferOverwriteCallback;
+void MH_SetRelayBufferOverwriteCallback(MH_RelayBufferOverwriteCallback* callback) {
+    g_relayBufferOverwriteCallback = callback;
+}
+
 // Maximum size of a trampoline function.
 #if defined(_M_X64) || defined(__x86_64__)
-    #define TRAMPOLINE_MAX_SIZE (MEMORY_SLOT_SIZE - sizeof(JMP_ABS))
+#define TRAMPOLINE_MAX_SIZE (MEMORY_SLOT_SIZE - sizeof(JMP_ABS))
 #else
-    #define TRAMPOLINE_MAX_SIZE MEMORY_SLOT_SIZE
+#define TRAMPOLINE_MAX_SIZE MEMORY_SLOT_SIZE
 #endif
 
 //-------------------------------------------------------------------------
@@ -314,7 +319,11 @@ BOOL CreateTrampolineFunction(PTRAMPOLINE ct)
 
     ct->pRelay = (LPBYTE)ct->pTrampoline + newPos;
     memcpy(ct->pRelay, &jmp, sizeof(jmp));
-#endif
 
+    if (g_relayBufferOverwriteCallback) {
+        UINT relay_buffer_size = TRAMPOLINE_MAX_SIZE - newPos;
+        g_relayBufferOverwriteCallback(ct, ct->pRelay, relay_buffer_size);
+    }
+#endif
     return TRUE;
 }
