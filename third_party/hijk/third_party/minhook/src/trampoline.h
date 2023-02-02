@@ -102,4 +102,18 @@ typedef struct _TRAMPOLINE
     UINT8  newIPs[8];       // [Out] Instruction boundaries of the trampoline function.
 } TRAMPOLINE, *PTRAMPOLINE;
 
+
 BOOL CreateTrampolineFunction(PTRAMPOLINE ct);
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+// Allow user to specify a callback to be called after trampoline creation.
+typedef void MH_RelayBufferOverwriteCallback(PTRAMPOLINE ct, void* relay_buffer, UINT size);
+void MH_SetRelayBufferOverwriteCallback(MH_RelayBufferOverwriteCallback*);
+
+#ifdef __cplusplus
+}
+#endif

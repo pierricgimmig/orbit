@@ -25,6 +25,8 @@ target_sources(WindowsTracing PUBLIC
 target_sources(WindowsTracing PRIVATE
         ContextSwitchManager.cpp
         ContextSwitchManager.h
+        DynamicInstrumentation.cpp
+        DynamicInstrumentation.h
         EtwEventTypes.h
         GraphicsEtwProvider.cpp
         GraphicsEtwProvider.h
@@ -40,10 +42,12 @@ target_include_directories(WindowsTracing INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_link_libraries(WindowsTracing PUBLIC
         GrpcProtos
         Introspection
+        ModuleUtils
         ObjectUtils
         OrbitBase
         PresentMon
         WindowsUtils
+        hijk
         krabsetw
         absl::base
         absl::bind_front
