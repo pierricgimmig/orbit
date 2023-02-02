@@ -21,7 +21,8 @@ namespace orbit_windows_utils {
 
 // Injects a dll in a remote process identified by "pid" if it is not already loaded. The call
 // succeeds if the dll is already loaded or returns an ErrorMessage if the injection fails.
-[[nodiscard]] ErrorMessageOr<void> InjectDllIfNotLoaded(uint32_t pid,
+// Returns true if dll was injected and false if dll was already loaded.
+[[nodiscard]] ErrorMessageOr<bool> InjectDllIfNotLoaded(uint32_t pid,
                                                         std::filesystem::path dll_path);
 
 // Create a thread in a remote process and call specified the function. The "parameter" byte buffer

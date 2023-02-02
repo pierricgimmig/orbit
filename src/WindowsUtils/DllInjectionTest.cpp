@@ -50,6 +50,19 @@ TEST(DllInjection, InjectDllInCurrentProcess) {
   EXPECT_THAT(remote_thread_result, HasNoError());
 }
 
+TEST(DllInjection, InjectDllIfNotLoadedInCurrentProcess) {
+  // Injection.
+  uint32_t pid = orbit_base::GetCurrentProcessId();
+  ErrorMessageOr<bool> result = InjectDllIfNotLoaded(pid, GetTestDllPath());
+  EXPECT_THAT(result, HasNoError());
+  EXPECT_TRUE(result.value());
+
+  // Re-injection.
+  result = InjectDllIfNotLoaded(pid, GetTestDllPath());
+  EXPECT_THAT(result, HasNoError());
+  EXPECT_FALSE(result.value());
+}
+
 TEST(DllInjection, InjectNonExistentDll) {
   uint32_t pid = orbit_base::GetCurrentProcessId();
   ErrorMessageOr<void> result = InjectDll(pid, GetNonExistentDllPath());
