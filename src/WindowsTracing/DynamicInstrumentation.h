@@ -5,30 +5,24 @@
 #ifndef WINDOWS_TRACING_DYNAMIC_INSTRUMENTATION_H_
 #define WINDOWS_TRACING_DYNAMIC_INSTRUMENTATION_H_
 
-#include "WindowsTracing/TracerListener.h"
+#include "GrpcProtos/instrumentation.pb.h"
+#include "OrbitBase/Result.h"
 
 namespace orbit_windows_tracing {
 
-struct FunctionToInstrument {
-  uint64_t absolute_virtual_address = 0;
-  std::string function_name;
-  std::string module_full_path;
-  size_t function_size;
-};
-
-// Tracer implementation that creates a new KrabsTracer on Start(), and releases it on Stop().
+// Class responsible for starting and stopping dynamic instrumentation in a remote process.
+// This will inject `OrbitUserSpaceDynamicInstrumentation.dll` into the target process.
 class DynamicInstrumentation {
  public:
-  DynamicInstrumentation(uint32_t target_pid);
-  DynamicInstrumentation() = delete;
-  ~DynamicInstrumentation() = default;
+  DynamicInstrumentation() = default;
+  ~DynamicInstrumentation();
 
-  void Start();
-  void Stop();
+  ErrorMessageOr<void> Start(const orbit_grpc_protos::DynamicInstrumentationOptions& options);
+  ErrorMessageOr<void> Stop();
 
  private:
-  TracerListener* listener_ = nullptr;
-  std::vector<FunctionToInstrument> instrumented_functions_;
+  uint32_t target_pid_ = 0;
+  bool active_ = false;
 };
 
 }  // namespace orbit_windows_tracing
