@@ -22,6 +22,7 @@ target_sources(GrpcProtos PUBLIC
 target_sources(GrpcProtos PRIVATE
         capture.proto
         code_block.proto
+        instrumentation.proto
         module.proto
         process.proto
         producer_side_services.proto

@@ -85,7 +85,7 @@ ErrorMessageOr<Module> FindModule(uint32_t pid, std::string_view module_name) {
     return ErrorMessage(
         absl::StrFormat("Multiple modules with the name \"%s\" found", module_name));
   }
-  return ErrorMessage("Could not find module in target process");
+  return ErrorMessage(absl::StrFormat("Could not find module in target process: %s", module_name));
 }
 
 ErrorMessageOr<Module> FindModuleWithRetries(uint32_t pid, std::string_view module_name,

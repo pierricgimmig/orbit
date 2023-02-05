@@ -1,0 +1,22 @@
+// Copyright (c) 2023 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto3";
+
+package orbit_grpc_protos;
+
+message DynamicallyInstrumentedFunction {
+  string name = 1;
+  uint64 size = 2;
+  uint64 absolute_address = 3;
+  string module_path = 4;
+  string module_build_id = 5;
+  bool record_arguments = 6;
+  bool record_return_value = 7;
+}
+
+message DynamicInstrumentationOptions {
+  uint32 target_pid = 1;
+  repeated DynamicallyInstrumentedFunction instrumented_functions = 2;
+}

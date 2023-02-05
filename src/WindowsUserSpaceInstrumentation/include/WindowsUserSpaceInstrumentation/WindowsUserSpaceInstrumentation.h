@@ -5,8 +5,7 @@
 #ifndef WINDOWS_USER_SPACE_INSTRUMENTATION_H_
 #define WINDOWS_USER_SPACE_INSTRUMENTATION_H_
 
-// InitializeInstrumentation needs to be called once after this library is injected into the target
-// process. It sets up the communication to OrbitService.
-extern "C" __declspec(dllexport) void InitializeInstrumentation();
+extern "C" __declspec(dllexport) void StartCapture(void* capture_options);
+extern "C" __declspec(dllexport) void StopCapture();
 
 #endif  // WINDOWS_USER_SPACE_INSTRUMENTATION_H_

@@ -66,18 +66,24 @@ void TracerImpl::Start() {
   absl::flat_hash_map<std::string, std::vector<Module>> modules_by_path =
       GetModulesByPath(capture_options_.pid());
   
-  std::vector<FunctionToInstrument> functions_to_instrument;
+  orbit_grpc_protos::DynamicInstrumentationOptions options;
+  options.set_target_pid(capture_options_.pid());
   for (const auto& function : capture_options_.instrumented_functions()) {
     for (const Module& module : modules_by_path[function.file_path()]) {
       const uint64_t function_address = orbit_module_utils::SymbolVirtualAddressToAbsoluteAddress(
           function.function_virtual_address(), module.address_start, module.load_bias,
           /*module_executable_section_offset=*/0);
 
-      FunctionToInstrument& function_to_instrument = functions_to_instrument.emplace_back();
-      function_to_instrument.absolute_virtual_address = function_address;
-      function_to_instrument.function_name = function.function_name();
-      function_to_instrument.function_size = function.function_size();
-      function_to_instrument.module_full_path = function.file_path();
+      orbit_grpc_protos::DynamicallyInstrumentedFunction* instrumented_function =
+          options.add_instrumented_functions();
+
+      instrumented_function->set_name(function.function_name());
+      instrumented_function->set_size(function.function_size());
+      instrumented_function->set_absolute_address(function_address);
+      instrumented_function->set_module_path(function.file_path());
+      instrumented_function->set_module_build_id(function.file_build_id());
+      instrumented_function->set_record_arguments(false);
+      instrumented_function->set_record_return_value(false);
 
       ORBIT_LOG("Instrumented function: %s", function.function_name());
       PRINT_STR(function.file_path());
@@ -90,13 +96,17 @@ void TracerImpl::Start() {
     }
   }
   
-  dynamic_instrumentation_ = std::make_unique<DynamicInstrumentation>(capture_options_.pid());
-  dynamic_instrumentation_->Start();
+  dynamic_instrumentation_ = std::make_unique<DynamicInstrumentation>();
+  if (auto result = dynamic_instrumentation_->Start(options); result.has_error()) {
+    ORBIT_ERROR("Starting dynamic instrumentation: %s", result.error().message());
+  }
 }
 
 void TracerImpl::Stop() {
   ORBIT_CHECK(dynamic_instrumentation_ != nullptr);
-  dynamic_instrumentation_->Stop();
+  if (auto result = dynamic_instrumentation_->Stop(); result.has_error()) {
+    ORBIT_ERROR("Stopping dynamic instrumentation: %s", result.error().message());
+  }
   dynamic_instrumentation_ = nullptr;
   ORBIT_CHECK(krabs_tracer_ != nullptr);
   krabs_tracer_->Stop();

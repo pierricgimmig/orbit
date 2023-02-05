@@ -22,26 +22,37 @@ std::filesystem::path GetDllPath() {
 
 }  // namespace
 
-DynamicInstrumentation::DynamicInstrumentation(uint32_t target_pid) {
-  static std::filesystem::path dll_path = GetDllPath();
-
-  // Inject dll in target process if dll is not already loaded.
-  auto injection_result = orbit_windows_utils::InjectDllIfNotLoaded(target_pid, dll_path);
-  if (injection_result.has_error()) {
-    ORBIT_ERROR("%s", absl::StrFormat("Trying to inject %s: %s", dll_path.string(),
-                                      injection_result.error().message()));
-  }
-
-  // Make sure instrumentation is initialized.
-  constexpr const char* kFunctionName = "InitializeInstrumentation";
-  auto result =
-      orbit_windows_utils::CreateRemoteThread(target_pid, dll_path.string(), kFunctionName, {});
-  if (result.has_error()) {
-    ORBIT_ERROR("%s", absl::StrFormat("Calling %s: %s", kFunctionName, result.error().message()));
+DynamicInstrumentation::~DynamicInstrumentation() {
+  if (active_) {
+    auto result = Stop();
+    if (result.has_error()) {
+      ORBIT_ERROR("Stopping dynamic instrumentation: %s", result.error().message());
+    }
   }
 }
 
-void DynamicInstrumentation::Start() {}
-void DynamicInstrumentation::Stop() {}
+ErrorMessageOr<void> DynamicInstrumentation::Start(
+    const orbit_grpc_protos::DynamicInstrumentationOptions& options) {
+  target_pid_ = options.target_pid();
+
+  // Inject dll in target process if dll is not already loaded.
+  OUTCOME_TRY(orbit_windows_utils::InjectDllIfNotLoaded(target_pid_, GetDllPath()));
+
+  // Call `StartCapture` in the remote process with the instrumentation options as argument.
+  OUTCOME_TRY(orbit_windows_utils::CreateRemoteThread(target_pid_, GetDllPath().filename().string(),
+                                                      "StartCapture", options.SerializeAsString()));
+  active_ = true;
+  return outcome::success();
+}
+
+ErrorMessageOr<void> DynamicInstrumentation::Stop() {
+  if (!active_) return outcome::success();
+
+  // Stop capturing.
+  OUTCOME_TRY(orbit_windows_utils::CreateRemoteThread(target_pid_, GetDllPath().string(),
+                                                      "StopCapture", {}));
+  active_ = false;
+  return outcome::success();
+}
 
 }  // namespace orbit_windows_tracing
