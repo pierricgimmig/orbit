@@ -7,16 +7,22 @@
 
 #include <variant>
 
-#include "FunctionEntryExitEventProducer.h"
+#include "FunctionCallEventProducer.h"
 #include "GrpcProtos/instrumentation.pb.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
 #include "OrbitBase/ThreadUtils.h"
 
-FunctionEntryExitEventProducer& GetCaptureEventProducer() {
-  static FunctionEntryExitEventProducer producer;
+FunctionCallEventProducer& GetCaptureEventProducer() {
+  static FunctionCallEventProducer producer;
   return producer;
 }
+
+struct FunctionEntry {
+  void* target_function;
+  uint64_t entry_timestamp_ns;
+};
+thread_local std::vector<FunctionEntry> function_entry_stack;
 
 struct InstrumentationData {
   orbit_grpc_protos::DynamicInstrumentationOptions options;
@@ -27,22 +33,27 @@ std::unique_ptr<InstrumentationData> g_instrumentation_data;
 
 void PrologCallback(void* target_function, struct Hijk_PrologContext* context) {
   const uint64_t timestamp_on_entry_ns = orbit_base::CaptureTimestampNs();
-  static const uint32_t kPid = orbit_base::GetCurrentProcessId();
-  thread_local const uint32_t kTid = orbit_base::GetCurrentThreadIdNative();
-  
-  if (GetCaptureEventProducer().IsCapturing()) {
-    GetCaptureEventProducer().EnqueueIntermediateEvent(FunctionEntry{
-        kPid, kTid, absl::bit_cast<uint64_t>(target_function), /*stack_pointer=*/0,
-        /*return_address=*/0, timestamp_on_entry_ns});
-  }
+  function_entry_stack.emplace_back(FunctionEntry{target_function, timestamp_on_entry_ns});
 }
+
+/*struct FunctionCall {
+  uint32_t pid;
+  uint32_t tid;
+  uint64_t function_id;
+  uint64_t begin_timestamp_ns;
+  uint64_t end_timestamp_ns;
+};*/
 
 void EpilogCallback(void* target_function, struct Hijk_EpilogContext* context) {
   const uint64_t timestamp_on_exit_ns = orbit_base::CaptureTimestampNs();
   static const uint32_t kPid = orbit_base::GetCurrentProcessId();
-    thread_local uint32_t kTid = orbit_base::GetCurrentThreadId();
-    GetCaptureEventProducer().EnqueueIntermediateEvent(
-        FunctionExit{kPid, kTid, timestamp_on_exit_ns});
+  thread_local uint32_t kTid = orbit_base::GetCurrentThreadId();
+
+  const FunctionEntry& entry = function_entry_stack.back();
+  GetCaptureEventProducer().EnqueueIntermediateEvent(
+      FunctionCall{kPid, kTid, absl::bit_cast<uint64_t>(target_function), entry.entry_timestamp_ns,
+                   timestamp_on_exit_ns});
+  function_entry_stack.pop_back();
 }
 
 extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) {
