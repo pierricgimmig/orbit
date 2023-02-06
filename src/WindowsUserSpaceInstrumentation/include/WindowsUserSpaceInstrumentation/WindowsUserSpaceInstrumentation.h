@@ -5,7 +5,7 @@
 #ifndef WINDOWS_USER_SPACE_INSTRUMENTATION_H_
 #define WINDOWS_USER_SPACE_INSTRUMENTATION_H_
 
-extern "C" __declspec(dllexport) void StartCapture(void* capture_options);
+extern "C" __declspec(dllexport) void StartCapture(const char* capture_options);
 extern "C" __declspec(dllexport) void StopCapture();
 
 #endif  // WINDOWS_USER_SPACE_INSTRUMENTATION_H_
