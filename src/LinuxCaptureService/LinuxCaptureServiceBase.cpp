@@ -129,6 +129,7 @@ void StopInternalProducersAndCaptureStartStopListenersInParallel(
   }
 }
 
+// What is this?
 // This class hijacks FunctionEntry and FunctionExit events before they reach the
 // ProducerEventProcessor, and sends them to LinuxTracing instead, so that they can be processed
 // like u(ret)probes. All the other events are forwarded to the ProducerEventProcessor normally.
