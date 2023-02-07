@@ -10,7 +10,14 @@ add_library(WindowsUserSpaceInstrumentation SHARED)
 
 set_target_properties(WindowsUserSpaceInstrumentation PROPERTIES OUTPUT_NAME "OrbitUserSpaceInstrumentation")
 
+target_include_directories(WindowsUserSpaceInstrumentation PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/include)
+
+target_sources(WindowsUserSpaceInstrumentation PUBLIC
+        include/WindowsUserSpaceInstrumentation/WindowsUserSpaceInstrumentation.h)
+
 target_sources(WindowsUserSpaceInstrumentation PRIVATE
+        FunctionCallEventProducer.h
         WindowsUserSpaceInstrumentation.cpp
         )
 
