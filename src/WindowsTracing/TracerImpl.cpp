@@ -80,6 +80,7 @@ void TracerImpl::Start() {
       instrumented_function->set_name(function.function_name());
       instrumented_function->set_size(function.function_size());
       instrumented_function->set_absolute_address(function_address);
+      instrumented_function->set_function_id(function.function_id());
       instrumented_function->set_module_path(function.file_path());
       instrumented_function->set_module_build_id(function.file_build_id());
       instrumented_function->set_record_arguments(false);
