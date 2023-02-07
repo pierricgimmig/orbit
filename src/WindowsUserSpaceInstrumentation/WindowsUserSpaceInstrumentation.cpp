@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "WindowsUserSpaceInstrumentation/WindowsUserSpaceInstrumentation.h"
+
 #include <absl/base/casts.h>
 #include <hijk/hijk.h>
 
@@ -66,6 +68,7 @@ extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) 
   g_instrumentation_data = std::make_unique<InstrumentationData>();
   g_instrumentation_data->options.ParseFromString(capture_options);
   const orbit_grpc_protos::DynamicInstrumentationOptions& options = g_instrumentation_data->options;
+  absl::flat_hash_map<uint64_t, uint64_t> absolute_address_to_id_map;
 
   ORBIT_LOG("Num instrumented functions: %u", options.instrumented_functions().size());
 
@@ -85,9 +88,11 @@ extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) 
                   function.absolute_address(), function.module_path());
       continue;
     }
-
+    absolute_address_to_id_map.emplace(absl::bit_cast<uint64_t>(absolute_address), function.function_id());
     g_instrumentation_data->instrumented_functions.push_back(absolute_address);
   }
+
+  GetCaptureEventProducer().SetAbsoluteAddressToFunctionIdMap(absolute_address_to_id_map);
 
   if (!Hijk_ApplyQueued()) {
     ORBIT_ERROR("Calling Hijk_ApplyQueued() when starting capture");
@@ -97,7 +102,7 @@ extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) 
 extern "C" __declspec(dllexport) void StopCapture() {
   for (void* absolute_address : g_instrumentation_data->instrumented_functions) {
     if (!Hijk_QueueDisableHook(absolute_address)) {
-      ORBIT_ERROR("Could not encueue disable hook for function [%p]", absolute_address);
+      ORBIT_ERROR("Could not enqueue disable hook for function [%p]", absolute_address);
     }
   }
 

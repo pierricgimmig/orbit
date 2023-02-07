@@ -5,6 +5,8 @@
 #ifndef WINDOWS_USER_SPACE_INSTRUMENTATION_FUNCTION_CALL_EVENT_PRODUCER_H_
 #define WINDOWS_USER_SPACE_INSTRUMENTATION_FUNCTION_CALL_EVENT_PRODUCER_H_
 
+#include <absl/container/flat_hash_map.h>
+
 #include <variant>
 
 #include "CaptureEventProducer/LockFreeBufferCaptureEventProducer.h"
@@ -14,7 +16,7 @@
 struct FunctionCall {
   uint32_t pid;
   uint32_t tid;
-  uint64_t function_id;
+  uint64_t absolute_address;
   uint64_t begin_timestamp_ns;
   uint64_t end_timestamp_ns;
 };
@@ -30,6 +32,11 @@ class FunctionCallEventProducer
 
   ~FunctionCallEventProducer() override { ShutdownAndWait(); }
 
+  void SetAbsoluteAddressToFunctionIdMap(
+      absl::flat_hash_map<uint64_t, uint64_t> address_to_id_map){
+    absolute_address_to_id_map_ = address_to_id_map;
+  };
+
  protected:
   [[nodiscard]] orbit_grpc_protos::ProducerCaptureEvent* TranslateIntermediateEvent(
       FunctionCall&& raw_event, google::protobuf::Arena* arena) override {
@@ -38,11 +45,14 @@ class FunctionCallEventProducer
     orbit_grpc_protos::FunctionCall* function_call = capture_event->mutable_function_call();
     function_call->set_pid(raw_event.pid);
     function_call->set_tid(raw_event.tid);
-    function_call->set_function_id(raw_event.function_id);
+    function_call->set_function_id(absolute_address_to_id_map_[raw_event.absolute_address]);
     function_call->set_duration_ns(raw_event.end_timestamp_ns - raw_event.begin_timestamp_ns);
     function_call->set_end_timestamp_ns(raw_event.end_timestamp_ns);
     return capture_event;
   }
+
+  // Needs lock
+  absl::flat_hash_map<uint64_t, uint64_t> absolute_address_to_id_map_;
 };
 
 #endif  // WINDOWS_USER_SPACE_INSTRUMENTATION_FUNCTION_CALL_EVENT_PRODUCER_H_

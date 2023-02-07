@@ -10,10 +10,11 @@ message DynamicallyInstrumentedFunction {
   string name = 1;
   uint64 size = 2;
   uint64 absolute_address = 3;
-  string module_path = 4;
-  string module_build_id = 5;
-  bool record_arguments = 6;
-  bool record_return_value = 7;
+  uint64 function_id = 4;
+  string module_path = 5;
+  string module_build_id = 6;
+  bool record_arguments = 7;
+  bool record_return_value = 8;
 }
 
 message DynamicInstrumentationOptions {
