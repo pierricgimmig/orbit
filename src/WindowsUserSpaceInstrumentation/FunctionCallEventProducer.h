@@ -6,6 +6,7 @@
 #define WINDOWS_USER_SPACE_INSTRUMENTATION_FUNCTION_CALL_EVENT_PRODUCER_H_
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <variant>
 
@@ -21,8 +22,8 @@ struct FunctionCall {
   uint64_t end_timestamp_ns;
 };
 
-// This class is used to enqueue FunctionEntry and FunctionExit events from multiple threads,
-// transform them into orbit_grpc_protos::FunctionCall protos, and relay them to OrbitService.
+// This class is used to enqueue FunctionCall events from multiple threads, transform them into
+// orbit_grpc_protos::FunctionCall protos, and relay them to OrbitService.
 class FunctionCallEventProducer
     : public orbit_capture_event_producer::LockFreeBufferCaptureEventProducer<FunctionCall> {
  public:
@@ -34,10 +35,16 @@ class FunctionCallEventProducer
 
   void SetAbsoluteAddressToFunctionIdMap(
       absl::flat_hash_map<uint64_t, uint64_t> address_to_id_map){
+    absl::MutexLock lock(&mutex_);
     absolute_address_to_id_map_ = address_to_id_map;
   };
 
  protected:
+  [[nodiscard]] uint64_t FunctionIdFromAddress(uint64_t absolute_address) const {
+    absl::MutexLock lock(&mutex_);
+    return absolute_address_to_id_map_.at(absolute_address);
+  }
+
   [[nodiscard]] orbit_grpc_protos::ProducerCaptureEvent* TranslateIntermediateEvent(
       FunctionCall&& raw_event, google::protobuf::Arena* arena) override {
     auto* capture_event =
@@ -45,13 +52,13 @@ class FunctionCallEventProducer
     orbit_grpc_protos::FunctionCall* function_call = capture_event->mutable_function_call();
     function_call->set_pid(raw_event.pid);
     function_call->set_tid(raw_event.tid);
-    function_call->set_function_id(absolute_address_to_id_map_[raw_event.absolute_address]);
+    function_call->set_function_id(FunctionIdFromAddress(raw_event.absolute_address));
     function_call->set_duration_ns(raw_event.end_timestamp_ns - raw_event.begin_timestamp_ns);
     function_call->set_end_timestamp_ns(raw_event.end_timestamp_ns);
     return capture_event;
   }
 
-  // Needs lock
+  mutable absl::Mutex mutex_;
   absl::flat_hash_map<uint64_t, uint64_t> absolute_address_to_id_map_;
 };
 

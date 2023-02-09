@@ -29,6 +29,7 @@ thread_local std::vector<FunctionEntry> function_entry_stack;
 struct InstrumentationData {
   orbit_grpc_protos::DynamicInstrumentationOptions options;
   std::vector<void*> instrumented_functions;
+  std::set<void*> hooks;
 };
 
 std::unique_ptr<InstrumentationData> g_instrumentation_data;
@@ -37,14 +38,6 @@ void PrologCallback(void* target_function, struct Hijk_PrologContext* context) {
   const uint64_t timestamp_on_entry_ns = orbit_base::CaptureTimestampNs();
   function_entry_stack.emplace_back(FunctionEntry{target_function, timestamp_on_entry_ns});
 }
-
-/*struct FunctionCall {
-  uint32_t pid;
-  uint32_t tid;
-  uint64_t function_id;
-  uint64_t begin_timestamp_ns;
-  uint64_t end_timestamp_ns;
-};*/
 
 void EpilogCallback(void* target_function, struct Hijk_EpilogContext* context) {
   const uint64_t timestamp_on_exit_ns = orbit_base::CaptureTimestampNs();
@@ -61,28 +54,29 @@ void EpilogCallback(void* target_function, struct Hijk_EpilogContext* context) {
 extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) {
   ORBIT_LOG("Starting Orbit user space dynamic instrumentation");
 
-  // Make sure communication channel to OrbitService is initialized.
-  GetCaptureEventProducer();
-
   // Parse argument.
   g_instrumentation_data = std::make_unique<InstrumentationData>();
   g_instrumentation_data->options.ParseFromString(capture_options);
+  g_instrumentation_data->instrumented_functions = {};
   const orbit_grpc_protos::DynamicInstrumentationOptions& options = g_instrumentation_data->options;
   absl::flat_hash_map<uint64_t, uint64_t> absolute_address_to_id_map;
 
-  ORBIT_LOG("Num instrumented functions: %u", options.instrumented_functions().size());
-
-  // Create hooks.
   for (const auto& function : options.instrumented_functions()) {
     ORBIT_LOG("Instrumented functions: %s[%u]", function.name(), function.absolute_address());
     void* absolute_address = absl::bit_cast<void*>(function.absolute_address());
 
-    if (!Hijk_CreateHook(absolute_address, &PrologCallback, &EpilogCallback)) {
-      ORBIT_ERROR("Could not create hook for function %s[%p] of %s", function.name(),
-                  function.absolute_address(), function.module_path());
-      continue;
+    // Create hook if it doesn't exist.
+    bool hook_exists = g_instrumentation_data->hooks.count(absolute_address) != 0;
+    if (!hook_exists) {
+      if (!Hijk_CreateHook(absolute_address, &PrologCallback, &EpilogCallback)) {
+        ORBIT_ERROR("Could not create hook for function %s[%p] of %s", function.name(),
+                    function.absolute_address(), function.module_path());
+        continue;
+      }
+      g_instrumentation_data->hooks.insert(absolute_address);
     }
 
+    // Enable hook.
     if (!Hijk_QueueEnableHook(absolute_address)) {
       ORBIT_ERROR("Could not enqueue enable hook for function %s[%p] of %s", function.name(),
                   function.absolute_address(), function.module_path());
@@ -91,6 +85,9 @@ extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) 
     absolute_address_to_id_map.emplace(absl::bit_cast<uint64_t>(absolute_address), function.function_id());
     g_instrumentation_data->instrumented_functions.push_back(absolute_address);
   }
+
+  ORBIT_LOG("Instrumented %u/%u functions", g_instrumentation_data->instrumented_functions.size(),
+            options.instrumented_functions().size());
 
   GetCaptureEventProducer().SetAbsoluteAddressToFunctionIdMap(absolute_address_to_id_map);
 
