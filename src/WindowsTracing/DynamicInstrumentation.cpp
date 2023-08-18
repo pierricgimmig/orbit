@@ -49,7 +49,7 @@ ErrorMessageOr<void> DynamicInstrumentation::Stop() {
   if (!active_) return outcome::success();
 
   // Stop capturing.
-  OUTCOME_TRY(orbit_windows_utils::CreateRemoteThread(target_pid_, GetDllPath().string(),
+  OUTCOME_TRY(orbit_windows_utils::CreateRemoteThread(target_pid_, GetDllPath().filename().string(),
                                                       "StopCapture", {}));
   active_ = false;
   return outcome::success();

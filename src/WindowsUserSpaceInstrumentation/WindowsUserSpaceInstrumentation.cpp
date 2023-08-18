@@ -98,12 +98,8 @@ extern "C" __declspec(dllexport) void StartCapture(const char* capture_options) 
 
 extern "C" __declspec(dllexport) void StopCapture() {
   for (void* absolute_address : g_instrumentation_data->instrumented_functions) {
-    if (!Hijk_QueueDisableHook(absolute_address)) {
-      ORBIT_ERROR("Could not enqueue disable hook for function [%p]", absolute_address);
+    if (!Hijk_RemoveHook(absolute_address)) {
+      ORBIT_ERROR("Calling Hijk_RemoveHook() when stopping capture");
     }
-  }
-
-  if (!Hijk_ApplyQueued()) {
-    ORBIT_ERROR("Calling Hijk_ApplyQueued() when stopping capture");
   }
 }
