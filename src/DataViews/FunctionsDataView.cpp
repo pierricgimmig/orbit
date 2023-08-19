@@ -262,7 +262,6 @@ void FunctionsDataView::RemoveFunctionsOfModule(std::string_view module_path) {
 void FunctionsDataView::ClearFunctions() {
   ORBIT_SCOPE_FUNCTION;
   functions_.clear();
-  OnDataChanged();
 }
 
 }  // namespace orbit_data_views
