@@ -68,7 +68,7 @@ void SchedulerTrack::DoUpdatePrimitives(PrimitiveAssembler& primitive_assembler,
   // will move this implementation to be the defaulted one.
   // TimerTrack::DoUpdatePrimitives(primitive_assembler, text_renderer, min_tick, max_tick,
   //                                picking_mode);
-  ORBIT_SCOPE_WITH_COLOR("SchedulerTrack::DoUpdatePrimitives", kOrbitColorPink);
+  ORBIT_SCOPE(__FUNCTION__, {.color = kOrbitColorPink});
   visible_timer_count_ = 0;
 
   const internal::DrawData draw_data =

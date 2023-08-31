@@ -86,7 +86,7 @@ void OrbitGLWidget::resizeGL(int w, int h) {
 }
 
 void OrbitGLWidget::paintGL() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   if (gl_canvas_) {
     QPainter painter(this);

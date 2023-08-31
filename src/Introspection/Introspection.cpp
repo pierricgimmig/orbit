@@ -31,9 +31,11 @@ ABSL_CONST_INIT static absl::Mutex global_introspection_mutex(absl::kConstInit);
 ABSL_CONST_INIT static IntrospectionListener* global_introspection_listener
     ABSL_GUARDED_BY(global_introspection_mutex) = nullptr;
 
+#if ORBIT_API_ENABLED
 // Introspection uses the same function table used by the Orbit API, but specifies its own
 // functions.
 orbit_api_v2 g_orbit_api;
+#endif
 
 namespace orbit_introspection {
 
@@ -101,6 +103,8 @@ void IntrospectionListener::DeferApiEventProcessing(const orbit_api::ApiEventVar
     global_introspection_listener->user_callback_(api_event);
   });
 }
+
+#if ORBIT_API_ENABLED
 
 void orbit_api_start_v1(const char* name, orbit_api_color color, uint64_t group_id,
                         uint64_t caller_address) {
@@ -197,9 +201,12 @@ void orbit_api_track_double(const char* name, double value, orbit_api_color colo
   IntrospectionListener::DeferApiEventProcessing(api_track);
 }
 
+#endif
+
 namespace orbit_introspection {
 
 void InitializeIntrospection() {
+#if ORBIT_API_ENABLED
   if (g_orbit_api.initialized != 0) return;
   g_orbit_api.start = &orbit_api_start_v1;
   g_orbit_api.stop = &orbit_api_stop;
@@ -215,6 +222,7 @@ void InitializeIntrospection() {
   std::atomic_thread_fence(std::memory_order_release);
   g_orbit_api.initialized = 1;
   g_orbit_api.enabled = 1;
+#endif
 }
 
 }  // namespace orbit_introspection

@@ -19,6 +19,8 @@
 #include "ApiUtils/ApiEnableInfo.h"
 #endif
 
+#if ORBIT_API_ENABLED
+
 namespace {
 orbit_api::LockFreeApiEventProducer& GetCaptureEventProducer() {
   static orbit_api::LockFreeApiEventProducer producer;
@@ -342,3 +344,5 @@ ORBIT_EXPORT void orbit_api_set_enabled_from_struct(orbit_api::ApiEnableInfo* in
 #endif  // _WIN32
 
 }  // extern "C"
+
+#endif  // ORBIT_API_ENABLED

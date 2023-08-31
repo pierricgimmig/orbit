@@ -860,7 +860,7 @@ ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::
 ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(
     const std::filesystem::path& file_path,
     llvm::object::OwningBinary<llvm::object::ObjectFile>&& file) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   auto* coff_object_file = llvm::dyn_cast<llvm::object::COFFObjectFile>(file.getBinary());
   if (coff_object_file == nullptr) {
     return ErrorMessage(absl::StrFormat("Unable to load object file \"%s\":", file_path.string()));

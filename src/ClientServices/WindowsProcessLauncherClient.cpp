@@ -69,7 +69,7 @@ class WindowsProcessLauncherClientImpl : public WindowsProcessLauncherClient {
 
 ErrorMessageOr<orbit_grpc_protos::ProcessInfo> WindowsProcessLauncherClientImpl::LaunchProcess(
     const orbit_grpc_protos::ProcessToLaunch& process_to_launch) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   LaunchProcessRequest request;
   LaunchProcessResponse response;
 
@@ -102,7 +102,7 @@ ErrorMessageOr<orbit_grpc_protos::ProcessInfo> WindowsProcessLauncherClientImpl:
 
 ErrorMessageOr<void> WindowsProcessLauncherClientImpl::SuspendProcessSpinningAtEntryPoint(
     uint32_t pid) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(IsProcessSpinningAtEntryPoint(pid));
   SuspendProcessSpinningAtEntryPointRequest request;
   SuspendProcessSpinningAtEntryPointResponse response;
@@ -124,7 +124,7 @@ ErrorMessageOr<void> WindowsProcessLauncherClientImpl::SuspendProcessSpinningAtE
 
 ErrorMessageOr<void> WindowsProcessLauncherClientImpl::ResumeProcessSuspendedAtEntryPoint(
     uint32_t pid) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(IsProcessSuspendedAtEntryPoint(pid));
   ResumeProcessSuspendedAtEntryPointRequest request;
   ResumeProcessSuspendedAtEntryPointResponse response;

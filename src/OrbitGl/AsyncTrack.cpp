@@ -100,7 +100,7 @@ float AsyncTrack::GetHeight() const {
 void AsyncTrack::DoUpdatePrimitives(PrimitiveAssembler& primitive_assembler,
                                     TextRenderer& text_renderer, uint64_t min_tick,
                                     uint64_t max_tick, PickingMode picking_mode) {
-  ORBIT_SCOPE_WITH_COLOR("AsyncTrack::DoUpdatePrimitives", kOrbitColorDeepPurple);
+  ORBIT_SCOPE(__FUNCTION__, {.color = kOrbitColorDeepPurple});
   TimerTrack::DoUpdatePrimitives(primitive_assembler, text_renderer, min_tick, max_tick,
                                  picking_mode);
 }

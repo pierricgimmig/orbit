@@ -185,7 +185,7 @@ class GrpcCaptureEventSender final : public CaptureEventSender {
   }
 
   void SendEvents(std::vector<orbit_grpc_protos::CaptureEvent>&& events) override {
-    ORBIT_SCOPE_FUNCTION;
+    ORBIT_SCOPE_FUNCTION();
     ORBIT_UINT64("Number of buffered events sent", events.size());
     if (events.empty()) {
       return;

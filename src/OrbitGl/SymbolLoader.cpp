@@ -90,7 +90,7 @@ void SymbolLoader::InitRemoteSymbolProviders() {
 
 Future<ErrorMessageOr<CanceledOr<void>>> SymbolLoader::RetrieveModuleAndLoadSymbols(
     const orbit_client_data::ModuleData* module_data) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(main_thread_id_ == std::this_thread::get_id());
   ORBIT_CHECK(module_data != nullptr);
   ORBIT_CHECK(module_identifier_provider != nullptr);
@@ -206,7 +206,7 @@ Future<ErrorMessageOr<CanceledOr<void>>> SymbolLoader::RetrieveModuleSymbolsAndL
 
 Future<ErrorMessageOr<CanceledOr<std::filesystem::path>>> SymbolLoader::RetrieveModuleSymbols(
     const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
 
   const ModuleData* module_data =
@@ -288,7 +288,7 @@ static ErrorMessageOr<std::optional<std::filesystem::path>> GetOverrideSymbolFil
 
 static ErrorMessageOr<std::filesystem::path> FindModuleLocallyImpl(
     orbit_symbols::SymbolHelper& symbol_helper, const ModuleData& module_data) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (absl::GetFlag(FLAGS_enable_unsafe_symbols)) {
     // First checkout if a symbol file override exists and if it does, use it
     OUTCOME_TRY(std::optional<std::filesystem::path> overriden_symbols_file,
@@ -356,7 +356,7 @@ static ErrorMessageOr<std::filesystem::path> FindModuleLocallyImpl(
 
 Future<ErrorMessageOr<std::filesystem::path>> SymbolLoader::FindModuleLocally(
     const ModuleData* module_data) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   return thread_pool_->Schedule([this, module_data]() -> ErrorMessageOr<std::filesystem::path> {
     return FindModuleLocallyImpl(symbol_helper_, *module_data);
   });
@@ -456,7 +456,7 @@ Future<ErrorMessageOr<CanceledOr<std::filesystem::path>>> SymbolLoader::Retrieve
 
 Future<ErrorMessageOr<CanceledOr<std::filesystem::path>>> SymbolLoader::RetrieveModuleFromInstance(
     std::string_view module_file_path, StopToken stop_token) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
 
   Future<ErrorMessageOr<NotFoundOr<std::filesystem::path>>> check_file_on_remote =
@@ -550,7 +550,7 @@ Future<ErrorMessageOr<CanceledOr<void>>> SymbolLoader::RetrieveModuleItselfAndLo
 Future<ErrorMessageOr<CanceledOr<std::filesystem::path>>> SymbolLoader::RetrieveModuleItself(
     const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id,
     uint64_t module_file_size) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
 
   // Note that the bullet points in the ErrorMessage constructed by this function are indented (by
@@ -627,7 +627,7 @@ Future<ErrorMessageOr<CanceledOr<std::filesystem::path>>> SymbolLoader::Retrieve
 
 Future<ErrorMessageOr<CanceledOr<std::filesystem::path>>>
 SymbolLoader::RetrieveModuleItselfFromInstance(std::string_view module_file_path) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
 
   if (const auto it = symbol_files_currently_downloading_.find(module_file_path);
@@ -684,7 +684,7 @@ SymbolLoader::RetrieveModuleItselfFromInstance(std::string_view module_file_path
 Future<ErrorMessageOr<void>> SymbolLoader::LoadSymbols(
     const std::filesystem::path& symbols_path,
     const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   auto load_symbols_from_file_future = thread_pool_->Schedule(
       [this, symbols_path,
@@ -716,7 +716,7 @@ Future<ErrorMessageOr<void>> SymbolLoader::LoadSymbols(
 Future<ErrorMessageOr<void>> SymbolLoader::LoadFallbackSymbols(
     const std::filesystem::path& object_path,
     const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   auto load_fallback_symbols_future =
       thread_pool_->Schedule([object_path]() -> ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> {

@@ -344,7 +344,7 @@ std::vector<ScopeNode<ScopeT>*> ScopeNode<ScopeT>::GetChildrenInRange(uint64_t s
 
 template <typename ScopeT>
 void ScopeNode<ScopeT>::Insert(ScopeNode<ScopeT>* node) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   // Find deepest parent and set depth on node to insert. The depth of descendants will be updated
   // in ScopeTree::UpdateDepthInSubtree as the tree also needs to update another data structure.

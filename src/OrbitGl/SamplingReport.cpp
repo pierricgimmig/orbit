@@ -33,7 +33,7 @@ SamplingReport::SamplingReport(
     : app_{app},
       callstack_data_{callstack_data},
       post_processed_sampling_data_{post_processed_sampling_data} {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_SCOPED_TIMED_LOG("SamplingReport::SamplingReport");
   ORBIT_CHECK(callstack_data_ != nullptr);
   ORBIT_CHECK(post_processed_sampling_data_ != nullptr);

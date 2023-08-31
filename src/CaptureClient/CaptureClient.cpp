@@ -210,7 +210,7 @@ orbit_base::Future<ErrorMessageOr<CaptureListener::CaptureOutcome>> CaptureClien
 ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
     orbit_grpc_protos::CaptureOptions capture_options,
     CaptureEventProcessor* capture_event_processor) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   writes_done_failed_ = false;
   try_abort_ = false;
   {
@@ -344,7 +344,7 @@ bool CaptureClient::AbortCaptureAndWait(int64_t max_wait_ms) {
 }
 
 ErrorMessageOr<void> CaptureClient::FinishCapture() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   grpc::Status status;
   {

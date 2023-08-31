@@ -46,7 +46,7 @@ void DataView::InitSortingOrders() {
 }
 
 void DataView::OnSort(int column, std::optional<SortingOrder> new_order) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   if (!IsSortingAllowed()) {
     return;
@@ -81,7 +81,7 @@ void DataView::SetUiFilterString(std::string_view filter) {
 }
 
 void DataView::OnDataChanged() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   DoFilter();
   OnSort(sorting_column_, std::optional<SortingOrder>{});
 }

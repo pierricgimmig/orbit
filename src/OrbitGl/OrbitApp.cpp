@@ -841,7 +841,7 @@ void OrbitApp::ListPresets() {
 }
 
 void OrbitApp::RefreshCaptureView() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   RequestUpdatePrimitives();
   FireRefreshCallbacks();
   DoZoom = true;  // TODO: remove global, review logic
@@ -1196,9 +1196,8 @@ bool OrbitApp::IsRefreshCallbackEnabled(orbit_data_views::DataViewType type) {
 }
 
 void OrbitApp::FireRefreshCallbacks(DataViewType type) {
-  ORBIT_SCOPE_WITH_COLOR(
-      absl::StrFormat("FireRefreshCallback (%s)", orbit_data_views::ToString(type)).c_str(),
-      kOrbitColorPink);
+  ORBIT_SCOPE(absl::StrFormat("FireRefreshCallback (%s)", orbit_data_views::ToString(type)).c_str(),
+              OrbitArg{.color = kOrbitColorPink});
   for (orbit_data_views::DataView* panel : panels_) {
     DataViewType panel_type = panel->GetType();
     if ((type == orbit_data_views::DataViewType::kAll || type == panel->GetType()) &&
@@ -1443,7 +1442,7 @@ void OrbitApp::AbortCapture() {
 }
 
 void OrbitApp::ClearCapture() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   ClearSamplingRelatedViews();
   if (capture_window_ != nullptr) {
@@ -1569,7 +1568,7 @@ Future<ErrorMessageOr<std::filesystem::path>> OrbitApp::RetrieveModuleWithDebugI
 
 void OrbitApp::AddSymbols(const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id,
                           const orbit_grpc_protos::ModuleSymbols& module_symbols) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ModuleData* module_data = GetMutableModuleByModulePathAndBuildId(module_path_and_build_id);
   // In case fallback symbols were previously loaded, remove them. Careful to call this before
   // ModuleData::AddSymbols, as it will clear the fallback symbols from the ModuleData, and
@@ -1599,7 +1598,7 @@ void OrbitApp::AddSymbols(const orbit_client_data::ModulePathAndBuildId& module_
 void OrbitApp::AddFallbackSymbols(
     const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id,
     const orbit_grpc_protos::ModuleSymbols& fallback_symbols) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ModuleData* module_data = GetMutableModuleByModulePathAndBuildId(module_path_and_build_id);
   module_data->AddFallbackSymbols(fallback_symbols);
 
@@ -1841,7 +1840,7 @@ void OrbitApp::ShowPresetInExplorer(const PresetFile& preset) {
   SendErrorToUi("%s", "Unable to show preset file in explorer.");
 }
 Future<ErrorMessageOr<void>> OrbitApp::UpdateProcessAndModuleList() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   functions_data_view_->ClearFunctions();
 
   auto module_infos = thread_pool_->Schedule(
@@ -1881,8 +1880,14 @@ Future<ErrorMessageOr<void>> OrbitApp::UpdateProcessAndModuleList() {
 
 Future<std::vector<ErrorMessageOr<CanceledOr<void>>>> OrbitApp::LoadAllSymbols() {
   static const char* async_track_name = "LoadAllSymbols: Disable Refresh Callbacks";
-  uint64_t async_scope_id = absl::bit_cast<uint64_t>(async_track_name);
-  ORBIT_START_ASYNC(async_track_name, async_scope_id);
+
+  uint64_t async_scope_id = 0;
+#if ORBIT_API_ENABLED
+  static uint32_t name_hash = OrbitHash(async_track_name);
+  static uint32_t async_id_counter = 0;
+  async_scope_id = OrbitGetAsyncId(name_hash, ++async_id_counter);
+  ORBIT_START_ASYNC(async_track_name, {.async_id = async_scope_id});
+#endif
   // Disable all refresh callbacks except for the modules Dataview when loading all symbols. This
   // avoids N^2 redundant sorting operations on functions DataView that could easily block the
   // entire UI for minutes.
@@ -1973,7 +1978,7 @@ void OrbitApp::AddDefaultFrameTrackOrLogError() {
 }
 
 void OrbitApp::RefreshUIAfterModuleReload() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   modules_data_view_->UpdateModules(GetTargetProcess());
 
   // TODO(b/247069854): Avoid FunctionsDataView::ClearFunctions: use
@@ -2345,7 +2350,7 @@ void OrbitApp::ClearInspection() {
 }
 
 void OrbitApp::UpdateAfterSymbolLoading() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (!HasCaptureData()) {
     return;
   }
@@ -2376,7 +2381,7 @@ void OrbitApp::UpdateAfterSymbolLoading() {
 }
 
 void OrbitApp::UpdateAfterSymbolLoadingThrottled() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   update_after_symbol_loading_throttle_.Fire();
 }
 
@@ -2865,7 +2870,7 @@ void OrbitApp::ClearThreadAndTimeRangeSelection() {
 }
 
 void OrbitApp::OnThreadOrTimeRangeSelectionChange() {
-  ORBIT_SCOPE_WITH_COLOR("OrbitApp::OnThreadOrTimeRangeSelectionChange", kOrbitColorLime);
+  ORBIT_SCOPE(__FUNCTION__, {.color = kOrbitColorLime});
   if (!HasCaptureData() || !absl::GetFlag(FLAGS_time_range_selection)) return;
 
   inspection_selection_.reset();

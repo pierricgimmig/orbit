@@ -23,7 +23,7 @@ namespace orbit_object_utils {
 
 ErrorMessageOr<std::unique_ptr<SymbolsFile>> CreateSymbolsFile(
     const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   std::string error_message{
       absl::StrFormat("Unable to create symbols file from \"%s\": ", file_path.string())};
 

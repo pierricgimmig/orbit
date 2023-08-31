@@ -2,20 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "Orbit.h"
+#include "OrbitLegacy.h"
 
 ORBIT_API_INSTANTIATE
 
 void BuildInCWithInstantiateInThisFile(void) {
-  ORBIT_START("name");
+  struct OrbitArg kDefaultParams = {0};
+  ORBIT_START("name", kDefaultParams);
   ORBIT_START_WITH_COLOR("name", (orbit_api_color)0xc01);
   ORBIT_START_WITH_GROUP_ID("name", 42);
   ORBIT_START_WITH_COLOR_AND_GROUP_ID("name", (orbit_api_color)0xc01, 42);
 
   ORBIT_STOP();
 
+  OrbitApiInternalStartAsync("name", 42, (struct OrbitArg){0});
   ORBIT_START_ASYNC("name", 42);
-  ORBIT_START_ASYNC_WITH_COLOR("name", 42, (orbit_api_color)0xc01);
+  OrbitApiInternalStartAsync("name", 42, (struct OrbitArg){.color = 0xc01});
+  struct OrbitArg args = (struct OrbitArg){.color = 0xc01};
+  ORBIT_START_ASYNC("name", 34, args);
+  ORBIT_START_ASYNC("name", 42, ((struct OrbitArg){.color = 0xc01}));
 
   ORBIT_STOP_ASYNC(42);
 
@@ -23,7 +28,7 @@ void BuildInCWithInstantiateInThisFile(void) {
   ORBIT_ASYNC_STRING_WITH_COLOR("string", 42, (orbit_api_color)0xc01);
 
   ORBIT_INT("name", -42);
-  ORBIT_INT_WITH_COLOR("name", -42, (orbit_api_color)0xc01);
+  ORBIT_INT_WITH_COLOR("name", -42, 0xc01);
 
   ORBIT_INT64("name", -42LL);
   ORBIT_INT64_WITH_COLOR("name", -42LL, (orbit_api_color)0xc01);

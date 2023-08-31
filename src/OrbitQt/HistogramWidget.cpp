@@ -407,7 +407,7 @@ constexpr uint32_t kSeed = 31;
 
 void HistogramWidget::UpdateData(const std::vector<uint64_t>* data, std::string scope_name,
                                  std::optional<ScopeId> scope_id) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (scope_data_.has_value() && scope_data_->id == scope_id) return;
 
   histogram_stack_ = {};

@@ -10,7 +10,7 @@
 namespace orbit_windows_tracing {
 
 [[nodiscard]] std::vector<orbit_windows_utils::Module> ListModulesEtw(uint32_t pid) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   KrabsTracer krabs_tracer(pid, /*sampling_frequency_hz=*/0, /*listener=*/nullptr,
                            KrabsTracer::ProviderFlags::kImageLoad);
   krabs_tracer.Start();

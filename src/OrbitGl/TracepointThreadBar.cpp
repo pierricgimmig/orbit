@@ -57,7 +57,7 @@ void TracepointThreadBar::DoDraw(PrimitiveAssembler& primitive_assembler,
 void TracepointThreadBar::DoUpdatePrimitives(PrimitiveAssembler& primitive_assembler,
                                              TextRenderer& text_renderer, uint64_t min_tick,
                                              uint64_t max_tick, PickingMode picking_mode) {
-  ORBIT_SCOPE_WITH_COLOR("TracepointThreadBar::DoUpdatePrimitives", kOrbitColorIndigo);
+  ORBIT_SCOPE(__FUNCTION__, {.color = kOrbitColorIndigo});
   ThreadBar::DoUpdatePrimitives(primitive_assembler, text_renderer, min_tick, max_tick,
                                 picking_mode);
 
@@ -113,6 +113,8 @@ void TracepointThreadBar::DoUpdatePrimitives(PrimitiveAssembler& primitive_assem
 
 std::string TracepointThreadBar::GetTracepointTooltip(PrimitiveAssembler& primitive_assembler,
                                                       PickingId id) const {
+  ORBIT_SCOPE_FUNCTION();
+  //ORBIT_SCOPE_FUNCTION_TEST({.color = kOrbitColorAmber});
   const auto* user_data = primitive_assembler.GetUserData(id);
   ORBIT_CHECK(user_data && user_data->custom_data_);
 

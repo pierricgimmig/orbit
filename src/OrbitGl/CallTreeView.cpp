@@ -214,7 +214,7 @@ static void AddUnwindErrorToTopDownThread(
 std::unique_ptr<CallTreeView> CallTreeView::CreateTopDownViewFromPostProcessedSamplingData(
     const PostProcessedSamplingData& post_processed_sampling_data,
     const ModuleManager* module_manager, const CaptureData* capture_data) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_SCOPED_TIMED_LOG("CreateTopDownViewFromPostProcessedSamplingData");
 
   auto top_down_view_root = std::make_unique<CallTreeRoot>();
@@ -289,7 +289,7 @@ AddUnwindErrorToBottomUpViewAndReturnUnwindErrorTypeNode(CallTreeRoot* bottom_up
 std::unique_ptr<CallTreeView> CallTreeView::CreateBottomUpViewFromPostProcessedSamplingData(
     const PostProcessedSamplingData& post_processed_sampling_data,
     const ModuleManager* module_manager, const CaptureData* capture_data) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_SCOPED_TIMED_LOG("CreateBottomUpViewFromPostProcessedSamplingData");
 
   auto bottom_up_view_root = std::make_unique<CallTreeRoot>();

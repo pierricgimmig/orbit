@@ -15,8 +15,6 @@
 #include "OrbitBase/ThreadPool.h"
 #include "OrbitBase/ThreadUtils.h"
 
-#define ORBIT_SCOPE_FUNCTION ORBIT_SCOPE(__FUNCTION__)
-
 namespace orbit_introspection {
 
 using IntrospectionEventCallback = std::function<void(const orbit_api::ApiEventVariant& api_event)>;

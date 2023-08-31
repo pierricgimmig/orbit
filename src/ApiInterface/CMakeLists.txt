@@ -7,7 +7,8 @@ cmake_minimum_required(VERSION 3.15)
 add_library(ApiInterface INTERFACE)
 
 target_sources(ApiInterface INTERFACE
-        include/ApiInterface/Orbit.h)
+        include/ApiInterface/Orbit.h
+        include/ApiInterface/OrbitLegacy.h)
 
 target_include_directories(ApiInterface INTERFACE
         ${CMAKE_CURRENT_LIST_DIR}/include)

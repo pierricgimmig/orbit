@@ -22,7 +22,7 @@ static const ScopeStats kDefaultScopeStats;
 
 ScopeStatsCollection::ScopeStatsCollection(ScopeIdProvider& scope_id_provider,
                                            absl::Span<const TimerInfo* const> timers) {
-  ORBIT_SCOPE_WITH_COLOR("ScopeStatsCollection", kOrbitColorDeepPurple);
+  ORBIT_SCOPE("ScopeStatsCollection", {.color = kOrbitColorDeepPurple});
   for (const TimerInfo* timer : timers) {
     std::optional<ScopeId> scope_id = scope_id_provider.ProvideId(*timer);
     if (scope_id.has_value()) {
@@ -75,7 +75,7 @@ const std::vector<uint64_t>* ScopeStatsCollection::GetSortedTimerDurationsForSco
 }
 
 void ScopeStatsCollection::OnCaptureComplete() {
-  ORBIT_SCOPE_WITH_COLOR("ScopeStatsCollection::OnCaptureComplete", kOrbitColorDeepOrange);
+  ORBIT_SCOPE(__FUNCTION__, {.color = kOrbitColorDeepOrange});
   if (timer_durations_are_sorted_) return;
 
   for (auto& [unused_id, timer_durations] : scope_id_to_timer_durations_) {

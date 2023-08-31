@@ -46,7 +46,7 @@ std::unique_ptr<grpc::ClientContext> CreateContext(
 }  // namespace
 
 ErrorMessageOr<std::vector<orbit_grpc_protos::ProcessInfo>> ProcessClient::GetProcessList() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   GetProcessListRequest request;
   GetProcessListResponse response;
   std::unique_ptr<grpc::ClientContext> context = CreateContext();
@@ -64,7 +64,7 @@ ErrorMessageOr<std::vector<orbit_grpc_protos::ProcessInfo>> ProcessClient::GetPr
 }
 
 ErrorMessageOr<std::vector<ModuleInfo>> ProcessClient::LoadModuleList(uint32_t pid) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   GetModuleListRequest request;
   GetModuleListResponse response;
   request.set_process_id(pid);
@@ -85,7 +85,7 @@ ErrorMessageOr<std::vector<ModuleInfo>> ProcessClient::LoadModuleList(uint32_t p
 
 ErrorMessageOr<orbit_base::NotFoundOr<std::filesystem::path>> ProcessClient::FindDebugInfoFile(
     std::string_view module_path, absl::Span<const std::string> additional_search_directories) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   GetDebugInfoFileRequest request;
   GetDebugInfoFileResponse response;
 
@@ -123,7 +123,7 @@ ErrorMessageOr<orbit_base::NotFoundOr<std::filesystem::path>> ProcessClient::Fin
 
 ErrorMessageOr<std::string> ProcessClient::LoadProcessMemory(uint32_t pid, uint64_t address,
                                                              uint64_t size) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   GetProcessMemoryRequest request;
   request.set_pid(pid);
   request.set_address(address);

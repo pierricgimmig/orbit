@@ -20,7 +20,7 @@
 
 ErrorMessageOr<void> CaptureStats::Generate(CaptureWindow* capture_window, uint64_t start_ns,
                                             uint64_t end_ns) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (capture_window == nullptr) return ErrorMessage("CaptureWindow is null");
   if (start_ns == end_ns) return ErrorMessage("Time range is 0");
   if (start_ns > end_ns) std::swap(start_ns, end_ns);

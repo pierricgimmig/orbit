@@ -107,7 +107,7 @@ void OpenGlBatcher::AddTriangle(const Triangle& triangle, float z,
 };
 
 void OpenGlBatcher::DrawRenderGroup(const BatchRenderGroupId& group, bool picking) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (primitive_buffers_by_group_.count(group) == 0u) return;
   initializeOpenGLFunctions();
   glPushAttrib(GL_ALL_ATTRIB_BITS);

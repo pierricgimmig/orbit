@@ -53,7 +53,7 @@ const TimerChain* TimerData::GetChain(uint64_t depth) const {
 std::vector<const orbit_client_protos::TimerInfo*> TimerData::GetTimers(uint64_t min_tick,
                                                                         uint64_t max_tick,
                                                                         bool exclusive) const {
-  ORBIT_SCOPE_WITH_COLOR("GetTimersAtDepthDiscretized", kOrbitColorBlueGrey);
+  ORBIT_SCOPE("GetTimers", {.color = kOrbitColorBlueGrey});
   // TODO(b/204173236): use it in TimerTracks.
   absl::MutexLock lock(&mutex_);
   std::vector<const orbit_client_protos::TimerInfo*> timers;
@@ -77,7 +77,7 @@ std::vector<const orbit_client_protos::TimerInfo*> TimerData::GetTimers(uint64_t
 
 std::vector<const orbit_client_protos::TimerInfo*> TimerData::GetTimersAtDepthDiscretized(
     uint32_t depth, uint32_t resolution, uint64_t start_ns, uint64_t end_ns) const {
-  ORBIT_SCOPE_WITH_COLOR("GetTimersAtDepthDiscretized", kOrbitColorBlueGrey);
+  ORBIT_SCOPE("GetTimersAtDepthDiscretized", {.color = kOrbitColorBlueGrey});
   absl::MutexLock lock(&mutex_);
   // The query is for the interval [start_ns, end_ns], but it's easier to work with the close-open
   // interval [start_ns, end_ns+1). We have to be careful with overflowing if end_ns is the maximum

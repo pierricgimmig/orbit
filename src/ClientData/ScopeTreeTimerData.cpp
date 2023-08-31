@@ -45,7 +45,7 @@ void ScopeTreeTimerData::OnCaptureComplete() {
 
 std::vector<const orbit_client_protos::TimerInfo*> ScopeTreeTimerData::GetTimers(
     uint64_t start_ns, uint64_t end_ns, bool exclusive) const {
-  ORBIT_SCOPE_WITH_COLOR("GetTimers", kOrbitColorAmber);
+  ORBIT_SCOPE("GetTimers", {.color = kOrbitColorAmber});
   // The query is for the interval [start_ns, end_ns], but it's easier to work with the close-open
   // interval [start_ns, end_ns+1). We have to be careful with overflowing.
   end_ns = std::max(end_ns, end_ns + 1);
@@ -63,7 +63,7 @@ std::vector<const orbit_client_protos::TimerInfo*> ScopeTreeTimerData::GetTimers
 
 std::vector<const orbit_client_protos::TimerInfo*> ScopeTreeTimerData::GetTimersAtDepthExclusive(
     uint32_t depth, uint64_t start_ns, uint64_t end_ns) const {
-  ORBIT_SCOPE_WITH_COLOR("GetTimersAtDepthExclusive", kOrbitColorGreen);
+  ORBIT_SCOPE("GetTimersAtDepthExclusive", {.color = kOrbitColorGreen});
   std::vector<const orbit_client_protos::TimerInfo*> all_timers_at_depth;
   absl::MutexLock lock(&scope_tree_mutex_);
 
@@ -105,7 +105,8 @@ std::vector<const orbit_client_protos::TimerInfo*> ScopeTreeTimerData::GetTimers
 
 std::vector<const orbit_client_protos::TimerInfo*> ScopeTreeTimerData::GetTimersAtDepthDiscretized(
     uint32_t depth, uint32_t resolution, uint64_t start_ns, uint64_t end_ns) const {
-  ORBIT_SCOPE_WITH_COLOR("GetTimersAtDepthDiscretized", kOrbitColorAmber);
+  ORBIT_SCOPE("GetTimersAtDepthDiscretized", {.color = kOrbitColorAmber});
+
   if (resolution == 0) return {};
   absl::MutexLock lock(&scope_tree_mutex_);
   // The query is for the interval [start_ns, end_ns], but it's easier to work with the close-open

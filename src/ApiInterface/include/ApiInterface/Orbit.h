@@ -17,281 +17,130 @@
 // extremely useful. The macros below allow you to profile sections of functions, track "async"
 // operations, and graph interesting values directly in Orbit's main capture window.
 //
-// API Summary:
-// ORBIT_SCOPE: Profile current scope.
-// ORBIT_START/ORBIT_STOP: Profile sections inside a scope.
-// ORBIT_START_ASYNC/ORBIT_STOP_ASYNC: Profile time spans across scopes or threads.
-// ORBIT_ASYNC_STRING: Provide custom string for an async time span.
-// ORBIT_INT: Graph int values.
-// ORBIT_INT64: Graph int64_t values.
-// ORBIT_UINT: Graph uint32_t values.
-// ORBIT_UINT64: Graph uint64_t values.
-// ORBIT_FLOAT: Graph float values.
-// ORBIT_DOUBLE: Graph double values.
+// Summary:
+// ORBIT_SCOPE(name, orbit_arg)
+// ORBIT_START(name, orbit_arg)
+// ORBIT_STOP()
+// ORBIT_START_ASYNC(name, id, orbit_arg)
+// ORBIT_STOP_ASYNC(id)
+// ORBIT_INT(name, value, orbit_arg)
+// ORBIT_INT64(name, value, orbit_arg)
+// ORBIT_UINT(name, value, orbit_arg)
+// ORBIT_UINT64(name, value, orbit_arg)
+// ORBIT_FLOAT(name, value, orbit_arg)
+// ORBIT_DOUBLE(name, value, orbit_arg)
 //
-// Colors:
-// Note that all of the macros above have a "_WITH_COLOR" variant that allows users to specify
-// a custom color for time slices, async strings and graph elements. A set of predefined colors can
-// be found below, see "orbit_api_color". Set custom colors with the "orbit_api_color(0xff0000ff)"
-// syntax (rgba).
-//
-// Integration:
-// To integrate the manual instrumentation API in your code base, simply include this header file
-// and place the ORBIT_API_INSTANTIATE macro in an implementation file. Orbit will automatically
-// deploy and dynamically load liborbit.so into the target process. Orbit will then write the proper
-// function addresses into the "g_orbit_api" table.
-//
-// NOTE: To enable manual instrumentation, please make sure that:
-//       1. The "Enable Orbit Api in target" checkbox is ticked in the "Capture Options" dialog.
-//       2. You have loaded debug symbols for modules in which "ORBIT_API_INSTANTIATE" was placed.
-//
-// Please note that this feature is still considered "experimental".
-//
-//
-// =================================================================================================
-// ORBIT_SCOPE: Profile current scope.
-// =================================================================================================
-//
-// Overview:
-// ORBIT_SCOPE will profile the time between "now" and the end of the current scope.
-//
-// Group id:
-// This macro also has a "_WITH_GROUP_ID" and a "_WITH_COLOR_AND_GROUP_ID" variant that allows users
-// to specify a group id. Scopes with the same group id are associated to each other, such that
-// selecting one scope in Orbit highlights all the other scopes that are associated to the selected
-// one.
-//
-// Example Usage: Profile sections of a function:
-//
-// void MyVeryLongFunction() {
-//   DoSomeWork();
-//   if(condition) {
-//     ORBIT_SCOPE("DoSomeMoreWork");
-//     DoSomeMoreWork();
-//   } else {
-//     ORBIT_SCOPE_WITH_COLOR("DoSomeOtherWork", kOrbitColorLightGreen);
-//     DoSomeOtherWork();
-//   }
-// }
-//
-// Parameters:
-// name: [const char*] Label to be displayed on current time slice.
-// col: [orbit_api_color] User-defined color for the current time slice (see orbit_api_color below).
-// group_id: [uint64_t] User-defined non-zero id that associates the current time slice with all the
-//           other time slices with the same id.
-//
-//
-// =================================================================================================
-// ORBIT_START/ORBIT_STOP: Profile sections inside a scope.
-// =================================================================================================
-//
-// Overview:
-// Profile the time between ORBIT_START and ORBIT_STOP.
-//
-// Note:
-// ORBIT_START and its matching ORBIT_STOP need to happen in the same thread. For start and stop
-// operations that happen in different threads use ORBIT_ASYNC_START/ORBIT_ASYNC_STOP.
-//
-// Group id:
-// The ORBIT_START macro also has a "_WITH_GROUP_ID" and a "_WITH_COLOR_AND_GROUP_ID" variant that
-// allows users to specify a group id. Time slices with the same group id are associated to each
-// other, such that selecting one slice in Orbit highlights all the other slices that are associated
-// to the selected one.
-//
-// Example Usage: Profile sections of a function:
-//
-// void MyVeryLongFunction() {
-//   DoSomeWork();
-//
-//   ORBIT_START("DoSomeMoreWork");
-//   DoSomeMoreWork();
-//   ORBIT_STOP();
-//
-//   ORBIT_START_WITH_COLOR("DoSomeOtherWork", kOrbitColorLightGreen);
-//   DoSomeOtherWork();
-//   ORBIT_STOP();
-// }
-//
-// Parameters of ORBIT_START:
-// name: [const char*] Label to be displayed on the current time slice.
-// col: [orbit_api_color] User-defined color for the current time slice (see orbit_api_color below).
-// group_id: [uint64_t] User-defined non-zero id that associates the current time slice with all the
-//           other time slices with the same id.
-//
-//
-// =================================================================================================
-// ORBIT_START_ASYNC/ORBIT_STOP_ASYNC: Profile time spans across scopes or threads.
-// =================================================================================================
-//
-// Overview:
-// Async time spans can be started in one scope and stopped in another. They will be displayed
-// in Orbit on a track uniquely identified by the "name" parameter. Note that those time slices
-// do not represent hierarchical information.
-//
-// Note:
-// It is possible to add per-time-slice strings using the ORBIT_ASYNC_STRING macro (see below).
-//
-// Example usage: Tracking "File IO" operations.
-// Thread 1: ORBIT_START_ASYNC("File IO", unique_64_bit_id);  // File IO request site.
-// Thread 1 or 2: ORBIT_ASYNC_STRING(unique_64_bit_id, "My very long file path");
-// Thread 1 or 2: ORBIT_STOP_ASYNC(unique_64_bit_id);  // File IO result site.
-// Result: Multiple time slices labeled with the results of "io_request->GetFileName()" will appear
-//         on a single "async" track named "File IO".
-//
-// Parameters of ORBIT_START_ASYNC:
-// name: [const char*] Name of the *track* that will display the async events in Orbit.
-// id: [uint64_t] User-provided globally *unique* id for the time slice. This id is used to match
-//     the ORBIT_START_ASYNC and ORBIT_STOP_ASYNC calls. An id needs to be unique across all tracks.
-// col: [orbit_api_color] User-defined color for the current time slice (see orbit_api_color below).
-//
-// Parameters of ORBIT_STOP_ASYNC:
-// id: [uint64_t] User-provided globally *unique* id for the time slice. This id is used to match
-//     the ORBIT_START_ASYNC and ORBIT_STOP_ASYNC calls. An id needs to be unique across all tracks.
-//
-//
-// =================================================================================================
-// ORBIT_ASYNC_STRING: Provide an additional string for an async time span.
-// =================================================================================================
-//
-// Overview:
-// Provide additional string to be displayed on the time slice corresponding to "id".
-//
-// Example usage: Tracking "File IO" operations.
-// Thread 1: ORBIT_START_ASYNC("File IO", unique_64_bit_id);  // File IO request site.
-// Thread 1 or 2: ORBIT_ASYNC_STRING(unique_64_bit_id, "My very long file path");
-// Thread 1 or 2: ORBIT_STOP_ASYNC(unique_64_bit_id);  // File IO result site.
-// Result: Multiple time slices labeled with the results of "io_request->GetFileName()" will appear
-//         on a single "async" track named "File IO".
-//
-// Parameters:
-// str: [const char*] String of arbitrary length to display in the time slice corresponding to "id".
-// id: [uint64_t] User-provided unique id for the time slice.
-// col: [orbit_api_color] User-defined color for the current string (see orbit_api_color below).
-//
-//
-// =================================================================================================
-// ORBIT_[type]: Graph variables.
-// =================================================================================================
-//
-// Overview:
-// Send values to be plotted over time in a track uniquely identified by "name".
-//
-// Example usage: Graph the state of interesting variables over time:
-//
-// void MainLoop() {
-//   for(instance : instances_) {
-//     ORBIT_FLOAT(instance->GetName(), instance->GetHealth());
-//   }
-//
-//   ORBIT_UINT64("Live Allocations", MemManager::GetNumLiveAllocs());
-// }
-// Result: Given that instances have unique names, as many variable tracks as there are unique
-//         instances will be created, and they will graph their individual instance health over
-//         time. A single "Live Allocations" track will be created and will graph the result of
-//         "MemManager::GetNumLiveAllocs()" over time.
-//
-// Parameters:
-// name: [const char*] Name of the track that will display the graph in Orbit.
-// val: [int, int64_t, uint32_t, uint64_t, float, double] Value to be plotted.
-// col: [orbit_api_color] User-defined color for the current value (see orbit_api_color below).
+// For detailed information, see github.com/google/orbit/blob/main/docs/manual_instrumentation.md.
+
 
 // To disable manual instrumentation macros, define ORBIT_API_ENABLED as 0.
 #define ORBIT_API_ENABLED 1
 
-#if ORBIT_API_ENABLED
+struct OrbitArg {
+  const char* tag;
+  uint64_t group_id;
+  uint64_t caller_address;
+  uint32_t color;
+};
 
+typedef uint32_t orbit_api_color;
+enum { kOrbitDefaultGroupId = 0ULL };
+enum { kOrbitCallerAddressAuto = 0ULL };
+enum { kOrbitApiVersion = 2 };
+
+// Material Design Colors #500
+#define kOrbitColorAuto 0x00000000
+#define kOrbitColorRed 0xf44336ff
+#define kOrbitColorPink 0xe91e63ff
+#define kOrbitColorPurple 0x9c27b0ff
+#define kOrbitColorDeepPurple 0x673ab7ff
+#define kOrbitColorIndigo 0x3f51b5ff
+#define kOrbitColorBlue 0x2196f3ff
+#define kOrbitColorLightBlue 0x03a9f4ff
+#define kOrbitColorCyan 0x00bcd4ff
+#define kOrbitColorTeal 0x009688ff
+#define kOrbitColorGreen 0x4caf50ff
+#define kOrbitColorLightGreen 0x8bc34aff
+#define kOrbitColorLime 0xcddc39ff
+#define kOrbitColorYellow 0xffeb3bff
+#define kOrbitColorAmber 0xffc107ff
+#define kOrbitColorOrange 0xff9800ff
+#define kOrbitColorDeepOrange 0xff5722ff
+#define kOrbitColorBrown 0x795548ff
+#define kOrbitColorGrey 0x9e9e9eff
+#define kOrbitColorBlueGrey 0x607d8bff
+
+#define DEFAULT_COLOR(...) kOrbitColorBlueGrey
 #ifdef __cplusplus
-
-#define ORBIT_SCOPE(name) ORBIT_SCOPE_WITH_COLOR(name, kOrbitColorAuto)
-#define ORBIT_SCOPE_WITH_COLOR(name, col) \
-  ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID(name, col, kOrbitDefaultGroupId)
-#define ORBIT_SCOPE_WITH_GROUP_ID(name, group_id) \
-  ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID(name, kOrbitColorAuto, group_id)
-#ifdef _WIN32
-#define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID(name, col, group_id) \
-  orbit_api::Scope ORBIT_VAR(name, col, group_id)
+#define DEFAULT_ARGS() {0}
 #else
-#define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID(name, col, group_id) \
-  ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID_INTERNAL(name, col, group_id, ORBIT_VAR)
-#endif  // _WIN32
-
-#endif  // __cplusplus
-
-#define ORBIT_START(name) \
-  ORBIT_CALL(start, name, kOrbitColorAuto, kOrbitDefaultGroupId, kOrbitCallerAddressAuto)
-#define ORBIT_STOP() ORBIT_CALL(stop, )
-#define ORBIT_START_ASYNC(name, id) \
-  ORBIT_CALL(start_async, name, id, kOrbitColorAuto, kOrbitCallerAddressAuto)
-#define ORBIT_STOP_ASYNC(id) ORBIT_CALL(stop_async, id)
-#define ORBIT_ASYNC_STRING(string, id) ORBIT_CALL(async_string, string, id, kOrbitColorAuto)
-#define ORBIT_INT(name, value) ORBIT_CALL(track_int, name, value, kOrbitColorAuto)
-#define ORBIT_INT64(name, value) ORBIT_CALL(track_int64, name, value, kOrbitColorAuto)
-#define ORBIT_UINT(name, value) ORBIT_CALL(track_uint, name, value, kOrbitColorAuto)
-#define ORBIT_UINT64(name, value) ORBIT_CALL(track_uint64, name, value, kOrbitColorAuto)
-#define ORBIT_FLOAT(name, value) ORBIT_CALL(track_float, name, value, kOrbitColorAuto)
-#define ORBIT_DOUBLE(name, value) ORBIT_CALL(track_double, name, value, kOrbitColorAuto)
-
-#define ORBIT_START_WITH_COLOR(name, color) \
-  ORBIT_CALL(start, name, color, kOrbitDefaultGroupId, kOrbitCallerAddressAuto)
-#define ORBIT_START_ASYNC_WITH_COLOR(name, id, color) \
-  ORBIT_CALL(start_async, name, id, color, kOrbitCallerAddressAuto)
-#define ORBIT_ASYNC_STRING_WITH_COLOR(string, id, color) ORBIT_CALL(async_string, string, id, color)
-#define ORBIT_INT_WITH_COLOR(name, value, color) ORBIT_CALL(track_int, name, value, color)
-#define ORBIT_INT64_WITH_COLOR(name, value, color) ORBIT_CALL(track_int64, name, value, color)
-#define ORBIT_UINT_WITH_COLOR(name, value, color) ORBIT_CALL(track_uint, name, value, color)
-#define ORBIT_UINT64_WITH_COLOR(name, value, color) ORBIT_CALL(track_uint64, name, value, color)
-#define ORBIT_FLOAT_WITH_COLOR(name, value, color) ORBIT_CALL(track_float, name, value, color)
-#define ORBIT_DOUBLE_WITH_COLOR(name, value, color) ORBIT_CALL(track_double, name, value, color)
-
-#define ORBIT_START_WITH_GROUP_ID(name, group_id) \
-  ORBIT_CALL(start, name, kOrbitColorAuto, group_id, kOrbitCallerAddressAuto)
-#define ORBIT_START_WITH_COLOR_AND_GROUP_ID(name, color, group_id) \
-  ORBIT_CALL(start, name, color, group_id, kOrbitCallerAddressAuto)
-
-#else  // ORBIT_API_ENABLED
-
-#ifdef __cplusplus
-#define ORBIT_SCOPE(name)
-#define ORBIT_SCOPE_WITH_COLOR(name, color)
-#define ORBIT_SCOPE_WITH_GROUP_ID(name, group_id)
-#define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID(name, col, group_id)
+#define DEFAULT_ARGS(...) (struct OrbitArg){0}
 #endif
 
-#define ORBIT_START(name)
-#define ORBIT_STOP()
-#define ORBIT_START_ASYNC(name, id)
-#define ORBIT_STOP_ASYNC(id)
-#define ORBIT_ASYNC_STRING(str, id)
-#define ORBIT_INT(name, value)
-#define ORBIT_INT64(name, value)
-#define ORBIT_UINT(name, value)
-#define ORBIT_UINT64(name, value)
-#define ORBIT_FLOAT(name, value)
-#define ORBIT_DOUBLE(name, value)
+#define ORBIT_COLOR(...) MACRO_CHOOSER(DEFAULT_COLOR, __VA_ARGS__)(__VA_ARGS__)
+#define ORBIT_DEFAULT_ARGS_OR(...) MACRO_CHOOSER(DEFAULT_ARGS, __VA_ARGS__)(__VA_ARGS__)
 
-#define ORBIT_START_WITH_COLOR(name, color)
-#define ORBIT_START_ASYNC_WITH_COLOR(name, id, color)
-#define ORBIT_ASYNC_STRING_WITH_COLOR(str, id, col)
-#define ORBIT_INT_WITH_COLOR(name, value, color)
-#define ORBIT_INT64_WITH_COLOR(name, value, color)
-#define ORBIT_UINT_WITH_COLOR(name, value, color)
-#define ORBIT_UINT64_WITH_COLOR(name, value, color)
-#define ORBIT_FLOAT_WITH_COLOR(name, value, color)
-#define ORBIT_DOUBLE_WITH_COLOR(name, value, color)
+// Default value support for c and c++ macros, worksaround MSVC's preprocessor not being compliant
+// by default. https://stackoverflow.com/questions/3046889/optional-parameters-with-c-macros.
+#define FIRST_ARGUMENT(x, ...) x
+#define FUNC_CHOOSER(_f1, _f2, ...) _f2
+#define FUNC_RECOMPOSER(argsWithParentheses) FUNC_CHOOSER argsWithParentheses
+#define CHOOSE_FROM_ARG_COUNT(...) FUNC_RECOMPOSER((__VA_ARGS__, FIRST_ARGUMENT, ))
+#define NO_ARG_EXPANDER(_default) , _default
+#define MACRO_CHOOSER(_default, ...) CHOOSE_FROM_ARG_COUNT(NO_ARG_EXPANDER __VA_ARGS__(_default))
 
-#define ORBIT_START_WITH_GROUP_ID(name, group_id)
-#define ORBIT_START_WITH_COLOR_AND_GROUP_ID(name, color, group_id)
+#if ORBIT_API_ENABLED
+
+#define ORBIT_SCOPE(...) ORBIT_SCOPE_INTERNAL(ORBIT_VAR, __VA_ARGS__)
+#define ORBIT_SCOPE_FUNCTION(...) ORBIT_SCOPE(__FUNCTION__ ORBIT_OPT_ARGS(__VA_ARGS__))
+#define ORBIT_START(name, ...) OrbitApiInternalStart(name, __VA_ARGS__)
+#define ORBIT_STOP() ORBIT_CALL(stop, )
+#define ORBIT_START_ASYNC(name, id, ...) OrbitApiInternalStartAsync(name, id, ORBIT_DEFAULT_ARGS_OR(__VA_ARGS__))
+#define ORBIT_STOP_ASYNC(id) ORBIT_CALL(stop_async, id)
+#define ORBIT_INT(name, value, ...) ORBIT_CALL(track_int, name, value, ORBIT_COLOR(__VA_ARGS__))
+//#define ORBIT_INT(name, value, ...) ORBIT_CALL(track_int, name, value, kOrbitColorAuto)
+#define ORBIT_INT64(name, value, ...) ORBIT_CALL(track_int64, name, value, kOrbitColorAuto)
+#define ORBIT_UINT(name, value, ...) ORBIT_CALL(track_uint, name, value, kOrbitColorAuto)
+#define ORBIT_UINT64(name, value, ...) ORBIT_CALL(track_uint64, name, value, kOrbitColorAuto)
+#define ORBIT_FLOAT(name, value, ...) ORBIT_CALL(track_float, name, value, kOrbitColorAuto)
+#define ORBIT_DOUBLE(name, value, ...) ORBIT_CALL(track_double, name, value, kOrbitColorAuto)
+
+#define ORBIT_SELECT(_0, _1, NAME, ...) NAME
+#define ORBIT_ARGS(...) ORBIT_SELECT(_0, ##__VA_ARGS__, ORBIT_ARG_1, ORBIT_ARG_0)(__VA_ARGS__)
+#define ORBIT_ARG_0(...) kOrbitColorAuto
+#define ORBIT_ARG_1(...) __VA_ARGS__
+
+
+
+#define ORBIT_OPT_ARGS(...) , ##__VA_ARGS__
+
+#else
+
+#define ORBIT_SCOPE(...)
+#define ORBIT_SCOPE_FUNCTION(...)
+#define ORBIT_START(...)
+#define ORBIT_STOP(...)
+#define ORBIT_START_ASYNC(...)
+#define ORBIT_STOP_ASYNC(...)
+#define ORBIT_INT(...)
+#define ORBIT_INT64(...)
+#define ORBIT_UINT(...)
+#define ORBIT_UINT64(...)
+#define ORBIT_FLOAT(...)
+#define ORBIT_DOUBLE(...)
+#define ORBIT_API_INSTANTIATE
 
 #endif  // ORBIT_API_ENABLED
 
+#if ORBIT_API_ENABLED
+
+// Atomic fence for acquire semantics.
 #ifdef __cplusplus
 #include <atomic>
-
 #define ORBIT_THREAD_FENCE_ACQUIRE() std::atomic_thread_fence(std::memory_order_acquire)
 #else
 #if __STDC_VERSION__ >= 201112L
 #include <stdatomic.h>
-
 #define ORBIT_THREAD_FENCE_ACQUIRE() atomic_thread_fence(memory_order_acquire)
 #elif defined(_WIN32)
 #include <windows.h>
@@ -312,35 +161,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// Material Design Colors #500
-typedef enum {  // NOLINT(modernize-use-using): This is C code.
-  kOrbitColorAuto = 0x00000000,
-  kOrbitColorRed = 0xf44336ff,
-  kOrbitColorPink = 0xe91e63ff,
-  kOrbitColorPurple = 0x9c27b0ff,
-  kOrbitColorDeepPurple = 0x673ab7ff,
-  kOrbitColorIndigo = 0x3f51b5ff,
-  kOrbitColorBlue = 0x2196f3ff,
-  kOrbitColorLightBlue = 0x03a9f4ff,
-  kOrbitColorCyan = 0x00bcd4ff,
-  kOrbitColorTeal = 0x009688ff,
-  kOrbitColorGreen = 0x4caf50ff,
-  kOrbitColorLightGreen = 0x8bc34aff,
-  kOrbitColorLime = 0xcddc39ff,
-  kOrbitColorYellow = 0xffeb3bff,
-  kOrbitColorAmber = 0xffc107ff,
-  kOrbitColorOrange = 0xff9800ff,
-  kOrbitColorDeepOrange = 0xff5722ff,
-  kOrbitColorBrown = 0x795548ff,
-  kOrbitColorGrey = 0x9e9e9eff,
-  kOrbitColorBlueGrey = 0x607d8bff
-} orbit_api_color;
-
-enum { kOrbitDefaultGroupId = 0ULL };
-enum { kOrbitCallerAddressAuto = 0ULL };
-
-enum { kOrbitApiVersion = 2 };
 
 struct orbit_api_v2 {  // NOLINT(readability-identifier-naming)
   uint32_t enabled;
@@ -402,6 +222,34 @@ static
     if (orbit_api_active() && g_orbit_api.function_name) g_orbit_api.function_name(__VA_ARGS__); \
   } while (0)
 
+
+#ifdef __cplusplus
+#define ORBIT_ARG(a) const OrbitArg& a = {0}
+#else
+#define ORBIT_ARG(a) struct OrbitArg a
+#endif
+
+inline void OrbitApiInternalStart(const char* name, ORBIT_ARG(a)) {
+  ORBIT_CALL(start, name, a.color, a.group_id, a.caller_address);
+}
+
+inline void OrbitApiInternalStartAsync(const char* name, uint64_t id, ORBIT_ARG(a)) {
+  ORBIT_CALL(start_async, name, id, a.color, a.caller_address);
+}
+
+#ifdef _WIN32
+/*name, col, group_id*/
+#define ORBIT_SCOPE_INTERNAL(pc_name, ...) \
+  orbit_api::Scope ORBIT_VAR(__VA_ARGS__)
+#else
+#define ORBIT_SCOPE_INTERNAL(pc_name, ...) \
+// Retrieve the program counter with inline assembly, instead of using ORBIT_GET_CALLER_PC() in
+// Scope::Scope and forcing that constructor to be noinline.
+  uint64_t pc_name;                                                                \
+  asm("lea (%%rip), %0" : "=r"(pc_name) : :);                                      \
+  orbit_api::Scope ORBIT_VAR(pc_name, __VA_ARGS__/*name, col, group_id, pc_name*/)
+#endif  // _WIN32s
+
 #ifdef __cplusplus
 }  // extern "C"
 
@@ -428,25 +276,18 @@ static
 #ifdef _WIN32
 namespace orbit_api {
 struct Scope {
-  __declspec(noinline) Scope(const char* name, orbit_api_color color, uint64_t group_id) {
+  __declspec(noinline) Scope(const char* name, ORBIT_ARG(a)) {
     uint64_t return_address = ORBIT_GET_CALLER_PC();
-    ORBIT_CALL(start, name, color, group_id, return_address);
+    ORBIT_CALL(start, name, a.color, a.group_id, return_address);
   }
   ~Scope() { ORBIT_CALL(stop); }
 };
 }  // namespace orbit_api
 #else
-// Retrieve the program counter with inline assembly, instead of using ORBIT_GET_CALLER_PC() in
-// Scope::Scope and forcing that constructor to be noinline.
-#define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID_INTERNAL(name, col, group_id, pc_name) \
-  uint64_t pc_name;                                                                \
-  asm("lea (%%rip), %0" : "=r"(pc_name) : :);                                      \
-  orbit_api::Scope ORBIT_VAR(name, col, group_id, pc_name)
-
 namespace orbit_api {
 struct Scope {
-  Scope(const char* name, orbit_api_color color, uint64_t group_id, uint64_t pc) {
-    ORBIT_CALL(start, name, color, group_id, pc);
+  Scope(uint64_t pc, const char* name, ORBIT_ARG(a)) {
+    ORBIT_CALL(start, name, a.color, a.group_id, pc);
   }
   ~Scope() { ORBIT_CALL(stop); }
 };
@@ -454,5 +295,25 @@ struct Scope {
 #endif  // _WIN32
 
 #endif  // __cplusplus
+
+// DJB2 hash function
+inline uint32_t OrbitHash(const char *str) {
+    uint32_t hash = 5381;  // Initial hash value
+    int c;
+    while ((c = *str++)) {
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    }
+    return hash;
+}
+
+inline uint64_t OrbitGetAsyncId(uint32_t hash, uint32_t scope_id) {
+    return hash | scope_id;
+}
+
+inline uint64_t OrbitGetAsyncIdFromName(const char *str, uint32_t scope_id) {
+    return OrbitGetAsyncId(OrbitHash(str), scope_id);
+}
+
+#endif  // ORBIT_API_ENABLED
 
 #endif  // ORBIT_API_INTERFACE_ORBIT_H_

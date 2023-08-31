@@ -293,7 +293,7 @@ void IntrospectionWindow::StopIntrospection() {
 }
 
 void IntrospectionWindow::Draw(QPainter* painter) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   CaptureWindow::Draw(painter);
 }
 

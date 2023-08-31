@@ -91,7 +91,7 @@ namespace {
 
 void QtTextRenderer::DrawRenderGroup(QPainter* painter, BatchRenderGroupStateManager& manager,
                                      const BatchRenderGroupId& group) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
   auto text_for_layer = stored_text_.find(group);
   if (text_for_layer == stored_text_.end()) {

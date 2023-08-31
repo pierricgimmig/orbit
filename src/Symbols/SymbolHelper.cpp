@@ -285,7 +285,7 @@ template <typename Verifier>
 ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsInCacheImpl(
     const fs::path& module_path, std::string_view searchee_for_error_message,
     Verifier&& verify) const {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   fs::path cache_file_path = GenerateCachedFilePath(module_path);
   OUTCOME_TRY(const bool exists, orbit_base::FileOrDirectoryExists(cache_file_path));
   if (!exists) {
@@ -303,7 +303,7 @@ fs::path SymbolHelper::GenerateCachedFilePath(const fs::path& file_path) const {
 
 ErrorMessageOr<ModuleSymbols> SymbolHelper::LoadSymbolsFromFile(
     const fs::path& file_path, const ObjectFileInfo& object_file_info) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_SCOPED_TIMED_LOG("LoadSymbolsFromFile: %s", file_path.string());
 
   OUTCOME_TRY(auto symbols_file, CreateSymbolsFile(file_path, object_file_info));
@@ -312,7 +312,7 @@ ErrorMessageOr<ModuleSymbols> SymbolHelper::LoadSymbolsFromFile(
 
 ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> SymbolHelper::LoadFallbackSymbolsFromFile(
     const std::filesystem::path& file_path) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_SCOPED_TIMED_LOG("LoadFallbackSymbolsFromFile: %s", file_path.string());
 
   OUTCOME_TRY(auto object_file, CreateObjectFile(file_path));

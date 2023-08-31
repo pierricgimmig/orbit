@@ -51,7 +51,7 @@ const std::vector<DataView::Column>& ModulesDataView::GetColumns() {
 }
 
 void ModulesDataView::OnDataChanged() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   DoFilter();
 }
 
@@ -101,7 +101,7 @@ std::string ModulesDataView::GetToolTip(int row, int column) {
   }
 
 void ModulesDataView::DoSort() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   bool ascending = sorting_orders_[sorting_column_] == SortingOrder::kAscending;
   std::function<bool(uint64_t, uint64_t)> sorter = nullptr;
 

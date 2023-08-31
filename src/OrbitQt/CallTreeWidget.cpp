@@ -814,7 +814,7 @@ void CallTreeWidget::OnSearchTypingFinishedTimerTimeout() {
 }
 
 void CallTreeWidget::OnSliderValueChanged(int value) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(value >= 0);
   ORBIT_CHECK(value <= 100);
   ExpandRecursivelyWithThreshold(ui_->callTreeTreeView, ui_->callTreeTreeView->model()->index(0, 0),

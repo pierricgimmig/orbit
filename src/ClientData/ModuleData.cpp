@@ -233,7 +233,7 @@ bool ModuleData::AreAtLeastFallbackSymbolsLoaded() const {
 }
 
 void ModuleData::AddSymbols(const orbit_grpc_protos::ModuleSymbols& module_symbols) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   absl::MutexLock lock(&mutex_);
   AddSymbolsInternal(module_symbols, SymbolCompleteness::kDebugSymbols);
 }

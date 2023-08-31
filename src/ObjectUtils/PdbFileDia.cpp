@@ -143,7 +143,7 @@ ErrorMessageOr<void> ForEachSymbolWithSymTag(const enum SymTagEnum& sym_tag,
 }  // namespace
 
 ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ModuleSymbols module_symbols;
   absl::flat_hash_set<uint64_t> addresses_from_module_info_stream;
 
@@ -242,7 +242,7 @@ ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileDia::LoadDebugSymbols() 
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> PdbFileDia::CreatePdbFile(
     const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   auto pdb_file_dia = absl::WrapUnique<PdbFileDia>(new PdbFileDia(file_path, object_file_info));
   auto result = pdb_file_dia->LoadDataForPDB();
   if (result.has_error()) {

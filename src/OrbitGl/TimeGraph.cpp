@@ -671,7 +671,7 @@ std::pair<const TimerInfo*, const TimerInfo*> TimeGraph::GetMinMaxTimerForScope(
 }
 
 void TimeGraph::PrepareBatcherAndUpdatePrimitives(PickingMode picking_mode) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   ORBIT_CHECK(app_->GetStringManager() != nullptr);
 
   primitive_assembler_.StartNewFrame();

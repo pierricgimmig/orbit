@@ -31,7 +31,7 @@ CaptureViewElement::CaptureViewElement(CaptureViewElement* parent, const Viewpor
 
 void CaptureViewElement::Draw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_renderer,
                               const DrawContext& draw_context) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   draw_requested_ = false;
   RenderGroups previous_groups = PreRender(primitive_assembler, text_renderer);
@@ -48,7 +48,7 @@ void CaptureViewElement::Draw(PrimitiveAssembler& primitive_assembler, TextRende
 void CaptureViewElement::UpdatePrimitives(PrimitiveAssembler& primitive_assembler,
                                           TextRenderer& text_renderer, uint64_t min_tick,
                                           uint64_t max_tick, PickingMode picking_mode) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
 
   update_primitives_requested_ = false;
   RenderGroups previous_groups = PreRender(primitive_assembler, text_renderer);

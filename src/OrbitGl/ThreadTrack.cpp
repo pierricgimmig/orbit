@@ -386,7 +386,7 @@ void ThreadTrack::DoUpdatePrimitives(PrimitiveAssembler& primitive_assembler,
   // ignored because ThreadTrack uses the ScopeTree, and TimerTrack doesn't.
   // TimerTrack::DoUpdatePrimitives(primitive_assembler, text_renderer, min_tick, max_tick,
   // picking_mode);
-  ORBIT_SCOPE_WITH_COLOR("ThreadTrack::DoUpdatePrimitives", kOrbitColorYellow);
+  ORBIT_SCOPE(__FUNCTION__, {.color = kOrbitColorYellow});
   visible_timer_count_ = 0;
 
   const internal::DrawData draw_data =

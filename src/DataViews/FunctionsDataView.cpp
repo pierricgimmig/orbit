@@ -126,7 +126,7 @@ std::string FunctionsDataView::GetValue(int row, int column) {
   }
 
 void FunctionsDataView::DoSort() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   // TODO(antonrohr): This sorting function can take a lot of time when a large
   // number of functions is used (several seconds). This function is currently
   // executed on the main thread and therefore freezes the UI and interrupts the
@@ -246,12 +246,12 @@ void FunctionsDataView::DoFilter() {
 
 void FunctionsDataView::AddFunctions(
     std::vector<const orbit_client_data::FunctionInfo*> functions) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   functions_.insert(functions_.end(), functions.begin(), functions.end());
 }
 
 void FunctionsDataView::RemoveFunctionsOfModule(std::string_view module_path) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   functions_.erase(std::remove_if(functions_.begin(), functions_.end(),
                                   [&module_path](const FunctionInfo* function_info) {
                                     return function_info->module_path() == module_path;
@@ -260,7 +260,7 @@ void FunctionsDataView::RemoveFunctionsOfModule(std::string_view module_path) {
 }
 
 void FunctionsDataView::ClearFunctions() {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   functions_.clear();
   OnDataChanged();
 }

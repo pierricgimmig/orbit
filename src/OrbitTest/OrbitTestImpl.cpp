@@ -15,14 +15,12 @@
 #include <string>
 #include <thread>
 
-#include "ApiInterface/Orbit.h"
+#include "ApiInterface/OrbitLegacy.h"
 #include "OrbitBase/Attributes.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ThreadUtils.h"
 
 ORBIT_API_INSTANTIATE;
-
-#define ORBIT_SCOPE_FUNCTION ORBIT_SCOPE(__FUNCTION__)
 
 OrbitTestImpl::OrbitTestImpl() { Init(); }
 
@@ -68,21 +66,21 @@ void OrbitTestImpl::Loop() {
 }
 
 void ORBIT_NOINLINE OrbitTestImpl::TestFunc(uint32_t depth) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (depth == recurse_depth_) return;
   TestFunc(depth + 1);
   std::this_thread::sleep_for(std::chrono::microseconds(sleep_us_));
 }
 
 void ORBIT_NOINLINE OrbitTestImpl::TestFunc2(uint32_t depth) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   if (depth == recurse_depth_) return;
   TestFunc(depth + 1);
   BusyWork(sleep_us_);
 }
 
 void ORBIT_NOINLINE OrbitTestImpl::BusyWork(uint64_t microseconds) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   auto start = std::chrono::system_clock::now();
   while (true) {
     auto end = std::chrono::system_clock::now();
@@ -123,17 +121,26 @@ static void ExecuteTask(uint32_t id) {
 }
 
 void OrbitTestImpl::OutputOrbitApiState() const {
+#if ORBIT_API_ENABLED
   while (!exit_requested_) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     ORBIT_LOG("g_orbit_api.enabled = %u", g_orbit_api.enabled);
   }
+#endif
 }
+
+uint32_t get_col() { return 33;}
 
 void OrbitTestImpl::ManualInstrumentationApiTest() {
   thread_pool_->Schedule([this]() { OutputOrbitApiState(); });
   while (!exit_requested_) {
     ORBIT_SCOPE("ORBIT_SCOPE_TEST");
     ORBIT_SCOPE_WITH_COLOR("ORBIT_SCOPE_TEST_WITH_COLOR", orbit_api_color(0xff0000ff));
+    ORBIT_SCOPE_FUNCTION();
+    ORBIT_SCOPE_FUNCTION({.color = kOrbitColorAmber});
+    ORBIT_INT("my int", 4, kOrbitColorAmber);
+    //ORBIT_INT("name", -42, ((orbit_api_color)0xc01));
+    ORBIT_INT("name", -42, get_col());
     SleepFor2Ms();
 
     ORBIT_START_WITH_COLOR("ORBIT_START_TEST", kOrbitColorRed);
@@ -156,10 +163,11 @@ void OrbitTestImpl::ManualInstrumentationApiTest() {
     static int int_var = -100;
     if (++int_var > 100) int_var = -100;
     ORBIT_INT("int_var", int_var);
+    ORBIT_INT("int_var", int_var, kOrbitColorIndigo);
 
     static int64_t int64_var = -100;
     if (++int64_var > 100) int64_var = -100;
-    ORBIT_INT64("int64_var", int64_var);
+    ORBIT_INT64("int64_var", int64_var, );
 
     static int uint_var = 0;
     if (++uint_var > 100) uint_var = 0;
@@ -168,6 +176,7 @@ void OrbitTestImpl::ManualInstrumentationApiTest() {
     static uint64_t uint64_var = 0;
     if (++uint64_var > 100) uint64_var = 0;
     ORBIT_UINT64_WITH_COLOR("uint64_var", uint64_var, kOrbitColorIndigo);
+    ORBIT_INT("my_int", 1, kOrbitColorAmber);
 
     [[maybe_unused]] static float float_var = 0.f;
     [[maybe_unused]] static constexpr float kSinfCoeff = 0.1f;

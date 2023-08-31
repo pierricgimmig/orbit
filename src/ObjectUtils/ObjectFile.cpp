@@ -24,7 +24,7 @@ namespace orbit_object_utils {
 
 ErrorMessageOr<std::unique_ptr<ObjectFile>> CreateObjectFile(
     const std::filesystem::path& file_path) {
-  ORBIT_SCOPE_FUNCTION;
+  ORBIT_SCOPE_FUNCTION();
   // TODO(hebecker): Remove this explicit construction of StringRef when we switch to LLVM10.
   const std::string file_path_str = file_path.string();
   const llvm::StringRef file_path_llvm{file_path_str};
