@@ -19,6 +19,7 @@
 #include "ApiUtils/ApiEnableInfo.h"
 #endif
 
+// Dummy change to test CI
 namespace {
 orbit_api::LockFreeApiEventProducer& GetCaptureEventProducer() {
   static orbit_api::LockFreeApiEventProducer producer;
