@@ -50,8 +50,10 @@ target_link_libraries(WindowsTracing PUBLIC
         absl::flat_hash_map
         absl::flat_hash_set
         absl::str_format
-        grpc::grpc
-        outcome::outcome)
+        gRPC::grpc
+        outcome::hl)
+
+        #  target_link_libraries(main PRIVATE gRPC::gpr gRPC::grpc gRPC::grpc++ gRPC::grpc++_alts)
 
 add_executable(WindowsTracingTests)
 

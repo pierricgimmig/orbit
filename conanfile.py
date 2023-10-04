@@ -49,8 +49,8 @@ class OrbitConan(ConanFile):
 
     def build_requirements(self):
         if self.options.with_system_deps: return
-        self.build_requires('protobuf/3.21.4')
-        self.build_requires('grpc/1.48.4')
+        #self.build_requires('protobuf/3.21.9')
+        self.build_requires('grpc/1.54.3')
         self.build_requires('gtest/1.11.0', force_host_context=True)
 
     def requirements(self):
@@ -58,18 +58,18 @@ class OrbitConan(ConanFile):
 
         self.requires("abseil/20220623.0")
         self.requires("capstone/4.0.2")
-        self.requires("grpc/1.48.4")
+        #self.requires("grpc/1.54.3")
         self.requires("outcome/2.2.3")
-        self.requires("llvm-core/13.0.0")
+        #self.requires("llvm-core/13.0.0")
         if self.settings.os != "Windows":
             self.requires("volk/1.3.224.1")
             self.requires("vulkan-headers/1.3.224.1")
             self.requires("vulkan-validationlayers/1.3.224.1")
-        self.requires("zlib/1.2.13", override=True)
-        self.requires("openssl/1.1.1s", override=True)
+        #self.requires("zlib/1.2.13", override=True)
+        #self.requires("openssl/1.1.1s", override=True)
 
-        if self.options.with_gui:
-            self.requires("libssh2/1.10.0")
+        # if self.options.with_gui:
+        #     self.requires("libssh2/1.10.0")
 
 
     def configure(self):

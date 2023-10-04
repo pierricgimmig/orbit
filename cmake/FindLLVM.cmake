@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 
-find_package(LLVM CONFIG 16)
+find_package(LLVM CONFIG 15)
 
 if(NOT LLVM_FOUND)
   find_package(LLVM CONFIG 15)

@@ -46,7 +46,7 @@ endif()
 target_link_libraries(
   OrbitSsh
   PUBLIC OrbitBase
-         Libssh2::libssh2)
+         Libssh2::libssh2_static)
 
 if(WIN32)
   target_compile_definitions(OrbitSsh PUBLIC WIN32_LEAN_AND_MEAN)

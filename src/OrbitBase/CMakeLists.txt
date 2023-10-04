@@ -95,7 +95,7 @@ target_sources(OrbitBase PRIVATE
 endif()
 
 target_link_libraries(OrbitBase PUBLIC
-        outcome::outcome
+        outcome::hl
         absl::base
         absl::flat_hash_map
         absl::strings

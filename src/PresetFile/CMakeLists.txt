@@ -22,7 +22,7 @@ target_link_libraries(
   PUBLIC OrbitBase
          ClientProtos
          absl::strings
-         protobuf::protobuf)
+         protobuf::libprotobuf)
 
 add_executable(PresetFileTests)
 

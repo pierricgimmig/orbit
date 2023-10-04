@@ -14,5 +14,5 @@ target_include_directories(FakeProducerSideService INTERFACE
 
 target_link_libraries(FakeProducerSideService INTERFACE
         GrpcProtos
-        grpc::grpc
+        gRPC::grpc
         GTest::gtest)

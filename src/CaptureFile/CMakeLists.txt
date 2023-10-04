@@ -35,7 +35,7 @@ target_link_libraries(
   PUBLIC OrbitBase
          GrpcProtos
          ClientProtos
-         protobuf::protobuf)
+         protobuf::libprotobuf)
 
 add_executable(CaptureFileTests)
 

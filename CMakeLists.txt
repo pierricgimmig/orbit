@@ -4,6 +4,9 @@
 
 cmake_minimum_required(VERSION 3.15)
 
+set(VCPKG_ROOT "../vcpkg")
+set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+
 project(Orbit C CXX ASM)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -107,12 +110,14 @@ find_package(gte REQUIRED)
 find_package(libprotobuf-mutator REQUIRED)
 find_package(LZMA REQUIRED)
 find_package(absl REQUIRED)
-find_package(LLVM REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(capstone REQUIRED)
 find_package(protobuf REQUIRED)
+find_package(LLVM REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(outcome REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(Libssh2 REQUIRED)
 
 if(WITH_GUI)
   find_package(OpenGL REQUIRED)
@@ -122,7 +127,7 @@ if(WITH_GUI)
                Network
                Test
                Widgets)
-  find_package(Libssh2 REQUIRED)
+  #find_package(Libssh2 REQUIRED)
 endif()
 
 find_package(Filesystem REQUIRED)

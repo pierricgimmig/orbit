@@ -1,0 +1,21 @@
+{
+    "name": "orbit",
+    "version-string": "1.0",
+    "dependencies": [
+        "abseil",
+        "xxhash",
+        "concurrentqueue",
+        "libprotobuf-mutator",
+        "liblzma",
+        "abseil",
+        "capstone",
+        "openssl",
+        "outcome",
+        "zlib",
+        "protobuf",
+        "grpc",
+        "gtest",
+        "llvm",
+        "libssh2"
+    ]
+}

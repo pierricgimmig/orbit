@@ -72,7 +72,7 @@ target_link_libraries(
           absl::flat_hash_map
           absl::str_format
           absl::strings
-          grpc::grpc
+          gRPC::grpc
           Qt5::Widgets)
 
 set_target_properties(SessionSetup PROPERTIES AUTOMOC ON)

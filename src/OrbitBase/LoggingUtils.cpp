@@ -57,39 +57,9 @@ std::vector<std::filesystem::path> ListFilesRecursivelyIgnoreErrors(
   return files_in_dir;
 }
 
-ErrorMessageOr<absl::Time> ParseLogFileTimestamp(std::string_view log_file_name) {
-  if (log_file_name.size() < kTimestampStartPos + kTimestampStringLength) {
-    return ErrorMessage(
-        absl::StrFormat("Unable to extract time information from log file: %s", log_file_name));
-  }
-  std::string_view timestamp_string =
-      log_file_name.substr(kTimestampStartPos, kTimestampStringLength);
-  absl::Time log_file_timestamp;
-  std::string parse_time_error;
-  if (!absl::ParseTime(kLogFileNameTimeFormat, timestamp_string, absl::UTCTimeZone(),
-                       &log_file_timestamp, &parse_time_error)) {
-    return ErrorMessage(
-        absl::StrFormat("Error while parsing time information from log file %s : %s", log_file_name,
-                        parse_time_error));
-  }
-  return log_file_timestamp;
-}
-
 std::vector<std::filesystem::path> FindOldLogFiles(
     absl::Span<const std::filesystem::path> file_paths) {
   std::vector<std::filesystem::path> old_files;
-  absl::Time expiration_time = absl::Now() - kLogFileLifetime;
-  for (const std::filesystem::path& log_file_path : file_paths) {
-    ErrorMessageOr<absl::Time> timestamp_or_error =
-        ParseLogFileTimestamp(log_file_path.filename().string());
-    if (timestamp_or_error.has_error()) {
-      ORBIT_LOG("Warning: %s", timestamp_or_error.error().message());
-      continue;
-    }
-    if (timestamp_or_error.value() < expiration_time) {
-      old_files.push_back(log_file_path);
-    }
-  }
   return old_files;
 }
 
