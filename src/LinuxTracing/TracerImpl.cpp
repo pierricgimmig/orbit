@@ -1,3 +1,4 @@
+
 // Copyright (c) 2020 The Orbit Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -53,6 +54,8 @@ using orbit_grpc_protos::ModulesSnapshot;
 using orbit_grpc_protos::ThreadName;
 using orbit_grpc_protos::ThreadNamesSnapshot;
 using orbit_grpc_protos::WarningInstrumentingWithUprobesEvent;
+
+static constexpr int32_t kAnyCpu = -1;
 
 namespace orbit_linux_tracing {
 
@@ -242,47 +245,33 @@ void TracerImpl::InitUprobesEventVisitor() {
 }
 
 bool TracerImpl::OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                             absl::Span<const int32_t> cpus,
-                             absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
+                             int pid, int* uprobe_fd) {
   ORBIT_SCOPE_FUNCTION;
   const char* module = function.file_path().c_str();
   const uint64_t offset = function.file_offset();
-  for (int32_t cpu : cpus) {
-    int fd{};
-    if (function.record_arguments()) {
-      fd = uprobes_retaddr_args_event_open(module, offset, /*pid=*/-1, cpu);
-    } else {
-      fd = uprobes_retaddr_event_open(module, offset, /*pid=*/-1, cpu);
-    }
-    if (fd < 0) {
-      ORBIT_ERROR("Opening uprobe %s+%#x on cpu %d", function.file_path(), function.file_offset(),
-                  cpu);
-      return false;
-    }
-    (*fds_per_cpu)[cpu] = fd;
+  *uprobe_fd = uprobes_retaddr_event_open(module, offset, pid, kAnyCpu);
+  if (f*uprobe_fd < 0) {
+    ORBIT_ERROR("Opening uprobe %s+%#x on cpu %d", function.file_path(), function.file_offset(),
+                cpu);
+    return false;
   }
   return true;
 }
 
 bool TracerImpl::OpenUretprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                                absl::Span<const int32_t> cpus,
-                                absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
+                                int pid, int* uretprobe_fd) {
   ORBIT_SCOPE_FUNCTION;
   const char* module = function.file_path().c_str();
   const uint64_t offset = function.file_offset();
-  for (int32_t cpu : cpus) {
-    int fd{};
-    if (function.record_return_value()) {
-      fd = uretprobes_retval_event_open(module, offset, /*pid=*/-1, cpu);
-    } else {
-      fd = uretprobes_event_open(module, offset, /*pid=*/-1, cpu);
-    }
-    if (fd < 0) {
-      ORBIT_ERROR("Opening uretprobe %s+%#x on cpu %d", function.file_path(),
-                  function.file_offset(), cpu);
-      return false;
-    }
-    (*fds_per_cpu)[cpu] = fd;
+  if (function.record_return_value()) {
+    *uretprobe_fd = uretprobes_retval_event_open(module, offset, pid, kAnyCpu);
+  } else {
+    *uretprobe_fd = uretprobes_event_open(module, offset, pid, kAnyCpu);
+  }
+  if (*uretprobe_fd < 0) {
+    ORBIT_ERROR("Opening uretprobe %s+%#x on cpu %d", function.file_path(),
+                function.file_offset(), cpu);
+    return false;
   }
   return true;
 }
@@ -328,7 +317,7 @@ bool TracerImpl::OpenUserSpaceProbes(absl::Span<const int32_t> cpus) {
     absl::flat_hash_map<int32_t, int> uprobes_fds_per_cpu;
     absl::flat_hash_map<int32_t, int> uretprobes_fds_per_cpu;
 
-    bool success = OpenUprobes(function, cpus, &uprobes_fds_per_cpu) &&
+    bool success = OpenUprobes(function, target_pid_, cpus, &uprobes_fds_per_cpu) &&
                    OpenUretprobes(function, cpus, &uretprobes_fds_per_cpu);
     if (!success) {
       CloseFileDescriptors(uprobes_fds_per_cpu);

@@ -127,8 +127,8 @@ int callchain_sample_event_open(uint64_t period_ns, pid_t pid, int32_t cpu,
                                 uint16_t stack_dump_size);
 
 // perf_event_open for uprobes and uretprobes.
-int uprobes_retaddr_event_open(const char* module, uint64_t function_offset, pid_t pid,
-                               int32_t cpu);
+int uprobes_retaddr_event_open(const char* module, uint64_t function_offset, pid_t pid, int32_t cpu,
+                               int32_t group_fd = -1, uint32_t flags = PERF_FLAG_FD_CLOEXEC);
 
 int uprobes_with_stack_and_sp_event_open(const char* module, uint64_t function_offset, pid_t pid,
                                          int32_t cpu, uint16_t stack_dump_size);
@@ -136,10 +136,11 @@ int uprobes_with_stack_and_sp_event_open(const char* module, uint64_t function_o
 int uprobes_retaddr_args_event_open(const char* module, uint64_t function_offset, pid_t pid,
                                     int32_t cpu);
 
-int uretprobes_event_open(const char* module, uint64_t function_offset, pid_t pid, int32_t cpu);
+int uretprobes_event_open(const char* module, uint64_t function_offset, pid_t pid, int32_t cpu,
+                               int32_t group_fd = -1, uint32_t flags = PERF_FLAG_FD_CLOEXEC);
 
 int uretprobes_retval_event_open(const char* module, uint64_t function_offset, pid_t pid,
-                                 int32_t cpu);
+                                 int32_t cpu, int32_t group_fd = -1, uint32_t flags = PERF_FLAG_FD_CLOEXEC);
 
 // Create the ring buffer to use perf_event_open in sampled mode.
 void* perf_event_open_mmap_ring_buffer(int fd, uint64_t mmap_length);

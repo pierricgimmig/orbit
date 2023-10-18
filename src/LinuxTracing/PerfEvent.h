@@ -440,6 +440,8 @@ struct PerfEvent {
   void Accept(PerfEventVisitor* visitor) const;
 };
 
+void PrintSizes();
+
 }  // namespace orbit_linux_tracing
 
 #endif  // LINUX_TRACING_PERF_EVENT_H_

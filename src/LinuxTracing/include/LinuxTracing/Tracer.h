@@ -36,6 +36,8 @@ class Tracer {
       TracerListener* listener);
 };
 
+void PrintPerfEventSizes();
+
 }  // namespace orbit_linux_tracing
 
 #endif  // LINUX_TRACING_TRACER_H_

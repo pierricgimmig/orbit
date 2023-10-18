@@ -21,3 +21,9 @@ std::unique_ptr<Tracer> Tracer::Create(
 }
 
 }  // namespace orbit_linux_tracing
+
+namespace orbit_linux_tracing {
+void PrintPerfEventSizes() {
+  orbit_linux_tracing::PrintSizes();
+}
+}

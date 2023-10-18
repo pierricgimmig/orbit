@@ -39,6 +39,49 @@ std::array<uint64_t, PERF_REG_X86_64_MAX> perf_event_sample_regs_user_all_to_reg
   return registers;
 }
 
+template <typename T>
+std::string orbit_to_string(const T& value) {
+  return std::to_string(value);
+}
+
+std::string orbit_to_string(const std::string& value) {
+  return value;
+}
+
+#define ORBIT_LOG_VAR(x) ORBIT_LOG("%s = %s", #x, orbit_to_string(x))
+
+void PrintSizes() {
+  ORBIT_LOG_VAR(sizeof(PerfEvent));
+  ORBIT_LOG_VAR(sizeof(ForkPerfEventData));
+  ORBIT_LOG_VAR(sizeof(ExitPerfEventData));
+  ORBIT_LOG_VAR(sizeof(LostPerfEventData));
+  ORBIT_LOG_VAR(sizeof(DiscardedPerfEventData));
+  ORBIT_LOG_VAR(sizeof(StackSamplePerfEventData));
+  ORBIT_LOG_VAR(sizeof(CallchainSamplePerfEventData));
+  ORBIT_LOG_VAR(sizeof(UprobesPerfEventData));
+  ORBIT_LOG_VAR(sizeof(UprobesWithArgumentsPerfEventData));
+  ORBIT_LOG_VAR(sizeof(UprobesWithStackPerfEventData));
+  ORBIT_LOG_VAR(sizeof(UretprobesPerfEventData));
+  ORBIT_LOG_VAR(sizeof(UretprobesWithReturnValuePerfEventData));
+  ORBIT_LOG_VAR(sizeof(UserSpaceFunctionEntryPerfEventData));
+  ORBIT_LOG_VAR(sizeof(UserSpaceFunctionExitPerfEventData));
+  ORBIT_LOG_VAR(sizeof(MmapPerfEventData));
+  ORBIT_LOG_VAR(sizeof(GenericTracepointPerfEventData));
+  ORBIT_LOG_VAR(sizeof(TaskNewtaskPerfEventData));
+  ORBIT_LOG_VAR(sizeof(TaskRenamePerfEventData));
+  ORBIT_LOG_VAR(sizeof(SchedSwitchPerfEventData));
+  ORBIT_LOG_VAR(sizeof(SchedWakeupPerfEventData));
+  ORBIT_LOG_VAR(sizeof(SchedSwitchWithCallchainPerfEventData));
+  ORBIT_LOG_VAR(sizeof(SchedWakeupWithCallchainPerfEventData));
+  ORBIT_LOG_VAR(sizeof(SchedSwitchWithStackPerfEventData));
+  ORBIT_LOG_VAR(sizeof(SchedWakeupWithStackPerfEventData));
+  ORBIT_LOG_VAR(sizeof(AmdgpuCsIoctlPerfEventData));
+  ORBIT_LOG_VAR(sizeof(AmdgpuSchedRunJobPerfEventData));
+  ORBIT_LOG_VAR(sizeof(DmaFenceSignaledPerfEventData));
+  std::string str = "blah";
+  ORBIT_LOG_VAR(str);
+}
+
 // This is a non-traditional way of implementing the visitor pattern. The use of `std::variant`
 // instead of a regular class hierarchy is motivated by the fact that this saves us from heap
 // allocating objects, which turns out to be more expensive than copying.

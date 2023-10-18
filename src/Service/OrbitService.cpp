@@ -23,6 +23,7 @@
 #include "OrbitVersion/OrbitVersion.h"
 #include "ProducerSideService/BuildAndStartProducerSideServer.h"
 #include "ProducerSideService/ProducerSideServer.h"
+#include "LinuxTracing/Tracer.h"
 
 #ifdef __linux
 #include <fcntl.h>
@@ -138,6 +139,8 @@ ErrorMessageOr<void> OrbitService::Run(std::atomic<bool>* exit_requested) {
   ORBIT_LOG("Orbit Service is running in DEBUG!");
   ORBIT_LOG("**********************************");
 #endif
+
+  orbit_linux_tracing::PrintPerfEventSizes();
 
   OUTCOME_TRY(std::unique_ptr<OrbitGrpcServer> grpc_server,
               CreateGrpcServer(grpc_port_, dev_mode_));

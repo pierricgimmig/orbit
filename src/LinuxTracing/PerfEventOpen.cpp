@@ -30,8 +30,9 @@ perf_event_attr generic_event_attr() {
   return pe;
 }
 
-int generic_event_open(perf_event_attr* attr, pid_t pid, int32_t cpu) {
-  int fd = perf_event_open(attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
+int generic_event_open(perf_event_attr* attr, pid_t pid, int32_t cpu, int32_t group_fd = -1,
+                       uint32_t flags = PERF_FLAG_FD_CLOEXEC) {
+  int fd = perf_event_open(attr, pid, cpu, group_fd, flags);
   if (fd == -1) {
     ORBIT_ERROR("perf_event_open: %s", SafeStrerror(errno));
   }
@@ -106,7 +107,7 @@ int callchain_sample_event_open(uint64_t period_ns, pid_t pid, int32_t cpu,
 }
 
 int uprobes_retaddr_event_open(const char* module, uint64_t function_offset, pid_t pid,
-                               int32_t cpu) {
+                               int32_t cpu, int32_t group_fd, uint32_t flags) {
   perf_event_attr pe = uprobe_event_attr(module, function_offset);
   pe.config &= ~1ULL;
   pe.sample_type |= PERF_SAMPLE_REGS_USER | PERF_SAMPLE_STACK_USER;
@@ -142,7 +143,8 @@ int uprobes_retaddr_args_event_open(const char* module, uint64_t function_offset
   return generic_event_open(&pe, pid, cpu);
 }
 
-int uretprobes_event_open(const char* module, uint64_t function_offset, pid_t pid, int32_t cpu) {
+int uretprobes_event_open(const char* module, uint64_t function_offset, pid_t pid, int32_t cpu,
+                          int32_t group_fd = -1, uint32_t flags = PERF_FLAG_FD_CLOEXEC) {
   perf_event_attr pe = uprobe_event_attr(module, function_offset);
   pe.config |= 1;  // Set bit 0 of config for uretprobe.
 

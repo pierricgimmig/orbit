@@ -71,7 +71,7 @@ class TracerImpl : public Tracer {
   [[nodiscard]] bool OpenUserSpaceProbes(absl::Span<const int32_t> cpus);
   [[nodiscard]] bool OpenUprobesToRecordAdditionalStackOn(absl::Span<const int32_t> cpus);
   [[nodiscard]] static bool OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                                        absl::Span<const int32_t> cpus,
+                                        int pid, absl::Span<const int32_t> cpus,
                                         absl::flat_hash_map<int32_t, int>* fds_per_cpu);
   [[nodiscard]] bool OpenUprobesWithStack(
       const orbit_grpc_protos::FunctionToRecordAdditionalStackOn& function,
