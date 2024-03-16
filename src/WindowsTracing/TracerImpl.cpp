@@ -5,6 +5,7 @@
 #include "TracerImpl.h"
 
 #include "GrpcProtos/module.pb.h"
+#include "ModuleUtils/VirtualAndAbsoluteAddresses.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
 #include "WindowsTracing/ListModulesETW.h"
@@ -18,7 +19,38 @@ using orbit_grpc_protos::ThreadNamesSnapshot;
 using orbit_windows_utils::Module;
 using orbit_windows_utils::Thread;
 
+#define PRINT_STR(x) ORBIT_LOG(#x " : %s", x)
+#define PRINT_VAR(x) ORBIT_LOG(#x " : %s", std::to_string(x))
+#define PRINT_HEX(x) ORBIT_LOG(#x " : 0x%x", x)
+
 namespace orbit_windows_tracing {
+
+namespace {
+
+std::vector<Module> GetModules(uint32_t pid) {
+  std::vector<Module> modules = orbit_windows_utils::ListModules(pid);
+  if (modules.empty()) {
+    // Fallback on etw module enumeration which involves more work.
+    modules = ListModulesEtw(pid);
+  }
+
+  if (modules.empty()) {
+    ORBIT_ERROR("Unable to load modules for %u", pid);
+  }
+  return modules;
+}
+
+[[nodiscard]] absl::flat_hash_map<std::string, std::vector<Module>> GetModulesByPath(
+    uint32_t pid) {
+  absl::flat_hash_map<std::string, std::vector<Module>> result;
+  std::vector<Module> modules = GetModules(pid);
+  for (const Module& module : modules) {
+    result[module.full_path].emplace_back(module);
+  }
+  return result;
+}
+
+}  // namespace
 
 TracerImpl::TracerImpl(orbit_grpc_protos::CaptureOptions capture_options, TracerListener* listener)
     : capture_options_(std::move(capture_options)), listener_(listener) {}
@@ -30,9 +62,53 @@ void TracerImpl::Start() {
   krabs_tracer_ = std::make_unique<KrabsTracer>(capture_options_.pid(),
                                                 capture_options_.samples_per_second(), listener_);
   krabs_tracer_->Start();
+
+  absl::flat_hash_map<std::string, std::vector<Module>> modules_by_path =
+      GetModulesByPath(capture_options_.pid());
+  
+  orbit_grpc_protos::DynamicInstrumentationOptions options;
+  options.set_target_pid(capture_options_.pid());
+  for (const auto& function : capture_options_.instrumented_functions()) {
+    for (const Module& module : modules_by_path[function.file_path()]) {
+      const uint64_t function_address = orbit_module_utils::SymbolVirtualAddressToAbsoluteAddress(
+          function.function_virtual_address(), module.address_start, module.load_bias,
+          /*module_executable_section_offset=*/0);
+
+      orbit_grpc_protos::DynamicallyInstrumentedFunction* instrumented_function =
+          options.add_instrumented_functions();
+
+      instrumented_function->set_name(function.function_name());
+      instrumented_function->set_size(function.function_size());
+      instrumented_function->set_absolute_address(function_address);
+      instrumented_function->set_function_id(function.function_id());
+      instrumented_function->set_module_path(function.file_path());
+      instrumented_function->set_module_build_id(function.file_build_id());
+      instrumented_function->set_record_arguments(false);
+      instrumented_function->set_record_return_value(false);
+
+      ORBIT_LOG("Instrumented function: %s", function.function_name());
+      PRINT_STR(function.file_path());
+      PRINT_STR(function.file_build_id());
+      PRINT_HEX(function.file_offset());
+      PRINT_HEX(function.function_id());
+      PRINT_HEX(function.function_virtual_address());
+      PRINT_VAR(function.function_size());
+      PRINT_HEX(function_address);
+    }
+  }
+  
+  dynamic_instrumentation_ = std::make_unique<DynamicInstrumentation>();
+  if (auto result = dynamic_instrumentation_->Start(options); result.has_error()) {
+    ORBIT_ERROR("Starting dynamic instrumentation: %s", result.error().message());
+  }
 }
 
 void TracerImpl::Stop() {
+  ORBIT_CHECK(dynamic_instrumentation_ != nullptr);
+  if (auto result = dynamic_instrumentation_->Stop(); result.has_error()) {
+    ORBIT_ERROR("Stopping dynamic instrumentation: %s", result.error().message());
+  }
+  dynamic_instrumentation_ = nullptr;
   ORBIT_CHECK(krabs_tracer_ != nullptr);
   krabs_tracer_->Stop();
   krabs_tracer_ = nullptr;
@@ -44,14 +120,8 @@ void TracerImpl::SendModulesSnapshot() {
   modules_snapshot.set_pid(pid);
   modules_snapshot.set_timestamp_ns(orbit_base::CaptureTimestampNs());
 
-  std::vector<Module> modules = orbit_windows_utils::ListModules(pid);
+  std::vector<Module> modules = GetModules(pid);
   if (modules.empty()) {
-    // Fallback on etw module enumeration which involves more work.
-    modules = ListModulesEtw(pid);
-  }
-
-  if (modules.empty()) {
-    ORBIT_ERROR("Unable to load modules for %u", pid);
     return;
   }
 

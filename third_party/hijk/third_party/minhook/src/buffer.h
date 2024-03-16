@@ -30,7 +30,7 @@
 
 // Size of each memory slot.
 #if defined(_M_X64) || defined(__x86_64__)
-    #define MEMORY_SLOT_SIZE 64
+    #define MEMORY_SLOT_SIZE 256
 #else
     #define MEMORY_SLOT_SIZE 32
 #endif

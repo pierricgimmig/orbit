@@ -6,6 +6,7 @@
 #define WINDOWS_TRACING_TRACER_IMPL_H_
 
 #include "GrpcProtos/capture.pb.h"
+#include "DynamicInstrumentation.h"
 #include "KrabsTracer.h"
 #include "WindowsTracing/Tracer.h"
 #include "WindowsTracing/TracerListener.h"
@@ -30,6 +31,7 @@ class TracerImpl : public Tracer {
   orbit_grpc_protos::CaptureOptions capture_options_;
   TracerListener* listener_ = nullptr;
   std::unique_ptr<KrabsTracer> krabs_tracer_;
+  std::unique_ptr<DynamicInstrumentation> dynamic_instrumentation_;
 };
 
 }  // namespace orbit_windows_tracing
