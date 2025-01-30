@@ -169,14 +169,17 @@ cmake --build . --config Release
 
 To compile on Linux:
 
-conan install . --build=missing
-cd build
-cmake -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake ..
-cmake --build . --config Release
-
-with a debug profile:
-
 Debug example:
 conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_debug --build=missing -of build_gcc17_debug
 cmake -B build_gcc17_debug -DCMAKE_TOOLCHAIN_FILE=build_gcc17_debug/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug .
-cmake --build build_gcc17_debug --paralell
+cmake --build build_gcc17_debug --parallel
+
+RelWithDebInfo example:
+conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
+cmake -B build_gcc17_relwithdebinfo -DCMAKE_TOOLCHAIN_FILE=build_gcc17_relwithdebinfo/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
+cmake --build build_gcc17_relwithdebinfo --parallel
+
+Release example:
+conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_release --build=missing -of build_gcc17_release
+cmake -B build_gcc17_release -DCMAKE_TOOLCHAIN_FILE=build_gcc17_release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release .
+cmake --build build_gcc17_release --parallel
