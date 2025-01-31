@@ -392,8 +392,6 @@ void OrbitMainWindow::SetupMainWindow() {
   ui->MainTabWidget->tabBar()->installEventFilter(this);
   ui->RightTabWidget->tabBar()->installEventFilter(this);
 
-  SetupAccessibleNamesForAutomation();
-
   setWindowTitle({});
   std::filesystem::path icon_file_name = (orbit_base::GetExecutableDir() / "orbit.ico");
   this->setWindowIcon(QIcon(QString::fromStdString(icon_file_name.string())));
@@ -538,14 +536,6 @@ void OrbitMainWindow::SetupTrackConfigurationUi() {
   ui->trackConfig->hide();
   QObject::connect(ui->actionConfigureTracks, &QAction::toggled,
                    [this](bool checked) { ui->trackConfig->setVisible(checked); });
-}
-
-void OrbitMainWindow::SetupAccessibleNamesForAutomation() {
-  for (QTabWidget* tab_widget : {ui->MainTabWidget, ui->RightTabWidget}) {
-    for (int i = 0; i < tab_widget->count(); ++i) {
-      tab_widget->widget(i)->setAccessibleName(tab_widget->widget(i)->objectName());
-    }
-  }
 }
 
 void OrbitMainWindow::SaveCurrentTabLayoutAsDefaultInMemory() {

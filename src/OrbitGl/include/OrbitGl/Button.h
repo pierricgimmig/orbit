@@ -11,7 +11,6 @@
 #include <memory>
 #include <string>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/PrimitiveAssembler.h"
 #include "OrbitGl/TextRenderer.h"
@@ -49,8 +48,6 @@ class Button : public CaptureViewElement, public std::enable_shared_from_this<Bu
 
  private:
   void DrawSymbol(PrimitiveAssembler& primitive_assembler);
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override;
 
   float height_ = 0.f;
   std::string name_;

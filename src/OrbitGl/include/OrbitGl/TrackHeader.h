@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/PrimitiveAssembler.h"
@@ -63,8 +62,6 @@ class TrackHeader : public CaptureViewElement, public std::enable_shared_from_th
 
   void UpdateCollapseToggle();
   float GetVerticalLabelOffset() const;
-
-  std::unique_ptr<orbit_accessibility::AccessibleInterface> CreateAccessibleInterface() override;
 
  private:
   std::shared_ptr<TriangleToggle> collapse_toggle_;

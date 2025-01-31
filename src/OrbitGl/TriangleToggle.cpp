@@ -10,7 +10,6 @@
 #include <cmath>
 #include <utility>
 
-#include "OrbitGl/AccessibleTriangleToggle.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/Geometry.h"
 #include "OrbitGl/GlCanvas.h"
@@ -75,7 +74,3 @@ void TriangleToggle::OnRelease() {
   handler_(is_collapsed_);
 }
 
-std::unique_ptr<orbit_accessibility::AccessibleInterface>
-TriangleToggle::CreateAccessibleInterface() {
-  return std::make_unique<orbit_gl::AccessibleTriangleToggle>(this);
-}

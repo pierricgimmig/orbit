@@ -13,7 +13,6 @@
 
 #include "ClientData/CaptureData.h"
 #include "ClientData/ModuleManager.h"
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/TimeGraphLayout.h"
 #include "OrbitGl/TimelineInfoInterface.h"
@@ -47,8 +46,6 @@ class ThreadBar : public CaptureViewElement, public std::enable_shared_from_this
   [[nodiscard]] virtual const std::string& GetName() const { return name_; }
 
  protected:
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override;
   [[nodiscard]] int64_t GetThreadId() const { return thread_id_; }
 
   OrbitApp* app_;

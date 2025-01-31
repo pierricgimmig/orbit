@@ -18,7 +18,6 @@
 #include "ClientData/CaptureData.h"
 #include "ClientData/TimerTrackDataIdManager.h"
 #include "ClientProtos/capture_data.pb.h"
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/BatchRenderGroup.h"
 #include "OrbitGl/Batcher.h"
 #include "OrbitGl/CaptureStats.h"
@@ -105,8 +104,6 @@ class CaptureWindow : public GlCanvas, public orbit_gl::CaptureWindowDebugInterf
   OrbitApp* app_ = nullptr;
   orbit_capture_client::CaptureControlInterface* capture_client_app_ = nullptr;
 
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override;
   CaptureStats selection_stats_;
 
   absl::btree_map<std::string, std::unique_ptr<orbit_gl::SimpleTimings>> scoped_frame_times_;

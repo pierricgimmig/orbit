@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "OrbitBase/Logging.h"
-#include "OrbitGl/AccessibleButton.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/Geometry.h"
 #include "OrbitGl/GlCanvas.h"
@@ -147,10 +146,6 @@ void Button::DrawSymbol(PrimitiveAssembler& primitive_assembler) {
     default:
       ORBIT_UNREACHABLE();
   }
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface> Button::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleButton>(this);
 }
 
 }  // namespace orbit_gl

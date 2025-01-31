@@ -4,14 +4,7 @@
 
 #include "OrbitGl/ThreadBar.h"
 
-#include "OrbitGl/AccessibleCaptureViewElement.h"
-
 namespace orbit_gl {
 
-std::unique_ptr<orbit_accessibility::AccessibleInterface> ThreadBar::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleCaptureViewElement>(
-      this, GetName(), orbit_accessibility::AccessibilityRole::Pane,
-      orbit_accessibility::AccessibilityState::kFocusable);
-}
 
 }  // namespace orbit_gl

@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "OrbitBase/Logging.h"
-#include "OrbitGl/AccessibleCaptureViewElement.h"
 #include "OrbitGl/Geometry.h"
 #include "OrbitGl/GlCanvas.h"
 #include "OrbitGl/PickingManager.h"
@@ -26,11 +25,6 @@ void TrackHeader::OnPick(int x, int y) {
   CaptureViewElement::OnPick(x, y);
 
   track_->SelectTrack();
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface> TrackHeader::CreateAccessibleInterface() {
-  return std::make_unique<orbit_gl::AccessibleCaptureViewElement>(
-      this, track_->GetName() + "_tab", orbit_accessibility::AccessibilityRole::PageTab);
 }
 
 void TrackHeader::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_renderer,

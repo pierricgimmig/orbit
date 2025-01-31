@@ -52,9 +52,4 @@ CaptureViewElement::EventResult VerticalSizer::OnMouseLeave() {
 
 void VerticalSizer::OnDrag(int x, int y) { on_drag_callback_(x, y); }
 
-std::unique_ptr<orbit_accessibility::AccessibleInterface>
-VerticalSizer::CreateAccessibleInterface() {
-  return nullptr;
-}
-
 }  // namespace orbit_gl

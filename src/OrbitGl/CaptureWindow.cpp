@@ -34,8 +34,6 @@
 #include "ClientData/ThreadStateSliceInfo.h"
 #include "ClientProtos/capture_data.pb.h"
 #include "DisplayFormats/DisplayFormats.h"
-#include "OrbitAccessibility/AccessibleInterface.h"
-#include "OrbitAccessibility/AccessibleWidgetBridge.h"
 #include "OrbitBase/Append.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
@@ -58,9 +56,6 @@
 #include "OrbitGl/TrackManager.h"
 #include "OrbitGl/Viewport.h"
 
-using orbit_accessibility::AccessibleInterface;
-using orbit_accessibility::AccessibleWidgetBridge;
-
 using orbit_client_data::CaptureData;
 using orbit_client_data::TimeRange;
 using orbit_gl::Batcher;
@@ -71,28 +66,6 @@ using orbit_gl::TextRenderer;
 constexpr const char* kTimingDraw = "Draw";
 constexpr const char* kTimingDrawAndUpdatePrimitives = "Draw & Update Primitives";
 constexpr const char* kTimingFrame = "Complete Frame";
-
-class AccessibleCaptureWindow : public AccessibleWidgetBridge {
- public:
-  explicit AccessibleCaptureWindow(CaptureWindow* window) : window_(window) {}
-
-  [[nodiscard]] int AccessibleChildCount() const override {
-    if (window_->GetTimeGraph() == nullptr) {
-      return 0;
-    }
-    return 1;
-  }
-
-  [[nodiscard]] const AccessibleInterface* AccessibleChild(int /*index*/) const override {
-    if (window_->GetTimeGraph() == nullptr) {
-      return nullptr;
-    }
-    return window_->GetTimeGraph()->GetOrCreateAccessibleInterface();
-  }
-
- private:
-  CaptureWindow* window_;
-};
 
 using orbit_client_protos::TimerInfo;
 
@@ -493,10 +466,6 @@ void CaptureWindow::SetIsMouseOver(bool value) {
 
 bool CaptureWindow::ShouldAutoZoom() const { return capture_client_app_->IsCapturing(); }
 
-std::unique_ptr<AccessibleInterface> CaptureWindow::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleCaptureWindow>(this);
-}
-
 void CaptureWindow::Draw(QPainter* painter) {
   ORBIT_SCOPE("CaptureWindow::Draw");
   uint64_t start_time_ns = orbit_base::CaptureTimestampNs();
@@ -631,7 +600,7 @@ void CaptureWindow::set_draw_help(bool draw_help) {
 
 void CaptureWindow::CreateTimeGraph(CaptureData* capture_data) {
   time_graph_ =
-      std::make_unique<TimeGraph>(this, app_, &viewport_, capture_data, &GetPickingManager(),
+      std::make_unique<TimeGraph>(app_, &viewport_, capture_data, &GetPickingManager(),
                                   &render_group_manager_, time_graph_layout_);
 }
 

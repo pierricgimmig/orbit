@@ -218,8 +218,6 @@ class OrbitMainWindow final : public QMainWindow, public orbit_gl::MainWindowInt
   void SetupStatusBarLogButton();
   void SetupTrackConfigurationUi();
 
-  void SetupAccessibleNamesForAutomation();
-
   void SaveCurrentTabLayoutAsDefaultInMemory();
 
   void SaveMainWindowGeometry();

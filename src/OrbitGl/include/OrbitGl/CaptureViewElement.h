@@ -11,7 +11,6 @@
 #include <string>
 #include <vector>
 
-#include "OrbitGl/AccessibleInterfaceProvider.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/PickingManager.h"
 #include "OrbitGl/PrimitiveAssembler.h"
@@ -28,7 +27,7 @@ struct ModifierKeys {
 };
 
 /* Base class for UI elements drawn underneath the capture window. */
-class CaptureViewElement : public Pickable, public AccessibleInterfaceProvider {
+class CaptureViewElement : public Pickable {
  public:
   explicit CaptureViewElement(CaptureViewElement* parent, const Viewport* viewport,
                               const TimeGraphLayout* layout);

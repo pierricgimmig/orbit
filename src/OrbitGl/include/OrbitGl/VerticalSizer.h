@@ -10,7 +10,6 @@
 #include <functional>
 #include <memory>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/PrimitiveAssembler.h"
 #include "OrbitGl/TextRenderer.h"
@@ -42,7 +41,6 @@ class VerticalSizer : public orbit_gl::CaptureViewElement,
               orbit_gl::TextRenderer& text_renderer, const DrawContext& draw_context) override;
   [[nodiscard]] EventResult OnMouseEnter() override;
   [[nodiscard]] EventResult OnMouseLeave() override;
-  std::unique_ptr<orbit_accessibility::AccessibleInterface> CreateAccessibleInterface() override;
 
  private:
   float height_ = 0.f;

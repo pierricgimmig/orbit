@@ -12,9 +12,7 @@
 #include <cstring>
 
 #include "ApiInterface/Orbit.h"
-#include "OrbitAccessibility/AccessibleWidgetBridge.h"
 #include "OrbitBase/Logging.h"
-#include "OrbitGl/AccessibleInterfaceProvider.h"
 
 // TODO(b/227341686) z-values should not be of `float` type. E.g. make them `uint`.
 // Tracks: 0.0 - 0.1
@@ -61,13 +59,10 @@ const Color GlCanvas::kTimeBarBackgroundColor = Color(33, 32, 33, 255);
 const Color GlCanvas::kTabTextColorSelected = Color(100, 181, 246, 255);
 
 GlCanvas::GlCanvas()
-    : AccessibleInterfaceProvider(),
-      text_renderer_(),
+    : text_renderer_(),
       viewport_(0, 0),
       ui_batcher_(BatcherId::kUi),
       primitive_assembler_(&ui_batcher_, &render_group_manager_, &picking_manager_) {
-  // Note that `GlCanvas` is the bridge to OpenGl content, and `GlCanvas`'s parent needs special
-  // handling for accessibility. Thus, we use `nullptr` here.
   text_renderer_.SetViewport(&viewport_);
 
   ResetHoverTimer();
@@ -265,8 +260,4 @@ void GlCanvas::Pick(PickingMode picking_mode, int x, int y) {
   PickingId pick_id = PickingId::FromPixelValue(value);
 
   HandlePickedElement(picking_mode, pick_id, x, y);
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface> GlCanvas::CreateAccessibleInterface() {
-  return std::make_unique<orbit_accessibility::AccessibleWidgetBridge>();
 }

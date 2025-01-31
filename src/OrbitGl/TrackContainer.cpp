@@ -28,7 +28,6 @@
 #include "GrpcProtos/capture.pb.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Sort.h"
-#include "OrbitGl/AccessibleCaptureViewElement.h"
 #include "OrbitGl/BatcherInterface.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/Geometry.h"
@@ -494,13 +493,6 @@ std::vector<CaptureViewElement*> TrackContainer::GetAllChildren() const {
 std::vector<CaptureViewElement*> TrackContainer::GetNonHiddenChildren() const {
   std::vector<Track*> all_tracks = track_manager_->GetVisibleTracks();
   return {all_tracks.begin(), all_tracks.end()};
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface>
-TrackContainer::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleCaptureViewElement>(
-      this, "TrackContainer", orbit_accessibility::AccessibilityRole::Pane,
-      orbit_accessibility::AccessibilityState::kFocusable);
 }
 
 }  // namespace orbit_gl

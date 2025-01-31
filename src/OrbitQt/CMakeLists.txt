@@ -8,8 +8,7 @@ add_library(OrbitQt STATIC)
 
 target_sources(
   OrbitQt
-  PRIVATE include/OrbitQt/AccessibilityAdapter.h
-          include/OrbitQt/AnnotatingSourceCodeDialog.h
+  PRIVATE include/OrbitQt/AnnotatingSourceCodeDialog.h
           include/OrbitQt/CallTreeViewItemModel.h
           include/OrbitQt/CallTreeWidget.h
           include/OrbitQt/CaptureOptionsDialog.h
@@ -40,8 +39,7 @@ target_sources(
 
 target_sources(
   OrbitQt
-  PRIVATE AccessibilityAdapter.cpp
-          AnnotatingSourceCodeDialog.cpp
+  PRIVATE AnnotatingSourceCodeDialog.cpp
           CallTreeViewItemModel.cpp
           CallTreeWidget.cpp
           CallTreeWidget.ui
@@ -89,7 +87,6 @@ target_link_libraries(
           CodeViewer
           ConfigWidgets
           DisplayFormats
-          OrbitAccessibility
           OrbitGl
           OrbitSshQt
           OrbitVersion
@@ -110,8 +107,7 @@ iwyu_add_dependency(OrbitQt)
 add_executable(OrbitQtTests)
 
 target_sources(OrbitQtTests
-        PRIVATE AccessibilityAdapterTest.cpp
-                AnnotatingSourceCodeDialogTest.cpp
+        PRIVATE AnnotatingSourceCodeDialogTest.cpp
                 CallTreeViewItemModelTest.cpp
                 CaptureWindowDebugWidgetTest.cpp
                 DebugTabWidgetTest.cpp

@@ -14,8 +14,6 @@
 #include <utility>
 #include <vector>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
-#include "OrbitGl/AccessibleInterfaceProvider.h"
 #include "OrbitGl/BatchRenderGroup.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/OpenGlBatcher.h"
@@ -26,10 +24,10 @@
 #include "OrbitGl/Timer.h"
 #include "OrbitGl/Viewport.h"
 
-class GlCanvas : public orbit_gl::AccessibleInterfaceProvider, protected QOpenGLFunctions {
+class GlCanvas : protected QOpenGLFunctions {
  public:
   explicit GlCanvas();
-  ~GlCanvas() override = default;
+  virtual ~GlCanvas() = default;
 
   void Resize(int width, int height);
   void Render(QPainter* painter, int width, int height);
@@ -138,8 +136,6 @@ class GlCanvas : public orbit_gl::AccessibleInterfaceProvider, protected QOpenGL
   orbit_gl::PrimitiveAssembler primitive_assembler_;
 
  private:
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override;
   void Pick(PickingMode picking_mode, int x, int y);
   virtual void HandlePickedElement(PickingMode /*picking_mode*/, PickingId /*picking_id*/,
                                    int /*x*/, int /*y*/) = 0;

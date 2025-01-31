@@ -20,7 +20,6 @@
 #include "ClientData/ThreadStateSliceInfo.h"
 #include "ClientData/TimerTrackDataIdManager.h"
 #include "ClientProtos/capture_data.pb.h"
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/PickingManager.h"
@@ -91,9 +90,6 @@ class TrackContainer final : public CaptureViewElement {
               const DrawContext& draw_context) override;
 
   void UpdateTracksPosition();
-
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override;
 
  private:
   void DrawOverlay(PrimitiveAssembler& primitive_assembler, TextRenderer& text_renderer,

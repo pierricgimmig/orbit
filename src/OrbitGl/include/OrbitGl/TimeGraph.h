@@ -26,8 +26,6 @@
 #include "ClientData/TimerChain.h"
 #include "ClientData/TimerTrackDataIdManager.h"
 #include "ClientProtos/capture_data.pb.h"
-#include "OrbitAccessibility/AccessibleInterface.h"
-#include "OrbitGl/AccessibleInterfaceProvider.h"
 #include "OrbitGl/BatchRenderGroup.h"
 #include "OrbitGl/Batcher.h"
 #include "OrbitGl/Button.h"
@@ -54,7 +52,7 @@ class TimeGraph : public orbit_gl::CaptureViewElement, public orbit_gl::Timeline
   using ScopeId = orbit_client_data::ScopeId;
 
  public:
-  explicit TimeGraph(AccessibleInterfaceProvider* parent, OrbitApp* app,
+  explicit TimeGraph(OrbitApp* app,
                      orbit_gl::Viewport* viewport, orbit_client_data::CaptureData* capture_data,
                      PickingManager* picking_manager,
                      orbit_gl::BatchRenderGroupStateManager* render_group_manager,
@@ -184,10 +182,6 @@ class TimeGraph : public orbit_gl::CaptureViewElement, public orbit_gl::Timeline
 
   [[nodiscard]] std::vector<CaptureViewElement*> GetAllChildren() const override;
 
-  [[nodiscard]] AccessibleInterfaceProvider* GetAccessibleParent() const {
-    return accessible_parent_;
-  }
-
  protected:
   static constexpr double kTimeGraphMinTimeWindowsUs = 0.1; /* 100 ns */
 
@@ -200,8 +194,6 @@ class TimeGraph : public orbit_gl::CaptureViewElement, public orbit_gl::Timeline
   void UpdateHorizontalSliderFromWorld();
   [[nodiscard]] float GetRightMargin() const;
 
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override;
   void ProcessAsyncTimer(const orbit_client_protos::TimerInfo& timer_info) const;
 
   std::shared_ptr<orbit_gl::GlSlider> horizontal_slider_;
@@ -231,7 +223,6 @@ class TimeGraph : public orbit_gl::CaptureViewElement, public orbit_gl::Timeline
   std::pair<const TimerInfo*, const TimerInfo*> GetMinMaxTimerForThreadTrackScope(
       ScopeId scope_id) const;
 
-  AccessibleInterfaceProvider* accessible_parent_;
   orbit_gl::QtTextRenderer text_renderer_static_;
 
   double ref_time_us_ = 0;

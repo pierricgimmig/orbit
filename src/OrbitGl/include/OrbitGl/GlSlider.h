@@ -11,7 +11,6 @@
 #include <memory>
 #include <utility>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/PrimitiveAssembler.h"
@@ -126,8 +125,6 @@ class GlVerticalSlider : public GlSlider {
     return viewport_->GetScreenHeight() - GetPos()[1] - layout_->GetSliderWidth();
   }
 
-  std::unique_ptr<orbit_accessibility::AccessibleInterface> CreateAccessibleInterface() override;
-
  protected:
   [[nodiscard]] float GetBarPixelLength() const override;
 };
@@ -144,8 +141,6 @@ class GlHorizontalSlider : public GlSlider {
               const DrawContext& draw_context) override;
 
   [[nodiscard]] float GetHeight() const override { return GetSliderWidth(); }
-
-  std::unique_ptr<orbit_accessibility::AccessibleInterface> CreateAccessibleInterface() override;
 
  protected:
   [[nodiscard]] float GetBarPixelLength() const override;

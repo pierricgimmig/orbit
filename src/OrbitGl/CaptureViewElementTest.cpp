@@ -10,7 +10,6 @@
 #include <memory>
 #include <vector>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/CaptureViewElementTester.h"
 #include "OrbitGl/CoreMath.h"
@@ -40,12 +39,6 @@ class UnitTestCaptureViewLeafElement : public CaptureViewElementMock {
       : CaptureViewElementMock(parent, viewport, layout) {}
 
   [[nodiscard]] float GetHeight() const override { return kLeafElementHeight; }
-
- private:
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override {
-    return nullptr;
-  }
 };
 
 class UnitTestCaptureViewContainerElement : public CaptureViewElementMock {
@@ -91,11 +84,6 @@ class UnitTestCaptureViewContainerElement : public CaptureViewElementMock {
 
  private:
   std::vector<std::unique_ptr<CaptureViewElement>> children_;
-
-  [[nodiscard]] std::unique_ptr<orbit_accessibility::AccessibleInterface>
-  CreateAccessibleInterface() override {
-    return nullptr;
-  }
 };
 
 TEST(CaptureViewElementTesterTest, PassesAllTestsOnExistingElement) {

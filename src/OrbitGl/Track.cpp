@@ -7,7 +7,6 @@
 #include <GteVector.h>
 
 #include "ClientData/CaptureData.h"
-#include "OrbitGl/AccessibleTrack.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/Geometry.h"
 #include "OrbitGl/GlCanvas.h"
@@ -35,10 +34,6 @@ Track::Track(CaptureViewElement* parent, const orbit_gl::TimelineInfoInterface* 
 void Track::OnPick(int x, int y) {
   CaptureViewElement::OnPick(x, y);
   SelectTrack();
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface> Track::CreateAccessibleInterface() {
-  return std::make_unique<orbit_gl::AccessibleTrack>(this, layout_);
 }
 
 void Track::DoDraw(PrimitiveAssembler& primitive_assembler, TextRenderer& text_renderer,

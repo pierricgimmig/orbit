@@ -23,7 +23,6 @@
 #include "Introspection/Introspection.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Typedef.h"
-#include "OrbitGl/AccessibleTimeGraph.h"
 #include "OrbitGl/AsyncTrack.h"
 #include "OrbitGl/CGroupAndProcessMemoryTrack.h"
 #include "OrbitGl/FrameTrack.h"
@@ -54,16 +53,12 @@ using orbit_gl::TextRenderer;
 using orbit_gl::TrackManager;
 using orbit_gl::VariableTrack;
 
-TimeGraph::TimeGraph(AccessibleInterfaceProvider* parent, OrbitApp* app,
+TimeGraph::TimeGraph(OrbitApp* app,
                      orbit_gl::Viewport* viewport, CaptureData* capture_data,
                      PickingManager* picking_manager,
                      orbit_gl::BatchRenderGroupStateManager* render_group_manager,
                      TimeGraphLayout* time_graph_layout)
-    // Note that `GlCanvas` and `TimeGraph` span the bridge to OpenGl content, and `TimeGraph`'s
-    // parent needs special handling for accessibility. Thus, we use `nullptr` here and we save the
-    // parent in accessible_parent_ which doesn't need to be a CaptureViewElement.
     : orbit_gl::CaptureViewElement(nullptr, viewport, time_graph_layout),
-      accessible_parent_{parent},
       layout_{time_graph_layout},
       batcher_(BatcherId::kTimeGraph),
       primitive_assembler_(&batcher_, render_group_manager, picking_manager),
@@ -927,8 +922,4 @@ bool TimeGraph::IsVisible(VisibilityType vis_type, uint64_t min, uint64_t max) c
 std::vector<orbit_gl::CaptureViewElement*> TimeGraph::GetAllChildren() const {
   return {GetTimelineUi(),  GetTrackContainer(), GetHorizontalSlider(), GetPlusButton(),
           GetMinusButton(), GetVerticalSlider(), GetTrackHeaderSizer()};
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface> TimeGraph::CreateAccessibleInterface() {
-  return std::make_unique<orbit_gl::AccessibleTimeGraph>(this);
 }

@@ -14,7 +14,6 @@
 
 #include "ClientFlags/ClientFlags.h"
 #include "DisplayFormats/DisplayFormats.h"
-#include "OrbitGl/AccessibleCaptureViewElement.h"
 #include "OrbitGl/CoreMath.h"
 #include "OrbitGl/Geometry.h"
 #include "OrbitGl/GlCanvas.h"
@@ -226,10 +225,6 @@ void TimelineUi::DoUpdatePrimitives(PrimitiveAssembler& primitive_assembler,
   UpdateNumDecimalsInLabels(min_timestamp_ns, max_timestamp_ns);
   RenderLines(primitive_assembler, min_timestamp_ns, max_timestamp_ns);
   RenderLabels(primitive_assembler, text_renderer, min_timestamp_ns, max_timestamp_ns);
-}
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface> TimelineUi::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleCaptureViewElement>(this, "Timeline");
 }
 
 }  // namespace orbit_gl

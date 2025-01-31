@@ -10,7 +10,6 @@
 #include <functional>
 #include <memory>
 
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitGl/CaptureViewElement.h"
 #include "OrbitGl/PrimitiveAssembler.h"
 #include "OrbitGl/TextRenderer.h"
@@ -49,8 +48,6 @@ class TriangleToggle : public orbit_gl::CaptureViewElement,
  protected:
   void DoDraw(orbit_gl::PrimitiveAssembler& primitive_assembler,
               orbit_gl::TextRenderer& text_renderer, const DrawContext& draw_context) override;
-
-  std::unique_ptr<orbit_accessibility::AccessibleInterface> CreateAccessibleInterface() override;
 
  private:
   float height_ = 20;

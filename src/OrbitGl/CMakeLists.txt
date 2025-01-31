@@ -11,13 +11,7 @@ target_compile_definitions(OrbitGl PUBLIC WIN32_LEAN_AND_MEAN)
 
 target_sources(
   OrbitGl
-  PUBLIC include/OrbitGl/AccessibleButton.h
-         include/OrbitGl/AccessibleCaptureViewElement.h
-         include/OrbitGl/AccessibleInterfaceProvider.h
-         include/OrbitGl/AccessibleTimeGraph.h
-         include/OrbitGl/AccessibleTrack.h
-         include/OrbitGl/AccessibleTriangleToggle.h
-         include/OrbitGl/AnnotationTrack.h
+  PUBLIC include/OrbitGl/AnnotationTrack.h
          include/OrbitGl/AsyncTrack.h
          include/OrbitGl/BasicPageFaultsTrack.h
          include/OrbitGl/Batcher.h
@@ -97,11 +91,7 @@ target_sources(
 
 target_sources(
   OrbitGl
-  PRIVATE AccessibleCaptureViewElement.cpp
-          AccessibleInterfaceProvider.cpp
-          AccessibleTrack.cpp
-          AccessibleTriangleToggle.cpp
-          AnnotationTrack.cpp
+  PRIVATE AnnotationTrack.cpp
           AsyncTrack.cpp
           BasicPageFaultsTrack.cpp
           Batcher.cpp
@@ -182,7 +172,6 @@ target_link_libraries(
          DisplayFormats
          GrpcProtos
          Http
-         OrbitAccessibility
          OrbitBase
          OrbitPaths
          OrbitVersion

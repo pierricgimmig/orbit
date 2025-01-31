@@ -47,7 +47,6 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
 #include "OrbitPaths/Paths.h"
-#include "OrbitQt/AccessibilityAdapter.h"
 #include "OrbitQt/opengldetect.h"
 #include "OrbitQt/orbitmainwindow.h"
 #include "OrbitSsh/Context.h"
@@ -126,7 +125,6 @@ int RunUiInstance(const DeploymentConfiguration& deployment_configuration,
     }
 
     int application_return_code = 0;
-    orbit_qt::InstallAccessibilityFactories();
 
     {  // Scoping of QT UI Resources
 

@@ -27,9 +27,8 @@ class UnitTestTimeGraph : public testing::Test {
     capture_data_ = TrackTestData::GenerateTestCaptureData();
     // Make the viewport big enough to account for a left margin.
     viewport_ = std::make_unique<Viewport>(1000, 200);
-    time_graph_ =
-        std::make_unique<TimeGraph>(nullptr, nullptr, viewport_.get(), capture_data_.get(), nullptr,
-                                    nullptr, &time_graph_layout_);
+    time_graph_ = std::make_unique<TimeGraph>(nullptr, viewport_.get(), capture_data_.get(),
+                                              nullptr, nullptr, &time_graph_layout_);
     time_graph_->ZoomAll();
   }
 

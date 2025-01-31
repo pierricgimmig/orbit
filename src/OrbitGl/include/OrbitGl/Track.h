@@ -22,7 +22,6 @@
 #include "ClientProtos/capture_data.pb.h"
 #include "Containers/BlockChain.h"
 #include "GteVector.h"
-#include "OrbitAccessibility/AccessibleInterface.h"
 #include "OrbitBase/Profiling.h"
 #include "OrbitBase/ThreadConstants.h"
 #include "OrbitGl/CaptureViewElement.h"
@@ -138,8 +137,6 @@ class Track : public orbit_gl::CaptureViewElement,
 
   [[nodiscard]] EventResult OnMouseEnter() override;
   [[nodiscard]] EventResult OnMouseLeave() override;
-
-  std::unique_ptr<orbit_accessibility::AccessibleInterface> CreateAccessibleInterface() override;
 
   bool pinned_ = false;
   bool headless_ = false;

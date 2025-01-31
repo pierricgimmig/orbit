@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <cmath>
 
-#include "OrbitGl/AccessibleCaptureViewElement.h"
 #include "OrbitGl/Geometry.h"
 #include "OrbitGl/GlCanvas.h"
 #include "OrbitGl/PickingManager.h"
@@ -275,11 +274,6 @@ void GlVerticalSlider::DoDraw(PrimitiveAssembler& primitive_assembler,
 
 float GlVerticalSlider::GetBarPixelLength() const { return GetHeight(); }
 
-std::unique_ptr<orbit_accessibility::AccessibleInterface>
-GlVerticalSlider::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleCaptureViewElement>(this, "Vertical Slider");
-}
-
 void GlHorizontalSlider::DoDraw(PrimitiveAssembler& primitive_assembler,
                                 TextRenderer& /*text_renderer*/,
                                 const DrawContext& /*draw_context*/) {
@@ -347,10 +341,5 @@ void GlHorizontalSlider::DoDraw(PrimitiveAssembler& primitive_assembler,
 }
 
 float GlHorizontalSlider::GetBarPixelLength() const { return GetWidth(); }
-
-std::unique_ptr<orbit_accessibility::AccessibleInterface>
-GlHorizontalSlider::CreateAccessibleInterface() {
-  return std::make_unique<AccessibleCaptureViewElement>(this, "Horizontal Slider");
-}
 
 }  // namespace orbit_gl
