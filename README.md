@@ -95,21 +95,21 @@ preset so that you won't have to do this manually again. To save a preset, go to
 
 #### Debug
 ```
-conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_debug --build=missing -of build_gcc17_debug
+conan install . -pr:a contrib/conan/profiles/linux/gcc17_debug --build=missing -of build_gcc17_debug
 cmake -B build_gcc17_debug -DCMAKE_TOOLCHAIN_FILE=build_gcc17_debug/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug .
 cmake --build build_gcc17_debug --parallel
 ```
 
 #### RelWithDebInfo
 ```
-conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
+conan install . -pr:a contrib/conan/profiles/linux/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
 cmake -B build_gcc17_relwithdebinfo -DCMAKE_TOOLCHAIN_FILE=build_gcc17_relwithdebinfo/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
 cmake --build build_gcc17_relwithdebinfo --parallel
 ```
 
 #### Release
 ```
-conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_release --build=missing -of build_gcc17_release
+conan install . -pr:a contrib/conan/profiles/linux/gcc17_release --build=missing -of build_gcc17_release
 cmake -B build_gcc17_release -DCMAKE_TOOLCHAIN_FILE=build_gcc17_release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release .
 cmake --build build_gcc17_release --parallel
 ```
