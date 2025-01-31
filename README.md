@@ -62,9 +62,37 @@ they are deprecated and mostly undocumented.
 
 ## Build
 
-Please have a look at the first three sections of our
-[development documentation](DEVELOPMENT.md). It describes how to build Orbit and
-which compilers, platforms, and tools are supported and needed.
+### Windows
+```
+conan install . --build="abseil/*" --build="protobuf/*" --build="grpc/*" --build=missing
+cd build
+cmake -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake ..
+cmake --build . --config Release
+```
+
+### Linux
+
+#### Debug
+```
+conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_debug --build=missing -of build_gcc17_debug
+cmake -B build_gcc17_debug -DCMAKE_TOOLCHAIN_FILE=build_gcc17_debug/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug .
+cmake --build build_gcc17_debug --parallel
+```
+
+#### RelWithDebInfo
+```
+conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
+cmake -B build_gcc17_relwithdebinfo -DCMAKE_TOOLCHAIN_FILE=build_gcc17_relwithdebinfo/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
+cmake --build build_gcc17_relwithdebinfo --parallel
+```
+
+#### Release
+```
+conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_release --build=missing -of build_gcc17_release
+cmake -B build_gcc17_release -DCMAKE_TOOLCHAIN_FILE=build_gcc17_release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release .
+cmake --build build_gcc17_release --parallel
+```
+
 
 ## Workflow
 
@@ -96,30 +124,6 @@ Once you have loaded the debug information for your modules and have chosen
 functions of interest to dynamically instrument, you can save your profiling
 preset so that you won't have to do this manually again. To save a preset, go to
 **File** > **Save Preset**
-
-### Feedback
-
-Questions and comments are more than welcome: please open an
-[issue](https://github.com/google/orbit/issues/new).
-
-## About
-
-Orbit was created by [Pierric Gimmig](https://www.linkedin.com/in/pgimmig/), but
-is now developed and maintained by a team of engineers at Google. The current
-maintainers are:
-* [@akopich](https://github.com/akopich)
-* [@antonrohr](https://github.com/antonrohr)
-* [@beckerhe](https://github.com/beckerhe)
-* [@danielfenner](https://github.com/danielfenner)
-* [@dimitry-](https://github.com/dimitry-)
-* [@dpallotti](https://github.com/dpallotti)
-* [@florian-kuebler](https://github.com/florian-kuebler)
-* [@karupayun](https://github.com/karupayun)
-* [@pierricgimmig](https://github.com/pierricgimmig)
-* [@reichlfl](https://github.com/reichlfl)
-* [@ronaldfw](https://github.com/ronaldfw)
-* [@vickyliu-go4it](https://github.com/vickyliu-go4it)
-* [@vwbaker](https://github.com/vwbaker)
 
 ## License
 
@@ -158,28 +162,3 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 [orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png
-
-
-To compile on Windows:
-conan install . --build="abseil/*" --build="protobuf/*" --build="grpc/*" --build=missing
-cd build
-cmake -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake ..
-cmake --build . --config Release
-
-
-To compile on Linux:
-
-Debug example:
-conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_debug --build=missing -of build_gcc17_debug
-cmake -B build_gcc17_debug -DCMAKE_TOOLCHAIN_FILE=build_gcc17_debug/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug .
-cmake --build build_gcc17_debug --parallel
-
-RelWithDebInfo example:
-conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
-cmake -B build_gcc17_relwithdebinfo -DCMAKE_TOOLCHAIN_FILE=build_gcc17_relwithdebinfo/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
-cmake --build build_gcc17_relwithdebinfo --parallel
-
-Release example:
-conan install . -pr:a third_party/conan/configs/linux/profiles/gcc17_release --build=missing -of build_gcc17_release
-cmake -B build_gcc17_release -DCMAKE_TOOLCHAIN_FILE=build_gcc17_release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release .
-cmake --build build_gcc17_release --parallel
