@@ -21,9 +21,9 @@ class OrbitDeps(ConanFile):
         self.requires("outcome/2.2.9")
         self.requires("llvm-core/13.0.0")
         if self.settings.os != "Windows":
-            self.requires("volk/1.3.268.0")
-            self.requires("vulkan-headers/1.3.290.0")
-            self.requires("vulkan-validationlayers/1.3.290.0")
+            self.requires("volk/1.3.239.0")
+            self.requires("vulkan-headers/1.3.239")
+            #self.requires("vulkan-validationlayers/1.3.239.0")
         self.requires("zlib/1.3.1", override=True)
         self.requires("openssl/3.3.2", override=True)
         self.requires("libssh2/1.11.0")
@@ -34,5 +34,5 @@ class OrbitDeps(ConanFile):
         self.tool_requires("gtest/1.15.0")
 
     def layout(self):
-        self.folders.build = "build"
-        self.folders.generators = "build/generators"
+        self.folders.generators = "generators"
+        
