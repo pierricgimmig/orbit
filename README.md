@@ -59,17 +59,12 @@ they are deprecated and mostly undocumented.
 
 ## Workflow
 
-> **Note** An extensive documentation of the usage of Orbit can be found in our
-> [usage documentation](documentation/DOCUMENTATION.md).
-
 The following describes the basic workflow of Orbit:
 1. Select a process in the list of currently running processes in the connection
    setup dialog, and click **Start Session**.
 2. The list of loaded modules will appear at the top of the **Symbols** tab.
 3. Orbit tries to automatically retrieve debug information of the modules.
-   See [here](documentation/DOCUMENTATION.md#load-symbols) on how to load
-   symbols for modules Orbit failed to load. For successfully loaded module
-   symbols, the **Functions** tab will get populated.
+   For successfully loaded module symbols, the **Functions** tab will get populated.
 4. Select functions you wish to dynamically instrument in the **Functions** tab
    by <kbd>Right-Click</kbd> and choosing **Hook**.
 5. Start profiling by pressing <kbd>F5</kbd>. To stop profiling, press
