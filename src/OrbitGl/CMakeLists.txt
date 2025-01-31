@@ -7,6 +7,8 @@ cmake_minimum_required(VERSION 3.15)
 project(OrbitGl CXX)
 add_library(OrbitGl STATIC)
 
+target_compile_definitions(OrbitGl PUBLIC WIN32_LEAN_AND_MEAN)
+
 target_sources(
   OrbitGl
   PUBLIC include/OrbitGl/AccessibleButton.h
@@ -246,7 +248,7 @@ target_sources(OrbitGlTests PRIVATE
 target_link_libraries(
   OrbitGlTests
   PRIVATE OrbitGl
-          GTest::Main)
+          GTest_Main)
 
 register_test(OrbitGlTests)
 

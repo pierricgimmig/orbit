@@ -38,10 +38,6 @@ target_link_libraries(CaptureClient PUBLIC
         GrpcProtos
         Introspection)
 
-add_fuzzer(CaptureEventProcessorProcessEventsFuzzer CaptureEventProcessorProcessEventsFuzzer.cpp)
-target_link_libraries(CaptureEventProcessorProcessEventsFuzzer
-        PRIVATE CaptureClient FuzzingUtils)
-
 add_executable(CaptureClientTests)
 
 target_sources(CaptureClientTests PRIVATE
@@ -55,6 +51,6 @@ target_sources(CaptureClientTests PRIVATE
 target_link_libraries(CaptureClientTests PRIVATE
         CaptureClient
         TestUtils
-        GTest::Main)
+        GTest_Main)
 
 register_test(CaptureClientTests)

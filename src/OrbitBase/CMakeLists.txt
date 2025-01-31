@@ -17,7 +17,6 @@ target_include_directories(OrbitBase PRIVATE
 target_sources(OrbitBase PRIVATE
         include/OrbitBase/Action.h
         include/OrbitBase/Align.h
-        include/OrbitBase/AnyErrorOf.h
         include/OrbitBase/AnyInvocable.h
         include/OrbitBase/AnyMovable.h
         include/OrbitBase/Append.h
@@ -109,7 +108,6 @@ add_executable(OrbitBaseTests)
 target_sources(OrbitBaseTests PRIVATE
         AlignTest.cpp
         AnyInvocableTest.cpp
-        AnyErrorOfTest.cpp
         AnyMovableTest.cpp
         AppendTest.cpp
         CanceledOrTest.cpp
@@ -166,6 +164,6 @@ target_link_libraries(OrbitBaseTests PRIVATE
         OrbitBase
         TestUtils
         GTest::gtest
-        GTest::Main)
+        GTest_Main)
 
 register_test(OrbitBaseTests)
