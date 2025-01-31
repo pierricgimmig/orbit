@@ -1,4 +1,0 @@
-include(msvc2019_common)
-
-[settings]
-build_type=Debug
