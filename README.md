@@ -86,9 +86,9 @@ preset so that you won't have to do this manually again. To save a preset, go to
 ## Build
 
 ### Requirements
-- python 3
-- cmake: `pip install cmake`
-- conan: `pip install conan`
+- Python 3
+- CMake: `pip install cmake`
+- Conan 2: `pip install conan`
 - Qt5: `sudo apt install qtbase5-dev`
 
 ### Linux
