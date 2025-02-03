@@ -13,10 +13,26 @@
 #include "LinuxTracingUtils.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Profiling.h"
+#include "OrbitBase/ReadFileToString.h"
 #include "OrbitBase/SafeStrerror.h"
 
 namespace orbit_linux_tracing {
 namespace {
+
+uint32_t read_uint32_from_file(std::filesystem::path file) {
+  return std::stoul(orbit_base::ReadFileToString(file).value());
+}
+
+uint32_t uprobe_type() {
+  static uint32_t uprobe_type = read_uint32_from_file("/sys/bus/event_source/devices/uprobe/type");
+  return uprobe_type;
+}
+
+uint32_t max_stack() {
+  static uint32_t max_stack = read_uint32_from_file("/proc/sys/kernel/perf_event_max_stack");
+  return max_stack;
+}
+
 perf_event_attr generic_event_attr() {
   perf_event_attr pe{};
   pe.size = sizeof(struct perf_event_attr);
@@ -40,9 +56,7 @@ int generic_event_open(perf_event_attr* attr, pid_t pid, int32_t cpu) {
 
 perf_event_attr uprobe_event_attr(const char* module, uint64_t function_offset) {
   perf_event_attr pe = generic_event_attr();
-
-  pe.type = 7;                                    // TODO: should be read from
-                                                  //  "/sys/bus/event_source/devices/uprobe/type"
+  pe.type = uprobe_type();
   pe.config1 = absl::bit_cast<uint64_t>(module);  // pe.config1 == pe.uprobe_path
   pe.config2 = function_offset;                   // pe.config2 == pe.probe_offset
 
@@ -92,8 +106,7 @@ int callchain_sample_event_open(uint64_t period_ns, pid_t pid, int32_t cpu,
   pe.config = PERF_COUNT_SW_CPU_CLOCK;
   pe.sample_period = period_ns;
   pe.sample_type |= PERF_SAMPLE_CALLCHAIN;
-  // TODO(b/239003729): Read this from /proc/sys/kernel/perf_event_max_stack
-  pe.sample_max_stack = 127;
+  pe.sample_max_stack = max_stack();
   pe.exclude_callchain_kernel = true;
 
   // Also capture a small part of the stack and the registers to allow patching the callers of
@@ -203,8 +216,7 @@ int tracepoint_with_callchain_event_open(const char* tracepoint_category,
   pe.type = PERF_TYPE_TRACEPOINT;
   pe.config = tp_id;
   pe.sample_type |= PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_RAW;
-  // TODO(b/239003729): Read this from /proc/sys/kernel/perf_event_max_stack
-  pe.sample_max_stack = 127;
+  pe.sample_max_stack = max_stack();
   pe.exclude_callchain_kernel = true;
 
   // Also capture a small part of the stack and the registers to allow patching the callers of
