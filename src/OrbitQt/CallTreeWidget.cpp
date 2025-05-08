@@ -97,6 +97,7 @@ CallTreeWidget::CallTreeWidget(QWidget* parent)
           &CallTreeWidget::OnSearchTypingFinishedTimerTimeout);
 
   if (IsSliderEnabled()) {
+    ui_->horizontalSlider->setValue(100);
     connect(ui_->horizontalSlider, &QSlider::valueChanged, this,
             &CallTreeWidget::OnSliderValueChanged);
   } else {
@@ -220,12 +221,10 @@ static void ExpandRecursivelyWithThreshold(QTreeView* tree_view, const QModelInd
 
 void CallTreeWidget::SetTopDownView(std::shared_ptr<const CallTreeView> top_down_view) {
   // Expand recursively if CallTreeView contains information for a single thread.
-  bool should_expand = IsSliderEnabled() && top_down_view->GetCallTreeRoot()->thread_count() == 1;
-
   SetCallTreeView(std::move(top_down_view),
                   std::make_unique<HideValuesForTopDownProxyModel>(nullptr));
 
-  if (should_expand) {
+  if (IsSliderEnabled()) {
     float expansion_threshold = 100.f - ui_->horizontalSlider->value();
     ExpandRecursivelyWithThreshold(
         ui_->callTreeTreeView, ui_->callTreeTreeView->model()->index(0, 0), expansion_threshold);
@@ -237,6 +236,12 @@ void CallTreeWidget::SetBottomUpView(std::shared_ptr<const CallTreeView> bottom_
                   std::make_unique<HideValuesForBottomUpProxyModel>(nullptr));
   // Don't show the "Exclusive" column for the bottom-up tree, it provides no useful information.
   ui_->callTreeTreeView->hideColumn(CallTreeViewItemModel::kExclusive);
+
+  if (IsSliderEnabled()) {
+    float expansion_threshold = 100.f - ui_->horizontalSlider->value();
+    ExpandRecursivelyWithThreshold(
+        ui_->callTreeTreeView, ui_->callTreeTreeView->model()->index(0, 0), expansion_threshold);
+  }
 }
 
 void CallTreeWidget::SetInspection() { ui_->inspectionNoticeWidget->show(); }
