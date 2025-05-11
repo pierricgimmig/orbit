@@ -72,7 +72,7 @@ using orbit_client_data::ModuleManager;
   return is_float ? std::optional<float>(value) : std::optional<float>(std::nullopt);
 }
 
-[[nodiscard]] static bool IsSliderEnabled() { return absl::GetFlag(FLAGS_devmode); }
+[[nodiscard]] static bool IsSliderEnabled() { return true; }
 
 CallTreeWidget::CallTreeWidget(QWidget* parent)
     : QWidget{parent}, ui_{std::make_unique<Ui::CallTreeWidget>()} {
