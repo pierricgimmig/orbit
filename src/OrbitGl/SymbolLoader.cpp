@@ -297,9 +297,7 @@ static ErrorMessageOr<std::filesystem::path> FindModuleLocallyImpl(
   }
 
   if (module_data.build_id().empty()) {
-    return ErrorMessage(
-        absl::StrFormat("Unable to find local symbols for module \"%s\": build id is empty.",
-                        module_data.file_path()));
+    ORBIT_LOG("WARNING: build id is empty for module \"%s\"", module_data.file_path());
   }
 
   // Note that the bullet points in the ErrorMessage constructed by this function are indented (by

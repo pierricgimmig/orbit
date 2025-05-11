@@ -324,9 +324,7 @@ ErrorMessageOr<orbit_base::NotFoundOr<fs::path>> FindSymbolsFilePath(
     const std::unique_ptr<SymbolsFile>& symbols_file{symbols_file_or_error.value()};
 
     if (symbols_file->GetBuildId().empty()) {
-      not_found_messages.push_back(
-          absl::StrFormat("Potential symbols file \"%s\" does not have a build id.", search_path));
-      continue;
+      ORBIT_LOG("WARNING: build id is empty for module \"%s\"", search_path.string());
     }
 
     if (symbols_file->GetBuildId() != build_id) {

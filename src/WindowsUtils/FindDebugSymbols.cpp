@@ -95,9 +95,7 @@ ErrorMessageOr<std::filesystem::path> FindDebugSymbols(
     const std::unique_ptr<SymbolsFile>& symbols_file{symbols_file_or_error.value()};
 
     if (symbols_file->GetBuildId().empty()) {
-      error_messages.push_back(absl::StrFormat(
-          "Potential symbols file \"%s\" does not have a build id.", search_path.string()));
-      continue;
+      ORBIT_LOG("WARNING: build id is empty for %s", search_path.string());
     }
 
     if (symbols_file->GetBuildId() != build_id) {

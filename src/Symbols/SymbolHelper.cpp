@@ -186,11 +186,7 @@ ErrorMessageOr<fs::path> SymbolHelper::FindSymbolsFileLocally(
     const fs::path& module_path, std::string_view build_id,
     const ModuleInfo::ObjectFileType& object_file_type, absl::Span<const fs::path> paths) {
   ORBIT_SCOPE(absl::StrFormat("FindSymbolsFileLocally [%s]", module_path.string()).c_str());
-  if (build_id.empty()) {
-    return ErrorMessage(absl::StrFormat(
-        "Could not find symbols file for module \"%s\", because it does not contain a build id.",
-        module_path.string()));
-  }
+  ORBIT_LOG("WARNING: build id is empty for module \"%s\"", module_path.string());
 
   // structured debug directories is only supported for elf files
   if (object_file_type == ModuleInfo::kElfFile) {
