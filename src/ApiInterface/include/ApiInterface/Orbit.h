@@ -438,10 +438,21 @@ struct Scope {
 #else
 // Retrieve the program counter with inline assembly, instead of using ORBIT_GET_CALLER_PC() in
 // Scope::Scope and forcing that constructor to be noinline.
+#if defined(__x86_64__)
 #define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID_INTERNAL(name, col, group_id, pc_name) \
   uint64_t pc_name;                                                                \
   asm("lea (%%rip), %0" : "=r"(pc_name) : :);                                      \
   orbit_api::Scope ORBIT_VAR(name, col, group_id, pc_name)
+#elif defined(__aarch64__)
+#define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID_INTERNAL(name, col, group_id, pc_name) \
+  uint64_t pc_name;                                                                \
+  asm("adr %0, ." : "=r"(pc_name) : :);                                            \
+  orbit_api::Scope ORBIT_VAR(name, col, group_id, pc_name)
+#else
+// Fallback: use noinline approach with ORBIT_GET_CALLER_PC()
+#define ORBIT_SCOPE_WITH_COLOR_AND_GROUP_ID_INTERNAL(name, col, group_id, pc_name) \
+  orbit_api::Scope ORBIT_VAR(name, col, group_id, ORBIT_GET_CALLER_PC())
+#endif
 
 namespace orbit_api {
 struct Scope {

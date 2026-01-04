@@ -543,8 +543,9 @@ void UprobesUnwindingVisitor::Visit(uint64_t event_timestamp,
 
 void UprobesUnwindingVisitor::Visit(uint64_t event_timestamp,
                                     const UprobesWithArgumentsPerfEventData& event_data) {
-  OnUprobes(event_timestamp, event_data.tid, event_data.cpu, event_data.regs.sp, event_data.regs.ip,
-            event_data.return_address, event_data.regs, event_data.function_id);
+  OnUprobes(event_timestamp, event_data.tid, event_data.cpu, event_data.regs.sp,
+            event_data.regs.GetInstructionPointer(), event_data.return_address, event_data.regs,
+            event_data.function_id);
 }
 
 void UprobesUnwindingVisitor::OnUretprobes(uint64_t timestamp_ns, pid_t pid, pid_t tid,

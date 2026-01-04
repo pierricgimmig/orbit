@@ -19,7 +19,10 @@ class OrbitDeps(ConanFile):
         self.requires("grpc/1.67.1")
         self.requires("gtest/1.15.0")
         self.requires("outcome/2.2.9")
-        self.requires("llvm-core/13.0.0")
+        # llvm-core doesn't support cross-compilation in Conan.
+        # For ARM64, use system LLVM packages installed in the Docker container.
+        if self.settings.arch != "armv8":
+            self.requires("llvm-core/13.0.0")
         if self.settings.os != "Windows":
             self.requires("volk/1.3.239.0")
             self.requires("vulkan-headers/1.3.239")

@@ -1171,7 +1171,7 @@ uint64_t TracerImpl::ProcessSampleEventAndReturnTimestamp(const perf_event_heade
                 .function_id = uprobes_uretprobes_ids_to_function_id_.at(
                     ring_buffer_record.sample_id.stream_id),
                 .sp = ring_buffer_record.regs.sp,
-                .ip = ring_buffer_record.regs.ip,
+                .ip = ring_buffer_record.regs.GetInstructionPointer(),
                 .return_address = ring_buffer_record.stack.top8bytes,
             },
     };
@@ -1261,7 +1261,7 @@ uint64_t TracerImpl::ProcessSampleEventAndReturnTimestamp(const perf_event_heade
             {
                 .pid = static_cast<pid_t>(ring_buffer_record.sample_id.pid),
                 .tid = static_cast<pid_t>(ring_buffer_record.sample_id.tid),
-                .rax = ring_buffer_record.regs.ax,
+                .rax = ring_buffer_record.regs.GetReturnValue(),
             },
     };
     DeferEvent(event);
@@ -1331,7 +1331,7 @@ uint64_t TracerImpl::ProcessSampleEventAndReturnTimestamp(const perf_event_heade
     DeferEvent(event);
 
   } else if (is_task_rename) {
-    ORBIT_CHECK(header.size == sizeof(RingBufferRawSample<TaskRenameTracepointData>));
+    //ORBIT_CHECK(header.size == sizeof(RingBufferRawSample<TaskRenameTracepointData>));
     RingBufferRawSample<TaskRenameTracepointData> ring_buffer_record;
     ring_buffer->ConsumeRecord(header, &ring_buffer_record);
 

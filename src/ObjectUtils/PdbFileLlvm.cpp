@@ -352,7 +352,9 @@ std::array<uint8_t, 16> PdbFileLlvm::GetGuid() const {
 }
 
 uint32_t PdbFileLlvm::GetAge() const {
-  auto* native_session = dynamic_cast<llvm::pdb::NativeSession*>(session_.get());
+  // Use static_cast since we know session_ is always a NativeSession (created by loadDataForPDB)
+  // and LLVM is built without RTTI so dynamic_cast is not available
+  auto* native_session = static_cast<llvm::pdb::NativeSession*>(session_.get());
   ORBIT_CHECK(native_session != nullptr);
   llvm::pdb::PDBFile& pdb_file = native_session->getPDBFile();
   ORBIT_CHECK(pdb_file.hasPDBDbiStream());
@@ -363,7 +365,8 @@ uint32_t PdbFileLlvm::GetAge() const {
 }
 
 [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> PdbFileLlvm::LoadDebugSymbols() {
-  auto* native_session = dynamic_cast<llvm::pdb::NativeSession*>(session_.get());
+  // Use static_cast since we know session_ is always a NativeSession (created by loadDataForPDB)
+  auto* native_session = static_cast<llvm::pdb::NativeSession*>(session_.get());
   ORBIT_CHECK(native_session != nullptr);
   llvm::pdb::PDBFile& pdb_file = native_session->getPDBFile();
 
@@ -433,7 +436,8 @@ uint32_t PdbFileLlvm::GetAge() const {
 
 static bool PdbHasDbiStream(llvm::pdb::IPDBSession* session) {
   ORBIT_CHECK(session != nullptr);
-  auto* native_session = dynamic_cast<llvm::pdb::NativeSession*>(session);
+  // Use static_cast since we know session is always a NativeSession (created by loadDataForPDB)
+  auto* native_session = static_cast<llvm::pdb::NativeSession*>(session);
   ORBIT_CHECK(native_session != nullptr);
   llvm::pdb::PDBFile& pdb_file = native_session->getPDBFile();
   if (!pdb_file.hasPDBDbiStream()) {

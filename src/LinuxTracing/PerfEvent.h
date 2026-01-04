@@ -26,9 +26,18 @@
 
 namespace orbit_linux_tracing {
 
+// Architecture-aware constant for the maximum number of perf registers.
+#if defined(__x86_64__)
+static constexpr size_t kPerfRegMax = PERF_REG_X86_64_MAX;
+#elif defined(__aarch64__)
+static constexpr size_t kPerfRegMax = PERF_REG_ARM64_MAX;
+#else
+#error "Unsupported architecture"
+#endif
+
 class PerfEventVisitor;
 
-[[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX>
+[[nodiscard]] std::array<uint64_t, kPerfRegMax>
 perf_event_sample_regs_user_all_to_register_array(const RingBufferSampleRegsUserAll& regs);
 
 // This template class holds data from a specific perf_event_open event, based on the type argument.
@@ -71,7 +80,7 @@ struct StackSamplePerfEventData {
     std::memcpy(&registers, regs.get(), sizeof(registers));
     return registers;
   }
-  [[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX> GetRegistersAsArray() const {
+  [[nodiscard]] std::array<uint64_t, kPerfRegMax> GetRegistersAsArray() const {
     return perf_event_sample_regs_user_all_to_register_array(GetRegisters());
   }
   [[nodiscard]] const uint8_t* GetStackData() const { return data.get(); }
@@ -99,7 +108,7 @@ struct CallchainSamplePerfEventData {
     std::memcpy(&registers, regs.get(), sizeof(registers));
     return registers;
   }
-  [[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX> GetRegistersAsArray() const {
+  [[nodiscard]] std::array<uint64_t, kPerfRegMax> GetRegistersAsArray() const {
     return perf_event_sample_regs_user_all_to_register_array(GetRegisters());
   }
   [[nodiscard]] const uint8_t* GetStackData() const { return data.get(); }
@@ -274,7 +283,7 @@ using DmaFenceSignaledPerfEvent = TypedPerfEvent<DmaFenceSignaledPerfEventData>;
 struct SchedWakeupWithCallchainPerfEventData {
   [[nodiscard]] const uint64_t* GetCallchain() const { return ips.get(); }
   [[nodiscard]] uint64_t GetCallchainSize() const { return ips_size; }
-  [[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX> GetRegistersAsArray() const {
+  [[nodiscard]] std::array<uint64_t, kPerfRegMax> GetRegistersAsArray() const {
     return perf_event_sample_regs_user_all_to_register_array(GetRegisters());
   }
   [[nodiscard]] RingBufferSampleRegsUserAll GetRegisters() const {
@@ -309,7 +318,7 @@ using SchedWakeupWithCallchainPerfEvent = TypedPerfEvent<SchedWakeupWithCallchai
 struct SchedSwitchWithCallchainPerfEventData {
   [[nodiscard]] const uint64_t* GetCallchain() const { return ips.get(); }
   [[nodiscard]] uint64_t GetCallchainSize() const { return ips_size; }
-  [[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX> GetRegistersAsArray() const {
+  [[nodiscard]] std::array<uint64_t, kPerfRegMax> GetRegistersAsArray() const {
     return perf_event_sample_regs_user_all_to_register_array(GetRegisters());
   }
   [[nodiscard]] RingBufferSampleRegsUserAll GetRegisters() const {
@@ -344,7 +353,7 @@ struct SchedSwitchWithCallchainPerfEventData {
 using SchedSwitchWithCallchainPerfEvent = TypedPerfEvent<SchedSwitchWithCallchainPerfEventData>;
 
 struct SchedWakeupWithStackPerfEventData {
-  [[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX> GetRegistersAsArray() const {
+  [[nodiscard]] std::array<uint64_t, kPerfRegMax> GetRegistersAsArray() const {
     return perf_event_sample_regs_user_all_to_register_array(GetRegisters());
   }
   [[nodiscard]] RingBufferSampleRegsUserAll GetRegisters() const {
@@ -371,7 +380,7 @@ struct SchedWakeupWithStackPerfEventData {
 using SchedWakeupWithStackPerfEvent = TypedPerfEvent<SchedWakeupWithStackPerfEventData>;
 
 struct SchedSwitchWithStackPerfEventData {
-  [[nodiscard]] std::array<uint64_t, PERF_REG_X86_64_MAX> GetRegistersAsArray() const {
+  [[nodiscard]] std::array<uint64_t, kPerfRegMax> GetRegistersAsArray() const {
     return perf_event_sample_regs_user_all_to_register_array(GetRegisters());
   }
   [[nodiscard]] RingBufferSampleRegsUserAll GetRegisters() const {

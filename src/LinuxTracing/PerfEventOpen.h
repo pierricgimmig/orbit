@@ -72,6 +72,7 @@ static constexpr uint64_t kSampleTypeTidTimeStreamidCpu =
 // unwinding.
 // This must be in sync with struct perf_event_sample_regs_user_all in
 // PerfEventRecords.h.
+#if defined(__x86_64__)
 static constexpr uint64_t kSampleRegsUserAll =
     (1lu << PERF_REG_X86_AX) | (1lu << PERF_REG_X86_BX) | (1lu << PERF_REG_X86_CX) |
     (1lu << PERF_REG_X86_DX) | (1lu << PERF_REG_X86_SI) | (1lu << PERF_REG_X86_DI) |
@@ -80,25 +81,64 @@ static constexpr uint64_t kSampleRegsUserAll =
     (1lu << PERF_REG_X86_R8) | (1lu << PERF_REG_X86_R9) | (1lu << PERF_REG_X86_R10) |
     (1lu << PERF_REG_X86_R11) | (1lu << PERF_REG_X86_R12) | (1lu << PERF_REG_X86_R13) |
     (1lu << PERF_REG_X86_R14) | (1lu << PERF_REG_X86_R15);
+#elif defined(__aarch64__)
+// ARM64: x0-x30, sp, pc, pstate
+static constexpr uint64_t kSampleRegsUserAll =
+    (1lu << PERF_REG_ARM64_X0) | (1lu << PERF_REG_ARM64_X1) | (1lu << PERF_REG_ARM64_X2) |
+    (1lu << PERF_REG_ARM64_X3) | (1lu << PERF_REG_ARM64_X4) | (1lu << PERF_REG_ARM64_X5) |
+    (1lu << PERF_REG_ARM64_X6) | (1lu << PERF_REG_ARM64_X7) | (1lu << PERF_REG_ARM64_X8) |
+    (1lu << PERF_REG_ARM64_X9) | (1lu << PERF_REG_ARM64_X10) | (1lu << PERF_REG_ARM64_X11) |
+    (1lu << PERF_REG_ARM64_X12) | (1lu << PERF_REG_ARM64_X13) | (1lu << PERF_REG_ARM64_X14) |
+    (1lu << PERF_REG_ARM64_X15) | (1lu << PERF_REG_ARM64_X16) | (1lu << PERF_REG_ARM64_X17) |
+    (1lu << PERF_REG_ARM64_X18) | (1lu << PERF_REG_ARM64_X19) | (1lu << PERF_REG_ARM64_X20) |
+    (1lu << PERF_REG_ARM64_X21) | (1lu << PERF_REG_ARM64_X22) | (1lu << PERF_REG_ARM64_X23) |
+    (1lu << PERF_REG_ARM64_X24) | (1lu << PERF_REG_ARM64_X25) | (1lu << PERF_REG_ARM64_X26) |
+    (1lu << PERF_REG_ARM64_X27) | (1lu << PERF_REG_ARM64_X28) | (1lu << PERF_REG_ARM64_X29) |
+    (1lu << PERF_REG_ARM64_LR) | (1lu << PERF_REG_ARM64_SP) | (1lu << PERF_REG_ARM64_PC);
+#else
+#error "Unsupported architecture for perf_event register sampling"
+#endif
 
 // This must be in sync with struct perf_event_ax_sample in
 // PerfEventRecords.h.
+// On ARM64, x0 is used for return values (equivalent to AX on x86_64).
+#if defined(__x86_64__)
 static constexpr uint64_t kSampleRegsUserAx = (1lu << PERF_REG_X86_AX);
+#elif defined(__aarch64__)
+static constexpr uint64_t kSampleRegsUserAx = (1lu << PERF_REG_ARM64_X0);
+#endif
 
 // This must be in sync with struct perf_event_sample_regs_user_sp_ip
 // in PerfEventRecords.h.
+#if defined(__x86_64__)
 static constexpr uint64_t kSampleRegsUserSpIp = (1lu << PERF_REG_X86_SP) | (1lu << PERF_REG_X86_IP);
+#elif defined(__aarch64__)
+static constexpr uint64_t kSampleRegsUserSpIp = (1lu << PERF_REG_ARM64_SP) | (1lu << PERF_REG_ARM64_PC);
+#endif
 
 // This must be in sync with struct perf_event_sample_regs_user_sp
 // in PerfEventRecords.h.
+#if defined(__x86_64__)
 static constexpr uint64_t kSampleRegsUserSp = (1lu << PERF_REG_X86_SP);
+#elif defined(__aarch64__)
+static constexpr uint64_t kSampleRegsUserSp = (1lu << PERF_REG_ARM64_SP);
+#endif
 
 // This must be in sync with struct perf_event_sample_regs_user_sp_ip_arguments
 // in PerfEventRecords.h.
+// On ARM64, x0-x7 are used for function arguments (System V ARM64 ABI).
+#if defined(__x86_64__)
 static constexpr uint64_t kSampleRegsUserSpIpArguments =
     (1lu << PERF_REG_X86_CX) | (1lu << PERF_REG_X86_DX) | (1lu << PERF_REG_X86_SI) |
     (1lu << PERF_REG_X86_DI) | (1lu << PERF_REG_X86_SP) | (1lu << PERF_REG_X86_IP) |
     (1lu << PERF_REG_X86_R8) | (1lu << PERF_REG_X86_R9);
+#elif defined(__aarch64__)
+static constexpr uint64_t kSampleRegsUserSpIpArguments =
+    (1lu << PERF_REG_ARM64_X0) | (1lu << PERF_REG_ARM64_X1) | (1lu << PERF_REG_ARM64_X2) |
+    (1lu << PERF_REG_ARM64_X3) | (1lu << PERF_REG_ARM64_X4) | (1lu << PERF_REG_ARM64_X5) |
+    (1lu << PERF_REG_ARM64_X6) | (1lu << PERF_REG_ARM64_X7) | (1lu << PERF_REG_ARM64_SP) |
+    (1lu << PERF_REG_ARM64_PC);
+#endif
 
 static_assert(sizeof(void*) == 8);
 static constexpr uint16_t kSampleStackUserSize8Bytes = 8;

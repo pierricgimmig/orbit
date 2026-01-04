@@ -12,11 +12,10 @@
 #include <vector>
 
 #include "LibunwindstackMultipleOfflineAndProcessMemory.h"
+#include "LibunwindstackUnwinder.h"  // Provides ArchRegs, kArchPerfRegMax
 #include "OrbitBase/Logging.h"
-#include "unwindstack/MachineX86_64.h"
 #include "unwindstack/MapInfo.h"
 #include "unwindstack/Regs.h"
-#include "unwindstack/RegsX86_64.h"
 
 namespace orbit_linux_tracing {
 template <typename CallchainPerfEventDataT>
@@ -27,9 +26,10 @@ orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManager::PatchCaller
   ORBIT_CHECK(current_maps != nullptr);
   ORBIT_CHECK(unwinder != nullptr);
 
-  const uint64_t rbp = event_data->GetRegisters().bp;
-  const uint64_t rsp = event_data->GetRegisters().sp;
-  const uint64_t rip = event_data->GetRegisters().ip;
+  // Use cross-platform accessors for register values
+  const uint64_t rbp = event_data->GetRegisters().GetFramePointer();
+  const uint64_t rsp = event_data->GetRegisters().GetStackPointer();
+  const uint64_t rip = event_data->GetRegisters().GetInstructionPointer();
 
   if (rbp < rsp) {
     return orbit_grpc_protos::Callstack::kFramePointerUnwindingError;
@@ -67,7 +67,7 @@ orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManager::PatchCaller
     return orbit_grpc_protos::Callstack::kComplete;
   }
 
-  unwindstack::RegsX86_64 new_regs = libunwindstack_result.regs();
+  ArchRegs new_regs = libunwindstack_result.regs();
 
   // If both pc and $rsp do not change during unwinding, there was an unwinding error.
   if ((new_regs.pc() == rip && new_regs.sp() == rsp) || libunwindstack_result.frames().empty()) {
@@ -79,7 +79,11 @@ orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManager::PatchCaller
     return orbit_grpc_protos::Callstack::kStackTopDwarfUnwindingError;
   }
 
+#if defined(__x86_64__)
   uint64_t new_rbp = new_regs[unwindstack::X86_64_REG_RBP];
+#elif defined(__aarch64__)
+  uint64_t new_rbp = new_regs[unwindstack::ARM64_REG_R29];  // FP on ARM64
+#endif
   // $rbp changed during unwinding (case (2)), i.e. either it was a valid frame pointer and thus
   // the callchain is already correct, or it was modified as general purpose register (unwinding
   // error).

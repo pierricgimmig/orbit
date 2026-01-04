@@ -1,0 +1,28 @@
+# Conan profile for ARM64 (AArch64) cross-compilation
+# Target: Raspberry Pi 4/5 running 64-bit Linux
+#
+# Usage:
+#   conan install . --profile:build=default --profile:host=conan/profiles/arm64-linux-cross \
+#     --output-folder=build_arm64 --build=missing
+
+[settings]
+os=Linux
+arch=armv8
+compiler=gcc
+compiler.version=11
+compiler.cppstd=17
+compiler.libcxx=libstdc++11
+build_type=Release
+
+[buildenv]
+CC=aarch64-linux-gnu-gcc
+CXX=aarch64-linux-gnu-g++
+AR=aarch64-linux-gnu-ar
+AS=aarch64-linux-gnu-as
+LD=aarch64-linux-gnu-ld
+STRIP=aarch64-linux-gnu-strip
+RANLIB=aarch64-linux-gnu-ranlib
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
+tools.build:compiler_executables={"c": "aarch64-linux-gnu-gcc", "cpp": "aarch64-linux-gnu-g++"}

@@ -8,7 +8,6 @@
 #include <unwindstack/Error.h>
 #include <unwindstack/Memory.h>
 #include <unwindstack/Regs.h>
-#include <unwindstack/RegsX86_64.h>
 
 #include <array>
 #include <cstddef>
@@ -23,15 +22,31 @@
 #include "unwindstack/DwarfStructs.h"
 #include "unwindstack/Elf.h"
 #include "unwindstack/ElfInterface.h"
-#include "unwindstack/MachineX86_64.h"
 #include "unwindstack/MapInfo.h"
 #include "unwindstack/Maps.h"
 #include "unwindstack/Object.h"
 #include "unwindstack/Unwinder.h"
 
+#if defined(__x86_64__)
+#include <unwindstack/MachineX86_64.h>
+#include <unwindstack/RegsX86_64.h>
+#elif defined(__aarch64__)
+#include <unwindstack/MachineArm64.h>
+#include <unwindstack/RegsArm64.h>
+#endif
+
 namespace orbit_linux_tracing {
 
 namespace {
+
+// Architecture-specific constants for register mapping.
+#if defined(__x86_64__)
+static constexpr size_t kUnwindstackRegLast = unwindstack::X86_64_REG_LAST;
+static constexpr unwindstack::ArchEnum kUnwindstackArch = unwindstack::ARCH_X86_64;
+#elif defined(__aarch64__)
+static constexpr size_t kUnwindstackRegLast = unwindstack::ARM64_REG_LAST;
+static constexpr unwindstack::ArchEnum kUnwindstackArch = unwindstack::ARCH_ARM64;
+#endif
 
 class LibunwindstackUnwinderImpl : public LibunwindstackUnwinder {
  public:
@@ -40,7 +55,7 @@ class LibunwindstackUnwinderImpl : public LibunwindstackUnwinder {
       : absolute_address_to_size_of_functions_to_stop_at_{
             absolute_address_to_size_of_functions_to_stop_at} {}
   LibunwindstackResult Unwind(pid_t pid, unwindstack::Maps* maps,
-                              const std::array<uint64_t, PERF_REG_X86_64_MAX>& perf_regs,
+                              const std::array<uint64_t, kArchPerfRegMax>& perf_regs,
                               absl::Span<const StackSliceView> stack_slices,
                               bool offline_memory_only = false,
                               size_t max_frames = kDefaultMaxFrames) override;
@@ -49,7 +64,7 @@ class LibunwindstackUnwinderImpl : public LibunwindstackUnwinder {
                                          unwindstack::Maps* maps) override;
 
  private:
-  static const std::array<size_t, unwindstack::X86_64_REG_LAST> kUnwindstackRegsToPerfRegs;
+  static const std::array<size_t, kUnwindstackRegLast> kUnwindstackRegsToPerfRegs;
 
   std::map<uint64_t, unwindstack::DwarfLocations>
       debug_frame_loc_regs_cache_;  // Single row indexed by pc_end.
@@ -59,19 +74,36 @@ class LibunwindstackUnwinderImpl : public LibunwindstackUnwinder {
   const std::map<uint64_t, uint64_t>* absolute_address_to_size_of_functions_to_stop_at_;
 };
 
-const std::array<size_t, unwindstack::X86_64_REG_LAST>
+#if defined(__x86_64__)
+const std::array<size_t, kUnwindstackRegLast>
     LibunwindstackUnwinderImpl::kUnwindstackRegsToPerfRegs{
         PERF_REG_X86_AX,  PERF_REG_X86_DX,  PERF_REG_X86_CX,  PERF_REG_X86_BX,  PERF_REG_X86_SI,
         PERF_REG_X86_DI,  PERF_REG_X86_BP,  PERF_REG_X86_SP,  PERF_REG_X86_R8,  PERF_REG_X86_R9,
         PERF_REG_X86_R10, PERF_REG_X86_R11, PERF_REG_X86_R12, PERF_REG_X86_R13, PERF_REG_X86_R14,
         PERF_REG_X86_R15, PERF_REG_X86_IP,
     };
+#elif defined(__aarch64__)
+// ARM64 register mapping: unwindstack register index -> perf register index
+// unwindstack ARM64_REG order: x0-x30, sp, pc (see MachineArm64.h)
+const std::array<size_t, kUnwindstackRegLast>
+    LibunwindstackUnwinderImpl::kUnwindstackRegsToPerfRegs{
+        PERF_REG_ARM64_X0,  PERF_REG_ARM64_X1,  PERF_REG_ARM64_X2,  PERF_REG_ARM64_X3,
+        PERF_REG_ARM64_X4,  PERF_REG_ARM64_X5,  PERF_REG_ARM64_X6,  PERF_REG_ARM64_X7,
+        PERF_REG_ARM64_X8,  PERF_REG_ARM64_X9,  PERF_REG_ARM64_X10, PERF_REG_ARM64_X11,
+        PERF_REG_ARM64_X12, PERF_REG_ARM64_X13, PERF_REG_ARM64_X14, PERF_REG_ARM64_X15,
+        PERF_REG_ARM64_X16, PERF_REG_ARM64_X17, PERF_REG_ARM64_X18, PERF_REG_ARM64_X19,
+        PERF_REG_ARM64_X20, PERF_REG_ARM64_X21, PERF_REG_ARM64_X22, PERF_REG_ARM64_X23,
+        PERF_REG_ARM64_X24, PERF_REG_ARM64_X25, PERF_REG_ARM64_X26, PERF_REG_ARM64_X27,
+        PERF_REG_ARM64_X28, PERF_REG_ARM64_X29, PERF_REG_ARM64_LR,  PERF_REG_ARM64_SP,
+        PERF_REG_ARM64_PC,
+    };
+#endif
 
 LibunwindstackResult LibunwindstackUnwinderImpl::Unwind(
-    pid_t pid, unwindstack::Maps* maps, const std::array<uint64_t, PERF_REG_X86_64_MAX>& perf_regs,
+    pid_t pid, unwindstack::Maps* maps, const std::array<uint64_t, kArchPerfRegMax>& perf_regs,
     absl::Span<const StackSliceView> stack_slices, bool offline_memory_only, size_t max_frames) {
-  unwindstack::RegsX86_64 regs{};
-  for (size_t perf_reg = 0; perf_reg < unwindstack::X86_64_REG_LAST; ++perf_reg) {
+  ArchRegs regs{};
+  for (size_t perf_reg = 0; perf_reg < kUnwindstackRegLast; ++perf_reg) {
     regs[perf_reg] = perf_regs.at(kUnwindstackRegsToPerfRegs[perf_reg]);
   }
 
@@ -117,7 +149,7 @@ std::optional<bool> HasFramePointerSetFromDwarfSection(
       return std::nullopt;
     }
     unwindstack::DwarfLocations loc_regs;
-    if (!dwarf_section->GetCfaLocationInfo(rel_pc, fde, &loc_regs, unwindstack::ARCH_X86_64)) {
+    if (!dwarf_section->GetCfaLocationInfo(rel_pc, fde, &loc_regs, kUnwindstackArch)) {
       return std::nullopt;
     }
     cache_it = loc_regs_cache->emplace(loc_regs.pc_end, std::move(loc_regs)).first;
@@ -135,10 +167,18 @@ std::optional<bool> HasFramePointerSetFromDwarfSection(
     //  "Typically, the CFA is defined to be the value of the stack pointer at the call site in the
     //  previous frame (which may be different from its value on entry to the current frame)"
     // So for the frame pointer case, the "value of the stack pointer at the call site" is:
-    // $rbp + 8 (for the prev. frame pointer) + 8 (for the return address)
+    // $rbp + 8 (for the prev. frame pointer) + 8 (for the return address) on x86_64
+    // $x29 + 16 (for the prev. frame pointer + link register) on ARM64
+#if defined(__x86_64__)
     if (loc->values[0] == unwindstack::X86_64_REG_RBP && loc->values[1] == 16) {
       return true;
     }
+#elif defined(__aarch64__)
+    // ARM64 uses x29 (FP) as frame pointer, offset 16 for FP + LR
+    if (loc->values[0] == unwindstack::ARM64_REG_R29 && loc->values[1] == 16) {
+      return true;
+    }
+#endif
   }
 
   return false;
@@ -154,7 +194,7 @@ std::optional<bool> LibunwindstackUnwinderImpl::HasFramePointerSet(uint64_t inst
 
   std::shared_ptr<unwindstack::Memory> process_memory =
       unwindstack::Memory::CreateProcessMemoryCached(pid);
-  unwindstack::Object* object = map_info->GetObject(process_memory, unwindstack::ARCH_X86_64);
+  unwindstack::Object* object = map_info->GetObject(process_memory, kUnwindstackArch);
   if (object == nullptr) {
     return std::nullopt;
   }
