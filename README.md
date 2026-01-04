@@ -123,3 +123,11 @@ cmake --build . --config Release
 ```
 
 [orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png
+
+
+### Raspberry Pi
+```
+./build_arm_service.sh
+scp build_arm64/bin/OrbitService raspberrypi.local:/home/pierric/
+ssh -t -L 44765:127.0.0.1:44765 raspberrypi.local 'sudo ./OrbitService'
+```
