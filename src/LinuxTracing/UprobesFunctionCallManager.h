@@ -57,12 +57,13 @@ class UprobesFunctionCallManager {
       function_call.set_return_value(return_value.value());
     }
     if (open_function.registers.has_value()) {
-      function_call.add_registers(open_function.registers.value().di);
-      function_call.add_registers(open_function.registers.value().si);
-      function_call.add_registers(open_function.registers.value().dx);
-      function_call.add_registers(open_function.registers.value().cx);
-      function_call.add_registers(open_function.registers.value().r8);
-      function_call.add_registers(open_function.registers.value().r9);
+      // Use cross-platform accessors for function arguments
+      function_call.add_registers(open_function.registers.value().GetArg0());
+      function_call.add_registers(open_function.registers.value().GetArg1());
+      function_call.add_registers(open_function.registers.value().GetArg2());
+      function_call.add_registers(open_function.registers.value().GetArg3());
+      function_call.add_registers(open_function.registers.value().GetArg4());
+      function_call.add_registers(open_function.registers.value().GetArg5());
     }
 
     stack_of_open_functions.pop_back();

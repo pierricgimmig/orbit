@@ -96,6 +96,8 @@ if(${CMAKE_SYSTEM_PROCESSOR} MATCHES x86_64)
   target_sources(libunwindstack_common PRIVATE AsmGetRegsX86_64.S)
 elseif(${CMAKE_SYSTEM_PROCESSOR} MATCHES x86)
   target_sources(libunwindstack_common PRIVATE AsmGetRegsX86.S)
+elseif(${CMAKE_SYSTEM_PROCESSOR} MATCHES aarch64)
+  target_sources(libunwindstack_common PRIVATE AsmGetRegsArm64.S)
 endif()
 
 target_sources(libunwindstack_common PUBLIC

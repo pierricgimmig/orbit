@@ -44,11 +44,15 @@ uint64_t GetMaxOpenFilesHardLimit();
 
 bool SetMaxOpenFilesSoftLimit(uint64_t soft_limit);
 
-#if defined(__x86_64__)
-
 #define READ_ONCE(x) (*static_cast<volatile typeof(x)*>(&x))
 #define WRITE_ONCE(x, v) (*static_cast<volatile typeof(x)*>(&x)) = (v)
+
+#if defined(__x86_64__)
 #define barrier() asm volatile("" ::: "memory")
+#elif defined(__aarch64__)
+// ARM64 uses dmb (Data Memory Barrier) for memory ordering
+#define barrier() asm volatile("dmb ish" ::: "memory")
+#endif
 
 #define smp_store_release(p, v) \
   do {                          \
@@ -62,8 +66,6 @@ bool SetMaxOpenFilesSoftLimit(uint64_t soft_limit);
     barrier();                       \
     ___p;                            \
   })
-
-#endif
 
 inline size_t GetPageSize() {
   // POSIX guarantees the result to be greater or equal than 1. So we can safely cast here.

@@ -10,6 +10,17 @@ set(REQUIRED_LLVM_LIBS LLVMDebugInfoCodeView
                         LLVMObject
                         LLVMSymbolize)
 
+# For ARM64 cross-compilation, use system LLVM instead of Conan's llvm-core
+# (Conan's llvm-core doesn't support cross-compilation)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  find_package(LLVM 14 REQUIRED CONFIG
+    HINTS /opt/llvm-arm64/lib/cmake/llvm
+          /usr/lib/llvm-14/cmake
+          /usr/lib/aarch64-linux-gnu/cmake/llvm-14)
+  message(STATUS "Found LLVM ${LLVM_VERSION} for ARM64 at ${LLVM_DIR}")
+  set(ORBIT_USE_SYSTEM_LLVM TRUE)
+endif()
+
 #find_llvm_libs("${REQUIRED_LLVM_LIBS}")
 
 project(ObjectUtils)
@@ -63,8 +74,21 @@ target_link_libraries(
          absl::synchronization
          absl::time
          absl::span
-         llvm-core::llvm-core
          )
+
+# Link LLVM - use system LLVM on ARM64, Conan's llvm-core otherwise
+if(ORBIT_USE_SYSTEM_LLVM)
+  # Use SYSTEM to suppress warnings from LLVM headers (old-style casts, etc.)
+  target_include_directories(ObjectUtils SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(ObjectUtils PUBLIC ${LLVM_DEFINITIONS})
+  # LLVM is built without RTTI by default, so disable RTTI for files that use LLVM types with dynamic_cast
+  set_source_files_properties(PdbFileLlvm.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+  llvm_map_components_to_libnames(LLVM_LIBS
+    DebugInfoCodeView DebugInfoDWARF DebugInfoPDB Object Symbolize)
+  target_link_libraries(ObjectUtils PUBLIC ${LLVM_LIBS})
+else()
+  target_link_libraries(ObjectUtils PUBLIC llvm-core::llvm-core)
+endif()
 
 if (WIN32)
 target_link_libraries(ObjectUtils PUBLIC DIASDK::DIASDK)

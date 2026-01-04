@@ -8,9 +8,10 @@
 
 namespace orbit_linux_tracing {
 
-std::array<uint64_t, PERF_REG_X86_64_MAX> perf_event_sample_regs_user_all_to_register_array(
+#if defined(__x86_64__)
+std::array<uint64_t, kPerfRegMax> perf_event_sample_regs_user_all_to_register_array(
     const RingBufferSampleRegsUserAll& regs) {
-  std::array<uint64_t, PERF_REG_X86_64_MAX> registers{};
+  std::array<uint64_t, kPerfRegMax> registers{};
   registers[PERF_REG_X86_AX] = regs.ax;
   registers[PERF_REG_X86_BX] = regs.bx;
   registers[PERF_REG_X86_CX] = regs.cx;
@@ -38,6 +39,19 @@ std::array<uint64_t, PERF_REG_X86_64_MAX> perf_event_sample_regs_user_all_to_reg
   registers[PERF_REG_X86_R15] = regs.r15;
   return registers;
 }
+#elif defined(__aarch64__)
+std::array<uint64_t, kPerfRegMax> perf_event_sample_regs_user_all_to_register_array(
+    const RingBufferSampleRegsUserAll& regs) {
+  std::array<uint64_t, kPerfRegMax> registers{};
+  // Map x0-x30 registers
+  for (size_t i = 0; i < 31; ++i) {
+    registers[PERF_REG_ARM64_X0 + i] = regs.x[i];
+  }
+  registers[PERF_REG_ARM64_SP] = regs.sp;
+  registers[PERF_REG_ARM64_PC] = regs.pc;
+  return registers;
+}
+#endif
 
 // This is a non-traditional way of implementing the visitor pattern. The use of `std::variant`
 // instead of a regular class hierarchy is motivated by the fact that this saves us from heap

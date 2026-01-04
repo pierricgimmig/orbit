@@ -9,10 +9,16 @@
 #include <asm/perf_regs.h>
 #include <sys/types.h>
 #include <unwindstack/Error.h>
-#include <unwindstack/MachineX86_64.h>
 #include <unwindstack/Maps.h>
-#include <unwindstack/RegsX86_64.h>
 #include <unwindstack/Unwinder.h>
+
+#if defined(__x86_64__)
+#include <unwindstack/MachineX86_64.h>
+#include <unwindstack/RegsX86_64.h>
+#elif defined(__aarch64__)
+#include <unwindstack/MachineArm64.h>
+#include <unwindstack/RegsArm64.h>
+#endif
 
 #include <array>
 #include <cstddef>
@@ -29,16 +35,25 @@
 
 namespace orbit_linux_tracing {
 
+// Architecture-aware type aliases for register types and sizes.
+#if defined(__x86_64__)
+using ArchRegs = unwindstack::RegsX86_64;
+static constexpr size_t kArchPerfRegMax = PERF_REG_X86_64_MAX;
+#elif defined(__aarch64__)
+using ArchRegs = unwindstack::RegsArm64;
+static constexpr size_t kArchPerfRegMax = PERF_REG_ARM64_MAX;
+#endif
+
 class LibunwindstackResult {
  public:
   explicit LibunwindstackResult(
-      std::vector<unwindstack::FrameData> frames, const unwindstack::RegsX86_64& regs,
+      std::vector<unwindstack::FrameData> frames, const ArchRegs& regs,
       unwindstack::ErrorCode error_code = unwindstack::ErrorCode::ERROR_NONE)
       : frames_{std::move(frames)}, regs_{regs}, error_code_{error_code} {}
 
   [[nodiscard]] const std::vector<unwindstack::FrameData>& frames() const { return frames_; }
 
-  [[nodiscard]] const unwindstack::RegsX86_64& regs() const { return regs_; }
+  [[nodiscard]] const ArchRegs& regs() const { return regs_; }
 
   [[nodiscard]] unwindstack::ErrorCode error_code() const { return error_code_; }
 
@@ -46,7 +61,7 @@ class LibunwindstackResult {
 
  private:
   std::vector<unwindstack::FrameData> frames_;
-  unwindstack::RegsX86_64 regs_;
+  ArchRegs regs_;
   unwindstack::ErrorCode error_code_;
 };
 
@@ -55,7 +70,7 @@ class LibunwindstackUnwinder {
   virtual ~LibunwindstackUnwinder() = default;
 
   virtual LibunwindstackResult Unwind(pid_t pid, unwindstack::Maps* maps,
-                                      const std::array<uint64_t, PERF_REG_X86_64_MAX>& perf_regs,
+                                      const std::array<uint64_t, kArchPerfRegMax>& perf_regs,
                                       absl::Span<const StackSliceView> stack_slices,
                                       bool offline_memory_only = false,
                                       size_t max_frames = kDefaultMaxFrames) = 0;

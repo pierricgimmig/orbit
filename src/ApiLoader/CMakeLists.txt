@@ -25,6 +25,7 @@ endif()
 target_link_libraries(ApiLoader PUBLIC
         ApiUtils
         GrpcProtos
+        ModuleUtils
         ObjectUtils
         OrbitBase)
 

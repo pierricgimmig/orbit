@@ -29,6 +29,7 @@ struct __attribute__((__packed__)) RingBufferForkExit {
 };
 
 // This struct must be in sync with the `kSampleRegsUserAll` in PerfEventOpen.h.
+#if defined(__x86_64__)
 struct __attribute__((__packed__)) RingBufferSampleRegsUserAll {
   uint64_t ax;
   uint64_t bx;
@@ -50,19 +51,49 @@ struct __attribute__((__packed__)) RingBufferSampleRegsUserAll {
   uint64_t r13;
   uint64_t r14;
   uint64_t r15;
+
+  // Cross-platform accessors
+  uint64_t GetInstructionPointer() const { return ip; }
+  uint64_t GetStackPointer() const { return sp; }
+  uint64_t GetFramePointer() const { return bp; }
 };
+#elif defined(__aarch64__)
+struct __attribute__((__packed__)) RingBufferSampleRegsUserAll {
+  uint64_t x[31];  // x0-x30 (x30 is LR)
+  uint64_t sp;
+  uint64_t pc;
+
+  // Cross-platform accessors (ARM64 uses x29 as frame pointer)
+  uint64_t GetInstructionPointer() const { return pc; }
+  uint64_t GetStackPointer() const { return sp; }
+  uint64_t GetFramePointer() const { return x[29]; }  // FP on ARM64
+};
+#endif
 
 // This struct must be in sync with the `kSampleRegsUserAx` in PerfEventOpen.h.
+// On ARM64, x0 is used for return values (equivalent to AX on x86_64).
 struct __attribute__((__packed__)) RingBufferSampleRegsUserAx {
   uint64_t abi;
+#if defined(__x86_64__)
   uint64_t ax;
+  uint64_t GetReturnValue() const { return ax; }
+#elif defined(__aarch64__)
+  uint64_t x0;  // Return value register on ARM64
+  uint64_t GetReturnValue() const { return x0; }
+#endif
 };
 
 // This struct must be in sync with the `kSampleRegsUserSpIp` in PerfEventOpen.h.
 struct __attribute__((__packed__)) RingBufferSampleRegsUserSpIp {
   uint64_t abi;
   uint64_t sp;
+#if defined(__x86_64__)
   uint64_t ip;
+  uint64_t GetInstructionPointer() const { return ip; }
+#elif defined(__aarch64__)
+  uint64_t pc;  // Program counter on ARM64
+  uint64_t GetInstructionPointer() const { return pc; }
+#endif
 };
 
 // This struct must be in sync with the `kSampleRegsUserSp` in PerfEventOpen.h.
@@ -71,6 +102,7 @@ struct __attribute__((__packed__)) RingBufferSampleRegsUserSp {
 };
 
 // This struct must be in sync with the `kSampleRegsUserSpIpArguments` in PerfEventOpen.h.
+#if defined(__x86_64__)
 struct __attribute__((__packed__)) RingBufferSampleRegsUserSpIpArguments {
   uint64_t abi;
   uint64_t cx;
@@ -81,7 +113,41 @@ struct __attribute__((__packed__)) RingBufferSampleRegsUserSpIpArguments {
   uint64_t ip;
   uint64_t r8;
   uint64_t r9;
+
+  uint64_t GetInstructionPointer() const { return ip; }
+  // Function arguments in x86_64 SysV ABI order: rdi, rsi, rdx, rcx, r8, r9
+  uint64_t GetArg0() const { return di; }
+  uint64_t GetArg1() const { return si; }
+  uint64_t GetArg2() const { return dx; }
+  uint64_t GetArg3() const { return cx; }
+  uint64_t GetArg4() const { return r8; }
+  uint64_t GetArg5() const { return r9; }
 };
+#elif defined(__aarch64__)
+// ARM64 uses x0-x7 for function arguments (System V ARM64 ABI).
+struct __attribute__((__packed__)) RingBufferSampleRegsUserSpIpArguments {
+  uint64_t abi;
+  uint64_t x0;
+  uint64_t x1;
+  uint64_t x2;
+  uint64_t x3;
+  uint64_t x4;
+  uint64_t x5;
+  uint64_t x6;
+  uint64_t x7;
+  uint64_t sp;
+  uint64_t pc;
+
+  uint64_t GetInstructionPointer() const { return pc; }
+  // Function arguments in ARM64 AAPCS order: x0-x7
+  uint64_t GetArg0() const { return x0; }
+  uint64_t GetArg1() const { return x1; }
+  uint64_t GetArg2() const { return x2; }
+  uint64_t GetArg3() const { return x3; }
+  uint64_t GetArg4() const { return x4; }
+  uint64_t GetArg5() const { return x5; }
+};
+#endif
 
 struct __attribute__((__packed__)) RingBufferSampleStackUser8bytes {
   uint64_t size;

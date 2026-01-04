@@ -6,6 +6,29 @@ cmake_minimum_required(VERSION 3.15)
 
 project(UserSpaceInstrumentation)
 
+# UserSpaceInstrumentation is not supported on ARM64 (requires x86_64-specific
+# machine code generation and register handling)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+  message(STATUS "UserSpaceInstrumentation: Building ARM64 stub (not fully supported)")
+  # Create stub library for ARM64 to satisfy linker dependencies
+  add_library(UserSpaceInstrumentation STATIC)
+  target_include_directories(UserSpaceInstrumentation PUBLIC
+          ${CMAKE_CURRENT_LIST_DIR}/include)
+  target_sources(UserSpaceInstrumentation PUBLIC
+          include/UserSpaceInstrumentation/AddressRange.h
+          include/UserSpaceInstrumentation/AnyThreadIsInStrictSeccompMode.h
+          include/UserSpaceInstrumentation/Attach.h
+          include/UserSpaceInstrumentation/ExecuteInProcess.h
+          include/UserSpaceInstrumentation/InjectLibraryInTracee.h
+          include/UserSpaceInstrumentation/InstrumentProcess.h)
+  # Stub implementation that returns "not supported" errors
+  target_sources(UserSpaceInstrumentation PRIVATE StubArm64.cpp)
+  target_link_libraries(UserSpaceInstrumentation PUBLIC
+          GrpcProtos
+          OrbitBase)
+  return()
+endif()
+
 add_library(UserSpaceInstrumentation STATIC)
 
 target_include_directories(UserSpaceInstrumentation PUBLIC
