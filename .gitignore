@@ -17,3 +17,6 @@ __pycache__
 
 # Visual Studio
 /.vs/
+
+# Rust/Cargo build artifacts
+third_party/py-spy-ffi/target/

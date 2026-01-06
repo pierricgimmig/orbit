@@ -111,6 +111,22 @@ message CaptureOptions {
       thread_state_change_callstack_collection = 21;
   // Expected to be "uint16".
   uint32 thread_state_change_callstack_stack_dump_size = 22;
+
+  // Python profiling options (py-spy integration)
+  // Python profiling is auto-detected when the target is a Python interpreter.
+  // Set to false to explicitly disable.
+  bool enable_python_profiling = 24;
+  // Python sampling rate. If 0, uses samples_per_second.
+  uint32 python_sampling_rate = 25;
+  // Include native extension frames in Python callstacks.
+  bool python_include_native = 26;
+
+  enum PythonDisplayMode {
+    kPythonDisplayModeUnspecified = 0;
+    kPythonSeparateTrack = 1;    // Python stacks in a separate track
+    kPythonMergedWithNative = 2; // Python frames interleaved with native
+  }
+  PythonDisplayMode python_display_mode = 27;
 }
 
 // For CaptureEvents with a duration, excluding for now GPU-related ones, we
