@@ -43,6 +43,7 @@
 #include "PerfEventOrderedStream.h"
 #include "PerfEventReaders.h"
 #include "PerfEventRecords.h"
+#include "PythonProfiler.h"
 
 using orbit_base::GetAllPids;
 using orbit_base::GetTidsOfProcess;
@@ -141,6 +142,10 @@ TracerImpl::TracerImpl(
     info.set_category(instrumented_tracepoint.category());
     instrumented_tracepoints_.emplace_back(info);
   }
+
+  // Python profiling configuration (auto-detect by default)
+  enable_python_profiling_ = capture_options.enable_python_profiling();
+  python_include_native_ = capture_options.python_include_native();
 }
 
 void TracerImpl::Start() {
@@ -899,11 +904,35 @@ void TracerImpl::Startup() {
     RetrieveInitialThreadStatesOfTarget();
   }
 
+  // Initialize Python profiling - auto-detect Python processes by default
+  // If enable_python_profiling_ is explicitly set, respect that setting.
+  // Otherwise, auto-detect if the target is a Python process.
+  bool should_enable_python = enable_python_profiling_ || IsPythonProcess(target_pid_);
+  if (should_enable_python) {
+    uint64_t python_sampling_period_ns =
+        sampling_period_ns_.value_or(10'000'000);  // Default 100 Hz if no sampling configured
+    python_sampling_thread_ = PythonSamplingThread::Create(target_pid_, listener_,
+                                                           python_sampling_period_ns,
+                                                           python_include_native_);
+    if (python_sampling_thread_ != nullptr) {
+      python_sampling_thread_->Start();
+      ORBIT_LOG("Python profiling enabled for process %d", target_pid_);
+    }
+  }
+
   stats_.Reset();
 }
 
 void TracerImpl::Shutdown() {
   ORBIT_SCOPE_FUNCTION;
+
+  // Stop Python sampling thread first
+  if (python_sampling_thread_ != nullptr) {
+    python_sampling_thread_->Stop();
+    python_sampling_thread_.reset();
+    ORBIT_LOG("Python profiling stopped");
+  }
+
   if (trace_thread_state_) {
     switches_states_names_visitor_->ProcessRemainingOpenStates(orbit_base::CaptureTimestampNs());
   }

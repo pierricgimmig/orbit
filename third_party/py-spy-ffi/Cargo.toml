@@ -1,0 +1,17 @@
+[package]
+name = "py-spy-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C FFI wrapper for py-spy to integrate with Orbit"
+
+[lib]
+crate-type = ["staticlib"]
+name = "pyspy_ffi"
+
+[dependencies]
+py-spy = { path = "../py-spy" }
+libc = "0.2"
+
+[profile.release]
+lto = true
+opt-level = "z"

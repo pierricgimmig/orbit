@@ -37,6 +37,7 @@
 #include "PerfEvent.h"
 #include "PerfEventProcessor.h"
 #include "PerfEventRingBuffer.h"
+#include "PythonSamplingThread.h"
 #include "SwitchesStatesNamesVisitor.h"
 #include "UprobesFunctionCallManager.h"
 #include "UprobesReturnAddressManager.h"
@@ -209,6 +210,11 @@ class TracerImpl : public Tracer {
   std::unique_ptr<GpuTracepointVisitor> gpu_event_visitor_;
   std::unique_ptr<LostAndDiscardedEventVisitor> lost_and_discarded_event_visitor_;
   PerfEventProcessor event_processor_;
+
+  // Python profiling (py-spy integration)
+  std::unique_ptr<PythonSamplingThread> python_sampling_thread_;
+  bool enable_python_profiling_ = false;
+  bool python_include_native_ = false;
 
   struct EventStats {
     void Reset() {

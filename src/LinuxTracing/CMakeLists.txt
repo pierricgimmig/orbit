@@ -52,6 +52,12 @@ target_sources(LinuxTracing PRIVATE
         PerfEventRingBuffer.cpp
         PerfEventRingBuffer.h
         PerfEventVisitor.h
+        PythonAddressProvider.cpp
+        PythonAddressProvider.h
+        PythonProfiler.cpp
+        PythonProfiler.h
+        PythonSamplingThread.cpp
+        PythonSamplingThread.h
         SwitchesStatesNamesVisitor.cpp
         SwitchesStatesNamesVisitor.h
         ThreadStateManager.cpp
@@ -78,6 +84,9 @@ target_link_libraries(LinuxTracing PUBLIC
         absl::str_format
         absl::strings
         absl::synchronization)
+
+# Python profiling support via py-spy (requires Rust/Cargo)
+target_link_libraries(LinuxTracing PRIVATE pyspy_ffi)
 
 add_executable(LinuxTracingTests)
 
