@@ -48,6 +48,15 @@ void PrintInstanceVersions() {
   }
 
   {
+    constexpr const char* kCloudcastDirPath = "/usr/local/cloudcast";
+    if (!std::filesystem::is_directory(kCloudcastDirPath))
+    {
+      ORBIT_LOG("Not running in cloudcast instance");
+      return;
+    }
+  }
+
+  {
     constexpr const char* kVersionFilePath = "/usr/local/cloudcast/VERSION";
     ErrorMessageOr<std::string> version = orbit_base::ReadFileToString(kVersionFilePath);
     if (version.has_value()) {
