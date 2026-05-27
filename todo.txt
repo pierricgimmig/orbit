@@ -1,0 +1,1 @@
+- Make context switches work on different Windows versions (52787b08510465296dfb8a1eb261f434f6461796)
