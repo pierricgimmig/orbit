@@ -65,12 +65,21 @@ void KrabsTracer::EnableProviders() {
   if (IsProviderEnabled(ProviderFlags::kThread)) {
     thread_provider_.add_on_event_callback(
         [this](const auto& record, const auto& context) { OnThreadEvent(record, context); });
+    thread_provider_.add_on_error_callback([](const EVENT_RECORD& record, const std::string& err) {
+      ORBIT_ERROR("thread_provider schema error (opcode=%u): %s",
+                  record.EventHeader.EventDescriptor.Opcode, err.c_str());
+    });
     kernel_trace_.enable(thread_provider_);
   }
 
   if (IsProviderEnabled(ProviderFlags::kContextSwitch)) {
     context_switch_provider_.add_on_event_callback(
         [this](const auto& record, const auto& context) { OnThreadEvent(record, context); });
+    context_switch_provider_.add_on_error_callback(
+        [](const EVENT_RECORD& record, const std::string& err) {
+          ORBIT_ERROR("context_switch_provider schema error (opcode=%u): %s",
+                      record.EventHeader.EventDescriptor.Opcode, err.c_str());
+        });
     kernel_trace_.enable(context_switch_provider_);
   }
 
@@ -180,10 +189,23 @@ void KrabsTracer::OnThreadEvent(const EVENT_RECORD& record, const krabs::trace_c
     }
     case kEtwThreadV2EventCSwitch: {
       // https://docs.microsoft.com/en-us/windows/win32/etw/cswitch
-      krabs::schema schema(record, context.schema_locator);
-      krabs::parser parser(schema);
-      uint32_t old_tid = parser.parse<uint32_t>(L"OldThreadId");
-      uint32_t new_tid = parser.parse<uint32_t>(L"NewThreadId");
+      // Count raw arrivals before any schema lookup so we can diagnose missing events.
+      ++stats_.num_cswitch_events_raw;
+      // Bypass TDH schema lookup entirely: CSwitch events on modern Windows may have
+      // a version that TDH cannot locate, causing a silent could_not_find_schema
+      // exception.  The UserData layout is stable and documented:
+      //   offset 0: NewThreadId (ULONG)
+      //   offset 4: OldThreadId (ULONG)
+      //   (followed by priority / wait-reason fields we don't need)
+      constexpr uint32_t kCswitchMinBytes = 8;
+      if (record.UserDataLength < kCswitchMinBytes) {
+        ORBIT_ERROR("CSwitch event UserData too small (%u bytes, need %u)",
+                    record.UserDataLength, kCswitchMinBytes);
+        break;
+      }
+      const uint32_t* data = absl::bit_cast<const uint32_t*>(record.UserData);
+      uint32_t new_tid = data[0];  // NewThreadId
+      uint32_t old_tid = data[1];  // OldThreadId
       uint64_t timestamp_ns =
           orbit_base::PerformanceCounterToNs(record.EventHeader.TimeStamp.QuadPart);
       uint16_t cpu = record.BufferContext.ProcessorIndex;
@@ -292,6 +314,8 @@ void KrabsTracer::OutputStats() {
   ORBIT_LOG("Events handled: %u", trace_stats.eventsHandled);
   ORBIT_LOG("Events lost: %u", trace_stats.eventsLost);
   ORBIT_LOG("--- KrabsTracer stats ---");
+  ORBIT_LOG("Number of thread events (all opcodes): %u", stats_.num_thread_events);
+  ORBIT_LOG("Number of cswitch events (raw, pre-parse): %u", stats_.num_cswitch_events_raw);
   ORBIT_LOG("Number of stack events: %u", stats_.num_stack_events);
   ORBIT_LOG("Number of stack events for target pid: %u", stats_.num_stack_events_for_target_pid);
   context_switch_manager_->OutputStats();

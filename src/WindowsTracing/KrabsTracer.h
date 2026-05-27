@@ -61,6 +61,7 @@ class KrabsTracer {
 
   struct Stats {
     uint64_t num_thread_events = 0;
+    uint64_t num_cswitch_events_raw = 0;  // Incremented before TDH schema lookup
     uint64_t num_stack_events = 0;
     uint64_t num_stack_events_for_target_pid = 0;
     uint64_t num_image_load_events_for_target_pid = 0;
