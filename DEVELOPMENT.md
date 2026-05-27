@@ -10,159 +10,114 @@ instance we wrap that once more into an SSH tunnel.
 
 ## Platforms
 
-The frontend is supported on Windows 10 and Linux. The collector currently
-only works on Linux.
-
-Previous versions of Orbit supported profiling on Windows, but due to the
-priority shift towards Stadia this support is currently in a non-working state.
-There are plans to bring it back, but at this point we can't commit to any time
-schedule.
-
-If you want to try profiling on Windows, we recommend you to download the older 1.0.2
-release from GitHub's [releases page](https://github.com/google/orbit/releases).
+Both the frontend and the collector (service) run on Windows and Linux.
 
 ## Compilers
 
-To build Orbit you need a compiler capable of C++17. The following ones should be fine.
+To build Orbit you need a compiler capable of C++20. The following ones should be fine.
 
 - GCC 9 and above on Linux
 - Clang 7 and above on Linux
-- MSVC 2019 and above on Windows (MSVC 2017 is no longer supported by some dependencies)
+- MSVC 2022 on Windows (VS2022, toolset v143)
 
 ## Dependencies
 
-All our third-party libraries and dependencies are managed by conan.
+All third-party libraries and dependencies are managed by **Conan 2**. Make sure
+you have Python 3 and Conan 2 installed:
+
+```
+pip install "conan>=2.0"
+```
+
+> **Note:** The old `bootstrap-orbit.ps1` / `build.ps1` scripts use the Conan 1 API
+> and no longer work. Use the Conan 2 workflow described below.
 
 ### Qt on Linux
 
-There are some exceptions. On Linux, we rely by default on the distribution's Qt5
-and Mesa installation. This can be changed by modifying the conan package options
-`system_qt` and `system_mesa`, but we recommend to go with the distribution provided
-Qt package. You will need at least version 5.12.4 of Qt. The point release is important
-because it resolves a [known issue](https://bugreports.qt.io/browse/QTBUG-69683). Note,
-that Ubuntu 18.04 LTS comes with Qt 5.9 which is NOT sufficient. Ubuntu 20.04 LTS is
-fine though.
-
-In case you still want to have Qt provided by conan, the simplest way to do that will be
-to change the default values of these two options.
-Check out `conanfile.py`. There is a python dictionary called `default_options`
-defined in the python class `OrbitConan`.
+On Linux, Orbit uses the distribution's system Qt 5 installation. You will need
+at least Qt 5.12.4. Ubuntu 20.04 LTS and above are fine; Ubuntu 18.04 ships Qt 5.9
+which is **not** sufficient.
 
 ### Qt on Windows
 
-On Windows you have the choice to either let Conan compile Qt from source or use
-one of the prebuilt distributions from [The Qt Company](https://qt.io/). (Note that
-as of writing this, you need to register to download the distribution packages.)
+Qt 5 is **not** managed by Conan — it must be installed separately. Download a
+prebuilt distribution from [The Qt Company](https://qt.io/) (registration required)
+or use a third-party installer such as
+[aqtinstall](https://github.com/miurahr/aqtinstall). Make sure to:
 
-We recommend to use a prebuilt distribution since compiling from source can take
-several hours.
+- Match the Qt build to your Visual Studio version and x64 architecture
+  (e.g. `msvc2019_64` works for both VS2019 and VS2022)
+- Install the **QtWebEngine** component (not selected by default)
+- Use at least Qt 5.12.4; Qt 5.15.x is recommended
 
-If you decide to compile from source, you don't have to prepare anything.
-You can skip over the next paragraph and go to "Building Orbit".
-
-If you decide to use a prebuilt Qt distribution, please download and install it
-yourself. Keep in mind the prebuilt has to match your Visual Studio version and
-architecture. You also have to install the QtWebEngine component which is usually
-not selected by default in the installer.
-
-As of writing this the minimum supported Qt version is 5.12.4 but this might change.
-We recommend the version which we also compile from source. It can be found by checking
-`conanfile.py`. Search for `self.requires("qt/`. The version can be found after that string.
-
-As a next step you have to tell the Orbit build system where Qt is installed by
-setting an environment variable `Qt5_DIR`. It has to point to the directory
-containing the CMake config file `Qt5Config.cmake`. For Qt 5.15.0 installed to
-the default location the path is `C:\Qt\5.15.0\msvc2019_64\lib\cmake\Qt5`;
-
-You don't have to set that variable globally. It's fine to set it in a local
-PowerShell when starting the bootstrapping script:
+Set the `Qt5_DIR` environment variable to point at the directory containing
+`Qt5Config.cmake` before running the build. For example:
 
 ```powershell
-$Env:Qt5_DIR="C:\Qt\5.15.0\msvc2019_64\lib\cmake\Qt5"
-.\bootstrap-orbit.ps1
+$env:Qt5_DIR = "C:\Qt\5.15.2\msvc2019_64\lib\cmake\Qt5"
 ```
-
-The value of `Qt5_DIR` is persisted in the default conan profiles. You can
-call `conan profile show default_relwithdebinfo` (after running bootstrap)
-to see the value of `Qt5_DIR`.
-
-If you have pre-existing `default_*`-profiles and want to switch to prebuilt
-Qt distributions you have to either delete these profiles - the build script
-will regenerate them - or you can manually edit them.
-
-A default profile with Qt compiled from source is pretty much empty:
-
-```
-# default_relwithdebinfo
-
-include(msvc2019_relwithdebinfo)
-
-[settings]
-[options]
-[build_requires]
-[env]
-
-```
-
-A default profile prepared for a prebuilt Qt package has two extra lines:
-
-```
-# default_relwithdebinfo
-
-include(msvc2019_relwithdebinfo)
-
-[settings]
-[options]
-OrbitProfiler:system_qt=True
-[build_requires]
-[env]
-OrbitProfiler:Qt5_DIR="C:\Qt\5.15.0\msvc2019_64\lib\cmake\Qt5"
-
-```
-
-You can find all the conan profiles in `%USERPROFILE%\.conan\profiles`.
 
 ## Building Orbit
 
-Orbit relies on `conan` as its package manager. Conan is written in Python3,
-so make sure you have either Conan installed or at least have Python3 installed.
+### Windows (first time or after dependency changes)
 
-The `bootstrap-orbit.{sh,ps1}` will try to install `conan` via `pip3` if not
-installed and reachable via `PATH`. Afterwards it calls `build.{sh,ps1}` which
-will compile Orbit for you.
+```powershell
+# From the repo root, with Qt5_DIR set (see above)
+conan install . --output-folder=build --build=missing
+cmake --preset conan-default
+cmake --build --preset conan-release
+```
 
-On Linux, `python3` should be preinstalled anyway, but you might need to install
-pip (package name: `python3-pip`).
+This generates `CMakeUserPresets.json` and `build/generators/CMakePresets.json` on
+first run. Subsequent runs only need the last two commands unless `conanfile.py`
+changes.
 
-On Windows, one option to install Python is via the Visual Studio Installer.
-Alternatively you can download prebuilts from [python.org](https://www.python.org/)
-(In both cases verify that `pip3.exe` is in the path, otherwise the bootstrap
-script will not be able to install conan for you.)
+**Build without the GUI** (skips Qt requirement):
+
+```powershell
+conan install . --output-folder=build --build=missing
+cmake --preset conan-default -DWITH_GUI=OFF
+cmake --build --preset conan-release
+```
+
+### Windows (incremental builds)
+
+```powershell
+cd build
+cmake --build . --config Release
+```
+
+### Linux (first time or after dependency changes)
+
+```bash
+./bootstrap-orbit.sh
+```
+
+`bootstrap-orbit.sh` installs Conan (if needed), installs the Conan config, and
+calls `build.sh` for the default profile.
+
+### Linux (incremental builds)
+
+```bash
+cd build_default_relwithdebinfo/
+cmake --build .
+```
 
 ## Running Orbit
 
-Like mentioned before, the collector currently only works for Linux. So the following
-only applies there:
+### Windows
 
-1. Start Orbit via 
-```bash
-./build_default_relwithdebinfo/bin/Orbit
-```
-2. Start OrbitService by clicking the button `Start OrbitService`. To obtain scheduling
-   information, the collector needs to run as root, hence this will prompt you for a
-	 password (via [pkexec](https://linux.die.net/man/1/pkexec)). Alternatively, you can 
-	 start OrbitService yourself:
-
-```bash
-sudo ./build_default_relwithdebinfo/bin/OrbitService # Start the collector
+```powershell
+.\build\bin\Orbit.exe          # UI frontend
+.\build\bin\OrbitService.exe   # Local service (run as Administrator for full access)
 ```
 
-The frontend currently has no graphical user interface to connect to a generic
-remote instance. Only Stadia is supported as a special case. 
+### Linux
 
-If you needed remote profiling support you could tunnel the mentioned TCP port through
-a SSH connection to an arbitrary Linux server. There are plans on adding generic
-SSH tunneling support but we can't promise any timeframe for that.
+```bash
+./build_default_relwithdebinfo/bin/Orbit            # UI frontend
+sudo ./build_default_relwithdebinfo/bin/OrbitService  # Collector (needs root)
+```
 
 ## Consistent code styling
 
@@ -273,172 +228,87 @@ distinctions need to be made, you can use preprocessor macros, e.g.:
 
 ## FAQ
 
-### What's the difference between `bootstrap-orbit.{sh,ps1}` and `build.{sh,ps1}`?
+### What's the difference between `bootstrap-orbit.sh` and `build.sh`? (Linux)
 
-`bootstrap-orbit.{sh,ps1}` performs all the tasks which have to be done once per developer machine.
-This includes:
+`bootstrap-orbit.sh` is a one-time setup script per developer machine. It:
 
-- Installing system dependencies
-- Installing the correct version of conan if necessary.
-- Installing the conan configuration (which changes rarely).
+- Installs Conan if not already present
+- Installs the Conan configuration
 
-Afterwards `bootstrap-orbit.{sh,ps1}` calls `build.{sh,ps1}`.
+Afterwards it calls `build.sh`.
 
-`build.{sh,ps1}` on the other hand performs all the tasks which have to be done
-once per build configuration. It creates a build directory, named after the
-given conan profile, installs the conan-managed dependencies into this build folder,
-calls `cmake` for build configuration and starts the build.
+`build.sh` does the per-build-configuration work: runs `conan install`, runs
+`cmake`, and starts the build. Re-run it whenever `conanfile.py` changes (e.g.
+after pulling or switching branches).
 
-Whenever the dependencies change you have to call `build.{sh,ps1}` again.
-A dependency change might be introduced by a pull from upstream or by a switch
-to a different branch.
+If the build fails with a cryptic CMake error after calling `build.sh`, try
+deleting the build directory and re-running `build.sh` to start clean.
 
-It might occur to you that even though you called `build.{sh,ps1}` your build still
-fails with a weird error message. Most of the time this is due to outdated but cached
-information managed by CMake. The simplest way to resolve that problem is to make
-a clean build by deleting the build directory and calling `build.{sh,ps1}`.
+> **Note:** The Windows equivalents `bootstrap-orbit.ps1` and `build.ps1` target
+> Conan 1 and are no longer functional. On Windows, use the Conan 2 workflow
+> described in the **Building Orbit** section above.
 
-`build.{sh,ps1}` can initialize as many build configurations as you like from the
-same invocation. Just pass conan profile names as command line arguments. Example for Linux:
+### `build.sh` after every one-line change takes forever — what should I do?
+
+`build.sh` is not for incremental builds. Use it once to set up a build directory,
+then do incremental builds directly via CMake:
 
 ```bash
-./build.sh clang7_debug gcc9_release clang9_relwithdebinfo ggp_release
-# is equivalent to
-./build.sh clang7_debug
-./build.sh gcc9_release
-./build.sh clang9_relwithdebinfo
-./build.sh ggp_release
+cd build_default_relwithdebinfo/
+cmake --build .          # Linux
 ```
 
-### Calling `build.{sh,ps1}` after every one-line-change takes forever! What should I do?
-
-`build.{sh,ps1}` is not meant for incremental builds. It should be called only once to initialize
-a build directory. (Check out the previous section for more information on what `build.{sh,ps1}`
-does.)
-
-For incremental builds, switch to the build directory and ask cmake to run the build:
-
-```bash
-cd <build_folder>/
-cmake --build . # On Linux
-cmake --build . --config {Release,RelWithDebInfo,Debug} # On Windows
+```powershell
+cd build
+cmake --build . --config Release   # Windows
 ```
 
-Alternatively, you can also just call `make` on Linux. Check out the next section on how to
-enable building with `ninja`.
+### How do I enable `ninja` for my Linux build?
 
-### How do I enable `ninja` for my build?
-
-> **Note:** Linux only for now! On Windows you have to use MSBuild.
-
-If you want to use `ninja`, you cannot rely on the `build.sh` script, which automatically
-initializes your build with `make` and that cannot be changed easily later on.
-So create a build directory from scratch, install the conan-managed dependencies
-and invoke `cmake` manually. Here is how it works:
-
-Let's assume you want to build Orbit in debug mode with `clang-9`:
+Create the build directory manually, install Conan dependencies, then invoke CMake
+with the Ninja generator. Example for a debug build with clang-9:
 
 ```bash
-mkdir build_clang9_debug # Create a build directory; should not exist before.
+mkdir build_clang9_debug
 cd build_clang9_debug/
-conan install -pr clang9_debug ../ # Install conan-managed dependencies
-cp ../third_party/toolchains/toolchain-linux-clang9-debug.cmake toolchain.cmake # Copy the cmake toolchain file, which matches the conan profile.
-cmake -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake -G Ninja ../
-ninja
-```
-
-> ### Note:
->
-> Please be aware that it is your responsibility to ensure that the conan profile is compatible
-> with the toolchain parameters cmake uses. In this example clang9 in debug mode is used in both cases.
-
-#### Another example without toolchain files:
-
-You can also manually pass the toolchain options to cmake via the command line:
-
-```bash
-mkdir build_clang9_debug # Create a build directory; should not exist before.
-cd build_clang9_debug/
-conan install -pr clang9_debug ../ # Install conan-managed dependencies
-cmake -DCMAKE_CXX_COMPILER=clang++-9 -DCMAKE_C_COMPILER=clang-9 -DCMAKE_BUILD_TYPE=Debug -G Ninja ../
+conan install --output-folder=. --build=missing -pr clang9_debug ../
+cmake -DCMAKE_CXX_COMPILER=clang++-9 -DCMAKE_C_COMPILER=clang-9 \
+      -DCMAKE_BUILD_TYPE=Debug -G Ninja ../
 ninja
 ```
 
 ### How do I integrate with CLion?
 
-In CLion, the IDE itself manages your build configurations, which is incompatible with our `build.{sh,ps1}`
-script. That means, you have to manually install conan dependencies into CLion's build directories
-and you have to manually verify that the directory's build configuration matches the used conan profile
-in terms of compiler, standard library, build type, target platform, etc.
+CLion manages build directories itself, so you need to install Conan dependencies
+into CLion's build directory manually:
 
 ```bash
-cd build_directory_created_by_clion/
-conan install -pr matching_conan_profile ..
+cd <build_directory_created_by_clion>/
+conan install --output-folder=. --build=missing ../
 ```
 
-After that, you can trigger a rerun of `cmake` from CLion and it will now be able to pick up all the missing
-dependencies.
+Then trigger a CMake re-run from CLion. The
+[CLion Conan Plugin](https://plugins.jetbrains.com/plugin/11956-conan) can
+automate this step.
 
-This process can be automated by the [CLion Conan Extension](https://plugins.jetbrains.com/plugin/11956-conan).
+### How do I open the project in Visual Studio?
 
-After installing the extension, it will take care of installing conan dependencies into your
-CLion build directories, whenever necessary. The only task left to you is to create a mapping
-between CLion build configurations and conan profiles. Check out
-[this blog post](https://blog.jetbrains.com/clion/2019/05/getting-started-with-the-conan-clion-plugin)
-on how to do it.
+After running `conan install` and `cmake --preset conan-default`, open the
+generated solution file `build/orbit_deps.sln` (or use **File → Open → Folder**
+in VS2022 and select the repo root — VS will detect `CMakeUserPresets.json`
+automatically).
 
-Add `-DCMAKE_CXX_FLAGS=-fsized-deallocation` to Settings -> Build, Execution, Deployment -> CMake -> CMake options.
-This flag is needed because Orbit's codebase makes use of C++14's [sized-deallocation feature](http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2013/n3536.html)
-which is not enabled by default on the clang compiler.
-
-### How do I integrate conan with Visual Studio?
-
-Visual Studio has this concept of having multiple build configurations in the same build directory.
-This concept is not very wide-spread on buildsystems coming from the Unix world. Both CMake and
-Conan have support for it, but some of our dependencies currently do not support it.
-
-That means, **currently you can't have debug and release builds in the same build folder!**
-Please ensure that Visual Studio is set to the build configuration which matches your build-
-folder's conan profile. Non-matching build configurations will result in a lot of linker errors.
-
-There is a [Conan Extension for Visual Studio](https://marketplace.visualstudio.com/items?itemName=conan-io.conan-vs-extension),
-which is currently under development, but should be able to help you, when you develop on
-Visual Studio.
+Make sure Visual Studio is set to the **Release** configuration to match the
+Conan-installed dependencies. Mixing configurations in the same build folder
+causes linker errors.
 
 ### How do I integrate with Visual Studio Code?
 
-Visual Studio Code uses configuration files to specify tasks that can be executed. These files are provided in the `contrib/.vscode` folder. To enable building from Visual Studio Code, simply copy the whole folder into the root directory with the name `.vscode`:
+Visual Studio Code uses configuration files to specify tasks. These are provided
+in `contrib/.vscode`. To enable them, copy the folder to the repo root:
 
 ```bash
 cp -r contrib/vscode .vscode
-```
-
-### The build worked fine, but when I try to call cmake manually I get `cmake not found!`
-
-Conan installs cmake as a build dependency automatically, but won't make it available in the PATH.
-
-If you want to use conan's cmake installation, you can use the `virtualenv` generator to create
-a virtual environment which has `cmake` in its PATH:
-
-```bash
-cd my_build_folder/
-conan install -pr my_conan_profile -g virtualenv ../
-source ./activate.sh # On Linux (bash) or on Windows in git-bash
-.\activate.bat # On Windows in cmd
-.\activate.ps1 # On Windows in powershell
-cmake ... # CMake from conan is now available
-```
-
-There is also a `deactivate.{sh,bat,ps1}` which make your shell leave the virtual environment.
-
-### `ERROR: .../orbitprofiler/conanfile.py: 'options.ggp' doesn't exist` ?!?
-
-This message or a similar one indicates that your build profiles are
-outdated and need to be updated. You can either just call the bootstrap
-script again or you can manually update your conan config:
-
-```bash
-conan config install third_party/conan/configs/[windows,linux]
 ```
 
 ### How can I use separate debugging symbols for Linux binaries?

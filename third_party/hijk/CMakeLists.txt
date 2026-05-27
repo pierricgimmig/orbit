@@ -36,15 +36,15 @@ add_definitions(-DNOMINMAX)
 add_definitions(-DUNICODE -D_UNICODE)
 
 if (MSVC)
-  # Build with Multiple Processes.
-  add_compile_options("/MP")
-  # Set source and execution character sets to UTF-8.
-  add_compile_options("/utf-8")
+  # Build with Multiple Processes. Scoped to C/CXX to avoid passing to MASM assembler.
+  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+  # Set source and execution character sets to UTF-8. Scoped to C/CXX only.
+  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>)
   # Set warning level for external includes.
   string(APPEND CMAKE_CXX_FLAGS " /experimental:external /external:anglebrackets /external:W0")
   string(APPEND CMAKE_C_FLAGS " /experimental:external /external:anglebrackets /external:W0")
-  # Treat all compiler warnings as errors.
-  add_compile_options("/WX")
+  # Treat all compiler warnings as errors. Scoped to C/CXX to avoid failing on MASM unknown-flag warnings.
+  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/WX>)
 endif()
 
 
