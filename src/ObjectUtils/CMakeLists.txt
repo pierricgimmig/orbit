@@ -21,6 +21,7 @@ target_sources(
          include/ObjectUtils/ElfFile.h
          include/ObjectUtils/ObjectFile.h
          include/ObjectUtils/PdbFile.h
+         include/ObjectUtils/PeFileReader.h
          include/ObjectUtils/SymbolsFile.h
          include/ObjectUtils/WindowsBuildIdUtils.h)
 
@@ -33,6 +34,7 @@ target_sources(
         PdbFileLlvm.h
         PdbFileLlvm.cpp
         ObjectFile.cpp
+        PeFileReader.cpp
         SymbolsFile.cpp
         WindowsBuildIdUtils.cpp)
 

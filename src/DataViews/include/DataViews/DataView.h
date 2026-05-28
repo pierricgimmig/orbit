@@ -48,6 +48,7 @@ constexpr std::string_view kMenuActionAddIterator = "Add iterator(s)";
 
 constexpr std::string_view kMenuActionDisassembly = "Go to Disassembly";
 constexpr std::string_view kMenuActionSourceCode = "Go to Source code";
+constexpr std::string_view kMenuActionDisassembleModule = "Disassemble Module";
 
 // Navigating related actions
 constexpr std::string_view kMenuActionJumpToFirst = "Jump to first";
@@ -179,6 +180,7 @@ class DataView {
   virtual void OnIteratorRequested(absl::Span<const int> /*selection*/) {}
   void OnDisassemblyRequested(absl::Span<const int> selection);
   void OnSourceCodeRequested(absl::Span<const int> selection);
+  virtual void OnDisassembleModuleRequested(absl::Span<const int> /*selection*/) {}
   virtual void OnJumpToRequested(std::string_view /*action*/, absl::Span<const int> /*selection*/) {
   }
   virtual void OnLoadPresetRequested(absl::Span<const int> /*selection*/) {}

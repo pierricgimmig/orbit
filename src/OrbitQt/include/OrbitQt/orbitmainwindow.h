@@ -46,6 +46,7 @@
 #include "ClientData/ScopeStatsCollection.h"
 #include "ClientData/TimerTrackDataIdManager.h"
 #include "ClientProtos/capture_data.pb.h"
+#include "CodeReport/AnnotatingLine.h"
 #include "CodeReport/CodeReport.h"
 #include "CodeReport/DisassemblyReport.h"
 #include "DataViews/DataView.h"
@@ -129,6 +130,8 @@ class OrbitMainWindow final : public QMainWindow, public orbit_gl::MainWindowInt
   void ShowDisassembly(const orbit_client_data::FunctionInfo& function_info,
                        std::string_view assembly,
                        orbit_code_report::DisassemblyReport report) override;
+  void ShowModuleDisassembly(std::string_view module_name, std::string_view assembly,
+                              std::vector<orbit_code_report::AnnotatingLine> annotations) override;
 
   void AppendToCaptureLog(CaptureLogSeverity severity, absl::Duration capture_time,
                           std::string_view message) override;

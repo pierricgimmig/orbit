@@ -42,6 +42,7 @@
 #include "ClientData/DataManager.h"
 #include "ClientData/FunctionInfo.h"
 #include "ClientData/ModuleData.h"
+#include "ClientData/ModuleInMemory.h"
 #include "ClientData/ModuleIdentifier.h"
 #include "ClientData/ModuleIdentifierProvider.h"
 #include "ClientData/ModuleManager.h"
@@ -158,6 +159,8 @@ class OrbitApp final : public DataViewFactory,
   void RefreshCaptureView();
   void Disassemble(uint32_t pid, const orbit_client_data::FunctionInfo& function) override;
   void ShowSourceCode(const orbit_client_data::FunctionInfo& function) override;
+  void DisassembleModule(const orbit_client_data::ModuleData& module,
+                         const orbit_client_data::ModuleInMemory& module_in_memory) override;
 
   void OnCaptureStarted(const orbit_grpc_protos::CaptureStarted& capture_started,
                         std::optional<std::filesystem::path> file_path,

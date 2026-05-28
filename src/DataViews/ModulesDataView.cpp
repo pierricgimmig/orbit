@@ -176,6 +176,10 @@ DataView::ActionStatus ModulesDataView::GetActionStatus(std::string_view action,
                                               : ActionStatus::kInvisible;
   }
 
+  if (action == kMenuActionDisassembleModule) {
+    return ActionStatus::kVisibleAndEnabled;
+  }
+
   return DataView::GetActionStatus(action, clicked_index, selected_indices);
 }
 
@@ -238,6 +242,16 @@ void ModulesDataView::UpdateModules(const ProcessData* process) {
   }
 
   OnDataChanged();
+}
+
+void ModulesDataView::OnDisassembleModuleRequested(absl::Span<const int> selection) {
+  // Use only the first selected module for disassembly.
+  if (selection.empty()) return;
+  int index = selection[0];
+  uint64_t start_address = indices_[index];
+  ModuleData* module = start_address_to_module_.at(start_address);
+  const ModuleInMemory& module_in_memory = start_address_to_module_in_memory_.at(start_address);
+  app_->DisassembleModule(*module, module_in_memory);
 }
 
 void ModulesDataView::OnRefreshButtonClicked() {

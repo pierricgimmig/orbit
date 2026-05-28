@@ -24,6 +24,8 @@ class Disassembler {
   void Disassemble(orbit_client_data::ProcessData& process,
                    orbit_client_data::ModuleManager& module_manager, const void* machine_code,
                    size_t size, uint64_t address, bool is_64bit);
+  // Like Disassemble but without resolving call-target symbol names.
+  void DisassembleRaw(const void* machine_code, size_t size, uint64_t address, bool is_64bit);
   void AddLine(std::string, std::optional<uint64_t> address = std::nullopt);
 
   [[nodiscard]] const std::string& GetResult() const { return result_; }

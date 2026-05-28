@@ -21,11 +21,13 @@ target_sources(CodeReport PUBLIC include/CodeReport/AnnotateDisassembly.h
                                  include/CodeReport/CodeReport.h
                                  include/CodeReport/Disassembler.h
                                  include/CodeReport/DisassemblyReport.h
+                                 include/CodeReport/FunctionPrologueDetector.h
                                  include/CodeReport/SourceCodeReport.h)
 
 target_sources(CodeReport PRIVATE AnnotateDisassembly.cpp
                                   Disassembler.cpp
                                   DisassemblyReport.cpp
+                                  FunctionPrologueDetector.cpp
                                   SourceCodeReport.cpp)
 
 add_executable(CodeReportTests)

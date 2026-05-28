@@ -16,6 +16,7 @@
 #include "ClientData/FunctionInfo.h"
 #include "ClientData/ModuleData.h"
 #include "ClientData/ModuleIdentifier.h"
+#include "ClientData/ModuleInMemory.h"
 #include "ClientData/ModulePathAndBuildId.h"
 #include "ClientData/PostProcessedSamplingData.h"
 #include "ClientData/ProcessData.h"
@@ -115,6 +116,8 @@ class AppInterface : public orbit_client_data::CaptureDataHolder {
 
   virtual void Disassemble(uint32_t pid, const orbit_client_data::FunctionInfo& function) = 0;
   virtual void ShowSourceCode(const orbit_client_data::FunctionInfo& function) = 0;
+  virtual void DisassembleModule(const orbit_client_data::ModuleData& module,
+                                 const orbit_client_data::ModuleInMemory& module_in_memory) = 0;
 
   virtual void ShowHistogram(const std::vector<uint64_t>* data, std::string scope_name,
                              std::optional<ScopeId> scope_id) = 0;

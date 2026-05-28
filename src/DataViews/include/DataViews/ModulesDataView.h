@@ -55,6 +55,7 @@ class ModulesDataView : public DataView {
  protected:
   [[nodiscard]] ActionStatus GetActionStatus(std::string_view action, int clicked_index,
                                              absl::Span<const int> selected_indices) override;
+  void OnDisassembleModuleRequested(absl::Span<const int> selection) override;
   void DoSort() override;
   void DoFilter() override;
 

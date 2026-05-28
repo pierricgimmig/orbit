@@ -15,6 +15,7 @@
 #include "ClientData/FunctionInfo.h"
 #include "ClientData/ModuleData.h"
 #include "ClientData/ModuleIdentifier.h"
+#include "ClientData/ModuleInMemory.h"
 #include "ClientData/ProcessData.h"
 #include "ClientData/ScopeId.h"
 #include "ClientProtos/capture_data.pb.h"
@@ -100,6 +101,9 @@ class MockAppInterface : public AppInterface {
   MOCK_METHOD(void, Disassemble, (uint32_t pid, const orbit_client_data::FunctionInfo&),
               (override));
   MOCK_METHOD(void, ShowSourceCode, (const orbit_client_data::FunctionInfo&), (override));
+  MOCK_METHOD(void, DisassembleModule,
+              (const orbit_client_data::ModuleData&, const orbit_client_data::ModuleInMemory&),
+              (override));
 
   MOCK_METHOD(bool, IsTracepointSelected, (const orbit_grpc_protos::TracepointInfo&),
               (const, override));

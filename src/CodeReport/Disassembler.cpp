@@ -99,6 +99,38 @@ void Disassembler::Disassemble(orbit_client_data::ProcessData& process,
   cs_close(&handle);
 }
 
+void Disassembler::DisassembleRaw(const void* machine_code, size_t size, uint64_t address,
+                                  bool is_64bit) {
+  csh handle = 0;
+  cs_insn* insn = nullptr;
+  size_t count = 0;
+  cs_mode mode = is_64bit ? CS_MODE_64 : CS_MODE_32;
+
+  AddLine(absl::StrFormat("Platform: %s",
+                          is_64bit ? "X86 64 (Intel syntax)" : "X86 32 (Intel syntax)"));
+  cs_err err = cs_open(CS_ARCH_X86, mode, &handle);
+  if (err != CS_ERR_OK) {
+    AddLine(absl::StrFormat("Failed on cs_open() with error returned: %u", err));
+    return;
+  }
+  cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+  count = cs_disasm(handle, static_cast<const uint8_t*>(machine_code), size, address, 0, &insn);
+  if (count != 0u) {
+    size_t j = 0;
+    for (; j < count; j++) {
+      cs_insn* cur = &insn[j];
+      AddLine(absl::StrFormat("0x%llx:\t%-12s %s", cur->address, cur->mnemonic, cur->op_str),
+              cur->address);
+    }
+    AddLine(absl::StrFormat("0x%llx:", insn[j - 1].address + insn[j - 1].size));
+    cs_free(insn, count);
+  } else {
+    AddLine("ERROR: Failed to disasm given code!");
+  }
+  AddLine("");
+  cs_close(&handle);
+}
+
 uint64_t Disassembler::GetAddressAtLine(size_t line) const {
   if (line >= line_to_address_.size()) return 0;
   return line_to_address_[line];

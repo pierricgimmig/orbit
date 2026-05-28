@@ -125,7 +125,7 @@ std::vector<DataView::ActionGroup> DataView::GetContextMenuWithGrouping(
                         kMenuActionUnselect, kMenuActionEnableFrameTrack,
                         kMenuActionDisableFrameTrack});
 
-  try_add_action_group({kMenuActionDisassembly, kMenuActionSourceCode});
+  try_add_action_group({kMenuActionDisassembly, kMenuActionSourceCode, kMenuActionDisassembleModule});
 
   // Navigating related actions
   try_add_action_group({kMenuActionAddIterator, kMenuActionJumpToFirst, kMenuActionJumpToLast,
@@ -160,6 +160,8 @@ void DataView::OnContextMenu(std::string_view action, int /*menu_index*/,
     OnDisassemblyRequested(item_indices);
   } else if (action == kMenuActionSourceCode) {
     OnSourceCodeRequested(item_indices);
+  } else if (action == kMenuActionDisassembleModule) {
+    OnDisassembleModuleRequested(item_indices);
 
   } else if (action == kMenuActionJumpToFirst || action == kMenuActionJumpToLast ||
              action == kMenuActionJumpToMin || action == kMenuActionJumpToMax) {

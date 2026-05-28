@@ -11,12 +11,14 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "ClientData/FunctionInfo.h"
 #include "ClientData/ModuleData.h"
 #include "ClientData/ScopeId.h"
 #include "ClientData/ScopeStatsCollection.h"
 #include "ClientProtos/capture_data.pb.h"
+#include "CodeReport/AnnotatingLine.h"
 #include "CodeReport/CodeReport.h"
 #include "CodeReport/DisassemblyReport.h"
 #include "DataViews/DataViewType.h"
@@ -48,6 +50,9 @@ class MainWindowInterface {
   virtual void ShowDisassembly(const orbit_client_data::FunctionInfo& function_info,
                                std::string_view assembly,
                                orbit_code_report::DisassemblyReport report) = 0;
+  virtual void ShowModuleDisassembly(
+      std::string_view module_name, std::string_view assembly,
+      std::vector<orbit_code_report::AnnotatingLine> annotations) = 0;
 
   enum class CaptureLogSeverity { kInfo, kWarning, kSevereWarning, kError };
   virtual void AppendToCaptureLog(CaptureLogSeverity severity, absl::Duration capture_time,

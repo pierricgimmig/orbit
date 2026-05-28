@@ -69,9 +69,11 @@
 #include "ClientProtos/preset.pb.h"
 #include "ClientProtos/user_defined_capture_info.pb.h"
 #include "ClientServices/TracepointServiceClient.h"
+#include "CodeReport/AnnotatingLine.h"
 #include "CodeReport/CodeReport.h"
 #include "CodeReport/Disassembler.h"
 #include "CodeReport/DisassemblyReport.h"
+#include "CodeReport/FunctionPrologueDetector.h"
 #include "CodeReport/SourceCodeReport.h"
 #include "DataViews/DataView.h"
 #include "DataViews/DataViewType.h"
@@ -86,6 +88,7 @@
 #include "Introspection/Introspection.h"
 #include "ModuleUtils/VirtualAndAbsoluteAddresses.h"
 #include "ObjectUtils/ElfFile.h"
+#include "ObjectUtils/PeFileReader.h"
 #include "OrbitBase/Action.h"
 #include "OrbitBase/CanceledOr.h"
 #include "OrbitBase/ExecutablePath.h"
@@ -968,6 +971,82 @@ void OrbitApp::ShowSourceCode(const orbit_client_data::FunctionInfo& function) {
     }
 
     main_window_->ShowSourceCode(source_file_path, line_info.source_line(), std::move(code_report));
+  });
+}
+
+void OrbitApp::DisassembleModule(const orbit_client_data::ModuleData& module,
+                                 const orbit_client_data::ModuleInMemory& module_in_memory) {
+  const std::string file_path = module.file_path();
+  const uint64_t runtime_base = module_in_memory.start();
+  const std::string module_name =
+      std::filesystem::path(file_path).filename().string();
+
+  thread_pool_->Schedule([this, file_path, runtime_base, module_name]() {
+    // Read executable sections from the PE file (works for 32-bit and 64-bit).
+    ErrorMessageOr<std::vector<orbit_object_utils::PeExecutableSection>> sections_or_error =
+        orbit_object_utils::GetPeExecutableSections(file_path);
+    if (sections_or_error.has_error()) {
+      std::string error_msg = sections_or_error.error().message();
+      main_thread_executor_->Schedule([this, module_name, error_msg]() {
+        SendErrorToUi("Disassemble Module", error_msg);
+      });
+      return;
+    }
+
+    const std::vector<orbit_object_utils::PeExecutableSection>& sections =
+        sections_or_error.value();
+
+    orbit_code_report::Disassembler disasm;
+    std::vector<uint64_t> all_prologue_addresses;
+
+    for (const orbit_object_utils::PeExecutableSection& sec : sections) {
+      const uint64_t section_runtime_addr = runtime_base + sec.virtual_address;
+      const auto* code_bytes = sec.data.data();
+      const size_t code_size = sec.data.size();
+      const bool file_is_64bit = sec.is_64bit;
+
+      // Section header comment.
+      disasm.AddLine(absl::StrFormat("; --- Section [0x%llx - 0x%llx] ---",
+                                     section_runtime_addr,
+                                     section_runtime_addr + code_size));
+      disasm.DisassembleRaw(code_bytes, code_size, section_runtime_addr, file_is_64bit);
+
+      // Detect function prologues in this section.
+      std::vector<uint64_t> section_prologues =
+          orbit_code_report::DetectFunctionPrologues(code_bytes, code_size, section_runtime_addr,
+                                                     file_is_64bit);
+      all_prologue_addresses.insert(all_prologue_addresses.end(), section_prologues.begin(),
+                                    section_prologues.end());
+    }
+
+    if (disasm.GetResult().empty()) {
+      main_thread_executor_->Schedule([this, module_name]() {
+        SendErrorToUi("Disassemble Module",
+                      absl::StrFormat("No executable sections found in \"%s\".", module_name));
+      });
+      return;
+    }
+
+    // Build AnnotatingLine entries for each detected prologue.
+    std::vector<orbit_code_report::AnnotatingLine> annotations;
+    uint64_t annotation_line_number = 1;
+    for (uint64_t addr : all_prologue_addresses) {
+      std::optional<size_t> line_0indexed = disasm.GetLineAtAddress(addr);
+      if (!line_0indexed.has_value()) continue;
+      // AnnotatingLine uses 1-indexed line numbers.
+      uint64_t ref_line = static_cast<uint64_t>(*line_0indexed) + 1;
+      annotations.push_back(orbit_code_report::AnnotatingLine{
+          .reference_line = ref_line,
+          .line_number = annotation_line_number++,
+          .line_contents = absl::StrFormat("; [function @ 0x%llx]", addr)});
+    }
+
+    std::string assembly = disasm.GetResult();
+    main_thread_executor_->Schedule(
+        [this, module_name, assembly = std::move(assembly),
+         annotations = std::move(annotations)]() mutable {
+          main_window_->ShowModuleDisassembly(module_name, assembly, std::move(annotations));
+        });
   });
 }
 

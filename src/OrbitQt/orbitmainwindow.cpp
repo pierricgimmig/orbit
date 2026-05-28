@@ -84,6 +84,7 @@
 #include "ClientProtos/capture_data.pb.h"
 #include "ClientServices/ProcessManager.h"
 #include "ClientSymbols/QSettingsBasedStorageManager.h"
+#include "CodeReport/AnnotatingLine.h"
 #include "CodeReport/DisassemblyReport.h"
 #include "CodeViewer/Dialog.h"
 #include "CodeViewer/FontSizeInEm.h"
@@ -1891,6 +1892,29 @@ void OrbitMainWindow::ShowDisassembly(const orbit_client_data::FunctionInfo& fun
       [this](const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id) {
         return app_->RetrieveModuleWithDebugInfo(module_path_and_build_id);
       });
+}
+
+void OrbitMainWindow::ShowModuleDisassembly(
+    std::string_view module_name, std::string_view assembly,
+    std::vector<orbit_code_report::AnnotatingLine> annotations) {
+  auto dialog = std::make_unique<orbit_code_viewer::OwningDialog>();
+  dialog->setWindowTitle(
+      absl::StrFormat("Orbit Module Disassembly - %s", module_name).c_str());
+  dialog->SetLineNumberTypes(orbit_code_viewer::Dialog::LineNumberTypes::kOnlyAnnotatingLines);
+  dialog->SetHighlightCurrentLine(true);
+
+  auto syntax_highlighter = std::make_unique<orbit_syntax_highlighter::X86Assembly>();
+  dialog->SetMainContent(QString::fromUtf8(assembly.data(), assembly.size()),
+                         std::move(syntax_highlighter));
+
+  if (!annotations.empty()) {
+    dialog->SetAnnotatingContent(annotations);
+  }
+
+  // Close when the main window is destroyed.
+  QObject::connect(this, &QObject::destroyed, dialog.get(), &QDialog::close);
+
+  orbit_code_viewer::OpenAndDeleteOnClose(std::move(dialog));
 }
 
 void OrbitMainWindow::AppendToCaptureLog(CaptureLogSeverity severity, absl::Duration capture_time,
