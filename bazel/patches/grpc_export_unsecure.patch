@@ -1,0 +1,24 @@
+Make grpc++_unsecure visible outside the gRPC repository.
+
+Orbit only ever creates insecure gRPC channels and servers -- every call site
+uses InsecureChannelCredentials or InsecureServerCredentials -- so it links
+grpc++_unsecure, the same target the pkg-config path in cmake/FindgRPC.cmake
+selects. gRPC builds that target but keeps it behind an empty package group.
+
+Linking the TLS stack instead would be worse than dead weight: gRPC's default
+BoringSSL collides at link time with the OpenSSL that libssh2 brings in, and
+building gRPC against OpenSSL instead makes the libraries Orbit injects into a
+target process abort inside OpenSSL's initialisation, which runs in the fresh
+linker namespace dlmopen creates.
+
+--- a/BUILD	2026-08-21 01:43:11.821710835 -0700
++++ b/BUILD	2026-08-21 01:43:11.859413460 -0700
+@@ -1264,7 +1264,7 @@
+         "avoid_dep",
+         "nofixdeps",
+     ],
+-    visibility = ["//bazel:grpc++_unsecure"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "channel_arg_names",
+         "global_callback_hook",

@@ -1,0 +1,9 @@
+# Cargo's output directory, if anyone has run cargo in the py-spy checkout.
+third_party/py-spy/target
+third_party/py-spy-ffi/target
+
+# CMake build trees.
+build
+build_gcc17_debug
+build_gcc17_relwithdebinfo
+build_gcc17_release

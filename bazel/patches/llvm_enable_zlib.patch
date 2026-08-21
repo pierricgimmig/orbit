@@ -1,0 +1,38 @@
+Build LLVM's Support library against zlib.
+
+The Bazel overlay LLVM ships leaves zlib out, which makes every attempt to read
+a SHF_COMPRESSED debug section fail with "LLVM was not built with
+LLVM_ENABLE_ZLIB". Orbit reads compressed debug info from real binaries, so the
+dependency is restored here -- CMake's LLVM_ENABLE_ZLIB=ON equivalent.
+
+diff -ur a/llvm/BUILD.bazel b/llvm/BUILD.bazel
+--- a/llvm/BUILD.bazel	2026-08-21 01:21:40.474374332 -0700
++++ b/llvm/BUILD.bazel	2026-08-21 01:21:49.601052072 -0700
+@@ -339,7 +339,7 @@
+     deps = [
+         ":config",
+         ":Demangle",
+-        # "@llvm_zlib//:zlib",
++        "@zlib",
+         # "@llvm_zstd//:zstd",
+     ],
+ )
+diff -ur a/llvm/config.bzl b/llvm/config.bzl
+--- a/llvm/config.bzl	2026-08-21 01:21:40.474107419 -0700
++++ b/llvm/config.bzl	2026-08-21 01:21:49.600759627 -0700
+@@ -105,6 +105,7 @@
+     # https://sourceware.org/bugzilla/show_bug.cgi?id=15366). These are also
+     # included unconditionally in the CMake build:
+     # https://github.com/llvm/llvm-project/blob/cd0dd8ece8e/llvm/cmake/modules/HandleLLVMOptions.cmake#L907-L909
++    "LLVM_ENABLE_ZLIB=1",
+     "__STDC_LIMIT_MACROS",
+     "__STDC_CONSTANT_MACROS",
+     "__STDC_FORMAT_MACROS",
+diff -ur a/MODULE.bazel b/MODULE.bazel
+--- a/MODULE.bazel	2026-08-21 01:21:40.471110207 -0700
++++ b/MODULE.bazel	2026-08-21 01:21:49.600697386 -0700
+@@ -6,3 +6,4 @@
+ bazel_dep(name = "rules_cc", version = "0.2.11")
+ bazel_dep(name = "rules_python", version = "1.9.0")
+ bazel_dep(name = "rules_shell", version = "0.6.1")
++bazel_dep(name = "zlib", version = "1.3.2")

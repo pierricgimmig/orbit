@@ -1,0 +1,124 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+module(
+    name = "orbit",
+    version = "0.0.0",
+    compatibility_level = 1,
+)
+
+# --- Rule sets -----------------------------------------------------------
+
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_python", version = "2.0.2")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_rust", version = "0.73.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+# --- Libraries -----------------------------------------------------------
+#
+# Kept at the newest versions the registry offers: the older ones gRPC pins
+# transitively pull rule sets that predate Bazel 9 and no longer load.
+
+bazel_dep(name = "abseil-cpp", version = "20260817.0")
+bazel_dep(name = "protobuf", version = "36.0")
+bazel_dep(name = "grpc", version = "1.83.0")
+bazel_dep(name = "googletest", version = "1.18.0")
+bazel_dep(name = "zlib", version = "1.3.2")
+bazel_dep(name = "libssh2", version = "1.11.1.bcr.1")
+
+# gRPC's DNS resolver. The version gRPC itself asks for ships a BUILD file that
+# calls the native cc_library, which Bazel 9 removed.
+bazel_dep(name = "c-ares", version = "1.34.6")
+
+# Orbit links grpc++_unsecure, which gRPC builds but does not export.
+single_version_override(
+    module_name = "grpc",
+    patch_strip = 1,
+    patches = ["//bazel/patches:grpc_export_unsecure.patch"],
+    version = "1.83.0",
+)
+
+# LLVMObject/LLVMSymbolize/LLVMDebugInfo*, used to read ELF, PE/COFF and PDB
+# symbols. Only the handful of libraries Orbit names actually get compiled.
+bazel_dep(name = "llvm-project", version = "17.0.4.bcr.1")
+
+# Two changes are needed, and one of them is to llvm-project's own
+# MODULE.bazel, so this has to be archive_override rather than
+# single_version_override: the registry's MODULE.bazel is what resolution sees,
+# and only an archive override reads it from the (patched) archive. The archive
+# is the one the registry points at, byte for byte.
+archive_override(
+    module_name = "llvm-project",
+    integrity = "sha256-gtqfNq+WA7BvU75HjcNGGblXf9knddbynazNP9DMLMw=",
+    patch_strip = 1,
+    patches = [
+        "//bazel/patches:llvm_smallvector_cstdint.patch",
+        "//bazel/patches:llvm_enable_zlib.patch",
+    ],
+    strip_prefix = "llvm-project-17.0.4.bcr.1.bzl",
+    urls = ["https://github.com/bazel-contrib/llvm-project-redist/releases/download/llvmorg-17.0.4.bcr.1/llvm-project-17.0.4.bcr.1.bzl.tar.zst"],
+)
+
+# --- Dependencies without a Bazel module ---------------------------------
+
+# Qt 5, unpacked from pinned Ubuntu packages. Prebuilt so that a first build
+# does not have to compile Qt.
+qt5 = use_extension("//bazel/deps:extensions.bzl", "qt5")
+use_repo(qt5, "qt5")
+
+# GL/gl.h and the unversioned libGL.so, likewise from pinned packages.
+opengl = use_extension("//bazel/deps:extensions.bzl", "opengl")
+use_repo(opengl, "opengl")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Capstone is a small C library, so it is built from source.
+http_archive(
+    name = "capstone",
+    build_file = "//bazel/deps:capstone.BUILD",
+    # TriCore is the one architecture whose sources spell the include as
+    # <platform.h> instead of <capstone/platform.h>. Upstream's own build only
+    # gets away with it because it puts include/capstone on the include path,
+    # which would leak names like x86.h and arm.h into every dependent.
+    patch_cmds = [
+        "sed -i.bak 's|#include <platform.h>|#include <capstone/platform.h>|' " +
+        "arch/TriCore/TriCoreInstPrinter.c && rm arch/TriCore/TriCoreInstPrinter.c.bak",
+    ],
+    sha256 = "2b9c66915923fdc42e0e32e2a9d7d83d3534a45bb235e163a70047951890c01a",
+    strip_prefix = "capstone-5.0.1",
+    url = "https://github.com/capstone-engine/capstone/archive/refs/tags/5.0.1.tar.gz",
+)
+
+# Outcome, in the same standalone form the Conan build used.
+http_archive(
+    name = "outcome",
+    build_file = "//bazel/deps:outcome.BUILD",
+    sha256 = "2840e403b1d7a0d3a75ecc4df574ab0674284bb21d76ac5f817695f2b56905f2",
+    strip_prefix = "outcome-2.2.9",
+    url = "https://github.com/ned14/outcome/archive/refs/tags/v2.2.9.tar.gz",
+)
+
+# --- Rust (py-spy) -------------------------------------------------------
+
+# LinuxTracing samples Python call stacks through py-spy, which is a Rust
+# crate. rules_rust downloads its own toolchain, so no host Rust install is
+# needed.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(edition = "2021")
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//third_party/py-spy-ffi:Cargo.lock",
+    manifests = [
+        "//third_party:py-spy/Cargo.toml",
+        "//third_party/py-spy-ffi:Cargo.toml",
+    ],
+)
+use_repo(crate, "crates")

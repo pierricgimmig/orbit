@@ -1,0 +1,70 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+common --enable_platform_specific_config
+
+# Orbit is a C++17 project, with GNU extensions enabled -- LinuxTracing reaches
+# into <linux/perf_event.h>, which uses typeof(). This matches
+# CMAKE_CXX_STANDARD 17 plus CMAKE_CXX_EXTENSIONS ON.
+build --cxxopt=-std=gnu++17
+build --host_cxxopt=-std=gnu++17
+
+# ---------------------------------------------------------------- build speed
+#
+# A shared on-disk cache. This is what makes a *second* first-build -- a clean
+# checkout, a new output base, a switched branch -- nearly free, and it is the
+# single biggest lever available without a remote cache.
+build --disk_cache=~/.cache/bazel/orbit
+
+# Keep the action environment independent of the invoking shell so that cache
+# entries stay valid across terminals, editors and CI.
+build --incompatible_strict_action_env
+
+# Reuse sandbox directories instead of recreating the symlink forest for every
+# action. Worth several percent on a tree this size.
+build --reuse_sandbox_directories
+
+# Don't materialize the legacy external/ runfiles layout; it doubles the number
+# of symlinks in every test's runfiles tree.
+build --nolegacy_external_runfiles
+
+# Version information for //src/OrbitVersion. Everything it emits is derived
+# from the commit, so an unchanged checkout does not trigger relinks.
+build --workspace_status_command=bazel/tools/workspace_status.sh
+
+# Orbit compiles its own code with -Werror for a long list of warnings.
+# Dependencies fetched through Bazel modules are not held to that standard, so
+# their headers are included with -isystem instead of -I.
+build --features=external_include_paths
+
+# Failures should not hide behind the progress bar.
+build --verbose_failures
+
+# ---------------------------------------------------------------------- tests
+test --test_output=errors
+test --test_summary=terse
+
+# Qt widgets tests run headless; this mirrors what cmake/tests.cmake sets.
+test --test_env=QT_QPA_PLATFORM=offscreen
+
+# ------------------------------------------------------------------- profiles
+build:opt -c opt
+build:debug -c dbg
+
+# Release-with-debug-info, the configuration Orbit ships.
+build:release -c opt
+build:release --copt=-g
+build:release --strip=never
+
+# Address/undefined sanitizers, mirroring the flags used with the CMake build.
+build:asan --copt=-fsanitize=address
+build:asan --copt=-fno-omit-frame-pointer
+build:asan --linkopt=-fsanitize=address
+build:asan --test_env=ASAN_OPTIONS=detect_leaks=1
+
+build:ubsan --copt=-fsanitize=undefined
+build:ubsan --linkopt=-fsanitize=undefined
+
+# A user-local file for machine-specific settings (remote cache, jobs, ...).
+try-import %workspace%/.bazelrc.user

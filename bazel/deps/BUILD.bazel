@@ -1,0 +1,28 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+exports_files([
+    "capstone.BUILD",
+    "opengl.BUILD.tpl",
+    "outcome.BUILD",
+    "resolve_debs.py",
+])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The set of LLVM libraries Orbit links, matching REQUIRED_LLVM_LIBS in
+# src/ObjectUtils/CMakeLists.txt. Grouped here so the module list lives in one
+# place rather than being repeated by every consumer.
+cc_library(
+    name = "llvm",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:DebugInfoCodeView",
+        "@llvm-project//llvm:DebugInfoDWARF",
+        "@llvm-project//llvm:DebugInfoPDB",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Symbolize",
+    ],
+)

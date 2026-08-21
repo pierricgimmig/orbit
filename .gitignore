@@ -20,3 +20,5 @@ __pycache__
 
 # Rust/Cargo build artifacts
 third_party/py-spy-ffi/target/
+.bazelrc.user
+/bazel-*
