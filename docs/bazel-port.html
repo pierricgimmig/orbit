@@ -471,7 +471,7 @@
       <div class="stat"><b>9,520</b><span>Actions</span></div>
       <div class="stat"><b>&lt;1s</b><span>No-op rebuild</span></div>
       <div class="stat"><b>148</b><span>C++ targets</span></div>
-      <div class="stat"><b>46/49</b><span>Tests passing</span></div>
+      <div class="stat"><b>48/49</b><span>Tests passing</span></div>
       <div class="stat"><b>0</b><span>Things to install</span></div>
     </div>
   </div>
@@ -834,14 +834,14 @@
         <tr><td>OpenSSL</td><td class="v was">3.3.2</td><td class="v now">3.5.5</td><td>Now only via libssh2 — gRPC no longer pulls it</td></tr>
         <tr><td>c-ares</td><td class="v was">transitive</td><td class="v now bump">1.34.6</td><td>gRPC asks for 1.19.1, whose BUILD calls the native <code>cc_library</code> Bazel 9 removed</td></tr>
         <tr><td>Qt 5</td><td class="v was">system apt</td><td class="v now bump">5.15.18</td><td>Pinned Ubuntu packages instead of machine state</td></tr>
-        <tr><td>capstone</td><td class="v was">5.0.1</td><td class="v now">5.0.1</td><td>Unchanged; release tarball + hand-written BUILD</td></tr>
-        <tr><td>Outcome</td><td class="v was">2.2.9</td><td class="v now">2.2.9</td><td>Unchanged; standalone single-header form</td></tr>
+        <tr><td>capstone</td><td class="v was">5.0.1</td><td class="v now bump">5.0.9</td><td>Newest stable; 6.0.0 has only alpha releases</td></tr>
+        <tr><td>Outcome</td><td class="v was">2.2.9</td><td class="v now bump">2.2.15</td><td>Newest; standalone single-header form</td></tr>
         <tr><td>BoringSSL</td><td class="v was">—</td><td class="v now">not linked</td><td>In the module graph, but zero targets reach any binary</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>Two things about that table are worth calling out. <strong>OpenSSL is no longer a direct dependency</strong> — it arrives only under libssh2, and the UI is the only binary that gets it. And <strong>capstone and Outcome did not move at all</strong>, because neither has a registry module and both are cheap to fetch and build directly; there was no pressure to change them.</p>
+  <p>Two things about that table are worth calling out. <strong>OpenSSL is no longer a direct dependency</strong> — it arrives only under libssh2, and the UI is the only binary that gets it. And every one of these is the newest release available, the rule sets included (<code>rules_cc</code> 0.2.22, <code>rules_python</code> 2.3.1, <code>rules_shell</code> 0.8.0, <code>rules_rust</code> 0.73.0, <code>bazel_skylib</code> 1.9.2, <code>platforms</code> 1.1.0). Two are pinned by availability rather than by choice: LLVM, because 17.0.4 is the only version <code>llvm-project</code> publishes to the registry, and capstone, whose 6.0 line has only alpha releases.</p>
 
   <div class="note">
     <span class="note-label">Removed along the way</span>
@@ -1074,15 +1074,39 @@
 
   <h2 id="tests">Test results</h2>
 
-  <p><code>bazel test //...</code> runs 49 targets; 46 pass. Of the three that do not, two are pre-existing and have nothing to do with the build:</p>
+  <p><code>bazel test //...</code> runs 49 targets; <strong>48 pass</strong>. Getting there needed the tracing surface switched on, which is what turned two of the defects in this port up:</p>
 
-  <ul>
-    <li><strong><code>OrbitVersionTests</code></strong> asserts the major version is 1. It comes from <code>git describe --match '1.*'</code>, and this repository's only tag is <code>v1.0.2</code>, which that pattern does not match — so the version resolves to <code>0.0</code>. <code>cmake/version.cmake</code> uses the same pattern and gets the same answer.</li>
-    <li><strong><code>SymbolsTests</code></strong> asserts a <em>"does not contain a build id"</em> error that commit <code>8e0cd23</code> replaced with a warning. The two assertions in <code>SymbolHelperTest.cpp</code> were not updated with it.</li>
-    <li><strong><code>UserSpaceInstrumentationTests</code></strong> fails intermittently — about four runs in five on an idle machine, and it passed both times the full suite ran it under load. The first injection always works and its threads come up; the second process the test forks sometimes ends up with no new threads at all. Waiting five times as long does not help, so it is a race rather than a timeout. It is the same area the upstream <code>GTEST_SKIP</code> in that test cites: <em>b/237251106, "injecting the library into the target process triggers some initialization code that check fails"</em>.</li>
-  </ul>
+  <pre><code><span class="c">$</span> sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.yama.ptrace_scope=0</code></pre>
 
-  <p><code>SessionSetupTests</code> is marked <code>flaky</code>: <code>ConnectToLocalWidgetTest</code> waits 500 ms for a 250 ms timer, which it misses under 32-way parallelism. It passes reliably on its own and on retry.</p>
+  <p>Before that, <code>LinuxTracingIntegrationTests</code> reported success while skipping its own body &mdash; it gates on <code>IsRunningAsRoot() || perf_event_paranoid &lt;= N</code>. Once it actually ran, it found that <code>cc_test</code> links dynamically where <code>cc_binary</code> does not, so the test binary was split across a shared object per module and a test that reads its own symbol table found nothing there.</p>
+
+  <h3>The one failure</h3>
+
+  <p><code>InstrumentProcessTest.Instrument</code> fails on roughly four runs in five. It is a defect in the injection, not in the build, and it has a specific cause.</p>
+
+  <p>The injected library is initialised on a thread built by <code>MachineCodeForCloneCall</code>, which issues a raw <code>clone</code> with <code>CLONE_VM | CLONE_THREAD</code> and deliberately gives it no thread-local storage. The comment above it is explicit: <em>"we do not create a new data structure for thread local storage but use the one of the thread we halted."</em> Reproduced outside ptrace, that thread model decides the outcome:</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Thread running <code>InitializeInstrumentation</code></th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Normal thread, its own TLS</td><td>succeeds 3 of 3 &mdash; 21 threads come up</td></tr>
+        <tr><td>Cloned thread borrowing another's TLS</td><td><strong>SIGSEGV</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>gRPC's event engine, which replaced the executor in 1.73, leans on thread-local storage far more heavily than what came before &mdash; so a latent problem in the injection became visible on this dependency bump. In the real path it is intermittent rather than fatal because the borrowed TLS block belongs to a <em>halted</em> thread that is not using it concurrently, so what breaks depends on what the initialisation happens to touch.</p>
+
+  <p>Fixing it means giving that thread real TLS, or moving the initialisation off it &mdash; inside ptrace-injected machine code. That is a change to the product rather than to the build, so it is documented rather than attempted. It is the same area the upstream <code>GTEST_SKIP</code> in that test cites (b/237251106).</p>
+
+  <h3>What still needs actual root</h3>
+
+  <p>Seven integration tests call <code>geteuid() == 0</code> directly and skip otherwise &mdash; <code>SchedulingSlices</code>, <code>FunctionCalls</code>, two callstack-with-uprobes tests, <code>ThreadStateSlices</code>, <code>ThreadNames</code>, and <code>GpuJobs</code> (which also wants Stadia hardware). No sysctl or permission change unskips them: they read kernel tracepoints under <code>/sys/kernel/debug/tracing</code>, which is <code>0700 root</code>. Running the test binary under <code>sudo</code> is the only way.</p>
+
+  <h3>Timing, not correctness</h3>
+
+  <p>Three tests carry Bazel tags instead of changed assertions. The integration tests are <code>exclusive</code>: they assert that no perf records were lost and no events were discarded as out of order, which is only true on a machine that is not saturated &mdash; run alongside 48 other tests, the ring buffer legitimately overflows and the tracer correctly reports it. <code>SessionSetupTests</code> and <code>CaptureEventProducerTests</code> are <code>flaky</code>: one waits 500&nbsp;ms for a 250&nbsp;ms timer, the other sleeps 25&nbsp;ms and expects a gRPC round trip inside it.</p>
 
   <!-- ==================================================== scope -->
 
