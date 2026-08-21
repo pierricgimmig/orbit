@@ -35,6 +35,7 @@ cc_test(
         "LockFreeBufferCaptureEventProducerTest.cpp",
     ],
     copts = ORBIT_COPTS,
+    flaky = True,
     deps = [
         "//src/CaptureEventProducer",
         "//src/FakeProducerSideService",

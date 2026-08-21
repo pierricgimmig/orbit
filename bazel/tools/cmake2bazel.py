@@ -432,11 +432,23 @@ STATIC_LINK_TESTS = {
     "OrbitServiceIntegrationTests",
 }
 
+# Tests that measure real tracing fidelity. They assert that no perf records
+# were lost and no events were discarded as out of order, which is only true on
+# a machine that is not saturated -- run alongside 48 other tests, the ring
+# buffer legitimately overflows and the assertion fires. Bazel runs these on
+# their own.
+EXCLUSIVE_TESTS = {
+    "LinuxTracingIntegrationTests",
+    "OrbitServiceIntegrationTests",
+}
+
 # Tests that wait on hard-coded timeouts and start missing them once 30-odd
 # other tests are running alongside them.
 FLAKY_TESTS = {
     # ConnectToLocalWidgetTest waits 500ms for a 250ms timer to have fired.
     "SessionSetupTests",
+    # Sleeps 25ms and expects a gRPC round trip to have completed in it.
+    "CaptureEventProducerTests",
 }
 
 # copy_file rules a package needs so that EXTRA_DATA entries above resolve
@@ -633,6 +645,8 @@ def render_target(target, module_name, directory, windows_headers, extra_hdrs):
         lines.append("    flaky = True,\n")
     if target.name in STATIC_LINK_TESTS:
         lines.append("    linkstatic = True,\n")
+    if target.name in EXCLUSIVE_TESTS:
+        lines.append('    tags = ["exclusive"],\n')
     if rule == "qt_cc_library":
         lines.append(render_list("include_dirs", includes or ["."]))
     else:

@@ -65,31 +65,68 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 
 ## Known test failures
 
-`bazel test //...` runs 49 test targets. Three do not pass, none of them
-because of the build:
+`bazel test //...` runs 49 test targets. One does not pass.
 
-- **`//src/OrbitVersion:OrbitVersionTests`** asserts the major version is 1.
-  The version comes from `git describe --match '1.*'`, and this repository's
-  only tag is `v1.0.2`, which that pattern does not match, so the version
-  resolves to `0.0`. `cmake/version.cmake` uses the same pattern and produces
-  the same result.
+**`//src/UserSpaceInstrumentation:UserSpaceInstrumentationTests`** fails
+intermittently in `InstrumentProcessTest.Instrument` -- roughly four runs in
+five on an idle machine, and it has passed under full-suite load. Injecting
+`liborbituserspaceinstrumentation.so` into the first target process always
+works; injecting into the second process the test forks sometimes leaves the
+target with no new threads at all. Waiting five times as long does not help, so
+it is a race rather than a timeout.
 
-- **`//src/Symbols:SymbolsTests`** asserts that looking up symbols for a module
-  without a build id fails with "does not contain a build id".
-  Commit 8e0cd2305 ("Don't discard symbols with no build-id") replaced that
-  error with a warning; the two assertions in `SymbolHelperTest.cpp` were not
-  updated with it.
+The cause is in the injection, not in the build. The injected library is
+initialised on a thread built by `MachineCodeForCloneCall`, which clones with
+`CLONE_VM | CLONE_THREAD` and deliberately does not set up thread-local
+storage. The comment above it says so: *"we do not create a new data structure
+for thread local storage but use the one of the thread we halted."* Reproduced
+outside ptrace, the thread model is decisive:
 
-- **`//src/UserSpaceInstrumentation:UserSpaceInstrumentationTests`** fails
-  intermittently in `InstrumentProcessTest.Instrument` -- roughly four runs in
-  five on an idle machine, and it has passed both times the full suite ran it
-  under load. Injecting `liborbituserspaceinstrumentation.so` into the first
-  target process always works and its threads come up; injecting into the
-  second process the same test forks sometimes leaves the target with no new
-  threads at all. Waiting five times as long does not help, so this is a race
-  in the injection rather than a timeout. It is the same area the upstream
-  `GTEST_SKIP` in that test refers to (b/237251106: "injecting the library into
-  the target process triggers some initialization code that check fails").
+| Thread running `InitializeInstrumentation` | Result |
+| --- | --- |
+| Normal thread, its own TLS | succeeds, 3 of 3, 21 threads come up |
+| Cloned thread borrowing another's TLS | SIGSEGV |
+
+gRPC's event engine, which replaced the executor in 1.73, uses thread-local
+storage far more heavily than what came before, which is why a latent problem
+became visible on this dependency bump. In the real path it is intermittent
+rather than fatal because the borrowed TLS block belongs to a halted thread
+that is not using it concurrently, so what breaks depends on what the
+initialisation happens to touch.
+
+Fixing it means giving that thread real TLS, or moving the initialisation off
+it -- delicate work inside ptrace-injected machine code, and a change to the
+product rather than to the build, so it is not part of this port. It is the
+same area the upstream `GTEST_SKIP` in that test cites (b/237251106,
+"injecting the library into the target process triggers some initialization
+code that check fails").
+
+### Tests that need more than the sysctls
+
+Seven integration tests check `geteuid() == 0` directly and skip otherwise:
+`SchedulingSlices`, `FunctionCalls`, `CallstackSamplesTogetherWithFunctionCalls`,
+`CallstackSamplesWithFramePointersTogetherWithFunctionCalls`,
+`ThreadStateSlices`, `ThreadNames` and `GpuJobs` (which additionally needs
+Stadia hardware). No sysctl or filesystem permission unskips these -- they read
+kernel tracepoints under `/sys/kernel/debug/tracing`, which is `0700 root`.
+To run them:
+
+```
+sudo bazel-bin/src/LinuxTracingIntegrationTests/LinuxTracingIntegrationTests
+```
+
+### Timing-sensitive tests
+
+Two tests carry Bazel tags rather than assertions changes:
+
+- The integration tests are `exclusive`. They assert that no perf records were
+  lost and no events were discarded as out of order, which is only true on a
+  machine that is not saturated; run alongside 48 other tests, the ring buffer
+  legitimately overflows.
+- `SessionSetupTests` and `CaptureEventProducerTests` are `flaky`. The first
+  waits 500 ms for a 250 ms timer; the second sleeps 25 ms and expects a gRPC
+  round trip to have finished in it. Both miss under 32-way parallelism and
+  pass on their own.
 
 ## Configurations
 
