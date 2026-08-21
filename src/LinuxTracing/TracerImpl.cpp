@@ -354,6 +354,14 @@ uint64_t TracerImpl::GetFunctionIdOfUprobeAddress(uint64_t absolute_address) {
     function_id = uprobe_address_map_.GetFunctionId(absolute_address);
   }
   if (function_id == orbit_grpc_protos::kInvalidFunctionId) {
+    // The event is still emitted, with an invalid id: UprobesFunctionCallManager pairs uprobes and
+    // uretprobes by a per-thread stack, so dropping one here would unbalance it.
+    if (unresolved_uprobe_address_count_ == 0) {
+      ORBIT_ERROR(
+          "A uprobe fired at %#x, which belongs to no instrumented function of this capture. "
+          "Further occurrences are counted, not logged.",
+          absolute_address);
+    }
     ++unresolved_uprobe_address_count_;
   }
   return function_id;
