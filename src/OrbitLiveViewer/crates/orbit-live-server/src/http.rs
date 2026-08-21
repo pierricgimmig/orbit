@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
+use orbit_live_event::argb_to_css;
+use orbit_live_render::{choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX};
+
 use crate::{CaptureFlags, LiveService, ServerConfig};
 
 mod assets {
@@ -40,6 +43,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/demo/stop", post(demo_stop))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/frame", get(frame))
+        .route("/api/timeline", get(timeline))
         .route("/*path", get(static_asset))
         .layer(CorsLayer::permissive())
         .with_state(service)
@@ -241,6 +245,60 @@ async fn frame(State(svc): State<Arc<LiveService>>, Query(q): Query<FrameQuery>)
         encode_raster_body(&raster),
     )
         .into_response()
+}
+
+#[derive(Serialize)]
+struct InstanceJson {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: String,
+    r: f32,
+}
+
+#[derive(Serialize)]
+struct TimelineBody {
+    lod: &'static str,
+    width: u32,
+    height: u32,
+    lane_count: u32,
+    instance_count: u32,
+    instances: Vec<InstanceJson>,
+}
+
+async fn timeline(State(svc): State<Arc<LiveService>>, Query(q): Query<FrameQuery>) -> Json<TimelineBody> {
+    let width = q.width.unwrap_or(1280).clamp(16, 4096);
+    let index = svc.build_index();
+    let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
+    let t0 = q.t0.unwrap_or(auto0);
+    let t1 = q.t1.unwrap_or(auto1.max(t0 + 1));
+    let lod = choose_lod(&index, t0, t1, width as usize, INSTANCE_MIN_PX);
+    let height = stack_height(&index).ceil() as u32;
+    let instances = if lod == TimelineLod::Instanced {
+        collect_instances(&index, t0, t1, width as f32, 0.0)
+            .instances
+            .iter()
+            .map(|i| InstanceJson {
+                x: i.x,
+                y: i.y,
+                w: i.w,
+                h: i.h,
+                color: argb_to_css(i.color),
+                r: i.radius,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Json(TimelineBody {
+        lod: lod.as_str(),
+        width,
+        height,
+        lane_count: index.lane_count() as u32,
+        instance_count: instances.len() as u32,
+        instances,
+    })
 }
 
 async fn ws_upgrade(

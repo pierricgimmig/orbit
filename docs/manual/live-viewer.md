@@ -50,14 +50,13 @@ reports, GPU tracks, presets.
 
 ## Renderer
 
-The display path is a **per-lane pixel-column walk** (binary search per
-column), not “one quad per scope”. See `src/OrbitLiveViewer/README.md` and
-`cargo bench -p orbit-live-render`. Do not paste timings here; benches
-produce them.
+Zoomed out: **per-lane pixel-column walk** (binary search per column).
+Zoomed in (a visible scope wider than ~4 px): instanced SDF rounded rects
+with an analytical drop shadow. Same Orbit thread palette as the Qt UI
+(`ThreadColor.cpp` / `TimeGraph::GetColor`). See
+`src/OrbitLiveViewer/README.md` and `cargo bench -p orbit-live-render`.
+Do not paste timings here; benches produce them.
 
-## WASM pack
-
-Default Linux CI runs `cargo test` / compiles benches for the native crates.
-Building the WebGPU WASM pack is optional and documented in
-`src/OrbitLiveViewer/build_wasm.sh`. Without the pack, the page still
-renders via `GET /api/frame` (same pixel-column algorithm, on the service).
+Without a WASM pack the page still renders: `GET /api/timeline` (instanced)
+or `GET /api/frame` (columns), both Orbit-colored. UI chrome is Orbit Qt
+colors in HTML; current egui MSRV is above this repo’s rustc 1.83 pin.

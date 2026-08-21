@@ -10,6 +10,15 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+mod color;
+pub use color::{
+    argb_to_css, async_scope_color, encode_manual_color, event_color, material_index_to_argb,
+    name_hash, palette_index, rgba_word_to_argb, scale_rgb, thread_scope_color, thread_state_color,
+    BOX_BORDER, ORBIT_API_COLORS_RGBA, ORBIT_COLOR_RED, SAME_SCOPE_HIGHLIGHT, SELECTION, SHADE_LEFT,
+    THREAD_PALETTE,
+};
+pub use color::{chrome, mode as color_mode};
+
 /// Wire size of [`LiveEvent`]. Must stay 32 so C FFI and the WS stream agree.
 pub const LIVE_EVENT_SIZE: usize = 32;
 
@@ -58,7 +67,7 @@ impl LiveEvent {
     }
 
     pub fn color_rgba(self) -> u32 {
-        palette_color(self.kind, self.extra, self.name_id)
+        event_color(self.kind, self.tid, self.depth, self.extra, self._pad)
     }
 
     pub fn lane_key(self) -> LaneKey {
@@ -113,43 +122,20 @@ impl LiveEvent {
     Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
 pub struct LaneKey {
-    pub kind: u8,
     pub tid: u32,
+    pub kind: u8,
     pub depth: u8,
     pub extra: u8,
 }
 
-/// Deterministic color from kind / extra / interned name.
+/// Kept for call sites that still pass `(kind, extra, name_id)`.
+/// Thread/CPU scopes need tid+depth — prefer [`LiveEvent::color_rgba`].
 pub fn palette_color(kind: u8, extra: u8, name_id: u32) -> u32 {
     match kind {
         kind::THREAD_STATE => thread_state_color(extra),
-        kind::SCHEDULING_SLICE => hash_color(0xC0_u32.wrapping_add(extra as u32)),
-        _ => hash_color(name_id.wrapping_add((kind as u32) << 24)),
+        kind::API_TRACK => palette_index(name_id),
+        _ => thread_scope_color(name_id, extra),
     }
-}
-
-fn thread_state_color(state: u8) -> u32 {
-    match state {
-        thread_state::RUNNING => 0xFF3DDC84,
-        thread_state::RUNNABLE => 0xFFE6B422,
-        thread_state::INTERRUPTIBLE_SLEEP => 0xFF4C6A92,
-        thread_state::UNINTERRUPTIBLE_SLEEP => 0xFF8B5A2B,
-        thread_state::STOPPED => 0xFFB0B0B0,
-        thread_state::TRACED => 0xFF9B59B6,
-        thread_state::DEAD | thread_state::ZOMBIE => 0xFF5A5A5A,
-        thread_state::PARKED => 0xFF2F4F6F,
-        thread_state::IDLE => 0xFF2A2A2A,
-        _ => 0xFF808080,
-    }
-}
-
-fn hash_color(seed: u32) -> u32 {
-    let mut x = seed.wrapping_mul(0x9E37_79B9) ^ 0xA5A5_A5A5;
-    x ^= x >> 16;
-    let r = 80 + (x & 0x7F);
-    let g = 80 + ((x >> 8) & 0x7F);
-    let b = 80 + ((x >> 16) & 0x7F);
-    0xFF00_0000 | (r << 16) | (g << 8) | b
 }
 
 /// Pairs `ApiScopeStart` / `ApiScopeStop` (and async variants) into duration events.
@@ -167,7 +153,6 @@ pub struct ScopePairer {
 struct OpenScope {
     start_ns: u64,
     pid: u32,
-    #[allow(dead_code)]
     color_rgba: u32,
     name_id: u32,
 }
@@ -237,7 +222,6 @@ impl ScopePairer {
         color_rgba: u32,
         name_id: u32,
     ) {
-        let _ = color_rgba;
         self.stacks.entry(tid).or_default().push(OpenScope {
             start_ns: timestamp_ns,
             pid,
@@ -251,6 +235,7 @@ impl ScopePairer {
         let open = stack.pop()?;
         let duration_ns = timestamp_ns.saturating_sub(open.start_ns);
         let depth = stack.len().min(255) as u8;
+        let (pad, extra) = encode_manual_color(open.color_rgba);
         Some(LiveEvent {
             start_ns: open.start_ns,
             duration_ns,
@@ -258,8 +243,8 @@ impl ScopePairer {
             pid: if pid != 0 { pid } else { open.pid },
             kind: kind::API_SCOPE,
             depth,
-            extra: 0,
-            _pad: 0,
+            extra,
+            _pad: pad,
             name_id: open.name_id,
         })
     }
@@ -335,6 +320,108 @@ impl ScopePairer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_palette_matches_orbit_hex() {
+        assert_eq!(THREAD_PALETTE[0], 0xFFE7_4435);
+        assert_eq!(THREAD_PALETTE[1], 0xFF2B_91AF);
+        assert_eq!(THREAD_PALETTE[2], 0xFFB9_75B5);
+        assert_eq!(THREAD_PALETTE[3], 0xFF57_A64A);
+        assert_eq!(THREAD_PALETTE[4], 0xFFD7_AB69);
+        assert_eq!(THREAD_PALETTE[5], 0xFFF8_6516);
+        assert_eq!(argb_to_css(THREAD_PALETTE[0]), "#E74435");
+        assert_eq!(BOX_BORDER, 0xFFFF_FFFF);
+        assert_eq!(ORBIT_COLOR_RED, 0xF443_36FF);
+    }
+
+    #[test]
+    fn cpu_scope_uses_tid_mod_6_and_even_depth_darkens() {
+        let odd = thread_scope_color(0, 1);
+        let even = thread_scope_color(0, 0);
+        assert_eq!(odd, 0xFFE7_4435);
+        assert_eq!(thread_scope_color(6, 1), 0xFFE7_4435);
+        assert_eq!(thread_scope_color(1, 1), 0xFF2B_91AF);
+        assert_eq!(even, scale_rgb(odd, 210, 255));
+        assert_ne!(even, odd);
+        let ev = LiveEvent {
+            tid: 7,
+            kind: kind::API_SCOPE,
+            depth: 1,
+            extra: 0,
+            _pad: color_mode::AUTO_THREAD,
+            name_id: 99,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+        };
+        assert_eq!(ev.color_rgba(), thread_scope_color(7, 1));
+    }
+
+    #[test]
+    fn async_name_hash_indexes_the_same_six_colors() {
+        let h = name_hash(b"GpuSubmit");
+        assert_eq!(async_scope_color(h), THREAD_PALETTE[(h as usize) % 6]);
+        let ev = LiveEvent {
+            kind: kind::API_TRACK,
+            extra: (h % 6) as u8,
+            _pad: color_mode::AUTO_NAME,
+            tid: 99,
+            depth: 0,
+            name_id: 1,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+        };
+        assert_eq!(ev.color_rgba(), THREAD_PALETTE[(h as usize) % 6]);
+    }
+
+    #[test]
+    fn manual_api_material_red_is_orbit_h_word() {
+        assert_eq!(encode_manual_color(0xF443_36FF), (color_mode::MANUAL_API, 1));
+        assert_eq!(material_index_to_argb(1), 0xFFF4_4336);
+        let ev = LiveEvent {
+            kind: kind::API_SCOPE,
+            extra: 1,
+            _pad: color_mode::MANUAL_API,
+            tid: 0,
+            depth: 1,
+            name_id: 0,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+        };
+        assert_eq!(ev.color_rgba(), 0xFFF4_4336);
+    }
+
+    #[test]
+    fn thread_state_colors_match_thread_state_bar() {
+        assert_eq!(thread_state_color(thread_state::RUNNING), 0xFF4C_AF50);
+        assert_eq!(thread_state_color(thread_state::RUNNABLE), 0xFF21_96F3);
+        assert_eq!(
+            thread_state_color(thread_state::INTERRUPTIBLE_SLEEP),
+            0xFF75_7575
+        );
+        assert_eq!(
+            thread_state_color(thread_state::UNINTERRUPTIBLE_SLEEP),
+            0xFFFF_9800
+        );
+        assert_eq!(thread_state_color(thread_state::STOPPED), 0xFFF4_4336);
+        assert_eq!(thread_state_color(thread_state::TRACED), 0xFF9C_27B0);
+        assert_eq!(thread_state_color(thread_state::DEAD), 0xFF00_0000);
+        assert_eq!(thread_state_color(thread_state::ZOMBIE), 0xFF00_0000);
+        assert_eq!(thread_state_color(thread_state::PARKED), 0xFF79_5548);
+        assert_eq!(thread_state_color(thread_state::IDLE), 0xFF79_5548);
+    }
+
+    #[test]
+    fn pairer_keeps_manual_api_color() {
+        let mut p = ScopePairer::default();
+        let a = p.intern("red");
+        p.on_scope_start(1, 10, 100, 0xF443_36FF, a);
+        let ev = p.on_scope_stop(1, 10, 200).unwrap();
+        assert_eq!(ev._pad, color_mode::MANUAL_API);
+        assert_eq!(ev.color_rgba(), 0xFFF4_4336);
+    }
 
     #[test]
     fn packed_size_is_32() {

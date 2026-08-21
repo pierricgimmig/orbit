@@ -3,7 +3,7 @@ name = "orbit-live-viewer"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "WASM live trace viewer: pixel-column rasterizer + optional WebGPU blit"
+description = "WASM live trace viewer: Orbit palette + hybrid pixel-column / instanced SDF"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

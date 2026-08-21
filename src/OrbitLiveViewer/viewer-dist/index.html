@@ -5,63 +5,82 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Orbit Live Viewer</title>
   <style>
+    /* Capture-window / Qt chrome. Do not invent a dark-green theme. */
     :root {
-      --bg: #101216;
-      --panel: #1b1f27;
-      --line: #2c3340;
-      --text: #e8edf5;
-      --muted: #8b95a8;
-      --accent: #3ddc84;
-      --warn: #e6b422;
+      --qt-window: #353535;
+      --canvas: #434343;
+      --track: #323232;
+      --timebar: #212021;
+      --input: #191919;
+      --text: #ffffff;
+      --tab: #64B5F6;
+      --line: #2a2a2a;
     }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-      font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
-    header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
-      padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
-    h1 { font-size: 15px; margin: 0 12px 0 0; letter-spacing: .04em; }
-    h1 span { color: var(--accent); }
-    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    label { color: var(--muted); }
+    html, body { margin: 0; height: 100%; background: var(--qt-window); color: var(--text);
+      font: 12px/1.35 "Segoe UI", ui-sans-serif, system-ui, sans-serif; }
+    #app { display: flex; height: 100%; }
+    aside {
+      width: 248px; flex: 0 0 248px; background: var(--qt-window);
+      border-right: 1px solid var(--line); padding: 10px 10px 16px;
+      display: flex; flex-direction: column; gap: 10px; overflow: auto;
+    }
+    h1 { font-size: 13px; font-weight: 600; margin: 0 0 4px; letter-spacing: .06em; }
+    h1 em { font-style: normal; color: var(--tab); }
+    h2 { font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+      color: #c8c8c8; margin: 8px 0 4px; font-weight: 600; }
+    label { display: block; color: #d0d0d0; margin-bottom: 4px; }
     select, input, button {
-      background: #0d1016; color: var(--text); border: 1px solid var(--line);
-      border-radius: 4px; padding: 5px 8px;
+      background: var(--input); color: var(--text); border: 1px solid #4a4a4a;
+      border-radius: 2px; padding: 4px 7px; font: inherit; width: 100%; box-sizing: border-box;
     }
-    button { cursor: pointer; }
-    button.primary { background: #163524; border-color: #2a6; color: var(--accent); }
-    button.danger { background: #2a1515; border-color: #833; }
-    #status { color: var(--muted); font-variant-numeric: tabular-nums; }
-    #trace-wrap { position: relative; height: calc(100vh - 92px); }
-    canvas { width: 100%; height: 100%; display: block; background: #0a0c10; }
-    #hint { position: absolute; left: 12px; bottom: 10px; color: var(--muted); pointer-events: none; }
-    #err { color: #f88; white-space: pre-wrap; }
+    button { cursor: pointer; width: auto; padding: 5px 10px; }
+    button:hover { border-color: var(--tab); }
+    button.primary { border-color: #5a8ab8; color: var(--tab); }
+    button.danger { border-color: #8a4040; }
+    .row { display: flex; gap: 6px; flex-wrap: wrap; }
+    #status { color: #d8d8d8; font-variant-numeric: tabular-nums; white-space: pre-wrap; }
+    #err { color: #F44336; white-space: pre-wrap; }
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--canvas); }
+    #timebar { height: 22px; background: var(--timebar); position: relative; flex: 0 0 22px; overflow: hidden; }
+    #timebar canvas { width: 100%; height: 100%; display: block; }
+    #trace-wrap { flex: 1; overflow: auto; background: var(--canvas); position: relative; }
+    #trace { display: block; background: var(--canvas); }
+    #hint { position: absolute; right: 10px; bottom: 8px; color: #c0c0c0; pointer-events: none; font-size: 11px; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>ORBIT <span>Live</span></h1>
-    <div class="row">
-      <label>Process
+  <div id="app">
+    <aside id="chrome">
+      <h1>ORBIT <em>Live</em></h1>
+      <h2>Process</h2>
+      <label>Attach
         <select id="processes"><option value="">(refresh)</option></select>
       </label>
-      <button id="refresh">Refresh</button>
-      <button id="start-capture" class="primary">Start capture</button>
-      <button id="stop-capture" class="danger">Stop</button>
-    </div>
-    <div class="row">
-      <button id="start-demo" class="primary">Start demo</button>
-      <button id="stop-demo">Stop demo</button>
-    </div>
-    <div class="row">
-      <label>Ring bytes <input id="ring" type="text" size="10" value="67108864" /></label>
-      <label>Spill path <input id="spill" type="text" size="18" placeholder="/tmp/orbit-spill" /></label>
+      <div class="row">
+        <button id="refresh">Refresh</button>
+        <button id="start-capture" class="primary">Start capture</button>
+        <button id="stop-capture" class="danger">Stop</button>
+      </div>
+      <h2>Demo</h2>
+      <div class="row">
+        <button id="start-demo" class="primary">Start demo</button>
+        <button id="stop-demo">Stop demo</button>
+      </div>
+      <h2>Ring / spill</h2>
+      <label>Ring bytes <input id="ring" type="text" value="67108864" /></label>
+      <label>Spill path <input id="spill" type="text" placeholder="/tmp/orbit-spill" /></label>
       <button id="apply-cfg">Apply ring/spill</button>
-    </div>
-    <div id="status">connecting…</div>
-    <div id="err"></div>
-  </header>
-  <div id="trace-wrap">
-    <canvas id="trace"></canvas>
-    <div id="hint">Wheel: zoom · Drag: pan · Space: follow latest 2s · renderer: <span id="renderer">…</span></div>
+      <h2>Status</h2>
+      <div id="status">connecting…</div>
+      <div id="err"></div>
+    </aside>
+    <main>
+      <div id="timebar"><canvas id="ticks"></canvas></div>
+      <div id="trace-wrap">
+        <canvas id="trace"></canvas>
+        <div id="hint">Wheel: zoom · Drag: pan · Space: follow 2s · <span id="renderer">…</span></div>
+      </div>
+    </main>
   </div>
   <script type="module" src="./app.js"></script>
 </body>

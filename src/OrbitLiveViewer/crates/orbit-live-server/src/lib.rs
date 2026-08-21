@@ -249,15 +249,20 @@ impl LiveService {
         }
     }
 
+    pub fn build_index(&self) -> TrackIndex {
+        let (_, events) = self.ring().snapshot();
+        let mut index = TrackIndex::default();
+        index.extend(events);
+        index
+    }
+
     pub fn rasterize_frame(
         &self,
         t0: Option<u64>,
         t1: Option<u64>,
         width: usize,
     ) -> orbit_live_render::RasterizedFrame {
-        let (_, events) = self.ring().snapshot();
-        let mut index = TrackIndex::default();
-        index.extend(events);
+        let index = self.build_index();
         let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
         let t0 = t0.unwrap_or(auto0);
         let t1 = t1.unwrap_or(auto1.max(t0 + 1));

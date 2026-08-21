@@ -35,9 +35,23 @@ Open `http://<host>:44766/`.
 
 `--http_port 0` disables the viewer.
 
+## Look (Orbit palette, not a barcode)
+
+Scope / thread colors come from `ThreadColor.cpp` / `TimeGraph::GetColor`
+(`#E74435 #2B91AF #B975B5 #57A64A #D7AB69 #F86516`). CPU scopes are
+`palette[tid % 6]`; even depth RGB *= 210/255. Async/GPU marker names use
+`palette[hash(name) % 6]`. Manual `orbit_api_color` is the Material-500 table
+in `ApiInterface/Orbit.h`. Thread states match `ThreadStateBar.cpp`. Chrome
+is the Qt capture window (`#434343` canvas, `#323232` track, `#353535` window).
+
+The served page is that Orbit-colored HTML (process list, Start/Stop capture,
+Start/Stop demo, ring/spill, status). Current **egui** wants rustc newer than
+this workspace’s **1.83** pin; eframe 0.30 would compile but is not pulled
+into the native crates so Orbit’s C++ toolchain stays untouched.
+
 ## Renderer (verified, not assumed)
 
-Owner hunch: paint from **pixels**, not one quad per scope.
+Owner hunch: paint from **pixels**, not one quad per scope, when zoomed out.
 
 Orbit's cheap live intervals are **non-overlapping per lane**
 (`(kind, tid, depth)` or scheduling core). Each pixel column is one binary
@@ -47,8 +61,12 @@ search on `end_ns`:
 events than pixels, a linear fill is cheaper (O(n) ≤ O(width)); that is a
 hybrid, not “ship naive as the only path.”
 
-The GPU (or a 2D blit) then draws **one** textured quad. The naive
-“fill every scope” path stays in the crate so benches can compare.
+When a sampled visible scope is wider than ~4 px the same view switches to
+**instanced SDF rounded rects** (plus an Evan Wallace analytical drop shadow
+in WGSL). That path walks only visible events. Do not CPU-blit a barcode for
+the zoomed-in case. The naive “fill every scope” raster stays in the crate so
+benches can compare. Without a WASM pack the page uses `GET /api/timeline`
+(instanced Canvas2D) or `GET /api/frame` (Orbit-colored columns).
 
 ```
 cargo bench -p orbit-live-render

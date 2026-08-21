@@ -91,6 +91,37 @@ fn spill_from_service_ring_does_not_corrupt_live_snapshot() {
 }
 
 #[test]
+fn timeline_uses_instanced_lod_for_wide_orbit_colored_scopes() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.push_events(&[LiveEvent {
+        start_ns: 0,
+        duration_ns: 50_000_000,
+        tid: 100,
+        pid: 1,
+        kind: kind::API_SCOPE,
+        depth: 1,
+        extra: 0,
+        _pad: 0,
+        name_id: 1,
+    }]);
+    let index = svc.build_index();
+    assert_eq!(
+        orbit_live_render::choose_lod(
+            &index,
+            0,
+            50_000_000,
+            200,
+            orbit_live_render::INSTANCE_MIN_PX
+        ),
+        orbit_live_render::TimelineLod::Instanced
+    );
+    assert_eq!(
+        index.lanes().next().unwrap().1.events()[0].color_rgba(),
+        orbit_live_event::thread_scope_color(100, 1)
+    );
+}
+
+#[test]
 fn frame_body_is_16_byte_header_plus_exact_rgba() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.push_events(&[ev(1), ev(2)]);

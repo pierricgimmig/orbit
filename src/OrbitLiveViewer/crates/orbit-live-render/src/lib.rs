@@ -30,7 +30,15 @@
 
 use std::collections::BTreeMap;
 
-use orbit_live_event::{kind, LaneKey, LiveEvent};
+use orbit_live_event::{chrome, kind, LaneKey, LiveEvent};
+
+mod lod;
+mod shaders;
+pub use lod::{
+    choose_lod, collect_instances, empty_column_color, lane_gap, lane_height, stack_height,
+    InstanceFrame, ScopeInstance, TimelineLod, INSTANCE_MIN_PX,
+};
+pub use shaders::{BLIT_WGSL, INSTANCE_WGSL};
 
 /// One horizontal lane of non-overlapping intervals, sorted by `start_ns`.
 #[derive(Clone, Debug, Default)]
@@ -108,7 +116,7 @@ impl Lane {
     pub fn rasterize_pixel_columns(&self, t0: u64, t1: u64, width: usize, out: &mut [u32]) {
         assert!(out.len() >= width);
         if width == 0 || t1 <= t0 {
-            out[..width].fill(0);
+            out[..width].fill(chrome::TRACK);
             return;
         }
         let dt = (t1 - t0) as f64 / width as f64;
@@ -120,7 +128,7 @@ impl Lane {
             out[x] = self
                 .overlapping(col0, col1)
                 .map(|e| e.color_rgba())
-                .unwrap_or(0);
+                .unwrap_or(chrome::TRACK);
         }
     }
 
@@ -128,7 +136,7 @@ impl Lane {
     /// Used only as a bench/correctness baseline — do not ship as the renderer.
     pub fn rasterize_naive(&self, t0: u64, t1: u64, width: usize, out: &mut [u32]) {
         assert!(out.len() >= width);
-        out[..width].fill(0);
+        out[..width].fill(chrome::TRACK);
         if width == 0 || t1 <= t0 {
             return;
         }
@@ -182,6 +190,10 @@ impl TrackIndex {
 
     pub fn lanes(&self) -> impl Iterator<Item = (LaneKey, &Lane)> {
         self.lanes.iter().map(|(k, v)| (*k, v))
+    }
+
+    pub fn lane(&self, key: LaneKey) -> Option<&Lane> {
+        self.lanes.get(&key)
     }
 
     pub fn time_bounds(&self) -> Option<(u64, u64)> {
@@ -255,6 +267,36 @@ impl RasterizedFrame {
             out.push(((*p >> 24) & 0xFF) as u8);
         }
         out
+    }
+
+    /// Repeat each lane row to its Orbit track height so a blit is not a barcode.
+    pub fn to_rgba8_scaled(&self) -> (Vec<u8>, u32) {
+        let mut height = 0u32;
+        let mut hs = Vec::with_capacity(self.lanes.len());
+        for key in &self.lanes {
+            let h = lod::lane_height(*key).round().max(1.0) as u32;
+            let g = lod::lane_gap(*key).round() as u32;
+            hs.push((h, g));
+            height = height.saturating_add(h.saturating_add(g));
+        }
+        let mut out = vec![0u8; self.width.saturating_mul(height as usize).saturating_mul(4)];
+        let mut y = 0u32;
+        for (row, &(h, g)) in hs.iter().enumerate() {
+            let src = self.row(row);
+            for _ in 0..h {
+                let dest = (y as usize) * self.width * 4;
+                for (i, p) in src.iter().enumerate() {
+                    let o = dest + i * 4;
+                    out[o] = ((*p >> 16) & 0xFF) as u8;
+                    out[o + 1] = ((*p >> 8) & 0xFF) as u8;
+                    out[o + 2] = (*p & 0xFF) as u8;
+                    out[o + 3] = ((*p >> 24) & 0xFF) as u8;
+                }
+                y += 1;
+            }
+            y += g;
+        }
+        (out, height)
     }
 }
 
@@ -347,7 +389,7 @@ mod tests {
         lane.rasterize_pixel_columns(0, 6400, width, &mut pixel);
         lane.rasterize_naive(0, 6400, width, &mut naive);
         assert_eq!(pixel, naive);
-        assert!(pixel.iter().any(|&p| p != 0));
+        assert!(pixel.iter().any(|&p| p != chrome::TRACK));
     }
 
     #[test]
@@ -429,6 +471,53 @@ mod tests {
             "pixel path ({large_pixel_ns} ns) should be faster than naive ({large_naive_ns} ns) \
              at {large_n} scopes / {width} px. If this fails, the chosen renderer is O(scopes)."
         );
+    }
+
+    #[test]
+    fn instanced_lod_when_scopes_are_wider_than_four_px() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 100_000, 0, 1));
+        assert_eq!(
+            choose_lod(&idx, 0, 100_000, 100, INSTANCE_MIN_PX),
+            TimelineLod::Instanced
+        );
+        let frame = collect_instances(&idx, 0, 100_000, 100.0, 0.0);
+        assert_eq!(frame.instances.len(), 1);
+        assert!((frame.instances[0].w - 100.0).abs() < 0.6);
+        assert_eq!(
+            frame.instances[0].color,
+            orbit_live_event::thread_scope_color(1, 0)
+        );
+    }
+
+    #[test]
+    fn pixel_column_lod_when_scopes_are_subpixel() {
+        let mut idx = TrackIndex::default();
+        for i in 0..64u64 {
+            idx.insert(scope(i * 20, 8, 0, i as u32));
+        }
+        assert_eq!(
+            choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX),
+            TimelineLod::PixelColumns
+        );
+    }
+
+    #[test]
+    fn collect_instances_walks_only_visible() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 10, 0, 1));
+        idx.insert(scope(1000, 10, 0, 2));
+        idx.insert(scope(2000, 10, 0, 3));
+        let frame = collect_instances(&idx, 990, 1020, 100.0, 0.0);
+        assert_eq!(frame.instances.len(), 1);
+    }
+
+    #[test]
+    fn shaders_are_present_for_both_lods() {
+        assert!(BLIT_WGSL.contains("textureSampleLevel"));
+        assert!(INSTANCE_WGSL.contains("sd_rounded_box"));
+        assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
+        assert!(INSTANCE_WGSL.contains("madebyevan.com"));
     }
 
     #[test]
