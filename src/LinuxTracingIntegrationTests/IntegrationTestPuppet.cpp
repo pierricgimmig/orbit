@@ -8,6 +8,8 @@
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 #include <dlfcn.h>
+#include <sched.h>
+#include <unistd.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -110,6 +112,61 @@ ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(48)
 ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(49)
 
 #undef ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY
+
+using UprobeStopRestartDummyFn = void (*)();
+#define ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(n) UprobeStopRestartDummy##n,
+constexpr UprobeStopRestartDummyFn kUprobeStopRestartDummies[] = {
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(0) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(1)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(2) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(3)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(4) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(5)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(6) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(7)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(8) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(9)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(10) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(11)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(12) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(13)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(14) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(15)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(16) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(17)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(18) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(19)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(20) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(21)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(22) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(23)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(24) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(25)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(26) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(27)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(28) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(29)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(30) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(31)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(32) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(33)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(34) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(35)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(36) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(37)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(38) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(39)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(40) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(41)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(42) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(43)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(44) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(45)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(46) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(47)
+    ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(48) ORBIT_REF_UPROBE_STOP_RESTART_DUMMY(49)};
+#undef ORBIT_REF_UPROBE_STOP_RESTART_DUMMY
+static_assert(sizeof(kUprobeStopRestartDummies) / sizeof(kUprobeStopRestartDummies[0]) ==
+              IntegrationTestPuppetConstants::kUprobeStopRestartDummyFunctionCount);
+
+// Calls every dummy, each on a different core. All of them share one tracefs event now, so this
+// is what shows that a probe past the first in an appended group still fires, and that the sample
+// is attributed to the right function whatever core it ran on.
+void CallUprobeStopRestartDummies() {
+  const long ncpus = sysconf(_SC_NPROCESSORS_ONLN);
+  for (int i = 0; i < PuppetConstants::kUprobeStopRestartDummyFunctionCount; ++i) {
+    if (ncpus > 0) {
+      cpu_set_t set;
+      CPU_ZERO(&set);
+      CPU_SET(static_cast<size_t>(i % ncpus), &set);
+      sched_setaffinity(0, sizeof(set), &set);
+    }
+    kUprobeStopRestartDummies[i]();
+  }
+  // Do not leave the puppet pinned for whatever runs next.
+  if (ncpus > 0) {
+    cpu_set_t all;
+    CPU_ZERO(&all);
+    for (long cpu = 0; cpu < ncpus; ++cpu) CPU_SET(static_cast<size_t>(cpu), &all);
+    sched_setaffinity(0, sizeof(all), &all);
+  }
+}
 
 extern "C" __attribute__((noinline)) uint64_t OuterFunctionToInstrument() {
   for (uint64_t i = 0; i < PuppetConstants::kInnerFunctionCallCount; ++i) {
@@ -250,6 +307,8 @@ int IntegrationTestPuppetMain() {
     ORBIT_LOG("Puppet received command: %s", command);
     if (command == PuppetConstants::kSleepCommand) {
       SleepRepeatedly();
+    } else if (command == PuppetConstants::kCallUprobeStopRestartDummiesCommand) {
+      CallUprobeStopRestartDummies();
     } else if (command == PuppetConstants::kCallOuterFunctionCommand) {
       CallOuterFunctionToInstrument();
     } else if (command == PuppetConstants::kPthreadSetnameNpCommand) {

@@ -71,6 +71,8 @@ struct IntegrationTestPuppetConstants {
 
   constexpr static const char* kSleepCommand = "sleep";
   constexpr static const char* kCallOuterFunctionCommand = "CallOuterFunction";
+  constexpr static const char* kCallUprobeStopRestartDummiesCommand =
+      "CallUprobeStopRestartDummies";
   constexpr static const char* kPthreadSetnameNpCommand = "pthread_setname_np";
   constexpr static const char* kDlopenCommand = "dlopen";
   constexpr static const char* kVulkanTutorialCommand = "VulkanTutorial";

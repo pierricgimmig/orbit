@@ -1315,6 +1315,12 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
   fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
   fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
   while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
+  // Every instrumented function of one sample layout now shares a single tracefs event, and so a
+  // single perf stream id. Call all the dummies, each on a different core, so that losing a probe
+  // past the first of an appended group -- or attributing a sample to the wrong function -- shows
+  // up. Two functions could never have caught either.
+  fixture.WriteLineToPuppet(PuppetConstants::kCallUprobeStopRestartDummiesCommand);
+  while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
   absl::SleepFor(kSleepBeforeStopTracing);
 
   std::vector<orbit_grpc_protos::ProducerCaptureEvent> first_events =
@@ -1323,8 +1329,44 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
 
   VerifyNoWarningInstrumentingWithUprobesEvents(first_events);
   VerifyNoLostOrDiscardedEvents(first_events);
-  VerifyFunctionCallsOfOuterAndInnerFunction(first_events, fixture.GetPuppetPid(), kOuterFunctionId,
-                                             kInnerFunctionId);
+
+  constexpr uint64_t kFirstDummyFunctionId = 100;
+
+  // VerifyFunctionCallsOfPuppetOuterAndInnerFunction counts every FunctionCall in what it is
+  // given, so the dummies have to be taken out before checking the outer/inner call structure.
+  // Checking it here is still worth it: it shows that instrumenting 52 functions at once does not
+  // disturb the nesting of the two that matter.
+  std::vector<orbit_grpc_protos::ProducerCaptureEvent> first_events_without_dummies;
+  first_events_without_dummies.reserve(first_events.size());
+  for (const orbit_grpc_protos::ProducerCaptureEvent& event : first_events) {
+    if (event.has_function_call() &&
+        event.function_call().function_id() >= kFirstDummyFunctionId) {
+      continue;
+    }
+    first_events_without_dummies.push_back(event);
+  }
+  VerifyFunctionCallsOfOuterAndInnerFunction(first_events_without_dummies, fixture.GetPuppetPid(),
+                                             kOuterFunctionId, kInnerFunctionId);
+
+  // Each dummy was called exactly once, on a different core, so each must appear exactly once
+  // under its own id.
+  absl::flat_hash_map<uint64_t, int> dummy_call_counts;
+  for (const orbit_grpc_protos::ProducerCaptureEvent& event : first_events) {
+    if (!event.has_function_call()) continue;
+    const orbit_grpc_protos::FunctionCall& call = event.function_call();
+    if (call.function_id() < kFirstDummyFunctionId) continue;
+    ++dummy_call_counts[call.function_id()];
+  }
+  EXPECT_EQ(dummy_call_counts.size(),
+            static_cast<size_t>(PuppetConstants::kUprobeStopRestartDummyFunctionCount))
+      << "not every dummy produced a FunctionCall under its own id; grouping probes under one "
+         "tracefs event lost or misattributed some of them";
+  for (int i = 0; i < PuppetConstants::kUprobeStopRestartDummyFunctionCount; ++i) {
+    const uint64_t function_id = kFirstDummyFunctionId + i;
+    EXPECT_EQ(dummy_call_counts[function_id], 1)
+        << "dummy with function id " << function_id << " was called once but produced "
+        << dummy_call_counts[function_id] << " FunctionCall events";
+  }
 
   fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
   while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
