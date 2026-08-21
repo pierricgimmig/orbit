@@ -66,6 +66,52 @@ std::string MakeOrbitUprobeEventName(uint64_t unique_id, bool is_return) {
                          static_cast<unsigned long long>(unique_id));
 }
 
+std::string_view TracefsEventNameForLayout(UprobeSampleLayout layout) {
+  switch (layout) {
+    case UprobeSampleLayout::kRetaddr:
+      return "u";
+    case UprobeSampleLayout::kRetaddrArgs:
+      return "ua";
+    case UprobeSampleLayout::kStackAndSp:
+      return "us";
+    case UprobeSampleLayout::kUretprobe:
+      return "r";
+    case UprobeSampleLayout::kUretprobeRetval:
+      return "rv";
+  }
+  return "u";
+}
+
+void ResetTracefsUprobeEvent(const TracefsUprobe& probe) {
+  ErrorMessageOr<std::filesystem::path> events_path_or_error = UprobeEventsPath();
+  if (events_path_or_error.has_error()) {
+    return;
+  }
+  // Not having a leftover is the normal case, so the resulting ENOENT is not an error.
+  static_cast<void>(RemoveTracefsUprobe(events_path_or_error.value(), probe));
+}
+
+ErrorMessageOr<void> AppendTracefsUprobe(const TracefsUprobe& probe, std::string_view module_path,
+                                         uint64_t function_offset, bool is_return) {
+  ErrorMessageOr<std::filesystem::path> events_path_or_error = UprobeEventsPath();
+  if (events_path_or_error.has_error()) {
+    return events_path_or_error.error();
+  }
+
+  const char type = is_return ? 'r' : 'p';
+  std::string command =
+      absl::StrFormat("%c:%s/%s %s:0x%llx", type, probe.group, probe.event, module_path,
+                      static_cast<unsigned long long>(function_offset));
+  ErrorMessageOr<void> write_result = WriteTracefsCommand(events_path_or_error.value(), command);
+  if (write_result.has_error()) {
+    return ErrorMessage{absl::StrFormat(
+        "Appending %s+0x%llx to %s/%s: %s", module_path,
+        static_cast<unsigned long long>(function_offset), probe.group, probe.event,
+        write_result.error().message())};
+  }
+  return outcome::success();
+}
+
 ErrorMessageOr<TracefsUprobe> DefineTracefsUprobe(std::string_view module_path,
                                                   uint64_t function_offset, bool is_return,
                                                   std::string_view event_name) {

@@ -56,6 +56,34 @@ struct TracefsUprobe {
 
 [[nodiscard]] std::string MakeOrbitUprobeEventName(uint64_t unique_id, bool is_return);
 
+// Name of the single tracefs event shared by every probe of one sample layout.
+//
+// Kernel fact (the reason this exists): `__probe_event_disable` walks the whole probe list of a
+// `trace_probe` calling `uprobe_unregister_nosync` for each, then calls `uprobe_unregister_sync`
+// *once* for the list. That sync is `synchronize_rcu_tasks_trace()` +
+// `synchronize_srcu(&uretprobes_srcu)`, tens of milliseconds, and it runs under the global
+// `event_mutex`, so grace periods of separate probes cannot overlap.
+//
+// `register_trace_uprobe` appends to an existing `trace_probe` when the group/event name already
+// exists and `is_ret_probe()` matches. Registering every function under one name per layout
+// therefore makes teardown cost a fixed number of grace periods instead of one per function.
+//
+// Functions stay distinguishable because a uprobe fires at the address it was registered on and
+// the sample already carries it in PERF_SAMPLE_REGS_USER; see UprobeAddressMap. Uretprobe samples
+// carry no function id at all -- they are matched to their uprobe by the per-thread stack in
+// UprobesFunctionCallManager -- so grouping them costs nothing.
+[[nodiscard]] std::string_view TracefsEventNameForLayout(UprobeSampleLayout layout);
+
+// Deletes anything previously registered under this event name, e.g. left over by a capture that
+// crashed. Must be called once per event, before the first AppendTracefsUprobe for it: calling it
+// between appends would delete the probes already appended.
+void ResetTracefsUprobeEvent(const TracefsUprobe& probe);
+
+// Registers one more probe under `probe`'s existing event name.
+[[nodiscard]] ErrorMessageOr<void> AppendTracefsUprobe(const TracefsUprobe& probe,
+                                                       std::string_view module_path,
+                                                       uint64_t function_offset, bool is_return);
+
 [[nodiscard]] ErrorMessageOr<TracefsUprobe> DefineTracefsUprobe(std::string_view module_path,
                                                                 uint64_t function_offset,
                                                                 bool is_return,
