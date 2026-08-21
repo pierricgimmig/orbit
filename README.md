@@ -85,36 +85,37 @@ preset so that you won't have to do this manually again. To save a preset, go to
 
 ## Build
 
+Orbit builds with [Bazel](https://bazel.build). Bazel fetches and builds every
+dependency itself, so a clean checkout needs nothing installed beyond Bazel and
+a C++17 compiler.
+
 ### Requirements
-- Python 3
-- CMake: `pip install cmake`
-- Conan 2: `pip install conan`
-- Qt5: `sudo apt install qtbase5-dev`
+- [Bazelisk](https://github.com/bazelbuild/bazelisk) (or Bazel 9.2.0, the
+  version pinned in `.bazelversion`)
+- A C++17 compiler; built and tested with GCC 15
 
 ### Linux
 
-#### Debug
 ```
-conan install . -pr:a contrib/conan/profiles/linux/gcc17_debug --build=missing -of build_gcc17_debug
-cmake -B build_gcc17_debug -DCMAKE_TOOLCHAIN_FILE=build_gcc17_debug/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug .
-cmake --build build_gcc17_debug --parallel
+git submodule update --init third_party/py-spy
+
+bazel build //...                    # fastbuild, the default
+bazel build --config=release //...   # optimized, with debug info
+bazel test //...
 ```
 
-#### RelWithDebInfo
-```
-conan install . -pr:a contrib/conan/profiles/linux/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
-cmake -B build_gcc17_relwithdebinfo -DCMAKE_TOOLCHAIN_FILE=build_gcc17_relwithdebinfo/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
-cmake --build build_gcc17_relwithdebinfo --parallel
-```
+`bazel run //src/Orbit` starts the UI; `bazel-bin/src/Service/OrbitService` is
+the service.
 
-#### Release
-```
-conan install . -pr:a contrib/conan/profiles/linux/gcc17_release --build=missing -of build_gcc17_release
-cmake -B build_gcc17_release -DCMAKE_TOOLCHAIN_FILE=build_gcc17_release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release .
-cmake --build build_gcc17_release --parallel
-```
+See [docs/building_with_bazel.md](docs/building_with_bazel.md) for the
+available configurations, where each dependency comes from, and how to keep
+builds fast.
 
 ### Windows
+
+The Bazel build covers Linux. Windows still goes through CMake and Conan, and
+the `CMakeLists.txt` files are kept for it:
+
 ```
 conan install . --build="abseil/*" --build="protobuf/*" --build="grpc/*" --build=missing
 cd build
@@ -126,6 +127,9 @@ cmake --build . --config Release
 
 
 ### Raspberry Pi
+
+Cross-compiling the ARM service also still goes through CMake:
+
 ```
 ./build_arm_service.sh
 scp build_arm64/bin/OrbitService raspberrypi.local:/home/pierric/
