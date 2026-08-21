@@ -73,6 +73,7 @@ qt_cc_library(
         "include",
     ],
     deps = [
+        "//bazel/deps:grpc",
         "//src/CaptureFileInfo",
         "//src/ClientData",
         "//src/ClientFlags",
@@ -85,7 +86,6 @@ qt_cc_library(
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/strings:str_format",
         "@abseil-cpp//absl/strings:strings",
-        "@grpc//:grpc++_unsecure",
         "@qt5//:Widgets",
     ],
 )

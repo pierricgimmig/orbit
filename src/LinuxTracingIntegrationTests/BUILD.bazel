@@ -50,6 +50,7 @@ cc_test(
     name = "LinuxTracingIntegrationTests",
     srcs = ["LinuxTracingIntegrationTest.cpp"],
     copts = ORBIT_COPTS,
+    linkstatic = True,
     deps = [
         "//src/GrpcProtos",
         "//src/LinuxTracing",
@@ -75,6 +76,7 @@ cc_test(
     ],
     copts = ORBIT_COPTS,
     data = [":libIntegrationTestPuppetSharedObject.so"],
+    linkstatic = True,
     deps = [
         "//src/ApiInterface",
         "//src/ApiUtils",

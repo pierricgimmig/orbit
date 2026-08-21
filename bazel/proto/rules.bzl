@@ -76,5 +76,5 @@ def orbit_proto_library(name, srcs, prefix, grpc = False, visibility = None):
         # output directory is what has to be on the include path.
         includes = ["."],
         visibility = visibility,
-        deps = ["@protobuf//:protobuf"] + (["@grpc//:grpc++_unsecure"] if grpc else []),
+        deps = ["@protobuf//:protobuf"] + (["//bazel/deps:grpc"] if grpc else []),
     )

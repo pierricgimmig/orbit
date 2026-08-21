@@ -13,8 +13,8 @@ cc_library(
     copts = ORBIT_COPTS,
     includes = ["include"],
     deps = [
+        "//bazel/deps:grpc",
         "//src/GrpcProtos",
         "@googletest//:gtest",
-        "@grpc//:grpc++_unsecure",
     ],
 )

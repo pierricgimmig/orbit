@@ -357,7 +357,7 @@ EXTERNAL = {
     "GTest_QtCoreMain": "//src/Test:gtest_qtcore_main",
     "GTest::QtGuiMain": "//src/Test:gtest_qtgui_main",
     "GTest_QtGuiMain": "//src/Test:gtest_qtgui_main",
-    "grpc::grpc": "@grpc//:grpc++_unsecure",
+    "grpc::grpc": "//bazel/deps:grpc",
     "protobuf::protobuf": "@protobuf//:protobuf",
     "capstone::capstone": "@capstone//:capstone",
     "outcome::outcome": "@outcome//:outcome",
@@ -421,6 +421,15 @@ EXTRA_DATA = {
         ":libUserSpaceInstrumentationTestLib.so",
         ":liborbituserspaceinstrumentation.so",
     ],
+}
+
+# cc_test links dynamically by default, which cc_binary does not. That splits
+# the test binary across a .so per module, and a test that reads its own symbol
+# table then finds nothing there. CMake linked everything statically, so the
+# tests that inspect the module they run in have to say so.
+STATIC_LINK_TESTS = {
+    "LinuxTracingIntegrationTests",
+    "OrbitServiceIntegrationTests",
 }
 
 # Tests that wait on hard-coded timeouts and start missing them once 30-odd
@@ -622,6 +631,8 @@ def render_target(target, module_name, directory, windows_headers, extra_hdrs):
                      % module_name)
     if target.name in FLAKY_TESTS:
         lines.append("    flaky = True,\n")
+    if target.name in STATIC_LINK_TESTS:
+        lines.append("    linkstatic = True,\n")
     if rule == "qt_cc_library":
         lines.append(render_list("include_dirs", includes or ["."]))
     else:

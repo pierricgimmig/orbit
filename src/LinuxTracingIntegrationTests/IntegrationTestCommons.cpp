@@ -46,7 +46,11 @@ void AddPuppetOuterAndInnerFunctionToCaptureOptions(
       continue;
     }
 
-    if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kOuterFunctionName)) {
+    // Exact match, not a substring: the puppet also has a helper named
+    // CallOuterFunctionToInstrument, which contains this name. Whether that
+    // helper survives into the symbol table depends on the optimisation level,
+    // so a substring match passes or fails depending on how the test was built.
+    if (symbol.demangled_name() == PuppetConstants::kOuterFunctionName) {
       ORBIT_CHECK(!outer_function_symbol_found);
       outer_function_symbol_found = true;
       orbit_grpc_protos::InstrumentedFunction instrumented_function;
@@ -60,7 +64,7 @@ void AddPuppetOuterAndInnerFunctionToCaptureOptions(
       capture_options->mutable_instrumented_functions()->Add(std::move(instrumented_function));
     }
 
-    if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kInnerFunctionName)) {
+    if (symbol.demangled_name() == PuppetConstants::kInnerFunctionName) {
       ORBIT_CHECK(!inner_function_symbol_found);
       inner_function_symbol_found = true;
       orbit_grpc_protos::InstrumentedFunction instrumented_function;
