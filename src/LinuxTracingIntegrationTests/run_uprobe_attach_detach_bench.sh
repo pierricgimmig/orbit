@@ -4,6 +4,7 @@
 #   ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh
 #   ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh /path/to/LinuxTracingIntegrationTests
 #   # or: sudo ORBIT_UPROBE_BENCH=1 ./bin/LinuxTracingIntegrationTests --gtest_filter='*UprobeAttachDetachBench*'
+# Writes uprobe_attach_detach_bench.txt and uprobe_attach_detach_bench.html in cwd.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

@@ -53,6 +53,7 @@
 #include "OrbitBase/Result.h"
 #include "OrbitBase/ThreadUtils.h"
 #include "PerfEventOpen.h"
+#include "UprobeBenchHtmlTemplate.h"
 #include "UprobeEvents.h"
 
 namespace orbit_linux_tracing_integration_tests {
@@ -807,6 +808,139 @@ void WriteAndPrintReport(const std::string& text) {
   }
 }
 
+[[nodiscard]] std::string HtmlEscape(std::string_view in) {
+  std::string out;
+  out.reserve(in.size());
+  for (const char c : in) {
+    switch (c) {
+      case '&':
+        out += "&amp;";
+        break;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      default:
+        out += c;
+        break;
+    }
+  }
+  return out;
+}
+
+[[nodiscard]] std::string HtmlValueCell(std::string_view text) {
+  if (text == "n/a") {
+    return "<td class=\"na\">n/a</td>";
+  }
+  return absl::StrFormat("<td>%s</td>", HtmlEscape(text));
+}
+
+[[nodiscard]] std::string FormatUprobeBenchHtmlFill(absl::Span<const UprobeBenchRow> rows,
+                                                    bool have_uprobe_pmu, bool have_tracefs,
+                                                    bool verdict_pass, bool verdict_available,
+                                                    std::string_view verdict_detail,
+                                                    std::string_view command,
+                                                    std::string_view missing) {
+  std::vector<UprobeBenchRow> fallback_rows;
+  if (rows.empty()) {
+    const int ncpus = orbit_linux_tracing::GetNumCores();
+    for (int nfunctions : {10, 20, 50}) {
+      UprobeBenchRow row;
+      row.nfunctions = nfunctions;
+      row.ncpus = ncpus;
+      row.percpu_fds = orbit_linux_tracing::UprobeSampleFdCount(static_cast<size_t>(ncpus),
+                                                                static_cast<size_t>(nfunctions));
+      row.named_probes =
+          orbit_linux_tracing::UprobeNamedProbeCount(static_cast<size_t>(nfunctions));
+      fallback_rows.push_back(row);
+    }
+    rows = fallback_rows;
+  }
+
+  std::ostringstream out;
+  out << "\n<div class=\"card\">\n";
+  out << "<p><strong>kernel:</strong> " << HtmlEscape(KernelRelease()) << "<br>\n";
+  out << "<strong>ncpus:</strong> " << orbit_linux_tracing::GetNumCores();
+  if (!rows.empty() && rows.front().ncpus != orbit_linux_tracing::GetNumCores()) {
+    out << " (cpuset " << rows.front().ncpus << ")";
+  }
+  out << "<br>\n";
+  out << "<strong>pid model:</strong> production samples use pid=-1,cpu=N (every thread, every "
+         "core). pid=target,cpu=-1 is a fewer-fd experiment only (single tid + inherit).<br>\n";
+  out << "<strong>uprobe PMU:</strong> " << (have_uprobe_pmu ? "available" : "NOT available")
+      << "<br>\n";
+  out << "<strong>tracefs:</strong> " << (have_tracefs ? "available" : "NOT available") << "</p>\n";
+  if (!missing.empty()) {
+    out << "<p><strong>missing:</strong> " << HtmlEscape(missing) << "</p>\n";
+  }
+
+  out << "<table>\n<thead>\n<tr>\n"
+         "<th>nfunctions</th><th>ncpus</th><th>percpu fds</th><th>named probes</th>"
+         "<th>percpu start</th><th>percpu stop</th><th>shared start</th><th>shared stop</th>"
+         "<th>speedup</th>\n</tr>\n</thead>\n<tbody>\n";
+  for (const UprobeBenchRow& row : rows) {
+    out << "<tr><td>" << row.nfunctions << "</td><td>" << row.ncpus << "</td><td>" << row.percpu_fds
+        << "</td><td>" << row.named_probes << "</td>"
+        << HtmlValueCell(FormatMs(row.percpu_pmu_start))
+        << HtmlValueCell(FormatMs(row.percpu_pmu_stop)) << HtmlValueCell(FormatMs(row.shared_start))
+        << HtmlValueCell(FormatMs(row.shared_stop)) << HtmlValueCell(FormatStopSpeedup(row))
+        << "</tr>\n";
+  }
+  out << "</tbody>\n</table>\n";
+  out << "<p class=\"note\">percpu_fds = 2×F×NCPU; named_probes = 2×F. "
+         "speedup = percpu_stop / shared_stop. Times are from this run; n/a is not invented.</p>\n";
+
+  out << "<h3>pid=target,cpu=-1 (experiment, 2×F fds; not production)</h3>\n";
+  if (have_uprobe_pmu) {
+    out << "<table>\n<thead>\n<tr><th>nfunctions</th><th>start</th><th>stop</th></tr>\n</thead>\n"
+           "<tbody>\n";
+    for (const UprobeBenchRow& row : rows) {
+      out << "<tr><td>" << row.nfunctions << "</td>" << HtmlValueCell(FormatMs(row.proc_pmu_start))
+          << HtmlValueCell(FormatMs(row.proc_pmu_stop)) << "</tr>\n";
+    }
+    out << "</tbody>\n</table>\n";
+  } else {
+    out << "<p class=\"na\">n/a (uprobe PMU not available)</p>\n";
+  }
+
+  const char* verdict_class = !verdict_available ? "na" : (verdict_pass ? "pass" : "fail");
+  const char* verdict_label = !verdict_available ? "n/a" : (verdict_pass ? "PASS" : "FAIL");
+  out << "<p><span class=\"verdict " << verdict_class << "\">" << verdict_label << "</span>";
+  if (!verdict_detail.empty()) {
+    out << " " << HtmlEscape(verdict_detail);
+  }
+  out << "</p>\n";
+  out << "<p><strong>command:</strong> <code>" << HtmlEscape(command) << "</code></p>\n";
+  out << "</div>\n";
+  return out.str();
+}
+
+void WriteUprobeBenchHtml(std::string_view fill_inner) {
+  std::string html(kUprobeBenchHtmlTemplate);
+  constexpr std::string_view kBegin = "<!-- ORBIT_BENCH_FILL_START -->";
+  constexpr std::string_view kEnd = "<!-- ORBIT_BENCH_FILL_END -->";
+  const std::size_t begin = html.find(kBegin);
+  const std::size_t end = html.find(kEnd);
+  if (begin != std::string::npos && end != std::string::npos && end > begin) {
+    html.replace(begin, end + kEnd.size() - begin,
+                 std::string(kBegin) + std::string(fill_inner) + std::string(kEnd));
+  } else {
+    ORBIT_ERROR("HTML template missing ORBIT_BENCH_FILL markers");
+  }
+  constexpr const char* kReportPath = "uprobe_attach_detach_bench.html";
+  std::ofstream out(kReportPath);
+  if (out) {
+    out << html;
+  } else {
+    ORBIT_ERROR("Could not write %s", kReportPath);
+  }
+}
+
 void PrintUprobeBenchReport(absl::Span<const UprobeBenchRow> rows, bool have_uprobe_pmu,
                             bool have_tracefs, bool verdict_pass, std::string_view verdict_detail,
                             std::string_view command) {
@@ -855,6 +989,9 @@ void PrintUprobeBenchReport(absl::Span<const UprobeBenchRow> rows, bool have_upr
   out << "\n";
   out << "command: " << command << "\n";
   WriteAndPrintReport(out.str());
+  WriteUprobeBenchHtml(FormatUprobeBenchHtmlFill(rows, have_uprobe_pmu, have_tracefs, verdict_pass,
+                                                 /*verdict_available=*/true, verdict_detail,
+                                                 command, /*missing=*/""));
 }
 
 }  // namespace
@@ -867,7 +1004,9 @@ void PrintUprobeBenchReport(absl::Span<const UprobeBenchRow> rows, bool have_upr
 //   # or: sudo ORBIT_UPROBE_BENCH=1 ./bin/LinuxTracingIntegrationTests --gtest_filter='*UprobeAttachDetachBench*'
 // clang-format on
 //
-// Writes a pasteable table to stdout and ./uprobe_attach_detach_bench.txt.
+// Writes a pasteable table to stdout and ./uprobe_attach_detach_bench.txt, plus
+// a self-contained HTML report (./uprobe_attach_detach_bench.html). Static copy:
+// docs/uprobe-stop.html.
 TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
   const std::string command = UprobeBenchCommand();
   if (!IsUprobeBenchEnabled()) {
@@ -901,6 +1040,10 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
     fail << "command: " << command << "\n";
     fail << "or:      ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh\n";
     WriteAndPrintReport(fail.str());
+    WriteUprobeBenchHtml(FormatUprobeBenchHtmlFill(
+        /*rows=*/{}, AreKernelUprobesAvailable(), have_tracefs, /*verdict_pass=*/false,
+        /*verdict_available=*/true,
+        "ORBIT_UPROBE_BENCH is on, but this machine cannot run the bench", command, missing));
     FAIL() << "ORBIT_UPROBE_BENCH is on, but this machine cannot run the bench.\n"
            << "missing: " << missing << "\n"
            << "run: ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh\n"
