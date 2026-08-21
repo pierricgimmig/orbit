@@ -1,5 +1,6 @@
 //! Browser fetch + WebSocket. Native tests get a no-op stub plus parsers.
 
+use orbit_live_event::chrome;
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -148,6 +149,12 @@ pub fn scale_frame_rgba(frame: &ServiceFrame, row_h: u32) -> (Vec<u8>, u32) {
     let w = frame.width as usize;
     let height = frame.lanes.saturating_mul(row_h);
     let mut out = vec![0u8; w.saturating_mul(height as usize).saturating_mul(4)];
+    for px in out.chunks_exact_mut(4) {
+        px[0] = ((chrome::TRACK >> 16) & 0xFF) as u8;
+        px[1] = ((chrome::TRACK >> 8) & 0xFF) as u8;
+        px[2] = (chrome::TRACK & 0xFF) as u8;
+        px[3] = ((chrome::TRACK >> 24) & 0xFF) as u8;
+    }
     for lane in 0..frame.lanes as usize {
         let src = lane * w * 4;
         if src + w * 4 > frame.rgba.len() {

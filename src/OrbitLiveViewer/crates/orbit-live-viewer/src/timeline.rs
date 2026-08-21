@@ -9,7 +9,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use orbit_live_render::{
-    collect_instances, BLIT_RECT_WGSL, INSTANCE_WGSL, ScopeInstance, TimelineLod,
+    collect_instances, ScopeInstance, TimelineLod, BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
 
 pub const INSTANCE_STRIDE: u64 = 48;
@@ -119,10 +119,18 @@ impl CallbackTrait for TimelineCallback {
 
     fn paint(
         &self,
-        _info: egui::PaintCallbackInfo,
+        info: egui::PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
         callback_resources: &CallbackResources,
     ) {
+        // egui-wgpu sets a courtesy viewport to the callback clip rect. Both
+        // blit and instance shaders emit NDC from full-framebuffer pixels
+        // (`x / viewport.x * 2 - 1` plus `uni.origin` / `uni.dest`), so reset
+        // to the real surface. Scissor stays the clip so we do not paint chrome.
+        let [sw, sh] = info.screen_size_px;
+        if sw > 0 && sh > 0 {
+            render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
+        }
         if let Some(gpu) = callback_resources.get::<TimelineGpu>() {
             gpu.draw(render_pass);
         }
@@ -140,6 +148,8 @@ pub struct TimelineGpu {
     inst_bind: wgpu::BindGroup,
     instance_buf: Option<wgpu::Buffer>,
     instance_count: u32,
+    /// Kept alive so the WebGPU `GPUTexture` is not dropped while bound.
+    column_tex: Option<wgpu::Texture>,
     column_bind: Option<wgpu::BindGroup>,
     lod: TimelineLod,
 }
@@ -316,6 +326,7 @@ impl TimelineGpu {
             inst_bind,
             instance_buf: None,
             instance_count: 0,
+            column_tex: None,
             column_bind: None,
             lod: TimelineLod::PixelColumns,
         }
@@ -343,6 +354,7 @@ impl TimelineGpu {
             TimelinePayload::Empty => {
                 self.lod = TimelineLod::PixelColumns;
                 self.instance_count = 0;
+                self.column_tex = None;
                 self.column_bind = None;
             }
             TimelinePayload::Pixel {
@@ -353,27 +365,43 @@ impl TimelineGpu {
                 self.lod = TimelineLod::PixelColumns;
                 self.instance_count = 0;
                 if *width == 0 || *height == 0 || rgba.is_empty() {
+                    self.column_tex = None;
                     self.column_bind = None;
                     return;
                 }
-                let texture = device.create_texture_with_data(
-                    queue,
-                    &wgpu::TextureDescriptor {
-                        label: Some("orbit-columns"),
-                        size: wgpu::Extent3d {
-                            width: *width,
-                            height: *height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                        view_formats: &[],
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("orbit-columns"),
+                    size: wgpu::Extent3d {
+                        width: *width,
+                        height: *height,
+                        depth_or_array_layers: 1,
                     },
-                    wgpu::util::TextureDataOrder::LayerMajor,
-                    rgba,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let (padded, bytes_per_row) = pack_rgba_aligned(rgba, *width, *height);
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &padded,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_row),
+                        rows_per_image: Some(*height),
+                    },
+                    wgpu::Extent3d {
+                        width: *width,
+                        height: *height,
+                        depth_or_array_layers: 1,
+                    },
                 );
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 self.column_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -394,9 +422,11 @@ impl TimelineGpu {
                         },
                     ],
                 }));
+                self.column_tex = Some(texture);
             }
             TimelinePayload::Instanced { instances } => {
                 self.lod = TimelineLod::Instanced;
+                self.column_tex = None;
                 self.column_bind = None;
                 let bytes = pack_instances(instances);
                 self.instance_count = instances.len() as u32;
@@ -439,6 +469,27 @@ impl TimelineGpu {
             }
         }
     }
+}
+
+/// WebGPU `write_texture` requires `bytes_per_row` to be a multiple of 256.
+/// Pack tightly stored RGBA8 into an aligned staging buffer.
+/// Returns `(padded_bytes, bytes_per_row)`.
+pub fn pack_rgba_aligned(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u32) {
+    let src_stride = width.saturating_mul(4);
+    let padded = src_stride.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    if padded == src_stride {
+        return (src.to_vec(), src_stride);
+    }
+    let mut out = vec![0u8; padded as usize * height as usize];
+    for y in 0..height as usize {
+        let s = y * src_stride as usize;
+        let d = y * padded as usize;
+        let n = src_stride as usize;
+        if s + n <= src.len() {
+            out[d..d + n].copy_from_slice(&src[s..s + n]);
+        }
+    }
+    (out, padded)
 }
 
 /// Pack dest-rect blit uniforms. WGSL aligns `vec4` to 16, so `viewport` is padded.
@@ -488,7 +539,7 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_live_event::{kind, LiveEvent};
+    use orbit_live_event::{kind, thread_scope_color, LiveEvent};
     use orbit_live_render::{choose_lod, TrackIndex, INSTANCE_MIN_PX};
 
     #[test]
@@ -510,6 +561,56 @@ mod tests {
         let u = pack_blit_uniforms([1920.0, 1080.0], [10.0, 20.0, 100.0, 50.0]);
         assert_eq!(&u[16..20], &10f32.to_le_bytes());
         assert_eq!(&u[8..16], &[0u8; 8]);
+    }
+
+    #[test]
+    fn pack_rgba_pads_bytes_per_row_to_256() {
+        let width = 100u32;
+        let height = 2u32;
+        let mut src = vec![0u8; (width * height * 4) as usize];
+        src[0..4].copy_from_slice(&[0xE7, 0x44, 0x35, 0xFF]);
+        src[(width * 4) as usize..(width * 4 + 4) as usize]
+            .copy_from_slice(&[0x32, 0x32, 0x32, 0xFF]);
+        let (padded, stride) = pack_rgba_aligned(&src, width, height);
+        assert_eq!(stride, 256);
+        assert_eq!(padded.len(), 256 * height as usize);
+        assert_eq!(&padded[0..4], &[0xE7, 0x44, 0x35, 0xFF]);
+        assert_eq!(&padded[256..260], &[0x32, 0x32, 0x32, 0xFF]);
+        assert_eq!(&padded[400..404], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn pixel_payload_uses_thread_palette_not_track_gray() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 100,
+            tid: 1,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 1,
+            extra: 0,
+            _pad: 0,
+            name_id: 1,
+        });
+        let p = TimelinePayload::from_index(&idx, 0, 100, 8.0, TimelineLod::PixelColumns, 1.0);
+        let TimelinePayload::Pixel {
+            rgba,
+            width,
+            height,
+        } = p
+        else {
+            panic!("expected pixel payload");
+        };
+        assert!(width >= 8);
+        assert!(height >= 16);
+        let expect = thread_scope_color(1, 1);
+        assert_ne!(expect, orbit_live_event::chrome::TRACK);
+        assert_eq!(rgba[0], ((expect >> 16) & 0xFF) as u8);
+        assert_eq!(rgba[1], ((expect >> 8) & 0xFF) as u8);
+        assert_eq!(rgba[2], (expect & 0xFF) as u8);
+        assert_eq!(rgba[3], 0xFF);
+        assert!(rgba.chunks_exact(4).any(|c| c == [0x32, 0x32, 0x32, 0xFF]));
     }
 
     #[test]

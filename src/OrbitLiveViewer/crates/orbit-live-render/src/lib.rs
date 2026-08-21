@@ -280,6 +280,13 @@ impl RasterizedFrame {
             height = height.saturating_add(h.saturating_add(g));
         }
         let mut out = vec![0u8; self.width.saturating_mul(height as usize).saturating_mul(4)];
+        // Empty columns / lane gaps stay Orbit track gray, not 0 (transparent).
+        for px in out.chunks_exact_mut(4) {
+            px[0] = ((chrome::TRACK >> 16) & 0xFF) as u8;
+            px[1] = ((chrome::TRACK >> 8) & 0xFF) as u8;
+            px[2] = (chrome::TRACK & 0xFF) as u8;
+            px[3] = ((chrome::TRACK >> 24) & 0xFF) as u8;
+        }
         let mut y = 0u32;
         for (row, &(h, g)) in hs.iter().enumerate() {
             let src = self.row(row);
@@ -350,6 +357,7 @@ pub fn generate_nested_scopes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbit_live_event::thread_scope_color;
     use std::time::Instant;
 
     fn scope(start: u64, dur: u64, depth: u8, name: u32) -> LiveEvent {
@@ -519,6 +527,24 @@ mod tests {
         assert!(INSTANCE_WGSL.contains("sd_rounded_box"));
         assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
         assert!(INSTANCE_WGSL.contains("madebyevan.com"));
+    }
+
+    #[test]
+    fn scaled_rgba_uses_event_color_not_track_gray() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 100, 1, 1));
+        let frame = idx.rasterize_pixel(0, 100, 8);
+        let expect = thread_scope_color(1, 1);
+        assert_eq!(frame.pixels[0], expect);
+        assert_ne!(expect, chrome::TRACK);
+        let (bytes, h) = frame.to_rgba8_scaled();
+        assert!(h >= 16);
+        assert_eq!(bytes[0], ((expect >> 16) & 0xFF) as u8);
+        assert_eq!(bytes[1], ((expect >> 8) & 0xFF) as u8);
+        assert_eq!(bytes[2], (expect & 0xFF) as u8);
+        assert_eq!(bytes[3], 0xFF);
+        // A gap/empty byte run still decodes as track gray, not 0.
+        assert!(bytes.chunks_exact(4).any(|c| c == [0x32, 0x32, 0x32, 0xFF]));
     }
 
     #[test]
