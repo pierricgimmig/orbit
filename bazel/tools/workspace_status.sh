@@ -17,12 +17,16 @@ git_or() {
   git "$@" 2>/dev/null || true
 }
 
-version_string="$(git_or describe --always --match '1.*')"
+# Release tags in this repository are written v1.0.2; upstream has used a bare
+# 1.x as well, so match both.
+version_string="$(git_or describe --always --match '1.*' --match 'v1.*')"
 commit_hash="$(git_or show -s --format=%H)"
 commit_date="$(git_or show -s --format=%cd --date=format-local:'%Y-%m-%dT%H:%M:%SZ')"
 
-major_version="$(sed -n 's/^\([0-9]\+\)\..*/\1/p' <<<"${version_string}")"
-minor_version="$(sed -n 's/^[0-9]\+\.\([0-9]\+\).*/\1/p' <<<"${version_string}")"
+# The version numbers are parsed off the tag, with the optional v dropped.
+numeric_version="${version_string#v}"
+major_version="$(sed -n 's/^\([0-9]\+\)\..*/\1/p' <<<"${numeric_version}")"
+minor_version="$(sed -n 's/^[0-9]\+\.\([0-9]\+\).*/\1/p' <<<"${numeric_version}")"
 
 echo "STABLE_ORBIT_VERSION_STRING ${version_string:-unknown}"
 echo "STABLE_ORBIT_MAJOR_VERSION ${major_version:-0}"

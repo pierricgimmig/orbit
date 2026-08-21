@@ -197,17 +197,19 @@ TEST(SymbolHelper, FindSymbolsFileLocally) {
     EXPECT_THAT(symbols_path_result, HasErrorWithMessage("Could not find"));
   }
 
-  {  // Find .debug fails because of module does not have build id
+  {  // Find .debug still fails when the module has no build id, but it now
+     // fails by searching and coming up empty rather than by refusing to look.
+     // See 8e0cd23, "Don't discard symbols with no build-id", which replaced
+     // the early return with a warning.
     const auto symbols_path_result = symbol_helper.FindSymbolsFileLocally(
         no_symbols_elf, "", ModuleInfo::kElfFile, {testdata_directory});
     EXPECT_THAT(symbols_path_result, HasErrorWithMessage("Could not find"));
-    EXPECT_THAT(symbols_path_result, HasErrorWithMessage("does not contain a build id"));
   }
 
-  {  // Find .pdb fails because of module does not have build id
+  {  // Find .pdb likewise: searched for, not found.
     const auto symbols_path_result = symbol_helper.FindSymbolsFileLocally(
         dllmain_dll, "", ModuleInfo::kCoffFile, {testdata_directory});
-    EXPECT_THAT(symbols_path_result, HasErrorWithMessage("does not contain a build id"));
+    EXPECT_THAT(symbols_path_result, HasErrorWithMessage("Could not find"));
   }
 
   {  // Find .debug fails because of object_file_type is wrong
