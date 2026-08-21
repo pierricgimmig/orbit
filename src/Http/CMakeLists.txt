@@ -30,7 +30,8 @@ set_target_properties(Http PROPERTIES AUTOMOC ON)
 add_executable(HttpTests)
 
 target_sources(HttpTests PRIVATE
-        HttpDownloadManagerTest.cpp)
+        HttpDownloadManagerTest.cpp
+        TlsAvailabilityTest.cpp)
 
 target_link_libraries(HttpTests PRIVATE
         GTest::QtCoreMain
@@ -38,6 +39,7 @@ target_link_libraries(HttpTests PRIVATE
         OrbitBase
         QtUtils
         Qt5::Core
+        Qt5::Network
         TestUtils)
 
 register_test(HttpTests)

@@ -778,6 +778,40 @@
 
   <p>gRPC builds <code>grpc++_unsecure</code> but keeps it behind an empty package group, so the module carries a one-line patch changing that target's visibility to public. That is the third patch in <code>bazel/patches/</code>.</p>
 
+  <h3>To be explicit: this drops no security</h3>
+
+  <p>The target's name invites the opposite reading, so it is worth stating plainly. Orbit has never used gRPC's TLS. All ten channel and server call sites use <code>InsecureChannelCredentials</code> or <code>InsecureServerCredentials</code>; <code>grpc::SslCredentials</code> has never appeared anywhere in this repository's history; there is no certificate, key or PEM handling in the tree. Linking <code>grpc++</code> compiled a TLS stack that no code path could reach, and removing it changes no runtime behaviour.</p>
+
+  <p>What protects each link, and always did:</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Link</th><th>What protects it</th></tr></thead>
+      <tbody>
+        <tr><td>Client &rarr; OrbitService</td><td>The server binds <code>127.0.0.1</code> only, so it is not reachable from the network. Remote profiling reaches it through an SSH tunnel, which is what authenticates and encrypts the link.</td></tr>
+        <tr><td>Producer &rarr; OrbitService</td><td>A Unix domain socket, governed by filesystem permissions.</td></tr>
+        <tr><td>Symbol downloads</td><td>Real HTTPS &mdash; but through Qt, not gRPC. Untouched by this change.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>TLS on a loopback socket would add nothing to the first row: anything that can open that port can also complete a handshake with it.</p>
+
+  <h3>The one place TLS is real</h3>
+
+  <p>Debug symbols are fetched over HTTPS from the Microsoft symbol server, through <code>QNetworkAccessManager</code>. Qt resolves its TLS backend by <code>dlopen</code>ing libssl at runtime, which means a Qt without a usable one fails every <code>https://</code> request at runtime and nowhere else &mdash; no link error, no warning. Since this build supplies Qt from pinned packages rather than from the machine, that property is now asserted rather than assumed:</p>
+
+  <pre><code><span class="c">[ RUN      ]</span> Tls.QtCanDoHttps
+<span class="k">[       OK ]</span> Tls.QtCanDoHttps</code></pre>
+
+  <p>The Qt shipped here is built against OpenSSL 3.5.3 and resolves 3.5.5 at runtime.</p>
+
+  <div class="note warn">
+    <span class="note-label">Exposure that does exist, and predates this port</span>
+    <p>OrbitService's gRPC endpoint has no authentication at all, and the service is normally run as root so that it can <code>ptrace</code>, read <code>/proc/*/mem</code> and inject libraries into arbitrary processes. Loopback keeps it off the network, but any local process can still connect and ask for those operations.</p>
+    <p>Adding TLS would not close that. Authenticating the peer would: a Unix domain socket with restrictive permissions &mdash; the pattern the producer side already uses &mdash; or an <code>SO_PEERCRED</code> check on the connection. That is a change to the service rather than to the build, so it is not part of this port.</p>
+  </div>
+
   <!-- ==================================================== versions -->
 
   <h2 id="versions">Every version that moved</h2>

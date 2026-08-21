@@ -30,7 +30,10 @@ qt_cc_library(
 
 qt_cc_test(
     name = "HttpTests",
-    srcs = ["HttpDownloadManagerTest.cpp"],
+    srcs = [
+        "HttpDownloadManagerTest.cpp",
+        "TlsAvailabilityTest.cpp",
+    ],
     copts = ORBIT_COPTS,
     data = glob(["testdata/**"]),
     env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/Http/testdata"},
@@ -41,5 +44,6 @@ qt_cc_test(
         "//src/Test:gtest_qtcore_main",
         "//src/TestUtils",
         "@qt5//:Core",
+        "@qt5//:Network",
     ],
 )

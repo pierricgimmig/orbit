@@ -160,10 +160,24 @@ that version; it rewrites `bazel/deps/debs.bzl`.
 ### gRPC without TLS
 
 Orbit links `grpc++_unsecure` rather than `grpc++`, which is what the
-pkg-config path in `cmake/FindgRPC.cmake` picks too. Every gRPC channel and
-server Orbit creates uses `InsecureChannelCredentials` /
-`InsecureServerCredentials` -- the transport is either a Unix socket or a
-tunnel SSH already secured -- so the TLS stack is never exercised.
+pkg-config path in `cmake/FindgRPC.cmake` picks too.
+
+**This drops no security.** Orbit has never used gRPC's TLS. All ten channel
+and server call sites in the tree use `InsecureChannelCredentials` or
+`InsecureServerCredentials`, and `grpc::SslCredentials` has never appeared in
+the repository's history -- there is no certificate, key or PEM handling
+anywhere. Linking `grpc++` compiled a TLS stack that no code path could reach.
+
+What actually protects the transport:
+
+| Link | Protection |
+| --- | --- |
+| Client to OrbitService | The server binds `127.0.0.1` only, so it is not reachable from the network. Remote profiling reaches it through an SSH tunnel, which authenticates and encrypts it. |
+| Producer to OrbitService | A Unix domain socket, governed by filesystem permissions. |
+| Symbol downloads over HTTPS | Qt, not gRPC. Unaffected by this, and covered by a test -- see below. |
+
+TLS on a loopback socket would add nothing to the first row: anything that can
+open that port can also complete a TLS handshake with it.
 
 Leaving it in would be worse than dead weight. gRPC's default BoringSSL
 collides at link time with the OpenSSL libssh2 pulls in, and building gRPC
@@ -175,6 +189,32 @@ and about 2,500 targets from the build.
 
 gRPC keeps `grpc++_unsecure` behind an empty package group, so the module is
 patched to export it; see `bazel/patches/grpc_export_unsecure.patch`.
+
+### The one place TLS is real
+
+Debug symbols are downloaded over HTTPS from the Microsoft symbol server.
+That path runs through `QNetworkAccessManager`, and Qt resolves its TLS backend
+by `dlopen`ing libssl at runtime -- so a Qt without one fails every `https://`
+request at runtime and nowhere else. Because this build supplies Qt from pinned
+packages rather than from the machine, `//src/Http:HttpTests` asserts that the
+Qt being shipped has a working backend:
+
+```
+[ RUN      ] Tls.QtCanDoHttps
+[       OK ] Tls.QtCanDoHttps
+```
+
+Qt 5.15.18 here is built against OpenSSL 3.5.3 and resolves 3.5.5 at runtime.
+
+### Known exposure, predating this port
+
+OrbitService's gRPC endpoint has no authentication of any kind, and the service
+is normally run as root so that it can `ptrace`, read `/proc/*/mem` and inject
+libraries. Binding to loopback keeps it off the network, but any local process
+can still connect to it and ask for those operations. Adding TLS would not
+change that. Closing it would mean authenticating the peer -- a Unix domain
+socket with restrictive permissions, as the producer side already uses, or an
+`SO_PEERCRED` check. That is a change to the service, not to the build.
 
 ## What is not ported
 

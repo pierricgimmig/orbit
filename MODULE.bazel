@@ -34,6 +34,20 @@ bazel_dep(name = "libssh2", version = "1.11.1.bcr.1")
 bazel_dep(name = "c-ares", version = "1.34.6")
 
 # Orbit links grpc++_unsecure, which gRPC builds but does not export.
+#
+# This drops no security. Orbit has never used gRPC's TLS: every channel and
+# every server in the tree is built with InsecureChannelCredentials or
+# InsecureServerCredentials, and grpc::SslCredentials has never appeared in the
+# repository's history. Linking grpc++ compiled a TLS stack that no code path
+# could reach.
+#
+# The transport is protected by other means. OrbitService's gRPC server binds
+# 127.0.0.1 only (Service/OrbitService.cpp), so it is not reachable from the
+# network; remote profiling reaches it through an SSH tunnel, which is what
+# authenticates and encrypts the link. The producer-side server listens on a
+# Unix domain socket. The one place Orbit does rely on TLS -- HTTPS symbol
+# downloads -- goes through Qt, not gRPC, and //src/Http:HttpTests asserts that
+# the Qt in this build has a working TLS backend.
 single_version_override(
     module_name = "grpc",
     patch_strip = 1,
