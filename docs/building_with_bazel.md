@@ -95,9 +95,22 @@ time, which shows the model is fragile -- but that harness leaves the TLS owner
 running concurrently where ptrace has it halted, so it is harsher than the real
 path and does not by itself establish TLS corruption as the cause here.
 
-Fixing this means making the injected thread wait until the producer's threads
-exist before it exits, rather than relying on timing. That is a change to the
-product, inside ptrace-injected machine code, so it is not part of this port.
+Two fixes were tried and neither worked, which narrows the search:
+
+| Attempt | Result |
+| --- | --- |
+| Run the initialisation on a real `std::thread` and join it | 4 failures in 5, unchanged |
+| Make `BuildAndStart` wait until its connect thread is actually running | 6 failures in 10 |
+
+So it is not enough for the producer's own thread to exist before the injected
+thread exits. What never appears is the gRPC event-engine pool, which is
+created later, on first use of the channel. Both attempts were reverted rather
+than left in shared code.
+
+A fix likely has to keep the injected thread alive until the whole set of
+Orbit-owned threads exists, which means the injection needs a completion signal
+it does not currently have. That is a change to the product, inside
+ptrace-injected machine code, so it is not part of this port.
 It is the same area the upstream `GTEST_SKIP` in that test cites (b/237251106,
 "injecting the library into the target process triggers some initialization
 code that check fails").
