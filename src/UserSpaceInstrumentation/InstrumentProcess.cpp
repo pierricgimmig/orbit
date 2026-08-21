@@ -4,6 +4,7 @@
 
 #include "UserSpaceInstrumentation/InstrumentProcess.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/casts.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/meta/type_traits.h>
@@ -15,7 +16,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
@@ -193,12 +196,25 @@ ErrorMessageOr<void> WaitForThreadToExit(pid_t pid, pid_t tid) {
   return outcome::success();
 }
 
-// These are the names of the threads that will be spawned when
-// liborbituserspaceinstrumentation.so is injected into the target process.
-std::multiset<std::string> GetExpectedOrbitThreadNames() {
-  static const std::multiset<std::string> kThreadNames{
-      "default-executo", "resolver-execut", "grpc_global_tim", "ConnectRcvCmds", "ForwarderThread"};
-  return kThreadNames;
+// The threads Orbit itself starts when liborbituserspaceinstrumentation.so is
+// injected into the target process. Injection is complete once both are up.
+constexpr std::array<std::string_view, 2> kOrbitThreadNames{"ConnectRcvCmds", "ForwarderThread"};
+
+// Threads gRPC starts underneath them. Which of these exist, and how many of
+// each, depends on the gRPC release: up to 1.72 it ran an executor, since 1.73
+// it runs an event engine whose pool is sized by the number of cores. They are
+// recognised so that the payload can skip them, but none is required to be
+// present.
+constexpr std::array<std::string_view, 6> kGrpcThreadNames{
+    "grpc_global_tim",                     // Timer manager, present throughout.
+    "event_engine",     "lifeguard",       // gRPC >= 1.73.
+    "default-executo",  "resolver-execut",  // gRPC <= 1.72.
+    "grpcpp_sync_ser",
+};
+
+[[nodiscard]] bool IsOrbitThreadName(std::string_view name) {
+  return absl::c_linear_search(kOrbitThreadNames, name) ||
+         absl::c_linear_search(kGrpcThreadNames, name);
 }
 
 ErrorMessageOr<std::vector<pid_t>> GetNewOrbitThreads(
@@ -213,42 +229,53 @@ ErrorMessageOr<std::vector<pid_t>> GetNewOrbitThreads(
   constexpr int kNumberOfRetries = 300;
   constexpr std::chrono::milliseconds kWaitingPeriod{10};
   std::vector<pid_t> orbit_threads;
-  std::multiset<std::string> orbit_threads_names;
   int count = 0;
-  while (orbit_threads_names != GetExpectedOrbitThreadNames()) {
-    if (count++ >= kNumberOfRetries) {
-      return ErrorMessage(
-          "Unable to find threads spawned by library injected for user space instrumentation.");
-    }
+  while (true) {
     std::this_thread::sleep_for(kWaitingPeriod);
     orbit_threads.clear();
-    orbit_threads_names.clear();
-    const auto tids = orbit_base::GetTidsOfProcess(pid);
-    for (const auto tid : tids) {
+    absl::flat_hash_set<std::string_view> found_orbit_thread_names;
+    for (const pid_t tid : orbit_base::GetTidsOfProcess(pid)) {
       if (tids_before_injection.contains(tid)) {
         continue;
       }
       const std::string tid_name = orbit_base::GetThreadName(tid);
-      if (GetExpectedOrbitThreadNames().count(tid_name) == 0) {
+      if (!IsOrbitThreadName(tid_name)) {
         continue;
       }
       orbit_threads.push_back(tid);
-      orbit_threads_names.insert(tid_name);
+      const auto it = absl::c_find(kOrbitThreadNames, tid_name);
+      if (it != kOrbitThreadNames.end()) found_orbit_thread_names.insert(*it);
+    }
+    if (found_orbit_thread_names.size() == kOrbitThreadNames.size()) {
+      return orbit_threads;
+    }
+    if (count++ >= kNumberOfRetries) {
+      return ErrorMessage(
+          "Unable to find threads spawned by library injected for user space instrumentation.");
     }
   }
-  return orbit_threads;
 }
 
 ErrorMessageOr<void> SetOrbitThreadsInTarget(pid_t pid, absl::Span<const ModuleInfo> modules,
                                              void* library_handle,
                                              const std::vector<pid_t>& orbit_threads) {
-  ORBIT_CHECK(orbit_threads.size() == GetExpectedOrbitThreadNames().size());
-  constexpr const char* kSetOrbitThreadsFunctionName = "SetOrbitThreads";
-  OUTCOME_TRY(void* set_orbit_threads_function_address,
-              DlsymInTracee(pid, modules, library_handle, kSetOrbitThreadsFunctionName));
-  OUTCOME_TRY(ExecuteInProcess(pid, set_orbit_threads_function_address, orbit_threads[0],
-                               orbit_threads[1], orbit_threads[2], orbit_threads[3],
-                               orbit_threads[4], orbit_threads[5]));
+  ORBIT_CHECK(!orbit_threads.empty());
+  constexpr const char* kAddOrbitThreadsFunctionName = "AddOrbitThreads";
+  OUTCOME_TRY(void* add_orbit_threads_function_address,
+              DlsymInTracee(pid, modules, library_handle, kAddOrbitThreadsFunctionName));
+
+  // ExecuteInProcess passes six arguments in registers, so the ids go over in
+  // batches of six; -1 pads the last, partially filled one.
+  constexpr size_t kBatchSize = 6;
+  for (size_t begin = 0; begin < orbit_threads.size(); begin += kBatchSize) {
+    std::array<pid_t, kBatchSize> batch;
+    batch.fill(-1);
+    for (size_t i = 0; i < kBatchSize && begin + i < orbit_threads.size(); ++i) {
+      batch[i] = orbit_threads[begin + i];
+    }
+    OUTCOME_TRY(ExecuteInProcess(pid, add_orbit_threads_function_address, batch[0], batch[1],
+                                 batch[2], batch[3], batch[4], batch[5]));
+  }
   return outcome::success();
 }
 

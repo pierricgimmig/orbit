@@ -17,11 +17,14 @@ extern "C" void StartNewCapture(uint64_t capture_start_timestamp_ns);
 // process. It sets up the communication to OrbitService.
 extern "C" void InitializeInstrumentation();
 
-// We'll spawn six threads when injecting this library. This happens immediatly after the call to
-// InitializeInstrumentation above. These threads facilitate the grpc communication with
-// OrbitService. OrbitService will detect the threads and call SetOrbitThreads to set the thread ids
-// such that events from these threads can be ignored in EntryPayload.
-extern "C" void SetOrbitThreads(pid_t tid_0, pid_t tid_1, pid_t tid_2, pid_t tid_3, pid_t tid_4,
+// Injecting this library spawns threads, immediately after the call to
+// InitializeInstrumentation above: two of Orbit's own plus however many the gRPC version in use
+// starts to communicate with OrbitService. OrbitService detects them and calls AddOrbitThreads to
+// register their ids, so that events from these threads can be ignored in EntryPayload.
+//
+// The ids arrive six at a time, which is as many as fit in the registers set up for a call into
+// the target process, and the last, partially filled batch is padded with -1.
+extern "C" void AddOrbitThreads(pid_t tid_0, pid_t tid_1, pid_t tid_2, pid_t tid_3, pid_t tid_4,
                                 pid_t tid_5);
 
 // Payload called on entry of an instrumented function. Needs to record the return address of the
