@@ -20,7 +20,7 @@ if ! command -v wasm-bindgen >/dev/null || ! wasm-bindgen --version | grep -q "$
   cargo install wasm-bindgen-cli --version "$BINDGEN_VER" --locked
 fi
 
-cargo build -p orbit-live-viewer --target wasm32-unknown-unknown --release --features webgpu
+cargo build -p orbit-live-viewer --target wasm32-unknown-unknown --release
 
 wasm-bindgen \
   --target web \

@@ -28,16 +28,21 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src/OrbitLiveViewer
       - name: Test native crates
         working-directory: src/OrbitLiveViewer
         run: cargo test --workspace --exclude orbit-live-viewer
-      - name: Test viewer crate (no WebGPU)
+      - name: Test viewer crate (eframe + callback, no window)
         working-directory: src/OrbitLiveViewer
         run: cargo test -p orbit-live-viewer
+      - name: Compile eframe WebRunner for wasm32
+        working-directory: src/OrbitLiveViewer
+        run: cargo build -p orbit-live-viewer --target wasm32-unknown-unknown
       - name: Compile benches
         working-directory: src/OrbitLiveViewer
         run: cargo bench --workspace --exclude orbit-live-viewer --no-run

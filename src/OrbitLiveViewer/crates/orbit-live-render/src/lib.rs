@@ -38,7 +38,7 @@ pub use lod::{
     choose_lod, collect_instances, empty_column_color, lane_gap, lane_height, stack_height,
     InstanceFrame, ScopeInstance, TimelineLod, INSTANCE_MIN_PX,
 };
-pub use shaders::{BLIT_WGSL, INSTANCE_WGSL};
+pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
 /// One horizontal lane of non-overlapping intervals, sorted by `start_ns`.
 #[derive(Clone, Debug, Default)]
@@ -515,6 +515,7 @@ mod tests {
     #[test]
     fn shaders_are_present_for_both_lods() {
         assert!(BLIT_WGSL.contains("textureSampleLevel"));
+        assert!(BLIT_RECT_WGSL.contains("uni.dest"));
         assert!(INSTANCE_WGSL.contains("sd_rounded_box"));
         assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
         assert!(INSTANCE_WGSL.contains("madebyevan.com"));

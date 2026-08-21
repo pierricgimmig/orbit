@@ -1,8 +1,8 @@
-//! Embed every file in viewer-dist/ as include_bytes! (no rust-embed / sha2).
+//! Embed files under viewer-dist/ (including wasm-bindgen snippets/).
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn mime_for(name: &str) -> &'static str {
     if name.ends_with(".html") {
@@ -20,6 +20,31 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
+fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
+    let mut entries: Vec<_> = match fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        let rel = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if path.is_dir() {
+            collect_files(&path, &rel, out);
+        } else if path.is_file() {
+            out.push((rel, path));
+        }
+    }
+}
+
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let dist = manifest.join("../../viewer-dist");
@@ -28,25 +53,20 @@ fn main() {
     let mut code = String::from(
         "pub fn get(path: &str) -> Option<(&'static str, &'static [u8])> {\n    match path {\n",
     );
+    let mut files = Vec::new();
     if dist.is_dir() {
-        let mut names: Vec<_> = fs::read_dir(&dist)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .collect();
-        names.sort_by_key(|e| e.file_name());
-        for entry in names {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            println!("cargo:rerun-if-changed={}", entry.path().display());
-            let abs = entry.path().canonicalize().unwrap();
-            let mime = mime_for(&name);
-            code.push_str(&format!(
-                "        \"{}\" => Some((\"{}\", include_bytes!(\"{}\"))),\n",
-                name,
-                mime,
-                abs.display()
-            ));
-        }
+        collect_files(&dist, "", &mut files);
+    }
+    for (rel, path) in files {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let abs = path.canonicalize().unwrap();
+        let mime = mime_for(&rel);
+        code.push_str(&format!(
+            "        \"{}\" => Some((\"{}\", include_bytes!(\"{}\"))),\n",
+            rel,
+            mime,
+            abs.display()
+        ));
     }
     code.push_str("        _ => None,\n    }\n}\n");
 

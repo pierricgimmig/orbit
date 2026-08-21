@@ -44,10 +44,16 @@ Scope / thread colors come from `ThreadColor.cpp` / `TimeGraph::GetColor`
 in `ApiInterface/Orbit.h`. Thread states match `ThreadStateBar.cpp`. Chrome
 is the Qt capture window (`#434343` canvas, `#323232` track, `#353535` window).
 
-The served page is that Orbit-colored HTML (process list, Start/Stop capture,
-Start/Stop demo, ring/spill, status). Current **egui** wants rustc newer than
-this workspace’s **1.83** pin; eframe 0.30 would compile but is not pulled
-into the native crates so Orbit’s C++ toolchain stays untouched.
+The shipped page is **eframe / egui-wgpu** (WebRunner on a full-window canvas).
+Process list, Start/Stop capture, Start/Stop demo, ring/spill, and status are
+egui widgets in the Orbit Fusion palette (`#353535` window, `#191919` inputs,
+`#434343` canvas, white text, `#64B5F6` selected). The timeline is **one**
+egui `PaintCallback` — not millions of `RectShape`s.
+
+This workspace pins **rustc 1.88** via `rust-toolchain.toml` so current eframe
+(0.32) builds. That pin is **only** for `src/OrbitLiveViewer`. The C++ Orbit /
+CMake toolchain is unchanged. `viewer-dist/fallback.html` is a last-ditch
+no-wasm page; it is not the UI we ship.
 
 ## Renderer (verified, not assumed)
 
@@ -88,10 +94,11 @@ cargo test --workspace --exclude orbit-live-viewer
 cargo bench --workspace --exclude orbit-live-viewer
 ```
 
-`--exclude orbit-live-viewer` skips the `wasm32` crate. That crate still has
-native unit tests (`cargo test -p orbit-live-viewer`) that do not need WebGPU.
+`--exclude orbit-live-viewer` skips the WASM crate’s heavier eframe graph.
+`cargo test -p orbit-live-viewer` still compiles the eframe app + callback
+on native (no window).
 
-### WASM pack (WebGPU + pixel rasterizer in the browser)
+### WASM pack (eframe WebRunner)
 
 Needs `wasm32-unknown-unknown` and `wasm-bindgen-cli` matching `wasm-bindgen 0.2.100`:
 
@@ -100,10 +107,9 @@ Needs `wasm32-unknown-unknown` and `wasm-bindgen-cli` matching `wasm-bindgen 0.2
 ```
 
 This writes `viewer-dist/orbit_live_viewer.js` and `.wasm`. Rebuild
-`orbit-live-ffi` / OrbitService afterwards so `rust-embed` picks them up.
+`orbit-live-ffi` / OrbitService afterwards so the embed picks them up.
 
-Without a WASM pack the served page still works: `app.js` falls back to
-`GET /api/frame` (service-side pixel-column raster) and a Canvas2D blit.
+Without a WASM pack, `/` shows a link to `fallback.html` (HTML/JS last-ditch).
 
 ### Embed in OrbitService
 

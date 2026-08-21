@@ -1,17 +1,23 @@
 //! WASM client for the Orbit live stream.
 //!
-//! Parsing of ELF/DWARF and protobuf stays on the service. This crate only
-//! decodes the packed live frames and rasterizes **from the pixels**:
-//! O(lanes × width × log n) via [`orbit_live_render`]. Zoomed-in scopes use
-//! instanced SDF rounded rects (`orbit_live_render::INSTANCE_WGSL`).
+//! Shipped UI is **eframe WebRunner** (`start_eframe`). Chrome is egui
+//! widgets; the timeline is one `PaintCallback` (hybrid wgpu).
+//! Parsing of ELF/DWARF and protobuf stays on the service.
 
 use orbit_live_event::InternTable;
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{choose_lod, TrackIndex, TimelineLod, INSTANCE_MIN_PX};
 use wasm_bindgen::prelude::*;
 
-#[cfg(feature = "webgpu")]
-mod gpu;
+#[cfg(feature = "egui")]
+mod app;
+#[cfg(feature = "egui")]
+mod net;
+#[cfg(feature = "egui")]
+mod timeline;
+
+#[cfg(feature = "egui")]
+pub use app::OrbitLiveApp;
 
 #[wasm_bindgen]
 pub struct LiveViewer {
@@ -112,11 +118,6 @@ impl LiveViewer {
 }
 
 impl LiveViewer {
-    #[allow(dead_code)]
-    pub(crate) fn track_index(&self) -> &TrackIndex {
-        &self.index
-    }
-
     fn apply_frame(&mut self, frame: LiveFrame) {
         match frame {
             LiveFrame::EventBatch { events } => {
@@ -133,6 +134,21 @@ impl LiveViewer {
             LiveFrame::CaptureFinished | LiveFrame::Hello { .. } | LiveFrame::Status { .. } => {}
         }
     }
+}
+
+/// Browser entry: eframe WebRunner on the given canvas. Native window is not used.
+#[cfg(all(feature = "egui", target_arch = "wasm32"))]
+#[wasm_bindgen]
+pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+    eframe::WebLogger::init(log::LevelFilter::Info).ok();
+    eframe::WebRunner::new()
+        .start(
+            canvas,
+            eframe::WebOptions::default(),
+            Box::new(|cc| Ok(Box::new(OrbitLiveApp::new(cc)))),
+        )
+        .await
 }
 
 #[cfg(test)]

@@ -3,29 +3,49 @@ name = "orbit-live-viewer"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "WASM live trace viewer: Orbit palette + hybrid pixel-column / instanced SDF"
+description = "eframe WebRunner live viewer: Orbit chrome + hybrid wgpu timeline"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
-webgpu = ["dep:wgpu"]
+default = ["egui"]
+egui = ["dep:eframe", "dep:egui", "dep:egui-wgpu"]
 
 [dependencies]
 orbit-live-event = { path = "../orbit-live-event" }
 orbit-live-protocol = { path = "../orbit-live-protocol" }
 orbit-live-render = { path = "../orbit-live-render" }
-wasm-bindgen = "=0.2.100"
+wasm-bindgen = "0.2"
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
-wgpu = { version = "23.0", default-features = false, features = ["wgsl", "webgpu"], optional = true }
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# eframe 0.32 (MSRV 1.85, wgpu 25). This workspace pins rustc 1.88.
+eframe = { version = "0.32.3", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"], optional = true }
+egui = { version = "0.32.3", optional = true }
+egui-wgpu = { version = "0.32.3", optional = true }
 
 [dependencies.web-sys]
 version = "0.3"
 features = [
+    "BinaryType",
     "console",
     "Document",
+    "Headers",
     "HtmlCanvasElement",
+    "Location",
+    "MessageEvent",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "WebSocket",
     "Window",
 ]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+# WebGPU first, WebGL fallback (egui-wgpu default).
+wgpu = { version = "25", default-features = false, features = ["webgpu", "webgl", "wgsl"] }

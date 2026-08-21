@@ -18,10 +18,10 @@ members = [
 edition = "2021"
 license = "BSD-2-Clause"
 repository = "https://github.com/pierricgimmig/orbit"
-rust-version = "1.83"
+# This workspace is newer than Orbit's C++ rustc pin. See rust-toolchain.toml.
+rust-version = "1.88"
 
 [workspace.dependencies]
-# Pins keep `cargo test` on rustc 1.83 (this repo's current toolchain).
 clap = "=4.5.23"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 parking_lot = "0.12"
