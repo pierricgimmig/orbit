@@ -1082,23 +1082,27 @@
 
   <h3>The one failure</h3>
 
-  <p><code>InstrumentProcessTest.Instrument</code> fails on roughly four runs in five. It is a defect in the injection, not in the build, and it has a specific cause.</p>
+  <p><code>InstrumentProcessTest.Instrument</code> fails on roughly four runs in five. It is a defect in the injection, not in the build &mdash; and it is a race, with the timing as the evidence.</p>
 
-  <p>The injected library is initialised on a thread built by <code>MachineCodeForCloneCall</code>, which issues a raw <code>clone</code> with <code>CLONE_VM | CLONE_THREAD</code> and deliberately gives it no thread-local storage. The comment above it is explicit: <em>"we do not create a new data structure for thread local storage but use the one of the thread we halted."</em> Reproduced outside ptrace, that thread model decides the outcome:</p>
+  <p>Adding two <code>ORBIT_LOG</code> calls around the body of <code>InitializeInstrumentation</code> &mdash; nothing else &mdash; makes the test pass consistently. The failure rate inverts with machine load. Waiting five times longer on the OrbitService side does not help, because the producer's threads are never created at all rather than created late.</p>
 
   <div class="table-wrap wide">
     <table>
-      <thead><tr><th>Thread running <code>InitializeInstrumentation</code></th><th>Result</th></tr></thead>
+      <thead><tr><th>Condition</th><th>Result</th></tr></thead>
       <tbody>
-        <tr><td>Normal thread, its own TLS</td><td>succeeds 3 of 3 &mdash; 21 threads come up</td></tr>
-        <tr><td>Cloned thread borrowing another's TLS</td><td><strong>SIGSEGV</strong></td></tr>
+        <tr><td>Idle machine, unmodified</td><td>fails 4 runs in 5</td></tr>
+        <tr><td>Two log lines added around the initialisation</td><td>passes</td></tr>
+        <tr><td>Under full-suite load</td><td>passes</td></tr>
+        <tr><td>OrbitService waits 5&times; longer for the threads</td><td>still fails</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>gRPC's event engine, which replaced the executor in 1.73, leans on thread-local storage far more heavily than what came before &mdash; so a latent problem in the injection became visible on this dependency bump. In the real path it is intermittent rather than fatal because the borrowed TLS block belongs to a <em>halted</em> thread that is not using it concurrently, so what breaks depends on what the initialisation happens to touch.</p>
+  <p>The shape of it: OrbitService clones a thread into the target with <code>CLONE_VM | CLONE_THREAD</code> and, deliberately, no thread-local storage of its own. <code>MachineCodeForCloneCall</code> says as much: <em>"we do not create a new data structure for thread local storage but use the one of the thread we halted."</em> That thread calls <code>InitializeInstrumentation</code>, which starts the producer's connect thread through <code>std::thread</code>, then exits immediately through a raw <code>SYS_exit</code>. Anything that delays that exit makes the problem disappear.</p>
 
-  <p>Fixing it means giving that thread real TLS, or moving the initialisation off it &mdash; inside ptrace-injected machine code. That is a change to the product rather than to the build, so it is documented rather than attempted. It is the same area the upstream <code>GTEST_SKIP</code> in that test cites (b/237251106).</p>
+  <p>A standalone harness reproducing the borrowed-TLS thread model segfaults every time, which shows the model is fragile. It is not proof of the cause here, though: that harness leaves the TLS owner running concurrently, where ptrace has it halted, so it is harsher than the real path.</p>
+
+  <p>Fixing it means making the injected thread wait until the producer's threads exist rather than relying on timing &mdash; inside ptrace-injected machine code, and a change to the product rather than to the build. It is the same area the upstream <code>GTEST_SKIP</code> in that test cites (b/237251106).</p>
 
   <h3>What still needs actual root</h3>
 

@@ -69,35 +69,34 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 
 **`//src/UserSpaceInstrumentation:UserSpaceInstrumentationTests`** fails
 intermittently in `InstrumentProcessTest.Instrument` -- roughly four runs in
-five on an idle machine, and it has passed under full-suite load. Injecting
+five on an idle machine, and it passes under full-suite load. Injecting
 `liborbituserspaceinstrumentation.so` into the first target process always
 works; injecting into the second process the test forks sometimes leaves the
-target with no new threads at all. Waiting five times as long does not help, so
-it is a race rather than a timeout.
+target with no new threads at all.
 
-The cause is in the injection, not in the build. The injected library is
-initialised on a thread built by `MachineCodeForCloneCall`, which clones with
-`CLONE_VM | CLONE_THREAD` and deliberately does not set up thread-local
-storage. The comment above it says so: *"we do not create a new data structure
-for thread local storage but use the one of the thread we halted."* Reproduced
-outside ptrace, the thread model is decisive:
+**It is a race, and the timing is the evidence.** Adding two `ORBIT_LOG` calls
+around the body of `InitializeInstrumentation` -- nothing else -- makes the test
+pass consistently, and the failure rate inverts with machine load. Waiting five
+times longer on the OrbitService side does not help, because the producer's
+threads are never created at all rather than created late.
 
-| Thread running `InitializeInstrumentation` | Result |
-| --- | --- |
-| Normal thread, its own TLS | succeeds, 3 of 3, 21 threads come up |
-| Cloned thread borrowing another's TLS | SIGSEGV |
+The shape of it: OrbitService clones a thread into the target with
+`CLONE_VM | CLONE_THREAD` and, deliberately, no thread-local storage of its own
+-- `MachineCodeForCloneCall` says so: *"we do not create a new data structure
+for thread local storage but use the one of the thread we halted."* That thread
+calls `InitializeInstrumentation`, which starts the producer's connect thread
+through `std::thread`, and then exits immediately through a raw `SYS_exit`.
+Anything that delays that exit, including a log line, makes the problem go away.
 
-gRPC's event engine, which replaced the executor in 1.73, uses thread-local
-storage far more heavily than what came before, which is why a latent problem
-became visible on this dependency bump. In the real path it is intermittent
-rather than fatal because the borrowed TLS block belongs to a halted thread
-that is not using it concurrently, so what breaks depends on what the
-initialisation happens to touch.
+A standalone harness reproducing the borrowed-TLS thread model segfaults every
+time, which shows the model is fragile -- but that harness leaves the TLS owner
+running concurrently where ptrace has it halted, so it is harsher than the real
+path and does not by itself establish TLS corruption as the cause here.
 
-Fixing it means giving that thread real TLS, or moving the initialisation off
-it -- delicate work inside ptrace-injected machine code, and a change to the
-product rather than to the build, so it is not part of this port. It is the
-same area the upstream `GTEST_SKIP` in that test cites (b/237251106,
+Fixing this means making the injected thread wait until the producer's threads
+exist before it exits, rather than relying on timing. That is a change to the
+product, inside ptrace-injected machine code, so it is not part of this port.
+It is the same area the upstream `GTEST_SKIP` in that test cites (b/237251106,
 "injecting the library into the target process triggers some initialization
 code that check fails").
 
