@@ -11,8 +11,8 @@ module(
 # --- Rule sets -----------------------------------------------------------
 
 bazel_dep(name = "rules_cc", version = "0.2.22")
-bazel_dep(name = "rules_python", version = "2.0.2")
-bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_python", version = "2.3.1")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "rules_rust", version = "0.73.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "platforms", version = "1.1.0")
@@ -101,18 +101,18 @@ http_archive(
         "sed -i.bak 's|#include <platform.h>|#include <capstone/platform.h>|' " +
         "arch/TriCore/TriCoreInstPrinter.c && rm arch/TriCore/TriCoreInstPrinter.c.bak",
     ],
-    sha256 = "2b9c66915923fdc42e0e32e2a9d7d83d3534a45bb235e163a70047951890c01a",
-    strip_prefix = "capstone-5.0.1",
-    url = "https://github.com/capstone-engine/capstone/archive/refs/tags/5.0.1.tar.gz",
+    sha256 = "0619da31af08152600af95c481527ef6d756c0a8404fca7544a4fdf6dfc2c0f9",
+    strip_prefix = "capstone-5.0.9",
+    url = "https://github.com/capstone-engine/capstone/archive/refs/tags/5.0.9.tar.gz",
 )
 
 # Outcome, in the same standalone form the Conan build used.
 http_archive(
     name = "outcome",
     build_file = "//bazel/deps:outcome.BUILD",
-    sha256 = "2840e403b1d7a0d3a75ecc4df574ab0674284bb21d76ac5f817695f2b56905f2",
-    strip_prefix = "outcome-2.2.9",
-    url = "https://github.com/ned14/outcome/archive/refs/tags/v2.2.9.tar.gz",
+    sha256 = "7da2314c3f3ee6fac2e2b3229c46cc4b5d3c86fa2f7d561e7dab72e4a93783fd",
+    strip_prefix = "outcome-2.2.15",
+    url = "https://github.com/ned14/outcome/archive/refs/tags/v2.2.15.tar.gz",
 )
 
 # --- Rust (py-spy) -------------------------------------------------------
