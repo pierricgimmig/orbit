@@ -64,7 +64,7 @@ void GrpcClientCaptureEventCollector::AddEvent(ClientCaptureEvent&& event) {
   if (capture_responses_being_built_.empty() ||
       capture_responses_being_built_.back()->capture_events_size() ==
           kMaxEventsPerCaptureResponse) {
-    auto* capture_response = google::protobuf::Arena::CreateMessage<CaptureResponse>(
+    auto* capture_response = google::protobuf::Arena::Create<CaptureResponse>(
         arena_of_capture_responses_being_built_.get());
     capture_responses_being_built_.push_back(capture_response);
   }

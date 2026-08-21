@@ -92,7 +92,7 @@ class LockFreeUserSpaceInstrumentationEventProducer
   [[nodiscard]] orbit_grpc_protos::ProducerCaptureEvent* TranslateIntermediateEvent(
       FunctionEntryExitVariant&& raw_event, google::protobuf::Arena* arena) override {
     auto* capture_event =
-        google::protobuf::Arena::CreateMessage<orbit_grpc_protos::ProducerCaptureEvent>(arena);
+        google::protobuf::Arena::Create<orbit_grpc_protos::ProducerCaptureEvent>(arena);
 
     std::visit(
         orbit_base::Overloaded{[capture_event](const FunctionEntry& raw_event) -> void {

@@ -375,7 +375,7 @@ void ProducerSideServiceImpl::ReceiveEventsThread(
 
   while (true) {
     google::protobuf::Arena arena{arena_options};
-    auto* request = google::protobuf::Arena::CreateMessage<
+    auto* request = google::protobuf::Arena::Create<
         orbit_grpc_protos::ReceiveCommandsAndSendEventsRequest>(&arena);
     if (!stream->Read(request)) break;
 
