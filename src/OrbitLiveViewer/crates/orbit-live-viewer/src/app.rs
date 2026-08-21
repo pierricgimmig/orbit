@@ -8,7 +8,10 @@ use orbit_live_event::{chrome, InternTable};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{choose_lod, stack_height, TrackIndex, INSTANCE_MIN_PX};
 
-use crate::net::{Net, ProcessJson, StatusJson};
+use crate::net::{
+    instances_from_timeline, scale_frame_rgba, Net, ProcessJson, ServiceFrame, StatusJson,
+    TimelineJson,
+};
 use crate::timeline::{paint_callback, TimelineGpu, TimelinePayload, ViewUniforms};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
@@ -61,6 +64,14 @@ pub struct OrbitLiveApp {
     t1: f64,
     follow: bool,
     last_status_request: f64,
+    last_view_request: f64,
+    view_width: u32,
+    service_timeline: Option<TimelineJson>,
+    service_frame: Option<ServiceFrame>,
+    got_status: bool,
+    http_ok: bool,
+    ws_ok: bool,
+    ws_queue: Vec<Vec<u8>>,
     lod_label: &'static str,
     has_gpu: bool,
 }
@@ -91,23 +102,39 @@ impl OrbitLiveApp {
             t1: FOLLOW_NS,
             follow: true,
             last_status_request: -1.0,
+            last_view_request: -1.0,
+            view_width: 1280,
+            service_timeline: None,
+            service_frame: None,
+            got_status: false,
+            http_ok: false,
+            ws_ok: false,
+            ws_queue: Vec::new(),
             lod_label: "",
             has_gpu,
         }
     }
 
+    fn apply_status(&mut self, s: StatusJson) {
+        self.got_status = true;
+        self.ring_bytes = s.ring_bytes.to_string();
+        if let Some(p) = &s.spill_path {
+            self.spill_path = p.clone();
+        }
+        if s.newest_end_ns > 0 && self.follow {
+            self.t1 = s.newest_end_ns as f64;
+            self.t0 = (self.t1 - FOLLOW_NS).max(0.0);
+        }
+        self.status = s;
+        self.error.clear();
+    }
+
     fn drain_net(&mut self) {
         let inbox = self.net.take();
+        self.http_ok = inbox.http_ok;
+        self.ws_ok = inbox.ws_ok;
         if let Some(s) = inbox.status {
-            self.ring_bytes = s.ring_bytes.to_string();
-            if let Some(p) = &s.spill_path {
-                self.spill_path = p.clone();
-            }
-            if s.newest_end_ns > 0 && self.follow {
-                self.t1 = s.newest_end_ns as f64;
-                self.t0 = (self.t1 - FOLLOW_NS).max(0.0);
-            }
-            self.status = s;
+            self.apply_status(s);
         }
         if let Some(p) = inbox.processes {
             if self.selected_pid.is_none() {
@@ -115,10 +142,25 @@ impl OrbitLiveApp {
             }
             self.processes = p;
         }
+        if let Some(tl) = inbox.timeline {
+            self.service_timeline = Some(tl);
+            self.service_frame = None;
+        }
+        if let Some(fr) = inbox.frame {
+            self.service_frame = Some(fr);
+        }
         if let Some(e) = inbox.error {
             self.error = e;
         }
-        for bytes in inbox.frames {
+        self.ws_queue.extend(inbox.frames);
+        let mut ingested = 0usize;
+        while !self.ws_queue.is_empty() {
+            let next_len = self.ws_queue[0].len();
+            if ingested > 0 && ingested + next_len > 256 * 1024 {
+                break;
+            }
+            let bytes = self.ws_queue.remove(0);
+            ingested = ingested.saturating_add(bytes.len());
             self.ingest(&bytes);
         }
     }
@@ -149,7 +191,33 @@ impl OrbitLiveApp {
             LiveFrame::CaptureStarted { .. } => {
                 self.index.clear();
             }
-            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } | LiveFrame::Status { .. } => {}
+            LiveFrame::Status {
+                capturing,
+                demo,
+                events_live,
+                events_capacity,
+                dropped,
+                spilled,
+                produced,
+                oldest_start_ns,
+                newest_end_ns,
+                ring_bytes,
+            } => {
+                self.apply_status(StatusJson {
+                    capturing,
+                    demo,
+                    events_live,
+                    events_capacity,
+                    dropped,
+                    spilled,
+                    produced,
+                    oldest_start_ns,
+                    newest_end_ns,
+                    ring_bytes,
+                    spill_path: self.status.spill_path.clone(),
+                });
+            }
+            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
         }
     }
 
@@ -263,15 +331,23 @@ impl OrbitLiveApp {
         } else {
             "idle"
         };
+        if !self.got_status {
+            ui.colored_label(
+                Color32::from_rgb(0xFF, 0xC1, 0x07),
+                "waiting for /api/status…",
+            );
+        }
         ui.monospace(format!(
-            "{mode}\n{}/{} live\ndropped {}  spilled {}\nproduced {}\nring {} B\nlod {}",
+            "{mode}\n{}/{} live\ndropped {}  spilled {}\nproduced {}\nring {} B\nlod {}\nhttp {}  ws {}",
             self.status.events_live,
             self.status.events_capacity,
             self.status.dropped,
             self.status.spilled,
             self.status.produced,
             self.status.ring_bytes,
-            self.lod_label
+            self.lod_label,
+            if self.http_ok { "ok" } else { "…" },
+            if self.ws_ok { "ok" } else { "…" },
         ));
         if !self.error.is_empty() {
             ui.colored_label(Color32::from_rgb(0xF4, 0x43, 0x36), &self.error);
@@ -305,24 +381,20 @@ impl OrbitLiveApp {
             let t0 = self.t0.max(0.0) as u64;
             let t1 = (self.t1 as u64).max(t0 + 1);
             let width = rect.width().max(1.0);
+            let ppp = ui.ctx().pixels_per_point();
+            self.view_width = (width * ppp).round().clamp(16.0, 4096.0) as u32;
             let lod = choose_lod(&self.index, t0, t1, width as usize, INSTANCE_MIN_PX);
             self.lod_label = lod.as_str();
 
             if self.has_gpu {
-                let ppp = ui.ctx().pixels_per_point();
                 let screen = ui.ctx().screen_rect();
                 let view = ViewUniforms::from_rect(
                     rect,
                     ppp,
                     [screen.width() * ppp, screen.height() * ppp],
                 );
-                let payload = if self.index.event_count() == 0 {
-                    TimelinePayload::Empty
-                } else {
-                    TimelinePayload::from_index(&self.index, t0, t1, width, lod, ppp)
-                };
-                ui.painter()
-                    .add(paint_callback(rect, payload, view));
+                let payload = self.timeline_payload(t0, t1, width, lod, ppp);
+                ui.painter().add(paint_callback(rect, payload, view));
             } else {
                 ui.painter().text(
                     rect.center(),
@@ -333,6 +405,48 @@ impl OrbitLiveApp {
                 );
             }
         });
+    }
+
+    fn timeline_payload(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: f32,
+        lod: orbit_live_render::TimelineLod,
+        ppp: f32,
+    ) -> TimelinePayload {
+        if self.index.event_count() > 0 {
+            return TimelinePayload::from_index(&self.index, t0, t1, width, lod, ppp);
+        }
+        if let Some(tl) = &self.service_timeline {
+            if tl.lod == "instanced" && !tl.instances.is_empty() {
+                let mut instances = instances_from_timeline(tl);
+                let s = ppp.max(0.01);
+                let scale_x = if tl.width > 0 {
+                    width * s / tl.width as f32
+                } else {
+                    s
+                };
+                for inst in &mut instances {
+                    inst.x *= scale_x;
+                    inst.y *= s;
+                    inst.w *= scale_x;
+                    inst.h *= s;
+                    inst.radius *= s;
+                }
+                return TimelinePayload::Instanced { instances };
+            }
+        }
+        if let Some(fr) = &self.service_frame {
+            let row_h = ((16.0 * ppp).round() as u32).max(1);
+            let (rgba, height) = scale_frame_rgba(fr, row_h);
+            return TimelinePayload::Pixel {
+                rgba,
+                width: fr.width.max(1),
+                height,
+            };
+        }
+        TimelinePayload::Empty
     }
 
     fn handle_nav(&mut self, response: &egui::Response, rect: Rect) {
@@ -378,6 +492,15 @@ impl eframe::App for OrbitLiveApp {
         if now - self.last_status_request > 0.25 {
             self.last_status_request = now;
             self.net.get_status();
+            if self.processes.is_empty() {
+                self.net.get_processes();
+            }
+        }
+        if now - self.last_view_request > 0.1 {
+            self.last_view_request = now;
+            let t0 = self.t0.max(0.0) as u64;
+            let t1 = (self.t1 as u64).max(t0 + 1);
+            self.net.pull_view(t0, t1, self.view_width.max(16));
         }
 
         let window = c32(chrome::QT_WINDOW);
