@@ -252,9 +252,10 @@ bool TracerImpl::OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& func
                              absl::Span<const int32_t> cpus,
                              absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
   ORBIT_SCOPE_FUNCTION;
-  // One TRACEPOINT fd per CPU so samples from every core are recorded. The
-  // named probe itself is registered once below; fd count is still
-  // 2 * ncpus * nfunctions across uprobe+uretprobe. See UprobeEvents.h.
+  // pid=-1, cpu=N (one TRACEPOINT fd per CPU). pid=target, cpu=-1 would be 2*F
+  // fds but only samples that tid; inherit cannot cover existing threads and
+  // cannot mmap a ring buffer. The named probe is registered once; see
+  // UprobeEvents.h. Fd count remains 2 * ncpus * nfunctions.
   ErrorMessageOr<TracefsUprobe> probe_or_error =
       DefineTracefsUprobe(function.file_path(), function.file_offset(), /*is_return=*/false,
                           MakeOrbitUprobeEventName(next_uprobe_event_id_++, /*is_return=*/false));

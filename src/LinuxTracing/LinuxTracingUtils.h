@@ -47,16 +47,18 @@ std::vector<int> GetCpusetCpus(pid_t pid);
 // tracepoint id or -1 in case of any errors.
 int GetTracepointId(const char* tracepoint_category, const char* tracepoint_name);
 
-// One uprobe + one uretprobe sample fd is opened per CPU per instrumented
-// function (pid=-1, cpu=N). That is the historical (and still current) sample
-// delivery count: 2 * ncpus * nfunctions.
+// Historical / still-used sample-delivery count for pid=-1, cpu=0..N-1:
+// one uprobe + one uretprobe fd per CPU per function. Each of those PMU fds
+// is its own create_local_trace_uprobe; close is serialized on event_mutex.
 inline constexpr size_t UprobeSampleFdCount(size_t ncpus, size_t nfunctions) {
   return 2 * ncpus * nfunctions;
 }
 
-// Shared tracefs registration creates one named probe per u(ret)probe, not per
-// CPU: 2 * nfunctions. Close cost of the old uprobe-PMU path scaled with
-// UprobeSampleFdCount because each PMU fd was its own uprobe_register.
+// pid=target, cpu=-1: one uprobe + one uretprobe per function (2*F). Fewer
+// fds, but only the specified tid is sampled (see UprobeEvents.h).
+inline constexpr size_t UprobeProcessWideFdCount(size_t nfunctions) { return 2 * nfunctions; }
+
+// Shared tracefs registration: one named probe per u(ret)probe (2*F).
 inline constexpr size_t UprobeNamedProbeCount(size_t nfunctions) { return 2 * nfunctions; }
 
 uint64_t GetMaxOpenFilesHardLimit();

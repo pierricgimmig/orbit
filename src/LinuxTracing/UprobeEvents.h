@@ -22,20 +22,24 @@ namespace orbit_linux_tracing {
 // per function (uprobe or uretprobe), then opened as a TRACEPOINT per CPU.
 inline constexpr const char* kOrbitUprobeEventGroup = "orbit";
 
-// Sample-delivery file descriptors stay one-per-CPU so hits on every core are
-// recorded. The historical uprobe PMU path created a *local* trace_uprobe
-// (`create_local_trace_uprobe`) for each of those fds, so each close() ran
-// `uprobe_unregister` → `register_for_each_vma` under the kernel-wide
-// `percpu_down_write(&dup_mmap_sem)` plus `uprobe_unregister_sync()`. That is
-// why teardown scaled with core count: fds = 2 * ncpus * nfunctions.
+// Kernel fact (uprobe PMU close): `perf_uprobe_destroy` takes the global
+// `event_mutex` around the *entire* close — `uprobe_apply(false)`,
+// `uprobe_unregister_nosync` (VMA walk under `dup_mmap_sem`),
+// `uprobe_unregister_sync()` (RCU tasks-trace + uretprobes SRCU), then
+// `tracepoint_synchronize_unregister`. Each per-CPU fd is its own
+// `create_local_trace_uprobe`, not another consumer of one probe. Parallel
+// `close()` cannot overlap grace periods; they queue on `event_mutex`.
+// Wall time is O(functions × CPUs × 2 × (VMA walk + 2–3 RCU GPs)).
 //
-// A named tracefs probe is registered once (TRACE_REG_PERF_REGISTER). Per-CPU
-// TRACEPOINT opens only add consumers; only the last close unregisters. Close
-// cost is then 2 * nfunctions, not 2 * ncpus * nfunctions.
+// Best userspace lever is fewer fds. `pid=target, cpu=-1` would be 2*F instead
+// of 2*F*NCPU, but it does *not* trace the target's other threads: perf_event
+// `pid` is a tid, `inherit` covers only children created after open (and
+// inherit+cpu=-1 cannot mmap a sample ring buffer). `pid=-1, cpu=N` is kept
+// for sample delivery so every thread on every core is recorded.
 //
-// One PMU event is not enough: pid=-1,cpu=N misses other CPUs, and
-// pid=tid,cpu=-1 misses sibling threads (inherit does not cover threads that
-// already exist).
+// Production therefore still opens one TRACEPOINT fd per CPU, but registers
+// each probe once via tracefs so only the last close of each named probe does
+// the expensive unregister (2*F, not 2*F*NCPU).
 
 enum class UprobeSampleLayout {
   kRetaddr,

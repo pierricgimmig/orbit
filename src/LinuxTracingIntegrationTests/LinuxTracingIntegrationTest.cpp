@@ -611,41 +611,58 @@ void CloseFds(const std::vector<int>& fds) {
 struct UprobeBenchRow {
   int nfunctions = 0;
   int ncpus = 0;
-  size_t total_fds = 0;
+  size_t percpu_fds = 0;
+  size_t proc_fds = 0;
   size_t named_probes = 0;
-  std::optional<absl::Duration> serial_pmu_start;
-  std::optional<absl::Duration> serial_pmu_stop;
+  std::optional<absl::Duration> percpu_pmu_start;
+  std::optional<absl::Duration> percpu_pmu_stop;
+  std::optional<absl::Duration> proc_pmu_start;
+  std::optional<absl::Duration> proc_pmu_stop;
   std::optional<absl::Duration> shared_start;
   std::optional<absl::Duration> shared_stop;
 };
 
-[[nodiscard]] std::optional<absl::Duration> TimeSerialPmuOpenClose(
-    absl::Span<const PuppetFunctionLocation> functions, absl::Span<const int32_t> cpus,
-    absl::Duration* start_out) {
+[[nodiscard]] bool TimePmuOpenClose(absl::Span<const PuppetFunctionLocation> functions,
+                                    absl::Span<const int32_t> cpus, pid_t pid,
+                                    absl::Duration* start_out, absl::Duration* stop_out) {
   std::vector<int> fds;
-  fds.reserve(orbit_linux_tracing::UprobeSampleFdCount(cpus.size(), functions.size()));
+  fds.reserve(functions.size() * (cpus.empty() ? 1 : cpus.size()) * 2);
   const absl::Time start_begin = absl::Now();
+  auto open_one = [&](const PuppetFunctionLocation& function, int32_t cpu) {
+    const int uprobe_fd = orbit_linux_tracing::uprobes_retaddr_event_open(
+        function.file_path.c_str(), function.file_offset, pid, cpu);
+    const int uretprobe_fd = orbit_linux_tracing::uretprobes_event_open(
+        function.file_path.c_str(), function.file_offset, pid, cpu);
+    if (uprobe_fd < 0 || uretprobe_fd < 0) {
+      if (uprobe_fd >= 0) close(uprobe_fd);
+      if (uretprobe_fd >= 0) close(uretprobe_fd);
+      return false;
+    }
+    fds.push_back(uprobe_fd);
+    fds.push_back(uretprobe_fd);
+    return true;
+  };
   for (const PuppetFunctionLocation& function : functions) {
-    for (int32_t cpu : cpus) {
-      const int uprobe_fd = orbit_linux_tracing::uprobes_retaddr_event_open(
-          function.file_path.c_str(), function.file_offset, /*pid=*/-1, cpu);
-      const int uretprobe_fd = orbit_linux_tracing::uretprobes_event_open(
-          function.file_path.c_str(), function.file_offset, /*pid=*/-1, cpu);
-      if (uprobe_fd < 0 || uretprobe_fd < 0) {
+    if (cpus.empty()) {
+      if (!open_one(function, /*cpu=*/-1)) {
         CloseFds(fds);
-        if (uprobe_fd >= 0) close(uprobe_fd);
-        if (uretprobe_fd >= 0) close(uretprobe_fd);
-        return std::nullopt;
+        return false;
       }
-      fds.push_back(uprobe_fd);
-      fds.push_back(uretprobe_fd);
+    } else {
+      for (int32_t cpu : cpus) {
+        if (!open_one(function, cpu)) {
+          CloseFds(fds);
+          return false;
+        }
+      }
     }
   }
   *start_out = absl::Now() - start_begin;
 
   const absl::Time stop_begin = absl::Now();
   CloseFds(fds);
-  return absl::Now() - stop_begin;
+  *stop_out = absl::Now() - stop_begin;
+  return true;
 }
 
 [[nodiscard]] bool TimeSharedTracefsOpenClose(absl::Span<const PuppetFunctionLocation> functions,
@@ -715,23 +732,27 @@ struct UprobeBenchRow {
 
 void PrintUprobeBenchTable(absl::Span<const UprobeBenchRow> rows) {
   ORBIT_LOG("Uprobe attach/detach bench (close/teardown and reattach only):");
-  ORBIT_LOG("%10s %7s %8s %13s %16s %16s %16s %16s", "nfunctions", "ncpus", "fds", "named_probes",
-            "serial_start", "serial_stop", "shared_start", "shared_stop");
+  ORBIT_LOG("%10s %7s %10s %8s %13s %16s %16s %16s %16s %16s %16s", "nfunctions", "ncpus",
+            "percpu_fds", "proc_fds", "named_probes", "percpu_start", "percpu_stop", "proc_start",
+            "proc_stop", "shared_start", "shared_stop");
   for (const UprobeBenchRow& row : rows) {
     ORBIT_LOG(
-        "%10d %7d %8zu %13zu %16s %16s %16s %16s", row.nfunctions, row.ncpus, row.total_fds,
-        row.named_probes,
-        row.serial_pmu_start.has_value() ? absl::FormatDuration(row.serial_pmu_start.value())
+        "%10d %7d %10zu %8zu %13zu %16s %16s %16s %16s %16s %16s", row.nfunctions, row.ncpus,
+        row.percpu_fds, row.proc_fds, row.named_probes,
+        row.percpu_pmu_start.has_value() ? absl::FormatDuration(row.percpu_pmu_start.value())
                                          : "n/a",
-        row.serial_pmu_stop.has_value() ? absl::FormatDuration(row.serial_pmu_stop.value()) : "n/a",
+        row.percpu_pmu_stop.has_value() ? absl::FormatDuration(row.percpu_pmu_stop.value()) : "n/a",
+        row.proc_pmu_start.has_value() ? absl::FormatDuration(row.proc_pmu_start.value()) : "n/a",
+        row.proc_pmu_stop.has_value() ? absl::FormatDuration(row.proc_pmu_stop.value()) : "n/a",
         row.shared_start.has_value() ? absl::FormatDuration(row.shared_start.value()) : "n/a",
         row.shared_stop.has_value() ? absl::FormatDuration(row.shared_stop.value()) : "n/a");
   }
-  ORBIT_LOG("fds = 2 * ncpus * nfunctions (one uprobe + one uretprobe sample fd per CPU).");
-  ORBIT_LOG("named_probes = 2 * nfunctions (one shared tracefs registration each).");
-  ORBIT_LOG(
-      "serial_* is the historical uprobe-PMU path (one uprobe_unregister per fd). "
-      "shared_* is the production detach/attach path.");
+  ORBIT_LOG("percpu_fds = 2 * ncpus * nfunctions  (pid=-1, cpu=0..N-1; each PMU fd is its own");
+  ORBIT_LOG("  create_local_trace_uprobe; close holds event_mutex for VMA walk + 2-3 RCU GPs).");
+  ORBIT_LOG("proc_fds   = 2 * nfunctions          (pid=target, cpu=-1). Fewer fds, but only that");
+  ORBIT_LOG("  tid is sampled; inherit misses existing threads and cannot mmap a ring buffer.");
+  ORBIT_LOG("named_probes = 2 * nfunctions        (shared tracefs registration; production path).");
+  ORBIT_LOG("shared_* is define+TRACEPOINT open / close+undefine. Do not invent timings.");
 }
 
 }  // namespace
@@ -766,21 +787,30 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
     UprobeBenchRow row;
     row.nfunctions = nfunctions;
     row.ncpus = static_cast<int>(cpus.size());
-    row.total_fds =
+    row.percpu_fds =
         orbit_linux_tracing::UprobeSampleFdCount(cpus.size(), static_cast<size_t>(nfunctions));
+    row.proc_fds = orbit_linux_tracing::UprobeProcessWideFdCount(static_cast<size_t>(nfunctions));
     row.named_probes = orbit_linux_tracing::UprobeNamedProbeCount(static_cast<size_t>(nfunctions));
 
     const absl::Span<const PuppetFunctionLocation> functions =
         absl::MakeConstSpan(all_functions).subspan(0, static_cast<size_t>(nfunctions));
 
     if (have_uprobe_pmu) {
-      absl::Duration serial_start;
-      std::optional<absl::Duration> serial_stop =
-          TimeSerialPmuOpenClose(functions, cpus, &serial_start);
-      ASSERT_TRUE(serial_stop.has_value())
-          << "serial uprobe-PMU open failed for " << nfunctions << " functions";
-      row.serial_pmu_start = serial_start;
-      row.serial_pmu_stop = serial_stop.value();
+      absl::Duration percpu_start;
+      absl::Duration percpu_stop;
+      ASSERT_TRUE(TimePmuOpenClose(functions, cpus, /*pid=*/-1, &percpu_start, &percpu_stop))
+          << "per-CPU uprobe-PMU open failed for " << nfunctions << " functions";
+      row.percpu_pmu_start = percpu_start;
+      row.percpu_pmu_stop = percpu_stop;
+
+      absl::Duration proc_start;
+      absl::Duration proc_stop;
+      const std::vector<int32_t> process_wide_cpu = {};
+      ASSERT_TRUE(TimePmuOpenClose(functions, process_wide_cpu, fixture.GetPuppetPidNative(),
+                                   &proc_start, &proc_stop))
+          << "pid=target,cpu=-1 uprobe-PMU open failed for " << nfunctions << " functions";
+      row.proc_pmu_start = proc_start;
+      row.proc_pmu_stop = proc_stop;
     }
 
     absl::Duration shared_start;
@@ -802,13 +832,13 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
   for (const UprobeBenchRow& row : rows) {
     ASSERT_TRUE(row.shared_stop.has_value());
     ASSERT_TRUE(row.shared_start.has_value());
-    if (row.serial_pmu_stop.has_value()) {
-      EXPECT_LE(row.shared_stop.value(), row.serial_pmu_stop.value() + absl::Milliseconds(250))
-          << "shared stop regressed vs serial PMU close for " << row.nfunctions << " functions";
+    if (row.percpu_pmu_stop.has_value()) {
+      EXPECT_LE(row.shared_stop.value(), row.percpu_pmu_stop.value() + absl::Milliseconds(250))
+          << "shared stop regressed vs per-CPU PMU close for " << row.nfunctions << " functions";
     }
-    if (row.serial_pmu_start.has_value()) {
-      EXPECT_LE(row.shared_start.value(), row.serial_pmu_start.value() + absl::Milliseconds(250))
-          << "shared start regressed vs serial PMU open for " << row.nfunctions << " functions";
+    if (row.percpu_pmu_start.has_value()) {
+      EXPECT_LE(row.shared_start.value(), row.percpu_pmu_start.value() + absl::Milliseconds(250))
+          << "shared start regressed vs per-CPU PMU open for " << row.nfunctions << " functions";
     }
   }
 

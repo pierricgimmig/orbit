@@ -412,6 +412,8 @@ TEST(FindFunctionsThatUprobesCannotInstrumentWithMessages, ModuleNotInMaps) {
 TEST(UprobeFdCount, DocumentsPerCpuTimesFunctionsFormula) {
   EXPECT_EQ(UprobeSampleFdCount(/*ncpus=*/8, /*nfunctions=*/10), 160);
   EXPECT_EQ(UprobeSampleFdCount(/*ncpus=*/16, /*nfunctions=*/50), 1600);
+  EXPECT_EQ(UprobeProcessWideFdCount(/*nfunctions=*/10), 20);
+  EXPECT_EQ(UprobeProcessWideFdCount(/*nfunctions=*/50), 100);
   EXPECT_EQ(UprobeNamedProbeCount(/*nfunctions=*/10), 20);
   EXPECT_EQ(UprobeNamedProbeCount(/*nfunctions=*/50), 100);
 }
