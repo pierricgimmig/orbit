@@ -216,18 +216,29 @@ struct FrameQuery {
     width: Option<u32>,
 }
 
+/// `/api/frame` body: 16-byte header (`u32` width, `u32` lanes, 8 reserved) +
+/// exactly `width * lanes * 4` RGBA bytes. t0/t1 stay on the query string.
+pub(crate) fn encode_raster_body(raster: &orbit_live_render::RasterizedFrame) -> Vec<u8> {
+    let expected = raster
+        .width
+        .saturating_mul(raster.lanes.len())
+        .saturating_mul(4);
+    let mut rgba = raster.to_rgba8();
+    rgba.resize(expected, 0);
+    let mut body = Vec::with_capacity(16 + expected);
+    body.extend_from_slice(&(raster.width as u32).to_le_bytes());
+    body.extend_from_slice(&(raster.lanes.len() as u32).to_le_bytes());
+    body.extend_from_slice(&[0u8; 8]);
+    body.extend_from_slice(&rgba);
+    body
+}
+
 async fn frame(State(svc): State<Arc<LiveService>>, Query(q): Query<FrameQuery>) -> Response {
     let width = q.width.unwrap_or(1280).clamp(16, 4096) as usize;
     let raster = svc.rasterize_frame(q.t0, q.t1, width);
-    let mut body = Vec::with_capacity(16 + raster.pixels.len() * 4);
-    body.extend_from_slice(&(width as u32).to_le_bytes());
-    body.extend_from_slice(&(raster.lanes.len() as u32).to_le_bytes());
-    body.extend_from_slice(&(q.t0.unwrap_or(0)).to_le_bytes());
-    body.extend_from_slice(&(q.t1.unwrap_or(0)).to_le_bytes());
-    body.extend(raster.to_rgba8());
     (
         [(header::CONTENT_TYPE, "application/octet-stream")],
-        body,
+        encode_raster_body(&raster),
     )
         .into_response()
 }

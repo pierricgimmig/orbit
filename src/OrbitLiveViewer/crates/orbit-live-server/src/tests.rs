@@ -89,3 +89,17 @@ fn spill_from_service_ring_does_not_corrupt_live_snapshot() {
     assert_eq!(spilled.len(), 6);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn frame_body_is_16_byte_header_plus_exact_rgba() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.push_events(&[ev(1), ev(2)]);
+    let raster = svc.rasterize_frame(Some(0), Some(40), 32);
+    let body = crate::http::encode_raster_body(&raster);
+    let width = u32::from_le_bytes(body[0..4].try_into().unwrap()) as usize;
+    let lanes = u32::from_le_bytes(body[4..8].try_into().unwrap()) as usize;
+    assert_eq!(width, raster.width);
+    assert_eq!(lanes, raster.lanes.len());
+    assert_eq!(body.len(), 16 + width * lanes * 4);
+    assert_eq!(&body[16..], raster.to_rgba8());
+}

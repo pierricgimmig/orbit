@@ -16,7 +16,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
     tokio::spawn(async move {
         let mut t = 0u64;
         let mut name = 0u32;
-        let threads = 6u32;
+        let threads = 32u32;
         let batch = scopes_per_sec.max(100) / 50;
         let period = Duration::from_millis(20);
         svc.mark_capture_started(1, 0);

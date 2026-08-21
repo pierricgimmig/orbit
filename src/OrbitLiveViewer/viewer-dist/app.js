@@ -144,7 +144,9 @@ async function drawServiceFrame() {
   if (buf.byteLength < 16) return;
   const w = buf.getUint32(0, true);
   const lanes = buf.getUint32(4, true);
-  const rgba = new Uint8Array(buf.buffer, 16);
+  const rgbaBytes = w * lanes * 4;
+  if (rgbaBytes === 0 || buf.byteLength < 16 + rgbaBytes) return;
+  const rgba = new Uint8Array(buf.buffer, buf.byteOffset + 16, rgbaBytes);
   paintRgba(rgba, w, lanes);
 }
 
