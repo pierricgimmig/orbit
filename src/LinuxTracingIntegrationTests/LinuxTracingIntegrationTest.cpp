@@ -786,15 +786,28 @@ struct UprobeBenchRow {
                          absl::ToDoubleMilliseconds(row.percpu_pmu_stop.value()) / shared_ms);
 }
 
-constexpr absl::Duration kUprobeBenchRegressionSlack = absl::Milliseconds(250);
+// A single un-warmed sample per row is not a measurement: the first row on a machine absorbs
+// one-off kernel setup and ends up slower than rows with more work, which inverts the trend the
+// bench is supposed to show. Warm up once, then report the median of several runs.
+constexpr int kUprobeBenchRepetitions = 3;
+
+[[nodiscard]] absl::Duration MedianOf(std::vector<absl::Duration> samples) {
+  ORBIT_CHECK(!samples.empty());
+  std::sort(samples.begin(), samples.end());
+  return samples[samples.size() / 2];
+}
+
+// Registering each probe once costs a few extra tracefs writes at start, so start is allowed to be
+// slightly worse. Stop is the point of the change and must actually improve.
+constexpr absl::Duration kUprobeBenchStartSlack = absl::Milliseconds(250);
 
 [[nodiscard]] bool RowMeetsRegressionPolicy(const UprobeBenchRow& row) {
   if (!row.percpu_pmu_start.has_value() || !row.percpu_pmu_stop.has_value() ||
       !row.shared_start.has_value() || !row.shared_stop.has_value()) {
     return true;
   }
-  return row.shared_start.value() <= row.percpu_pmu_start.value() + kUprobeBenchRegressionSlack &&
-         row.shared_stop.value() <= row.percpu_pmu_stop.value() + kUprobeBenchRegressionSlack;
+  return row.shared_start.value() <= row.percpu_pmu_start.value() + kUprobeBenchStartSlack &&
+         row.shared_stop.value() < row.percpu_pmu_stop.value();
 }
 
 void WriteAndPrintReport(const std::string& text) {
@@ -893,7 +906,8 @@ void WriteAndPrintReport(const std::string& text) {
   }
   out << "</tbody>\n</table>\n";
   out << "<p class=\"note\">percpu_fds = 2×F×NCPU; named_probes = 2×F. "
-         "speedup = percpu_stop / shared_stop. Times are from this run; n/a is not invented.</p>\n";
+         "speedup = percpu_stop / shared_stop. Times are the median of 3 runs after an untimed "
+         "warm-up; n/a is not invented.</p>\n";
 
   out << "<h3>pid=target,cpu=-1 (experiment, 2×F fds; not production)</h3>\n";
   if (have_uprobe_pmu) {
@@ -968,6 +982,8 @@ void PrintUprobeBenchReport(absl::Span<const UprobeBenchRow> rows, bool have_upr
                            FormatStopSpeedup(row));
   }
   out << "percpu_fds = 2×F×NCPU; named_probes = 2×F. speedup = percpu_stop / shared_stop.\n";
+  out << "times are the median of " << kUprobeBenchRepetitions
+      << " runs after an untimed warm-up.\n";
   out << "\n";
   out << "pid=target,cpu=-1 (experiment, 2×F fds; not production):\n";
   out << absl::StrFormat("%10s %13s %13s\n", "nfunctions", "start", "stop");
@@ -1051,6 +1067,11 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
     return;
   }
 
+  // Both per-CPU models open 2 * F * NCPU descriptors (3200 for 50 functions on 32 cores), which
+  // is far above the default RLIMIT_NOFILE soft limit. TracerImpl::Startup() raises it the same
+  // way; without this the bench dies with "perf_event_open: Too many open files".
+  orbit_linux_tracing::SetMaxOpenFilesSoftLimit(orbit_linux_tracing::GetMaxOpenFilesHardLimit());
+
   LinuxTracingIntegrationTestFixture fixture;
   const std::vector<PuppetFunctionLocation> all_functions =
       GetPuppetUprobeBenchFunctionLocations(fixture.GetPuppetPidNative());
@@ -1061,6 +1082,21 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
   const bool have_uprobe_pmu = AreKernelUprobesAvailable();
   std::vector<UprobeBenchRow> rows;
   uint64_t id_base = (static_cast<uint64_t>(getpid()) << 16) | 0xB000u;
+
+  {
+    // Untimed warm-up. The first u(ret)probe cycle on a machine pays one-off kernel costs that
+    // would otherwise be charged entirely to the first row.
+    const absl::Span<const PuppetFunctionLocation> warmup =
+        absl::MakeConstSpan(all_functions).subspan(0, 2);
+    absl::Duration unused_start;
+    absl::Duration unused_stop;
+    if (have_uprobe_pmu) {
+      static_cast<void>(TimePmuOpenClose(warmup, cpus, /*pid=*/-1, &unused_start, &unused_stop));
+    }
+    static_cast<void>(
+        TimeSharedTracefsOpenClose(warmup, cpus, id_base, &unused_start, &unused_stop));
+    id_base += 256;
+  }
 
   for (int nfunctions : {10, 20, 50}) {
     UprobeBenchRow row;
@@ -1075,30 +1111,46 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
         absl::MakeConstSpan(all_functions).subspan(0, static_cast<size_t>(nfunctions));
 
     if (have_uprobe_pmu) {
-      absl::Duration percpu_start;
-      absl::Duration percpu_stop;
-      ASSERT_TRUE(TimePmuOpenClose(functions, cpus, /*pid=*/-1, &percpu_start, &percpu_stop))
-          << "per-CPU uprobe-PMU open failed for " << nfunctions << " functions";
-      row.percpu_pmu_start = percpu_start;
-      row.percpu_pmu_stop = percpu_stop;
-
-      absl::Duration proc_start;
-      absl::Duration proc_stop;
+      std::vector<absl::Duration> percpu_starts;
+      std::vector<absl::Duration> percpu_stops;
+      std::vector<absl::Duration> proc_starts;
+      std::vector<absl::Duration> proc_stops;
       const std::vector<int32_t> process_wide_cpu = {};
-      ASSERT_TRUE(TimePmuOpenClose(functions, process_wide_cpu, fixture.GetPuppetPidNative(),
-                                   &proc_start, &proc_stop))
-          << "pid=target,cpu=-1 uprobe-PMU open failed for " << nfunctions << " functions";
-      row.proc_pmu_start = proc_start;
-      row.proc_pmu_stop = proc_stop;
+      for (int repetition = 0; repetition < kUprobeBenchRepetitions; ++repetition) {
+        absl::Duration percpu_start;
+        absl::Duration percpu_stop;
+        ASSERT_TRUE(TimePmuOpenClose(functions, cpus, /*pid=*/-1, &percpu_start, &percpu_stop))
+            << "per-CPU uprobe-PMU open failed for " << nfunctions << " functions";
+        percpu_starts.push_back(percpu_start);
+        percpu_stops.push_back(percpu_stop);
+
+        absl::Duration proc_start;
+        absl::Duration proc_stop;
+        ASSERT_TRUE(TimePmuOpenClose(functions, process_wide_cpu, fixture.GetPuppetPidNative(),
+                                     &proc_start, &proc_stop))
+            << "pid=target,cpu=-1 uprobe-PMU open failed for " << nfunctions << " functions";
+        proc_starts.push_back(proc_start);
+        proc_stops.push_back(proc_stop);
+      }
+      row.percpu_pmu_start = MedianOf(std::move(percpu_starts));
+      row.percpu_pmu_stop = MedianOf(std::move(percpu_stops));
+      row.proc_pmu_start = MedianOf(std::move(proc_starts));
+      row.proc_pmu_stop = MedianOf(std::move(proc_stops));
     }
 
-    absl::Duration shared_start;
-    absl::Duration shared_stop;
-    ASSERT_TRUE(TimeSharedTracefsOpenClose(functions, cpus, id_base, &shared_start, &shared_stop))
-        << "shared tracefs open/close failed for " << nfunctions << " functions";
-    id_base += 256;
-    row.shared_start = shared_start;
-    row.shared_stop = shared_stop;
+    std::vector<absl::Duration> shared_starts;
+    std::vector<absl::Duration> shared_stops;
+    for (int repetition = 0; repetition < kUprobeBenchRepetitions; ++repetition) {
+      absl::Duration shared_start;
+      absl::Duration shared_stop;
+      ASSERT_TRUE(TimeSharedTracefsOpenClose(functions, cpus, id_base, &shared_start, &shared_stop))
+          << "shared tracefs open/close failed for " << nfunctions << " functions";
+      id_base += 256;
+      shared_starts.push_back(shared_start);
+      shared_stops.push_back(shared_stop);
+    }
+    row.shared_start = MedianOf(std::move(shared_starts));
+    row.shared_stop = MedianOf(std::move(shared_stops));
     rows.push_back(row);
   }
 
@@ -1112,30 +1164,30 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
       if (!RowMeetsRegressionPolicy(row)) {
         verdict_pass = false;
         verdict_detail = absl::StrFormat(
-            "shared start/stop is >250ms worse than percpu PMU for %d functions", row.nfunctions);
+            "shared stop is not faster than percpu PMU for %d functions", row.nfunctions);
         break;
       }
     }
     if (verdict_pass) {
-      verdict_detail = "shared start/stop is not >250ms worse than percpu PMU";
+      verdict_detail = "shared stop is faster than percpu PMU on every row";
     }
   }
   PrintUprobeBenchReport(rows, have_uprobe_pmu, have_tracefs, verdict_pass, verdict_detail,
                          command);
 
-  // Regression policy: fail only if the shared-tracefs path is clearly worse
-  // than serial close of the historical per-CPU PMU fds. Allow 250ms of slack
-  // so a few-millisecond run on a small VM is not noise. Do not invent timings.
+  // The claim under test is that stop gets faster, so assert exactly that rather than merely
+  // tolerating a regression. Start may be slightly worse (extra tracefs writes) and gets slack.
+  // Do not invent timings.
   for (const UprobeBenchRow& row : rows) {
     ASSERT_TRUE(row.shared_stop.has_value());
     ASSERT_TRUE(row.shared_start.has_value());
     if (row.percpu_pmu_stop.has_value()) {
-      EXPECT_LE(row.shared_stop.value(), row.percpu_pmu_stop.value() + kUprobeBenchRegressionSlack)
-          << "shared stop regressed vs per-CPU PMU close for " << row.nfunctions << " functions";
+      EXPECT_LT(row.shared_stop.value(), row.percpu_pmu_stop.value())
+          << "shared stop is not faster than per-CPU PMU close for " << row.nfunctions
+          << " functions";
     }
     if (row.percpu_pmu_start.has_value()) {
-      EXPECT_LE(row.shared_start.value(),
-                row.percpu_pmu_start.value() + kUprobeBenchRegressionSlack)
+      EXPECT_LE(row.shared_start.value(), row.percpu_pmu_start.value() + kUprobeBenchStartSlack)
           << "shared start regressed vs per-CPU PMU open for " << row.nfunctions << " functions";
     }
   }
@@ -1159,24 +1211,33 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
                                                            fixture.GetPuppetPidNative(),
                                                            /*first_function_id=*/100);
 
+  // Same grace period as TraceAndGetEvents(): the last u(ret)probe records are still in the
+  // per-CPU ring buffers when the puppet reports done. Stopping immediately drops them and the
+  // function-call count comes up short.
+  constexpr absl::Duration kSleepBeforeStopTracing = absl::Milliseconds(100);
+
   fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
   fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
   while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
+  absl::SleepFor(kSleepBeforeStopTracing);
 
   std::vector<orbit_grpc_protos::ProducerCaptureEvent> first_events =
       fixture.StopTracingAndGetEvents();
   fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
 
   VerifyNoWarningInstrumentingWithUprobesEvents(first_events);
+  VerifyNoLostOrDiscardedEvents(first_events);
   VerifyFunctionCallsOfOuterAndInnerFunction(first_events, fixture.GetPuppetPid(), kOuterFunctionId,
                                              kInnerFunctionId);
 
   fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
   while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
+  absl::SleepFor(kSleepBeforeStopTracing);
 
   std::vector<orbit_grpc_protos::ProducerCaptureEvent> second_events =
       fixture.StopTracingAndGetEvents();
   VerifyNoWarningInstrumentingWithUprobesEvents(second_events);
+  VerifyNoLostOrDiscardedEvents(second_events);
   VerifyFunctionCallsOfOuterAndInnerFunction(second_events, fixture.GetPuppetPid(),
                                              kOuterFunctionId, kInnerFunctionId);
 }

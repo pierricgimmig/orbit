@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <utility>
 #include <vector>
@@ -86,6 +87,10 @@ std::vector<PuppetFunctionLocation> GetPuppetUprobeBenchFunctionLocations(pid_t 
   std::optional<PuppetFunctionLocation> inner;
   std::vector<PuppetFunctionLocation> dummies;
   for (const orbit_grpc_protos::SymbolInfo& symbol : module_symbols.symbol_infos()) {
+    if (IsClonedPartOfFunction(symbol.demangled_name())) {
+      continue;
+    }
+
     PuppetFunctionLocation location;
     location.file_path = executable_path;
     location.file_offset = symbol.address() - module_info.load_bias();
@@ -94,8 +99,8 @@ std::vector<PuppetFunctionLocation> GetPuppetUprobeBenchFunctionLocations(pid_t 
       outer = location;
     } else if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kInnerFunctionName)) {
       inner = location;
-    } else if (absl::StrContains(symbol.demangled_name(),
-                                 PuppetConstants::kUprobeStopRestartDummyFunctionNamePrefix)) {
+    } else if (absl::StartsWith(symbol.demangled_name(),
+                                PuppetConstants::kUprobeStopRestartDummyFunctionNamePrefix)) {
       dummies.push_back(std::move(location));
     }
   }
@@ -124,8 +129,9 @@ void AddPuppetUprobeStopRestartDummyFunctionsToCaptureOptions(
 
   int dummy_functions_found = 0;
   for (const orbit_grpc_protos::SymbolInfo& symbol : module_symbols.symbol_infos()) {
-    if (!absl::StrContains(symbol.demangled_name(),
-                           PuppetConstants::kUprobeStopRestartDummyFunctionNamePrefix)) {
+    if (IsClonedPartOfFunction(symbol.demangled_name()) ||
+        !absl::StartsWith(symbol.demangled_name(),
+                          PuppetConstants::kUprobeStopRestartDummyFunctionNamePrefix)) {
       continue;
     }
     orbit_grpc_protos::InstrumentedFunction instrumented_function;

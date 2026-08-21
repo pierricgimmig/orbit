@@ -52,6 +52,13 @@ ErrorMessageOr<std::filesystem::path> UprobeEventsPath() {
   return path;
 }
 
+// Deleting a probe that is not defined fails with ENOENT. That is the normal case when clearing a
+// possible leftover, so removal is kept separate from the logging in UndefineTracefsUprobe.
+ErrorMessageOr<void> RemoveTracefsUprobe(const std::filesystem::path& events_path,
+                                         const TracefsUprobe& probe) {
+  return WriteTracefsCommand(events_path, absl::StrFormat("-:%s/%s", probe.group, probe.event));
+}
+
 }  // namespace
 
 std::string MakeOrbitUprobeEventName(uint64_t unique_id, bool is_return) {
@@ -68,8 +75,9 @@ ErrorMessageOr<TracefsUprobe> DefineTracefsUprobe(std::string_view module_path,
   }
 
   TracefsUprobe probe{.group = kOrbitUprobeEventGroup, .event = std::string{event_name}};
-  // Remove a leftover definition from a previous crashed capture with the same name.
-  UndefineTracefsUprobe(probe);
+  // Remove a leftover definition from a previous crashed capture with the same name. Having no
+  // leftover is the normal case, so the resulting ENOENT must not be reported as an error.
+  static_cast<void>(RemoveTracefsUprobe(events_path_or_error.value(), probe));
 
   const char type = is_return ? 'r' : 'p';
   std::string command =
@@ -92,8 +100,7 @@ void UndefineTracefsUprobe(const TracefsUprobe& probe) {
   if (events_path_or_error.has_error()) {
     return;
   }
-  std::string command = absl::StrFormat("-:%s/%s", probe.group, probe.event);
-  ErrorMessageOr<void> write_result = WriteTracefsCommand(events_path_or_error.value(), command);
+  ErrorMessageOr<void> write_result = RemoveTracefsUprobe(events_path_or_error.value(), probe);
   if (write_result.has_error()) {
     ORBIT_ERROR("Undefining %s/%s: %s", probe.group, probe.event, write_result.error().message());
   }
