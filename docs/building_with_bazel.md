@@ -1,5 +1,9 @@
 # Building Orbit with Bazel
 
+For the reasoning behind the decisions below -- why each dependency is
+sourced the way it is, which versions moved and what forced them -- see
+[bazel-port.html](bazel-port.html), which is written to be read in a browser.
+
 Orbit builds with [Bazel](https://bazel.build). Every dependency is fetched by
 Bazel itself, Qt included, so a clean checkout needs nothing installed beyond
 Bazel and a C/C++ compiler -- no Conan, no CMake, no `apt install` step, and no
