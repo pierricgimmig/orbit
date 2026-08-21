@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Overview</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a class="current" href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">Orbit · Open Runtime Binary Instrumentation Tool</p>
+<h1>What Orbit is, and how to read this</h1>
+<p class="lede">Orbit is a native sampling + dynamic-instrumentation profiler. The interesting half of the product lives in a privileged collector (<code>OrbitService</code>) that talks to the kernel through <code>perf_event_open</code>. The Qt client is a remote viewer of that stream.</p>
+
+<div class="callout">
+  <strong>How to use these pages.</strong> They are a hosted manual, not a README. Each page names files and functions that exist in this tree. Open the path if you have the repo; you should not need the repo to understand the system. Relative links work as files or as a static site.
+</div>
+
+<h2>Product in one paragraph</h2>
+<p>The root <code>README.md</code> states the contract: no source change, no rebuild, no relaunch of the target. Sampling finds candidates; dynamic instrumentation records exact function entry/exit as hierarchical timers; scheduling, memory, AMD GPU driver events, Vulkan markers, and optional Python stacks sit on the same timeline. Serialization of a capture is a first-class file format (<code>src/CaptureFile/FORMAT.md</code>, signature <code>ORBT</code>).</p>
+<p>Focus has shifted to Linux. Windows local profiling is partial: ETW sampling and context switches exist; dynamic instrumentation does not. A Windows UI can still drive a Linux <code>OrbitService</code> over SSH. That split is real in the code, not just marketing — see <code>src/Service/OrbitGrpcServer.cpp</code>.</p>
+
+<h2>Map of the system</h2>
+<figure class="figure" aria-label="Process map">
+<svg viewBox="0 0 720 340" width="100%" height="auto" role="img" aria-labelledby="mapTitle mapDesc">
+  <title id="mapTitle">Orbit process map</title>
+  <desc id="mapDesc">Qt client talks gRPC to OrbitService. OrbitService owns LinuxCaptureService, which starts TracerImpl and optional user-space instrumentation. Producers connect on a Unix socket. The kernel supplies perf events.</desc>
+  <rect width="720" height="340" fill="#161b27"/>
+  <g fill="none" stroke="#c4622d" stroke-width="1.4">
+    <rect x="24" y="28" width="200" height="92" rx="4"/>
+    <rect x="260" y="28" width="220" height="92" rx="4"/>
+    <rect x="516" y="28" width="180" height="92" rx="4"/>
+    <rect x="24" y="168" width="200" height="92" rx="4"/>
+    <rect x="260" y="168" width="220" height="92" rx="4"/>
+    <rect x="516" y="168" width="180" height="92" rx="4"/>
+  </g>
+  <g fill="#f3eee4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="13">
+    <text x="36" y="52" fill="#c4622d" font-size="11">CLIENT</text>
+    <text x="36" y="74">Orbit (Qt)</text>
+    <text x="36" y="94" fill="#9a9284" font-size="11">src/Orbit · OrbitQt · OrbitGl</text>
+    <text x="272" y="52" fill="#c4622d" font-size="11">SERVICE</text>
+    <text x="272" y="74">OrbitService :44765</text>
+    <text x="272" y="94" fill="#9a9284" font-size="11">src/Service · LinuxCaptureService</text>
+    <text x="528" y="52" fill="#c4622d" font-size="11">TARGET</text>
+    <text x="528" y="74">profiled process</text>
+    <text x="528" y="94" fill="#9a9284" font-size="11">optional liborbit.so / trampolines</text>
+    <text x="36" y="192" fill="#c4622d" font-size="11">PRODUCERS</text>
+    <text x="36" y="214">Unix socket</text>
+    <text x="36" y="234" fill="#9a9284" font-size="11">/tmp/orbit-producer-side-socket</text>
+    <text x="272" y="192" fill="#c4622d" font-size="11">KERNEL</text>
+    <text x="272" y="214">perf_event_open</text>
+    <text x="272" y="234" fill="#9a9284" font-size="11">uprobe PMU · tracepoints · mmap</text>
+    <text x="528" y="192" fill="#c4622d" font-size="11">OPTIONAL</text>
+    <text x="528" y="214">Vulkan layer</text>
+    <text x="528" y="234" fill="#9a9284" font-size="11">src/OrbitVulkanLayer</text>
+  </g>
+  <g stroke="#2d7a74" stroke-width="1.6" fill="none">
+    <path d="M224 74 H260"/>
+    <path d="M480 74 H516"/>
+    <path d="M370 120 V168"/>
+    <path d="M124 168 V120"/>
+    <path d="M606 120 V168"/>
+  </g>
+</svg>
+<figcaption>Three processes that matter: the Qt UI, <code>OrbitService</code>, and the target. Everything else is a producer attached to the service or a kernel fd owned by <code>TracerImpl</code>.</figcaption>
+</figure>
+
+<h2>How to read this manual</h2>
+<table>
+  <thead><tr><th>Page</th><th>What it answers</th></tr></thead>
+  <tbody>
+    <tr><td><a href="architecture.html">Architecture</a></td><td>Who talks to whom, capture start/stop, gRPC, SSH, producer socket, capture file.</td></tr>
+    <tr><td><a href="linux-tracing.html">Linux tracing</a></td><td><code>TracerImpl</code>: uprobes, ring buffers, per-CPU fds, visitors, start/stop.</td></tr>
+    <tr><td><a href="instrumentation.html">Instrumentation</a></td><td>Kernel uprobes vs ptrace trampolines vs the Orbit API vs py-spy.</td></tr>
+    <tr><td><a href="client-ui.html">Client UI</a></td><td>Session setup, capture view, tracks, Hook, options that actually exist.</td></tr>
+    <tr><td><a href="symbols-modules.html">Symbols &amp; modules</a></td><td>ELF/DWARF/PE/PDB, module mmap updates, Wine/PE traps.</td></tr>
+    <tr><td><a href="kernel-assumptions.html">Kernel assumptions</a></td><td>The implicit kernel/distro contract. This is the page to argue with.</td></tr>
+    <tr><td><a href="audit.html">Audit</a></td><td>Shortcomings, leftovers, test/CI gaps, footguns. Hunches labelled as such.</td></tr>
+    <tr><td><a href="roadmap.html">Roadmap</a></td><td>What to fix or add, ordered by leverage on the product as it exists.</td></tr>
+  </tbody>
+</table>
+
+<h2>What this review actually ran</h2>
+<p>This VM is <code>Linux 6.12.94+</code>, 4 CPUs, <code>perf_event_paranoid=2</code>, uid 1000. There is <strong>no</strong> uprobe PMU at <code>/sys/bus/event_source/devices/uprobe/type</code>, and no <code>uprobe_events</code> under tracefs or debugfs. Qt5 is not installed. A full <code>OrbitQt</code> / <code>LinuxTracing</code> build was <strong>not</strong> attempted. Integration tests and the opt-in uprobe bench from PR <a href="https://github.com/pierricgimmig/orbit/pull/10">#10</a> were not run. No timings in these pages were measured here.</p>
+<p>What <em>was</em> done: read the tree, including <code>src/LinuxTracing/TracerImpl.cpp</code>, <code>PerfEventOpen.cpp</code>, <code>LinuxCaptureServiceBase.cpp</code>, <code>UserSpaceInstrumentation</code>, UI/symbol paths, CI, and the open PR branch <code>cursor/fast-uprobe-stop-a3cf</code>. That branch is <strong>not</strong> merged into the tree these pages describe.</p>
+
+<div class="callout warn">
+  <strong>Do not treat PR #10 as current behavior.</strong> On <code>main</code>, stop still closes one uprobe PMU fd per CPU per function, sequentially. The tracefs-once design lives on that branch only. The kernel-assumptions and Linux-tracing pages cover both the historical cost and the proposed fix.
+</div>
+
+<h2>Source map (real directories)</h2>
+<table>
+  <thead><tr><th>Tree</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/Orbit</code>, <code>OrbitQt</code>, <code>OrbitGl</code></td><td>Client binary, Qt chrome, capture canvas + tracks.</td></tr>
+    <tr><td><code>src/Service</code></td><td><code>OrbitService</code> process; wires gRPC services.</td></tr>
+    <tr><td><code>src/LinuxCaptureService</code></td><td>Capture RPC, user-space vs uprobe split, memory watchdog.</td></tr>
+    <tr><td><code>src/LinuxTracing</code></td><td><code>TracerImpl</code>: <code>perf_event_open</code>, ring buffers, visitors.</td></tr>
+    <tr><td><code>src/UserSpaceInstrumentation</code></td><td>ptrace, trampolines, injected <code>liborbituserspaceinstrumentation.so</code>.</td></tr>
+    <tr><td><code>src/CaptureClient</code>, <code>ClientServices</code>, <code>SessionSetup</code></td><td>UI-side capture RPC, process list, SSH deploy.</td></tr>
+    <tr><td><code>src/Symbols</code>, <code>ObjectUtils</code>, <code>SymbolLoader</code></td><td>ELF/DWARF/PE/PDB load and cache.</td></tr>
+    <tr><td><code>src/ProducerSideService</code></td><td>In-process producers (API, Vulkan layer) on a Unix socket.</td></tr>
+    <tr><td><code>src/WindowsTracing</code>, <code>WindowsCaptureService</code></td><td>ETW path; no kernel-style dynamic hooks.</td></tr>
+    <tr><td><code>src/OrbitClientGgp*</code>, <code>OrbitCaptureGgp*</code></td><td>Stadia/GGP leftovers, still compiled.</td></tr>
+    <tr><td><code>third_party/py-spy-ffi</code></td><td>Rust FFI used by <code>PythonProfiler</code>.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout audit">
+  <strong>Audit preview.</strong> The collector assumes a debugfs-mounted tracepoint id file, a cgroup-v1 cpuset layout, a live uprobe PMU, and root-or-equivalent for almost every interesting test. GitHub Actions excludes <code>IntegrationTest</code> binaries. Those facts are expanded on the <a href="kernel-assumptions.html">kernel</a> and <a href="audit.html">audit</a> pages — they are not hunches.
+</div>
+
+<nav class="pager">
+  <span></span>
+  <a href="architecture.html">Architecture →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>

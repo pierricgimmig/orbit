@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Audit</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a class="current" href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">Shortcomings · leftovers · tests · footguns</p>
+<h1>Audit</h1>
+<p class="lede">This is a reading of the tree, not a load test. Items below are things the code actually does (or does not do). Severity is about user impact on a current Linux box, not about elegance.</p>
+
+<h2>What this review could not do</h2>
+<ul>
+  <li>No <code>OrbitQt</code> build — Qt5 packages were not present.</li>
+  <li>No <code>LinuxTracing</code> build — gRPC/protobuf/LLVM/Conan graph not installed; py-spy FFI needs Cargo.</li>
+  <li>No <code>perf_event_open</code> of an uprobe — no PMU, no <code>uprobe_events</code>.</li>
+  <li>No integration tests, no <code>ORBIT_UPROBE_BENCH=1</code>. <strong>No milliseconds claimed.</strong></li>
+  <li>PR #10 inspected via <code>git log</code> / <code>git diff --stat</code> against <code>main</code>, not merged.</li>
+</ul>
+
+<h2>High-impact shortcomings</h2>
+<h3>1. Uprobe stop scales with cores × functions</h3>
+<p>Current <code>OpenUprobes</code> + sequential <code>close</code> is the product’s most expensive teardown. User-space instrumentation is the default partly because of this (the UI literally says uprobes are “slower”). On a 16–32 CPU machine with dozens of hooks, stop can dominate the session. The fix direction is already designed on <code>cursor/fast-uprobe-stop-a3cf</code>. Leaving it unmerged is a product bug, not a research gap.</p>
+
+<h3>2. Tracepoint IDs are debugfs-only</h3>
+<p><code>GetTracepointId</code> will not see a modern-only tracefs mount. Scheduling, thread names, GPU, and custom tracepoints then fail together. Easy to fix; unfixed for years.</p>
+
+<h3>3. <code>uprobe_type()</code> / <code>max_stack()</code> can throw</h3>
+<p>Static initialization via <code>ReadFileToString().value()</code> + <code>std::stoul</code> is not an <code>ErrorMessageOr</code>. A container kernel without the PMU can abort the tracer thread instead of emitting the existing protobuf error event.</p>
+
+<h3>4. CI does not run the tests that need a real kernel</h3>
+<p><code>.github/workflows/build-and-test.yml</code> Ubuntu step:</p>
+<pre><code>ARGS="-E IntegrationTest" ... cmake --build . --target test</code></pre>
+<p>So <code>LinuxTracingIntegrationTests</code> and <code>OrbitServiceIntegrationTests</code> never run on GitHub Actions. GPU tests also require <code>CheckIsStadiaInstance()</code> (kernel release contains <code>-ggp-</code>). Unit tests cannot replace “did <code>perf_event_open</code> actually fire?”. A regression in <code>OpenUprobes</code> can merge green.</p>
+<p>Ubuntu CI also configures CMake <em>without</em> Conan (system packages). The README’s happy path is Conan 2. Windows CI still pins Conan <strong>1.58.0</strong>. Three build stories, one repo. Actions still use <code>checkout@v3</code> / <code>cache@v3</code> / <code>upload-artifact@v3</code>.</p>
+
+<h3>5. Integration tests skip the interesting cases</h3>
+<table>
+  <thead><tr><th>Test</th><th>Gate</th></tr></thead>
+  <tbody>
+    <tr><td><code>SchedulingSlices</code></td><td>root</td></tr>
+    <tr><td><code>FunctionCalls</code></td><td>root (uprobes)</td></tr>
+    <tr><td><code>CallstackSamplesAndAddressInfos</code></td><td>paranoid ≤ 0</td></tr>
+    <tr><td><code>CallstackSamplesTogetherWithFunctionCalls</code></td><td>root</td></tr>
+    <tr><td><code>CallstackSamplesWithFramePointers</code></td><td>paranoid ≤ 0</td></tr>
+    <tr><td><code>CallstackSamplesWithFramePointersTogetherWithFunctionCalls</code></td><td>root</td></tr>
+    <tr><td><code>ThreadStateSlices</code></td><td>root</td></tr>
+    <tr><td><code>ThreadNames</code></td><td>root</td></tr>
+    <tr><td><code>ModuleUpdateOnDlopen</code></td><td>paranoid ≤ 0</td></tr>
+    <tr><td><code>GpuJobs</code></td><td>Stadia instance <em>and</em> root</td></tr>
+  </tbody>
+</table>
+<p><code>OnThreadStateSliceCallstack</code> in the test listener is a no-op with <code>TODO(b/243515756)</code>. Thread-state slices in the test expect <code>pid == 0</code> (“We currently don’t set the pid”). User-space instrumentation has a separate service-level test that also skips without root. There is no test that a function failing user-space patch is actually opened as a uprobe.</p>
+
+<h2>Poor implementation / footguns</h2>
+<ul>
+  <li><strong>Partial uprobe success.</strong> <code>OpenUserSpaceProbes</code> continues after a failed function, sets a boolean, and still enables the fds that worked. The UI gets a generic “uprobes” failure string, not per-function errors (those exist only for the “not in a file mapping” warning).</li>
+  <li><strong>ioctl / close errors ignored.</strong> <code>perf_event_enable/disable/redirect</code> log and proceed. <code>close</code> return value is discarded. Teardown can look clean while probes remain.</li>
+  <li><strong>TracingHandler one-shot.</strong> After <code>Stop</code>, late <code>FunctionEntry</code> events are dropped. A second <code>Start</code> on the same object is forbidden by comment, not by API.</li>
+  <li><strong>333&nbsp;ms reorder delay.</strong> Always. Short captures and “stop and see the last slice” pay it. Not configurable.</li>
+  <li><strong>Python auto-on.</strong> Any exe whose basename contains <code>python</code> gets a py-spy attach (ptrace). That can fail noisily or surprise a user who did not ask. Detection misses embedded interpreters.</li>
+  <li><strong>py-spy FFI build.</strong> <code>LinuxTracing</code> unconditionally <code>PRIVATE pyspy_ffi</code>. If Cargo is missing, CMake warns and <code>return()</code>s from the FFI file — the imported target may not exist and the LinuxTracing configure/link becomes environment-dependent. No test binary covers <code>PythonProfiler</code>.</li>
+  <li><strong>Insecure gRPC on localhost</strong> is fine behind SSH; it is not fine if someone rebinds the flag. There is no peer auth on the Unix producer socket either (filesystem permissions only, <code>/tmp/...</code>).</li>
+  <li><strong>Memory watchdog = 50% of physical RAM.</strong> In a small cgroup this is either never hit or hit immediately. It reads host <code>sysconf(_SC_PHYS_PAGES)</code>, not cgroup memory.max.</li>
+  <li><strong>cgroup v1 only</strong> for cpuset and for memory tracks that still talk about <code>ggp run --enforce-production-ram</code> (<code>CGroupAndProcessMemoryTrack.cpp</code>).</li>
+  <li><strong>Round-robin batch of 5</strong> treats a stack sample like a sched_switch. The TODO in <code>Run</code> admits this. Under load, sampling buffers (16&nbsp;MiB) and uprobe buffers (8&nbsp;MiB) can still <code>LOST</code>.</li>
+  <li><strong>Wine / PE anonymous maps</strong> — uprobes silently do not fire; the warning exists but only if maps were readable at start.</li>
+  <li><strong>ARM64 docs vs code.</strong> <code>building_arm64.md</code> says dynamic instrumentation is “uprobes-based” and unsupported. Code: trampolines unsupported, uprobe PMU wired.</li>
+</ul>
+
+<h2>Stadia / GGP / cloudcast leftovers</h2>
+<p>These still compile and still run on the hot path:</p>
+<ul>
+  <li><code>PrintInstanceVersions</code> — four cloudcast reads + <code>gpuinfo</code> on every service start.</li>
+  <li>Minidump directory <code>/usr/local/cloudcast/core</code> for capture-finished process state.</li>
+  <li><code>src/OrbitClientGgp</code>, <code>OrbitCaptureGgpClient</code>, <code>OrbitCaptureGgpService</code>, <code>services_ggp.proto</code>, port 44767.</li>
+  <li><code>GGP_SDK_PATH</code> symbol provider; <code>ggpvlk.so</code> load priority; FakeClient instruments <code>ggpvlk QueuePresentKHR</code>.</li>
+  <li><code>CheckIsStadiaInstance</code> — GPU integration tests are dead on any non-<code>-ggp-</code> kernel.</li>
+  <li>Comments referring to <code>CloudCollectorStartStopCaptureRequestWaiter</code> (type not in tree).</li>
+  <li><code>copybara:insert</code> blocks in UserSpaceInstrumentation and OrbitBase tests.</li>
+  <li>Toolchain file <code>third_party/toolchains/toolchain-linux-ggp-release.cmake</code>.</li>
+</ul>
+<p>None of this is “wrong” if Stadia support is still a goal. If it is not, it is noise that hides real errors (every laptop start logs four <code>ORBIT_ERROR</code>s from missing VERSION files).</p>
+
+<h2>Windows vs Linux completeness</h2>
+<p>README is accurate. Windows has ETW sampling, module/thread snapshots, optional API-in-tracee. It does not have dynamic hooks, sched tracepoints, uprobes, user-space trampolines, or the Linux memory watchdog. Shipping a Windows UI that talks to Linux OrbitService is the supported remote story. Local Windows profiling is a remnant.</p>
+
+<h2>GPU path assumptions</h2>
+<p>Driver timeline is AMD-only. Vulkan debug markers need <code>src/OrbitVulkanLayer</code> loaded in the target and the producer socket. Tests for GPU jobs are Stadia-gated. Raspberry Pi and Intel/NVIDIA users get a checkbox that fails open.</p>
+
+<h2>Error handling quality (honest summary)</h2>
+<p>The codebase is not sloppy about logging. Almost every <code>perf_event_open</code> failure is <code>ORBIT_ERROR</code>’d. The gap is <em>recovery and specificity</em>: one boolean for “some uprobes failed”, exceptions on missing sysfs, no retry, no capability probe at service start, no structured “this kernel cannot do X” before the user hooks 80 functions.</p>
+<p>Thread safety in the tracer is mostly “one run thread + one deferred thread + mutex on the staging vector.” Visitors are not concurrent. UI <code>OrbitApp</code> hops to the main executor for almost every event — correct, and a bottleneck under huge captures (not measured here).</p>
+
+<h2>Dead or disabled tests elsewhere</h2>
+<p>Several tests are compiled but disabled with Google Orbit issue links: <code>OrbitBase/ThreadPoolTest.cpp</code> (#4503), <code>ObjectUtils/ElfFileTest.cpp</code> (#4502), <code>WindowsUtils/ProcessLauncherTest.cpp</code>. Those are inherited, not introduced here.</p>
+
+<h2>What is actually in good shape</h2>
+<p>Credit where the tree deserves it:</p>
+<ul>
+  <li>Visitor split and 333&nbsp;ms reorder are a clear, documented design — not an accident.</li>
+  <li>User-space and kernel paths sharing <code>UprobesFunctionCallManager</code> is the right abstraction.</li>
+  <li>Wine stack-switch handling is specific and commented.</li>
+  <li>Capture file format is versioned and documented (<code>FORMAT.md</code>).</li>
+  <li>Unit tests around unwind + mmap updates are thorough <em>as fixtures</em>.</li>
+  <li>This fork’s ARM64 register work and py-spy integration are real features, even if the latter is still young.</li>
+</ul>
+
+<nav class="pager">
+  <a href="kernel-assumptions.html">← Kernel assumptions</a>
+  <a href="roadmap.html">Roadmap →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Instrumentation</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a class="current" href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">Uprobes · trampolines · API · Wine · Python</p>
+<h1>Instrumentation</h1>
+<p class="lede">“Hook” in the UI is not one mechanism. The service picks a dynamic method, then falls back. Manual markers and Python stacks are separate producers that only look like timers in the client.</p>
+
+<h2>From Hook to a probe</h2>
+<p>Right-click <strong>Hook</strong> is <code>kMenuActionSelect</code> in <code>src/DataViews/include/DataViews/DataView.h</code>. <code>FunctionsDataView</code> marks the row with <code>H</code>. That calls <code>OrbitApp::SelectFunction</code> → <code>DataManager::SelectFunction</code>. Nothing is planted in the target until capture starts.</p>
+<p><code>CaptureClient</code> copies selected functions into <code>CaptureOptions.instrumented_functions</code> (file path, build id, file offset, virtual address, size, name, record-args / record-retval). It requires the method to be <code>kKernelUprobes</code> or <code>kUserSpaceInstrumentation</code>.</p>
+<p>The UI default is <strong>user-space instrumentation</strong> (<code>CaptureOptionsDialog::kDynamicInstrumentationMethodDefaultValue</code>). GGP leftover clients still force <code>kKernelUprobes</code> (<code>src/OrbitClientGgp/ClientGgp.cpp</code>).</p>
+
+<h2>Two dynamic methods</h2>
+<figure class="figure" aria-label="Instrumentation methods">
+<svg viewBox="0 0 720 220" width="100%" height="auto" role="img">
+  <title>Kernel uprobes versus user-space trampolines</title>
+  <rect width="720" height="220" fill="#161b27"/>
+  <g fill="none" stroke="#c4622d" stroke-width="1.3">
+    <rect x="20" y="36" width="330" height="160" rx="4"/>
+    <rect x="370" y="36" width="330" height="160" rx="4"/>
+  </g>
+  <g fill="#f3eee4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12">
+    <text x="36" y="60" fill="#c4622d">kKernelUprobes</text>
+    <text x="36" y="84">perf_event_open uprobe PMU</text>
+    <text x="36" y="104">int3 / trampoline in kernel</text>
+    <text x="36" y="124">2 fds × CPUs × function</text>
+    <text x="36" y="144">no ptrace, works if PMU exists</text>
+    <text x="36" y="164">UI calls this “slower”</text>
+    <text x="386" y="60" fill="#c4622d">kUserSpaceInstrumentation</text>
+    <text x="386" y="84">ptrace attach, allocate, inject .so</text>
+    <text x="386" y="104">overwrite prologue → trampoline</text>
+    <text x="386" y="124">FunctionEntry/Exit via producer</text>
+    <text x="386" y="144">hijacked back into TracerImpl</text>
+    <text x="386" y="164">x86_64 only (ARM64 is a stub)</text>
+  </g>
+</svg>
+<figcaption>Both paths produce <code>FunctionCall</code> events. Failures of the user-space path leave those functions in <code>linux_tracing_capture_options</code> so uprobes still try.</figcaption>
+</figure>
+
+<h3>Kernel uprobes</h3>
+<p>Covered on the <a href="linux-tracing.html">Linux tracing</a> page. Requirements: <code>CONFIG_UPROBE_EVENTS</code>, the uprobe PMU in sysfs, privileges that satisfy <code>perf_event_paranoid</code>, and a file-backed mapping of the function (Wine PEs often fail this — <code>FindFunctionsThatUprobesCannotInstrumentWithMessages</code>).</p>
+<p>Uprobes cannot instrument a function that is not (yet) mapped. The warning text promises automatic instrumentation if the module loads later; that depends on mmap events + the existing fd already covering that file offset for the inode. Newly loaded modules with <em>new</em> paths need new opens; the current <code>Startup</code> path does not re-run <code>OpenUserSpaceProbes</code> mid-capture.</p>
+
+<h3>User-space instrumentation</h3>
+<p><code>InstrumentationManager::InstrumentProcess</code> (<code>src/UserSpaceInstrumentation/InstrumentProcess.cpp</code>):</p>
+<ol>
+  <li>Locate <code>liborbituserspaceinstrumentation.so</code> next to <code>OrbitService</code> or in <code>../lib</code>.</li>
+  <li>If not already injected, <code>InjectLibraryInTracee</code> (ptrace, allocate, <code>dlopen</code> in the target).</li>
+  <li>Clone a helper thread in the tracee to run <code>InitializeInstrumentation</code> (machine code in <code>MachineCodeForCloneCall</code> — syscall numbers are x86_64).</li>
+  <li>For each function: skip the libc blocklist, disassemble with Capstone, emit a trampoline, overwrite the prologue with a jump.</li>
+  <li>Return trampoline ranges + injected path so LinuxTracing can hide them from unwind.</li>
+</ol>
+<p><code>UninstrumentProcess</code> restores prologues only. The library and trampoline mappings stay in the target for the life of the process / manager.</p>
+<p>Blocklisted names (<code>IsBlocklisted</code>) include malloc/free internals, <code>__GI_memcpy</code> (libc jumps into +0x3), pthread cancel helpers, etc. Those fall back to uprobes if the method is user-space and they were still in the options — actually they are skipped during InstrumentProcess and appear in <code>function_ids_to_error_messages</code>, then remain in the filtered-out set only if they <em>succeeded</em>. Failed ids stay in <code>linux_tracing_capture_options</code> and uprobes try them. That is the “slower kernel (uprobes)” message in <code>OrbitApp::OnErrorEnablingUserSpaceInstrumentationEvent</code> / <code>OnWarningInstrumentingWithUserSpaceInstrumentationEvent</code>.</p>
+<p>Strict seccomp: <code>AnyThreadIsInStrictSeccompMode</code> can refuse the attach. Hotpatchability is a field on <code>InstrumentedFunction</code> (<code>is_hotpatchable</code>) for the disassembler’s benefit.</p>
+
+<div class="callout warn">
+  <strong>ARM64.</strong> <code>src/UserSpaceInstrumentation/CMakeLists.txt</code> builds <code>StubArm64.cpp</code> that returns “not supported”. Kernel uprobes <em>do</em> have ARM64 register masks in <code>PerfEventOpen.h</code>. <code>docs/building_arm64.md</code> conflates the two and says “uprobes-based function hooking is not supported on ARM64”. That sentence is wrong: the disabled piece is the trampoline JIT, not the uprobe PMU.
+</div>
+
+<h2>Manual instrumentation (Orbit API)</h2>
+<p>Headers in <code>src/ApiInterface/Orbit.h</code>. User code instantiates the table with <code>ORBIT_API_INSTANTIATE</code>. <code>CaptureClient::FindApiFunctions</code> looks up versioned <code>OrbitApiGetFunctionTableAddress*</code> symbols in loaded modules. <code>EnableApiInTracee</code> writes function pointers into the target so scopes start emitting. Events arrive through the producer-side socket (<code>src/Api/LockFreeApiEventProducer.h</code>) as API scope / track / string events, not as uprobes.</p>
+<p>Frame tracks for manual scopes are still a TODO in <code>FrameTrack.cpp</code> (<code>b/169554463</code>).</p>
+
+<h2>Wine / Proton</h2>
+<p>Wine’s <code>__wine_syscall_dispatcher</code> switches to a different stack. DWARF unwind dies after that frame. <code>OrbitApp</code> implements <code>WineSyscallHandlingMethod</code>:</p>
+<ul>
+  <li><code>kNoSpecialHandling</code> — do nothing (hidden in some UI builds)</li>
+  <li><code>kStopUnwinding</code> — default; put the dispatcher in <code>functions_to_stop_unwinding_at</code></li>
+  <li><code>kRecordUserStack</code> — also add it to <code>functions_to_record_additional_stack_on</code> so a full stack is snapped before the switch</li>
+</ul>
+<p>PE modules mapped anonymously (Wine’s typical <code>.text</code> dance) cannot be uprobe targets; the warning string says so explicitly in <code>LinuxTracingUtils.cpp</code>.</p>
+
+<h2>Python</h2>
+<p>Not dynamic instrumentation. <code>PythonSamplingThread</code> samples interpreter stacks via py-spy FFI and synthesizes callstacks / address infos. Auto-enable if the exe name looks like Python — a process named <code>my-python-wrapper</code> matches; an embedded interpreter in <code>blender</code> does not. <code>python_include_native</code> turns on <code>pyspy_new_with_native</code>.</p>
+
+<h2>What “dynamic function calls” means in the UI</h2>
+<p>A <code>FunctionCall</code> is a closed interval: pid, tid, function id, duration, end timestamp, depth, optional retval, optional six argument registers. Thread tracks draw them as nested timers. Sampling still runs independently; <code>UprobesUnwindingVisitor</code> must patch samples that fall inside an open dynamic frame so the callstack is not a lie.</p>
+
+<nav class="pager">
+  <a href="linux-tracing.html">← Linux tracing</a>
+  <a href="client-ui.html">Client UI →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>
