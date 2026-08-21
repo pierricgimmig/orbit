@@ -471,9 +471,9 @@ impl TimelineGpu {
     }
 }
 
-/// WebGPU `write_texture` requires `bytes_per_row` to be a multiple of 256.
-/// Pack tightly stored RGBA8 into an aligned staging buffer.
-/// Returns `(padded_bytes, bytes_per_row)`.
+/// WebGPU `write_texture` requires `bytes_per_row` to be a multiple of
+/// `COPY_BYTES_PER_ROW_ALIGNMENT` (256). Pack tightly stored RGBA8 into an
+/// aligned staging buffer. Returns `(padded_bytes, bytes_per_row)`.
 pub fn pack_rgba_aligned(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u32) {
     let src_stride = width.saturating_mul(4);
     let padded = src_stride.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -564,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn pack_rgba_pads_bytes_per_row_to_256() {
+    fn pack_rgba_pads_bytes_per_row_to_copy_alignment() {
         let width = 100u32;
         let height = 2u32;
         let mut src = vec![0u8; (width * height * 4) as usize];
@@ -572,10 +572,13 @@ mod tests {
         src[(width * 4) as usize..(width * 4 + 4) as usize]
             .copy_from_slice(&[0x32, 0x32, 0x32, 0xFF]);
         let (padded, stride) = pack_rgba_aligned(&src, width, height);
-        assert_eq!(stride, 256);
-        assert_eq!(padded.len(), 256 * height as usize);
+        let expect = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        assert_eq!(stride, expect);
+        assert_eq!(stride, 512);
+        assert_eq!(padded.len(), stride as usize * height as usize);
         assert_eq!(&padded[0..4], &[0xE7, 0x44, 0x35, 0xFF]);
-        assert_eq!(&padded[256..260], &[0x32, 0x32, 0x32, 0xFF]);
+        let row1 = stride as usize;
+        assert_eq!(&padded[row1..row1 + 4], &[0x32, 0x32, 0x32, 0xFF]);
         assert_eq!(&padded[400..404], &[0, 0, 0, 0]);
     }
 
