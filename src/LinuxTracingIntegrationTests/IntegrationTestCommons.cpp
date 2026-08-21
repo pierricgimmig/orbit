@@ -41,6 +41,10 @@ void AddPuppetOuterAndInnerFunctionToCaptureOptions(
   bool outer_function_symbol_found = false;
   bool inner_function_symbol_found = false;
   for (const orbit_grpc_protos::SymbolInfo& symbol : module_symbols.symbol_infos()) {
+    if (IsClonedPartOfFunction(symbol.demangled_name())) {
+      continue;
+    }
+
     if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kOuterFunctionName)) {
       ORBIT_CHECK(!outer_function_symbol_found);
       outer_function_symbol_found = true;

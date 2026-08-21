@@ -8,13 +8,25 @@
 #include <absl/types/span.h>
 #include <sys/types.h>
 
+#include <absl/strings/match.h>
+
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "GrpcProtos/capture.pb.h"
 
 namespace orbit_linux_tracing_integration_tests {
+
+// GCC and Clang may split a function into hot and cold parts at -O2, emitting extra symbols such
+// as "OuterFunctionToInstrument.cold", "foo.part.0" or "bar() [clone .cold]". Those are not
+// separate functions to instrument, and matching them by substring would double-count.
+[[nodiscard]] inline bool IsClonedPartOfFunction(std::string_view demangled_name) {
+  return absl::StrContains(demangled_name, ".cold") ||
+         absl::StrContains(demangled_name, ".part.") ||
+         absl::StrContains(demangled_name, "[clone ");
+}
 
 struct PuppetFunctionLocation {
   std::string file_path;

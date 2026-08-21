@@ -1191,6 +1191,10 @@ GetOuterAndInnerFunctionVirtualAddressRanges(pid_t pid) {
   uint64_t inner_function_virtual_address_start = 0;
   uint64_t inner_function_virtual_address_end = 0;
   for (const orbit_grpc_protos::SymbolInfo& symbol : module_symbols.symbol_infos()) {
+    if (IsClonedPartOfFunction(symbol.demangled_name())) {
+      continue;
+    }
+
     if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kOuterFunctionName)) {
       ORBIT_CHECK(outer_function_virtual_address_start == 0 &&
                   outer_function_virtual_address_end == 0);
