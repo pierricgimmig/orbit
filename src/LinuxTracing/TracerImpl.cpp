@@ -204,42 +204,6 @@ static void CloseFileDescriptors(const absl::flat_hash_map<int32_t, int>& fds_pe
   }
 }
 
-// Run `fn(index)` for every index in [0, n). Uprobe attach/detach syscalls each wait on
-// kernel-side RCU / VMA work; overlapping them is what makes stop+restart take milliseconds
-// instead of hundreds of milliseconds to seconds.
-template <typename Fn>
-static void ParallelFor(size_t n, Fn&& fn) {
-  if (n == 0) {
-    return;
-  }
-
-  const unsigned hardware_concurrency = std::max(1u, std::thread::hardware_concurrency());
-  const size_t num_threads = std::min(static_cast<size_t>(hardware_concurrency), n);
-  std::atomic<size_t> next_index{0};
-  std::vector<std::thread> threads;
-  threads.reserve(num_threads);
-
-  for (size_t i = 0; i < num_threads; ++i) {
-    threads.emplace_back([&fn, &next_index, n] {
-      while (true) {
-        const size_t index = next_index.fetch_add(1, std::memory_order_relaxed);
-        if (index >= n) {
-          break;
-        }
-        fn(index);
-      }
-    });
-  }
-
-  for (std::thread& thread : threads) {
-    thread.join();
-  }
-}
-
-static void CloseFileDescriptorsInParallel(absl::Span<const int> fds) {
-  ParallelFor(fds.size(), [&fds](size_t index) { close(fds[index]); });
-}
-
 static void OpenRingBuffersOrRedirectOnExisting(
     const absl::flat_hash_map<int32_t, int>& fds_per_cpu,
     absl::flat_hash_map<int32_t, int>* ring_buffer_fds_per_cpu,
@@ -288,21 +252,25 @@ bool TracerImpl::OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& func
                              absl::Span<const int32_t> cpus,
                              absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
   ORBIT_SCOPE_FUNCTION;
-  const char* module = function.file_path().c_str();
-  const uint64_t offset = function.file_offset();
-  for (int32_t cpu : cpus) {
-    int fd{};
-    if (function.record_arguments()) {
-      fd = uprobes_retaddr_args_event_open(module, offset, /*pid=*/-1, cpu);
-    } else {
-      fd = uprobes_retaddr_event_open(module, offset, /*pid=*/-1, cpu);
-    }
-    if (fd < 0) {
-      ORBIT_ERROR("Opening uprobe %s+%#x on cpu %d", function.file_path(), function.file_offset(),
-                  cpu);
-      return false;
-    }
-    (*fds_per_cpu)[cpu] = fd;
+  // One TRACEPOINT fd per CPU so samples from every core are recorded. The
+  // named probe itself is registered once below; fd count is still
+  // 2 * ncpus * nfunctions across uprobe+uretprobe. See UprobeEvents.h.
+  ErrorMessageOr<TracefsUprobe> probe_or_error =
+      DefineTracefsUprobe(function.file_path(), function.file_offset(), /*is_return=*/false,
+                          MakeOrbitUprobeEventName(next_uprobe_event_id_++, /*is_return=*/false));
+  if (probe_or_error.has_error()) {
+    ORBIT_ERROR("Defining uprobe %s+%#x: %s", function.file_path(), function.file_offset(),
+                probe_or_error.error().message());
+    return false;
+  }
+  defined_uprobes_.push_back(probe_or_error.value());
+
+  const UprobeSampleLayout layout =
+      function.record_arguments() ? UprobeSampleLayout::kRetaddrArgs : UprobeSampleLayout::kRetaddr;
+  if (!OpenTracefsUprobeFdsPerCpu(probe_or_error.value(), cpus, /*pid=*/-1, layout,
+                                  /*stack_dump_size=*/0, fds_per_cpu)) {
+    ORBIT_ERROR("Opening uprobe %s+%#x", function.file_path(), function.file_offset());
+    return false;
   }
   return true;
 }
@@ -311,21 +279,23 @@ bool TracerImpl::OpenUretprobes(const orbit_grpc_protos::InstrumentedFunction& f
                                 absl::Span<const int32_t> cpus,
                                 absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
   ORBIT_SCOPE_FUNCTION;
-  const char* module = function.file_path().c_str();
-  const uint64_t offset = function.file_offset();
-  for (int32_t cpu : cpus) {
-    int fd{};
-    if (function.record_return_value()) {
-      fd = uretprobes_retval_event_open(module, offset, /*pid=*/-1, cpu);
-    } else {
-      fd = uretprobes_event_open(module, offset, /*pid=*/-1, cpu);
-    }
-    if (fd < 0) {
-      ORBIT_ERROR("Opening uretprobe %s+%#x on cpu %d", function.file_path(),
-                  function.file_offset(), cpu);
-      return false;
-    }
-    (*fds_per_cpu)[cpu] = fd;
+  ErrorMessageOr<TracefsUprobe> probe_or_error =
+      DefineTracefsUprobe(function.file_path(), function.file_offset(), /*is_return=*/true,
+                          MakeOrbitUprobeEventName(next_uprobe_event_id_++, /*is_return=*/true));
+  if (probe_or_error.has_error()) {
+    ORBIT_ERROR("Defining uretprobe %s+%#x: %s", function.file_path(), function.file_offset(),
+                probe_or_error.error().message());
+    return false;
+  }
+  defined_uprobes_.push_back(probe_or_error.value());
+
+  const UprobeSampleLayout layout = function.record_return_value()
+                                        ? UprobeSampleLayout::kUretprobeRetval
+                                        : UprobeSampleLayout::kUretprobe;
+  if (!OpenTracefsUprobeFdsPerCpu(probe_or_error.value(), cpus, /*pid=*/-1, layout,
+                                  /*stack_dump_size=*/0, fds_per_cpu)) {
+    ORBIT_ERROR("Opening uretprobe %s+%#x", function.file_path(), function.file_offset());
+    return false;
   }
   return true;
 }
@@ -366,26 +336,13 @@ bool TracerImpl::OpenUserSpaceProbes(absl::Span<const int32_t> cpus) {
   ORBIT_SCOPE_FUNCTION;
   bool uprobes_event_open_errors = false;
 
-  struct OpenedFunctionProbes {
+  absl::flat_hash_map<int32_t, int> fds_per_cpu_for_redirection{};
+  for (const auto& function : instrumented_functions_) {
     absl::flat_hash_map<int32_t, int> uprobes_fds_per_cpu;
     absl::flat_hash_map<int32_t, int> uretprobes_fds_per_cpu;
-    bool success = false;
-  };
-  std::vector<OpenedFunctionProbes> opened_probes(instrumented_functions_.size());
-  ParallelFor(instrumented_functions_.size(), [this, &cpus, &opened_probes](size_t index) {
-    const auto& function = instrumented_functions_[index];
-    opened_probes[index].success =
-        OpenUprobes(function, cpus, &opened_probes[index].uprobes_fds_per_cpu) &&
-        OpenUretprobes(function, cpus, &opened_probes[index].uretprobes_fds_per_cpu);
-  });
 
-  absl::flat_hash_map<int32_t, int> fds_per_cpu_for_redirection{};
-  for (size_t index = 0; index < instrumented_functions_.size(); ++index) {
-    const auto& function = instrumented_functions_[index];
-    auto& uprobes_fds_per_cpu = opened_probes[index].uprobes_fds_per_cpu;
-    auto& uretprobes_fds_per_cpu = opened_probes[index].uretprobes_fds_per_cpu;
-
-    bool success = opened_probes[index].success;
+    bool success = OpenUprobes(function, cpus, &uprobes_fds_per_cpu) &&
+                   OpenUretprobes(function, cpus, &uretprobes_fds_per_cpu);
     if (!success) {
       CloseFileDescriptors(uprobes_fds_per_cpu);
       CloseFileDescriptors(uretprobes_fds_per_cpu);
@@ -411,19 +368,22 @@ bool TracerImpl::OpenUserSpaceProbes(absl::Span<const int32_t> cpus) {
 
 bool TracerImpl::OpenUprobesWithStack(
     const orbit_grpc_protos::FunctionToRecordAdditionalStackOn& function,
-    absl::Span<const int32_t> cpus, absl::flat_hash_map<int32_t, int>* fds_per_cpu) const {
+    absl::Span<const int32_t> cpus, absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
   ORBIT_SCOPE_FUNCTION;
-  const char* module = function.file_path().c_str();
-  const uint64_t offset = function.file_offset();
-  for (int32_t cpu : cpus) {
-    int fd =
-        uprobes_with_stack_and_sp_event_open(module, offset, /*pid=*/-1, cpu, stack_dump_size_);
-    if (fd < 0) {
-      ORBIT_ERROR("Opening uprobe %s+%#x with stack on cpu %d", function.file_path(),
-                  function.file_offset(), cpu);
-      return false;
-    }
-    (*fds_per_cpu)[cpu] = fd;
+  ErrorMessageOr<TracefsUprobe> probe_or_error =
+      DefineTracefsUprobe(function.file_path(), function.file_offset(), /*is_return=*/false,
+                          MakeOrbitUprobeEventName(next_uprobe_event_id_++, /*is_return=*/false));
+  if (probe_or_error.has_error()) {
+    ORBIT_ERROR("Defining uprobe %s+%#x with stack: %s", function.file_path(),
+                function.file_offset(), probe_or_error.error().message());
+    return false;
+  }
+  defined_uprobes_.push_back(probe_or_error.value());
+
+  if (!OpenTracefsUprobeFdsPerCpu(probe_or_error.value(), cpus, /*pid=*/-1,
+                                  UprobeSampleLayout::kStackAndSp, stack_dump_size_, fds_per_cpu)) {
+    ORBIT_ERROR("Opening uprobe %s+%#x with stack", function.file_path(), function.file_offset());
+    return false;
   }
   return true;
 }
@@ -811,8 +771,8 @@ void TracerImpl::Startup() {
     cpuset_cpus = all_cpus;
   }
 
-  // As we open two perf_event_open file descriptors (uprobe and uretprobe) per
-  // cpu per instrumented function, increase the maximum number of open files.
+  // Sample-delivery fds are still two (uprobe + uretprobe) per CPU per
+  // instrumented function: 2 * ncpus * nfunctions. Increase the open-file limit.
   SetMaxOpenFilesSoftLimit(GetMaxOpenFilesHardLimit());
 
   event_processor_.SetDiscardedOutOfOrderCounter(&stats_.discarded_out_of_order_count);
@@ -962,9 +922,8 @@ void TracerImpl::Startup() {
   if (should_enable_python) {
     uint64_t python_sampling_period_ns =
         sampling_period_ns_.value_or(10'000'000);  // Default 100 Hz if no sampling configured
-    python_sampling_thread_ = PythonSamplingThread::Create(target_pid_, listener_,
-                                                           python_sampling_period_ns,
-                                                           python_include_native_);
+    python_sampling_thread_ = PythonSamplingThread::Create(
+        target_pid_, listener_, python_sampling_period_ns, python_include_native_);
     if (python_sampling_thread_ != nullptr) {
       python_sampling_thread_->Start();
       ORBIT_LOG("Python profiling enabled for process %d", target_pid_);
@@ -1003,20 +962,28 @@ void TracerImpl::Shutdown() {
     ring_buffers_.clear();
   }
 
-  // Close the file descriptors. Uprobe/uretprobe closes dominate this cost; run them concurrently.
+  // Close the file descriptors. Per-CPU TRACEPOINT closes are cheap; the last
+  // close of each named probe does one uprobe_unregister (VMA walk + sync).
+  // Then remove the tracefs definitions so nothing is leaked.
   ORBIT_SCOPE_WITH_COLOR(absl::StrFormat("Closing %d file descriptors", num_fds).c_str(),
                          kOrbitColorRed);
-  std::vector<int> all_fds;
-  all_fds.reserve(num_fds);
   for (auto& [fd_type, fds] : tracing_fds_by_type_) {
-    ORBIT_LOG("Closing %d %s file descriptors in parallel", fds.size(), fd_type);
-    all_fds.insert(all_fds.end(), fds.begin(), fds.end());
+    ORBIT_LOG("Closing %d %s file descriptors", fds.size(), fd_type);
+    ORBIT_SCOPED_TIMED_LOG("Closing %d %s file descriptors", fds.size(), fd_type);
+    CloseFileDescriptors(fds);
   }
   {
-    ORBIT_SCOPE("CloseFileDescriptorsInParallel");
-    ORBIT_SCOPED_TIMED_LOG("Closing %d file descriptors in parallel", all_fds.size());
-    CloseFileDescriptorsInParallel(all_fds);
+    ORBIT_SCOPE("UndefineTracefsUprobes");
+    ORBIT_SCOPED_TIMED_LOG("Undefining %d tracefs uprobes", defined_uprobes_.size());
+    UndefineTracefsUprobes();
   }
+}
+
+void TracerImpl::UndefineTracefsUprobes() {
+  for (const TracefsUprobe& probe : defined_uprobes_) {
+    UndefineTracefsUprobe(probe);
+  }
+  defined_uprobes_.clear();
 }
 
 void TracerImpl::ProcessOneRecord(PerfEventRingBuffer* ring_buffer) {
@@ -1413,7 +1380,7 @@ uint64_t TracerImpl::ProcessSampleEventAndReturnTimestamp(const perf_event_heade
     DeferEvent(event);
 
   } else if (is_task_rename) {
-    //ORBIT_CHECK(header.size == sizeof(RingBufferRawSample<TaskRenameTracepointData>));
+    // ORBIT_CHECK(header.size == sizeof(RingBufferRawSample<TaskRenameTracepointData>));
     RingBufferRawSample<TaskRenameTracepointData> ring_buffer_record;
     ring_buffer->ConsumeRecord(header, &ring_buffer_record);
 
@@ -1659,12 +1626,14 @@ void TracerImpl::RetrieveInitialThreadStatesOfTarget() {
 void TracerImpl::Reset() {
   ORBIT_SCOPE_FUNCTION;
   tracing_fds_by_type_.clear();
+  UndefineTracefsUprobes();
   ring_buffers_.clear();
   fds_to_last_timestamp_ns_.clear();
 
   uprobes_uretprobes_ids_to_function_id_.clear();
   uprobes_ids_.clear();
   uprobes_with_args_ids_.clear();
+  uprobes_with_stack_ids_.clear();
   uretprobes_ids_.clear();
   uretprobes_with_retval_ids_.clear();
   stack_sampling_ids_.clear();

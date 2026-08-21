@@ -191,6 +191,23 @@ void* perf_event_open_mmap_ring_buffer(int fd, uint64_t mmap_length) {
   return mmap_ret;
 }
 
+int configured_tracepoint_event_open(const char* tracepoint_category, const char* tracepoint_name,
+                                     pid_t pid, int32_t cpu, uint64_t extra_sample_type,
+                                     uint64_t sample_regs_user, uint16_t sample_stack_user) {
+  int tp_id = GetTracepointId(tracepoint_category, tracepoint_name);
+  if (tp_id == -1) {
+    return -1;
+  }
+  perf_event_attr pe = generic_event_attr();
+  pe.type = PERF_TYPE_TRACEPOINT;
+  pe.config = tp_id;
+  pe.sample_type |= extra_sample_type;
+  pe.sample_regs_user = sample_regs_user;
+  pe.sample_stack_user = sample_stack_user;
+
+  return generic_event_open(&pe, pid, cpu);
+}
+
 int tracepoint_event_open(const char* tracepoint_category, const char* tracepoint_name, pid_t pid,
                           int32_t cpu) {
   int tp_id = GetTracepointId(tracepoint_category, tracepoint_name);

@@ -65,6 +65,8 @@ target_sources(LinuxTracing PRIVATE
         Tracer.cpp
         TracerImpl.cpp
         TracerImpl.h
+        UprobeEvents.cpp
+        UprobeEvents.h
         UprobesFunctionCallManager.h
         UprobesReturnAddressManager.h
         UprobesUnwindingVisitor.cpp
@@ -104,6 +106,7 @@ target_sources(LinuxTracingTests PRIVATE
         PerfEventQueueTest.cpp
         SwitchesStatesNamesVisitorTest.cpp
         ThreadStateManagerTest.cpp
+        UprobeEventsTest.cpp
         UprobesFunctionCallManagerTest.cpp
         UprobesReturnAddressManagerTest.cpp
         UprobesUnwindingVisitorCallchainTest.cpp

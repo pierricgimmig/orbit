@@ -39,6 +39,7 @@
 #include "PerfEventRingBuffer.h"
 #include "PythonSamplingThread.h"
 #include "SwitchesStatesNamesVisitor.h"
+#include "UprobeEvents.h"
 #include "UprobesFunctionCallManager.h"
 #include "UprobesReturnAddressManager.h"
 #include "UprobesUnwindingVisitor.h"
@@ -71,15 +72,16 @@ class TracerImpl : public Tracer {
   void InitUprobesEventVisitor();
   [[nodiscard]] bool OpenUserSpaceProbes(absl::Span<const int32_t> cpus);
   [[nodiscard]] bool OpenUprobesToRecordAdditionalStackOn(absl::Span<const int32_t> cpus);
-  [[nodiscard]] static bool OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                                        absl::Span<const int32_t> cpus,
-                                        absl::flat_hash_map<int32_t, int>* fds_per_cpu);
+  [[nodiscard]] bool OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& function,
+                                 absl::Span<const int32_t> cpus,
+                                 absl::flat_hash_map<int32_t, int>* fds_per_cpu);
   [[nodiscard]] bool OpenUprobesWithStack(
       const orbit_grpc_protos::FunctionToRecordAdditionalStackOn& function,
-      absl::Span<const int32_t> cpus, absl::flat_hash_map<int32_t, int>* fds_per_cpu) const;
-  [[nodiscard]] static bool OpenUretprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                                           absl::Span<const int32_t> cpus,
-                                           absl::flat_hash_map<int32_t, int>* fds_per_cpu);
+      absl::Span<const int32_t> cpus, absl::flat_hash_map<int32_t, int>* fds_per_cpu);
+  [[nodiscard]] bool OpenUretprobes(const orbit_grpc_protos::InstrumentedFunction& function,
+                                    absl::Span<const int32_t> cpus,
+                                    absl::flat_hash_map<int32_t, int>* fds_per_cpu);
+  void UndefineTracefsUprobes();
   [[nodiscard]] bool OpenMmapTask(absl::Span<const int32_t> cpus);
   [[nodiscard]] bool OpenSampling(absl::Span<const int32_t> cpus);
 
@@ -168,6 +170,8 @@ class TracerImpl : public Tracer {
   std::thread run_thread_;
 
   absl::flat_hash_map<std::string, std::vector<int>> tracing_fds_by_type_;
+  std::vector<TracefsUprobe> defined_uprobes_;
+  uint64_t next_uprobe_event_id_ = 1;
   std::vector<PerfEventRingBuffer> ring_buffers_;
   absl::flat_hash_map<int, uint64_t> fds_to_last_timestamp_ns_;
 

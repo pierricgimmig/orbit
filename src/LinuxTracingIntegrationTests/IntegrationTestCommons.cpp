@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "IntegrationTestCommons.h"
+
 #include <absl/strings/match.h>
 #include <absl/types/span.h>
 #include <gmock/gmock.h>
@@ -9,9 +11,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "GrpcProtos/capture.pb.h"
 #include "GrpcProtos/module.pb.h"
@@ -66,6 +71,45 @@ void AddPuppetOuterAndInnerFunctionToCaptureOptions(
   }
   ORBIT_CHECK(outer_function_symbol_found);
   ORBIT_CHECK(inner_function_symbol_found);
+}
+
+std::vector<PuppetFunctionLocation> GetPuppetUprobeBenchFunctionLocations(pid_t pid) {
+  const orbit_grpc_protos::ModuleInfo& module_info = GetExecutableBinaryModuleInfo(pid);
+  const orbit_grpc_protos::ModuleSymbols& module_symbols = GetExecutableBinaryModuleSymbols(pid);
+  const std::filesystem::path& executable_path = GetExecutableBinaryPath(pid);
+
+  std::optional<PuppetFunctionLocation> outer;
+  std::optional<PuppetFunctionLocation> inner;
+  std::vector<PuppetFunctionLocation> dummies;
+  for (const orbit_grpc_protos::SymbolInfo& symbol : module_symbols.symbol_infos()) {
+    PuppetFunctionLocation location;
+    location.file_path = executable_path;
+    location.file_offset = symbol.address() - module_info.load_bias();
+    location.name = symbol.demangled_name();
+    if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kOuterFunctionName)) {
+      outer = location;
+    } else if (absl::StrContains(symbol.demangled_name(), PuppetConstants::kInnerFunctionName)) {
+      inner = location;
+    } else if (absl::StrContains(symbol.demangled_name(),
+                                 PuppetConstants::kUprobeStopRestartDummyFunctionNamePrefix)) {
+      dummies.push_back(std::move(location));
+    }
+  }
+  ORBIT_CHECK(outer.has_value());
+  ORBIT_CHECK(inner.has_value());
+  ORBIT_CHECK(dummies.size() ==
+              static_cast<size_t>(PuppetConstants::kUprobeStopRestartDummyFunctionCount));
+
+  std::sort(dummies.begin(), dummies.end(),
+            [](const PuppetFunctionLocation& a, const PuppetFunctionLocation& b) {
+              return a.name < b.name;
+            });
+
+  std::vector<PuppetFunctionLocation> result;
+  result.push_back(std::move(outer.value()));
+  result.push_back(std::move(inner.value()));
+  result.insert(result.end(), dummies.begin(), dummies.end());
+  return result;
 }
 
 void AddPuppetUprobeStopRestartDummyFunctionsToCaptureOptions(

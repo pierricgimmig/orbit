@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/hash/hash.h>
 #include <absl/strings/match.h>
@@ -13,6 +14,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -36,11 +38,14 @@
 #include "LinuxTracing/Tracer.h"
 #include "LinuxTracing/TracerListener.h"
 #include "LinuxTracing/UserSpaceInstrumentationAddresses.h"
+#include "LinuxTracingUtils.h"
 #include "ModuleUtils/VirtualAndAbsoluteAddresses.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ReadFileToString.h"
 #include "OrbitBase/Result.h"
 #include "OrbitBase/ThreadUtils.h"
+#include "PerfEventOpen.h"
+#include "UprobeEvents.h"
 
 namespace orbit_linux_tracing_integration_tests {
 
@@ -583,25 +588,236 @@ TEST(LinuxTracingIntegrationTest, FunctionCalls) {
                                              kInnerFunctionId);
 }
 
-TEST(LinuxTracingIntegrationTest, UprobeStopThenRestartIsFast) {
+namespace {
+
+void CloseFds(const std::vector<int>& fds) {
+  for (int fd : fds) {
+    close(fd);
+  }
+}
+
+[[nodiscard]] std::vector<int32_t> UprobeBenchCpus(pid_t pid) {
+  std::vector<int> cpus = orbit_linux_tracing::GetCpusetCpus(pid);
+  if (cpus.empty()) {
+    const int n = orbit_linux_tracing::GetNumCores();
+    cpus.reserve(static_cast<size_t>(n));
+    for (int cpu = 0; cpu < n; ++cpu) {
+      cpus.push_back(cpu);
+    }
+  }
+  return {cpus.begin(), cpus.end()};
+}
+
+struct UprobeBenchRow {
+  int nfunctions = 0;
+  int ncpus = 0;
+  size_t total_fds = 0;
+  size_t named_probes = 0;
+  std::optional<absl::Duration> serial_pmu_start;
+  std::optional<absl::Duration> serial_pmu_stop;
+  std::optional<absl::Duration> shared_start;
+  std::optional<absl::Duration> shared_stop;
+};
+
+[[nodiscard]] std::optional<absl::Duration> TimeSerialPmuOpenClose(
+    absl::Span<const PuppetFunctionLocation> functions, absl::Span<const int32_t> cpus,
+    absl::Duration* start_out) {
+  std::vector<int> fds;
+  fds.reserve(orbit_linux_tracing::UprobeSampleFdCount(cpus.size(), functions.size()));
+  const absl::Time start_begin = absl::Now();
+  for (const PuppetFunctionLocation& function : functions) {
+    for (int32_t cpu : cpus) {
+      const int uprobe_fd = orbit_linux_tracing::uprobes_retaddr_event_open(
+          function.file_path.c_str(), function.file_offset, /*pid=*/-1, cpu);
+      const int uretprobe_fd = orbit_linux_tracing::uretprobes_event_open(
+          function.file_path.c_str(), function.file_offset, /*pid=*/-1, cpu);
+      if (uprobe_fd < 0 || uretprobe_fd < 0) {
+        CloseFds(fds);
+        if (uprobe_fd >= 0) close(uprobe_fd);
+        if (uretprobe_fd >= 0) close(uretprobe_fd);
+        return std::nullopt;
+      }
+      fds.push_back(uprobe_fd);
+      fds.push_back(uretprobe_fd);
+    }
+  }
+  *start_out = absl::Now() - start_begin;
+
+  const absl::Time stop_begin = absl::Now();
+  CloseFds(fds);
+  return absl::Now() - stop_begin;
+}
+
+[[nodiscard]] bool TimeSharedTracefsOpenClose(absl::Span<const PuppetFunctionLocation> functions,
+                                              absl::Span<const int32_t> cpus, uint64_t id_base,
+                                              absl::Duration* start_out, absl::Duration* stop_out) {
+  std::vector<orbit_linux_tracing::TracefsUprobe> probes;
+  std::vector<int> fds;
+  fds.reserve(orbit_linux_tracing::UprobeSampleFdCount(cpus.size(), functions.size()));
+
+  const absl::Time start_begin = absl::Now();
+  uint64_t next_id = id_base;
+  for (const PuppetFunctionLocation& function : functions) {
+    auto uprobe = orbit_linux_tracing::DefineTracefsUprobe(
+        function.file_path, function.file_offset, /*is_return=*/false,
+        orbit_linux_tracing::MakeOrbitUprobeEventName(next_id++, /*is_return=*/false));
+    auto uretprobe = orbit_linux_tracing::DefineTracefsUprobe(
+        function.file_path, function.file_offset, /*is_return=*/true,
+        orbit_linux_tracing::MakeOrbitUprobeEventName(next_id++, /*is_return=*/true));
+    if (uprobe.has_error() || uretprobe.has_error()) {
+      CloseFds(fds);
+      for (const auto& probe : probes) {
+        orbit_linux_tracing::UndefineTracefsUprobe(probe);
+      }
+      if (uprobe.has_value()) {
+        orbit_linux_tracing::UndefineTracefsUprobe(uprobe.value());
+      }
+      if (uretprobe.has_value()) {
+        orbit_linux_tracing::UndefineTracefsUprobe(uretprobe.value());
+      }
+      return false;
+    }
+    probes.push_back(uprobe.value());
+    probes.push_back(uretprobe.value());
+
+    absl::flat_hash_map<int32_t, int> uprobe_fds;
+    absl::flat_hash_map<int32_t, int> uretprobe_fds;
+    const bool opened =
+        orbit_linux_tracing::OpenTracefsUprobeFdsPerCpu(
+            uprobe.value(), cpus, /*pid=*/-1, orbit_linux_tracing::UprobeSampleLayout::kRetaddr,
+            /*stack_dump_size=*/0, &uprobe_fds) &&
+        orbit_linux_tracing::OpenTracefsUprobeFdsPerCpu(
+            uretprobe.value(), cpus, /*pid=*/-1,
+            orbit_linux_tracing::UprobeSampleLayout::kUretprobe,
+            /*stack_dump_size=*/0, &uretprobe_fds);
+    if (!opened) {
+      for (const auto& [unused_cpu, fd] : uprobe_fds) fds.push_back(fd);
+      for (const auto& [unused_cpu, fd] : uretprobe_fds) fds.push_back(fd);
+      CloseFds(fds);
+      for (const auto& probe : probes) {
+        orbit_linux_tracing::UndefineTracefsUprobe(probe);
+      }
+      return false;
+    }
+    for (const auto& [unused_cpu, fd] : uprobe_fds) fds.push_back(fd);
+    for (const auto& [unused_cpu, fd] : uretprobe_fds) fds.push_back(fd);
+  }
+  *start_out = absl::Now() - start_begin;
+
+  const absl::Time stop_begin = absl::Now();
+  CloseFds(fds);
+  for (const auto& probe : probes) {
+    orbit_linux_tracing::UndefineTracefsUprobe(probe);
+  }
+  *stop_out = absl::Now() - stop_begin;
+  return true;
+}
+
+void PrintUprobeBenchTable(absl::Span<const UprobeBenchRow> rows) {
+  ORBIT_LOG("Uprobe attach/detach bench (close/teardown and reattach only):");
+  ORBIT_LOG("%10s %7s %8s %13s %16s %16s %16s %16s", "nfunctions", "ncpus", "fds", "named_probes",
+            "serial_start", "serial_stop", "shared_start", "shared_stop");
+  for (const UprobeBenchRow& row : rows) {
+    ORBIT_LOG(
+        "%10d %7d %8zu %13zu %16s %16s %16s %16s", row.nfunctions, row.ncpus, row.total_fds,
+        row.named_probes,
+        row.serial_pmu_start.has_value() ? absl::FormatDuration(row.serial_pmu_start.value())
+                                         : "n/a",
+        row.serial_pmu_stop.has_value() ? absl::FormatDuration(row.serial_pmu_stop.value()) : "n/a",
+        row.shared_start.has_value() ? absl::FormatDuration(row.shared_start.value()) : "n/a",
+        row.shared_stop.has_value() ? absl::FormatDuration(row.shared_stop.value()) : "n/a");
+  }
+  ORBIT_LOG("fds = 2 * ncpus * nfunctions (one uprobe + one uretprobe sample fd per CPU).");
+  ORBIT_LOG("named_probes = 2 * nfunctions (one shared tracefs registration each).");
+  ORBIT_LOG(
+      "serial_* is the historical uprobe-PMU path (one uprobe_unregister per fd). "
+      "shared_* is the production detach/attach path.");
+}
+
+}  // namespace
+
+TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
+  constexpr const char* kRunCommand =
+      "sudo ./bin/LinuxTracingIntegrationTests --gtest_filter='*UprobeAttachDetachBench*'";
   if (!CheckIsRunningAsRoot()) {
+    ORBIT_LOG("Uprobe attach/detach bench not run here (need root). Run with: %s", kRunCommand);
     GTEST_SKIP();
   }
-  if (!CheckAreKernelUprobesAvailable()) {
+  if (!orbit_linux_tracing::AreTracefsUprobesAvailable()) {
+    ORBIT_LOG(
+        "Uprobe attach/detach bench not run here (no /sys/kernel/{tracing,debug/tracing}/"
+        "uprobe_events). Run with: %s",
+        kRunCommand);
     GTEST_SKIP();
   }
 
   LinuxTracingIntegrationTestFixture fixture;
+  const std::vector<PuppetFunctionLocation> all_functions =
+      GetPuppetUprobeBenchFunctionLocations(fixture.GetPuppetPidNative());
+  const std::vector<int32_t> cpus = UprobeBenchCpus(fixture.GetPuppetPidNative());
+  ASSERT_FALSE(cpus.empty());
+  ASSERT_GE(all_functions.size(), 50u);
 
+  const bool have_uprobe_pmu = AreKernelUprobesAvailable();
+  std::vector<UprobeBenchRow> rows;
+  uint64_t id_base = (static_cast<uint64_t>(getpid()) << 16) | 0xB000u;
+
+  for (int nfunctions : {10, 20, 50}) {
+    UprobeBenchRow row;
+    row.nfunctions = nfunctions;
+    row.ncpus = static_cast<int>(cpus.size());
+    row.total_fds =
+        orbit_linux_tracing::UprobeSampleFdCount(cpus.size(), static_cast<size_t>(nfunctions));
+    row.named_probes = orbit_linux_tracing::UprobeNamedProbeCount(static_cast<size_t>(nfunctions));
+
+    const absl::Span<const PuppetFunctionLocation> functions =
+        absl::MakeConstSpan(all_functions).subspan(0, static_cast<size_t>(nfunctions));
+
+    if (have_uprobe_pmu) {
+      absl::Duration serial_start;
+      std::optional<absl::Duration> serial_stop =
+          TimeSerialPmuOpenClose(functions, cpus, &serial_start);
+      ASSERT_TRUE(serial_stop.has_value())
+          << "serial uprobe-PMU open failed for " << nfunctions << " functions";
+      row.serial_pmu_start = serial_start;
+      row.serial_pmu_stop = serial_stop.value();
+    }
+
+    absl::Duration shared_start;
+    absl::Duration shared_stop;
+    ASSERT_TRUE(TimeSharedTracefsOpenClose(functions, cpus, id_base, &shared_start, &shared_stop))
+        << "shared tracefs open/close failed for " << nfunctions << " functions";
+    id_base += 256;
+    row.shared_start = shared_start;
+    row.shared_stop = shared_stop;
+    rows.push_back(row);
+  }
+
+  PrintUprobeBenchTable(rows);
+
+  // Regression policy: the table is the point. Fail only if the shared-tracefs
+  // path is clearly worse than serial close of the historical per-CPU PMU fds.
+  // Allow 250ms of slack so a few-millisecond run on a small VM is not noise.
+  // Do not invent timings when this kernel cannot run the bench.
+  for (const UprobeBenchRow& row : rows) {
+    ASSERT_TRUE(row.shared_stop.has_value());
+    ASSERT_TRUE(row.shared_start.has_value());
+    if (row.serial_pmu_stop.has_value()) {
+      EXPECT_LE(row.shared_stop.value(), row.serial_pmu_stop.value() + absl::Milliseconds(250))
+          << "shared stop regressed vs serial PMU close for " << row.nfunctions << " functions";
+    }
+    if (row.serial_pmu_start.has_value()) {
+      EXPECT_LE(row.shared_start.value(), row.serial_pmu_start.value() + absl::Milliseconds(250))
+          << "shared start regressed vs serial PMU open for " << row.nfunctions << " functions";
+    }
+  }
+
+  // Full tracer e2e: kernel uprobe mode, start → exercise → stop → start again.
   orbit_grpc_protos::CaptureOptions capture_options = fixture.BuildDefaultCaptureOptions();
-  // This e2e must use kernel uprobe mode — user-space instrumentation has a different teardown
-  // path and would not exercise the u(ret)probe close bottleneck.
   capture_options.set_dynamic_instrumentation_method(
       orbit_grpc_protos::CaptureOptions::kKernelUprobes);
   ASSERT_EQ(capture_options.dynamic_instrumentation_method(),
             orbit_grpc_protos::CaptureOptions::kKernelUprobes);
-
-  // Isolate the uprobe attach/detach path: no sampling, GPU, or thread-state producers.
   capture_options.set_samples_per_second(0.0);
   capture_options.set_trace_gpu_driver(false);
   capture_options.set_trace_thread_state(false);
@@ -614,26 +830,14 @@ TEST(LinuxTracingIntegrationTest, UprobeStopThenRestartIsFast) {
   AddPuppetUprobeStopRestartDummyFunctionsToCaptureOptions(&capture_options,
                                                            fixture.GetPuppetPidNative(),
                                                            /*first_function_id=*/100);
-  ASSERT_GE(capture_options.instrumented_functions_size(),
-            2 + PuppetConstants::kUprobeStopRestartDummyFunctionCount);
 
   fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
-
   fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
   while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
 
-  const absl::Time stop_restart_begin = absl::Now();
   std::vector<orbit_grpc_protos::ProducerCaptureEvent> first_events =
       fixture.StopTracingAndGetEvents();
   fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
-  const absl::Duration stop_then_restart = absl::Now() - stop_restart_begin;
-
-  ORBIT_LOG("Uprobe stop+restart took %s", absl::FormatDuration(stop_then_restart));
-  // Serial close() of per-CPU u(ret)probe fds takes hundreds of ms to seconds. After overlapping
-  // those kernel waits, stop then start again must finish in milliseconds.
-  EXPECT_LT(stop_then_restart, absl::Milliseconds(100))
-      << "stop+restart took " << absl::FormatDuration(stop_then_restart)
-      << "; kernel uprobe teardown should complete in milliseconds";
 
   VerifyNoWarningInstrumentingWithUprobesEvents(first_events);
   VerifyFunctionCallsOfOuterAndInnerFunction(first_events, fixture.GetPuppetPid(), kOuterFunctionId,

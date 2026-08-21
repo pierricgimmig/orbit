@@ -8,9 +8,22 @@
 #include <absl/types/span.h>
 #include <sys/types.h>
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include "GrpcProtos/capture.pb.h"
 
 namespace orbit_linux_tracing_integration_tests {
+
+struct PuppetFunctionLocation {
+  std::string file_path;
+  uint64_t file_offset = 0;
+  std::string name;
+};
+
+// Outer, inner, then the dummy no-ops — enough for the 10 / 20 / 50 attach-detach bench.
+[[nodiscard]] std::vector<PuppetFunctionLocation> GetPuppetUprobeBenchFunctionLocations(pid_t pid);
 
 // Adds `IntegrationTestPuppet`'s functions `OuterFunctionToInstrument` and
 // `InnerFunctionToInstrument` to the `CaptureOptions` as functions to dynamically instrument.

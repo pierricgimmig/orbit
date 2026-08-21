@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -57,8 +58,7 @@ TEST(GetThreadState, LinuxTracingTestsMainAndAnother) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }};
 
-  mutex.Await(absl::Condition(
-      +[](pid_t* tid) { return *tid != -1; }, &thread_tid));
+  mutex.Await(absl::Condition(+[](pid_t* tid) { return *tid != -1; }, &thread_tid));
   mutex.Unlock();
 
   ASSERT_TRUE(thread_state_holding_mutex.has_value());
@@ -407,6 +407,21 @@ TEST(FindFunctionsThatUprobesCannotInstrumentWithMessages, ModuleNotInMaps) {
   EXPECT_TRUE(absl::StartsWith(error_message,
                                "Function \"bar()\" belongs to module \"/path/to/elf\", which is "
                                "not loaded by the process."));
+}
+
+TEST(UprobeFdCount, DocumentsPerCpuTimesFunctionsFormula) {
+  EXPECT_EQ(UprobeSampleFdCount(/*ncpus=*/8, /*nfunctions=*/10), 160);
+  EXPECT_EQ(UprobeSampleFdCount(/*ncpus=*/16, /*nfunctions=*/50), 1600);
+  EXPECT_EQ(UprobeNamedProbeCount(/*nfunctions=*/10), 20);
+  EXPECT_EQ(UprobeNamedProbeCount(/*nfunctions=*/50), 100);
+}
+
+TEST(FindTracingDirectory, DoesNotCrash) {
+  std::optional<std::filesystem::path> tracing_dir = FindTracingDirectory();
+  if (tracing_dir.has_value()) {
+    EXPECT_FALSE(tracing_dir->empty());
+  }
+  (void)AreTracefsUprobesAvailable();
 }
 
 }  // namespace orbit_linux_tracing

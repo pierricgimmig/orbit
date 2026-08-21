@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <ctime>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -35,10 +36,28 @@ std::vector<int> ParseCpusetCpus(std::string_view cpuset_cpus_content);
 
 std::vector<int> GetCpusetCpus(pid_t pid);
 
+// Returns /sys/kernel/tracing or /sys/kernel/debug/tracing when present.
+[[nodiscard]] std::optional<std::filesystem::path> FindTracingDirectory();
+
+// True when tracefs exposes uprobe_events (CONFIG_UPROBE_EVENTS).
+[[nodiscard]] bool AreTracefsUprobesAvailable();
+
 // Looks up the tracepoint id for the given category (example: "sched")
-// and name (example: "sched_waking"). Returns the tracepoint id or
-// -1 in case of any errors.
+// and name (example: "sched_waking"). Tries both tracefs roots. Returns the
+// tracepoint id or -1 in case of any errors.
 int GetTracepointId(const char* tracepoint_category, const char* tracepoint_name);
+
+// One uprobe + one uretprobe sample fd is opened per CPU per instrumented
+// function (pid=-1, cpu=N). That is the historical (and still current) sample
+// delivery count: 2 * ncpus * nfunctions.
+inline constexpr size_t UprobeSampleFdCount(size_t ncpus, size_t nfunctions) {
+  return 2 * ncpus * nfunctions;
+}
+
+// Shared tracefs registration creates one named probe per u(ret)probe, not per
+// CPU: 2 * nfunctions. Close cost of the old uprobe-PMU path scaled with
+// UprobeSampleFdCount because each PMU fd was its own uprobe_register.
+inline constexpr size_t UprobeNamedProbeCount(size_t nfunctions) { return 2 * nfunctions; }
 
 uint64_t GetMaxOpenFilesHardLimit();
 
