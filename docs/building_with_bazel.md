@@ -68,8 +68,10 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 `bazel test //...` runs 49 test targets. One does not pass.
 
 **`//src/UserSpaceInstrumentation:UserSpaceInstrumentationTests`** fails
-intermittently in `InstrumentProcessTest.Instrument` -- roughly four runs in
-five on an idle machine, and it passes under full-suite load. Injecting
+intermittently in `InstrumentProcessTest.Instrument` -- about four runs in five
+when run on its own, and two full-suite runs in three. One full run of
+`bazel test //...` has come back 49 of 49, so it is genuinely intermittent
+rather than load-determined. Injecting
 `liborbituserspaceinstrumentation.so` into the first target process always
 works; injecting into the second process the test forks sometimes leaves the
 target with no new threads at all.

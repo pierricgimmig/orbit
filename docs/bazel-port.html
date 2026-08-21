@@ -1082,7 +1082,7 @@
 
   <h3>The one failure</h3>
 
-  <p><code>InstrumentProcessTest.Instrument</code> fails on roughly four runs in five. It is a defect in the injection, not in the build &mdash; and it is a race, with the timing as the evidence.</p>
+  <p><code>InstrumentProcessTest.Instrument</code> fails on about four runs in five when run on its own, and two full-suite runs in three; one full <code>bazel test //...</code> has come back 49 of 49. It is a defect in the injection, not in the build &mdash; and it is a race, with the timing as the evidence.</p>
 
   <p>Adding two <code>ORBIT_LOG</code> calls around the body of <code>InitializeInstrumentation</code> &mdash; nothing else &mdash; makes the test pass consistently. The failure rate inverts with machine load. Waiting five times longer on the OrbitService side does not help, because the producer's threads are never created at all rather than created late.</p>
 
@@ -1090,9 +1090,9 @@
     <table>
       <thead><tr><th>Condition</th><th>Result</th></tr></thead>
       <tbody>
-        <tr><td>Idle machine, unmodified</td><td>fails 4 runs in 5</td></tr>
+        <tr><td>Run on its own, unmodified</td><td>fails 4 runs in 5</td></tr>
         <tr><td>Two log lines added around the initialisation</td><td>passes</td></tr>
-        <tr><td>Under full-suite load</td><td>passes</td></tr>
+        <tr><td>Under full-suite load</td><td>fails 2 runs in 3</td></tr>
         <tr><td>OrbitService waits 5&times; longer for the threads</td><td>still fails</td></tr>
       </tbody>
     </table>
