@@ -16,12 +16,14 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "ApiInterface/Orbit.h"
 #include "GrpcProtos/capture.pb.h"
@@ -202,6 +204,42 @@ static void CloseFileDescriptors(const absl::flat_hash_map<int32_t, int>& fds_pe
   }
 }
 
+// Run `fn(index)` for every index in [0, n). Uprobe attach/detach syscalls each wait on
+// kernel-side RCU / VMA work; overlapping them is what makes stop+restart take milliseconds
+// instead of hundreds of milliseconds to seconds.
+template <typename Fn>
+static void ParallelFor(size_t n, Fn&& fn) {
+  if (n == 0) {
+    return;
+  }
+
+  const unsigned hardware_concurrency = std::max(1u, std::thread::hardware_concurrency());
+  const size_t num_threads = std::min(static_cast<size_t>(hardware_concurrency), n);
+  std::atomic<size_t> next_index{0};
+  std::vector<std::thread> threads;
+  threads.reserve(num_threads);
+
+  for (size_t i = 0; i < num_threads; ++i) {
+    threads.emplace_back([&fn, &next_index, n] {
+      while (true) {
+        const size_t index = next_index.fetch_add(1, std::memory_order_relaxed);
+        if (index >= n) {
+          break;
+        }
+        fn(index);
+      }
+    });
+  }
+
+  for (std::thread& thread : threads) {
+    thread.join();
+  }
+}
+
+static void CloseFileDescriptorsInParallel(absl::Span<const int> fds) {
+  ParallelFor(fds.size(), [&fds](size_t index) { close(fds[index]); });
+}
+
 static void OpenRingBuffersOrRedirectOnExisting(
     const absl::flat_hash_map<int32_t, int>& fds_per_cpu,
     absl::flat_hash_map<int32_t, int>* ring_buffer_fds_per_cpu,
@@ -328,13 +366,26 @@ bool TracerImpl::OpenUserSpaceProbes(absl::Span<const int32_t> cpus) {
   ORBIT_SCOPE_FUNCTION;
   bool uprobes_event_open_errors = false;
 
-  absl::flat_hash_map<int32_t, int> fds_per_cpu_for_redirection{};
-  for (const auto& function : instrumented_functions_) {
+  struct OpenedFunctionProbes {
     absl::flat_hash_map<int32_t, int> uprobes_fds_per_cpu;
     absl::flat_hash_map<int32_t, int> uretprobes_fds_per_cpu;
+    bool success = false;
+  };
+  std::vector<OpenedFunctionProbes> opened_probes(instrumented_functions_.size());
+  ParallelFor(instrumented_functions_.size(), [this, &cpus, &opened_probes](size_t index) {
+    const auto& function = instrumented_functions_[index];
+    opened_probes[index].success =
+        OpenUprobes(function, cpus, &opened_probes[index].uprobes_fds_per_cpu) &&
+        OpenUretprobes(function, cpus, &opened_probes[index].uretprobes_fds_per_cpu);
+  });
 
-    bool success = OpenUprobes(function, cpus, &uprobes_fds_per_cpu) &&
-                   OpenUretprobes(function, cpus, &uretprobes_fds_per_cpu);
+  absl::flat_hash_map<int32_t, int> fds_per_cpu_for_redirection{};
+  for (size_t index = 0; index < instrumented_functions_.size(); ++index) {
+    const auto& function = instrumented_functions_[index];
+    auto& uprobes_fds_per_cpu = opened_probes[index].uprobes_fds_per_cpu;
+    auto& uretprobes_fds_per_cpu = opened_probes[index].uretprobes_fds_per_cpu;
+
+    bool success = opened_probes[index].success;
     if (!success) {
       CloseFileDescriptors(uprobes_fds_per_cpu);
       CloseFileDescriptors(uretprobes_fds_per_cpu);
@@ -952,17 +1003,19 @@ void TracerImpl::Shutdown() {
     ring_buffers_.clear();
   }
 
-  // Close the file descriptors.
+  // Close the file descriptors. Uprobe/uretprobe closes dominate this cost; run them concurrently.
   ORBIT_SCOPE_WITH_COLOR(absl::StrFormat("Closing %d file descriptors", num_fds).c_str(),
                          kOrbitColorRed);
+  std::vector<int> all_fds;
+  all_fds.reserve(num_fds);
   for (auto& [fd_type, fds] : tracing_fds_by_type_) {
-    std::string msg = absl::StrFormat("Closing %d %s file descriptors", fds.size(), fd_type);
-    ORBIT_SCOPE(msg.c_str());
-    ORBIT_SCOPED_TIMED_LOG("%s", msg);
-    for (int fd : fds) {
-      ORBIT_SCOPE("Closing fd");
-      close(fd);
-    }
+    ORBIT_LOG("Closing %d %s file descriptors in parallel", fds.size(), fd_type);
+    all_fds.insert(all_fds.end(), fds.begin(), fds.end());
+  }
+  {
+    ORBIT_SCOPE("CloseFileDescriptorsInParallel");
+    ORBIT_SCOPED_TIMED_LOG("Closing %d file descriptors in parallel", all_fds.size());
+    CloseFileDescriptorsInParallel(all_fds);
   }
 }
 

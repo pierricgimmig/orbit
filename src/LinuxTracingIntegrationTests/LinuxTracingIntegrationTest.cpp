@@ -583,6 +583,72 @@ TEST(LinuxTracingIntegrationTest, FunctionCalls) {
                                              kInnerFunctionId);
 }
 
+TEST(LinuxTracingIntegrationTest, UprobeStopThenRestartIsFast) {
+  if (!CheckIsRunningAsRoot()) {
+    GTEST_SKIP();
+  }
+  if (!CheckAreKernelUprobesAvailable()) {
+    GTEST_SKIP();
+  }
+
+  LinuxTracingIntegrationTestFixture fixture;
+
+  orbit_grpc_protos::CaptureOptions capture_options = fixture.BuildDefaultCaptureOptions();
+  // This e2e must use kernel uprobe mode — user-space instrumentation has a different teardown
+  // path and would not exercise the u(ret)probe close bottleneck.
+  capture_options.set_dynamic_instrumentation_method(
+      orbit_grpc_protos::CaptureOptions::kKernelUprobes);
+  ASSERT_EQ(capture_options.dynamic_instrumentation_method(),
+            orbit_grpc_protos::CaptureOptions::kKernelUprobes);
+
+  // Isolate the uprobe attach/detach path: no sampling, GPU, or thread-state producers.
+  capture_options.set_samples_per_second(0.0);
+  capture_options.set_trace_gpu_driver(false);
+  capture_options.set_trace_thread_state(false);
+  capture_options.set_trace_context_switches(true);
+
+  constexpr uint64_t kOuterFunctionId = 1;
+  constexpr uint64_t kInnerFunctionId = 2;
+  AddPuppetOuterAndInnerFunctionToCaptureOptions(&capture_options, fixture.GetPuppetPidNative(),
+                                                 kOuterFunctionId, kInnerFunctionId);
+  AddPuppetUprobeStopRestartDummyFunctionsToCaptureOptions(&capture_options,
+                                                           fixture.GetPuppetPidNative(),
+                                                           /*first_function_id=*/100);
+  ASSERT_GE(capture_options.instrumented_functions_size(),
+            2 + PuppetConstants::kUprobeStopRestartDummyFunctionCount);
+
+  fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
+
+  fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
+  while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
+
+  const absl::Time stop_restart_begin = absl::Now();
+  std::vector<orbit_grpc_protos::ProducerCaptureEvent> first_events =
+      fixture.StopTracingAndGetEvents();
+  fixture.StartTracingAndWaitForTracingLoopStarted(capture_options);
+  const absl::Duration stop_then_restart = absl::Now() - stop_restart_begin;
+
+  ORBIT_LOG("Uprobe stop+restart took %s", absl::FormatDuration(stop_then_restart));
+  // Serial close() of per-CPU u(ret)probe fds takes hundreds of ms to seconds. After overlapping
+  // those kernel waits, stop then start again must finish in milliseconds.
+  EXPECT_LT(stop_then_restart, absl::Milliseconds(100))
+      << "stop+restart took " << absl::FormatDuration(stop_then_restart)
+      << "; kernel uprobe teardown should complete in milliseconds";
+
+  VerifyNoWarningInstrumentingWithUprobesEvents(first_events);
+  VerifyFunctionCallsOfOuterAndInnerFunction(first_events, fixture.GetPuppetPid(), kOuterFunctionId,
+                                             kInnerFunctionId);
+
+  fixture.WriteLineToPuppet(PuppetConstants::kCallOuterFunctionCommand);
+  while (fixture.ReadLineFromPuppet() != PuppetConstants::kDoneResponse) continue;
+
+  std::vector<orbit_grpc_protos::ProducerCaptureEvent> second_events =
+      fixture.StopTracingAndGetEvents();
+  VerifyNoWarningInstrumentingWithUprobesEvents(second_events);
+  VerifyFunctionCallsOfOuterAndInnerFunction(second_events, fixture.GetPuppetPid(),
+                                             kOuterFunctionId, kInnerFunctionId);
+}
+
 std::pair<std::pair<uint64_t, uint64_t>, std::pair<uint64_t, uint64_t>>
 GetOuterAndInnerFunctionVirtualAddressRanges(pid_t pid) {
   const orbit_grpc_protos::ModuleInfo& module_info = GetExecutableBinaryModuleInfo(pid);

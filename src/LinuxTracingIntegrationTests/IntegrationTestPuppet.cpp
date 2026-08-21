@@ -52,6 +52,31 @@ extern "C" __attribute__((noinline)) double InnerFunctionToInstrument(uint64_t d
   return 1 + result;
 }
 
+#define ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(n)                               \
+  extern "C" __attribute__((noinline, used)) void UprobeStopRestartDummy##n() { \
+    volatile int unique = n;                                                    \
+    (void)unique;                                                               \
+  }
+
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(0)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(1)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(2)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(3)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(4)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(5)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(6)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(7)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(8)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(9)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(10)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(11)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(12)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(13)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(14)
+ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY(15)
+
+#undef ORBIT_DEFINE_UPROBE_STOP_RESTART_DUMMY
+
 extern "C" __attribute__((noinline)) uint64_t OuterFunctionToInstrument() {
   for (uint64_t i = 0; i < PuppetConstants::kInnerFunctionCallCount; ++i) {
     ORBIT_LOG("InnerFunctionToInstrument returned: %f",

@@ -24,6 +24,11 @@ struct IntegrationTestPuppetConstants {
   constexpr static std::array<uint64_t, 6> kInnerFunctionCallArgs = {1, 2, 3, 4, 5, 6};
   constexpr static const char* kInnerFunctionName = "InnerFunctionToInstrument";
 
+  // Extra no-op functions used by the uprobe stop/restart e2e to attach enough probes that a
+  // serial close() teardown would take hundreds of milliseconds.
+  constexpr static int kUprobeStopRestartDummyFunctionCount = 16;
+  constexpr static const char* kUprobeStopRestartDummyFunctionNamePrefix = "UprobeStopRestartDummy";
+
   constexpr static const char* kNewThreadName = "Thread Name";
 
   constexpr static const char* kSharedObjectFileName = "libIntegrationTestPuppetSharedObject.so";

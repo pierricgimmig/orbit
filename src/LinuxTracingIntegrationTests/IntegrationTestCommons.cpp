@@ -68,6 +68,31 @@ void AddPuppetOuterAndInnerFunctionToCaptureOptions(
   ORBIT_CHECK(inner_function_symbol_found);
 }
 
+void AddPuppetUprobeStopRestartDummyFunctionsToCaptureOptions(
+    orbit_grpc_protos::CaptureOptions* capture_options, pid_t pid, uint64_t first_function_id) {
+  const orbit_grpc_protos::ModuleInfo& module_info = GetExecutableBinaryModuleInfo(pid);
+  const orbit_grpc_protos::ModuleSymbols& module_symbols = GetExecutableBinaryModuleSymbols(pid);
+  const std::filesystem::path& executable_path = GetExecutableBinaryPath(pid);
+
+  int dummy_functions_found = 0;
+  for (const orbit_grpc_protos::SymbolInfo& symbol : module_symbols.symbol_infos()) {
+    if (!absl::StrContains(symbol.demangled_name(),
+                           PuppetConstants::kUprobeStopRestartDummyFunctionNamePrefix)) {
+      continue;
+    }
+    orbit_grpc_protos::InstrumentedFunction instrumented_function;
+    instrumented_function.set_file_path(executable_path);
+    instrumented_function.set_file_offset(symbol.address() - module_info.load_bias());
+    instrumented_function.set_function_id(first_function_id + dummy_functions_found);
+    instrumented_function.set_function_virtual_address(symbol.address());
+    instrumented_function.set_function_size(symbol.size());
+    instrumented_function.set_function_name(symbol.demangled_name());
+    capture_options->mutable_instrumented_functions()->Add(std::move(instrumented_function));
+    ++dummy_functions_found;
+  }
+  ORBIT_CHECK(dummy_functions_found == PuppetConstants::kUprobeStopRestartDummyFunctionCount);
+}
+
 void VerifyFunctionCallsOfPuppetOuterAndInnerFunction(
     absl::Span<const orbit_grpc_protos::FunctionCall> function_calls, uint32_t pid,
     uint64_t outer_function_id, uint64_t inner_function_id,

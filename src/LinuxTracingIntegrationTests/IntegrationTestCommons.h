@@ -19,6 +19,11 @@ void AddPuppetOuterAndInnerFunctionToCaptureOptions(
     orbit_grpc_protos::CaptureOptions* capture_options, pid_t pid, uint64_t outer_function_id,
     uint64_t inner_function_id);
 
+// Adds `kUprobeStopRestartDummyFunctionCount` no-op functions from `IntegrationTestPuppet` to
+// `capture_options` so that stop/restart exercises closing many u(ret)probe file descriptors.
+void AddPuppetUprobeStopRestartDummyFunctionsToCaptureOptions(
+    orbit_grpc_protos::CaptureOptions* capture_options, pid_t pid, uint64_t first_function_id);
+
 // Verifies the expectations on the number and content of the `FunctionCall` events produced when
 // dynamically instrumenting `IntegrationTestPuppet`'s functions `OuterFunctionToInstrument` and
 // `InnerFunctionToInstrument`.
