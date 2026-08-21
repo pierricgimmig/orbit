@@ -7,6 +7,7 @@
 #include <absl/hash/hash.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
+#include <absl/strings/str_format.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
@@ -14,15 +15,22 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
+#include <climits>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -730,46 +738,174 @@ struct UprobeBenchRow {
   return true;
 }
 
-void PrintUprobeBenchTable(absl::Span<const UprobeBenchRow> rows) {
-  ORBIT_LOG("Uprobe attach/detach bench (close/teardown and reattach only):");
-  ORBIT_LOG("%10s %7s %10s %8s %13s %16s %16s %16s %16s %16s %16s", "nfunctions", "ncpus",
-            "percpu_fds", "proc_fds", "named_probes", "percpu_start", "percpu_stop", "proc_start",
-            "proc_stop", "shared_start", "shared_stop");
-  for (const UprobeBenchRow& row : rows) {
-    ORBIT_LOG(
-        "%10d %7d %10zu %8zu %13zu %16s %16s %16s %16s %16s %16s", row.nfunctions, row.ncpus,
-        row.percpu_fds, row.proc_fds, row.named_probes,
-        row.percpu_pmu_start.has_value() ? absl::FormatDuration(row.percpu_pmu_start.value())
-                                         : "n/a",
-        row.percpu_pmu_stop.has_value() ? absl::FormatDuration(row.percpu_pmu_stop.value()) : "n/a",
-        row.proc_pmu_start.has_value() ? absl::FormatDuration(row.proc_pmu_start.value()) : "n/a",
-        row.proc_pmu_stop.has_value() ? absl::FormatDuration(row.proc_pmu_stop.value()) : "n/a",
-        row.shared_start.has_value() ? absl::FormatDuration(row.shared_start.value()) : "n/a",
-        row.shared_stop.has_value() ? absl::FormatDuration(row.shared_stop.value()) : "n/a");
+[[nodiscard]] bool IsUprobeBenchEnabled() {
+  const char* value = std::getenv("ORBIT_UPROBE_BENCH");
+  if (value == nullptr || value[0] == '\0') {
+    return false;
   }
-  ORBIT_LOG("percpu_fds = 2 * ncpus * nfunctions  (pid=-1, cpu=0..N-1; each PMU fd is its own");
-  ORBIT_LOG("  create_local_trace_uprobe; close holds event_mutex for VMA walk + 2-3 RCU GPs).");
-  ORBIT_LOG("proc_fds   = 2 * nfunctions          (pid=target, cpu=-1). Fewer fds, but only that");
-  ORBIT_LOG("  tid is sampled; inherit misses existing threads and cannot mmap a ring buffer.");
-  ORBIT_LOG("named_probes = 2 * nfunctions        (shared tracefs registration; production path).");
-  ORBIT_LOG("shared_* is define+TRACEPOINT open / close+undefine. Do not invent timings.");
+  std::string lowered(value);
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return lowered == "1" || lowered == "true" || lowered == "yes";
+}
+
+[[nodiscard]] std::string KernelRelease() {
+  utsname info{};
+  if (uname(&info) != 0) {
+    return "unknown";
+  }
+  return info.release;
+}
+
+[[nodiscard]] std::string UprobeBenchCommand() {
+  char exe[PATH_MAX];
+  const ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+  const std::string bin =
+      n > 0 ? std::string(exe, static_cast<size_t>(n)) : "LinuxTracingIntegrationTests";
+  return absl::StrFormat("sudo ORBIT_UPROBE_BENCH=1 %s --gtest_filter='*UprobeAttachDetachBench*'",
+                         bin);
+}
+
+[[nodiscard]] std::string FormatMs(const std::optional<absl::Duration>& duration) {
+  if (!duration.has_value()) {
+    return "n/a";
+  }
+  return absl::StrFormat("%.1f ms", absl::ToDoubleMilliseconds(duration.value()));
+}
+
+[[nodiscard]] std::string FormatStopSpeedup(const UprobeBenchRow& row) {
+  if (!row.percpu_pmu_stop.has_value() || !row.shared_stop.has_value()) {
+    return "n/a";
+  }
+  const double shared_ms = absl::ToDoubleMilliseconds(row.shared_stop.value());
+  if (shared_ms <= 0.0) {
+    return "n/a";
+  }
+  return absl::StrFormat("%.1fx",
+                         absl::ToDoubleMilliseconds(row.percpu_pmu_stop.value()) / shared_ms);
+}
+
+constexpr absl::Duration kUprobeBenchRegressionSlack = absl::Milliseconds(250);
+
+[[nodiscard]] bool RowMeetsRegressionPolicy(const UprobeBenchRow& row) {
+  if (!row.percpu_pmu_start.has_value() || !row.percpu_pmu_stop.has_value() ||
+      !row.shared_start.has_value() || !row.shared_stop.has_value()) {
+    return true;
+  }
+  return row.shared_start.value() <= row.percpu_pmu_start.value() + kUprobeBenchRegressionSlack &&
+         row.shared_stop.value() <= row.percpu_pmu_stop.value() + kUprobeBenchRegressionSlack;
+}
+
+void WriteAndPrintReport(const std::string& text) {
+  std::cout << text << std::flush;
+  constexpr const char* kReportPath = "uprobe_attach_detach_bench.txt";
+  std::ofstream out(kReportPath);
+  if (out) {
+    out << text;
+  } else {
+    ORBIT_ERROR("Could not write %s", kReportPath);
+  }
+}
+
+void PrintUprobeBenchReport(absl::Span<const UprobeBenchRow> rows, bool have_uprobe_pmu,
+                            bool have_tracefs, bool verdict_pass, std::string_view verdict_detail,
+                            std::string_view command) {
+  std::ostringstream out;
+  out << "=== Orbit uprobe attach/detach bench ===\n";
+  out << "kernel:     " << KernelRelease() << "\n";
+  out << "ncpus:      " << orbit_linux_tracing::GetNumCores();
+  if (!rows.empty() && rows.front().ncpus != orbit_linux_tracing::GetNumCores()) {
+    out << " (cpuset " << rows.front().ncpus << ")";
+  }
+  out << "\n";
+  out << "pid model:  production samples use pid=-1,cpu=N (every thread, every core).\n";
+  out << "            pid=target,cpu=-1 is a fewer-fd experiment only (single tid + inherit).\n";
+  out << "uprobe PMU: " << (have_uprobe_pmu ? "available" : "NOT available") << "\n";
+  out << "tracefs:    " << (have_tracefs ? "available" : "NOT available") << "\n";
+  out << "\n";
+  out << absl::StrFormat("%10s %7s %12s %13s %13s %13s %13s %13s %12s\n", "nfunctions", "ncpus",
+                         "percpu_fds", "named_probes", "percpu_start", "percpu_stop",
+                         "shared_start", "shared_stop", "speedup");
+  for (const UprobeBenchRow& row : rows) {
+    out << absl::StrFormat("%10d %7d %12zu %13zu %13s %13s %13s %13s %12s\n", row.nfunctions,
+                           row.ncpus, row.percpu_fds, row.named_probes,
+                           FormatMs(row.percpu_pmu_start), FormatMs(row.percpu_pmu_stop),
+                           FormatMs(row.shared_start), FormatMs(row.shared_stop),
+                           FormatStopSpeedup(row));
+  }
+  out << "percpu_fds = 2×F×NCPU; named_probes = 2×F. speedup = percpu_stop / shared_stop.\n";
+  out << "\n";
+  out << "pid=target,cpu=-1 (experiment, 2×F fds; not production):\n";
+  out << absl::StrFormat("%10s %13s %13s\n", "nfunctions", "start", "stop");
+  if (have_uprobe_pmu) {
+    for (const UprobeBenchRow& row : rows) {
+      out << absl::StrFormat("%10d %13s %13s\n", row.nfunctions, FormatMs(row.proc_pmu_start),
+                             FormatMs(row.proc_pmu_stop));
+    }
+  } else {
+    out << "n/a (uprobe PMU not available)\n";
+  }
+  out << "\n";
+  out << "legend: percpu = historical local PMU (event_mutex × fds); "
+         "shared = production (one tracefs unregister per function)\n";
+  out << "verdict: " << (verdict_pass ? "PASS" : "FAIL");
+  if (!verdict_detail.empty()) {
+    out << " (" << verdict_detail << ")";
+  }
+  out << "\n";
+  out << "command: " << command << "\n";
+  WriteAndPrintReport(out.str());
 }
 
 }  // namespace
 
+// Opt-in 10/20/50 attach/detach bench + tracer e2e (start/stop/start + function-call check).
+// Off by default even as root. Enable with ORBIT_UPROBE_BENCH=1 (also true/yes).
+//
+// clang-format off
+//   ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh
+//   # or: sudo ORBIT_UPROBE_BENCH=1 ./bin/LinuxTracingIntegrationTests --gtest_filter='*UprobeAttachDetachBench*'
+// clang-format on
+//
+// Writes a pasteable table to stdout and ./uprobe_attach_detach_bench.txt.
 TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
-  constexpr const char* kRunCommand =
-      "sudo ./bin/LinuxTracingIntegrationTests --gtest_filter='*UprobeAttachDetachBench*'";
-  if (!CheckIsRunningAsRoot()) {
-    ORBIT_LOG("Uprobe attach/detach bench not run here (need root). Run with: %s", kRunCommand);
-    GTEST_SKIP();
+  const std::string command = UprobeBenchCommand();
+  if (!IsUprobeBenchEnabled()) {
+    GTEST_SKIP() << "set ORBIT_UPROBE_BENCH=1 (or run "
+                    "./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh)";
   }
-  if (!orbit_linux_tracing::AreTracefsUprobesAvailable()) {
-    ORBIT_LOG(
-        "Uprobe attach/detach bench not run here (no /sys/kernel/{tracing,debug/tracing}/"
-        "uprobe_events). Run with: %s",
-        kRunCommand);
-    GTEST_SKIP();
+
+  const bool is_root = IsRunningAsRoot();
+  const bool have_tracefs = orbit_linux_tracing::AreTracefsUprobesAvailable();
+  if (!is_root || !have_tracefs) {
+    std::string missing;
+    if (!is_root) {
+      missing += absl::StrFormat("root (euid=%d)", static_cast<int>(geteuid()));
+    }
+    if (!have_tracefs) {
+      if (!missing.empty()) {
+        missing += " and ";
+      }
+      missing +=
+          "tracefs uprobe_events (/sys/kernel/tracing/uprobe_events or "
+          "/sys/kernel/debug/tracing/uprobe_events)";
+    }
+    std::ostringstream fail;
+    fail << "=== Orbit uprobe attach/detach bench ===\n";
+    fail << "kernel:     " << KernelRelease() << "\n";
+    fail << "ncpus:      " << orbit_linux_tracing::GetNumCores() << "\n";
+    fail << "uprobe PMU: " << (AreKernelUprobesAvailable() ? "available" : "NOT available") << "\n";
+    fail << "tracefs:    " << (have_tracefs ? "available" : "NOT available") << "\n";
+    fail << "verdict: FAIL (ORBIT_UPROBE_BENCH is on, but this machine cannot run the bench)\n";
+    fail << "missing: " << missing << "\n";
+    fail << "command: " << command << "\n";
+    fail << "or:      ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh\n";
+    WriteAndPrintReport(fail.str());
+    FAIL() << "ORBIT_UPROBE_BENCH is on, but this machine cannot run the bench.\n"
+           << "missing: " << missing << "\n"
+           << "run: ./src/LinuxTracingIntegrationTests/run_uprobe_attach_detach_bench.sh\n"
+           << "or: " << command;
+    return;
   }
 
   LinuxTracingIntegrationTestFixture fixture;
@@ -823,21 +959,40 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
     rows.push_back(row);
   }
 
-  PrintUprobeBenchTable(rows);
+  bool verdict_pass = true;
+  std::string verdict_detail;
+  if (!have_uprobe_pmu) {
+    verdict_detail =
+        "shared path completed; percpu PMU unavailable so regression comparison was skipped";
+  } else {
+    for (const UprobeBenchRow& row : rows) {
+      if (!RowMeetsRegressionPolicy(row)) {
+        verdict_pass = false;
+        verdict_detail = absl::StrFormat(
+            "shared start/stop is >250ms worse than percpu PMU for %d functions", row.nfunctions);
+        break;
+      }
+    }
+    if (verdict_pass) {
+      verdict_detail = "shared start/stop is not >250ms worse than percpu PMU";
+    }
+  }
+  PrintUprobeBenchReport(rows, have_uprobe_pmu, have_tracefs, verdict_pass, verdict_detail,
+                         command);
 
-  // Regression policy: the table is the point. Fail only if the shared-tracefs
-  // path is clearly worse than serial close of the historical per-CPU PMU fds.
-  // Allow 250ms of slack so a few-millisecond run on a small VM is not noise.
-  // Do not invent timings when this kernel cannot run the bench.
+  // Regression policy: fail only if the shared-tracefs path is clearly worse
+  // than serial close of the historical per-CPU PMU fds. Allow 250ms of slack
+  // so a few-millisecond run on a small VM is not noise. Do not invent timings.
   for (const UprobeBenchRow& row : rows) {
     ASSERT_TRUE(row.shared_stop.has_value());
     ASSERT_TRUE(row.shared_start.has_value());
     if (row.percpu_pmu_stop.has_value()) {
-      EXPECT_LE(row.shared_stop.value(), row.percpu_pmu_stop.value() + absl::Milliseconds(250))
+      EXPECT_LE(row.shared_stop.value(), row.percpu_pmu_stop.value() + kUprobeBenchRegressionSlack)
           << "shared stop regressed vs per-CPU PMU close for " << row.nfunctions << " functions";
     }
     if (row.percpu_pmu_start.has_value()) {
-      EXPECT_LE(row.shared_start.value(), row.percpu_pmu_start.value() + absl::Milliseconds(250))
+      EXPECT_LE(row.shared_start.value(),
+                row.percpu_pmu_start.value() + kUprobeBenchRegressionSlack)
           << "shared start regressed vs per-CPU PMU open for " << row.nfunctions << " functions";
     }
   }
