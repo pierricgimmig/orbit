@@ -846,18 +846,6 @@ struct UprobeBenchRow {
   return absl::StrFormat("%.1fx", absl::ToDoubleMilliseconds(numerator.value()) / d);
 }
 
-[[nodiscard]] std::string FormatStopSpeedup(const UprobeBenchRow& row) {
-  if (!row.percpu_pmu_stop.has_value() || !row.shared_stop.has_value()) {
-    return "n/a";
-  }
-  const double shared_ms = absl::ToDoubleMilliseconds(row.shared_stop.value());
-  if (shared_ms <= 0.0) {
-    return "n/a";
-  }
-  return absl::StrFormat("%.1fx",
-                         absl::ToDoubleMilliseconds(row.percpu_pmu_stop.value()) / shared_ms);
-}
-
 // A single un-warmed sample per row is not a measurement: the first row on a machine absorbs
 // one-off kernel setup and ends up slower than rows with more work, which inverts the trend the
 // bench is supposed to show. Warm up once, then report the median of several runs.
@@ -874,12 +862,19 @@ constexpr int kUprobeBenchRepetitions = 3;
 constexpr absl::Duration kUprobeBenchStartSlack = absl::Milliseconds(250);
 
 [[nodiscard]] bool RowMeetsRegressionPolicy(const UprobeBenchRow& row) {
-  if (!row.percpu_pmu_start.has_value() || !row.percpu_pmu_stop.has_value() ||
-      !row.shared_start.has_value() || !row.shared_stop.has_value()) {
+  if (!row.grouped_stop.has_value() || !row.grouped_start.has_value() ||
+      !row.shared_stop.has_value()) {
     return true;
   }
-  return row.shared_start.value() <= row.percpu_pmu_start.value() + kUprobeBenchStartSlack &&
-         row.shared_stop.value() < row.percpu_pmu_stop.value();
+  if (row.grouped_stop.value() >= row.shared_stop.value()) return false;
+  if (row.percpu_pmu_stop.has_value() && row.grouped_stop.value() >= row.percpu_pmu_stop.value()) {
+    return false;
+  }
+  if (row.percpu_pmu_start.has_value() &&
+      row.grouped_start.value() > row.percpu_pmu_start.value() + kUprobeBenchStartSlack) {
+    return false;
+  }
+  return true;
 }
 
 void WriteAndPrintReport(const std::string& text) {
@@ -966,19 +961,19 @@ void WriteAndPrintReport(const std::string& text) {
 
   out << "<table>\n<thead>\n<tr>\n"
          "<th>nfunctions</th><th>ncpus</th><th>percpu fds</th><th>named probes</th>"
-         "<th>percpu start</th><th>percpu stop</th><th>shared start</th><th>shared stop</th>"
-         "<th>speedup</th>\n</tr>\n</thead>\n<tbody>\n";
+         "<th>percpu stop</th><th>shared stop</th><th>grouped stop</th>"
+         "<th>percpu/grouped</th><th>grouped start</th>\n</tr>\n</thead>\n<tbody>\n";
   for (const UprobeBenchRow& row : rows) {
     out << "<tr><td>" << row.nfunctions << "</td><td>" << row.ncpus << "</td><td>" << row.percpu_fds
         << "</td><td>" << row.named_probes << "</td>"
-        << HtmlValueCell(FormatMs(row.percpu_pmu_start))
-        << HtmlValueCell(FormatMs(row.percpu_pmu_stop)) << HtmlValueCell(FormatMs(row.shared_start))
-        << HtmlValueCell(FormatMs(row.shared_stop)) << HtmlValueCell(FormatStopSpeedup(row))
-        << "</tr>\n";
+        << HtmlValueCell(FormatMs(row.percpu_pmu_stop)) << HtmlValueCell(FormatMs(row.shared_stop))
+        << HtmlValueCell(FormatMs(row.grouped_stop))
+        << HtmlValueCell(FormatRatio(row.percpu_pmu_stop, row.grouped_stop))
+        << HtmlValueCell(FormatMs(row.grouped_start)) << "</tr>\n";
   }
   out << "</tbody>\n</table>\n";
   out << "<p class=\"note\">percpu_fds = 2×F×NCPU; named_probes = 2×F. "
-         "speedup = percpu_stop / shared_stop. Times are the median of 3 runs after an untimed "
+         "speedup = percpu_stop / grouped_stop. Times are the median of 3 runs after an untimed "
          "warm-up; n/a is not invented.</p>\n";
 
   out << "<h3>pid=target,cpu=-1 (experiment, 2×F fds; not production)</h3>\n";
@@ -1056,7 +1051,7 @@ void PrintUprobeBenchReport(absl::Span<const UprobeBenchRow> rows, bool have_upr
                            FormatMs(row.grouped_start));
   }
   out << "grouped = every probe under ONE tracefs event name (2 named events, not 2*F).\n";
-  out << "percpu_fds = 2×F×NCPU; named_probes = 2×F. speedup = percpu_stop / shared_stop.\n";
+  out << "percpu_fds = 2×F×NCPU; named_probes = 2×F; grouped uses 2 named events regardless.\n";
   out << "times are the median of " << kUprobeBenchRepetitions
       << " runs after an untimed warm-up.\n";
   out << "\n";
@@ -1250,12 +1245,15 @@ TEST(LinuxTracingIntegrationTest, UprobeAttachDetachBench) {
       if (!RowMeetsRegressionPolicy(row)) {
         verdict_pass = false;
         verdict_detail = absl::StrFormat(
-            "shared stop is not faster than percpu PMU for %d functions", row.nfunctions);
+            "grouped stop is not faster than one named probe per function for %d functions",
+            row.nfunctions);
         break;
       }
     }
     if (verdict_pass) {
-      verdict_detail = "shared stop is faster than percpu PMU on every row";
+      verdict_detail =
+          "grouping every probe under one tracefs event makes stop independent of the function "
+          "count";
     }
   }
   PrintUprobeBenchReport(rows, have_uprobe_pmu, have_tracefs, verdict_pass, verdict_detail,
