@@ -1,0 +1,35 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ClientServices",
+    srcs = [
+        "CrashManager.cpp",
+        "ProcessClient.cpp",
+        "ProcessManager.cpp",
+        "TracepointServiceClient.cpp",
+        "WindowsProcessLauncherClient.cpp",
+    ],
+    hdrs = [
+        "include/ClientServices/CrashManager.h",
+        "include/ClientServices/ProcessClient.h",
+        "include/ClientServices/ProcessManager.h",
+        "include/ClientServices/TracepointServiceClient.h",
+        "include/ClientServices/WindowsProcessLauncherClient.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/ClientServices",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/OrbitBase",
+    ],
+)

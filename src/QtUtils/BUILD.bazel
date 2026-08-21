@@ -1,0 +1,74 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "QtUtils",
+    srcs = [
+        "ExecuteProcess.cpp",
+        "MainThreadExecutor.cpp",
+        "SingleThreadExecutor.cpp",
+        "Throttle.cpp",
+    ],
+    hdrs = [
+        "include/QtUtils/AssertNoQtLogWarnings.h",
+        "include/QtUtils/CreateTimeout.h",
+        "include/QtUtils/ExecuteProcess.h",
+        "include/QtUtils/WaitFor.h",
+    ],
+    moc_hdrs = [
+        "include/QtUtils/EventLoop.h",
+        "include/QtUtils/MainThreadExecutor.h",
+        "include/QtUtils/SingleThreadExecutor.h",
+        "include/QtUtils/Throttle.h",
+    ],
+    copts = ORBIT_COPTS,
+    include_dirs = ["include"],
+    deps = [
+        "//src/Introspection",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+        "@abseil-cpp//absl/types:span",
+        "@googletest//:gtest",
+        "@qt5//:Core",
+    ],
+)
+
+cc_binary(
+    name = "FakeCliProgram",
+    srcs = ["FakeCliProgram/main.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+    ],
+)
+
+qt_cc_test(
+    name = "QtUtilsTests",
+    srcs = [
+        "CreateTimeoutTest.cpp",
+        "EventLoopTest.cpp",
+        "ExecuteProcessTest.cpp",
+        "MainThreadExecutorTest.cpp",
+        "SingleThreadExecutorTest.cpp",
+        "ThrottleTest.cpp",
+        "WaitForTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = [":FakeCliProgram"],
+    deps = [
+        "//src/QtTestUtils",
+        "//src/QtUtils",
+        "//src/Test:gtest_qtcore_main",
+        "//src/TestUtils",
+    ],
+)

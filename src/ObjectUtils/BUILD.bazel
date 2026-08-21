@@ -1,0 +1,70 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ObjectUtils",
+    srcs = [
+        "CoffFile.cpp",
+        "ElfFile.cpp",
+        "ObjectFile.cpp",
+        "PdbFile.cpp",
+        "PdbFileLlvm.cpp",
+        "SymbolsFile.cpp",
+        "WindowsBuildIdUtils.cpp",
+    ],
+    hdrs = [
+        "PdbFileDia.h",
+        "PdbFileLlvm.h",
+        "include/ObjectUtils/CoffFile.h",
+        "include/ObjectUtils/ElfFile.h",
+        "include/ObjectUtils/ObjectFile.h",
+        "include/ObjectUtils/PdbFile.h",
+        "include/ObjectUtils/PdbUtilsDia.h",
+        "include/ObjectUtils/SymbolsFile.h",
+        "include/ObjectUtils/WindowsBuildIdUtils.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//bazel/deps:llvm",
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/memory:memory",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+        "@abseil-cpp//absl/types:span",
+    ],
+)
+
+cc_test(
+    name = "ObjectUtilsTests",
+    srcs = [
+        "CoffFileTest.cpp",
+        "ElfFileTest.cpp",
+        "ObjectFileTest.cpp",
+        "PdbFileLlvmTest.cpp",
+        "PdbFileTest.h",
+        "SymbolsFileTest.cpp",
+        "WindowsBuildIdUtilsTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/ObjectUtils/testdata"},
+    deps = [
+        "//src/ObjectUtils",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

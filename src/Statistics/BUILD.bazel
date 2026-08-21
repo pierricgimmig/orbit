@@ -1,0 +1,47 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "Statistics",
+    srcs = [
+        "BinomialConfidenceInterval.cpp",
+        "DataSet.cpp",
+        "Histogram.cpp",
+        "HistogramUtils.cpp",
+    ],
+    hdrs = [
+        "HistogramUtils.h",
+        "include/Statistics/BinomialConfidenceInterval.h",
+        "include/Statistics/DataSet.h",
+        "include/Statistics/Gaussian.h",
+        "include/Statistics/Histogram.h",
+        "include/Statistics/MultiplicityCorrection.h",
+        "include/Statistics/StatisticsUtils.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = ["//src/OrbitBase"],
+)
+
+cc_test(
+    name = "StatisticsTests",
+    srcs = [
+        "GaussianTest.cpp",
+        "HistogramTest.cpp",
+        "MultiplicityCorrectionTest.cpp",
+        "StatisticsUtilTest.cpp",
+        "WilsonBinomialConfidenceIntervalEstimatorTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/Statistics",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

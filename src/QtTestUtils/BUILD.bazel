@@ -1,0 +1,33 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "QtTestUtils",
+    hdrs = ["include/QtTestUtils/WaitForWithTimeout.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "//src/QtUtils",
+        "@qt5//:Core",
+        "@qt5//:Test",
+    ],
+)
+
+qt_cc_test(
+    name = "QtTestUtilsTests",
+    srcs = ["WaitForWithTimeoutTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/QtTestUtils",
+        "//src/Test:gtest_qtcore_main",
+        "//src/TestUtils",
+    ],
+)

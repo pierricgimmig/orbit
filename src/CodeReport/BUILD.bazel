@@ -1,0 +1,57 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "CodeReport",
+    srcs = [
+        "AnnotateDisassembly.cpp",
+        "Disassembler.cpp",
+        "DisassemblyReport.cpp",
+        "SourceCodeReport.cpp",
+    ],
+    hdrs = [
+        "include/CodeReport/AnnotateDisassembly.h",
+        "include/CodeReport/AnnotatingLine.h",
+        "include/CodeReport/CodeReport.h",
+        "include/CodeReport/Disassembler.h",
+        "include/CodeReport/DisassemblyReport.h",
+        "include/CodeReport/SourceCodeReport.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/ClientData",
+        "//src/GrpcProtos",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/strings:strings",
+        "@capstone//:capstone",
+    ],
+)
+
+cc_test(
+    name = "CodeReportTests",
+    srcs = [
+        "AnnotateDisassemblyTest.cpp",
+        "AssemblyTestLiterals.h",
+        "DisassemblerTest.cpp",
+        "DisassemblyReportTest.cpp",
+        "SourceCodeReportTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/CodeReport/testdata"},
+    deps = [
+        "//src/CodeReport",
+        "//src/ModuleUtils",
+        "//src/SymbolProvider",
+        "//src/Test:gtest_main",
+    ],
+)

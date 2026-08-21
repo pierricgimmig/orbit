@@ -1,0 +1,50 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "CaptureFileInfo",
+    srcs = [
+        "CaptureFileInfo.cpp",
+        "ItemModel.cpp",
+        "Manager.cpp",
+    ],
+    hdrs = [
+        "include/CaptureFileInfo/CaptureFileInfo.h",
+        "include/CaptureFileInfo/Manager.h",
+    ],
+    moc_hdrs = ["include/CaptureFileInfo/ItemModel.h"],
+    copts = ORBIT_COPTS,
+    include_dirs = ["include"],
+    deps = [
+        "//src/DisplayFormats",
+        "//src/OrbitBase",
+        "//src/OrbitPaths",
+        "@qt5//:Widgets",
+    ],
+)
+
+qt_cc_test(
+    name = "CaptureFileInfoTests",
+    srcs = [
+        "CaptureFileInfoTest.cpp",
+        "ItemModelTest.cpp",
+        "ManagerTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/CaptureFileInfo/testdata"},
+    deps = [
+        "//src/CaptureFileInfo",
+        "//src/ClientFlags",
+        "//src/QtUtils",
+        "//src/Test:gtest_qtgui_main",
+        "//src/TestUtils",
+        "@qt5//:Test",
+    ],
+)

@@ -1,0 +1,17 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/proto:rules.bzl", "orbit_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+orbit_proto_library(
+    name = "ClientProtos",
+    srcs = [
+        "capture_data.proto",
+        "preset.proto",
+        "user_defined_capture_info.proto",
+    ],
+    prefix = "ClientProtos",
+)

@@ -1,0 +1,68 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "OrbitSshQt",
+    srcs = [
+        "Error.cpp",
+        "Session.cpp",
+        "SftpChannel.cpp",
+        "SftpCopyToLocalOperation.cpp",
+        "SftpCopyToRemoteOperation.cpp",
+        "Task.cpp",
+        "Tunnel.cpp",
+    ],
+    hdrs = [
+        "include/OrbitSshQt/Error.h",
+        "include/OrbitSshQt/ScopedConnection.h",
+        "include/OrbitSshQt/StateMachineHelper.h",
+    ],
+    moc_hdrs = [
+        "include/OrbitSshQt/Session.h",
+        "include/OrbitSshQt/SftpChannel.h",
+        "include/OrbitSshQt/SftpCopyToLocalOperation.h",
+        "include/OrbitSshQt/SftpCopyToRemoteOperation.h",
+        "include/OrbitSshQt/Task.h",
+        "include/OrbitSshQt/Tunnel.h",
+    ],
+    copts = ORBIT_COPTS,
+    include_dirs = ["include"],
+    deps = [
+        "//src/Introspection",
+        "//src/OrbitBase",
+        "//src/OrbitSsh",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/strings:str_format",
+        "@qt5//:Core",
+        "@qt5//:Network",
+    ],
+)
+
+qt_cc_test(
+    name = "OrbitSshQtTests",
+    srcs = [
+        "SessionTest.cpp",
+        "SftpChannelTest.cpp",
+        "SftpCopyToLocalOperationTest.cpp",
+        "SftpCopyToRemoteOperationTest.cpp",
+        "SftpTestFixture.h",
+        "TaskTest.cpp",
+        "TunnelTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/OrbitSshQt/testdata"},
+    deps = [
+        "//src/OrbitSshQt",
+        "//src/QtTestUtils",
+        "//src/SshQtTestUtils",
+        "//src/Test:gtest_qtcore_main",
+        "//src/TestUtils",
+    ],
+)

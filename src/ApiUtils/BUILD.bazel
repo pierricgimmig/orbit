@@ -1,0 +1,39 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ApiUtils",
+    srcs = [
+        "EncodedString.cpp",
+        "Event.cpp",
+    ],
+    hdrs = [
+        "include/ApiUtils/ApiEnableInfo.h",
+        "include/ApiUtils/EncodedString.h",
+        "include/ApiUtils/Event.h",
+        "include/ApiUtils/GetFunctionTableAddressPrefix.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/ApiInterface",
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_test(
+    name = "ApiUtilsTests",
+    srcs = ["EncodedStringTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ApiUtils",
+        "//src/Test:gtest_main",
+    ],
+)

@@ -1,0 +1,41 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "RemoteSymbolProvider",
+    srcs = ["MicrosoftSymbolServerSymbolProvider.cpp"],
+    hdrs = ["include/RemoteSymbolProvider/MicrosoftSymbolServerSymbolProvider.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/Http",
+        "//src/OrbitBase",
+        "//src/QtUtils",
+        "//src/SymbolProvider",
+        "//src/Symbols",
+    ],
+)
+
+qt_cc_test(
+    name = "RemoteSymbolProviderTests",
+    srcs = [
+        "MicrosoftSymbolServerSymbolProviderIntegrationTest.cpp",
+        "MicrosoftSymbolServerSymbolProviderTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/GrpcProtos",
+        "//src/ObjectUtils",
+        "//src/RemoteSymbolProvider",
+        "//src/Test:gtest_qtcore_main",
+        "//src/TestUtils",
+        "@qt5//:Core",
+    ],
+)

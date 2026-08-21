@@ -1,0 +1,34 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("//bazel/proto:rules.bzl", "orbit_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+orbit_proto_library(
+    name = "protos",
+    srcs = [
+        "capture.proto",
+        "code_block.proto",
+        "module.proto",
+        "process.proto",
+        "producer_side_services.proto",
+        "services.proto",
+        "services_ggp.proto",
+        "symbol.proto",
+        "tracepoint.proto",
+    ],
+    grpc = True,
+    prefix = "GrpcProtos",
+)
+
+cc_library(
+    name = "GrpcProtos",
+    hdrs = ["include/GrpcProtos/Constants.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [":protos"],
+)

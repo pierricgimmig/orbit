@@ -1,0 +1,60 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "CaptureFile",
+    srcs = [
+        "BufferOutputStream.cpp",
+        "CaptureFile.cpp",
+        "CaptureFileHelpers.cpp",
+        "CaptureFileOutputStream.cpp",
+        "FileFragmentInputStream.cpp",
+        "ProtoSectionInputStreamImpl.cpp",
+    ],
+    hdrs = [
+        "CaptureFileConstants.h",
+        "FileFragmentInputStream.h",
+        "ProtoSectionInputStreamImpl.h",
+        "include/CaptureFile/BufferOutputStream.h",
+        "include/CaptureFile/CaptureFile.h",
+        "include/CaptureFile/CaptureFileHelpers.h",
+        "include/CaptureFile/CaptureFileOutputStream.h",
+        "include/CaptureFile/CaptureFileSection.h",
+        "include/CaptureFile/ProtoSectionInputStream.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/ClientProtos",
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+        "@protobuf//:protobuf",
+    ],
+)
+
+cc_test(
+    name = "CaptureFileTests",
+    srcs = [
+        "BufferOutputStreamTest.cpp",
+        "CaptureFileHelpersTest.cpp",
+        "CaptureFileOutputStreamTest.cpp",
+        "CaptureFileTest.cpp",
+        "FileFragmentInputStreamTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/CaptureFile/testdata"},
+    deps = [
+        "//src/CaptureFile",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/synchronization:synchronization",
+    ],
+)

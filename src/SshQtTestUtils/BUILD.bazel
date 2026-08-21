@@ -1,0 +1,44 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "SshQtTestUtils",
+    srcs = [
+        "KillProcessListeningOnTcpPort.cpp",
+        "ParsePortNumberFromSocatOutput.cpp",
+    ],
+    hdrs = [
+        "include/SshQtTestUtils/KillProcessListeningOnTcpPort.h",
+        "include/SshQtTestUtils/ParsePortNumberFromSocatOutput.h",
+        "include/SshQtTestUtils/SshSessionTest.h",
+        "include/SshQtTestUtils/SshTestFixture.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "//src/OrbitSsh",
+        "//src/OrbitSshQt",
+        "//src/QtTestUtils",
+        "//src/TestUtils",
+        "@abseil-cpp//absl/strings:strings",
+        "@qt5//:Test",
+    ],
+)
+
+cc_test(
+    name = "SshQtTestUtilsTests",
+    srcs = ["ParsePortNumberFromSocatOutputTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/SshQtTestUtils",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

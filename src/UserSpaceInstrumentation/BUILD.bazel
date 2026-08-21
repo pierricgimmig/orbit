@@ -1,0 +1,130 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "UserSpaceInstrumentation",
+    srcs = [
+        "AccessTraceesMemory.cpp",
+        "AllocateInTracee.cpp",
+        "AnyThreadIsInStrictSeccompMode.cpp",
+        "Attach.cpp",
+        "ExecuteInProcess.cpp",
+        "ExecuteMachineCode.cpp",
+        "FindFunctionAddress.cpp",
+        "InjectLibraryInTracee.cpp",
+        "InstrumentProcess.cpp",
+        "MachineCode.cpp",
+        "ReadSeccompModeOfThread.cpp",
+        "RegisterState.cpp",
+        "Trampoline.cpp",
+    ],
+    hdrs = [
+        "AccessTraceesMemory.h",
+        "AllocateInTracee.h",
+        "ExecuteMachineCode.h",
+        "FindFunctionAddress.h",
+        "MachineCode.h",
+        "ReadSeccompModeOfThread.h",
+        "RegisterState.h",
+        "Trampoline.h",
+        "include/UserSpaceInstrumentation/AddressRange.h",
+        "include/UserSpaceInstrumentation/AnyThreadIsInStrictSeccompMode.h",
+        "include/UserSpaceInstrumentation/Attach.h",
+        "include/UserSpaceInstrumentation/ExecuteInProcess.h",
+        "include/UserSpaceInstrumentation/InjectLibraryInTracee.h",
+        "include/UserSpaceInstrumentation/InstrumentProcess.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/UserSpaceInstrumentation",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/ModuleUtils",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+        "@abseil-cpp//absl/types:span",
+        "@capstone//:capstone",
+    ],
+)
+
+cc_binary(
+    name = "liborbituserspaceinstrumentation.so",
+    srcs = [
+        "OrbitUserSpaceInstrumentation.cpp",
+        "OrbitUserSpaceInstrumentation.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/UserSpaceInstrumentation",
+    ],
+    linkshared = True,
+    linkstatic = True,
+    deps = [
+        "//src/CaptureEventProducer",
+        "//src/OrbitBase",
+        "//src/ProducerSideChannel",
+    ],
+)
+
+cc_binary(
+    name = "libUserSpaceInstrumentationTestLib.so",
+    srcs = [
+        "UserSpaceInstrumentationTestLib.cpp",
+        "UserSpaceInstrumentationTestLib.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/UserSpaceInstrumentation",
+    ],
+    linkshared = True,
+    linkstatic = True,
+)
+
+cc_test(
+    name = "UserSpaceInstrumentationTests",
+    srcs = [
+        "AccessTraceesMemoryTest.cpp",
+        "AllocateInTraceeTest.cpp",
+        "AttachTest.cpp",
+        "ExecuteInProcessTest.cpp",
+        "ExecuteMachineCodeTest.cpp",
+        "FindFunctionAddressTest.cpp",
+        "GetTestLibLibraryPath.cpp",
+        "GetTestLibLibraryPath.h",
+        "InjectLibraryInTraceeTest.cpp",
+        "InstrumentProcessTest.cpp",
+        "MachineCodeTest.cpp",
+        "ReadSeccompModeOfThreadTest.cpp",
+        "RegisterStateTest.cpp",
+        "TestProcess.cpp",
+        "TestProcess.h",
+        "TestUtils.cpp",
+        "TestUtils.h",
+        "TestUtilsTest.cpp",
+        "TrampolineTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = [
+        ":libUserSpaceInstrumentationTestLib.so",
+        ":liborbituserspaceinstrumentation.so",
+    ],
+    includes = ["."],
+    deps = [
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+        "//src/UserSpaceInstrumentation",
+        "@capstone//:capstone",
+        "@googletest//:gtest",
+    ],
+)

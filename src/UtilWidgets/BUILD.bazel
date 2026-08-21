@@ -1,0 +1,25 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "UtilWidgets",
+    srcs = ["NoticeWidget.cpp"],
+    moc_hdrs = ["include/UtilWidgets/NoticeWidget.h"],
+    ui = ["NoticeWidget.ui"],
+    copts = ORBIT_COPTS,
+    include_dirs = [
+        ".",
+        "include",
+    ],
+    deps = [
+        "//src/QtUtils",
+        "@abseil-cpp//absl/strings:str_format",
+        "@qt5//:Widgets",
+    ],
+)

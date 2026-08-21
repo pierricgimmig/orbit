@@ -1,0 +1,45 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "Http",
+    srcs = [
+        "HttpDownloadManager.cpp",
+        "HttpDownloadOperation.cpp",
+    ],
+    hdrs = [
+        "include/Http/DownloadManager.h",
+        "include/Http/HttpDownloadManager.h",
+        "include/Http/MockDownloadManager.h",
+    ],
+    moc_hdrs = ["HttpDownloadOperation.h"],
+    copts = ORBIT_COPTS,
+    include_dirs = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "@qt5//:Core",
+        "@qt5//:Network",
+    ],
+)
+
+qt_cc_test(
+    name = "HttpTests",
+    srcs = ["HttpDownloadManagerTest.cpp"],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/Http/testdata"},
+    deps = [
+        "//src/Http",
+        "//src/OrbitBase",
+        "//src/QtUtils",
+        "//src/Test:gtest_qtcore_main",
+        "//src/TestUtils",
+        "@qt5//:Core",
+    ],
+)

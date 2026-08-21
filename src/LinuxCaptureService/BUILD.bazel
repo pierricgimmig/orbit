@@ -1,0 +1,63 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "LinuxCaptureService",
+    srcs = [
+        "ExtractSignalFromMinidump.cpp",
+        "LinuxCaptureService.cpp",
+        "LinuxCaptureServiceBase.cpp",
+        "MemoryInfoHandler.cpp",
+        "MemoryWatchdog.cpp",
+        "TracingHandler.cpp",
+    ],
+    hdrs = [
+        "ExtractSignalFromMinidump.h",
+        "MemoryInfoHandler.h",
+        "MemoryWatchdog.h",
+        "TracingHandler.h",
+        "UserSpaceInstrumentationAddressesImpl.h",
+        "include/LinuxCaptureService/LinuxCaptureService.h",
+        "include/LinuxCaptureService/LinuxCaptureServiceBase.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxCaptureService",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/ApiLoader",
+        "//src/ApiUtils",
+        "//src/CaptureServiceBase",
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/LinuxTracing",
+        "//src/MemoryTracing",
+        "//src/OrbitBase",
+        "//src/OrbitVersion",
+        "//src/ProducerEventProcessor",
+        "//src/UserSpaceInstrumentation",
+    ],
+)
+
+cc_test(
+    name = "LinuxCaptureServiceTests",
+    srcs = [
+        "ExtractSignalFromMinidumpTest.cpp",
+        "MemoryWatchdogTest.cpp",
+        "UserSpaceInstrumentationAddressesImplTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/LinuxCaptureService/testdata"},
+    deps = [
+        "//src/LinuxCaptureService",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

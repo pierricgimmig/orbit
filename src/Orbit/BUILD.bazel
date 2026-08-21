@@ -1,0 +1,34 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("//bazel/qt:rules.bzl", "qt_application", "qt_rcc")
+
+package(default_visibility = ["//visibility:public"])
+
+# The icon set, compiled into the binary as a Qt resource.
+qt_rcc(
+    name = "orbiticons",
+    data = ["//icons:images"],
+    qrc = "//icons:orbiticons.qrc",
+    resource_name = "orbiticons",
+)
+
+qt_application(
+    name = "Orbit",
+    srcs = [
+        "main.cpp",
+        ":orbiticons",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ClientFlags",
+        "//src/CommandLineUtils",
+        "//src/OrbitQt",
+        "//src/Style",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/flags:usage",
+    ],
+)

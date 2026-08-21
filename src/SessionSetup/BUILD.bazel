@@ -1,0 +1,120 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+
+package(default_visibility = ["//visibility:public"])
+
+copy_file(
+    name = "copy_OrbitService",
+    src = "//src/Service:OrbitService",
+    out = "OrbitService",
+    is_executable = True,
+)
+
+qt_cc_library(
+    name = "SessionSetup",
+    srcs = [
+        "ConnectToLocalWidget.cpp",
+        "ConnectToTargetDialog.cpp",
+        "DeploymentConfigurations.cpp",
+        "Error.cpp",
+        "LoadCaptureWidget.cpp",
+        "OrbitServiceInstance.cpp",
+        "OtherUserDialog.cpp",
+        "OverlayWidget.cpp",
+        "ProcessItemModel.cpp",
+        "ProcessLauncherWidget.cpp",
+        "ProcessListWidget.cpp",
+        "ServiceDeployManager.cpp",
+        "SessionSetupDialog.cpp",
+        "SessionSetupUtils.cpp",
+        "TargetLabel.cpp",
+    ],
+    hdrs = [
+        "include/SessionSetup/Connections.h",
+        "include/SessionSetup/DeploymentConfigurations.h",
+        "include/SessionSetup/Error.h",
+        "include/SessionSetup/OtherUserDialog.h",
+        "include/SessionSetup/SessionSetupUtils.h",
+        "include/SessionSetup/TargetConfiguration.h",
+    ],
+    moc_hdrs = [
+        "include/SessionSetup/ConnectToLocalWidget.h",
+        "include/SessionSetup/ConnectToTargetDialog.h",
+        "include/SessionSetup/DoubleClickableLabel.h",
+        "include/SessionSetup/LoadCaptureWidget.h",
+        "include/SessionSetup/OrbitServiceInstance.h",
+        "include/SessionSetup/OverlayWidget.h",
+        "include/SessionSetup/ProcessItemModel.h",
+        "include/SessionSetup/ProcessLauncherWidget.h",
+        "include/SessionSetup/ProcessListWidget.h",
+        "include/SessionSetup/ServiceDeployManager.h",
+        "include/SessionSetup/SessionSetupDialog.h",
+        "include/SessionSetup/TargetLabel.h",
+    ],
+    ui = [
+        "ConnectToLocalWidget.ui",
+        "ConnectToTargetDialog.ui",
+        "LoadCaptureWidget.ui",
+        "OtherUserDialog.ui",
+        "OverlayWidget.ui",
+        "ProcessLauncherWidget.ui",
+        "ProcessListWidget.ui",
+        "SessionSetupDialog.ui",
+        "TargetLabel.ui",
+    ],
+    copts = ORBIT_COPTS,
+    include_dirs = [
+        ".",
+        "include",
+    ],
+    deps = [
+        "//src/CaptureFileInfo",
+        "//src/ClientData",
+        "//src/ClientFlags",
+        "//src/ClientServices",
+        "//src/OrbitBase",
+        "//src/OrbitSsh",
+        "//src/OrbitSshQt",
+        "//src/QtUtils",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@grpc//:grpc++_unsecure",
+        "@qt5//:Widgets",
+    ],
+)
+
+qt_cc_test(
+    name = "SessionSetupTests",
+    srcs = [
+        "ConnectToLocalWidgetTest.cpp",
+        "DoubleClickableLabelTest.cpp",
+        "LoadCaptureWidgetTest.cpp",
+        "OrbitServiceInstanceTest.cpp",
+        "OtherUserDialogTest.cpp",
+        "ProcessItemModelTest.cpp",
+        "ProcessListWidgetTest.cpp",
+        "ServiceDeployManagerTest.cpp",
+        "SessionSetupDialogTest.cpp",
+        "SessionSetupUtilsTest.cpp",
+        "TargetLabelTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]) + [":OrbitService"],
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/SessionSetup/testdata"},
+    flaky = True,
+    deps = [
+        "//src/QtTestUtils",
+        "//src/SessionSetup",
+        "//src/SshQtTestUtils",
+        "//src/Test:gtest_qtgui_main",
+        "//src/TestUtils",
+        "@qt5//:Test",
+    ],
+)

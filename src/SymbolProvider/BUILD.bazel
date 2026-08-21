@@ -1,0 +1,43 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "SymbolProvider",
+    srcs = [
+        "StructuredDebugDirectorySymbolProvider.cpp",
+        "SymbolLoadingOutcome.cpp",
+    ],
+    hdrs = [
+        "include/SymbolProvider/StructuredDebugDirectorySymbolProvider.h",
+        "include/SymbolProvider/SymbolLoadingOutcome.h",
+        "include/SymbolProvider/SymbolProvider.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/ClientData",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_test(
+    name = "SymbolProviderTests",
+    srcs = [
+        "StructuredDebugDirectorySymbolProviderTest.cpp",
+        "SymbolLoadingOutcomeTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/SymbolProvider/testdata"},
+    deps = [
+        "//src/SymbolProvider",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

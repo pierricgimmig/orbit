@@ -1,0 +1,46 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "SourcePathsMapping",
+    srcs = [
+        "Mapping.cpp",
+        "MappingItemModel.cpp",
+        "MappingManager.cpp",
+    ],
+    hdrs = [
+        "include/SourcePathsMapping/Mapping.h",
+        "include/SourcePathsMapping/MappingManager.h",
+    ],
+    moc_hdrs = ["include/SourcePathsMapping/MappingItemModel.h"],
+    copts = ORBIT_COPTS,
+    include_dirs = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "//src/QtUtils",
+        "@qt5//:Core",
+        "@qt5//:Test",
+    ],
+)
+
+qt_cc_test(
+    name = "SourcePathsMappingTests",
+    srcs = [
+        "MappingItemModelTest.cpp",
+        "MappingManagerTest.cpp",
+        "MappingTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/SourcePathsMapping/testdata"},
+    deps = [
+        "//src/SourcePathsMapping",
+        "//src/Test:gtest_qtcore_main",
+    ],
+)
