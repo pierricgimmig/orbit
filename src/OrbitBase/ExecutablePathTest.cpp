@@ -21,13 +21,10 @@ TEST(ExecutablePath, GetExecutablePath) {
   const std::string executable_name = "OrbitBaseTests";
 #endif
   EXPECT_EQ(path.filename(), executable_name);
-  EXPECT_EQ(path.parent_path().filename(), "bin");
 }
 
 TEST(ExecutablePath, GetExecutableDir) {
-  /* copybara:insert(executable's directory is named differently)
-  GTEST_SKIP();
-  */
-
-  EXPECT_EQ(orbit_base::GetExecutableDir().filename(), "bin");
+  // Which directory the executable ends up in is the build system's choice, so
+  // only the relationship to GetExecutablePath is checked here.
+  EXPECT_EQ(orbit_base::GetExecutableDir(), orbit_base::GetExecutablePath().parent_path());
 }
