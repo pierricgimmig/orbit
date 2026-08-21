@@ -139,6 +139,13 @@ pub fn instances_from_timeline(tl: &TimelineJson) -> Vec<orbit_live_render::Scop
             h: i.h,
             color: css_to_argb(&i.color),
             radius: i.r,
+            name_id: 0,
+            start_ns: 0,
+            tid: 0,
+            kind: 0,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
         })
         .collect()
 }

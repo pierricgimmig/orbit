@@ -45,11 +45,13 @@ struct VsOut {
   @location(2) half_size: vec2<f32>,
   @location(3) radius: f32,
   @location(4) pix: vec2<f32>,
+  @location(5) mark: f32,
 };
 
 const SHADOW_PAD: f32 = 10.0;
 const SHADOW_SIGMA: f32 = 2.2;
 const SHADE: f32 = 0.94;
+const SIBLING_RGB: vec3<f32> = vec3(0.392, 0.710, 0.965);
 
 @vertex
 fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
@@ -58,9 +60,12 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
     vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0)
   );
   let uv = corners[vid];
-  let pad = SHADOW_PAD;
+  let mark = inst.extra.y;
+  let selected = mark > 1.5 && mark < 2.5;
+  let lift = select(0.0, -1.6, selected);
+  let pad = SHADOW_PAD + select(0.0, 2.0, selected);
   let x = uni.origin.x + inst.rect.x - pad + uv.x * (inst.rect.z + 2.0 * pad);
-  let y = uni.origin.y + inst.rect.y - pad + uv.y * (inst.rect.w + 2.0 * pad);
+  let y = uni.origin.y + inst.rect.y + lift - pad + uv.y * (inst.rect.w + 2.0 * pad);
   var o: VsOut;
   o.pos = vec4(
     (x / uni.viewport.x) * 2.0 - 1.0,
@@ -69,12 +74,13 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
     1.0
   );
   let cx = inst.rect.x + inst.rect.z * 0.5;
-  let cy = inst.rect.y + inst.rect.w * 0.5;
-  o.local = vec2(x - cx, y - cy);
+  let cy = inst.rect.y + inst.rect.w * 0.5 + lift;
+  o.local = vec2(x - (uni.origin.x + cx), y - (uni.origin.y + cy));
   o.half_size = vec2(inst.rect.z, inst.rect.w) * 0.5;
   o.color = inst.color;
   o.radius = inst.extra.x;
-  o.pix = vec2(x - inst.rect.x, y - inst.rect.y);
+  o.pix = vec2(x - (uni.origin.x + inst.rect.x), y - (uni.origin.y + inst.rect.y + lift));
+  o.mark = mark;
   return o;
 }
 
@@ -121,15 +127,32 @@ fn rounded_box_shadow(point: vec2<f32>, half: vec2<f32>, corner: f32, sigma: f32
 
 @fragment
 fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
+  let hover = v.mark > 0.5 && v.mark < 1.5;
+  let selected = v.mark > 1.5 && v.mark < 2.5;
+  let sibling = v.mark > 2.5;
   let d = sd_rounded_box(v.local, v.half_size, v.radius);
   let aa = fwidth(d) * 0.75;
   let fill = 1.0 - smoothstep(-aa, aa, d);
   let border = 1.0 - smoothstep(-aa, aa, abs(d) - 0.6);
-  let shadow = rounded_box_shadow(v.local + vec2(0.8, 1.2), v.half_size, v.radius, SHADOW_SIGMA);
+  let sigma = SHADOW_SIGMA + select(0.0, 0.8, selected);
+  let shadow = rounded_box_shadow(v.local + vec2(0.8, 1.2), v.half_size, v.radius, sigma);
   let shade_mix = select(1.0, SHADE, v.pix.x < 3.0 && fill > 0.5);
   var rgb = v.color.rgb * shade_mix;
-  rgb = mix(rgb, vec3(1.0), border * 0.35 * fill);
-  let alpha = max(fill * v.color.a, shadow * 0.28 * (1.0 - fill));
+  rgb = rgb * select(1.0, 1.04, hover);
+  rgb = rgb * select(1.0, 1.08, selected);
+  var rim = vec3(1.0);
+  var rim_w = 0.35;
+  if sibling {
+    rim = SIBLING_RGB;
+    rim_w = 0.82;
+  } else if selected {
+    rim_w = 0.88;
+  } else if hover {
+    rim_w = 0.52;
+  }
+  rgb = mix(rgb, rim, border * rim_w * fill);
+  let shadow_a = select(0.28, 0.46, selected);
+  let alpha = max(fill * v.color.a, shadow * shadow_a * (1.0 - fill));
   return vec4(rgb, alpha);
 }
 "#;

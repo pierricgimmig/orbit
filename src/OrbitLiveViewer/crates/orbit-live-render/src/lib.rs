@@ -35,8 +35,11 @@ use orbit_live_event::{chrome, kind, LaneKey, LiveEvent};
 mod lod;
 mod shaders;
 pub use lod::{
-    choose_lod, collect_instances, empty_column_color, lane_gap, lane_height, stack_height,
-    InstanceFrame, ScopeInstance, TimelineLod, INSTANCE_MIN_PX,
+    apply_highlight_flags, choose_lod, collect_instances, collect_instances_layout,
+    drop_index_for_y, empty_column_color, instance_for_event, lane_gap, lane_height,
+    pick_column_event, pick_instance_at, reorder_insert, stack_height, stack_height_keys,
+    stacked_layout, sync_lane_order, InstanceFrame, ScopeInstance, ScopePick, TimelineLod,
+    FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX,
 };
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
@@ -217,6 +220,26 @@ impl TrackIndex {
     /// Flattened `lanes × width` RGBA8 pixels (row-major, one row per lane).
     pub fn rasterize_pixel(&self, t0: u64, t1: u64, width: usize) -> RasterizedFrame {
         let keys: Vec<LaneKey> = self.lanes.keys().copied().collect();
+        self.rasterize_pixel_ordered(t0, t1, width, &keys)
+    }
+
+    /// Same hot path as [`Self::rasterize_pixel`], with a session lane order.
+    pub fn rasterize_pixel_ordered(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        order: &[LaneKey],
+    ) -> RasterizedFrame {
+        let keys: Vec<LaneKey> = if order.is_empty() {
+            self.lanes.keys().copied().collect()
+        } else {
+            order
+                .iter()
+                .copied()
+                .filter(|k| self.lanes.contains_key(k))
+                .collect()
+        };
         let mut pixels = vec![0u32; keys.len() * width];
         for (row, key) in keys.iter().enumerate() {
             let dest = &mut pixels[row * width..(row + 1) * width];
@@ -527,6 +550,93 @@ mod tests {
         assert!(INSTANCE_WGSL.contains("sd_rounded_box"));
         assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
         assert!(INSTANCE_WGSL.contains("madebyevan.com"));
+        assert!(INSTANCE_WGSL.contains("SIBLING_RGB"));
+        assert!(INSTANCE_WGSL.contains("selected"));
+    }
+
+    #[test]
+    fn collect_instances_layout_remaps_lane_y() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 50, 0, 1));
+        idx.insert(LiveEvent {
+            tid: 2,
+            ..scope(0, 50, 0, 2)
+        });
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        assert_eq!(keys.len(), 2);
+        let flipped = vec![(keys[1], 40.0), (keys[0], 0.0)];
+        let frame = collect_instances_layout(&idx, 0, 50, 100.0, &flipped);
+        assert_eq!(frame.instances.len(), 2);
+        let a = frame.instances.iter().find(|i| i.name_id == 2).unwrap();
+        let b = frame.instances.iter().find(|i| i.name_id == 1).unwrap();
+        assert!((a.y - 40.0).abs() < 0.01);
+        assert!(b.y.abs() < 0.01);
+    }
+
+    #[test]
+    fn pick_instance_hits_topmost_and_flags_siblings() {
+        let a = ScopeInstance {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 10.0,
+            color: 1,
+            radius: 2.0,
+            name_id: 7,
+            start_ns: 10,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            flags: FLAG_NONE,
+        };
+        let b = ScopeInstance {
+            x: 5.0,
+            y: 0.0,
+            w: 20.0,
+            h: 10.0,
+            color: 1,
+            radius: 2.0,
+            name_id: 7,
+            start_ns: 40,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            flags: FLAG_NONE,
+        };
+        assert_eq!(pick_instance_at(&[a, b], 8.0, 4.0), Some(1));
+        let mut insts = vec![a, b];
+        apply_highlight_flags(
+            &mut insts,
+            Some(ScopePick {
+                name_id: 7,
+                start_ns: 40,
+                tid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+            }),
+            None,
+        );
+        assert_eq!(insts[1].flags, FLAG_SELECTED);
+        assert_eq!(insts[0].flags, FLAG_SIBLING);
+    }
+
+    #[test]
+    fn lane_order_sync_and_reorder() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 10, 0, 1));
+        idx.insert(LiveEvent {
+            tid: 2,
+            ..scope(0, 10, 0, 2)
+        });
+        let mut order = Vec::new();
+        sync_lane_order(&mut order, &idx);
+        assert_eq!(order.len(), 2);
+        let moved = reorder_insert(&order, order[0], 1);
+        assert_eq!(moved[1], order[0]);
+        assert_eq!(drop_index_for_y(&order, order[0], 1000.0), 1);
     }
 
     #[test]

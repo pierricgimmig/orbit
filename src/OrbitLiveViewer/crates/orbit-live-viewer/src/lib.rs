@@ -12,9 +12,13 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "egui")]
 mod app;
 #[cfg(feature = "egui")]
+mod fonts;
+#[cfg(feature = "egui")]
 mod net;
 #[cfg(feature = "egui")]
 mod timeline;
+#[cfg(feature = "egui")]
+mod tracks;
 
 #[cfg(feature = "egui")]
 pub use app::OrbitLiveApp;

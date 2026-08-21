@@ -8,8 +8,10 @@ use egui::PaintCallback;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
+use orbit_live_event::LaneKey;
 use orbit_live_render::{
-    collect_instances, ScopeInstance, TimelineLod, BLIT_RECT_WGSL, INSTANCE_WGSL,
+    collect_instances_layout, stacked_layout, ScopeInstance, TimelineLod, TrackIndex,
+    BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
 
 pub const INSTANCE_STRIDE: u64 = 48;
@@ -44,6 +46,7 @@ pub enum TimelinePayload {
         rgba: Vec<u8>,
         width: u32,
         height: u32,
+        overlay: Vec<ScopeInstance>,
     },
     Instanced {
         instances: Vec<ScopeInstance>,
@@ -52,18 +55,28 @@ pub enum TimelinePayload {
 
 impl TimelinePayload {
     pub fn from_index(
-        index: &orbit_live_render::TrackIndex,
+        index: &TrackIndex,
         t0: u64,
         t1: u64,
         width_pts: f32,
         lod: TimelineLod,
         pixels_per_point: f32,
+        layout: &[(LaneKey, f32)],
+        overlay: &[ScopeInstance],
     ) -> Self {
         let width_pts = width_pts.max(1.0);
+        let layout_owned;
+        let layout = if layout.is_empty() {
+            let keys: Vec<LaneKey> = index.lanes().map(|(k, _)| k).collect();
+            layout_owned = stacked_layout(&keys, 0.0);
+            layout_owned.as_slice()
+        } else {
+            layout
+        };
+        let s = pixels_per_point.max(0.01);
         match lod {
             TimelineLod::Instanced => {
-                let mut frame = collect_instances(index, t0, t1, width_pts, 0.0);
-                let s = pixels_per_point.max(0.01);
+                let mut frame = collect_instances_layout(index, t0, t1, width_pts, layout);
                 for inst in &mut frame.instances {
                     inst.x *= s;
                     inst.y *= s;
@@ -77,12 +90,26 @@ impl TimelinePayload {
             }
             TimelineLod::PixelColumns => {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
-                let raster = index.rasterize_pixel(t0, t1, width_px);
+                let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
+                let raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys);
                 let (rgba, height) = raster.to_rgba8_scaled();
+                let overlay = overlay
+                    .iter()
+                    .cloned()
+                    .map(|mut inst| {
+                        inst.x *= s;
+                        inst.y *= s;
+                        inst.w *= s;
+                        inst.h *= s;
+                        inst.radius *= s;
+                        inst
+                    })
+                    .collect();
                 Self::Pixel {
                     rgba,
                     width: width_px as u32,
                     height: height.max(1),
+                    overlay,
                 }
             }
         }
@@ -354,6 +381,7 @@ impl TimelineGpu {
             TimelinePayload::Empty => {
                 self.lod = TimelineLod::PixelColumns;
                 self.instance_count = 0;
+                self.instance_buf = None;
                 self.column_tex = None;
                 self.column_bind = None;
             }
@@ -361,9 +389,10 @@ impl TimelineGpu {
                 rgba,
                 width,
                 height,
+                overlay,
             } => {
                 self.lod = TimelineLod::PixelColumns;
-                self.instance_count = 0;
+                self.upload_instances(device, overlay);
                 if *width == 0 || *height == 0 || rgba.is_empty() {
                     self.column_tex = None;
                     self.column_bind = None;
@@ -428,40 +457,35 @@ impl TimelineGpu {
                 self.lod = TimelineLod::Instanced;
                 self.column_tex = None;
                 self.column_bind = None;
-                let bytes = pack_instances(instances);
-                self.instance_count = instances.len() as u32;
-                if bytes.is_empty() {
-                    self.instance_buf = None;
-                    return;
-                }
-                self.instance_buf = Some(device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor {
-                        label: Some("orbit-instances"),
-                        contents: &bytes,
-                        usage: wgpu::BufferUsages::VERTEX,
-                    },
-                ));
+                self.upload_instances(device, instances);
             }
         }
     }
 
+    fn upload_instances(&mut self, device: &wgpu::Device, instances: &[ScopeInstance]) {
+        let bytes = pack_instances(instances);
+        self.instance_count = instances.len() as u32;
+        if bytes.is_empty() {
+            self.instance_buf = None;
+            return;
+        }
+        self.instance_buf = Some(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("orbit-instances"),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+        );
+    }
+
     fn draw(&self, pass: &mut wgpu::RenderPass<'static>) {
-        match self.lod {
-            TimelineLod::PixelColumns => {
-                let Some(bind) = &self.column_bind else {
-                    return;
-                };
-                pass.set_pipeline(&self.blit_pipeline);
-                pass.set_bind_group(0, bind, &[]);
-                pass.draw(0..6, 0..1);
-            }
-            TimelineLod::Instanced => {
-                let Some(buf) = &self.instance_buf else {
-                    return;
-                };
-                if self.instance_count == 0 {
-                    return;
-                }
+        if let Some(bind) = &self.column_bind {
+            pass.set_pipeline(&self.blit_pipeline);
+            pass.set_bind_group(0, bind, &[]);
+            pass.draw(0..6, 0..1);
+        }
+        if let Some(buf) = &self.instance_buf {
+            if self.instance_count > 0 {
                 pass.set_pipeline(&self.inst_pipeline);
                 pass.set_bind_group(0, &self.inst_bind, &[]);
                 pass.set_vertex_buffer(0, buf.slice(..));
@@ -529,7 +553,7 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
         bytes.extend_from_slice(&b.to_le_bytes());
         bytes.extend_from_slice(&a.to_le_bytes());
         bytes.extend_from_slice(&i.radius.to_le_bytes());
-        bytes.extend_from_slice(&0f32.to_le_bytes());
+        bytes.extend_from_slice(&i.flags.to_le_bytes());
         bytes.extend_from_slice(&0f32.to_le_bytes());
         bytes.extend_from_slice(&0f32.to_le_bytes());
     }
@@ -551,6 +575,35 @@ mod tests {
             h: 16.0,
             color: 0xFFE7_4435,
             radius: 3.0,
+            name_id: 1,
+            start_ns: 0,
+            tid: 1,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 2.0,
+        };
+        let bytes = pack_instances(&[inst]);
+        assert_eq!(bytes.len(), 48);
+        assert_eq!(&bytes[36..40], &2f32.to_le_bytes());
+    }
+
+    #[test]
+    fn pack_instances_flags_sit_in_extra_y() {
+        let inst = ScopeInstance {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: 0,
+            start_ns: 0,
+            tid: 0,
+            kind: 0,
+            depth: 0,
+            extra: 0,
+            flags: 3.0,
         };
         let bytes = pack_instances(&[inst]);
         assert_eq!(bytes.len(), 48);
@@ -596,15 +649,26 @@ mod tests {
             _pad: 0,
             name_id: 1,
         });
-        let p = TimelinePayload::from_index(&idx, 0, 100, 8.0, TimelineLod::PixelColumns, 1.0);
+        let p = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            8.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &[],
+            &[],
+        );
         let TimelinePayload::Pixel {
             rgba,
             width,
             height,
+            overlay,
         } = p
         else {
             panic!("expected pixel payload");
         };
+        assert!(overlay.is_empty());
         assert!(width >= 8);
         assert!(height >= 16);
         let expect = thread_scope_color(1, 1);
@@ -632,7 +696,7 @@ mod tests {
         });
         let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
-        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0);
+        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0, &[], &[]);
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
 }
