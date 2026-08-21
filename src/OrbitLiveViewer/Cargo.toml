@@ -1,0 +1,34 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/orbit-live-event",
+    "crates/orbit-live-ring",
+    "crates/orbit-live-protocol",
+    "crates/orbit-live-render",
+    "crates/orbit-live-server",
+    "crates/orbit-live-viewer",
+    "crates/orbit-live-ffi",
+]
+
+[workspace.package]
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.83"
+
+[workspace.dependencies]
+# Pins keep `cargo test` on rustc 1.83 (this repo's current toolchain).
+clap = "=4.5.23"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+parking_lot = "0.12"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
+
+[profile.bench]
+lto = false
+debug = true

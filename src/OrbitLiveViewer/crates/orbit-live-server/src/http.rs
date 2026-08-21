@@ -1,0 +1,277 @@
+use std::sync::Arc;
+
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Query, State};
+use axum::http::{header, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
+
+use crate::{CaptureFlags, LiveService, ServerConfig};
+
+mod assets {
+    include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
+}
+
+pub async fn serve(service: Arc<LiveService>) -> Result<(), String> {
+    let bind = service.config.lock().bind;
+    let app = router(service);
+    let listener = TcpListener::bind(bind)
+        .await
+        .map_err(|e| format!("bind {bind}: {e}"))?;
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| format!("http server: {e}"))
+}
+
+pub fn router(service: Arc<LiveService>) -> Router {
+    Router::new()
+        .route("/", get(index))
+        .route("/ws", get(ws_upgrade))
+        .route("/api/status", get(status))
+        .route("/api/processes", get(processes))
+        .route("/api/capture/start", post(capture_start))
+        .route("/api/capture/stop", post(capture_stop))
+        .route("/api/demo/start", post(demo_start))
+        .route("/api/demo/stop", post(demo_stop))
+        .route("/api/config", get(get_config).put(put_config))
+        .route("/api/frame", get(frame))
+        .route("/*path", get(static_asset))
+        .layer(CorsLayer::permissive())
+        .with_state(service)
+}
+
+async fn index() -> Response {
+    asset_response("index.html").unwrap_or_else(|| {
+        Html("<!doctype html><title>Orbit Live</title><p>viewer-dist/index.html missing</p>")
+            .into_response()
+    })
+}
+
+async fn static_asset(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    asset_response(&path).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+fn asset_response(path: &str) -> Option<Response> {
+    let (mime, data) = assets::get(path)?;
+    Some(([(header::CONTENT_TYPE, mime)], data).into_response())
+}
+
+async fn status(State(svc): State<Arc<LiveService>>) -> Json<StatusBody> {
+    Json(StatusBody::from_service(&svc))
+}
+
+#[derive(Serialize)]
+struct StatusBody {
+    capturing: bool,
+    demo: bool,
+    events_live: u64,
+    events_capacity: u64,
+    dropped: u64,
+    spilled: u64,
+    produced: u64,
+    oldest_start_ns: u64,
+    newest_end_ns: u64,
+    ring_bytes: u64,
+    spill_path: Option<String>,
+    http_bind: String,
+}
+
+impl StatusBody {
+    fn from_service(svc: &LiveService) -> Self {
+        let stats = svc.stats();
+        let cfg = svc.config.lock();
+        Self {
+            capturing: svc.capturing.load(std::sync::atomic::Ordering::Relaxed),
+            demo: svc.demo.load(std::sync::atomic::Ordering::Relaxed),
+            events_live: stats.events_live,
+            events_capacity: stats.events_capacity,
+            dropped: stats.dropped,
+            spilled: stats.spilled,
+            produced: stats.produced,
+            oldest_start_ns: stats.oldest_start_ns,
+            newest_end_ns: stats.newest_end_ns,
+            ring_bytes: stats.bytes_capacity,
+            spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
+            http_bind: cfg.bind.to_string(),
+        }
+    }
+}
+
+async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
+    let hooks = svc.hooks.lock();
+    match hooks.as_ref() {
+        Some(h) => match (h.list_processes_json)() {
+            Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        },
+        None => Json(Vec::<serde_json::Value>::new()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct StartBody {
+    pid: u32,
+    enable_api: Option<bool>,
+    context_switches: Option<bool>,
+    thread_states: Option<bool>,
+}
+
+async fn capture_start(
+    State(svc): State<Arc<LiveService>>,
+    Json(body): Json<StartBody>,
+) -> Response {
+    let flags = CaptureFlags {
+        enable_api: body.enable_api.unwrap_or(true),
+        context_switches: body.context_switches.unwrap_or(true),
+        thread_states: body.thread_states.unwrap_or(true),
+    };
+    let hooks = svc.hooks.lock();
+    match hooks.as_ref() {
+        Some(h) => match (h.start_capture)(body.pid, flags) {
+            Ok(()) => {
+                svc.mark_capture_started(body.pid, 0);
+                StatusCode::OK.into_response()
+            }
+            Err(e) => (StatusCode::CONFLICT, e).into_response(),
+        },
+        None => (
+            StatusCode::NOT_IMPLEMENTED,
+            "OrbitService control hooks are not registered. Use Start demo, or run the C++ service.",
+        )
+            .into_response(),
+    }
+}
+
+async fn capture_stop(State(svc): State<Arc<LiveService>>) -> Response {
+    let hooks = svc.hooks.lock();
+    match hooks.as_ref() {
+        Some(h) => match (h.stop_capture)() {
+            Ok(()) => {
+                svc.mark_capture_finished();
+                StatusCode::OK.into_response()
+            }
+            Err(e) => (StatusCode::CONFLICT, e).into_response(),
+        },
+        None => StatusCode::OK.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct DemoBody {
+    scopes_per_sec: Option<u64>,
+}
+
+async fn demo_start(State(svc): State<Arc<LiveService>>, Json(body): Json<DemoBody>) -> Response {
+    match crate::demo::start(&svc, body.scopes_per_sec.unwrap_or(50_000)) {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(e) => (StatusCode::CONFLICT, e).into_response(),
+    }
+}
+
+async fn demo_stop(State(svc): State<Arc<LiveService>>) -> Response {
+    crate::demo::stop(&svc);
+    StatusCode::OK.into_response()
+}
+
+async fn get_config(State(svc): State<Arc<LiveService>>) -> Json<ConfigBody> {
+    let cfg = svc.config.lock().clone();
+    Json(ConfigBody::from_config(&cfg))
+}
+
+#[derive(Serialize, Deserialize)]
+struct ConfigBody {
+    ring_buffer_bytes: u64,
+    spill_path: Option<String>,
+}
+
+impl ConfigBody {
+    fn from_config(cfg: &ServerConfig) -> Self {
+        Self {
+            ring_buffer_bytes: cfg.ring_buffer_bytes,
+            spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
+        }
+    }
+}
+
+async fn put_config(State(svc): State<Arc<LiveService>>, Json(body): Json<ConfigBody>) -> Response {
+    let spill = body
+        .spill_path
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
+    match svc.replace_ring(body.ring_buffer_bytes, spill) {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct FrameQuery {
+    t0: Option<u64>,
+    t1: Option<u64>,
+    width: Option<u32>,
+}
+
+async fn frame(State(svc): State<Arc<LiveService>>, Query(q): Query<FrameQuery>) -> Response {
+    let width = q.width.unwrap_or(1280).clamp(16, 4096) as usize;
+    let raster = svc.rasterize_frame(q.t0, q.t1, width);
+    let mut body = Vec::with_capacity(16 + raster.pixels.len() * 4);
+    body.extend_from_slice(&(width as u32).to_le_bytes());
+    body.extend_from_slice(&(raster.lanes.len() as u32).to_le_bytes());
+    body.extend_from_slice(&(q.t0.unwrap_or(0)).to_le_bytes());
+    body.extend_from_slice(&(q.t1.unwrap_or(0)).to_le_bytes());
+    body.extend(raster.to_rgba8());
+    (
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        body,
+    )
+        .into_response()
+}
+
+async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(svc): State<Arc<LiveService>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| ws_loop(socket, svc))
+}
+
+async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
+    let (mut sink, mut stream) = socket.split();
+    for frame in svc.hello_and_snapshot_frames() {
+        if sink.send(Message::Binary(frame)).await.is_err() {
+            return;
+        }
+    }
+    let mut rx = svc.subscribe();
+    loop {
+        tokio::select! {
+            incoming = stream.next() => {
+                match incoming {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(p))) => {
+                        let _ = sink.send(Message::Pong(p)).await;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => break,
+                }
+            }
+            live = rx.recv() => {
+                match live {
+                    Ok(bytes) => {
+                        if sink.send(Message::Binary(bytes)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+}
+
+use tokio::sync::broadcast;

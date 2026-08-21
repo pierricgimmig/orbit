@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbit Live Viewer</title>
+  <style>
+    :root {
+      --bg: #101216;
+      --panel: #1b1f27;
+      --line: #2c3340;
+      --text: #e8edf5;
+      --muted: #8b95a8;
+      --accent: #3ddc84;
+      --warn: #e6b422;
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
+    header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+      padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    h1 { font-size: 15px; margin: 0 12px 0 0; letter-spacing: .04em; }
+    h1 span { color: var(--accent); }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    label { color: var(--muted); }
+    select, input, button {
+      background: #0d1016; color: var(--text); border: 1px solid var(--line);
+      border-radius: 4px; padding: 5px 8px;
+    }
+    button { cursor: pointer; }
+    button.primary { background: #163524; border-color: #2a6; color: var(--accent); }
+    button.danger { background: #2a1515; border-color: #833; }
+    #status { color: var(--muted); font-variant-numeric: tabular-nums; }
+    #trace-wrap { position: relative; height: calc(100vh - 92px); }
+    canvas { width: 100%; height: 100%; display: block; background: #0a0c10; }
+    #hint { position: absolute; left: 12px; bottom: 10px; color: var(--muted); pointer-events: none; }
+    #err { color: #f88; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ORBIT <span>Live</span></h1>
+    <div class="row">
+      <label>Process
+        <select id="processes"><option value="">(refresh)</option></select>
+      </label>
+      <button id="refresh">Refresh</button>
+      <button id="start-capture" class="primary">Start capture</button>
+      <button id="stop-capture" class="danger">Stop</button>
+    </div>
+    <div class="row">
+      <button id="start-demo" class="primary">Start demo</button>
+      <button id="stop-demo">Stop demo</button>
+    </div>
+    <div class="row">
+      <label>Ring bytes <input id="ring" type="text" size="10" value="67108864" /></label>
+      <label>Spill path <input id="spill" type="text" size="18" placeholder="/tmp/orbit-spill" /></label>
+      <button id="apply-cfg">Apply ring/spill</button>
+    </div>
+    <div id="status">connecting…</div>
+    <div id="err"></div>
+  </header>
+  <div id="trace-wrap">
+    <canvas id="trace"></canvas>
+    <div id="hint">Wheel: zoom · Drag: pan · Space: follow latest 2s · renderer: <span id="renderer">…</span></div>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

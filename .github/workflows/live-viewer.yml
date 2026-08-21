@@ -1,0 +1,43 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+name: live-viewer
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'src/OrbitLiveViewer/**'
+      - '.github/workflows/live-viewer.yml'
+  pull_request:
+    branches: ['main']
+    paths:
+      - 'src/OrbitLiveViewer/**'
+      - '.github/workflows/live-viewer.yml'
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-test:
+    name: cargo test (native live-viewer crates)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/OrbitLiveViewer
+      - name: Test native crates
+        working-directory: src/OrbitLiveViewer
+        run: cargo test --workspace --exclude orbit-live-viewer
+      - name: Test viewer crate (no WebGPU)
+        working-directory: src/OrbitLiveViewer
+        run: cargo test -p orbit-live-viewer
+      - name: Compile benches
+        working-directory: src/OrbitLiveViewer
+        run: cargo bench --workspace --exclude orbit-live-viewer --no-run
