@@ -1,0 +1,50 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # Apache-2.0, see NOTICE.
+
+# Android's liblog, vendored for libunwindstack. Mirrors cmake/Findliblog.cmake:
+# the readers and writers that talk to Android's logd, and the event tag map,
+# are Android-only and stay out of the build.
+cc_library(
+    name = "liblog",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = [
+            "pmsg_reader.cpp",
+            "pmsg_writer.cpp",
+            "logd_reader.cpp",
+            "logd_writer.cpp",
+            "event_tag_map.cpp",
+            "log_time.cpp",
+        ],
+    ) + [
+        # liblog and libbase depend on each other; CMake breaks the cycle by
+        # compiling libbase's logging.cpp into liblog as well.
+        "//third_party/libbase:logging.cpp",
+        "//third_party/libbase:logging_splitters.h",
+    ],
+    hdrs = glob([
+        "*.h",
+        "include/**/*.h",
+    ]),
+    copts = ["-w"],
+    includes = ["include"],
+    deps = [
+        "//third_party/libbase:headers",
+        "//third_party/libcutils:headers",
+    ],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["include/**/*.h"]),
+    includes = ["include"],
+)
+
+exports_files(["NOTICE"])

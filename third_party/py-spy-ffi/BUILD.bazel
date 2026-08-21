@@ -1,0 +1,39 @@
+# Copyright (c) 2024 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+])
+
+# The C ABI py-spy is reached through. Only Linux is supported: py-spy reads
+# another process's memory with ptrace.
+rust_static_library(
+    name = "pyspy_ffi_rust",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        package_name = "third_party/py-spy-ffi",
+        proc_macro = True,
+    ),
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = all_crate_deps(package_name = "third_party/py-spy-ffi") + [
+        "//third_party:py_spy",
+    ],
+)
+
+cc_library(
+    name = "py-spy-ffi",
+    hdrs = ["include/pyspy_ffi.h"],
+    includes = ["include"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":pyspy_ffi_rust"],
+)

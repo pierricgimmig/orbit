@@ -1,0 +1,19 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # Boost Software License 1.0
+
+# The handful of Geometric Tools vector headers Orbit vendors.
+cc_library(
+    name = "gte",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+    textual_hdrs = glob(["*.inl"]),
+)
+
+exports_files(["LICENSE_1_0.txt"])
