@@ -470,7 +470,7 @@
       <div class="stat"><b>6m35s</b><span>Cold build</span></div>
       <div class="stat"><b>9,520</b><span>Actions</span></div>
       <div class="stat"><b>&lt;1s</b><span>No-op rebuild</span></div>
-      <div class="stat"><b>148</b><span>C++ targets</span></div>
+      <div class="stat"><b>159</b><span>C++ targets</span></div>
       <div class="stat"><b>48/49</b><span>Tests passing</span></div>
       <div class="stat"><b>0</b><span>Things to install</span></div>
     </div>
@@ -479,7 +479,7 @@
 
 <article class="doc">
 
-  <p class="lede">Orbit's Linux build now runs on Bazel. <code>git clone</code>, <code>git submodule update --init third_party/py-spy</code>, <code>bazel build //...</code> — that is the whole setup. No Conan, no CMake, no <code>apt install</code>, no Rust toolchain. This is the reasoning behind each decision, including the two that were wrong the first time.</p>
+  <p class="lede">Orbit builds with Bazel on Linux and Windows. <code>git clone</code>, <code>git submodule update --init third_party/py-spy</code>, <code>bazel build //...</code> — that is the whole setup. No Conan, no CMake, no <code>apt install</code>, no Rust toolchain. CMake and Conan are gone from the tree entirely. This is the reasoning behind each decision, including the two that were wrong the first time.</p>
 
   <nav class="toc wide" aria-label="Contents">
     <h2>Contents</h2>
@@ -491,13 +491,14 @@
       <li><a href="#llvm">LLVM: built, and patched twice</a></li>
       <li><a href="#ssl">The SSL problem</a></li>
       <li><a href="#versions">Every version that moved</a></li>
-      <li><a href="#buildfiles">Writing 72 BUILD files</a></li>
+      <li><a href="#buildfiles">Writing 101 BUILD files</a></li>
       <li><a href="#qtcodegen">Qt code generation</a></li>
       <li><a href="#includes">Two include-path quirks</a></li>
       <li><a href="#source">Source changes, and why</a></li>
       <li><a href="#speed">Where the 6m35s goes</a></li>
       <li><a href="#tests">Test results</a></li>
-      <li><a href="#scope">What is not ported</a></li>
+      <li><a href="#windows">Windows, in one BUILD file per module</a></li>
+      <li><a href="#scope">Removing CMake</a></li>
     </ol>
   </nav>
 
@@ -850,9 +851,9 @@
 
   <!-- ==================================================== BUILD files -->
 
-  <h2 id="buildfiles">Writing 72 BUILD files</h2>
+  <h2 id="buildfiles">Writing 101 BUILD files</h2>
 
-  <p>The <code>CMakeLists.txt</code> files are strikingly regular — a library, its sources, its dependencies, a test binary, <code>register_test</code> — so they were translated mechanically rather than by hand. <code>bazel/tools/cmake2bazel.py</code> parses the CMake command stream, evaluates the conditionals for a Linux build with the GUI on, and emits <code>BUILD.bazel</code>. It is checked in so the port can be re-derived and diffed against CMake, not because the build needs it.</p>
+  <p>The <code>CMakeLists.txt</code> files were strikingly regular — a library, its sources, its dependencies, a test binary, <code>register_test</code> — so they were translated mechanically rather than by hand. <code>bazel/tools/cmake2bazel.py</code> parsed the CMake command stream, evaluated the conditionals per platform, and emitted <code>BUILD.bazel</code>. It was checked in while CMake was still there so the port could be re-derived and diffed against it; once CMake went, so did the translator. Its last version is at commit <code>aeda7f74b</code>.</p>
 
   <p>It handles a few things that are easy to get wrong by hand:</p>
 
@@ -966,7 +967,7 @@
   <p><code>Arena::CreateMessage</code> was removed in protobuf 31. <code>Arena::Create</code> has been the spelling for messages far longer and works with both, so the change is backwards-compatible with the Conan build.</p>
 
   <h4>Forced by LLVM 17</h4>
-  <p><code>Elf_Note_Impl::getDesc</code> gained a required alignment argument, which the section header carries. This is the one change that is <em>not</em> backwards-compatible: LLVM 13, which Conan pins, has the no-argument form.</p>
+  <p><code>Elf_Note_Impl::getDesc</code> gained a required alignment argument, which the section header carries. This is the one change that is <em>not</em> backwards-compatible: LLVM 13, which Conan pinned, had the no-argument form.</p>
 
   <h4>Forced by GCC 15</h4>
   <p>Vendored <code>procinfo/process.h</code> names <code>uint64_t</code> without including anything that declares it.</p>
@@ -1068,13 +1069,15 @@
 
   <p><strong>A shared disk cache.</strong> <code>.bazelrc</code> points <code>--disk_cache</code> at <code>~/.cache/bazel/orbit</code>, which is keyed by action rather than by output base. Deleting <code>bazel-out</code>, switching branches, or making a second clone re-uses it, so the expensive dependency compile happens once per machine rather than once per checkout. The 6m35s above is the pessimistic case where even that is empty.</p>
 
+  <p>A second cold run, on the same machine but with other work in flight, measured 412.6s for the same 9,520 actions &mdash; so the figure is stable to within a few percent rather than a lucky run.</p>
+
   <p>Two figures for scale: LLVM's six libraries take about 40 seconds, and py-spy with the 213 crates in its lockfile takes 43. A no-op rebuild is under a second. Put machine-specific settings — <code>--jobs</code>, a remote cache, a different cache location — in <code>.bazelrc.user</code>, which is git-ignored and imported automatically.</p>
 
   <!-- ==================================================== tests -->
 
   <h2 id="tests">Test results</h2>
 
-  <p><code>bazel test //...</code> runs 49 targets; <strong>48 pass</strong>. Getting there needed the tracing surface switched on, which is what turned two of the defects in this port up:</p>
+  <p><code>bazel test //...</code> matches 51 targets on Linux, two of which are the Windows test suites and skip cleanly; of the 49 that run, <strong>48 pass</strong>. Getting there needed the tracing surface switched on, which is what turned two of the defects in this port up:</p>
 
   <pre><code><span class="c">$</span> sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.yama.ptrace_scope=0</code></pre>
 
@@ -1124,21 +1127,136 @@
 
   <h3>Timing, not correctness</h3>
 
-  <p>Three tests carry Bazel tags instead of changed assertions. The integration tests are <code>exclusive</code>: they assert that no perf records were lost and no events were discarded as out of order, which is only true on a machine that is not saturated &mdash; run alongside 48 other tests, the ring buffer legitimately overflows and the tracer correctly reports it. <code>SessionSetupTests</code> and <code>CaptureEventProducerTests</code> are <code>flaky</code>: one waits 500&nbsp;ms for a 250&nbsp;ms timer, the other sleeps 25&nbsp;ms and expects a gRPC round trip inside it.</p>
+  <p>Several tests carry Bazel tags instead of changed assertions. The integration tests are <code>exclusive</code>: they assert that no perf records were lost and no events were discarded as out of order, which is only true on a machine that is not saturated &mdash; run alongside 48 other tests, the ring buffer legitimately overflows and the tracer correctly reports it. <code>SessionSetupTests</code> and <code>CaptureEventProducerTests</code> are <code>flaky</code>: one waits 500&nbsp;ms for a 250&nbsp;ms timer, the other sleeps 25&nbsp;ms and expects a gRPC round trip inside it.</p>
+
+  <p>Two more tags exist so CI can be precise about what gates a change. The integration tests are also <code>integration</code>, which excludes them on a hosted runner that cannot grant <code>perf_event_open</code> or <code>ptrace</code> &mdash; the same set <code>ctest -E IntegrationTest</code> excluded. <code>UserSpaceInstrumentationTests</code> is <code>known_flaky</code>, for the race above: it still runs in CI, in a step marked <code>continue-on-error</code>, so the failure stays visible without blocking unrelated work.</p>
 
   <!-- ==================================================== scope -->
 
-  <h2 id="scope">What is not ported</h2>
+  <!-- ==================================================== windows -->
 
-  <p>The Bazel build covers exactly what the top-level <code>CMakeLists.txt</code> builds on Linux. Three groups sit outside it, matching what CMake leaves out there too: the <code>src/Windows*</code> modules behind <code>if(WIN32)</code>; the three Vulkan modules behind <code>WITH_VULKAN</code>, an option the root <code>CMakeLists.txt</code> leaves commented out so neither build system produces them; and <code>FuzzingUtils</code>, whose <code>add_subdirectory</code> is commented out.</p>
+  <h2 id="windows">Windows, in one BUILD file per module</h2>
 
-  <p>Every <code>CMakeLists.txt</code> is still in place. Windows and the ARM cross-build still use them, and the README now says so.</p>
+  <p>The five <code>src/Windows*</code> modules — ETW tracing, the process and process-launcher services, the capture service, and the utility layer underneath them — sat behind <code>if(WIN32)</code> in CMake, which meant a Linux checkout never even parsed them. Bazel has no equivalent of "this directory does not exist on your platform", and that turns out to be the better arrangement: one <code>BUILD.bazel</code> per module describes both platforms, and the graph is complete no matter where you are standing.</p>
 
-  <div class="note warn">
-    <span class="note-label">CI will fail on this branch</span>
-    <p><code>build-and-test.yml</code> runs the CMake + Conan build on pull requests touching <code>src/**</code>, and <code>conanfile.py</code> pins <code>llvm-core/13.0.0</code> — which predates the <code>getDesc</code> signature above. That single line is the only thing that breaks it.</p>
-    <p>Two ways out: move the Conan pin to LLVM 17 or newer, or point CI at Bazel. The second is a smaller workflow file than the first is a dependency bump.</p>
+  <p>Two mechanisms do all of it.</p>
+
+  <p><strong><code>select()</code></strong> picks sources and dependencies inside a target that exists on both platforms. <code>src/Service</code> is the clearest case: the same <code>OrbitService</code> binary links <code>LinuxCaptureService</code> or <code>WindowsCaptureService</code>, and eight modules in total — <code>OrbitBase</code>, <code>ObjectUtils</code>, <code>ModuleUtils</code>, <code>ApiLoader</code>, <code>OrbitSsh</code>, <code>ProducerSideService</code>, <code>Service</code> — carry a platform branch.</p>
+
+  <p><strong><code>target_compatible_with</code></strong> handles the targets that exist on one platform only. The five Windows modules and the four Windows-only vendored libraries declare <code>["@platforms//os:windows"]</code>, which makes <code>bazel build //...</code> on Linux <em>skip</em> them rather than fail — the same wildcard build works on both machines, and asking for one explicitly on the wrong platform gives you a clear message instead of a compiler error.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 300" role="img" aria-label="One BUILD file per module serves both platforms: select() switches sources and dependencies inside shared targets such as OrbitService, while target_compatible_with makes Windows-only targets skip on Linux instead of failing.">
+        <defs>
+          <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="arwa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- the single source of truth -->
+        <rect x="286" y="16" width="208" height="52" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="390" y="38" font-size="12" text-anchor="middle" font-weight="600" fill="currentColor">src/Service/BUILD.bazel</text>
+        <text x="390" y="55" font-size="10.5" text-anchor="middle" fill="currentColor">one file, both platforms</text>
+
+        <line x1="390" y1="68" x2="390" y2="96" stroke="currentColor" stroke-width="1.2" marker-end="url(#arw)"/>
+
+        <!-- the select diamond -->
+        <path d="M 390 100 L 470 128 L 390 156 L 310 128 Z" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="390" y="126" font-size="11" text-anchor="middle" fill="var(--accent)">select()</text>
+        <text x="390" y="140" font-size="9.5" text-anchor="middle" fill="var(--accent)">os:windows</text>
+
+        <!-- branches -->
+        <line x1="310" y1="128" x2="212" y2="128" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#arwa)"/>
+        <text x="261" y="120" font-size="10" text-anchor="middle" fill="var(--accent)">default</text>
+
+        <line x1="470" y1="128" x2="568" y2="128" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#arwa)"/>
+        <text x="519" y="120" font-size="10" text-anchor="middle" fill="var(--accent)">windows</text>
+
+        <rect x="52" y="104" width="158" height="48" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="131" y="124" font-size="11" text-anchor="middle" fill="currentColor">LinuxCaptureService</text>
+        <text x="131" y="140" font-size="10" text-anchor="middle" fill="currentColor">perf_event_open</text>
+
+        <rect x="570" y="104" width="158" height="48" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="649" y="124" font-size="11" text-anchor="middle" fill="currentColor">WindowsCaptureService</text>
+        <text x="649" y="140" font-size="10" text-anchor="middle" fill="currentColor">ETW, via krabsetw</text>
+
+        <!-- the compatibility band -->
+        <text x="14" y="204" font-size="11" font-weight="600" fill="currentColor">TARGET_COMPATIBLE_WITH</text>
+        <line x1="14" y1="212" x2="766" y2="212" stroke="currentColor" stroke-width="1" opacity="0.35"/>
+
+        <rect x="14" y="228" width="228" height="52" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="128" y="248" font-size="11" text-anchor="middle" fill="currentColor">bazel build //... on Linux</text>
+        <text x="128" y="265" font-size="10" text-anchor="middle" fill="currentColor">5 modules + 4 libs skipped</text>
+
+        <rect x="538" y="228" width="228" height="52" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="652" y="248" font-size="11" text-anchor="middle" fill="currentColor">bazel build //... on Windows</text>
+        <text x="652" y="265" font-size="10" text-anchor="middle" fill="currentColor">all of them built</text>
+
+        <line x1="244" y1="254" x2="330" y2="254" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+        <text x="390" y="250" font-size="10.5" text-anchor="middle" fill="currentColor">same command,</text>
+        <text x="390" y="264" font-size="10.5" text-anchor="middle" fill="currentColor">same wildcard</text>
+        <line x1="450" y1="254" x2="536" y2="254" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+      </svg>
+    </div>
+    <figcaption><code>select()</code> switches what a shared target contains; <code>target_compatible_with</code> decides whether a target exists at all. Between them, <code>bazel build //...</code> is the correct command on both platforms.</figcaption>
+  </figure>
+
+  <h3>The four Windows-only libraries</h3>
+
+  <p>Each was already vendored in <code>third_party/</code> and each got a BUILD file mirroring what its CMake find-module declared:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Library</th><th>Used by</th><th>Shape</th></tr></thead>
+      <tbody>
+        <tr><td class="v">krabsetw</td><td>WindowsTracing</td><td>Header-only C++ wrapper over ETW</td></tr>
+        <tr><td class="v">PresentMon</td><td>WindowsTracing</td><td>Headers only, matching the <code>INTERFACE</code> library <code>FindPresentMon.cmake</code> declared</td></tr>
+        <tr><td class="v">cppwin32</td><td>WindowsUtils</td><td>Generated C++/WinRT-style projections</td></tr>
+        <tr><td class="v">MinHook</td><td>WindowsUtils</td><td>Three core sources plus the length-disassembler, as its vendored CMakeLists had it</td></tr>
+      </tbody>
+    </table>
   </div>
+
+  <h3>The DIA SDK</h3>
+
+  <p>The PDB reader needs Microsoft's Debug Interface Access SDK, which ships inside a Visual Studio installation rather than as a package. <code>bazel/deps/dia_sdk.bzl</code> is a repository rule that locates it through <code>VSINSTALLDIR</code> — the same search <code>cmake/FindDiaSdk.cmake</code> did — with <code>DIA_SDK_DIR</code> as an override. On Linux it generates an empty stub whose only source is an <code>#error</code>, so every BUILD file that references it still loads on a platform where the SDK cannot exist.</p>
+
+  <h3>C++20, on Windows only</h3>
+
+  <p>The Windows modules use coroutines and <code>&lt;span&gt;</code>. Rather than move the whole tree, <code>.bazelrc</code> sets the standard per platform — <code>--cxxopt=-std=gnu++17</code> under <code>build:linux</code>, <code>--cxxopt=/std:c++20</code> under <code>build:windows</code> — which is what the CMake build did too.</p>
+
+  <!-- ==================================================== scope -->
+
+  <h2 id="scope">Removing CMake</h2>
+
+  <p>With Windows building, nothing in the tree needed CMake any more, so it went: <strong>146 files, about 7,400 lines</strong>. The root and per-module <code>CMakeLists.txt</code>, the twenty-four <code>cmake/Find*.cmake</code> modules and the rest of <code>cmake/</code>, <code>conanfile.py</code>, the Conan profiles under <code>conan/</code> and <code>contrib/conan/</code>, the MSVC and ARM cross toolchain files, and the two <code>CMakeLists.txt</code> files Orbit had written for vendored code. The genuinely upstream ones — libprotobuf-mutator, MinHook, xxHash — stay, because they are part of those libraries' own sources.</p>
+
+  <p><code>bazel/tools/cmake2bazel.py</code> went with them. A translator whose input no longer exists is a trap, not documentation; it and everything it read are at commit <code>aeda7f74b</code> if the derivation ever needs to be re-run.</p>
+
+  <p>Everything downstream of the build system moved with it: the VS Code build task, the license-header check (which walked <code>CMakeLists.txt</code> and now walks <code>.bzl</code> and <code>.bazel</code>), <code>.gitignore</code>, <code>.bazelignore</code>, and the three CI workflows.</p>
+
+  <h3>CI</h3>
+
+  <p><code>build-and-test.yml</code> used to apt-install nineteen packages, configure CMake and run ctest. It now checks out, restores two Bazel caches and runs two commands, across four configurations including MSVC on Windows:</p>
+
+  <pre><code>bazel build //...
+bazel test --test_tag_filters=-integration,-known_flaky //...</code></pre>
+
+  <p><code>integration</code> is the set that drives <code>perf_event_open</code> and <code>ptrace</code> against a live process, which a hosted runner does not permit — the same set <code>ctest -E IntegrationTest</code> excluded. <code>known_flaky</code> is the one suite with the open race; it still runs, in a step marked <code>continue-on-error</code>, so its output stays visible without blocking unrelated changes. The CodeQL workflow builds through Bazel with <code>--spawn_strategy=local</code> so its tracer can observe the compiler, and the nightly release builds <code>//src/Orbit</code> and <code>//src/Service:OrbitService</code> and publishes tarballs.</p>
+
+  <div class="note">
+    <span class="note-label">One thing the removal cost</span>
+    <p>The old ARM64 path cross-compiled OrbitService inside a Docker image carrying an aarch64 GCC, a multiarch sysroot and a prebuilt LLVM at <code>/opt/llvm-arm64</code>. All three were CMake-shaped and went with it.</p>
+    <p>Bazel makes the native build the easy answer instead — every dependency is source, so <code>bazel build --config=release //src/Service:OrbitService</code> on the Pi itself needs no toolchain setup at all, and the ARM64 stub for <code>UserSpaceInstrumentation</code> is now a <code>select()</code> on <code>@platforms//cpu:aarch64</code> rather than an <code>if()</code> that returns early. Cross-compiling from x86-64 would need an aarch64 <code>cc_toolchain</code> and a Rust target added to <code>MODULE.bazel</code>; that has not been written, and is called out in <code>docs/building_arm64.md</code>.</p>
+  </div>
+
+  <h3>What is still not built, on any platform</h3>
+
+  <p>Two groups, and they are the two CMake also left out: <code>src/OrbitVulkanLayer</code>, <code>src/OrbitTriggerCaptureVulkanLayer</code> and <code>src/VulkanTutorial</code>, which sat behind a <code>WITH_VULKAN</code> option the root <code>CMakeLists.txt</code> left commented out; and <code>src/FuzzingUtils</code>, whose <code>add_subdirectory</code> was commented out.</p>
 
   <h2 id="end">Where to look</h2>
 
@@ -1153,7 +1271,8 @@
         <tr><td class="v">bazel/proto/rules.bzl</td><td>protobuf and gRPC generation</td></tr>
         <tr><td class="v">bazel/deps/</td><td>The <code>.deb</code> repository rule, the pinned package list, and its regenerator</td></tr>
         <tr><td class="v">bazel/patches/</td><td>Two LLVM patches, one gRPC visibility patch, each with its reasoning in the header</td></tr>
-        <tr><td class="v">bazel/tools/cmake2bazel.py</td><td>The translator this port was derived from</td></tr>
+        <tr><td class="v">bazel/deps/dia_sdk.bzl</td><td>Locates the Visual Studio DIA SDK; stubs out elsewhere</td></tr>
+        <tr><td class="v">.github/workflows/</td><td>Bazel CI across GCC, Clang and MSVC</td></tr>
         <tr><td class="v">docs/building_with_bazel.md</td><td>The reference version of all of this</td></tr>
       </tbody>
     </table>

@@ -4,22 +4,30 @@ For the reasoning behind the decisions below -- why each dependency is
 sourced the way it is, which versions moved and what forced them -- see
 [bazel-port.html](bazel-port.html), which is written to be read in a browser.
 
-Orbit builds with [Bazel](https://bazel.build). Every dependency is fetched by
-Bazel itself, Qt included, so a clean checkout needs nothing installed beyond
-Bazel and a C/C++ compiler -- no Conan, no CMake, no `apt install` step, and no
-Rust toolchain.
+Orbit builds with [Bazel](https://bazel.build) on Linux and Windows. Every
+dependency is fetched by Bazel itself, Qt included, so a clean checkout needs
+nothing installed beyond Bazel and a C/C++ compiler -- no Conan, no CMake, no
+`apt install` step, and no Rust toolchain.
 
 ## Requirements
 
 - **Bazel 9.2.0.** The version is pinned in `.bazelversion`; install
   [Bazelisk](https://github.com/bazelbuild/bazelisk) and it will pick up the
   right release automatically.
-- **A C++17 compiler.** Built and tested with GCC 15 on Ubuntu 26.04.
+- **A C++ compiler.** Linux builds as C++17 and is tested with GCC 15 on
+  Ubuntu 26.04. Windows builds as C++20 with MSVC from Visual Studio 2022,
+  because the `Windows*` modules use C++20 coroutines and `<span>`.
 - **git**, for the submodule below and for the version stamp.
 
 Qt's own shared libraries come from the fetched packages, but the ones they in
 turn load -- ICU, glib, fontconfig, X11 -- are expected to be on the machine
 already, as they are in any desktop install.
+
+On Windows, the PDB symbol reader needs the Debug Interface Access SDK, which
+ships with Visual Studio. `bazel/deps/dia_sdk.bzl` locates it through
+`VSINSTALLDIR`, the same way `cmake/FindDiaSdk.cmake` used to; set `DIA_SDK_DIR`
+to override. Nothing else about the Windows build differs -- the same
+`bazel build //...` produces the whole tree.
 
 py-spy, which Orbit uses to sample Python call stacks, is a git submodule:
 
@@ -55,8 +63,7 @@ bazel test //src/OrbitBase:all       # one module
 Tests that need a display run with `QT_QPA_PLATFORM=offscreen`, which
 `.bazelrc` sets for every test, so `bazel test //...` works over SSH.
 
-Some tests need `ptrace` and `perf_event_open` permissions, exactly as they do
-under CMake:
+Some tests need `ptrace` and `perf_event_open` permissions:
 
 ```
 sudo sysctl -w kernel.perf_event_paranoid=-1
@@ -65,7 +72,9 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 
 ## Known test failures
 
-`bazel test //...` runs 49 test targets. One does not pass.
+`bazel test //...` matches 51 test targets. Two of them -- `WindowsTracingTests`
+and `WindowsUtilsTests` -- are `target_compatible_with` Windows and are skipped
+on Linux, leaving 49. One of those 49 does not pass.
 
 **`//src/UserSpaceInstrumentation:UserSpaceInstrumentationTests`** fails
 intermittently in `InstrumentProcessTest.Instrument` -- about four runs in five
@@ -141,17 +150,42 @@ Two tests carry Bazel tags rather than assertions changes:
   waits 500 ms for a 250 ms timer; the second sleeps 25 ms and expects a gRPC
   round trip to have finished in it. Both miss under 32-way parallelism and
   pass on their own.
+- `UserSpaceInstrumentationTests` is `known_flaky`, for the race above.
+
+## Continuous integration
+
+`.github/workflows/build-and-test.yml` builds and tests four configurations:
+GCC fastbuild, GCC opt and Clang fastbuild on Ubuntu, and MSVC opt on Windows.
+There is no dependency-installation step -- checkout, restore the Bazel caches,
+`bazel build //...`, `bazel test //...`.
+
+Two tag filters shape what gates a pull request:
+
+```
+bazel test --test_tag_filters=-integration,-known_flaky //...   # gating
+bazel test --test_tag_filters=known_flaky //...                 # reported, not gating
+```
+
+`integration` is excluded because those tests drive `perf_event_open` and
+`ptrace` against a live process, which a hosted runner does not permit -- the
+same set `ctest -E IntegrationTest` excluded before. `known_flaky` still runs,
+so its output is visible in the log, but with `continue-on-error` so the open
+race does not block unrelated changes.
+
+`~/.cache/bazel-disk` and `~/.cache/bazel-repo` are restored through
+`actions/cache`, keyed on `MODULE.bazel.lock`, so a run that does not touch the
+dependency graph never rebuilds it.
 
 ## Configurations
 
 `.bazelrc` defines the configurations Orbit ships:
 
-| Command | Equivalent CMake build type |
+| Command | What you get |
 | --- | --- |
-| `bazel build //...` | `Debug`, without debug info (Bazel's `fastbuild`) |
-| `bazel build --config=debug //...` | `Debug` |
-| `bazel build --config=release //...` | `RelWithDebInfo` |
-| `bazel build --config=opt //...` | `Release` |
+| `bazel build //...` | Unoptimised, no debug info (Bazel's `fastbuild`) |
+| `bazel build --config=debug //...` | Unoptimised with debug info |
+| `bazel build --config=release //...` | Optimised with debug info |
+| `bazel build --config=opt //...` | Optimised, no debug info |
 | `bazel build --config=asan //...` | AddressSanitizer |
 | `bazel build --config=ubsan //...` | UndefinedBehaviorSanitizer |
 
@@ -164,7 +198,9 @@ to profile with or hand to someone else.
 `bazel build //...` from a clean checkout, with nothing downloaded and an
 empty cache, is **6.5 minutes** on a 32-core machine: 9,520 actions covering
 gRPC, protobuf, Abseil, LLVM, capstone, GoogleTest, py-spy's 200-odd crates,
-and Orbit itself. A no-op rebuild after that is about a second.
+and Orbit itself. A second cold run measured 412.6 s for the same 9,520
+actions, so that is a stable figure rather than a lucky one. A no-op rebuild
+after that is about a second.
 
 Two things keep it there:
 
@@ -210,8 +246,8 @@ that version; it rewrites `bazel/deps/debs.bzl`.
 
 ### gRPC without TLS
 
-Orbit links `grpc++_unsecure` rather than `grpc++`, which is what the
-pkg-config path in `cmake/FindgRPC.cmake` picks too.
+Orbit links `grpc++_unsecure` rather than `grpc++` -- which is also what the
+pkg-config path in the old `cmake/FindgRPC.cmake` selected.
 
 **This drops no security.** Orbit has never used gRPC's TLS. All ten channel
 and server call sites in the tree use `InsecureChannelCredentials` or
@@ -267,27 +303,39 @@ change that. Closing it would mean authenticating the peer -- a Unix domain
 socket with restrictive permissions, as the producer side already uses, or an
 `SO_PEERCRED` check. That is a change to the service, not to the build.
 
-## What is not ported
+## Platforms and what is not built
 
-The Bazel build covers everything the top-level `CMakeLists.txt` builds on
-Linux. Three groups of modules are outside it, matching what CMake leaves out
-there too:
+Bazel is the only build system in the tree. CMake, Conan and the Conan profiles
+were removed once Windows was ported; the last commit that still contains them
+is `aeda7f74b`.
 
-- `src/Windows*`, which sit behind `if(WIN32)`. Windows still builds through
-  CMake and Conan.
+| Platform | State |
+| --- | --- |
+| Linux x86-64 | Fully supported, the development platform |
+| Windows x86-64 | Fully supported: the `Windows*` modules, ETW tracing, PDB symbols, the DIA SDK and MinHook |
+| Linux aarch64 | Builds natively; dynamic instrumentation is stubbed. See [building_arm64.md](building_arm64.md) |
+
+Two groups of modules are not built on any platform, matching what CMake left
+out as well:
+
 - `src/OrbitVulkanLayer`, `src/OrbitTriggerCaptureVulkanLayer` and
-  `src/VulkanTutorial`, which sit behind `WITH_VULKAN`. The top-level
-  `CMakeLists.txt` leaves that option commented out, so they are not built by
-  either build system.
-- `src/FuzzingUtils`, whose `add_subdirectory` is commented out.
+  `src/VulkanTutorial`, which sat behind `WITH_VULKAN` -- an option the old
+  top-level `CMakeLists.txt` left commented out.
+- `src/FuzzingUtils`, whose `add_subdirectory` was commented out.
 
-The `CMakeLists.txt` files are all still in place; nothing here removes them.
+### Platform-conditional targets
+
+Sources, headers and dependencies that differ per platform use `select()` on
+`@platforms//os:windows`, so one `BUILD.bazel` per module still covers both.
+`src/Windows*` and the Windows-only third-party libraries -- krabsetw,
+PresentMon, cppwin32, MinHook -- carry
+`target_compatible_with = ["@platforms//os:windows"]`, which makes
+`bazel build //...` skip rather than fail them on Linux.
 
 ## How the build is laid out
 
-Each module under `src/` has a `BUILD.bazel` that mirrors its `CMakeLists.txt`:
-a `cc_library` named after the module, and a `cc_test` for its tests. Shared
-build logic lives in `bazel/`:
+Each module under `src/` has a `BUILD.bazel` holding a `cc_library` named after
+the module and a `cc_test` for its tests. Shared build logic lives in `bazel/`:
 
 | Path | Contents |
 | --- | --- |
@@ -295,12 +343,11 @@ build logic lives in `bazel/`:
 | `bazel/qt/rules.bzl` | `qt_cc_library`, `qt_moc`, `qt_uic`, `qt_rcc` |
 | `bazel/proto/rules.bzl` | protobuf and gRPC code generation |
 | `bazel/version/rules.bzl` | Expands `OrbitVersion.cpp.in` from the workspace status |
-| `bazel/deps/` | Dependencies that are not Bazel modules |
-| `bazel/tools/cmake2bazel.py` | The one-shot translator the port was derived from |
+| `bazel/deps/` | Dependencies that are not Bazel modules, plus the DIA SDK locator |
 
 ### Qt code generation
 
-CMake's `AUTOMOC`/`AUTOUIC`/`AUTORCC` scan sources at build time. Bazel needs
+CMake's `AUTOMOC`/`AUTOUIC`/`AUTORCC` scanned sources at build time. Bazel needs
 generated files declared up front, so `qt_cc_library` takes them explicitly:
 
 ```python
