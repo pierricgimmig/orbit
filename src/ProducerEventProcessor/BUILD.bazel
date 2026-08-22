@@ -1,0 +1,45 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ProducerEventProcessor",
+    srcs = [
+        "GrpcClientCaptureEventCollector.cpp",
+        "ProducerEventProcessor.cpp",
+    ],
+    hdrs = [
+        "include/ProducerEventProcessor/ClientCaptureEventCollector.h",
+        "include/ProducerEventProcessor/GrpcClientCaptureEventCollector.h",
+        "include/ProducerEventProcessor/ProducerEventProcessor.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/ProducerEventProcessor",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/CaptureFile",
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_test(
+    name = "ProducerEventProcessorTests",
+    srcs = [
+        "GrpcClientCaptureEventCollectorTest.cpp",
+        "ProducerEventProcessorTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ProducerEventProcessor",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

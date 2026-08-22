@@ -1,0 +1,66 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+exports_files([
+    "capstone.BUILD",
+    "opengl.BUILD.tpl",
+    "outcome.BUILD",
+    "resolve_debs.py",
+])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The set of LLVM libraries Orbit links, matching REQUIRED_LLVM_LIBS in
+# src/ObjectUtils/CMakeLists.txt. Grouped here so the module list lives in one
+# place rather than being repeated by every consumer.
+cc_library(
+    name = "llvm",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:DebugInfoCodeView",
+        "@llvm-project//llvm:DebugInfoDWARF",
+        "@llvm-project//llvm:DebugInfoPDB",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Symbolize",
+    ],
+)
+
+# Orbit's gRPC dependency.
+#
+# This resolves to grpc++_unsecure -- gRPC's build without the TLS transport --
+# and the name deserves an explanation, because it reads as a downgrade and is
+# not one.
+#
+# Orbit does not use gRPC's TLS and never has. All ten channel and server call
+# sites in the tree construct InsecureChannelCredentials or
+# InsecureServerCredentials; grpc::SslCredentials has never appeared in this
+# repository's history; there is no certificate, key or PEM handling anywhere.
+# Linking the TLS build would compile a stack that no code path can reach, and
+# would advertise a protection the wire does not have.
+#
+# What does protect the wire:
+#
+#   - OrbitService binds 127.0.0.1 only (Service/OrbitService.cpp), so its gRPC
+#     port is not reachable from the network. Remote profiling reaches it
+#     through an SSH tunnel, and SSH is what authenticates and encrypts it.
+#   - The producer-side server listens on a Unix domain socket, governed by
+#     filesystem permissions.
+#   - Symbol downloads are real HTTPS, but they go through Qt rather than gRPC.
+#     //src/Http:HttpTests asserts that the Qt in this build has a working TLS
+#     backend.
+#
+# There is also a hard technical reason the TLS build cannot be used here.
+# Orbit injects liborbit.so and liborbituserspaceinstrumentation.so into target
+# processes with dlmopen(LM_ID_NEWLM). OpenSSL's initialisation does not
+# survive being loaded into a fresh linker namespace -- it aborts the target
+# with "corrupted double-linked list" -- so a gRPC linked against it takes the
+# injected libraries down with it. gRPC's other TLS backend, BoringSSL,
+# survives that, but collides at link time with the OpenSSL libssh2 brings into
+# the UI. Without TLS, neither problem exists.
+alias(
+    name = "grpc",
+    actual = "@grpc//:grpc++_unsecure",
+    visibility = ["//visibility:public"],
+)

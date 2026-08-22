@@ -11,7 +11,7 @@ namespace orbit_api {
 orbit_grpc_protos::ProducerCaptureEvent* LockFreeApiEventProducer::TranslateIntermediateEvent(
     ApiEventVariant&& raw_api_event, google::protobuf::Arena* arena) {
   auto* capture_event =
-      google::protobuf::Arena::CreateMessage<orbit_grpc_protos::ProducerCaptureEvent>(arena);
+      google::protobuf::Arena::Create<orbit_grpc_protos::ProducerCaptureEvent>(arena);
 
   std::visit(
       [capture_event](const auto& event) {

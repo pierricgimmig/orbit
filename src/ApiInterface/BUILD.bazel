@@ -1,0 +1,31 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//bazel:copts.bzl", "ORBIT_C_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+# The public Orbit API. Header-only: applications include Orbit.h and define
+# ORBIT_API_ENABLED to get the manual instrumentation macros.
+cc_library(
+    name = "ApiInterface",
+    hdrs = ["include/ApiInterface/Orbit.h"],
+    includes = ["include"],
+)
+
+# Orbit.h has to stay valid C as well as C++, and it has to link. This is a
+# binary rather than a test so that linking is actually exercised.
+cc_binary(
+    name = "ApiHeaderBuildsInCTest",
+    srcs = [
+        "BuildInCMain.c",
+        "BuildInCWithInstantiateInAnotherFile.c",
+        "BuildInCWithInstantiateInThisFile.c",
+    ],
+    copts = ORBIT_C_COPTS,
+    # Orbit.h is included as <Orbit.h>, not <ApiInterface/Orbit.h>.
+    includes = ["include/ApiInterface"],
+    deps = [":ApiInterface"],
+)

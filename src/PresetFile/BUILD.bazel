@@ -1,0 +1,33 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "PresetFile",
+    srcs = ["PresetFile.cpp"],
+    hdrs = ["include/PresetFile/PresetFile.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/ClientProtos",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:strings",
+        "@protobuf//:protobuf",
+    ],
+)
+
+cc_test(
+    name = "PresetFileTests",
+    srcs = ["PresetFileTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/PresetFile",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

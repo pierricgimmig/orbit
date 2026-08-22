@@ -80,7 +80,7 @@ class VulkanLayerProducerImpl : public VulkanLayerProducer {
         orbit_grpc_protos::ProducerCaptureEvent&& intermediate_event,
         google::protobuf::Arena* arena) override {
       auto* capture_event =
-          google::protobuf::Arena::CreateMessage<orbit_grpc_protos::ProducerCaptureEvent>(arena);
+          google::protobuf::Arena::Create<orbit_grpc_protos::ProducerCaptureEvent>(arena);
       // Note that, as capture_event is in the Arena and intermediate_event is on the heap, this
       // std::move will actually end up being a copy, as it will use CopyFrom internally.
       // For the amount of events that this Vulkan layer produces, this is fine performance-wise.

@@ -85,49 +85,64 @@ preset so that you won't have to do this manually again. To save a preset, go to
 
 ## Build
 
+Orbit builds with [Bazel](https://bazel.build) on Linux and Windows. Bazel
+fetches and builds every dependency itself, so a clean checkout needs nothing
+installed beyond Bazel and a C++ compiler - no package manager, no
+`apt install`, no Qt SDK, no Rust toolchain.
+
 ### Requirements
-- Python 3
-- CMake: `pip install cmake`
-- Conan 2: `pip install conan`
-- Qt5: `sudo apt install qtbase5-dev`
 
-### Linux
+- [Bazelisk](https://github.com/bazelbuild/bazelisk), or Bazel 9.2.0 directly
+  (the version pinned in `.bazelversion`)
+- **Linux:** GCC or Clang with C++17 support. Built and tested with GCC 15.
+- **Windows:** Visual Studio 2022 with the C++ workload. The `Windows*` modules
+  build as C++20. For the PDB symbol reader, the Debug Interface Access SDK
+  ships with Visual Studio; Bazel finds it through `VSINSTALLDIR`, or set
+  `DIA_SDK_DIR` to point at it directly.
 
-#### Debug
-```
-conan install . -pr:a contrib/conan/profiles/linux/gcc17_debug --build=missing -of build_gcc17_debug
-cmake -B build_gcc17_debug -DCMAKE_TOOLCHAIN_FILE=build_gcc17_debug/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Debug .
-cmake --build build_gcc17_debug --parallel
-```
+### Building
 
-#### RelWithDebInfo
 ```
-conan install . -pr:a contrib/conan/profiles/linux/gcc17_relwithdebinfo --build=missing -of build_gcc17_relwithdebinfo
-cmake -B build_gcc17_relwithdebinfo -DCMAKE_TOOLCHAIN_FILE=build_gcc17_relwithdebinfo/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .
-cmake --build build_gcc17_relwithdebinfo --parallel
-```
+git clone https://github.com/google/orbit.git
+cd orbit
+git submodule update --init third_party/py-spy
 
-#### Release
-```
-conan install . -pr:a contrib/conan/profiles/linux/gcc17_release --build=missing -of build_gcc17_release
-cmake -B build_gcc17_release -DCMAKE_TOOLCHAIN_FILE=build_gcc17_release/generators/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release .
-cmake --build build_gcc17_release --parallel
+bazel build //...                    # fastbuild, the default
+bazel build --config=release //...   # optimized, with debug info
+bazel test //...
 ```
 
-### Windows
+`bazel run //src/Orbit` starts the UI. The service binary lands at
+`bazel-bin/src/Service/OrbitService` on Linux and
+`bazel-bin/src/Service/OrbitService.exe` on Windows.
+
+The first build compiles the dependency tree from source and takes a few
+minutes; everything after that is incremental and shared through a local disk
+cache. See [docs/building_with_bazel.md](docs/building_with_bazel.md) for the
+available configurations, where each dependency comes from, and how to keep
+builds fast.
+
+### Remote profiling
+
+OrbitService runs on the machine being profiled and the UI connects to it over
+SSH. Profiling needs access to `perf_event_open` and `ptrace`:
+
 ```
-conan install . --build="abseil/*" --build="protobuf/*" --build="grpc/*" --build=missing
-cd build
-cmake -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake ..
-cmake --build . --config Release
+sudo sysctl kernel.perf_event_paranoid=-1
+sudo sysctl kernel.yama.ptrace_scope=0
 ```
+
+### Raspberry Pi and other ARM64 targets
+
+Build natively on the target - Bazel builds every dependency from source, so
+there is no cross-toolchain to set up:
+
+```
+bazel build --config=release //src/Service:OrbitService
+```
+
+Then connect the UI to it over an SSH tunnel. Dynamic instrumentation is
+x86-64 only; on ARM64 the service provides sampling and tracing.
+See [docs/building_arm64.md](docs/building_arm64.md).
 
 [orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png
-
-
-### Raspberry Pi
-```
-./build_arm_service.sh
-scp build_arm64/bin/OrbitService raspberrypi.local:/home/pierric/
-ssh -t -L 44765:127.0.0.1:44765 raspberrypi.local 'sudo ./OrbitService'
-```

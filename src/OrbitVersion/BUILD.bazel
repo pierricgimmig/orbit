@@ -1,0 +1,34 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("//bazel/version:rules.bzl", "orbit_version_file")
+
+package(default_visibility = ["//visibility:public"])
+
+orbit_version_file(
+    name = "version_source",
+    out = "OrbitVersion.cpp",
+    template = "OrbitVersion.cpp.in",
+)
+
+cc_library(
+    name = "OrbitVersion",
+    srcs = [":version_source"],
+    hdrs = ["include/OrbitVersion/OrbitVersion.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = ["@abseil-cpp//absl/strings:str_format"],
+)
+
+cc_test(
+    name = "OrbitVersionTests",
+    srcs = ["OrbitVersionTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        ":OrbitVersion",
+        "//src/Test:gtest_main",
+    ],
+)

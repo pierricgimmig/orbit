@@ -1,0 +1,85 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "DataViews",
+    srcs = [
+        "CallstackDataView.cpp",
+        "DataView.cpp",
+        "DataViewUtils.cpp",
+        "FunctionsDataView.cpp",
+        "LiveFunctionsDataView.cpp",
+        "ModulesDataView.cpp",
+        "PresetsDataView.cpp",
+        "SamplingReportDataView.cpp",
+        "TracepointsDataView.cpp",
+    ],
+    hdrs = [
+        "DataViewUtils.h",
+        "include/DataViews/AppInterface.h",
+        "include/DataViews/CallstackDataView.h",
+        "include/DataViews/CompareAscendingOrDescending.h",
+        "include/DataViews/DataView.h",
+        "include/DataViews/DataViewType.h",
+        "include/DataViews/FunctionsDataView.h",
+        "include/DataViews/LiveFunctionsDataView.h",
+        "include/DataViews/LiveFunctionsInterface.h",
+        "include/DataViews/ModulesDataView.h",
+        "include/DataViews/PresetLoadState.h",
+        "include/DataViews/PresetsDataView.h",
+        "include/DataViews/SamplingReportDataView.h",
+        "include/DataViews/SamplingReportInterface.h",
+        "include/DataViews/SymbolLoadingState.h",
+        "include/DataViews/TracepointsDataView.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/ClientData",
+        "//src/ClientFlags",
+        "//src/ClientModel",
+        "//src/ClientProtos",
+        "//src/DisplayFormats",
+        "//src/OrbitBase",
+        "//src/PresetFile",
+        "//src/QtUtils",
+        "//src/Statistics",
+        "//src/SymbolProvider",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/time:time",
+        "@abseil-cpp//absl/types:span",
+    ],
+)
+
+cc_test(
+    name = "DataViewsTests",
+    srcs = [
+        "CallstackDataViewTest.cpp",
+        "DataViewTest.cpp",
+        "DataViewTestUtils.cpp",
+        "DataViewTestUtils.h",
+        "DataViewUtilsTest.cpp",
+        "FunctionsDataViewTest.cpp",
+        "LiveFunctionsDataViewTest.cpp",
+        "MockAppInterface.h",
+        "ModulesDataViewTest.cpp",
+        "PresetsDataViewTest.cpp",
+        "SamplingReportDataViewTest.cpp",
+        "TracepointsDataViewTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/DataViews",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

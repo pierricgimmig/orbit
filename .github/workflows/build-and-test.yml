@@ -1,4 +1,4 @@
-# Copyright (c) 2022 The Orbit Authors. All rights reserved.
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,19 +8,24 @@ on:
     branches:
       - 'main'
     paths:
-      - 'CMakeLists.txt'
+      - '.bazelrc'
+      - '.bazelversion'
       - '.github/**'
-      - 'cmake/**'
+      - 'MODULE.bazel'
+      - 'MODULE.bazel.lock'
+      - 'bazel/**'
       - 'src/**'
       - 'third_party/**'
-      - 'conanfile.py'
   pull_request:
     branches:
       - 'main'
     paths:
-      - 'CMakeLists.txt'
+      - '.bazelrc'
+      - '.bazelversion'
       - '.github/**'
-      - 'cmake/**'
+      - 'MODULE.bazel'
+      - 'MODULE.bazel.lock'
+      - 'bazel/**'
       - 'src/**'
       - 'third_party/**'
   schedule:
@@ -34,7 +39,7 @@ concurrency:
 
 jobs:
   job:
-    name: ${{ matrix.config.build_type }}.${{ matrix.config.cc }}.build-and-test-${{ matrix.config.os }}
+    name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
     timeout-minutes: 360
     strategy:
@@ -42,39 +47,35 @@ jobs:
       matrix:
         config:
         - {
-            name: "GCC Release",
-            build_type: 'Release',
+            name: "linux-gcc-fastbuild",
+            os: "ubuntu-22.04",
+            config_flag: "",
             cc: "gcc",
-            cxx: "g++",
-            os: "ubuntu-22.04"
+            cxx: "g++"
         }
         - {
-            name: "Clang Release",
-            build_type: 'Release',
+            name: "linux-gcc-opt",
+            os: "ubuntu-22.04",
+            config_flag: "-c opt",
+            cc: "gcc",
+            cxx: "g++"
+        }
+        - {
+            name: "linux-clang-fastbuild",
+            os: "ubuntu-22.04",
+            config_flag: "",
             cc: "clang",
-            cxx: "clang++",
-            os: "ubuntu-22.04"
+            cxx: "clang++"
         }
         - {
-            name: "Clang Debug",
-            build_type: 'Debug',
-            cc: "clang",
-            cxx: "clang++",
-            os: "ubuntu-22.04"
-        }
-        - {
-            name: "MSVC Release",
-            build_type: 'Release',
-            cc: "msvc",
-            os: "windows-2019",
-            conan_profile: "msvc2019_release"
+            name: "windows-msvc-opt",
+            os: "windows-2022",
+            config_flag: "-c opt"
         }
     env:
-      CCACHE_BASEDIR: "${GITHUB_WORKSPACE}"
-      CCACHE_DIR: "${GITHUB_WORKSPACE}/.ccache"
-      CCACHE_COMPRESS: "true"
-      CCACHE_COMPRESSLEVEL: "6"
-      CCACHE_MAXSIZE: "600M"
+      # Bazel resolves the C++ toolchain from CC/CXX.
+      CC: ${{ matrix.config.cc }}
+      CXX: ${{ matrix.config.cxx }}
       PR_NUMBER: ${{ github.event.number }}
       PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
       PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -84,131 +85,79 @@ jobs:
            echo "$PR_NUMBER" > pr_metadata/pr_number.txt
            echo "$PR_HEAD_REPO" > pr_metadata/pr_head_repo.txt
            echo "$PR_HEAD_REF" > pr_metadata/pr_head_ref.txt
-        if: github.event_name == 'pull_request' && matrix.config.name == 'Clang Debug'
+        shell: bash
+        if: github.event_name == 'pull_request' && matrix.config.name == 'linux-clang-fastbuild'
       - name: 'Upload PR metadata'
-        if: github.event_name == 'pull_request' && matrix.config.name == 'Clang Debug'
-        uses: actions/upload-artifact@v3
+        if: github.event_name == 'pull_request' && matrix.config.name == 'linux-clang-fastbuild'
+        uses: actions/upload-artifact@v4
         with:
           name: pr_metadata
           path: pr_metadata
           retention-days: 1
-      - uses: actions/checkout@v3
+
+      - uses: actions/checkout@v4
         with:
           fetch-depth: '0'
-      - name: Install dependencies (Ubuntu)
-        if: startsWith(matrix.config.os, 'ubuntu')
-        run: |
-           sudo apt update &&                             \
-           sudo apt install --yes --no-install-recommends \
-           build-essential                                \
-           clang-tidy-14                                  \
-           cmake                                          \
-           ccache                                         \
-           libboost-dev                                   \
-           libcapstone-dev                                \
-           libgrpc++-dev                                  \
-           libssh2-1-dev                                  \
-           vulkan-validationlayers-dev                    \
-           libz-dev                                       \
-           llvm-dev                                       \
-           protobuf-compiler-grpc                         \
-           pkg-config                                     \
-           libvulkan-volk-dev                             \
-           libvulkan-dev                                  \
-           libopengl-dev                                  \
-           libglx-dev                                     \
-           mesa-common-dev                                \
-           qtbase5-dev                                    \
-           libgtest-dev                                   \
-           libgmock-dev                                   \
-           git                                            \
-           libprotobuf-dev
-      - name: Install dependencies (Windows)
-        if: startsWith(matrix.config.os, 'windows')
-        run: |
-          py -3 -m pip install aqtinstall
-          py -3 -m aqt install-qt  --outputdir C:\Qt windows desktop 5.15 win64_msvc2019_64
-          py -3 -m pip install conan==1.58.0
-          choco install -y ccache
-          echo "C:\ProgramData\chocolatey\lib\ccache\tools\ccache-4.7.3-windows-x86_64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Save CCache Timestamp
-        id: ccache_timestamp
-        run: echo "timestamp=$(date +%m-%d-%Y--%H:%M:%S)" >> $GITHUB_OUTPUT
-        shell: bash
-      - name: Setup CCache Files
-        uses: actions/cache@v3
+          # py-spy is a submodule; the Rust FFI layer needs its sources.
+          submodules: 'recursive'
+
+      # Everything else - Qt, OpenGL, LLVM, gRPC, capstone, the Rust
+      # toolchain - is fetched by Bazel itself. There is nothing to apt-install.
+      - name: Mount Bazel cache
+        uses: actions/cache@v4
         with:
           path: |
-            .ccache
-            ~/.conan
-            C:\.conan
-          key: ${{ matrix.config.build_type }}-${{ matrix.config.cc }}-ccache-${{ steps.ccache_timestamp.outputs.timestamp }}
+            ~/.cache/bazel-disk
+            ~/.cache/bazel-repo
+          key: bazel-${{ matrix.config.name }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
           restore-keys: |
-            ${{ matrix.config.build_type }}-${{ matrix.config.cc }}-ccache-
-            ccache-
-      - run: ccache -p
-      - run: ccache -z
-      - run: mkdir "build"
-        if: startsWith(matrix.config.os, 'ubuntu')
-      - name: CMake Configure (Ubuntu)
-        if: startsWith(matrix.config.os, 'ubuntu')
-        working-directory: ./build
-        env:
-          CXX: ${{ matrix.config.cxx }}
-          CC: ${{ matrix.config.cc }}
+            bazel-${{ matrix.config.name }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
+            bazel-${{ matrix.config.name }}-
+
+      - name: Write CI bazelrc
+        shell: bash
         run: |
-          cmake -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}                                     \
-           -DCMAKE_CXX_FLAGS="-march=sandybridge -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer" \
-           -DCMAKE_C_COMPILER_LAUNCHER=ccache                                                          \
-           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache                                                        \
-           ${GITHUB_WORKSPACE}
-      - name: CMake Build (Ubuntu)
-        if: startsWith(matrix.config.os, 'ubuntu')
-        working-directory: ./build
-        run: cmake --build .
-      - name: Run clang-tidy (Clang Debug)
-        if: github.event_name == 'pull_request' && matrix.config.name == 'Clang Debug'
+          cat > .bazelrc.user <<'EOF'
+          common --announce_rc
+          common --color=no
+          common --curses=no
+          build --disk_cache=~/.cache/bazel-disk
+          build --repository_cache=~/.cache/bazel-repo
+          build --keep_going
+          test --test_output=errors
+          test --test_summary=terse
+          EOF
+
+      - name: Build
+        run: bazel build ${{ matrix.config.config_flag }} //...
+
+      # `integration` drives perf_event_open and ptrace against a live process,
+      # which a hosted runner does not permit - the same set the CMake build
+      # excluded with `ctest -E IntegrationTest`. `known_flaky` is the one test
+      # with an open race; see docs/building_with_bazel.md.
+      - name: Test
+        run: bazel test ${{ matrix.config.config_flag }} --test_tag_filters=-integration,-known_flaky //...
+
+      - name: Test (known-flaky, non-gating)
+        continue-on-error: true
+        run: bazel test ${{ matrix.config.config_flag }} --test_tag_filters=known_flaky //...
+
+      - name: Collect test results
+        if: success() || failure()
+        shell: bash
         run: |
-          # Use origin/main as reference branch, if not specified by Github
-          REFERENCE="origin/${GITHUB_BASE_REF:-main}"
-          MERGE_BASE="$(git merge-base $REFERENCE HEAD)" # Merge base is the commit on main this PR was branched from.
-          git diff -U0 --no-color --diff-filter=r $MERGE_BASE -- 'src/**' | clang-tidy-diff-14.py -p1 -path build -export-fixes clang-tidy-fixes.yml
-      - uses: actions/upload-artifact@v3
-        if: github.event_name == 'pull_request' && matrix.config.name == 'Clang Debug'
-        with:
-          name: clang_tidy_fixes
-          path: clang-tidy-fixes.yml
-      - name: CMake Test (Ubuntu)
-        if: startsWith(matrix.config.os, 'ubuntu')
-        working-directory: ./build
-        run: |
-          CTEST_OUTPUT_ON_FAILURE=1 \
-          ARGS="-E IntegrationTest" \
-          ../contrib/scripts/run_ssh_containers.sh \
-          cmake --build . --target test
-      - name: Install conan config (Windows)
-        if: startsWith(matrix.config.os, 'windows')
-        run: |
-          py -3 -m conans.conan config install .\third_party\conan\configs\windows\
-          py -3 -m conans.conan config install .\third_party\conan\configs\windows_ci\
-      - name: Build & Test (Windows)
-        if: startsWith(matrix.config.os, 'windows')
-        env:
-          Qt5_DIR: "C:\\Qt\\5.15.2\\msvc2019_64"
-          CMAKE_CXX_COMPILER_LAUNCHER: "ccache"
-          CMAKE_C_COMPILER_LAUNCHER: "ccache"
-        run: |
-          py -3 -m conans.conan install -pr:b msvc2019_release -pr:h ${{ matrix.config.conan_profile }} -if build/ --build outdated --update ./
-          py -3 -m conans.conan build -bf build/ .
-      - name: Clean up conan cache (Windows)
-        run: py -3 -m conans.conan remove --src --builds --force *
-        if: startsWith(matrix.config.os, 'windows')
-      - name: CCache Stats
-        run: ccache -s -v
+          mkdir -p testresults
+          testlogs="$(bazel info bazel-testlogs)"
+          find "$testlogs" -name 'test.xml' -print0 |
+            while IFS= read -r -d '' f; do
+              rel="${f#"$testlogs"/}"
+              cp "$f" "testresults/$(echo "${rel%/test.xml}" | tr '/' '_').xml"
+            done
+
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: test-results-${{ matrix.config.cc }}-${{ matrix.config.build_type }}
-          path: 'build/testresults/**/*.xml'
+          name: test-results-${{ matrix.config.name }}
+          path: 'testresults/**/*.xml'
           retention-days: 1

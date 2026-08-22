@@ -1,0 +1,45 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "CaptureEventProducer",
+    srcs = ["CaptureEventProducer.cpp"],
+    hdrs = [
+        "include/CaptureEventProducer/CaptureEventProducer.h",
+        "include/CaptureEventProducer/LockFreeBufferCaptureEventProducer.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/CaptureEventProducer",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+        "//src/Service:OrbitServiceLib",
+        "//third_party/concurrentqueue",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+    ],
+)
+
+cc_test(
+    name = "CaptureEventProducerTests",
+    srcs = [
+        "CaptureEventProducerTest.cpp",
+        "LockFreeBufferCaptureEventProducerTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    flaky = True,
+    deps = [
+        "//src/CaptureEventProducer",
+        "//src/FakeProducerSideService",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)

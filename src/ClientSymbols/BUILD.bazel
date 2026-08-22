@@ -1,0 +1,37 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ClientSymbols",
+    srcs = ["QSettingsBasedStorageManager.cpp"],
+    hdrs = [
+        "include/ClientSymbols/PersistentStorageManager.h",
+        "include/ClientSymbols/QSettingsBasedStorageManager.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/hash:hash",
+        "@abseil-cpp//absl/types:span",
+        "@qt5//:Core",
+    ],
+)
+
+qt_cc_test(
+    name = "ClientSymbolsTests",
+    srcs = ["QSettingsBasedStorageManagerTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ClientSymbols",
+        "//src/Test:gtest_qtcore_main",
+    ],
+)

@@ -1,0 +1,71 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "WindowsTracing",
+    srcs = [
+        "ContextSwitchManager.cpp",
+        "GraphicsEtwProvider.cpp",
+        "KrabsTracer.cpp",
+        "ListModulesEtw.cpp",
+        "Tracer.cpp",
+        "TracerImpl.cpp",
+    ],
+    hdrs = [
+        "ContextSwitchManager.h",
+        "EtwEventTypes.h",
+        "GraphicsEtwProvider.h",
+        "KrabsTracer.h",
+        "TracerImpl.h",
+        "include/WindowsTracing/ListModulesEtw.h",
+        "include/WindowsTracing/Tracer.h",
+        "include/WindowsTracing/TracerListener.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/WindowsTracing",
+    ],
+    defines = [
+        "INITGUID",
+        "WIN32_LEAN_AND_MEAN",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    includes = ["include"],
+    deps = [
+        "//bazel/deps:grpc",
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "//src/WindowsUtils",
+        "//third_party/PresentMon",
+        "//third_party/krabsetw",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/functional:bind_front",
+        "@abseil-cpp//absl/strings:str_format",
+        "@outcome//:outcome",
+    ],
+)
+
+cc_test(
+    name = "WindowsTracingTests",
+    srcs = [
+        "ContextSwitchManagerTest.cpp",
+        "ListModulesEtwTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    linkopts = ["/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//src/Test:gtest_main",
+        "//src/WindowsTracing",
+        "@googletest//:gtest",
+    ],
+)

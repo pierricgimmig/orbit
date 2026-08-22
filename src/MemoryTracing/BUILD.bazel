@@ -1,0 +1,49 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "MemoryTracing",
+    srcs = [
+        "MemoryInfoListener.cpp",
+        "MemoryInfoProducer.cpp",
+        "MemoryTracingUtils.cpp",
+    ],
+    hdrs = [
+        "include/MemoryTracing/MemoryInfoListener.h",
+        "include/MemoryTracing/MemoryInfoProducer.h",
+        "include/MemoryTracing/MemoryTracingUtils.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/MemoryTracing",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+    ],
+)
+
+cc_test(
+    name = "MemoryTracingTests",
+    srcs = [
+        "MemoryTracingIntegrationTest.cpp",
+        "MemoryTracingUtilsTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/MemoryTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)

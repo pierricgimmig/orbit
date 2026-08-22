@@ -1,0 +1,11 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# The shim in include/outcome.hpp adapts the copy of Outcome that ships inside
+# Boost to look like the standalone library. The Bazel build fetches standalone
+# Outcome directly (see @outcome in MODULE.bazel), so nothing here is built.
+
+licenses(["notice"])  # Apache-2.0, see LICENCE.
+
+exports_files(["LICENCE"])

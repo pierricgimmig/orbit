@@ -7,6 +7,8 @@
 #include <google/protobuf/arena.h>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <stack>
 #include <utility>
 #include <variant>
@@ -40,7 +42,26 @@ std::stack<OpenFunctionCall>& GetOpenFunctionCallStack() {
 
 uint64_t current_capture_start_timestamp_ns = 0;
 
-pid_t orbit_threads[] = {-1, -1, -1, -1, -1, -1};
+// Thread ids belonging to Orbit's own machinery inside the target process: the
+// producer-side connection and whatever thread pool gRPC starts behind it.
+// Payloads running on these are skipped, because instrumenting them would
+// recurse into the very code that reports the events.
+//
+// The count is not fixed. gRPC's event engine sizes its pool by the number of
+// cores, so the ids arrive through repeated AddOrbitThreads() calls -- six at a
+// time, which is how many arguments fit in the registers ExecuteInProcess sets
+// up. They are all delivered while the process is stopped, before any
+// instrumentation is installed.
+constexpr size_t kMaxOrbitThreads = 256;
+std::array<pid_t, kMaxOrbitThreads> orbit_threads{};
+size_t orbit_thread_count = 0;
+
+[[nodiscard]] bool IsOrbitThread(pid_t tid) {
+  for (size_t i = 0; i < orbit_thread_count; ++i) {
+    if (orbit_threads[i] == tid) return true;
+  }
+  return false;
+}
 
 // Don't use the orbit_grpc_protos::FunctionEntry and orbit_grpc_protos::FunctionExit protos
 // directly. While in memory those protos are basically plain structs as their fields are all
@@ -92,7 +113,7 @@ class LockFreeUserSpaceInstrumentationEventProducer
   [[nodiscard]] orbit_grpc_protos::ProducerCaptureEvent* TranslateIntermediateEvent(
       FunctionEntryExitVariant&& raw_event, google::protobuf::Arena* arena) override {
     auto* capture_event =
-        google::protobuf::Arena::CreateMessage<orbit_grpc_protos::ProducerCaptureEvent>(arena);
+        google::protobuf::Arena::Create<orbit_grpc_protos::ProducerCaptureEvent>(arena);
 
     std::visit(
         orbit_base::Overloaded{[capture_event](const FunctionEntry& raw_event) -> void {
@@ -144,14 +165,15 @@ bool& GetIsInPayload() {
 // OrbitService.
 [[gnu::visibility("default")]] void InitializeInstrumentation() { GetCaptureEventProducer(); }
 
-[[gnu::visibility("default")]] void SetOrbitThreads(pid_t tid_0, pid_t tid_1, pid_t tid_2,
+// Records up to six more of Orbit's own thread ids. Ids that are -1 are
+// ignored, so the caller can leave the last batch partially filled.
+[[gnu::visibility("default")]] void AddOrbitThreads(pid_t tid_0, pid_t tid_1, pid_t tid_2,
                                                     pid_t tid_3, pid_t tid_4, pid_t tid_5) {
-  orbit_threads[0] = tid_0;
-  orbit_threads[1] = tid_1;
-  orbit_threads[2] = tid_2;
-  orbit_threads[3] = tid_3;
-  orbit_threads[4] = tid_4;
-  orbit_threads[5] = tid_5;
+  for (pid_t tid : {tid_0, tid_1, tid_2, tid_3, tid_4, tid_5}) {
+    if (tid == -1) continue;
+    if (orbit_thread_count == kMaxOrbitThreads) return;
+    orbit_threads[orbit_thread_count++] = tid;
+  }
 }
 
 [[gnu::visibility("default")]] void StartNewCapture(uint64_t capture_start_timestamp_ns) {
@@ -171,8 +193,10 @@ bool& GetIsInPayload() {
 
   thread_local const pid_t kTid = orbit_base::GetCurrentThreadIdNative();
 
-  if (kTid == orbit_threads[0] || kTid == orbit_threads[1] || kTid == orbit_threads[2] ||
-      kTid == orbit_threads[3] || kTid == orbit_threads[4] || kTid == orbit_threads[5]) {
+  // The set of Orbit threads is complete before the first payload can run, so
+  // this only has to be looked up once per thread.
+  thread_local const bool kIsOrbitThread = IsOrbitThread(kTid);
+  if (kIsOrbitThread) {
     is_in_payload = false;
     return;
   }

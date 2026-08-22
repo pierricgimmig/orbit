@@ -1,0 +1,37 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "CaptureServiceBase",
+    srcs = [
+        "CaptureServiceBase.cpp",
+        "CommonProducerCaptureEventBuilders.cpp",
+        "GrpcStartStopCaptureRequestWaiter.cpp",
+    ],
+    hdrs = [
+        "include/CaptureServiceBase/CaptureServiceBase.h",
+        "include/CaptureServiceBase/CaptureStartStopListener.h",
+        "include/CaptureServiceBase/CommonProducerCaptureEventBuilders.h",
+        "include/CaptureServiceBase/GrpcStartStopCaptureRequestWaiter.h",
+        "include/CaptureServiceBase/StopCaptureReasonToString.h",
+        "include/CaptureServiceBase/StopCaptureRequestWaiter.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/CaptureServiceBase",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "//src/OrbitVersion",
+        "//src/ProducerEventProcessor",
+    ],
+)

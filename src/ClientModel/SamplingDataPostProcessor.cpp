@@ -50,10 +50,19 @@ using CallstackInfoAsPairWithLvalueRefToFrames =
 struct CallstackInfoHash {
   using is_transparent = void;  // Makes this functor transparent, enabling heterogeneous lookup.
 
-  size_t operator()(const CallstackInfo& o) const { return absl::Hash<CallstackInfo>{}(o); }
+  size_t operator()(const CallstackInfo& o) const { return Hash(o.type(), o.frames()); }
 
   size_t operator()(const CallstackInfoAsPairWithLvalueRefToFrames& p) const {
-    return absl::Hash<CallstackInfoAsPairWithLvalueRefToFrames>{}(p);
+    return Hash(p.second, p.first);
+  }
+
+ private:
+  // Both overloads have to go through the same expression. Hashing the pair as
+  // a pair would mix its members in the opposite order to CallstackInfo's own
+  // AbslHashValue, and two keys that compare equal would land in different
+  // buckets -- so the heterogeneous lookup would simply never find anything.
+  static size_t Hash(CallstackType type, const std::vector<uint64_t>& frames) {
+    return absl::HashOf(type, frames);
   }
 };
 

@@ -1,0 +1,42 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ClientModel",
+    srcs = [
+        "CaptureSerializer.cpp",
+        "SamplingDataPostProcessor.cpp",
+    ],
+    hdrs = [
+        "include/ClientModel/CaptureSerializer.h",
+        "include/ClientModel/SamplingDataPostProcessor.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/ClientModel",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/CaptureClient",
+        "//src/ClientProtos",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_test(
+    name = "ClientModelTests",
+    srcs = [
+        "CaptureSerializerTest.cpp",
+        "SamplingDataPostProcessorTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ClientModel",
+        "//src/Test:gtest_main",
+    ],
+)

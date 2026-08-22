@@ -1,0 +1,68 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+# Test entry points. Every Orbit test links exactly one of these; the Qt
+# variants create the QCoreApplication/QApplication the widget tests need.
+#
+# These are deliberately not testonly: //src/TestUtils is part of
+# //src/LinuxTracing's public interface, and it links an entry point.
+cc_library(
+    name = "gtest_main",
+    srcs = [
+        "Path.cpp",
+        "test_main.cpp",
+    ],
+    hdrs = ["include/Test/Path.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "gtest_qtcore_main",
+    srcs = [
+        "Path.cpp",
+        "test_qtcore_main.cpp",
+    ],
+    hdrs = ["include/Test/Path.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "@googletest//:gtest",
+        "@qt5//:Core",
+    ],
+)
+
+cc_library(
+    name = "gtest_qtgui_main",
+    srcs = [
+        "Path.cpp",
+        "test_qtgui_main.cpp",
+    ],
+    hdrs = ["include/Test/Path.h"],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings",
+        "@googletest//:gtest",
+        "@qt5//:Widgets",
+    ],
+)
+
+cc_test(
+    name = "TestTests",
+    srcs = ["StringViewTest.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [":gtest_main"],
+)

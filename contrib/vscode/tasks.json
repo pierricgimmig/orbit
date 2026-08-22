@@ -3,34 +3,40 @@
   "tasks": [
     {
       "type": "shell",
-      "label": "shell: build default relwithdebinfo",
-      "command": "cmake",
-      "windows": {
-        "args": [
-          "--build",
-          ".",
-          "--config",
-          "RelWithDebInfo"
-        ],
-        "options": {
-          "shell": {
-            "executable": "powershell.exe"
-          }
-        }
-      },
-      "linux": {
-        "args": [
-          "--build",
-          ".",
-          "--",
-          "-j16"
-        ]
-      },
+      "label": "bazel: build everything",
+      "command": "bazel",
+      "args": ["build", "//..."],
       "options": {
-        "cwd": "${workspaceFolder}/build_default_relwithdebinfo"
+        "cwd": "${workspaceFolder}"
       },
+      "problemMatcher": ["$gcc"],
       "group": {
         "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "type": "shell",
+      "label": "bazel: build Orbit (release)",
+      "command": "bazel",
+      "args": ["build", "-c", "opt", "//src/OrbitQt:Orbit"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$gcc"],
+      "group": "build"
+    },
+    {
+      "type": "shell",
+      "label": "bazel: test everything",
+      "command": "bazel",
+      "args": ["test", "//..."],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$gcc"],
+      "group": {
+        "kind": "test",
         "isDefault": true
       }
     }

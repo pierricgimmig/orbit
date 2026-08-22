@@ -1,0 +1,97 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "WindowsUtils",
+    srcs = [
+        "AdjustTokenPrivilege.cpp",
+        "BusyLoopLauncher.cpp",
+        "BusyLoopUtils.cpp",
+        "CreateProcess.cpp",
+        "Debugger.cpp",
+        "DllInjection.cpp",
+        "FindDebugSymbols.cpp",
+        "ListModules.cpp",
+        "ListThreads.cpp",
+        "OpenProcess.cpp",
+        "PathConverter.cpp",
+        "ProcessLauncher.cpp",
+        "ProcessList.cpp",
+        "ReadProcessMemory.cpp",
+        "SafeHandle.cpp",
+        "WriteProcessMemory.cpp",
+    ],
+    hdrs = [
+        "include/WindowsUtils/AdjustTokenPrivilege.h",
+        "include/WindowsUtils/BusyLoopLauncher.h",
+        "include/WindowsUtils/BusyLoopUtils.h",
+        "include/WindowsUtils/CreateProcess.h",
+        "include/WindowsUtils/Debugger.h",
+        "include/WindowsUtils/DllInjection.h",
+        "include/WindowsUtils/FindDebugSymbols.h",
+        "include/WindowsUtils/ListModules.h",
+        "include/WindowsUtils/ListThreads.h",
+        "include/WindowsUtils/OpenProcess.h",
+        "include/WindowsUtils/PathConverter.h",
+        "include/WindowsUtils/ProcessLauncher.h",
+        "include/WindowsUtils/ProcessList.h",
+        "include/WindowsUtils/ReadProcessMemory.h",
+        "include/WindowsUtils/SafeHandle.h",
+        "include/WindowsUtils/WriteProcessMemory.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/WindowsUtils",
+    ],
+    defines = [
+        "INITGUID",
+        "WIN32_LEAN_AND_MEAN",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    includes = ["include"],
+    deps = [
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+    ],
+)
+
+cc_test(
+    name = "WindowsUtilsTests",
+    srcs = [
+        "BusyLoopLauncherTest.cpp",
+        "CreateProcessTest.cpp",
+        "DebuggerTest.cpp",
+        "DllInjectionTest.cpp",
+        "FindDebugSymbolsTest.cpp",
+        "ListModulesTest.cpp",
+        "ListThreadsTest.cpp",
+        "OpenProcessTest.cpp",
+        "PathConverterTest.cpp",
+        "ProcessLauncherTest.cpp",
+        "ProcessListTest.cpp",
+        "ReadProcessMemoryTest.cpp",
+        "SafeHandleTest.cpp",
+        "WriteProcessMemoryTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/WindowsUtils/testdata"},
+    linkopts = ["/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+        "//src/WindowsUtils",
+        "@googletest//:gtest",
+    ],
+)

@@ -1,0 +1,70 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "ConfigWidgets",
+    srcs = [
+        "PropertyConfigWidget.cpp",
+        "SourcePathsMappingDialog.cpp",
+        "StopSymbolDownloadDialog.cpp",
+        "SymbolErrorDialog.cpp",
+        "SymbolLocationsDialog.cpp",
+    ],
+    moc_hdrs = [
+        "include/ConfigWidgets/PropertyConfigWidget.h",
+        "include/ConfigWidgets/SourcePathsMappingDialog.h",
+        "include/ConfigWidgets/StopSymbolDownloadDialog.h",
+        "include/ConfigWidgets/SymbolErrorDialog.h",
+        "include/ConfigWidgets/SymbolLocationsDialog.h",
+    ],
+    ui = [
+        "SourcePathsMappingDialog.ui",
+        "StopSymbolDownloadDialog.ui",
+        "SymbolErrorDialog.ui",
+        "SymbolLocationsDialog.ui",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/ConfigWidgets",
+    ],
+    include_dirs = [
+        ".",
+        "include",
+    ],
+    deps = [
+        "//src/ClientData",
+        "//src/ClientFlags",
+        "//src/ClientSymbols",
+        "//src/OrbitBase",
+        "//src/SourcePathsMapping",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/strings:str_format",
+        "@qt5//:Core",
+        "@qt5//:Gui",
+        "@qt5//:Widgets",
+    ],
+)
+
+qt_cc_test(
+    name = "ConfigWidgetsTests",
+    srcs = [
+        "PropertyConfigWidgetTest.cpp",
+        "StopSymbolDownloadDialogTest.cpp",
+        "SymbolErrorDialogTest.cpp",
+        "SymbolLocationsDialogTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/ConfigWidgets/testdata"},
+    deps = [
+        "//src/ConfigWidgets",
+        "//src/Test:gtest_qtgui_main",
+        "//src/TestUtils",
+    ],
+)

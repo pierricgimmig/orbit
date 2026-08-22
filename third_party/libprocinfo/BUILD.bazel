@@ -1,0 +1,25 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # Apache-2.0
+
+cc_library(
+    name = "libprocinfo",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = [
+            "*_test.cpp",
+            "*_fuzzer.cpp",
+            "*_benchmark.cpp",
+        ],
+    ),
+    hdrs = glob(["include/**/*.h"]),
+    copts = ["-w"],
+    includes = ["include"],
+    deps = ["//third_party/libbase"],
+)

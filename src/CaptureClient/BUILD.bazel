@@ -1,0 +1,61 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "CaptureClient",
+    srcs = [
+        "ApiEventProcessor.cpp",
+        "CaptureClient.cpp",
+        "CaptureEventProcessor.cpp",
+        "CompositeEventProcessor.cpp",
+        "GpuQueueSubmissionProcessor.cpp",
+        "LoadCapture.cpp",
+        "SaveToFileEventProcessor.cpp",
+    ],
+    hdrs = [
+        "include/CaptureClient/AbstractCaptureListener.h",
+        "include/CaptureClient/ApiEventProcessor.h",
+        "include/CaptureClient/AppInterface.h",
+        "include/CaptureClient/CaptureClient.h",
+        "include/CaptureClient/CaptureEventProcessor.h",
+        "include/CaptureClient/CaptureListener.h",
+        "include/CaptureClient/ClientCaptureOptions.h",
+        "include/CaptureClient/GpuQueueSubmissionProcessor.h",
+        "include/CaptureClient/LoadCapture.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/CaptureClient",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/ApiUtils",
+        "//src/CaptureFile",
+        "//src/ClientData",
+        "//src/GrpcProtos",
+        "//src/Introspection",
+    ],
+)
+
+cc_test(
+    name = "CaptureClientTests",
+    srcs = [
+        "ApiEventProcessorTest.cpp",
+        "CaptureEventProcessorTest.cpp",
+        "CompositeEventProcessorTest.cpp",
+        "GpuQueueSubmissionProcessorTest.cpp",
+        "MockCaptureListener.h",
+        "SaveToFileEventProcessorTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/CaptureClient",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

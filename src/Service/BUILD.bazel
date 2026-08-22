@@ -1,0 +1,68 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+copy_file(
+    name = "copy_liborbit_so",
+    src = "//src/Api:liborbit.so",
+    out = "liborbit.so",
+    is_executable = True,
+)
+
+copy_file(
+    name = "copy_liborbituserspaceinstrumentation_so",
+    src = "//src/UserSpaceInstrumentation:liborbituserspaceinstrumentation.so",
+    out = "liborbituserspaceinstrumentation.so",
+    is_executable = True,
+)
+
+cc_library(
+    name = "OrbitServiceLib",
+    srcs = [
+        "OrbitGrpcServer.cpp",
+        "OrbitService.cpp",
+    ],
+    hdrs = [
+        "OrbitGrpcServer.h",
+        "OrbitService.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["."],
+    deps = [
+        "//src/CrashService",
+        "//src/GrpcProtos",
+        "//src/LinuxCaptureService",
+        "//src/OrbitVersion",
+        "//src/ProcessService",
+        "//src/ProducerSideService",
+        "//src/TracepointService",
+    ] + select({
+        "@platforms//os:windows": [
+            "//src/WindowsCaptureService",
+            "//src/WindowsProcessService",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "OrbitService",
+    srcs = ["main.cpp"],
+    copts = ORBIT_COPTS,
+    data = [
+        ":liborbit.so",
+        ":liborbituserspaceinstrumentation.so",
+    ],
+    deps = [
+        "//src/Service:OrbitServiceLib",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/flags:usage",
+    ],
+)

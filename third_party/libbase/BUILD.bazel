@@ -1,0 +1,49 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # Apache-2.0, see NOTICE.
+
+# Android's libbase, vendored for libunwindstack. Mirrors cmake/Findlibbase.cmake:
+# tests, fuzzers, benchmarks, the UTF-8 helpers and the Windows backends are
+# left out.
+cc_library(
+    name = "libbase",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = [
+            "*_test.cpp",
+            "*_fuzzer.cpp",
+            "*_benchmark.cpp",
+            "test_main.cpp",
+            "test_utils.cpp",
+            "utf8.cpp",
+            "*_windows.cpp",
+        ],
+    ),
+    hdrs = glob([
+        "*.h",
+        "include/**/*.h",
+    ]),
+    copts = ["-w"],
+    includes = ["include"],
+    deps = ["//third_party/liblog:headers"],
+)
+
+# Headers only, for the parts of liblog that would otherwise depend on libbase
+# in a cycle.
+cc_library(
+    name = "headers",
+    hdrs = glob(["include/**/*.h"]),
+    includes = ["include"],
+)
+
+exports_files([
+    "NOTICE",
+    "logging.cpp",
+    "logging_splitters.h",
+])

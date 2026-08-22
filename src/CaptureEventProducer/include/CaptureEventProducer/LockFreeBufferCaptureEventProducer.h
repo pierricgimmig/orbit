@@ -84,7 +84,7 @@ class LockFreeBufferCaptureEventProducer : public CaptureEventProducer {
 
   // Subclasses need to implement this method to convert an `IntermediateEventT` enqueued in the
   // internal lock-free buffer to a `CaptureEvent` to be sent to ProducerSideService.
-  // The `CaptureEvent` must be created in the Arena using `google::protobuf::Arena::CreateMessage`
+  // The `CaptureEvent` must be created in the Arena using `google::protobuf::Arena::Create`
   // from <google/protobuf/arena.h>. The pointer provided by `CreateMessage` should be returned.
   // This optimizes memory allocations and cache efficiency. But keep in mind that:
   // - `string` and `bytes` fields (both of which use `std::string` internally) still get heap
@@ -135,7 +135,7 @@ class LockFreeBufferCaptureEventProducer : public CaptureEventProducer {
              current_status == ProducerStatus::kShouldNotifyAllEventsSent) &&
             dequeued_event_count > 0) {
           google::protobuf::Arena arena{arena_options};
-          auto* send_request = google::protobuf::Arena::CreateMessage<
+          auto* send_request = google::protobuf::Arena::Create<
               orbit_grpc_protos::ReceiveCommandsAndSendEventsRequest>(&arena);
           auto* capture_events =
               send_request->mutable_buffered_capture_events()->mutable_capture_events();

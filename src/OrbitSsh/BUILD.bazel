@@ -1,0 +1,69 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "OrbitSsh",
+    srcs = [
+        "Channel.cpp",
+        "Context.cpp",
+        "Credentials.cpp",
+        "Error.cpp",
+        "KnownHostsError.cpp",
+        "LibSsh2Utils.cpp",
+        "Session.cpp",
+        "Sftp.cpp",
+        "SftpFile.cpp",
+        "Socket.cpp",
+    ] + select({
+        "@platforms//os:windows": [
+            "WindowsSocket.cpp",
+        ],
+        "//conditions:default": [
+            "LinuxSocket.cpp",
+        ],
+    }),
+    hdrs = [
+        "HomeEnvironmentVariable.h",
+        "LibSsh2Utils.h",
+        "include/OrbitSsh/AddrAndPort.h",
+        "include/OrbitSsh/Channel.h",
+        "include/OrbitSsh/Context.h",
+        "include/OrbitSsh/Credentials.h",
+        "include/OrbitSsh/Error.h",
+        "include/OrbitSsh/KnownHostsError.h",
+        "include/OrbitSsh/Session.h",
+        "include/OrbitSsh/Sftp.h",
+        "include/OrbitSsh/SftpFile.h",
+        "include/OrbitSsh/Socket.h",
+        "include/OrbitSsh/Status.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "@libssh2//:libssh2",
+    ],
+)
+
+cc_test(
+    name = "OrbitSshTests",
+    srcs = [
+        "ContextTests.cpp",
+        "CredentialsTest.cpp",
+        "SocketTests.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/OrbitSsh/testdata"},
+    deps = [
+        "//src/OrbitSsh",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

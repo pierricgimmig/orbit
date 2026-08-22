@@ -1,0 +1,50 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "TestUtils",
+    srcs = [
+        "TemporaryDirectory.cpp",
+        "TemporaryFile.cpp",
+    ],
+    hdrs = [
+        "include/TestUtils/ContainerHelpers.h",
+        "include/TestUtils/SaveRangeFromArg.h",
+        "include/TestUtils/TemporaryDirectory.h",
+        "include/TestUtils/TemporaryFile.h",
+        "include/TestUtils/TestUtils.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/OrbitBase",
+        "//src/Test:gtest_main",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "TestUtilsTests",
+    srcs = [
+        "ContainerHelpersTest.cpp",
+        "SaveRangeFromArgTest.cpp",
+        "TemporaryDirectoryTest.cpp",
+        "TemporaryFileTest.cpp",
+        "TestUtilsTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

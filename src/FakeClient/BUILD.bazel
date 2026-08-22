@@ -1,0 +1,36 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "OrbitFakeClient",
+    srcs = [
+        "FakeCaptureEventProcessor.h",
+        "FakeClientMain.cpp",
+        "Flags.h",
+        "GraphicsCaptureEventProcessor.h",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ApiUtils",
+        "//src/CaptureClient",
+        "//src/ClientData",
+        "//src/ClientProtos",
+        "//src/GrpcProtos",
+        "//src/ModuleUtils",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "//src/SymbolProvider",
+        "@abseil-cpp//absl/container:flat_hash_map",
+        "@abseil-cpp//absl/flags:flag",
+        "@abseil-cpp//absl/flags:parse",
+        "@abseil-cpp//absl/flags:usage",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/time:time",
+    ],
+)

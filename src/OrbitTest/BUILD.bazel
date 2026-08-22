@@ -1,0 +1,36 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "OrbitTest",
+    srcs = [
+        "OrbitTest.cpp",
+        "OrbitTestImpl.cpp",
+        "OrbitTestImpl.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["."],
+    deps = [
+        "//src/ApiInterface",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_binary(
+    name = "OrbitTestShortLivedThreads",
+    srcs = ["OrbitTestShortLivedThreads.cpp"],
+    copts = ORBIT_COPTS,
+)
+
+cc_binary(
+    name = "ThreadDependencyTestApp",
+    srcs = ["OrbitTestThreadDependencies.cpp"],
+    copts = ORBIT_COPTS,
+    deps = ["//src/OrbitBase"],
+)

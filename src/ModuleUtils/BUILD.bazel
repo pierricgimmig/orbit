@@ -1,0 +1,54 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ModuleUtils",
+    srcs = ["VirtualAndAbsoluteAddresses.cpp"] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "ReadLinuxMaps.cpp",
+            "ReadLinuxModules.cpp",
+        ],
+    }),
+    hdrs = [
+        "include/ModuleUtils/ReadLinuxMaps.h",
+        "include/ModuleUtils/ReadLinuxModules.h",
+        "include/ModuleUtils/VirtualAndAbsoluteAddresses.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/ModuleUtils",
+    ],
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+    ],
+)
+
+cc_test(
+    name = "ModuleUtilsTests",
+    srcs = ["VirtualAndAbsoluteAddressesTest.cpp"] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "ReadLinuxMapsTest.cpp",
+            "ReadLinuxModulesTest.cpp",
+        ],
+    }),
+    copts = ORBIT_COPTS,
+    data = glob(["testdata/**"]),
+    env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/ModuleUtils/testdata"},
+    deps = [
+        "//src/ModuleUtils",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
+    ],
+)

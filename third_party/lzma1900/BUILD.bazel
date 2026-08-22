@@ -1,0 +1,62 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["unencumbered"])  # Public domain, see LICENSE.
+
+# The subset of the LZMA SDK libunwindstack needs to decompress .gnu_debugdata
+# sections. The multi-threaded coder and the encoder-only pieces the CMake
+# build also leaves out stay out of the build.
+cc_library(
+    name = "lzma",
+    srcs = [
+        "C/7zAlloc.c",
+        "C/7zArcIn.c",
+        "C/7zBuf.c",
+        "C/7zBuf2.c",
+        "C/7zCrc.c",
+        "C/7zCrcOpt.c",
+        "C/7zDec.c",
+        "C/7zFile.c",
+        "C/7zStream.c",
+        "C/Aes.c",
+        "C/AesOpt.c",
+        "C/Alloc.c",
+        "C/Bcj2.c",
+        "C/Bra.c",
+        "C/Bra86.c",
+        "C/BraIA64.c",
+        "C/CpuArch.c",
+        "C/Delta.c",
+        "C/LzFind.c",
+        "C/Lzma2Dec.c",
+        "C/Lzma2Enc.c",
+        "C/Lzma86Dec.c",
+        "C/Lzma86Enc.c",
+        "C/LzmaDec.c",
+        "C/LzmaEnc.c",
+        "C/LzmaLib.c",
+        "C/Ppmd7.c",
+        "C/Ppmd7Dec.c",
+        "C/Ppmd7Enc.c",
+        "C/Sha256.c",
+        "C/Sort.c",
+        "C/Xz.c",
+        "C/XzCrc64.c",
+        "C/XzCrc64Opt.c",
+        "C/XzDec.c",
+        "C/XzEnc.c",
+        "C/XzIn.c",
+    ],
+    hdrs = glob(["C/*.h"]),
+    copts = ["-w"],
+    includes = ["C"],
+    # Single-threaded build; the SDK's threading layer is not compiled in.
+    local_defines = ["_7ZIP_ST"],
+)
+
+exports_files(["LICENSE"])

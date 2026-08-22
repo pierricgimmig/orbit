@@ -31,7 +31,7 @@ class LockFreeBufferCaptureEventProducerImpl
  protected:
   orbit_grpc_protos::ProducerCaptureEvent* TranslateIntermediateEvent(
       std::string&& /*intermediate_event*/, google::protobuf::Arena* arena) override {
-    return google::protobuf::Arena::CreateMessage<orbit_grpc_protos::ProducerCaptureEvent>(arena);
+    return google::protobuf::Arena::Create<orbit_grpc_protos::ProducerCaptureEvent>(arena);
   }
 };
 

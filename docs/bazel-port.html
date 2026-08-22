@@ -1,0 +1,1294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit on Bazel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #14685a;
+    --accent-deep: #0d4c41;
+    --accent-wash: #dfece7;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #52c4a8;
+      --accent-deep: #7ed8c0;
+      --accent-wash: #12302a;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #52c4a8;
+    --accent-deep: #7ed8c0;
+    --accent-wash: #12302a;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+
+  /* ------------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* --------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* ---------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Build system port &middot; Linux</p>
+    <h1>Orbit on Bazel</h1>
+    <p class="dek">Every dependency the Conan build used to hand over, re-sourced — and the handful of places where the new versions made the code wrong.</p>
+    <p class="byline">Branch <code>port-to-bazel</code> &middot; 25 commits &middot; 291 files &middot; Bazel 9.2.0, GCC 15.2, Ubuntu 26.04</p>
+
+    <div class="stats">
+      <div class="stat"><b>6m35s</b><span>Cold build</span></div>
+      <div class="stat"><b>9,520</b><span>Actions</span></div>
+      <div class="stat"><b>&lt;1s</b><span>No-op rebuild</span></div>
+      <div class="stat"><b>159</b><span>C++ targets</span></div>
+      <div class="stat"><b>48/49</b><span>Tests passing</span></div>
+      <div class="stat"><b>0</b><span>Things to install</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Orbit builds with Bazel on Linux and Windows. <code>git clone</code>, <code>git submodule update --init third_party/py-spy</code>, <code>bazel build //...</code> — that is the whole setup. No Conan, no CMake, no <code>apt install</code>, no Rust toolchain. CMake and Conan are gone from the tree entirely. This is the reasoning behind each decision, including the two that were wrong the first time.</p>
+
+  <nav class="toc wide" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#start">What was there before</a></li>
+      <li><a href="#principle">The one principle</a></li>
+      <li><a href="#sourcing">Where each dependency comes from</a></li>
+      <li><a href="#qt">Qt: prebuilt, from pinned .debs</a></li>
+      <li><a href="#llvm">LLVM: built, and patched twice</a></li>
+      <li><a href="#ssl">The SSL problem</a></li>
+      <li><a href="#versions">Every version that moved</a></li>
+      <li><a href="#buildfiles">Writing 101 BUILD files</a></li>
+      <li><a href="#qtcodegen">Qt code generation</a></li>
+      <li><a href="#includes">Two include-path quirks</a></li>
+      <li><a href="#source">Source changes, and why</a></li>
+      <li><a href="#speed">Where the 6m35s goes</a></li>
+      <li><a href="#tests">Test results</a></li>
+      <li><a href="#windows">Windows, in one BUILD file per module</a></li>
+      <li><a href="#scope">Removing CMake</a></li>
+    </ol>
+  </nav>
+
+  <!-- ==================================================== the start -->
+
+  <h2 id="start">What was there before</h2>
+
+  <p>81 module directories under <code>src/</code>, about 1,220 C++ source and header files, one Rust crate, and a Qt 5 desktop UI. CMake drove the build; Conan supplied Abseil, protobuf, gRPC, GoogleTest, LLVM, capstone, OpenSSL, libssh2 and Outcome; Qt came from the system via <code>apt install qtbase5-dev</code>; and eleven more libraries were vendored directly into <code>third_party/</code>, each of which now has its own BUILD file.</p>
+
+  <p>The <code>cmake/Find*.cmake</code> directory is the interesting part of the old setup — twenty-four hand-written find modules, several with fallback chains (<em>try the Conan package, then pkg-config, then build it from <code>third_party/</code></em>). That is the machinery the port had to replace, and it is also a good map of where the sharp edges were.</p>
+
+  <!-- ==================================================== principle -->
+
+  <h2 id="principle">The one principle</h2>
+
+  <p>You asked for Bazel modules instead of Conan, and for the first build to be fast. Those two pull in opposite directions: a Bazel module means <em>source</em>, and source means compiling. So the rule for every dependency was:</p>
+
+  <div class="verdict">
+    <dt>Rule</dt>
+    <dd>Use a Bazel module when one exists and the compile is affordable. Where it isn't affordable, fetch a prebuilt artifact pinned by URL and SHA-256 — never reach for something already installed on the machine.</dd>
+  </div>
+
+  <p>That last clause is what keeps the build honest. "Prebuilt" here does not mean "whatever <code>apt</code> put in <code>/usr</code>"; it means a specific file, at a specific URL, with a specific hash, recorded in the repository. A different machine gets the same bytes.</p>
+
+  <!-- ==================================================== sourcing -->
+
+  <h2 id="sourcing">Where each dependency comes from</h2>
+
+  <p>Four paths, in descending order of preference.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 330" role="img" aria-label="Four sourcing paths — Bazel Central Registry, pinned .deb archives, release tarballs, and in-tree third_party — all feeding one bazel build with nothing coming from the host machine.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- lane 1 -->
+        <rect x="10" y="14" width="250" height="58" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="24" y="36" font-size="13" font-weight="600" fill="currentColor">Bazel Central Registry</text>
+        <text x="24" y="54" font-size="11.5" fill="currentColor">Abseil · protobuf · gRPC · GoogleTest</text>
+        <text x="24" y="68" font-size="11.5" fill="currentColor">zlib · libssh2 · c-ares · LLVM · rules_rust</text>
+
+        <!-- lane 2 -->
+        <rect x="10" y="88" width="250" height="58" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="24" y="110" font-size="13" font-weight="600" fill="var(--accent)">Pinned .deb archives</text>
+        <text x="24" y="128" font-size="11.5" fill="currentColor">Qt 5.15.18 (15 packages)</text>
+        <text x="24" y="142" font-size="11.5" fill="currentColor">OpenGL headers + link libraries</text>
+
+        <!-- lane 3 -->
+        <rect x="10" y="162" width="250" height="58" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="24" y="184" font-size="13" font-weight="600" fill="currentColor">Release tarballs</text>
+        <text x="24" y="202" font-size="11.5" fill="currentColor">capstone 5.0.1 · Outcome 2.2.9</text>
+        <text x="24" y="216" font-size="11.5" fill="currentColor">hand-written BUILD in bazel/deps</text>
+
+        <!-- lane 4 -->
+        <rect x="10" y="236" width="250" height="58" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="24" y="258" font-size="13" font-weight="600" fill="currentColor">In-tree third_party/</text>
+        <text x="24" y="276" font-size="11.5" fill="currentColor">libunwindstack · libbase · liblog · LZMA</text>
+        <text x="24" y="290" font-size="11.5" fill="currentColor">xxHash · gte · concurrentqueue · py-spy</text>
+
+        <!-- arrows into the middle -->
+        <line x1="262" y1="43" x2="352" y2="130" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+        <line x1="262" y1="117" x2="352" y2="145" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#ar-a)"/>
+        <line x1="262" y1="191" x2="352" y2="165" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+        <line x1="262" y1="265" x2="352" y2="180" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+
+        <text x="272" y="78" font-size="10.5" fill="currentColor">compiled</text>
+        <text x="272" y="106" font-size="10.5" fill="var(--accent)">unpacked</text>
+        <text x="272" y="206" font-size="10.5" fill="currentColor">compiled</text>
+        <text x="272" y="255" font-size="10.5" fill="currentColor">globbed</text>
+
+        <!-- middle -->
+        <rect x="356" y="118" width="150" height="74" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="431" y="146" font-size="13" font-weight="600" text-anchor="middle" fill="var(--accent)">MODULE.bazel</text>
+        <text x="431" y="165" font-size="11.5" text-anchor="middle" fill="currentColor">+ 148 cc targets</text>
+        <text x="431" y="181" font-size="11.5" text-anchor="middle" fill="currentColor">across 82 packages</text>
+
+        <line x1="508" y1="155" x2="576" y2="155" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)"/>
+
+        <!-- outputs -->
+        <rect x="580" y="102" width="188" height="106" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="596" y="126" font-size="12.5" font-weight="600" fill="currentColor">bazel-bin</text>
+        <text x="596" y="146" font-size="11.5" fill="currentColor">Orbit (UI)</text>
+        <text x="596" y="162" font-size="11.5" fill="currentColor">OrbitService</text>
+        <text x="596" y="178" font-size="11.5" fill="currentColor">liborbit.so</text>
+        <text x="596" y="194" font-size="11.5" fill="currentColor">liborbituserspaceinstrumentation.so</text>
+
+        <!-- the host, crossed out -->
+        <rect x="356" y="238" width="150" height="56" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 4" opacity="0.55"/>
+        <text x="431" y="262" font-size="12" text-anchor="middle" fill="currentColor" opacity="0.7">the host machine</text>
+        <text x="431" y="280" font-size="11" text-anchor="middle" fill="currentColor" opacity="0.7">/usr/lib, /usr/include</text>
+        <line x1="366" y1="290" x2="496" y2="244" stroke="currentColor" stroke-width="1.2" opacity="0.55"/>
+        <text x="518" y="270" font-size="11" fill="currentColor" opacity="0.75">nothing sourced here</text>
+      </svg>
+    </div>
+    <figcaption><b>Nothing comes from the machine.</b> Everything Orbit links arrives through one of four pinned paths. Qt and OpenGL are the only ones that arrive prebuilt, and even those are specific files with recorded hashes rather than whatever is installed.</figcaption>
+  </figure>
+
+  <p>The one thing the host still provides is the low-level shared libraries Qt itself loads — ICU, glib, fontconfig, X11. Those are present on any desktop install and are the same libraries the CMake build linked against.</p>
+
+  <!-- ==================================================== Qt -->
+
+  <h2 id="qt">Qt: prebuilt, from pinned .debs</h2>
+
+  <p>Qt is where the "affordable compile" test fails hardest. Building Qt 5 from source would have dwarfed everything else in a first build, and there is no Qt 5 Bazel module — <code>rules_qt</code> in the registry is Qt 6 only. The old build sidestepped this by requiring <code>apt install qtbase5-dev</code>, which means the build depends on machine state and on having root.</p>
+
+  <p>Bazel can extract the outer <code>ar</code> container of a <code>.deb</code> natively. That turns out to be the whole trick: a repository rule downloads the package, lets Bazel unpack the container, picks <code>data.tar.zst</code> back out, and unpacks that over a shared tree. No host tools, no <code>dpkg</code>, no root.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 216" role="img" aria-label="A pinned .deb URL is downloaded, its ar container extracted by Bazel, the inner data.tar.zst extracted again, and the resulting usr tree exposed as cc_library targets and the moc, uic and rcc tools.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <rect x="8" y="46" width="132" height="62" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="74" y="70" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor">debs.bzl</text>
+        <text x="74" y="88" font-size="10.5" text-anchor="middle" fill="currentColor">url + sha256</text>
+        <text x="74" y="102" font-size="10.5" text-anchor="middle" fill="currentColor">24 packages</text>
+
+        <line x1="142" y1="77" x2="186" y2="77" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+        <text x="164" y="68" font-size="10" text-anchor="middle" fill="currentColor">download</text>
+
+        <rect x="190" y="52" width="104" height="50" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="242" y="74" font-size="12" text-anchor="middle" fill="currentColor">package.deb</text>
+        <text x="242" y="90" font-size="10.5" text-anchor="middle" fill="currentColor">(ar container)</text>
+
+        <line x1="296" y1="77" x2="340" y2="77" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+        <text x="318" y="68" font-size="10" text-anchor="middle" fill="currentColor">extract</text>
+
+        <rect x="344" y="52" width="112" height="50" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="400" y="74" font-size="12" text-anchor="middle" fill="currentColor">data.tar.zst</text>
+        <text x="400" y="90" font-size="10.5" text-anchor="middle" fill="currentColor">(payload)</text>
+
+        <line x1="458" y1="77" x2="502" y2="77" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+        <text x="480" y="68" font-size="10" text-anchor="middle" fill="currentColor">extract</text>
+
+        <rect x="506" y="34" width="150" height="86" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="581" y="56" font-size="12" font-weight="600" text-anchor="middle" fill="var(--accent)">@qt5</text>
+        <text x="581" y="76" font-size="10.5" text-anchor="middle" fill="currentColor">usr/include/…/qt5</text>
+        <text x="581" y="92" font-size="10.5" text-anchor="middle" fill="currentColor">usr/lib/…/libQt5*.so.5</text>
+        <text x="581" y="108" font-size="10.5" text-anchor="middle" fill="currentColor">usr/lib/qt5/bin/{moc,uic,rcc}</text>
+
+        <line x1="658" y1="60" x2="700" y2="42" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+        <line x1="658" y1="98" x2="700" y2="122" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+        <text x="706" y="40" font-size="11" fill="currentColor">cc_library</text>
+        <text x="706" y="54" font-size="10" fill="currentColor">Core Gui Widgets</text>
+        <text x="706" y="66" font-size="10" fill="currentColor">Network Test</text>
+
+        <text x="706" y="126" font-size="11" fill="currentColor">code generators</text>
+        <text x="706" y="140" font-size="10" fill="currentColor">qt_moc / qt_uic / qt_rcc</text>
+
+        <!-- soname note -->
+        <line x1="581" y1="124" x2="581" y2="160" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+        <text x="581" y="176" font-size="10.5" text-anchor="middle" fill="currentColor">linked by SONAME path (libQt5Core.so.5),</text>
+        <text x="581" y="190" font-size="10.5" text-anchor="middle" fill="currentColor">so DT_NEEDED matches what Bazel stages</text>
+      </svg>
+    </div>
+    <figcaption><b>A .deb becomes a cc_library in two extractions.</b> Bazel handles the outer <code>ar</code> container itself, so the rule only has to find the payload and unpack it. The libraries are linked through their SONAME-matching path — link <code>libQt5Core.so</code> instead and the binary records a DT_NEEDED entry for a file that isn't in the runfiles.</figcaption>
+  </figure>
+
+  <p>Three small libraries had to be added to that set — <code>libdouble-conversion3</code>, <code>libpcre2-16-0</code>, <code>libmd4c0</code> — because <code>libQt5Core</code> and <code>libQt5Gui</code> need them and Ubuntu 26.04 does not ship them in a default install. To bump Qt, edit the package list in <code>bazel/deps/resolve_debs.py</code> and re-run it; it rewrites <code>debs.bzl</code> from apt metadata.</p>
+
+  <h3>The plugin problem</h3>
+
+  <p><code>libQt5Core</code> has the Ubuntu package's install prefix compiled into it and looks for platform plugins underneath it. Since Qt was never installed, that path does not exist and <code>QApplication</code> refuses to start. Qt reads a <code>qt.conf</code> next to the executable before falling back to the built-in prefix, so <code>qt_application()</code> writes one and mirrors the plugin tree into the same output directory. <code>bazel-bin/src/Orbit/Orbit</code> now starts standalone.</p>
+
+  <!-- ==================================================== LLVM -->
+
+  <h2 id="llvm">LLVM: built, and patched twice</h2>
+
+  <p>LLVM was the decision most likely to blow the build-time budget, so it got measured first. Orbit links six libraries — <code>Object</code>, <code>Symbolize</code>, <code>DebugInfoDWARF</code>, <code>DebugInfoPDB</code>, <code>DebugInfoCodeView</code>, <code>Demangle</code> — and Bazel builds only what is reachable. That subset compiles in <strong>about 40 seconds</strong>, not the hours a full LLVM build takes, so the registry module won and no prebuilt tarball was needed.</p>
+
+  <p>It needed two patches, both in <code>bazel/patches/</code>.</p>
+
+  <h4>1 · The missing include</h4>
+
+  <p><code>SmallVector.h</code> names <code>uint64_t</code> without including <code>&lt;cstdint&gt;</code>. Older libstdc++ headers dragged the declaration in transitively; GCC 15's do not, so every translation unit that reaches <code>SmallVector.h</code> — LLVM's own and Orbit's alike — failed to compile. Upstream fixed this after 17.0.4; the patch backports the one-line include.</p>
+
+  <h4>2 · The missing zlib</h4>
+
+  <p>LLVM's Bazel overlay has the zlib dependency commented out, which makes every attempt to read a <code>SHF_COMPRESSED</code> debug section fail with <em>"LLVM was not built with LLVM_ENABLE_ZLIB"</em>. Orbit reads compressed debug info from real binaries, and <code>ObjectUtilsTests</code> caught it immediately. Restoring it means adding <code>LLVM_ENABLE_ZLIB=1</code> and a dependency edge — but the edge needs <code>zlib</code> to be visible inside <code>llvm-project</code>, which means adding a <code>bazel_dep</code> to <em>its</em> <code>MODULE.bazel</code>.</p>
+
+  <div class="note">
+    <span class="note-label">Why archive_override, not single_version_override</span>
+    <p>Module resolution reads the <code>MODULE.bazel</code> the <em>registry</em> serves, not the one in the archive, so a patch to it under <code>single_version_override</code> is simply ignored. <code>archive_override</code> reads the module file from the archive, which makes the patched <code>bazel_dep</code> take effect. The archive URL and integrity are copied verbatim from the registry's own <code>source.json</code>, so the same bytes are fetched either way.</p>
+  </div>
+
+  <!-- ==================================================== SSL -->
+
+  <h2 id="ssl">The SSL problem</h2>
+
+  <p>This one took three attempts and is the most interesting thing in the port.</p>
+
+  <p>gRPC links BoringSSL by default. libssh2 links OpenSSL. Both export the OpenSSL C API, and the Orbit UI needs SSH <em>and</em> gRPC — so it failed to link with hundreds of duplicate definitions: <code>CONF_modules_load_file</code>, <code>X509V3_EXT_nconf</code>, <code>i2v_GENERAL_NAMES</code>, on and on.</p>
+
+  <p>The obvious fix is to make gRPC use OpenSSL too; it has a flag for exactly that. The UI then linked. But <code>UserSpaceInstrumentationTests</code> started failing in a way that took a while to pin down: the library Orbit injects into a target process would load, initialise, and produce no threads at all. Reproduced outside Bazel with a twelve-line <code>dlmopen</code> harness, it was blunter than that — <code>corrupted double-linked list</code>, then <code>SIGABRT</code>. OpenSSL's initialisation does not survive being loaded into the fresh linker namespace <code>dlmopen(LM_ID_NEWLM)</code> creates. The same harness against a BoringSSL build printed <code>init returned</code> and 21 threads.</p>
+
+  <p>So: BoringSSL breaks the UI, OpenSSL breaks injection. The third option is to notice that <strong>Orbit never uses TLS at all</strong>. Every channel and every server in the tree is built with <code>InsecureChannelCredentials</code> or <code>InsecureServerCredentials</code> — ten call sites, no exceptions — because the transport is either a Unix socket or a tunnel SSH has already secured. That is also what the pkg-config fallback in <code>cmake/FindgRPC.cmake</code> selected: <code>grpc++_unsecure</code>.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 320" role="img" aria-label="Three SSL configurations compared. With BoringSSL for gRPC and OpenSSL for libssh2 the UI fails to link. With OpenSSL for both, the injected library aborts inside dlmopen. With grpc++_unsecure there is one crypto library and the injected library links none.">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- column headers -->
+        <text x="110" y="20" font-size="10.5" font-weight="600" fill="currentColor" text-anchor="middle">gRPC links</text>
+        <text x="286" y="20" font-size="10.5" font-weight="600" fill="currentColor" text-anchor="middle">libssh2 links</text>
+        <text x="470" y="20" font-size="10.5" font-weight="600" fill="currentColor" text-anchor="middle">result in one binary</text>
+
+        <!-- OPTION A -->
+        <text x="12" y="52" font-size="11" font-family="monospace" fill="currentColor">A</text>
+        <rect x="40" y="36" width="140" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="110" y="58" font-size="12" text-anchor="middle" fill="currentColor">BoringSSL</text>
+        <rect x="216" y="36" width="140" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="286" y="58" font-size="12" text-anchor="middle" fill="currentColor">OpenSSL</text>
+        <line x1="182" y1="53" x2="214" y2="53" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+        <line x1="358" y1="53" x2="396" y2="53" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar3)"/>
+        <rect x="400" y="34" width="200" height="38" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="500" y="49" font-size="11.5" text-anchor="middle" fill="currentColor">Orbit UI — does not link</text>
+        <text x="500" y="64" font-size="10.5" text-anchor="middle" fill="currentColor">hundreds of duplicate symbols</text>
+        <line x1="612" y1="40" x2="632" y2="66" stroke="currentColor" stroke-width="1.6"/>
+        <line x1="632" y1="40" x2="612" y2="66" stroke="currentColor" stroke-width="1.6"/>
+
+        <!-- OPTION B -->
+        <text x="12" y="132" font-size="11" font-family="monospace" fill="currentColor">B</text>
+        <rect x="40" y="116" width="140" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="110" y="138" font-size="12" text-anchor="middle" fill="currentColor">OpenSSL</text>
+        <rect x="216" y="116" width="140" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="286" y="138" font-size="12" text-anchor="middle" fill="currentColor">OpenSSL</text>
+        <line x1="182" y1="133" x2="214" y2="133" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+        <line x1="358" y1="133" x2="396" y2="133" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar3)"/>
+        <rect x="400" y="106" width="200" height="54" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="500" y="122" font-size="11.5" text-anchor="middle" fill="currentColor">UI links · injected .so aborts</text>
+        <text x="500" y="137" font-size="10.5" text-anchor="middle" fill="currentColor">OpenSSL init inside the namespace</text>
+        <text x="500" y="151" font-size="10.5" text-anchor="middle" fill="currentColor">dlmopen(LM_ID_NEWLM) creates</text>
+        <line x1="612" y1="116" x2="632" y2="150" stroke="currentColor" stroke-width="1.6"/>
+        <line x1="632" y1="116" x2="612" y2="150" stroke="currentColor" stroke-width="1.6"/>
+
+        <!-- OPTION C -->
+        <text x="12" y="222" font-size="11" font-family="monospace" fill="var(--accent)">C</text>
+        <rect x="40" y="206" width="140" height="34" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="110" y="228" font-size="12" text-anchor="middle" fill="var(--accent)">no TLS at all</text>
+        <rect x="216" y="206" width="140" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="286" y="228" font-size="12" text-anchor="middle" fill="currentColor">OpenSSL</text>
+        <line x1="182" y1="223" x2="214" y2="223" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+        <line x1="358" y1="223" x2="396" y2="223" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#ar3a)"/>
+        <rect x="400" y="196" width="200" height="54" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="500" y="212" font-size="11.5" text-anchor="middle" fill="var(--accent)">both work</text>
+        <text x="500" y="227" font-size="10.5" text-anchor="middle" fill="currentColor">UI: 1,727 OpenSSL targets, 0 BoringSSL</text>
+        <text x="500" y="241" font-size="10.5" text-anchor="middle" fill="currentColor">injected .so: 0 crypto targets</text>
+        <polyline points="612,224 620,234 636,208" fill="none" stroke="var(--accent)" stroke-width="2"/>
+
+        <!-- footnote -->
+        <line x1="40" y1="272" x2="740" y2="272" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+        <text x="40" y="292" font-size="11" fill="currentColor">Option C is possible because every gRPC channel and server in Orbit uses insecure credentials —</text>
+        <text x="40" y="308" font-size="11" fill="currentColor">the transport is a Unix socket or an SSH tunnel. It also removes about 2,500 targets from the build.</text>
+      </svg>
+    </div>
+    <figcaption><b>The choice is which crypto library ends up in each binary.</b> A and B each satisfy one binary and break the other; C removes the conflict rather than resolving it. The target counts are from <code>bazel query deps()</code> on the current branch.</figcaption>
+  </figure>
+
+  <p>gRPC builds <code>grpc++_unsecure</code> but keeps it behind an empty package group, so the module carries a one-line patch changing that target's visibility to public. That is the third patch in <code>bazel/patches/</code>.</p>
+
+  <h3>To be explicit: this drops no security</h3>
+
+  <p>The target's name invites the opposite reading, so it is worth stating plainly. Orbit has never used gRPC's TLS. All ten channel and server call sites use <code>InsecureChannelCredentials</code> or <code>InsecureServerCredentials</code>; <code>grpc::SslCredentials</code> has never appeared anywhere in this repository's history; there is no certificate, key or PEM handling in the tree. Linking <code>grpc++</code> compiled a TLS stack that no code path could reach, and removing it changes no runtime behaviour.</p>
+
+  <p>What protects each link, and always did:</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Link</th><th>What protects it</th></tr></thead>
+      <tbody>
+        <tr><td>Client &rarr; OrbitService</td><td>The server binds <code>127.0.0.1</code> only, so it is not reachable from the network. Remote profiling reaches it through an SSH tunnel, which is what authenticates and encrypts the link.</td></tr>
+        <tr><td>Producer &rarr; OrbitService</td><td>A Unix domain socket, governed by filesystem permissions.</td></tr>
+        <tr><td>Symbol downloads</td><td>Real HTTPS &mdash; but through Qt, not gRPC. Untouched by this change.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>TLS on a loopback socket would add nothing to the first row: anything that can open that port can also complete a handshake with it.</p>
+
+  <h3>The one place TLS is real</h3>
+
+  <p>Debug symbols are fetched over HTTPS from the Microsoft symbol server, through <code>QNetworkAccessManager</code>. Qt resolves its TLS backend by <code>dlopen</code>ing libssl at runtime, which means a Qt without a usable one fails every <code>https://</code> request at runtime and nowhere else &mdash; no link error, no warning. Since this build supplies Qt from pinned packages rather than from the machine, that property is now asserted rather than assumed:</p>
+
+  <pre><code><span class="c">[ RUN      ]</span> Tls.QtCanDoHttps
+<span class="k">[       OK ]</span> Tls.QtCanDoHttps</code></pre>
+
+  <p>The Qt shipped here is built against OpenSSL 3.5.3 and resolves 3.5.5 at runtime.</p>
+
+  <div class="note warn">
+    <span class="note-label">Exposure that does exist, and predates this port</span>
+    <p>OrbitService's gRPC endpoint has no authentication at all, and the service is normally run as root so that it can <code>ptrace</code>, read <code>/proc/*/mem</code> and inject libraries into arbitrary processes. Loopback keeps it off the network, but any local process can still connect and ask for those operations.</p>
+    <p>Adding TLS would not close that. Authenticating the peer would: a Unix domain socket with restrictive permissions &mdash; the pattern the producer side already uses &mdash; or an <code>SO_PEERCRED</code> check on the connection. That is a change to the service rather than to the build, so it is not part of this port.</p>
+  </div>
+
+  <!-- ==================================================== versions -->
+
+  <h2 id="versions">Every version that moved</h2>
+
+  <p>Most of these jumps were not chosen so much as forced. Bazel 9 removed the native <code>cc_library</code> from BUILD files, and older registry modules — and the rule sets they pull in transitively — have not caught up. Pinning gRPC near its old 1.67 was tried and abandoned: 1.72 loads, but its BUILD files want <code>@protobuf//bazel:upb_proto_library.bzl</code>, which protobuf 30 deleted, and minimal version selection pushes protobuf to 35 regardless because <code>envoy_api</code> and <code>rules_go</code> ask for it.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Dependency</th><th>CMake + Conan</th><th>Bazel</th><th>Why</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Abseil</td><td class="v was">20240116.2</td><td class="v now bump">20260817.0</td><td>Newest; older ones drag in rule sets that fail to load under Bazel 9</td></tr>
+        <tr><td>protobuf</td><td class="v was">5.27.0</td><td class="v now bump">36.0</td><td>Pulled up by gRPC 1.83 and by <code>envoy_api</code>'s transitive deps</td></tr>
+        <tr><td>gRPC</td><td class="v was">1.67.1</td><td class="v now bump">1.83.0</td><td>Older registry versions pull <code>rules_go</code> / <code>rules_foreign_cc</code> that predate Bazel 9</td></tr>
+        <tr><td>GoogleTest</td><td class="v was">1.15.0</td><td class="v now bump">1.18.0</td><td>Matches gRPC's pin</td></tr>
+        <tr><td>LLVM</td><td class="v was">13.0.0</td><td class="v now bump">17.0.4</td><td>Only 17.x is in the registry; 13 also predates the <code>getDesc</code> signature</td></tr>
+        <tr><td>zlib</td><td class="v was">1.3.1</td><td class="v now">1.3.2</td><td>Registry default</td></tr>
+        <tr><td>libssh2</td><td class="v was">1.11.0</td><td class="v now">1.11.1</td><td>Registry default</td></tr>
+        <tr><td>OpenSSL</td><td class="v was">3.3.2</td><td class="v now">3.5.5</td><td>Now only via libssh2 — gRPC no longer pulls it</td></tr>
+        <tr><td>c-ares</td><td class="v was">transitive</td><td class="v now bump">1.34.6</td><td>gRPC asks for 1.19.1, whose BUILD calls the native <code>cc_library</code> Bazel 9 removed</td></tr>
+        <tr><td>Qt 5</td><td class="v was">system apt</td><td class="v now bump">5.15.18</td><td>Pinned Ubuntu packages instead of machine state</td></tr>
+        <tr><td>capstone</td><td class="v was">5.0.1</td><td class="v now bump">5.0.9</td><td>Newest stable; 6.0.0 has only alpha releases</td></tr>
+        <tr><td>Outcome</td><td class="v was">2.2.9</td><td class="v now bump">2.2.15</td><td>Newest; standalone single-header form</td></tr>
+        <tr><td>BoringSSL</td><td class="v was">—</td><td class="v now">not linked</td><td>In the module graph, but zero targets reach any binary</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two things about that table are worth calling out. <strong>OpenSSL is no longer a direct dependency</strong> — it arrives only under libssh2, and the UI is the only binary that gets it. And every one of these is the newest release available, the rule sets included (<code>rules_cc</code> 0.2.22, <code>rules_python</code> 2.3.1, <code>rules_shell</code> 0.8.0, <code>rules_rust</code> 0.73.0, <code>bazel_skylib</code> 1.9.2, <code>platforms</code> 1.1.0). Two are pinned by availability rather than by choice: LLVM, because 17.0.4 is the only version <code>llvm-project</code> publishes to the registry, and capstone, whose 6.0 line has only alpha releases.</p>
+
+  <div class="note">
+    <span class="note-label">Removed along the way</span>
+    <p>An explicit <code>rules_foreign_cc</code> dependency was needed briefly, to force a Bazel-9-compatible version over the one gRPC's telemetry libraries pulled in. Once gRPC moved to 1.83 it became unnecessary and was taken back out.</p>
+  </div>
+
+  <!-- ==================================================== BUILD files -->
+
+  <h2 id="buildfiles">Writing 101 BUILD files</h2>
+
+  <p>The <code>CMakeLists.txt</code> files were strikingly regular — a library, its sources, its dependencies, a test binary, <code>register_test</code> — so they were translated mechanically rather than by hand. <code>bazel/tools/cmake2bazel.py</code> parsed the CMake command stream, evaluated the conditionals per platform, and emitted <code>BUILD.bazel</code>. It was checked in while CMake was still there so the port could be re-derived and diffed against it; once CMake went, so did the translator. Its last version is at commit <code>aeda7f74b</code>.</p>
+
+  <p>It handles a few things that are easy to get wrong by hand:</p>
+
+  <ul>
+    <li><strong>Headers CMake never had to list.</strong> CMake compiles fine without naming private headers; Bazel needs every included header declared. The translator adds any header in the module that the CMakeLists did not mention.</li>
+    <li><strong><code>if(WIN32)</code> branches.</strong> Sources inside them are still collected, purely so their headers can be kept <em>out</em> of the Linux target rather than swept up by the rule above.</li>
+    <li><strong>PUBLIC vs PRIVATE include directories.</strong> Public ones become <code>includes</code> and propagate; private ones become <code>-I</code> flags in <code>copts</code> and do not.</li>
+    <li><strong>Qt macros.</strong> Headers are scanned for <code>Q_OBJECT</code>, <code>Q_GADGET</code> and <code>Q_NAMESPACE</code> to decide what moc has to run on, and <code>.ui</code> files are globbed the way AUTOUIC finds them.</li>
+  </ul>
+
+  <p>Everything it could not model is either hand-written (the two proto packages, the version file, the gtest entry points, the API header's C compile test) or listed in small tables at the top of the script — extra runtime data, the tests that need a binary copied next to them, the one test marked flaky.</p>
+
+  <!-- ==================================================== Qt codegen -->
+
+  <h2 id="qtcodegen">Qt code generation</h2>
+
+  <p>CMake's AUTOMOC and AUTOUIC scan sources at build time and generate whatever they find. Bazel needs the generated files named before the build starts, so <code>qt_cc_library</code> takes them as attributes.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 250" role="img" aria-label="CMake's AUTOMOC scans all sources at build time to discover what needs moc, while the Bazel rule takes the moc-able headers and ui files as declared attributes and runs one action per file.">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <text x="14" y="18" font-size="11" font-weight="600" fill="currentColor">CMAKE</text>
+        <line x1="14" y1="26" x2="370" y2="26" stroke="currentColor" stroke-width="1" opacity="0.35"/>
+
+        <rect x="14" y="42" width="120" height="46" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="74" y="62" font-size="11.5" text-anchor="middle" fill="currentColor">all sources</text>
+        <text x="74" y="78" font-size="10.5" text-anchor="middle" fill="currentColor">in the target</text>
+
+        <line x1="136" y1="65" x2="176" y2="65" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar4)"/>
+        <text x="156" y="56" font-size="10" text-anchor="middle" fill="currentColor">scan</text>
+
+        <rect x="180" y="42" width="120" height="46" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="240" y="62" font-size="11.5" text-anchor="middle" fill="currentColor">AUTOMOC</text>
+        <text x="240" y="78" font-size="10.5" text-anchor="middle" fill="currentColor">at build time</text>
+
+        <line x1="240" y1="90" x2="240" y2="122" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar4)"/>
+        <rect x="180" y="126" width="120" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="240" y="148" font-size="11.5" text-anchor="middle" fill="currentColor">moc_*.cpp</text>
+
+        <text x="14" y="188" font-size="11" fill="currentColor">The set of generated files</text>
+        <text x="14" y="204" font-size="11" fill="currentColor">is discovered, not declared.</text>
+
+        <!-- divider -->
+        <line x1="392" y1="10" x2="392" y2="230" stroke="currentColor" stroke-width="1" opacity="0.25"/>
+
+        <text x="410" y="18" font-size="11" font-weight="600" fill="var(--accent)">BAZEL</text>
+        <line x1="410" y1="26" x2="766" y2="26" stroke="var(--accent)" stroke-width="1" opacity="0.5"/>
+
+        <rect x="410" y="36" width="150" height="30" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="485" y="56" font-size="11" text-anchor="middle" fill="var(--accent)">moc_hdrs = [ … ]</text>
+
+        <rect x="410" y="74" width="150" height="30" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="485" y="94" font-size="11" text-anchor="middle" fill="var(--accent)">ui = [ … ]</text>
+
+        <rect x="410" y="112" width="150" height="30" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="485" y="132" font-size="11" text-anchor="middle" fill="currentColor">srcs / hdrs</text>
+
+        <line x1="562" y1="51" x2="600" y2="62" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#ar4a)"/>
+        <line x1="562" y1="89" x2="600" y2="98" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#ar4a)"/>
+        <line x1="562" y1="127" x2="600" y2="134" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar4)"/>
+
+        <rect x="604" y="48" width="150" height="30" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="679" y="68" font-size="11" text-anchor="middle" fill="currentColor">one moc action each</text>
+
+        <rect x="604" y="86" width="150" height="30" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="679" y="106" font-size="11" text-anchor="middle" fill="currentColor">one uic action each</text>
+
+        <line x1="679" y1="120" x2="679" y2="148" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar4)"/>
+        <line x1="600" y1="134" x2="640" y2="150" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar4)"/>
+
+        <rect x="604" y="152" width="150" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="679" y="174" font-size="11.5" text-anchor="middle" fill="currentColor">cc_library</text>
+
+        <text x="410" y="206" font-size="11" fill="currentColor">Declared, so each file is its own</text>
+        <text x="410" y="222" font-size="11" fill="currentColor">cacheable, parallelisable action.</text>
+      </svg>
+    </div>
+    <figcaption><b>Discovery moves from build time to the BUILD file.</b> The cost is that <code>moc_hdrs</code> has to be kept current; the benefit is that each generated file is a separate cached action instead of a scan of the whole target.</figcaption>
+  </figure>
+
+  <p>One detail worth recording, because it is invisible until it breaks: moc writes an <code>#include</code> of the header it processed into the generated file, and the path it writes has to resolve from the generated file's own directory. The rule passes <code>-f</code> with the header's path relative to whichever include directory exposes it — falling back to the workspace-relative path for private headers, which resolves through the <code>-iquote</code> entry Bazel adds anyway.</p>
+
+  <h3>Protos</h3>
+
+  <p>Orbit's <code>.proto</code> files import each other by bare filename (<code>import "capture.proto";</code>) while the generated C++ is included with a module prefix (<code>"GrpcProtos/capture.pb.h"</code>). <code>proto_library</code> cannot express both — <code>strip_import_prefix</code> satisfies one or the other. Rather than rewrite thirteen proto files, <code>bazel/proto/rules.bzl</code> drives <code>protoc</code> directly, the same way <code>cmake/grpc_helper.cmake</code> did. Both proto packages are self-contained, so one generation step per package is exactly the right granularity.</p>
+
+  <!-- ==================================================== includes -->
+
+  <h2 id="includes">Two include-path quirks</h2>
+
+  <p>Both come from the same place: Conan exposed every package's headers through one include directory, so Orbit spells third-party includes with angle brackets — <code>#include &lt;absl/strings/str_cat.h&gt;</code>. Bazel publishes a module's headers through <code>-iquote</code>, which only satisfies quoted includes. Rewriting 1,159 <code>absl</code> includes across the tree was one option; the other was to add the repository root as a system include directory. <code>Label(…).workspace_root</code> resolves to the canonical repository path at load time, so <code>bazel/copts.bzl</code> computes the flag rather than hard-coding <code>external/abseil-cpp+</code>.</p>
+
+  <p>The second quirk is warnings. Orbit compiles with <code>-Werror=old-style-cast</code>, among others, and third-party headers do not survive that. Bazel's <code>external_include_paths</code> feature switches external repositories to <code>-isystem</code>, which handles the registry modules — but not the code vendored inside this repository, which is not "external" as far as Bazel is concerned. The directories <code>cmake/Find*.cmake</code> marked <code>SYSTEM</code> are therefore listed explicitly in <code>copts.bzl</code>; without it, <code>gte</code>'s headers alone produce about 4,000 errors.</p>
+
+  <!-- ==================================================== source -->
+
+  <h2 id="source">Source changes, and why</h2>
+
+  <p>Fourteen files, +132/−62, each change in its own commit. None of it is Bazel-specific — it is what the newer dependency versions require, plus two genuine bugs that the newer versions exposed.</p>
+
+  <h4>Forced by protobuf 36</h4>
+  <p><code>Arena::CreateMessage</code> was removed in protobuf 31. <code>Arena::Create</code> has been the spelling for messages far longer and works with both, so the change is backwards-compatible with the Conan build.</p>
+
+  <h4>Forced by LLVM 17</h4>
+  <p><code>Elf_Note_Impl::getDesc</code> gained a required alignment argument, which the section header carries. This is the one change that is <em>not</em> backwards-compatible: LLVM 13, which Conan pinned, had the no-argument form.</p>
+
+  <h4>Forced by GCC 15</h4>
+  <p>Vendored <code>procinfo/process.h</code> names <code>uint64_t</code> without including anything that declares it.</p>
+
+  <h3>A real hash bug</h3>
+
+  <p>Abseil's newer hardened builds assert that <code>eq(a, b)</code> implies <code>hash(a) == hash(b)</code>, and <code>ClientModelTests</code> aborted on it. The transparent hash functor in <code>SamplingDataPostProcessor</code> hashed a <code>CallstackInfo</code> through its <code>AbslHashValue</code>, which combines <code>(type, frames)</code> — but hashed the heterogeneous lookup key as a <code>std::pair</code>, which combines <code>(frames, type)</code>. Keys that compare equal hashed differently, so the heterogeneous lookup the functor exists for could never find anything, and every callstack was inserted afresh. Both overloads now go through one expression.</p>
+
+  <h3>Thread exclusion that outlived its assumptions</h3>
+
+  <p>When Orbit injects <code>liborbituserspaceinstrumentation.so</code> into a target, that library starts threads of its own. The instrumentation payload must skip them, or it recurses into the code reporting the events — so OrbitService finds them after injecting and hands their ids back.</p>
+
+  <p>It did that by waiting for exactly five threads with hard-coded names, two of which came from gRPC's internal executor. gRPC deleted the executor in 1.73 in favour of an event engine whose pool is sized by core count. The set never matched again, so instrumentation failed outright — and the count is no longer fixed, which the six-argument <code>SetOrbitThreads</code> could not express.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 260" role="img" aria-label="Before, five exact thread names had to match and one six-argument call carried them. After, only Orbit's own two names are required, gRPC's threads are recognised across both layouts, and the ids are sent in batches of six.">
+        <defs>
+          <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <text x="14" y="18" font-size="11" font-weight="600" fill="currentColor">BEFORE — gRPC ≤ 1.72</text>
+        <line x1="14" y1="26" x2="370" y2="26" stroke="currentColor" stroke-width="1" opacity="0.35"/>
+
+        <rect x="14" y="38" width="180" height="112" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="104" y="58" font-size="11" text-anchor="middle" fill="currentColor">wait for this exact set</text>
+        <text x="26" y="78" font-size="10.5" font-family="monospace" fill="currentColor">default-executo</text>
+        <text x="26" y="94" font-size="10.5" font-family="monospace" fill="currentColor">resolver-execut</text>
+        <text x="26" y="110" font-size="10.5" font-family="monospace" fill="currentColor">grpc_global_tim</text>
+        <text x="26" y="126" font-size="10.5" font-family="monospace" fill="currentColor">ConnectRcvCmds</text>
+        <text x="26" y="142" font-size="10.5" font-family="monospace" fill="currentColor">ForwarderThread</text>
+
+        <line x1="196" y1="94" x2="238" y2="94" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar5)"/>
+        <rect x="242" y="76" width="126" height="36" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="305" y="98" font-size="10.5" font-family="monospace" text-anchor="middle" fill="currentColor">SetOrbitThreads(×6)</text>
+
+        <text x="14" y="182" font-size="11" fill="currentColor">gRPC 1.73 deleted the executor.</text>
+        <text x="14" y="198" font-size="11" fill="currentColor">Two names vanished, the set never</text>
+        <text x="14" y="214" font-size="11" fill="currentColor">matched, instrumentation failed.</text>
+
+        <line x1="392" y1="10" x2="392" y2="240" stroke="currentColor" stroke-width="1" opacity="0.25"/>
+
+        <text x="410" y="18" font-size="11" font-weight="600" fill="var(--accent)">AFTER — any gRPC</text>
+        <line x1="410" y1="26" x2="766" y2="26" stroke="var(--accent)" stroke-width="1" opacity="0.5"/>
+
+        <rect x="410" y="38" width="180" height="52" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="500" y="56" font-size="11" text-anchor="middle" fill="var(--accent)">required — Orbit's own</text>
+        <text x="422" y="74" font-size="10.5" font-family="monospace" fill="currentColor">ConnectRcvCmds</text>
+        <text x="422" y="86" font-size="10.5" font-family="monospace" fill="currentColor">ForwarderThread</text>
+
+        <rect x="410" y="98" width="180" height="66" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="500" y="116" font-size="11" text-anchor="middle" fill="currentColor">recognised — gRPC's, N of them</text>
+        <text x="422" y="134" font-size="10.5" font-family="monospace" fill="currentColor">event_engine · lifeguard</text>
+        <text x="422" y="148" font-size="10.5" font-family="monospace" fill="currentColor">grpc_global_tim · default-executo</text>
+        <text x="422" y="160" font-size="10.5" font-family="monospace" fill="currentColor">resolver-execut · grpcpp_sync_ser</text>
+
+        <line x1="592" y1="100" x2="628" y2="100" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#ar5a)"/>
+        <rect x="632" y="82" width="130" height="36" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="697" y="98" font-size="10.5" font-family="monospace" text-anchor="middle" fill="var(--accent)">AddOrbitThreads</text>
+        <text x="697" y="111" font-size="10" text-anchor="middle" fill="currentColor">batches of six</text>
+
+        <text x="410" y="196" font-size="11" fill="currentColor">Six is how many arguments fit in the registers</text>
+        <text x="410" y="212" font-size="11" fill="currentColor">ExecuteInProcess sets up, so the ids go over in</text>
+        <text x="410" y="228" font-size="11" fill="currentColor">batches; the payload's test is now a cached bool.</text>
+      </svg>
+    </div>
+    <figcaption><b>The set of threads to skip stopped being a fixed set.</b> Only Orbit's own two names gate the wait; gRPC's are recognised across both layouts but none is required. The per-call test in the payload became a <code>thread_local bool</code> resolved once, which is cheaper than the six comparisons it replaced.</figcaption>
+  </figure>
+
+  <h3>Two tests that asserted CMake's output layout</h3>
+
+  <p><code>ExecutablePathTest</code> asserted the test binary sits in a directory named <code>bin</code> — which says nothing about <code>GetExecutablePath</code> and everything about where CMake puts binaries. The copybara note directly above it says as much: Google's internal build skips the test because its directory is named differently. <code>GetTestLibLibraryPath</code> looked for its library only in <code>../lib</code> for the same reason, and now checks next to the executable first, which is where every other library lookup in the tree starts.</p>
+
+  <div class="note">
+    <span class="note-label">Behaviour change worth knowing about</span>
+    <p><code>//src/OrbitVersion</code> is generated from <code>--workspace_status_command</code>. Everything it reports is derived from the commit rather than from wall-clock time, so an unchanged checkout produces an unchanged binary and no needless relinking. The build timestamp is now the commit's date, not the moment you ran the build.</p>
+  </div>
+
+  <!-- ==================================================== speed -->
+
+  <h2 id="speed">Where the 6m35s goes</h2>
+
+  <p>Measured on this machine — 32 cores, empty output base, empty disk cache, nothing downloaded:</p>
+
+  <pre><code><span class="c">$</span> bazel build //...
+<span class="k">INFO:</span> Elapsed time: 394.796s, Critical Path: 101.22s
+<span class="k">INFO:</span> Build completed successfully, 9520 total actions</code></pre>
+
+  <p>Three things keep that number where it is.</p>
+
+  <p><strong>Qt is not compiled.</strong> It is unpacked. That alone is the difference between six minutes and something closer to an hour.</p>
+
+  <p><strong>The TLS stack is not built.</strong> Choosing <code>grpc++_unsecure</code> removed roughly 2,500 targets — BoringSSL, and everything in gRPC that only exists to feed it.</p>
+
+  <p><strong>A shared disk cache.</strong> <code>.bazelrc</code> points <code>--disk_cache</code> at <code>~/.cache/bazel/orbit</code>, which is keyed by action rather than by output base. Deleting <code>bazel-out</code>, switching branches, or making a second clone re-uses it, so the expensive dependency compile happens once per machine rather than once per checkout. The 6m35s above is the pessimistic case where even that is empty.</p>
+
+  <p>A second cold run, on the same machine but with other work in flight, measured 412.6s for the same 9,520 actions &mdash; so the figure is stable to within a few percent rather than a lucky run.</p>
+
+  <p>Two figures for scale: LLVM's six libraries take about 40 seconds, and py-spy with the 213 crates in its lockfile takes 43. A no-op rebuild is under a second. Put machine-specific settings — <code>--jobs</code>, a remote cache, a different cache location — in <code>.bazelrc.user</code>, which is git-ignored and imported automatically.</p>
+
+  <!-- ==================================================== tests -->
+
+  <h2 id="tests">Test results</h2>
+
+  <p><code>bazel test //...</code> matches 51 targets on Linux, two of which are the Windows test suites and skip cleanly; of the 49 that run, <strong>48 pass</strong>. Getting there needed the tracing surface switched on, which is what turned two of the defects in this port up:</p>
+
+  <pre><code><span class="c">$</span> sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.yama.ptrace_scope=0</code></pre>
+
+  <p>Before that, <code>LinuxTracingIntegrationTests</code> reported success while skipping its own body &mdash; it gates on <code>IsRunningAsRoot() || perf_event_paranoid &lt;= N</code>. Once it actually ran, it found that <code>cc_test</code> links dynamically where <code>cc_binary</code> does not, so the test binary was split across a shared object per module and a test that reads its own symbol table found nothing there.</p>
+
+  <h3>The one failure</h3>
+
+  <p><code>InstrumentProcessTest.Instrument</code> fails on about four runs in five when run on its own, and two full-suite runs in three; one full <code>bazel test //...</code> has come back 49 of 49. It is a defect in the injection, not in the build &mdash; and it is a race, with the timing as the evidence.</p>
+
+  <p>Adding two <code>ORBIT_LOG</code> calls around the body of <code>InitializeInstrumentation</code> &mdash; nothing else &mdash; makes the test pass consistently. The failure rate inverts with machine load. Waiting five times longer on the OrbitService side does not help, because the producer's threads are never created at all rather than created late.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Condition</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Run on its own, unmodified</td><td>fails 4 runs in 5</td></tr>
+        <tr><td>Two log lines added around the initialisation</td><td>passes</td></tr>
+        <tr><td>Under full-suite load</td><td>fails 2 runs in 3</td></tr>
+        <tr><td>OrbitService waits 5&times; longer for the threads</td><td>still fails</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The shape of it: OrbitService clones a thread into the target with <code>CLONE_VM | CLONE_THREAD</code> and, deliberately, no thread-local storage of its own. <code>MachineCodeForCloneCall</code> says as much: <em>"we do not create a new data structure for thread local storage but use the one of the thread we halted."</em> That thread calls <code>InitializeInstrumentation</code>, which starts the producer's connect thread through <code>std::thread</code>, then exits immediately through a raw <code>SYS_exit</code>. Anything that delays that exit makes the problem disappear.</p>
+
+  <p>A standalone harness reproducing the borrowed-TLS thread model segfaults every time, which shows the model is fragile. It is not proof of the cause here, though: that harness leaves the TLS owner running concurrently, where ptrace has it halted, so it is harsher than the real path.</p>
+
+  <p>Two fixes were tried, and both failing is itself informative:</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Attempt</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Run the initialisation on a real <code>std::thread</code> and join it</td><td>4 failures in 5, unchanged</td></tr>
+        <tr><td>Make <code>BuildAndStart</code> wait until its connect thread is running</td><td>6 failures in 10</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>So it is not enough for the producer's own thread to exist before the injected thread exits. What never appears is gRPC's event-engine pool, which is created later, on first use of the channel. Both attempts were reverted rather than left in shared code.</p>
+
+  <p>A fix likely has to keep the injected thread alive until the whole set of Orbit-owned threads exists &mdash; a completion signal the injection does not currently have. That is a change to the product rather than to the build. It is the same area the upstream <code>GTEST_SKIP</code> in that test cites (b/237251106).</p>
+
+  <h3>What still needs actual root</h3>
+
+  <p>Seven integration tests call <code>geteuid() == 0</code> directly and skip otherwise &mdash; <code>SchedulingSlices</code>, <code>FunctionCalls</code>, two callstack-with-uprobes tests, <code>ThreadStateSlices</code>, <code>ThreadNames</code>, and <code>GpuJobs</code> (which also wants Stadia hardware). No sysctl or permission change unskips them: they read kernel tracepoints under <code>/sys/kernel/debug/tracing</code>, which is <code>0700 root</code>. Running the test binary under <code>sudo</code> is the only way.</p>
+
+  <h3>Timing, not correctness</h3>
+
+  <p>Several tests carry Bazel tags instead of changed assertions. The integration tests are <code>exclusive</code>: they assert that no perf records were lost and no events were discarded as out of order, which is only true on a machine that is not saturated &mdash; run alongside 48 other tests, the ring buffer legitimately overflows and the tracer correctly reports it. <code>SessionSetupTests</code> and <code>CaptureEventProducerTests</code> are <code>flaky</code>: one waits 500&nbsp;ms for a 250&nbsp;ms timer, the other sleeps 25&nbsp;ms and expects a gRPC round trip inside it.</p>
+
+  <p>Two more tags exist so CI can be precise about what gates a change. The integration tests are also <code>integration</code>, which excludes them on a hosted runner that cannot grant <code>perf_event_open</code> or <code>ptrace</code> &mdash; the same set <code>ctest -E IntegrationTest</code> excluded. <code>UserSpaceInstrumentationTests</code> is <code>known_flaky</code>, for the race above: it still runs in CI, in a step marked <code>continue-on-error</code>, so the failure stays visible without blocking unrelated work.</p>
+
+  <!-- ==================================================== scope -->
+
+  <!-- ==================================================== windows -->
+
+  <h2 id="windows">Windows, in one BUILD file per module</h2>
+
+  <p>The five <code>src/Windows*</code> modules — ETW tracing, the process and process-launcher services, the capture service, and the utility layer underneath them — sat behind <code>if(WIN32)</code> in CMake, which meant a Linux checkout never even parsed them. Bazel has no equivalent of "this directory does not exist on your platform", and that turns out to be the better arrangement: one <code>BUILD.bazel</code> per module describes both platforms, and the graph is complete no matter where you are standing.</p>
+
+  <p>Two mechanisms do all of it.</p>
+
+  <p><strong><code>select()</code></strong> picks sources and dependencies inside a target that exists on both platforms. <code>src/Service</code> is the clearest case: the same <code>OrbitService</code> binary links <code>LinuxCaptureService</code> or <code>WindowsCaptureService</code>, and seven modules carry a platform branch: <code>OrbitBase</code>, <code>ObjectUtils</code>, <code>ModuleUtils</code>, <code>ApiLoader</code>, <code>OrbitSsh</code>, <code>ProducerSideService</code> and <code>Service</code>.</p>
+
+  <p><strong><code>target_compatible_with</code></strong> handles the targets that exist on one platform only. The five Windows modules and the four Windows-only vendored libraries declare <code>["@platforms//os:windows"]</code>, which makes <code>bazel build //...</code> on Linux <em>skip</em> them rather than fail — the same wildcard build works on both machines, and asking for one explicitly on the wrong platform gives you a clear message instead of a compiler error.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 300" role="img" aria-label="One BUILD file per module serves both platforms: select() switches sources and dependencies inside shared targets such as OrbitService, while target_compatible_with makes Windows-only targets skip on Linux instead of failing.">
+        <defs>
+          <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="arwa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- the single source of truth -->
+        <rect x="286" y="16" width="208" height="52" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="390" y="38" font-size="12" text-anchor="middle" font-weight="600" fill="currentColor">src/Service/BUILD.bazel</text>
+        <text x="390" y="55" font-size="10.5" text-anchor="middle" fill="currentColor">one file, both platforms</text>
+
+        <line x1="390" y1="68" x2="390" y2="96" stroke="currentColor" stroke-width="1.2" marker-end="url(#arw)"/>
+
+        <!-- the select diamond -->
+        <path d="M 390 100 L 470 128 L 390 156 L 310 128 Z" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="390" y="126" font-size="11" text-anchor="middle" fill="var(--accent)">select()</text>
+        <text x="390" y="140" font-size="9.5" text-anchor="middle" fill="var(--accent)">os:windows</text>
+
+        <!-- branches -->
+        <line x1="310" y1="128" x2="212" y2="128" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#arwa)"/>
+        <text x="261" y="120" font-size="10" text-anchor="middle" fill="var(--accent)">default</text>
+
+        <line x1="470" y1="128" x2="568" y2="128" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#arwa)"/>
+        <text x="519" y="120" font-size="10" text-anchor="middle" fill="var(--accent)">windows</text>
+
+        <rect x="52" y="104" width="158" height="48" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="131" y="124" font-size="11" text-anchor="middle" fill="currentColor">LinuxCaptureService</text>
+        <text x="131" y="140" font-size="10" text-anchor="middle" fill="currentColor">perf_event_open</text>
+
+        <rect x="570" y="104" width="158" height="48" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="649" y="124" font-size="11" text-anchor="middle" fill="currentColor">WindowsCaptureService</text>
+        <text x="649" y="140" font-size="10" text-anchor="middle" fill="currentColor">ETW, via krabsetw</text>
+
+        <!-- the compatibility band -->
+        <text x="14" y="204" font-size="11" font-weight="600" fill="currentColor">TARGET_COMPATIBLE_WITH</text>
+        <line x1="14" y1="212" x2="766" y2="212" stroke="currentColor" stroke-width="1" opacity="0.35"/>
+
+        <rect x="14" y="228" width="228" height="52" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="128" y="248" font-size="11" text-anchor="middle" fill="currentColor">bazel build //... on Linux</text>
+        <text x="128" y="265" font-size="10" text-anchor="middle" fill="currentColor">5 modules + 4 libs skipped</text>
+
+        <rect x="538" y="228" width="228" height="52" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="652" y="248" font-size="11" text-anchor="middle" fill="currentColor">bazel build //... on Windows</text>
+        <text x="652" y="265" font-size="10" text-anchor="middle" fill="currentColor">all of them built</text>
+
+        <line x1="244" y1="254" x2="330" y2="254" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+        <text x="390" y="250" font-size="10.5" text-anchor="middle" fill="currentColor">same command,</text>
+        <text x="390" y="264" font-size="10.5" text-anchor="middle" fill="currentColor">same wildcard</text>
+        <line x1="450" y1="254" x2="536" y2="254" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+      </svg>
+    </div>
+    <figcaption><code>select()</code> switches what a shared target contains; <code>target_compatible_with</code> decides whether a target exists at all. Between them, <code>bazel build //...</code> is the correct command on both platforms.</figcaption>
+  </figure>
+
+  <h3>The four Windows-only libraries</h3>
+
+  <p>Each was already vendored in <code>third_party/</code> and each got a BUILD file mirroring what its CMake find-module declared:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Library</th><th>Used by</th><th>Shape</th></tr></thead>
+      <tbody>
+        <tr><td class="v">krabsetw</td><td>WindowsTracing</td><td>Header-only C++ wrapper over ETW</td></tr>
+        <tr><td class="v">PresentMon</td><td>WindowsTracing</td><td>Headers only, matching the <code>INTERFACE</code> library <code>FindPresentMon.cmake</code> declared</td></tr>
+        <tr><td class="v">cppwin32</td><td>WindowsUtils</td><td>Generated C++/WinRT-style projections</td></tr>
+        <tr><td class="v">MinHook</td><td>WindowsUtils</td><td>Three core sources plus the length-disassembler, as its vendored CMakeLists had it</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The DIA SDK</h3>
+
+  <p>The PDB reader needs Microsoft's Debug Interface Access SDK, which ships inside a Visual Studio installation rather than as a package. <code>bazel/deps/dia_sdk.bzl</code> is a repository rule that locates it through <code>VSINSTALLDIR</code> — the same search <code>cmake/FindDiaSdk.cmake</code> did — with <code>DIA_SDK_DIR</code> as an override. On Linux it generates an empty stub whose only source is an <code>#error</code>, so every BUILD file that references it still loads on a platform where the SDK cannot exist.</p>
+
+  <h3>What is verified, and what is not</h3>
+
+  <p>This was developed on Linux, so none of it has been through MSVC. What is checked is that the whole Windows dependency graph resolves &mdash; <code>bazel query</code> walks 6,555 nodes across the five modules without an unresolved label &mdash; and that <code>bazel build //...</code> on Linux skips them cleanly rather than failing. Compiling them is the first thing the MSVC leg of CI does.</p>
+
+  <h3>C++20, on Windows only</h3>
+
+  <p>The Windows modules use coroutines and <code>&lt;span&gt;</code>. Rather than move the whole tree, <code>.bazelrc</code> sets the standard per platform — <code>--cxxopt=-std=gnu++17</code> under <code>build:linux</code>, <code>--cxxopt=/std:c++20</code> under <code>build:windows</code> — which is what the CMake build did too.</p>
+
+  <!-- ==================================================== scope -->
+
+  <h2 id="scope">Removing CMake</h2>
+
+  <p>With Windows building, nothing in the tree needed CMake any more, so it went: <strong>146 files, about 7,400 lines</strong>. The root and per-module <code>CMakeLists.txt</code>, the twenty-four <code>cmake/Find*.cmake</code> modules and the rest of <code>cmake/</code>, <code>conanfile.py</code>, the Conan profiles under <code>conan/</code> and <code>contrib/conan/</code>, the MSVC and ARM cross toolchain files, and the two <code>CMakeLists.txt</code> files Orbit had written for vendored code. The genuinely upstream ones — libprotobuf-mutator, MinHook, xxHash — stay, because they are part of those libraries' own sources.</p>
+
+  <p><code>bazel/tools/cmake2bazel.py</code> went with them. A translator whose input no longer exists is a trap, not documentation; it and everything it read are at commit <code>aeda7f74b</code> if the derivation ever needs to be re-run.</p>
+
+  <p>Everything downstream of the build system moved with it: the VS Code build task, the license-header check (which walked <code>CMakeLists.txt</code> and now walks <code>.bzl</code> and <code>.bazel</code>), <code>.gitignore</code>, <code>.bazelignore</code>, and the three CI workflows.</p>
+
+  <h3>CI</h3>
+
+  <p><code>build-and-test.yml</code> used to apt-install nineteen packages, configure CMake and run ctest. It now checks out, restores two Bazel caches and runs two commands, across four configurations including MSVC on Windows:</p>
+
+  <pre><code>bazel build //...
+bazel test --test_tag_filters=-integration,-known_flaky //...</code></pre>
+
+  <p><code>integration</code> is the set that drives <code>perf_event_open</code> and <code>ptrace</code> against a live process, which a hosted runner does not permit — the same set <code>ctest -E IntegrationTest</code> excluded. <code>known_flaky</code> is the one suite with the open race; it still runs, in a step marked <code>continue-on-error</code>, so its output stays visible without blocking unrelated changes. The CodeQL workflow builds through Bazel with <code>--spawn_strategy=local</code> so its tracer can observe the compiler, and the nightly release builds <code>//src/Orbit</code> and <code>//src/Service:OrbitService</code> and publishes tarballs.</p>
+
+  <div class="note">
+    <span class="note-label">One thing the removal cost</span>
+    <p>The old ARM64 path cross-compiled OrbitService inside a Docker image carrying an aarch64 GCC, a multiarch sysroot and a prebuilt LLVM at <code>/opt/llvm-arm64</code>. All three were CMake-shaped and went with it.</p>
+    <p>Bazel makes the native build the easy answer instead — every dependency is source, so <code>bazel build --config=release //src/Service:OrbitService</code> on the Pi itself needs no toolchain setup at all, and the ARM64 stub for <code>UserSpaceInstrumentation</code> is now a <code>select()</code> on <code>@platforms//cpu:aarch64</code> rather than an <code>if()</code> that returns early. Cross-compiling from x86-64 would need an aarch64 <code>cc_toolchain</code> and a Rust target added to <code>MODULE.bazel</code>; that has not been written, and is called out in <code>docs/building_arm64.md</code>.</p>
+  </div>
+
+  <h3>What is still not built, on any platform</h3>
+
+  <p>Two groups, and they are the two CMake also left out: <code>src/OrbitVulkanLayer</code>, <code>src/OrbitTriggerCaptureVulkanLayer</code> and <code>src/VulkanTutorial</code>, which sat behind a <code>WITH_VULKAN</code> option the root <code>CMakeLists.txt</code> left commented out; and <code>src/FuzzingUtils</code>, whose <code>add_subdirectory</code> was commented out.</p>
+
+  <h2 id="end">Where to look</h2>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>Path</th><th>What it holds</th></tr></thead>
+      <tbody>
+        <tr><td class="v">MODULE.bazel</td><td>Dependency resolution, the three module patches, the Qt and OpenGL extensions</td></tr>
+        <tr><td class="v">.bazelrc</td><td>C++ standard, disk cache, warning behaviour for external code, the <code>opt</code> / <code>debug</code> / <code>release</code> / <code>asan</code> / <code>ubsan</code> configurations</td></tr>
+        <tr><td class="v">bazel/copts.bzl</td><td>The warning flags every Orbit target compiles with, and the include-path shims</td></tr>
+        <tr><td class="v">bazel/qt/rules.bzl</td><td><code>qt_cc_library</code>, <code>qt_cc_test</code>, <code>qt_application</code>, and the moc/uic/rcc actions</td></tr>
+        <tr><td class="v">bazel/proto/rules.bzl</td><td>protobuf and gRPC generation</td></tr>
+        <tr><td class="v">bazel/deps/</td><td>The <code>.deb</code> repository rule, the pinned package list, and its regenerator</td></tr>
+        <tr><td class="v">bazel/patches/</td><td>Two LLVM patches, one gRPC visibility patch, each with its reasoning in the header</td></tr>
+        <tr><td class="v">bazel/deps/dia_sdk.bzl</td><td>Locates the Visual Studio DIA SDK; stubs out elsewhere</td></tr>
+        <tr><td class="v">.github/workflows/</td><td>Bazel CI across GCC, Clang and MSVC</td></tr>
+        <tr><td class="v">docs/building_with_bazel.md</td><td>The reference version of all of this</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Orbit on Bazel &middot; branch <code>port-to-bazel</code> &middot; measured on Ubuntu 26.04, GCC 15.2.0, Bazel 9.2.0, 32 cores.<br>
+    Figures are hand-drawn SVG; every number on this page came from a command run on the branch.
+  </div>
+</footer>
+</body>
+</html>

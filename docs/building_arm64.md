@@ -1,154 +1,75 @@
 # Building OrbitService for ARM64 (Raspberry Pi 4/5)
 
-This document describes how to cross-compile OrbitService for ARM64 (AArch64) targets, specifically for Raspberry Pi 4 and 5.
+## Build natively on the target
 
-## Prerequisites
+The Bazel build compiles every dependency from source, so an ARM64 machine
+needs nothing beyond Bazel and a C++17 compiler. That removes the reason the
+old build had for cross-compiling: there is no prebuilt x86-64 LLVM to work
+around, and no Conan package that has to exist for the target architecture.
 
-- Docker installed on your build machine
-- At least 8GB RAM recommended for cross-compilation
-- Conan 2.x installed (for managing build profiles)
-
-## Quick Start
-
-### 1. Build the Docker Image
+On the Pi (64-bit Raspberry Pi OS or Ubuntu):
 
 ```bash
-cd /path/to/orbit
-docker build -f docker/Dockerfile.arm64-cross -t orbit-arm64-cross .
+# Bazelisk picks up the version pinned in .bazelversion.
+wget -O ~/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
+chmod +x ~/bin/bazel
+
+git clone https://github.com/google/orbit.git
+cd orbit
+bazel build --config=release //src/Service:OrbitService
 ```
 
-### 2. Cross-Compile OrbitService
+The binary is at `bazel-bin/src/Service/OrbitService`.
+
+A Pi 4 with 4 GB of RAM will run out of memory building LLVM at the default
+parallelism. Cap the job count and give Bazel a smaller heap:
 
 ```bash
-docker run --rm -v $(pwd):/orbit -w /orbit orbit-arm64-cross bash -c '
-  mkdir -p build_arm64
-  cd build_arm64
-  conan install .. \
-    --profile:build=default \
-    --profile:host=/orbit/conan/profiles/arm64-linux-cross \
-    --output-folder=. \
-    --build=missing
-  cmake .. \
-    -DCMAKE_TOOLCHAIN_FILE=third_party/toolchains/toolchain-linux-arm64-cross.cmake \
-    -DCMAKE_BUILD_TYPE=Release \
-    -G Ninja
-  ninja OrbitService
-'
+bazel build --config=release --jobs=2 --local_ram_resources=2048 \
+  //src/Service:OrbitService
 ```
 
-### 3. Deploy to Raspberry Pi
+Building on the Pi takes a while the first time. If you build for several Pis,
+point them at a shared cache (`--disk_cache=/mnt/shared/bazel`) or run a remote
+cache; the second machine then fetches artifacts instead of compiling.
+
+## Running
 
 ```bash
-# Copy the binary to your Raspberry Pi
-scp build_arm64/bin/OrbitService pi@raspberrypi:/opt/orbitprofiler/
-
-# If you need the user space instrumentation library (not functional on ARM64)
-# scp build_arm64/lib/liborbituserspaceinstrumentation.so pi@raspberrypi:/opt/orbitprofiler/
+sudo sysctl kernel.perf_event_paranoid=-1
+sudo sysctl kernel.yama.ptrace_scope=0
+sudo ./bazel-bin/src/Service/OrbitService
 ```
 
-## Detailed Instructions
-
-### Build Directory Structure
-
-After a successful cross-compilation, the build directory will contain:
-
-```
-build_arm64/
-├── bin/
-│   └── OrbitService          # The ARM64 binary
-├── lib/
-│   └── ...                   # Libraries
-└── generators/
-    └── ...                   # Conan-generated CMake files
-```
-
-### Running on Raspberry Pi
-
-1. Ensure your Raspberry Pi is running a 64-bit OS (Raspberry Pi OS 64-bit recommended)
-
-2. Create the installation directory:
-   ```bash
-   sudo mkdir -p /opt/orbitprofiler
-   sudo chown $USER:$USER /opt/orbitprofiler
-   ```
-
-3. Copy the OrbitService binary:
-   ```bash
-   scp build_arm64/bin/OrbitService pi@raspberrypi:/opt/orbitprofiler/
-   ```
-
-4. Run OrbitService:
-   ```bash
-   ssh pi@raspberrypi
-   sudo /opt/orbitprofiler/OrbitService --help
-   ```
-
-### Kernel Configuration
-
-OrbitService uses `perf_event_open` for profiling. Ensure the following kernel settings:
+From the machine running the UI:
 
 ```bash
-# Check perf_event settings
-cat /proc/sys/kernel/perf_event_paranoid
-
-# If needed, allow unprivileged access (or run as root)
-sudo sysctl -w kernel.perf_event_paranoid=-1
+ssh -t -L 44765:127.0.0.1:44765 raspberrypi.local 'sudo /path/to/OrbitService'
 ```
 
-## Known Limitations
+then connect the UI to `127.0.0.1:44765`.
 
-1. **UserSpaceInstrumentation**: Dynamic instrumentation (uprobes-based function hooking) is not supported on ARM64. This feature requires x86_64-specific machine code generation.
+## What works on ARM64
 
-2. **GPU Tracing**: AMD GPU tracing (via amdgpu tracepoints) is not applicable on Raspberry Pi.
+Sampling, thread scheduling, and the tracing paths that go through
+`perf_event_open` work the same as on x86-64.
 
-3. **Performance**: Cross-compiled binaries are optimized for Cortex-A72 (RPi 4). They will also work on Cortex-A76 (RPi 5) but may not use all A76-specific optimizations.
+**Dynamic instrumentation does not.** `UserSpaceInstrumentation` writes x86-64
+machine code into the target process and reads x86-64 register state, so on
+aarch64 the module builds against a stub that returns "not supported" and
+OrbitService still links. This is the same arrangement the CMake build used
+(`StubArm64.cpp`); in Bazel it is a `select()` on `@platforms//cpu:aarch64` in
+`src/UserSpaceInstrumentation/BUILD.bazel`.
 
-## Troubleshooting
+## Cross-compiling from x86-64
 
-### Conan dependency build failures
+Not currently set up. The CMake build cross-compiled inside a Docker image that
+carried an aarch64 GCC, a Debian multiarch sysroot, and a prebuilt ARM64 LLVM
+at `/opt/llvm-arm64`; all three went away with CMake.
 
-If Conan fails to build dependencies for ARM64:
-
-1. Ensure you have enough disk space (at least 10GB free)
-2. Try building with fewer parallel jobs: add `-j 2` to the ninja command
-3. Check that the cross-compiler is correctly installed in the Docker image
-
-### Missing libraries on Raspberry Pi
-
-If OrbitService fails to start due to missing libraries:
-
-```bash
-# Check dependencies
-ldd /opt/orbitprofiler/OrbitService
-
-# Install missing libraries (example)
-sudo apt install libstdc++6
-```
-
-### Permission denied for perf_event_open
-
-```bash
-# Run as root
-sudo /opt/orbitprofiler/OrbitService
-
-# Or adjust kernel settings
-sudo sysctl -w kernel.perf_event_paranoid=-1
-```
-
-## Files Added/Modified for ARM64 Support
-
-### New Files
-- `docker/Dockerfile.arm64-cross` - Docker image for cross-compilation
-- `conan/profiles/arm64-linux-cross` - Conan profile for ARM64
-- `third_party/toolchains/toolchain-linux-arm64-cross.cmake` - CMake toolchain
-- `third_party/libunwindstack/AsmGetRegsArm64.S` - ARM64 register assembly
-
-### Modified Files
-- `src/LinuxTracing/PerfEventOpen.h` - ARM64 register masks
-- `src/LinuxTracing/PerfEventRecords.h` - ARM64 register structs
-- `src/LinuxTracing/PerfEvent.h` - Architecture-aware constants
-- `src/LinuxTracing/PerfEvent.cpp` - ARM64 register conversion
-- `src/LinuxTracing/LibunwindstackUnwinder.h` - ARM64 type aliases
-- `src/LinuxTracing/LibunwindstackUnwinder.cpp` - ARM64 unwinding support
-- `src/UserSpaceInstrumentation/CMakeLists.txt` - Disabled on ARM64
-- `third_party/libunwindstack/CMakeLists.txt` - ARM64 assembly source
+Reproducing it under Bazel means registering an aarch64 `cc_toolchain` (a
+`--platforms=//...:linux_arm64` definition plus a sysroot) and adding the
+`aarch64-unknown-linux-gnu` target to the Rust toolchain in `MODULE.bazel` for
+the py-spy FFI layer. That is a self-contained piece of work, but it needs a
+cross toolchain to develop against, and none of it has been written or tested.
+Native builds are the supported path today.

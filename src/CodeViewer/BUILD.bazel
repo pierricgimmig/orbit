@@ -1,0 +1,52 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel/qt:rules.bzl", "qt_cc_library", "qt_cc_test")
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+qt_cc_library(
+    name = "CodeViewer",
+    srcs = [
+        "Dialog.cpp",
+        "FontSizeInEm.cpp",
+        "OwningDialog.cpp",
+        "PlaceHolderWidget.cpp",
+        "Viewer.cpp",
+    ],
+    hdrs = ["include/CodeViewer/FontSizeInEm.h"],
+    moc_hdrs = [
+        "include/CodeViewer/Dialog.h",
+        "include/CodeViewer/OwningDialog.h",
+        "include/CodeViewer/PlaceHolderWidget.h",
+        "include/CodeViewer/Viewer.h",
+    ],
+    ui = ["Dialog.ui"],
+    copts = ORBIT_COPTS,
+    include_dirs = [
+        ".",
+        "include",
+    ],
+    deps = [
+        "//src/CodeReport",
+        "//src/OrbitBase",
+        "//src/SyntaxHighlighter",
+        "@qt5//:Widgets",
+    ],
+)
+
+qt_cc_test(
+    name = "CodeViewerTests",
+    srcs = [
+        "FontSizeInEmTest.cpp",
+        "ViewerTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ClientFlags",
+        "//src/CodeViewer",
+        "//src/Test:gtest_qtgui_main",
+    ],
+)

@@ -1,0 +1,111 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "libIntegrationTestPuppetSharedObject.so",
+    srcs = ["IntegrationTestPuppetSharedObject.cpp"],
+    copts = ORBIT_COPTS,
+    linkshared = True,
+    linkstatic = True,
+    deps = ["//src/OrbitBase"],
+)
+
+cc_library(
+    name = "IntegrationTestCommons",
+    srcs = [
+        "IntegrationTestCommons.cpp",
+        "IntegrationTestPuppet.cpp",
+        "IntegrationTestUtils.cpp",
+    ],
+    hdrs = [
+        "IntegrationTestChildProcess.h",
+        "IntegrationTestCommons.h",
+        "IntegrationTestPuppet.h",
+        "IntegrationTestUtils.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["."],
+    deps = [
+        "//src/ApiInterface",
+        "//src/GrpcProtos",
+        "//src/ModuleUtils",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "LinuxTracingIntegrationTests",
+    srcs = [
+        "LinuxTracingIntegrationTest.cpp",
+        "UprobeBenchHtmlTemplate.h",
+    ],
+    copts = ORBIT_COPTS + [
+        # The uprobe attach/detach bench reads LinuxTracing's internal headers.
+        "-Isrc/LinuxTracing",
+    ],
+    linkstatic = True,
+    tags = [
+        "exclusive",
+        "integration",
+    ],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/LinuxTracing",
+        "//src/LinuxTracingIntegrationTests:IntegrationTestCommons",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "//src/Test:gtest_main",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_test(
+    name = "OrbitServiceIntegrationTests",
+    srcs = [
+        "IntegrationTestPuppet.cpp",
+        "IntegrationTestPuppet.h",
+        "OrbitServiceIntegrationTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    data = [":libIntegrationTestPuppetSharedObject.so"],
+    linkstatic = True,
+    tags = [
+        "exclusive",
+        "integration",
+    ],
+    deps = [
+        "//src/ApiInterface",
+        "//src/ApiUtils",
+        "//src/GrpcProtos",
+        "//src/LinuxTracingIntegrationTests:IntegrationTestCommons",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+        "//src/OrbitVersion",
+        "//src/Service:OrbitServiceLib",
+        "//src/Test:gtest_main",
+        "@abseil-cpp//absl/base:base",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/synchronization:synchronization",
+        "@abseil-cpp//absl/time:time",
+        "@googletest//:gtest",
+    ],
+)

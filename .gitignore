@@ -1,9 +1,6 @@
-build*/
 /.idea/
-/cmake-build*/
 compile_commands.json
 /.vscode/
-/conan.log
 
 # Ignore generated and compiled Python code
 *_pb2.py
@@ -20,3 +17,5 @@ __pycache__
 
 # Rust/Cargo build artifacts
 third_party/py-spy-ffi/target/
+.bazelrc.user
+/bazel-*
