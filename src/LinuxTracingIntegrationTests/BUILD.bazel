@@ -48,8 +48,14 @@ cc_library(
 
 cc_test(
     name = "LinuxTracingIntegrationTests",
-    srcs = ["LinuxTracingIntegrationTest.cpp"],
-    copts = ORBIT_COPTS,
+    srcs = [
+        "LinuxTracingIntegrationTest.cpp",
+        "UprobeBenchHtmlTemplate.h",
+    ],
+    copts = ORBIT_COPTS + [
+        # The uprobe attach/detach bench reads LinuxTracing's internal headers.
+        "-Isrc/LinuxTracing",
+    ],
     linkstatic = True,
     tags = [
         "exclusive",
