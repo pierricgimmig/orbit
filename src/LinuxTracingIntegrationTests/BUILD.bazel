@@ -51,7 +51,10 @@ cc_test(
     srcs = ["LinuxTracingIntegrationTest.cpp"],
     copts = ORBIT_COPTS,
     linkstatic = True,
-    tags = ["exclusive"],
+    tags = [
+        "exclusive",
+        "integration",
+    ],
     deps = [
         "//src/GrpcProtos",
         "//src/LinuxTracing",
@@ -78,7 +81,10 @@ cc_test(
     copts = ORBIT_COPTS,
     data = [":libIntegrationTestPuppetSharedObject.so"],
     linkstatic = True,
-    tags = ["exclusive"],
+    tags = [
+        "exclusive",
+        "integration",
+    ],
     deps = [
         "//src/ApiInterface",
         "//src/ApiUtils",

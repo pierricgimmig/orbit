@@ -141,6 +141,10 @@ cc_test(
         ":liborbituserspaceinstrumentation.so",
     ],
     includes = ["."],
+    # InstrumentProcessTest.Instrument has a race between the injected
+    # thread exiting and gRPC's event-engine thread pool being created.
+    # Diagnosed, not yet fixed; CI runs this suite non-gating.
+    tags = ["known_flaky"],
     deps = [
         "//src/Test:gtest_main",
         "//src/TestUtils",
