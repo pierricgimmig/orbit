@@ -105,7 +105,6 @@ installed beyond Bazel and a C++ compiler - no package manager, no
 ```
 git clone https://github.com/google/orbit.git
 cd orbit
-git submodule update --init third_party/py-spy
 
 bazel build //...                    # fastbuild, the default
 bazel build --config=release //...   # optimized, with debug info

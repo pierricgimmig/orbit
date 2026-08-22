@@ -2,44 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""py-spy, built from the git submodule in py-spy/.
+"""Package marker for the vendored third-party code.
 
-The rules live here rather than in py-spy/BUILD.bazel because that directory is
-a submodule: a file placed there would not survive `git submodule update`. With
-no BUILD file of its own, py-spy/ belongs to this package.
+The subdirectories that carry build rules of their own -- libunwindstack,
+libbase, xxHash-r42, ... -- are packages in their own right. This file keeps
+the ones that do not (vulkan, libsystem, conan, ...) out of the root package.
 """
-
-load("@crates//:defs.bzl", "aliases", "all_crate_deps")
-load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
-load("@rules_rust//rust:defs.bzl", "rust_library")
 
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])  # MIT, see py-spy/LICENSE.
-
-exports_files(["py-spy/Cargo.toml"])
-
-# py-spy's build script only sets the `unwind` cfg for the platforms whose
-# native unwinding it supports.
-cargo_build_script(
-    name = "py_spy_build_script",
-    srcs = ["py-spy/build.rs"],
-    edition = "2021",
-)
-
-rust_library(
-    name = "py_spy",
-    srcs = glob(["py-spy/src/**/*.rs"]),
-    aliases = aliases(),
-    crate_name = "py_spy",
-    crate_root = "py-spy/src/lib.rs",
-    edition = "2021",
-    # crate_universe keys workspace members by their path relative to the
-    # package holding the manifest, which is this one.
-    proc_macro_deps = all_crate_deps(
-        package_name = "py-spy",
-        proc_macro = True,
-    ),
-    target_compatible_with = ["@platforms//os:linux"],
-    deps = all_crate_deps(package_name = "py-spy") + [":py_spy_build_script"],
-)
+licenses(["notice"])

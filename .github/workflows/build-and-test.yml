@@ -98,8 +98,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: '0'
-          # py-spy is a submodule; the Rust FFI layer needs its sources.
-          submodules: 'recursive'
 
       # Everything else - Qt, OpenGL, LLVM, gRPC, capstone, the Rust
       # toolchain - is fetched by Bazel itself. There is nothing to apt-install.
