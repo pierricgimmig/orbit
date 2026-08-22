@@ -121,6 +121,24 @@ cache. See [docs/building_with_bazel.md](docs/building_with_bazel.md) for the
 available configurations, where each dependency comes from, and how to keep
 builds fast.
 
+#### How long it takes, and how much disk it needs
+
+Measure it on your own machine rather than taking anyone's word for it:
+
+```
+bazel run //bazel/benchmark:build_benchmark             # from scratch, plus iteration
+bazel run //bazel/benchmark:build_benchmark -- --quick  # iteration only, no full build
+```
+
+The full run builds everything with an empty output base, repository cache and
+disk cache of its own -- it neither disturbs nor benefits from the caches you
+build with -- then measures an edit-and-rebuild of a few shapes and reports what
+all of it costs on disk. Budget ~15 GB of scratch space and a re-download of
+every dependency; it took about ten minutes on the desktop in the report.
+
+It rewrites [docs/build_benchmark.md](docs/build_benchmark.md), which holds one
+machine's numbers to compare against.
+
 ### Remote profiling
 
 OrbitService runs on the machine being profiled and the UI connects to it over
