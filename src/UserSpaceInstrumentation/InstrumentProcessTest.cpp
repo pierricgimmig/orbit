@@ -17,6 +17,8 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <random>
@@ -26,6 +28,8 @@
 #include <vector>
 
 #include "GrpcProtos/capture.pb.h"
+#include "ObjectUtils/ElfFile.h"
+#include "OrbitBase/ExecutablePath.h"
 #include "OrbitBase/GetProcessIds.h"
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Result.h"
@@ -41,7 +45,10 @@ namespace {
 
 using orbit_test_utils::HasErrorWithMessage;
 using orbit_test_utils::HasNoError;
+using ::testing::AnyOf;
 using ::testing::HasSubstr;
+using ::testing::IsSupersetOf;
+using ::testing::Not;
 
 constexpr int kFunctionId1 = 42;
 constexpr int kFunctionId2 = 43;
@@ -65,6 +72,21 @@ orbit_grpc_protos::CaptureOptions BuildCaptureOptions() {
   AddFunctionToCaptureOptions(&capture_options, "ReturnImmediately", kFunctionId2);
 
   return capture_options;
+}
+
+// Fails if the target is not running anymore, naming the signal that took it down: the heap errors
+// glibc reports end in abort(), and the message it prints goes to the target's stderr.
+void ExpectTargetIsRunning(pid_t pid, std::string_view when) {
+  int status = 0;
+  const pid_t waited = waitpid(pid, &status, WNOHANG);
+  if (waited == 0) return;
+  if (waited == pid && WIFSIGNALED(status)) {
+    ADD_FAILURE() << "The target died from signal " << WTERMSIG(status) << " " << when
+                  << "; if that is SIGABRT, look for the message glibc printed on stderr.";
+    return;
+  }
+  ADD_FAILURE() << "The target is gone " << when << " (waitpid returned " << waited << ", status 0x"
+                << std::hex << status << ").";
 }
 
 [[nodiscard]] InstrumentationManager* GetInstrumentationManager() {
@@ -237,6 +259,95 @@ TEST(InstrumentProcessTest, Instrument) {
   // End child pid_process_2.
   kill(pid_process_2, SIGKILL);
   waitpid(pid_process_2, nullptr, 0);
+}
+
+// The instrumentation library is loaded into the target with dlopen, and everything it brings with
+// it -- gRPC, protobuf, abseil -- has to stay inside it. In particular it must not bring an
+// allocator of its own: loading it into a linker namespace of its own used to do exactly that,
+// because such a namespace comes with a second copy of libc, and the two main arenas then grew the
+// same brk heap and handed out overlapping memory. The target died of that, with
+// "malloc(): unsorted double linked list corrupted" or the sysmalloc assertion about the program
+// break, right while the injected library was starting up.
+//
+// So: a target that uses its heap the way any real one does has to come out of being instrumented
+// alive.
+TEST(InstrumentProcessTest, TargetHeapSurvivesInstrumentation) {
+  InstrumentationManager* instrumentation_manager = GetInstrumentationManager();
+
+  const pid_t pid = fork();
+  ORBIT_CHECK(pid != -1);
+  if (pid == 0) {
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+
+    // Hold on to a couple of thousand blocks and keep replacing them, which makes the allocator
+    // grow and shrink the heap the whole time we are being instrumented.
+    constexpr size_t kLiveBlockCount = 2048;
+    static std::array<void*, kLiveBlockCount> live_blocks{};
+    uint32_t random_state = 12345;
+    [[maybe_unused]] volatile int sum = 0;
+    while (true) {
+      for (void*& block : live_blocks) {
+        random_state = random_state * 1103515245 + 12345;
+        free(block);
+        block = malloc(64 + (random_state >> 16) % 32768);
+        memset(block, 0x5a, 32);
+        sum += SomethingToInstrument();
+      }
+    }
+  }
+
+  orbit_grpc_protos::CaptureOptions capture_options = BuildCaptureOptions();
+  capture_options.set_pid(pid);
+  auto result_or_error = instrumentation_manager->InstrumentProcess(capture_options);
+  ASSERT_THAT(result_or_error, HasNoError());
+  EXPECT_TRUE(result_or_error.value().instrumented_function_ids.contains(kFunctionId1));
+
+  // Let the target run instrumented for a while: a corrupted heap is only noticed the next time the
+  // target allocates.
+  std::this_thread::sleep_for(std::chrono::milliseconds{500});
+  ExpectTargetIsRunning(pid, "while instrumented");
+
+  auto result = instrumentation_manager->UninstrumentProcess(pid);
+  ASSERT_THAT(result, HasNoError());
+
+  std::this_thread::sleep_for(std::chrono::milliseconds{500});
+  ExpectTargetIsRunning(pid, "after uninstrumenting");
+
+  kill(pid, SIGKILL);
+  waitpid(pid, nullptr, 0);
+}
+
+// The library injected into the target statically links gRPC, protobuf and abseil, and is loaded
+// into the linker namespace the target already has. That is only safe as long as none of it is
+// visible there: a symbol this library exports can be bound to by its own code in place of the
+// target's copy, or the other way around, and two copies of protobuf that find each other abort
+// over the same descriptors being registered twice. The CMake build hid these symbols; the port to
+// Bazel dropped that, which is what this test is here to catch.
+TEST(InstrumentProcessTest, InstrumentationLibraryExportsNothingButItsPayloads) {
+  const std::filesystem::path library_path =
+      orbit_base::GetExecutableDir() / "liborbituserspaceinstrumentation.so";
+  ASSERT_TRUE(std::filesystem::exists(library_path)) << library_path.string();
+
+  auto elf_file_or_error = orbit_object_utils::CreateElfFile(library_path);
+  ASSERT_THAT(elf_file_or_error, HasNoError());
+  auto symbols_or_error = elf_file_or_error.value()->LoadSymbolsFromDynsym();
+  ASSERT_THAT(symbols_or_error, HasNoError());
+
+  std::vector<std::string> exported_names;
+  for (const orbit_grpc_protos::SymbolInfo& symbol : symbols_or_error.value().symbol_infos()) {
+    exported_names.emplace_back(symbol.demangled_name());
+  }
+
+  // Everything OrbitService calls into the library is here; nothing else has to be.
+  EXPECT_THAT(exported_names,
+              IsSupersetOf({"InitializeInstrumentationInNewThread", "StartNewCapture",
+                            "AddOrbitThreads", "EntryPayload", "ExitPayload"}));
+
+  for (const std::string& name : exported_names) {
+    EXPECT_THAT(name, Not(AnyOf(HasSubstr("grpc"), HasSubstr("protobuf"), HasSubstr("absl"),
+                                HasSubstr("upb"), HasSubstr("google"))))
+        << "The library exports the code it brings along, which must stay private to it.";
+  }
 }
 
 TEST(InstrumentProcessTest, GetErrorMessage) {
