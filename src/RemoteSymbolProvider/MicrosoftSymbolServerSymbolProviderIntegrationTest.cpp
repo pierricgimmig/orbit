@@ -4,12 +4,15 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/hash/hash.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <QCoreApplication>
+#include <QTimer>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -23,6 +26,7 @@
 #include "OrbitBase/Future.h"
 #include "OrbitBase/Result.h"
 #include "OrbitBase/StopSource.h"
+#include "OrbitBase/UniqueResource.h"
 #include "QtUtils/MainThreadExecutor.h"
 #include "RemoteSymbolProvider/MicrosoftSymbolServerSymbolProvider.h"
 #include "SymbolProvider/SymbolLoadingOutcome.h"
@@ -42,12 +46,18 @@ TEST(MicrosoftSymbolServerSymbolProviderIntegrationTest, RetrieveWindowsPdbAndLo
   orbit_test_utils::TemporaryFile temporary_file = std::move(temporary_file_or_error.value());
   ASSERT_TRUE(temporary_file.file_path().has_parent_path());
   const std::filesystem::path symbol_cache_dir = temporary_file.file_path().parent_path();
+  // The symbol cache directory is the shared temporary directory, so the name of the module alone
+  // does not make for a unique path: two instances of this test running at the same time would
+  // download to the same file and delete each other's download. The name of the temporary file is
+  // unique to this instance, so use it as a prefix.
+  const std::string cached_file_prefix = temporary_file.file_path().filename().string();
 
   orbit_symbols::MockSymbolCache symbol_cache;
   EXPECT_CALL(symbol_cache, GenerateCachedFilePath)
-      .WillRepeatedly([&symbol_cache_dir](const std::filesystem::path& module_file_path) {
+      .WillRepeatedly([&symbol_cache_dir,
+                       &cached_file_prefix](const std::filesystem::path& module_file_path) {
         auto file_name = absl::StrReplaceAll(module_file_path.string(), {{"/", "_"}});
-        return symbol_cache_dir / file_name;
+        return symbol_cache_dir / absl::StrCat(cached_file_prefix, "_", file_name);
       });
 
   orbit_http::HttpDownloadManager download_manager{};
@@ -60,10 +70,21 @@ TEST(MicrosoftSymbolServerSymbolProviderIntegrationTest, RetrieveWindowsPdbAndLo
 
   orbit_base::StopSource stop_source{};
 
+  bool retrieval_completed = false;
+
   symbol_provider
       .RetrieveSymbols({.module_path = kValidModuleName, .build_id = kValidModuleBuildId},
                        stop_source.GetStopToken())
-      .Then(&executor, [](const orbit_symbol_provider::SymbolLoadingOutcome& result) {
+      .Then(&executor, [&retrieval_completed](
+                           const orbit_symbol_provider::SymbolLoadingOutcome& result) {
+        // A failing assertion returns from this callback. Leave the event loop on every path out of
+        // it, or the test hangs until it is killed from the outside instead of failing.
+        const orbit_base::unique_resource leave_event_loop{
+            &retrieval_completed, [](bool* retrieval_completed) {
+              *retrieval_completed = true;
+              QCoreApplication::exit();
+            }};
+
         ASSERT_TRUE(orbit_symbol_provider::IsSuccessResult(result));
         orbit_symbol_provider::SymbolLoadingSuccessResult success_result =
             orbit_symbol_provider::GetSuccessResult(result);
@@ -102,11 +123,18 @@ TEST(MicrosoftSymbolServerSymbolProviderIntegrationTest, RetrieveWindowsPdbAndLo
         auto removed_or_error = orbit_base::RemoveFile(success_result.path);
         ASSERT_THAT(removed_or_error, HasNoError());
         EXPECT_TRUE(removed_or_error.value());
-
-        QCoreApplication::exit();
       });
 
+  // The download goes out to a symbol server, so it can stall for reasons that have nothing to do
+  // with the code under test. Give up on it rather than running into the timeout of whatever
+  // started this test, which reports far less about what happened.
+  constexpr std::chrono::minutes kDownloadTimeout{2};
+  QTimer::singleShot(kDownloadTimeout, []() { QCoreApplication::exit(); });
+
   QCoreApplication::exec();
+
+  EXPECT_TRUE(retrieval_completed)
+      << "The symbols were not retrieved within " << kDownloadTimeout.count() << " minutes.";
 }
 
 }  // namespace orbit_remote_symbol_provider
