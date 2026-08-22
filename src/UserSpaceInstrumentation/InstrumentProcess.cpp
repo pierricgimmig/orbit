@@ -436,8 +436,24 @@ ErrorMessageOr<std::unique_ptr<InstrumentedProcess>> InstrumentedProcess::Create
   // in the previous run.
   OUTCOME_TRY(const bool already_injected, AlreadyInjected(modules));
 
+  // Load the library into the linker namespace the target already has, not into one of its own.
+  //
+  // A namespace of its own comes with a second copy of libc, and the two copies grow the same brk
+  // heap from their own main arena, each assuming the memory above its top chunk is its own. They
+  // hand out overlapping memory and the target dies -- glibc reports "malloc(): unsorted double
+  // linked list corrupted" or asserts in sysmalloc that nothing else moved the program break --
+  // while the injected library is starting up, which is heavy on allocation.
+  //
+  // A namespace of its own was introduced (#4327) when Orbit could be built against gRPC and
+  // protobuf as *system* libraries, i.e. dynamically linked: the target and this library would then
+  // share one libprotobuf, and registering the same generated descriptors twice in one protobuf
+  // aborts. That is what the namespace kept apart. This build links gRPC, protobuf and abseil
+  // statically into liborbituserspaceinstrumentation.so and hides every one of their symbols
+  // (see the BUILD file), so this library carries its own copies with no way for them to meet the
+  // target's -- which is the same reason liborbit.so, the Orbit API library, is loaded into the
+  // initial namespace as well.
   auto library_handle_or_error =
-      DlmopenInTracee(pid, modules, library_path, RTLD_NOW, LinkerNamespace::kCreateNewNamespace);
+      DlmopenInTracee(pid, modules, library_path, RTLD_NOW, LinkerNamespace::kUseInitialNamespace);
   if (library_handle_or_error.has_error()) {
     return ErrorMessage(absl::StrFormat("Unable to open library in tracee: %s",
                                         library_handle_or_error.error().message()));
