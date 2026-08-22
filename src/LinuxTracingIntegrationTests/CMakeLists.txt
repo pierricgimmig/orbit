@@ -52,6 +52,9 @@ add_executable(LinuxTracingIntegrationTests)
 target_sources(LinuxTracingIntegrationTests PRIVATE
         LinuxTracingIntegrationTest.cpp)
 
+target_include_directories(LinuxTracingIntegrationTests PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/../LinuxTracing)
+
 target_link_libraries(LinuxTracingIntegrationTests PRIVATE
         GrpcProtos
         IntegrationTestCommons

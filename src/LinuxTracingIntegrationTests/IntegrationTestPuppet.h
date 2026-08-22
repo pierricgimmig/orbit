@@ -24,6 +24,10 @@ struct IntegrationTestPuppetConstants {
   constexpr static std::array<uint64_t, 6> kInnerFunctionCallArgs = {1, 2, 3, 4, 5, 6};
   constexpr static const char* kInnerFunctionName = "InnerFunctionToInstrument";
 
+  // Extra no-op functions used by the uprobe attach/detach bench (10 / 20 / 50 functions).
+  constexpr static int kUprobeStopRestartDummyFunctionCount = 50;
+  constexpr static const char* kUprobeStopRestartDummyFunctionNamePrefix = "UprobeStopRestartDummy";
+
   constexpr static const char* kNewThreadName = "Thread Name";
 
   constexpr static const char* kSharedObjectFileName = "libIntegrationTestPuppetSharedObject.so";
@@ -67,6 +71,8 @@ struct IntegrationTestPuppetConstants {
 
   constexpr static const char* kSleepCommand = "sleep";
   constexpr static const char* kCallOuterFunctionCommand = "CallOuterFunction";
+  constexpr static const char* kCallUprobeStopRestartDummiesCommand =
+      "CallUprobeStopRestartDummies";
   constexpr static const char* kPthreadSetnameNpCommand = "pthread_setname_np";
   constexpr static const char* kDlopenCommand = "dlopen";
   constexpr static const char* kVulkanTutorialCommand = "VulkanTutorial";

@@ -1,0 +1,169 @@
+// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "UprobeEvents.h"
+
+#include <absl/strings/str_format.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <string>
+
+#include "LinuxTracingUtils.h"
+#include "OrbitBase/File.h"
+#include "OrbitBase/Logging.h"
+#include "OrbitBase/SafeStrerror.h"
+
+namespace orbit_linux_tracing {
+namespace {
+
+ErrorMessageOr<void> WriteTracefsCommand(const std::filesystem::path& path, std::string_view line) {
+  // Must not O_TRUNC: uprobe_events is a command interface, and truncating it
+  // would delete every probe on the system.
+  int raw_fd = TEMP_FAILURE_RETRY(open(path.c_str(), O_WRONLY | O_CLOEXEC));
+  if (raw_fd < 0) {
+    return ErrorMessage{absl::StrFormat("Opening \"%s\": %s", path.string(), SafeStrerror(errno))};
+  }
+  orbit_base::UniqueFd fd{raw_fd};
+
+  std::string command{line};
+  if (command.empty() || command.back() != '\n') {
+    command.push_back('\n');
+  }
+  ErrorMessageOr<void> write_result = orbit_base::WriteFully(fd, command);
+  if (write_result.has_error()) {
+    return ErrorMessage{
+        absl::StrFormat("Writing \"%s\": %s", path.string(), write_result.error().message())};
+  }
+  return outcome::success();
+}
+
+ErrorMessageOr<std::filesystem::path> UprobeEventsPath() {
+  std::optional<std::filesystem::path> tracing_dir = FindTracingDirectory();
+  if (!tracing_dir.has_value()) {
+    return ErrorMessage{"No tracefs directory found"};
+  }
+  std::filesystem::path path = tracing_dir.value() / "uprobe_events";
+  if (access(path.c_str(), F_OK) != 0) {
+    return ErrorMessage{absl::StrFormat("\"%s\" is not available", path.string())};
+  }
+  return path;
+}
+
+// Deleting a probe that is not defined fails with ENOENT. That is the normal case when clearing a
+// possible leftover, so removal is kept separate from the logging in UndefineTracefsUprobe.
+ErrorMessageOr<void> RemoveTracefsUprobe(const std::filesystem::path& events_path,
+                                         const TracefsUprobe& probe) {
+  return WriteTracefsCommand(events_path, absl::StrFormat("-:%s/%s", probe.group, probe.event));
+}
+
+}  // namespace
+
+std::string MakeOrbitUprobeEventName(uint64_t unique_id, bool is_return) {
+  return absl::StrFormat("%c%llu", is_return ? 'r' : 'u',
+                         static_cast<unsigned long long>(unique_id));
+}
+
+std::string_view TracefsEventNameForLayout(UprobeSampleLayout layout) {
+  switch (layout) {
+    case UprobeSampleLayout::kRetaddr:
+      return "u";
+    case UprobeSampleLayout::kRetaddrArgs:
+      return "ua";
+    case UprobeSampleLayout::kStackAndSp:
+      return "us";
+    case UprobeSampleLayout::kUretprobe:
+      return "r";
+    case UprobeSampleLayout::kUretprobeRetval:
+      return "rv";
+  }
+  return "u";
+}
+
+void ResetTracefsUprobeEvent(const TracefsUprobe& probe) {
+  ErrorMessageOr<std::filesystem::path> events_path_or_error = UprobeEventsPath();
+  if (events_path_or_error.has_error()) {
+    return;
+  }
+  // Not having a leftover is the normal case, so the resulting ENOENT is not an error.
+  static_cast<void>(RemoveTracefsUprobe(events_path_or_error.value(), probe));
+}
+
+ErrorMessageOr<void> AppendTracefsUprobe(const TracefsUprobe& probe, std::string_view module_path,
+                                         uint64_t function_offset, bool is_return) {
+  ErrorMessageOr<std::filesystem::path> events_path_or_error = UprobeEventsPath();
+  if (events_path_or_error.has_error()) {
+    return events_path_or_error.error();
+  }
+
+  const char type = is_return ? 'r' : 'p';
+  std::string command =
+      absl::StrFormat("%c:%s/%s %s:0x%llx", type, probe.group, probe.event, module_path,
+                      static_cast<unsigned long long>(function_offset));
+  ErrorMessageOr<void> write_result = WriteTracefsCommand(events_path_or_error.value(), command);
+  if (write_result.has_error()) {
+    return ErrorMessage{absl::StrFormat(
+        "Appending %s+0x%llx to %s/%s: %s", module_path,
+        static_cast<unsigned long long>(function_offset), probe.group, probe.event,
+        write_result.error().message())};
+  }
+  return outcome::success();
+}
+
+ErrorMessageOr<TracefsUprobe> DefineTracefsUprobe(std::string_view module_path,
+                                                  uint64_t function_offset, bool is_return,
+                                                  std::string_view event_name) {
+  ErrorMessageOr<std::filesystem::path> events_path_or_error = UprobeEventsPath();
+  if (events_path_or_error.has_error()) {
+    return events_path_or_error.error();
+  }
+
+  TracefsUprobe probe{.group = kOrbitUprobeEventGroup, .event = std::string{event_name}};
+  // Remove a leftover definition from a previous crashed capture with the same name. Having no
+  // leftover is the normal case, so the resulting ENOENT must not be reported as an error.
+  static_cast<void>(RemoveTracefsUprobe(events_path_or_error.value(), probe));
+
+  const char type = is_return ? 'r' : 'p';
+  std::string command =
+      absl::StrFormat("%c:%s/%s %s:0x%llx", type, probe.group, probe.event, module_path,
+                      static_cast<unsigned long long>(function_offset));
+  ErrorMessageOr<void> write_result = WriteTracefsCommand(events_path_or_error.value(), command);
+  if (write_result.has_error()) {
+    return ErrorMessage{absl::StrFormat(
+        "Defining %s/%s at %s+0x%llx: %s", probe.group, probe.event, module_path,
+        static_cast<unsigned long long>(function_offset), write_result.error().message())};
+  }
+  return probe;
+}
+
+void UndefineTracefsUprobe(const TracefsUprobe& probe) {
+  if (probe.group.empty() || probe.event.empty()) {
+    return;
+  }
+  ErrorMessageOr<std::filesystem::path> events_path_or_error = UprobeEventsPath();
+  if (events_path_or_error.has_error()) {
+    return;
+  }
+  ErrorMessageOr<void> write_result = RemoveTracefsUprobe(events_path_or_error.value(), probe);
+  if (write_result.has_error()) {
+    ORBIT_ERROR("Undefining %s/%s: %s", probe.group, probe.event, write_result.error().message());
+  }
+}
+
+bool OpenTracefsUprobeFdsPerCpu(const TracefsUprobe& probe, absl::Span<const int32_t> cpus,
+                                pid_t pid, UprobeSampleLayout layout, uint16_t stack_dump_size,
+                                absl::flat_hash_map<int32_t, int>* fds_per_cpu) {
+  for (int32_t cpu : cpus) {
+    int fd = OpenTracefsUprobeFd(probe, pid, cpu, layout, stack_dump_size);
+    if (fd < 0) {
+      ORBIT_ERROR("Opening tracefs %s/%s on cpu %d", probe.group, probe.event, cpu);
+      return false;
+    }
+    (*fds_per_cpu)[cpu] = fd;
+  }
+  return true;
+}
+
+}  // namespace orbit_linux_tracing

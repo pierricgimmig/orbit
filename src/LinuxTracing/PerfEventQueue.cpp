@@ -65,6 +65,11 @@ const PerfEvent& PerfEventQueue::TopEvent() {
 }
 
 void PerfEventQueue::PopEvent() {
+  // Without this, popping an empty queue reaches
+  // heap_of_queues_of_events_ordered_in_stream_.front() on an empty vector, which is undefined
+  // behaviour rather than a check failure. PerfEventQueueTest relies on this dying.
+  ORBIT_CHECK(HasEvent());
+
   if (!priority_queue_of_events_not_ordered_in_stream_.empty() &&
       (heap_of_queues_of_events_ordered_in_stream_.empty() ||
        priority_queue_of_events_not_ordered_in_stream_.top().timestamp <=

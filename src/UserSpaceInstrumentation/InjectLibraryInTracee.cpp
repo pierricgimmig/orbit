@@ -166,8 +166,8 @@ ErrorMessageOr<uint64_t> FindFunctionAddressWithFallback(
   auto code_memory = std::move(code_memory_or_error.value());
 
   // Write the name of symbol into memory at code_memory with offset of kCodeScratchPadSize.
-  std::vector<uint8_t> symbol_name_as_vector(symbol_name_length, 0);
-  memcpy(symbol_name_as_vector.data(), symbol.data(), symbol.length());
+  std::vector<uint8_t> symbol_name_as_vector(symbol.begin(), symbol.end());
+  symbol_name_as_vector.push_back(0);  // terminating zero
   const uint64_t symbol_name_address = code_memory->GetAddress() + kCodeScratchPadSize;
   auto write_memory_result = WriteTraceesMemory(pid, symbol_name_address, symbol_name_as_vector);
   if (write_memory_result.has_error()) {

@@ -39,6 +39,8 @@
 #include "PerfEventRingBuffer.h"
 #include "PythonSamplingThread.h"
 #include "SwitchesStatesNamesVisitor.h"
+#include "UprobeAddressMap.h"
+#include "UprobeEvents.h"
 #include "UprobesFunctionCallManager.h"
 #include "UprobesReturnAddressManager.h"
 #include "UprobesUnwindingVisitor.h"
@@ -71,23 +73,19 @@ class TracerImpl : public Tracer {
   void InitUprobesEventVisitor();
   [[nodiscard]] bool OpenUserSpaceProbes(absl::Span<const int32_t> cpus);
   [[nodiscard]] bool OpenUprobesToRecordAdditionalStackOn(absl::Span<const int32_t> cpus);
-  [[nodiscard]] static bool OpenUprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                                        absl::Span<const int32_t> cpus,
-                                        absl::flat_hash_map<int32_t, int>* fds_per_cpu);
-  [[nodiscard]] bool OpenUprobesWithStack(
-      const orbit_grpc_protos::FunctionToRecordAdditionalStackOn& function,
-      absl::Span<const int32_t> cpus, absl::flat_hash_map<int32_t, int>* fds_per_cpu) const;
-  [[nodiscard]] static bool OpenUretprobes(const orbit_grpc_protos::InstrumentedFunction& function,
-                                           absl::Span<const int32_t> cpus,
-                                           absl::flat_hash_map<int32_t, int>* fds_per_cpu);
+  // Registers every function of one sample layout under a single tracefs event and opens the
+  // per-CPU descriptors for it.
+  [[nodiscard]] bool OpenGroupedUprobes(
+      UprobeSampleLayout layout,
+      absl::Span<const orbit_grpc_protos::InstrumentedFunction* const> functions,
+      absl::Span<const int32_t> cpus, absl::flat_hash_map<int32_t, int>* fds_per_cpu);
+  void RegisterGroupedUprobeFds(UprobeSampleLayout layout,
+                                const absl::flat_hash_map<int32_t, int>& fds_per_cpu);
+  void ResolveUprobeAddresses();
+  [[nodiscard]] uint64_t GetFunctionIdOfUprobeAddress(uint64_t absolute_address);
+  void UndefineTracefsUprobes();
   [[nodiscard]] bool OpenMmapTask(absl::Span<const int32_t> cpus);
   [[nodiscard]] bool OpenSampling(absl::Span<const int32_t> cpus);
-
-  void AddUprobesFileDescriptors(const absl::flat_hash_map<int32_t, int>& uprobes_fds_per_cpu,
-                                 const orbit_grpc_protos::InstrumentedFunction& function);
-
-  void AddUretprobesFileDescriptors(const absl::flat_hash_map<int32_t, int>& uretprobes_fds_per_cpu,
-                                    const orbit_grpc_protos::InstrumentedFunction& function);
 
   [[nodiscard]] bool OpenThreadNameTracepoints(absl::Span<const int32_t> cpus);
   void InitSwitchesStatesNamesVisitor();
@@ -168,10 +166,15 @@ class TracerImpl : public Tracer {
   std::thread run_thread_;
 
   absl::flat_hash_map<std::string, std::vector<int>> tracing_fds_by_type_;
+  std::vector<TracefsUprobe> defined_uprobes_;
   std::vector<PerfEventRingBuffer> ring_buffers_;
   absl::flat_hash_map<int, uint64_t> fds_to_last_timestamp_ns_;
 
-  absl::flat_hash_map<uint64_t, uint64_t> uprobes_uretprobes_ids_to_function_id_;
+  // Uprobe samples identify their function by the address the probe fired at, because every
+  // function of one layout now shares a tracefs event and therefore a perf stream id.
+  UprobeAddressMap uprobe_address_map_;
+  uint64_t last_uprobe_address_resolve_ns_ = 0;
+  uint64_t unresolved_uprobe_address_count_ = 0;
   absl::flat_hash_set<uint64_t> uprobes_ids_;
   absl::flat_hash_set<uint64_t> uprobes_with_args_ids_;
   absl::flat_hash_set<uint64_t> uprobes_with_stack_ids_;

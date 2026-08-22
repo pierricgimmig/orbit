@@ -113,7 +113,8 @@ static constexpr uint64_t kSampleRegsUserAx = (1lu << PERF_REG_ARM64_X0);
 #if defined(__x86_64__)
 static constexpr uint64_t kSampleRegsUserSpIp = (1lu << PERF_REG_X86_SP) | (1lu << PERF_REG_X86_IP);
 #elif defined(__aarch64__)
-static constexpr uint64_t kSampleRegsUserSpIp = (1lu << PERF_REG_ARM64_SP) | (1lu << PERF_REG_ARM64_PC);
+static constexpr uint64_t kSampleRegsUserSpIp =
+    (1lu << PERF_REG_ARM64_SP) | (1lu << PERF_REG_ARM64_PC);
 #endif
 
 // This must be in sync with struct perf_event_sample_regs_user_sp
@@ -188,6 +189,10 @@ void* perf_event_open_mmap_ring_buffer(int fd, uint64_t mmap_length);
 // tracepoint given by the category (for example, "sched") and the name
 // (for example, "sched_waking"). Returns the file descriptor for the
 // perf event or -1 in case of any errors.
+int configured_tracepoint_event_open(const char* tracepoint_category, const char* tracepoint_name,
+                                     pid_t pid, int32_t cpu, uint64_t extra_sample_type,
+                                     uint64_t sample_regs_user, uint16_t sample_stack_user);
+
 int tracepoint_event_open(const char* tracepoint_category, const char* tracepoint_name, pid_t pid,
                           int32_t cpu);
 

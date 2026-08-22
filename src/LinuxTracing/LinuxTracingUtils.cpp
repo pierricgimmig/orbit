@@ -167,23 +167,47 @@ std::vector<int> GetCpusetCpus(pid_t pid) {
   return ParseCpusetCpus(cpuset_cpus_content_or_error.value());
 }
 
+std::optional<std::filesystem::path> FindTracingDirectory() {
+  static const char* const kCandidates[] = {"/sys/kernel/tracing", "/sys/kernel/debug/tracing"};
+  for (const char* candidate : kCandidates) {
+    if (access(candidate, R_OK) == 0) {
+      return std::filesystem::path{candidate};
+    }
+  }
+  return std::nullopt;
+}
+
+bool AreTracefsUprobesAvailable() {
+  std::optional<std::filesystem::path> tracing_dir = FindTracingDirectory();
+  if (!tracing_dir.has_value()) {
+    return false;
+  }
+  return access((tracing_dir.value() / "uprobe_events").c_str(), R_OK) == 0;
+}
+
 int GetTracepointId(const char* tracepoint_category, const char* tracepoint_name) {
-  std::string filename = absl::StrFormat("/sys/kernel/debug/tracing/events/%s/%s/id",
-                                         tracepoint_category, tracepoint_name);
+  static const char* const kTracingRoots[] = {"/sys/kernel/tracing", "/sys/kernel/debug/tracing"};
+  std::string last_error;
+  for (const char* root : kTracingRoots) {
+    std::string filename =
+        absl::StrFormat("%s/events/%s/%s/id", root, tracepoint_category, tracepoint_name);
+    ErrorMessageOr<std::string> file_content_or_error = orbit_base::ReadFileToString(filename);
+    if (file_content_or_error.has_error()) {
+      last_error = file_content_or_error.error().message();
+      continue;
+    }
 
-  ErrorMessageOr<std::string> file_content_or_error = orbit_base::ReadFileToString(filename);
-  if (file_content_or_error.has_error()) {
-    ORBIT_ERROR("Reading tracepoint id of %s:%s: %s", tracepoint_category, tracepoint_name,
-                file_content_or_error.error().message());
-    return -1;
+    int tp_id = -1;
+    if (!absl::SimpleAtoi(file_content_or_error.value(), &tp_id)) {
+      ORBIT_ERROR("Parsing tracepoint id for: %s:%s", tracepoint_category, tracepoint_name);
+      return -1;
+    }
+    return tp_id;
   }
 
-  int tp_id = -1;
-  if (!absl::SimpleAtoi(file_content_or_error.value(), &tp_id)) {
-    ORBIT_ERROR("Parsing tracepoint id for: %s:%s", tracepoint_category, tracepoint_name);
-    return -1;
-  }
-  return tp_id;
+  ORBIT_ERROR("Reading tracepoint id of %s:%s: %s", tracepoint_category, tracepoint_name,
+              last_error.empty() ? "tracing directory not found" : last_error);
+  return -1;
 }
 
 uint64_t GetMaxOpenFilesHardLimit() {

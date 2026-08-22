@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <ctime>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -35,10 +36,30 @@ std::vector<int> ParseCpusetCpus(std::string_view cpuset_cpus_content);
 
 std::vector<int> GetCpusetCpus(pid_t pid);
 
+// Returns /sys/kernel/tracing or /sys/kernel/debug/tracing when present.
+[[nodiscard]] std::optional<std::filesystem::path> FindTracingDirectory();
+
+// True when tracefs exposes uprobe_events (CONFIG_UPROBE_EVENTS).
+[[nodiscard]] bool AreTracefsUprobesAvailable();
+
 // Looks up the tracepoint id for the given category (example: "sched")
-// and name (example: "sched_waking"). Returns the tracepoint id or
-// -1 in case of any errors.
+// and name (example: "sched_waking"). Tries both tracefs roots. Returns the
+// tracepoint id or -1 in case of any errors.
 int GetTracepointId(const char* tracepoint_category, const char* tracepoint_name);
+
+// Historical / still-used sample-delivery count for pid=-1, cpu=0..N-1:
+// one uprobe + one uretprobe fd per CPU per function. Each of those PMU fds
+// is its own create_local_trace_uprobe; close is serialized on event_mutex.
+inline constexpr size_t UprobeSampleFdCount(size_t ncpus, size_t nfunctions) {
+  return 2 * ncpus * nfunctions;
+}
+
+// pid=target, cpu=-1: one uprobe + one uretprobe per function (2*F). Fewer
+// fds, but only the specified tid is sampled (see UprobeEvents.h).
+inline constexpr size_t UprobeProcessWideFdCount(size_t nfunctions) { return 2 * nfunctions; }
+
+// Shared tracefs registration: one named probe per u(ret)probe (2*F).
+inline constexpr size_t UprobeNamedProbeCount(size_t nfunctions) { return 2 * nfunctions; }
 
 uint64_t GetMaxOpenFilesHardLimit();
 

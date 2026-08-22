@@ -30,6 +30,20 @@ namespace orbit_linux_tracing_integration_tests {
   return false;
 }
 
+[[nodiscard]] inline bool AreKernelUprobesAvailable() {
+  return access("/sys/bus/event_source/devices/uprobe/type", R_OK) == 0;
+}
+
+[[nodiscard]] inline bool CheckAreKernelUprobesAvailable() {
+  if (AreKernelUprobesAvailable()) {
+    return true;
+  }
+
+  ORBIT_ERROR(
+      "Kernel uprobes required for this test (missing /sys/bus/event_source/devices/uprobe)");
+  return false;
+}
+
 [[nodiscard]] bool CheckIsStadiaInstance();
 
 [[nodiscard]] std::filesystem::path GetExecutableBinaryPath(pid_t pid);
