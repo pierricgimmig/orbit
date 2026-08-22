@@ -159,7 +159,8 @@ bool& GetIsInPayload() {
 
 // NOTE: All symbols defined here have private linker visibility by default. Symbols that
 // need to be visible to the tracee must be marked with `[[gnu::visibility("default")]]`. Check
-// out the CMakeLists.txt file for more information.
+// out the BUILD file for more information: the library is loaded into the target's own linker
+// namespace, and only the handful of symbols marked below may be visible there.
 
 // Initialize the LockFreeUserSpaceInstrumentationEventProducer and establish the connection to
 // OrbitService.

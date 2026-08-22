@@ -89,6 +89,17 @@ cc_binary(
     ],
     copts = ORBIT_COPTS + [
         "-Isrc/UserSpaceInstrumentation",
+        # Everything this library brings along -- gRPC, protobuf, abseil, the
+        # C++ runtime -- stays inside it. Only the payloads below are visible
+        # to the outside, which is what lets the library be loaded into a
+        # target that has copies of the same code of its own.
+        "-fvisibility=hidden",
+        "-fvisibility-inlines-hidden",
+    ],
+    linkopts = [
+        # The visibility flags above only cover this target's own translation
+        # units; the static archives linked into it are hidden here.
+        "-Wl,--exclude-libs,ALL",
     ],
     linkshared = True,
     linkstatic = True,
