@@ -28,10 +28,6 @@ of a job is visualized. Additional GPU data, such as Vulkan debug markers can be
 retrieved using Orbit's Vulkan layer. Memory consumption and page-fault
 information is visualized as well.
 
-An introduction to Orbit's key features can be found in the following YouTube
-video:
-[![Orbit Presentation][orbit_youtube_presentation]](https://www.youtube.com/watch?v=8V-EPBPGZPs)
-
 ## Features
 
 - Dynamic Instrumentation (no code change required)
@@ -122,8 +118,6 @@ cd build
 cmake -DCMAKE_TOOLCHAIN_FILE=build/generators/conan_toolchain.cmake ..
 cmake --build . --config Release
 ```
-
-[orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png
 
 
 ### Raspberry Pi
