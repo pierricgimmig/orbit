@@ -9,8 +9,8 @@ package(default_visibility = ["//visibility:public"])
 licenses(["notice"])  # Apache-2.0
 
 # Android's libunwindstack. The DEX-file support is left out (Orbit does not
-# unwind through ART), and LogStdout replaces the Android logger, exactly as
-# third_party/libunwindstack/CMakeLists.txt does it.
+# unwind through ART), and LogStdout replaces the Android logger, which is what
+# the CMake build did before the port to Bazel.
 cc_library(
     name = "libunwindstack",
     srcs = [
