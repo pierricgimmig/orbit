@@ -1,4 +1,4 @@
-# Live-viewer workspace only. Does not change Orbit's C++ / CMake toolchain.
+# Live-viewer workspace only. Does not change Orbit's C++ / Bazel toolchain.
 # eframe 0.32 requires rustc ≥ 1.85 (edition 2024).
 [toolchain]
 channel = "1.88.0"

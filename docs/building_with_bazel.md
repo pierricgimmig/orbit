@@ -17,7 +17,7 @@ nothing installed beyond Bazel and a C/C++ compiler -- no Conan, no CMake, no
 - **A C++ compiler.** Linux builds as C++17 and is tested with GCC 15 on
   Ubuntu 26.04. Windows builds as C++20 with MSVC from Visual Studio 2022,
   because the `Windows*` modules use C++20 coroutines and `<span>`.
-- **git**, for the submodule below and for the version stamp.
+- **git**, for the version stamp.
 
 Qt's own shared libraries come from the fetched packages, but the ones they in
 turn load -- ICU, glib, fontconfig, X11 -- are expected to be on the machine
@@ -29,18 +29,23 @@ ships with Visual Studio. `bazel/deps/dia_sdk.bzl` locates it through
 to override. Nothing else about the Windows build differs -- the same
 `bazel build //...` produces the whole tree.
 
-py-spy, which Orbit uses to sample Python call stacks, is a git submodule:
+py-spy, which Orbit uses to sample Python call stacks, is fetched through
+`crate_universe` from crates.io. No git submodule and no host Rust install
+are required.
 
-```
-git submodule update --init third_party/py-spy
-```
+The service-side live viewer crates (`orbit-live-ffi` and the HTTP/ring stack)
+are fetched the same way, from `src/OrbitLiveViewer/Cargo.lock`. The wasm32
+eframe pack is **not** built by Bazel; run `src/OrbitLiveViewer/build_wasm.sh`
+and commit the result under `viewer-dist/`. See
+[src/OrbitLiveViewer/README.md](../src/OrbitLiveViewer/README.md).
 
 ## Building
 
 ```
-bazel build //...            # everything
-bazel build //src/Orbit      # just the UI
-bazel build //src/Service    # just OrbitService
+bazel build //...                              # everything
+bazel build //src/Orbit                        # just the UI
+bazel build //src/Service:OrbitService         # OrbitService (embeds live viewer on Linux)
+bazel build //src/OrbitLiveViewer:orbit_live_ffi  # live-viewer Rust FFI only
 ```
 
 The binaries land in `bazel-bin`:
@@ -50,6 +55,7 @@ The binaries land in `bazel-bin`:
 | `//src/Orbit` | `bazel-bin/src/Orbit/Orbit` |
 | `//src/Service:OrbitService` | `bazel-bin/src/Service/OrbitService` |
 | `//src/FakeClient:OrbitFakeClient` | `bazel-bin/src/FakeClient/OrbitFakeClient` |
+| `//src/OrbitLiveViewer:orbit_live_service` | `bazel-bin/src/OrbitLiveViewer/orbit_live_service` |
 
 `bazel run //src/Orbit` builds and starts the UI in one step.
 

@@ -10,7 +10,7 @@
 load("@live_crates//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -27,7 +27,18 @@ rust_library(
     aliases = aliases(),
     crate_root = "crates/orbit-live-event/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-event",
+        proc_macro = True,
+    ),
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-event"),
+)
+
+rust_test(
+    name = "orbit_live_event_test",
+    crate = ":orbit_live_event",
+    edition = ORBIT_LIVE_EDITION,
+    size = "small",
 )
 
 rust_library(
@@ -36,9 +47,20 @@ rust_library(
     aliases = aliases(),
     crate_root = "crates/orbit-live-protocol/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-protocol",
+        proc_macro = True,
+    ),
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-protocol") + [
         ":orbit_live_event",
     ],
+)
+
+rust_test(
+    name = "orbit_live_protocol_test",
+    crate = ":orbit_live_protocol",
+    edition = ORBIT_LIVE_EDITION,
+    size = "small",
 )
 
 rust_library(
@@ -47,9 +69,20 @@ rust_library(
     aliases = aliases(),
     crate_root = "crates/orbit-live-render/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-render",
+        proc_macro = True,
+    ),
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-render") + [
         ":orbit_live_event",
     ],
+)
+
+rust_test(
+    name = "orbit_live_render_test",
+    crate = ":orbit_live_render",
+    edition = ORBIT_LIVE_EDITION,
+    size = "small",
 )
 
 rust_library(
@@ -58,9 +91,20 @@ rust_library(
     aliases = aliases(),
     crate_root = "crates/orbit-live-ring/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-ring",
+        proc_macro = True,
+    ),
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-ring") + [
         ":orbit_live_event",
     ],
+)
+
+rust_test(
+    name = "orbit_live_ring_test",
+    crate = ":orbit_live_ring",
+    edition = ORBIT_LIVE_EDITION,
+    size = "small",
 )
 
 # Generates embedded_assets.rs from viewer-dist/. The script walks up from
@@ -76,10 +120,17 @@ cargo_build_script(
 
 rust_library(
     name = "orbit_live_server",
-    srcs = glob(["crates/orbit-live-server/src/**/*.rs"]),
+    srcs = glob(
+        ["crates/orbit-live-server/src/**/*.rs"],
+        exclude = ["crates/orbit-live-server/src/main.rs"],
+    ),
     aliases = aliases(),
     crate_root = "crates/orbit-live-server/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-server",
+        proc_macro = True,
+    ),
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-server") + [
         ":orbit_live_event",
         ":orbit_live_protocol",
@@ -96,6 +147,23 @@ rust_test(
     size = "small",
 )
 
+# Standalone HTTP server (demo producer, no C++ capture stack). Same crates
+# OrbitService links through :orbit_live_ffi.
+rust_binary(
+    name = "orbit_live_service",
+    srcs = ["crates/orbit-live-server/src/main.rs"],
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-server/src/main.rs",
+    edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-server",
+        proc_macro = True,
+    ),
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-server") + [
+        ":orbit_live_server",
+    ],
+)
+
 # The staticlib OrbitService links. Only Linux: OrbitService's live bridge is
 # built alongside LinuxCaptureService.
 rust_static_library(
@@ -104,6 +172,10 @@ rust_static_library(
     aliases = aliases(),
     crate_root = "crates/orbit-live-ffi/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
+    proc_macro_deps = all_crate_deps(
+        package_name = "src/OrbitLiveViewer/crates/orbit-live-ffi",
+        proc_macro = True,
+    ),
     target_compatible_with = ["@platforms//os:linux"],
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-ffi") + [
         ":orbit_live_event",

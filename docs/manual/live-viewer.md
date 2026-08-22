@@ -22,6 +22,10 @@ on `0.0.0.0:44766`. Open that URL from the same machine or another host.
 Standalone (demo producer only):
 
 ```
+bazel run //src/OrbitLiveViewer:orbit_live_service -- \
+  --http-port 44766 --ring-buffer-bytes 64M
+
+# or, without Bazel:
 cargo run -p orbit-live-server --release --manifest-path src/OrbitLiveViewer/Cargo.toml -- \
   --http-port 44766 --ring-buffer-bytes 64M
 ```

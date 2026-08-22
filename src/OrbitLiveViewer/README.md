@@ -133,6 +133,9 @@ which is what compiles `LiveViewerBridge.cpp` and un-`#ifdef`s the bridge in
 
 ```
 bazel build //src/Service:OrbitService
+bazel build //src/OrbitLiveViewer:orbit_live_ffi
+bazel build //src/OrbitLiveViewer:orbit_live_service
+bazel test //src/OrbitLiveViewer:all
 ```
 
 No host Rust install is needed — rules_rust downloads its own toolchain, and
