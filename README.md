@@ -28,6 +28,10 @@ of a job is visualized. Additional GPU data, such as Vulkan debug markers can be
 retrieved using Orbit's Vulkan layer. Memory consumption and page-fault
 information is visualized as well.
 
+An introduction to Orbit's key features can be found in the following YouTube
+video:
+[![Orbit Presentation][orbit_youtube_presentation]](https://www.youtube.com/watch?v=8V-EPBPGZPs)
+
 ## Features
 
 - Dynamic Instrumentation (no code change required)
@@ -140,3 +144,5 @@ bazel build --config=release //src/Service:OrbitService
 Then connect the UI to it over an SSH tunnel. Dynamic instrumentation is
 x86-64 only; on ARM64 the service provides sampling and tracing.
 See [docs/building_arm64.md](docs/building_arm64.md).
+
+[orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png
