@@ -26,8 +26,8 @@ ErrorMessageOr<std::filesystem::path> GetTestLibLibraryPath() {
     if (orbit_base::OpenFileForReading(library_path).has_value()) return library_path;
   }
 
-  return ErrorMessage{absl::StrFormat("Unable to find \"%s\" next to \"%s\"", kLibName,
-                                      exe_dir.string())};
+  return ErrorMessage{
+      absl::StrFormat("Unable to find \"%s\" next to \"%s\"", kLibName, exe_dir.string())};
   /* copybara:strip_end_and_replace
   const std::string library_path = "@@LIB_USER_SPACE_INSTRUMENTATION_TEST_LIB_PATH@@";
   OUTCOME_TRY(orbit_base::OpenFileForReading(library_path));

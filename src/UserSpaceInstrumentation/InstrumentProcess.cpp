@@ -207,8 +207,8 @@ constexpr std::array<std::string_view, 2> kOrbitThreadNames{"ConnectRcvCmds", "F
 // present.
 constexpr std::array<std::string_view, 6> kGrpcThreadNames{
     "grpc_global_tim",                     // Timer manager, present throughout.
-    "event_engine",     "lifeguard",       // gRPC >= 1.73.
-    "default-executo",  "resolver-execut",  // gRPC <= 1.72.
+    "event_engine",    "lifeguard",        // gRPC >= 1.73.
+    "default-executo", "resolver-execut",  // gRPC <= 1.72.
     "grpcpp_sync_ser",
 };
 
