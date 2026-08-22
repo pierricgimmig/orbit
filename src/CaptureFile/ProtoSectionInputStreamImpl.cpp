@@ -49,7 +49,10 @@ ErrorMessageOr<void> ProtoSectionInputStreamImpl::ReadMessage(google::protobuf::
         ErrorMessage{"Unexpected end of section while reading the message"});
   }
 
-  message->ParseFromArray(buf.get(), message_size);
+  if (!message->ParseFromArray(buf.get(), message_size)) {
+    return ErrorMessage{
+        absl::StrFormat("Unable to parse the message of size %d in the section", message_size)};
+  }
 
   if (message->ByteSizeLong() != message_size) {
     return ErrorMessage{absl::StrFormat(

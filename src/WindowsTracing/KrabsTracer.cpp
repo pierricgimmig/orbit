@@ -269,14 +269,14 @@ void KrabsTracer::OnImageLoadEvent(const EVENT_RECORD& record,
                   module.full_path);
     }
 
-    absl::MutexLock lock{&modules_mutex_};
+    absl::MutexLock lock{modules_mutex_};
     modules_.emplace_back(std::move(module));
   }
 }
 
 std::vector<orbit_windows_utils::Module> KrabsTracer::GetLoadedModules() const {
   std::vector<orbit_windows_utils::Module> modules;
-  absl::MutexLock lock{&modules_mutex_};
+  absl::MutexLock lock{modules_mutex_};
   modules = modules_;
   return modules;
 }

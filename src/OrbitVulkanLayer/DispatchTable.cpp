@@ -39,7 +39,7 @@ void DispatchTable::CreateInstanceDispatchTable(
 
   void* key = GetDispatchTableKey(instance);
   {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(!instance_dispatch_table_.contains(key));
     instance_dispatch_table_[key] = dispatch_table;
 
@@ -63,7 +63,7 @@ void DispatchTable::CreateInstanceDispatchTable(
 void DispatchTable::RemoveInstanceDispatchTable(VkInstance instance) {
   void* key = GetDispatchTableKey(instance);
   {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(instance_dispatch_table_.contains(key));
     instance_dispatch_table_.erase(key);
 
@@ -156,7 +156,7 @@ void DispatchTable::CreateDeviceDispatchTable(
 
   void* key = GetDispatchTableKey(device);
   {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(!device_dispatch_table_.contains(key));
     device_dispatch_table_[key] = dispatch_table;
 
@@ -184,7 +184,7 @@ void DispatchTable::CreateDeviceDispatchTable(
 void DispatchTable::RemoveDeviceDispatchTable(VkDevice device) {
   void* key = GetDispatchTableKey(device);
   {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
 
     ORBIT_CHECK(device_dispatch_table_.contains(key));
     device_dispatch_table_.erase(key);

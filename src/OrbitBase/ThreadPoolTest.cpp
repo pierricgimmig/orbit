@@ -30,9 +30,9 @@ TEST(ThreadPool, Smoke) {
   bool called = false;
 
   {
-    absl::MutexLock lock(&mutex);
+    absl::MutexLock lock(mutex);
     thread_pool->Schedule([&]() {
-      absl::MutexLock lock(&mutex);
+      absl::MutexLock lock(mutex);
       called = true;
     });
 
@@ -63,10 +63,10 @@ TEST(ThreadPool, QueuedActionsExecutedOnShutdown) {
 
   constexpr size_t kNumberOfActions = 7;
   {
-    absl::MutexLock lock(&mutex);
+    absl::MutexLock lock(mutex);
     for (size_t i = 0; i < kNumberOfActions; ++i) {
       thread_pool->Schedule([&]() {
-        absl::MutexLock lock(&mutex);
+        absl::MutexLock lock(mutex);
         counter++;
       });
     }
@@ -97,27 +97,27 @@ TEST(ThreadPool, CheckTtl) {
   size_t actions_executed = 0;
 
   auto action = [&] {
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     actions_started++;
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     actions_executed++;
   };
 
   constexpr size_t kNumberOfActions = 7;
   {
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     for (size_t i = 0; i < kNumberOfActions; ++i) {
       thread_pool->Schedule(action);
     }
     // Wait until actions are on worker threads
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 5; }, &actions_started),
         absl::Milliseconds(50)));
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
     // Now check the thread_pool size
     EXPECT_EQ(thread_pool->GetPoolSize(), kThreadPoolMaxSize);
@@ -155,38 +155,38 @@ TEST(ThreadPool, ExtendThreadPool) {
   size_t actions_executed = 0;
 
   auto action = [&] {
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     actions_started++;
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     actions_executed++;
   };
 
   {
     // Schedule an action and check we have one worker thread
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     thread_pool->Schedule(action);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 1; }, &actions_started),
         absl::Milliseconds(100)))
         << "actions_started=" << actions_started << ", expected 1";
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
     EXPECT_EQ(thread_pool->GetPoolSize(), 1);
 
     // Schedule another action and check that there are 2 workers threads now.
     thread_pool->Schedule(action);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 2; }, &actions_started),
         absl::Milliseconds(100)));
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
     EXPECT_EQ(thread_pool->GetPoolSize(), 2);
 
@@ -200,9 +200,9 @@ TEST(ThreadPool, ExtendThreadPool) {
 
     EXPECT_EQ(thread_pool->GetPoolSize(), kThreadPoolMaxSize);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_EQ(actions_started, kThreadPoolMaxSize);
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
     EXPECT_TRUE(actions_executed_mutex.AwaitWithTimeout(
         absl::Condition(
@@ -222,26 +222,26 @@ TEST(ThreadPool, ExtendThreadPool) {
   // Now make sure thread_pool increases number of threads
   // correctly after reducing number of worker threads.
   {
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     thread_pool->Schedule(action);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 13; }, &actions_started),
         absl::Milliseconds(100)));
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
     EXPECT_EQ(thread_pool->GetPoolSize(), 1);
 
     thread_pool->Schedule(action);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 14; }, &actions_started),
         absl::Milliseconds(100)));
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
     EXPECT_EQ(thread_pool->GetPoolSize(), 2);
 
@@ -254,9 +254,9 @@ TEST(ThreadPool, ExtendThreadPool) {
     absl::SleepFor(absl::Milliseconds(50));
 
     EXPECT_EQ(thread_pool->GetPoolSize(), kThreadPoolMaxSize);
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_EQ(actions_started, 12 + kThreadPoolMaxSize);
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
   }
 
   thread_pool->ShutdownAndWait();
@@ -281,37 +281,37 @@ TEST(ThreadPool, CheckGetNumberOfBusyThreads) {
   size_t actions_executed = 0;
 
   auto action = [&] {
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     actions_started++;
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
 
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     actions_executed++;
   };
 
   {
     // Schedule an action and check we have a busy thread
-    absl::MutexLock lock(&actions_executed_mutex);
+    absl::MutexLock lock(actions_executed_mutex);
     thread_pool->Schedule(action);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 1; }, &actions_started),
         absl::Milliseconds(100)))
         << "actions_started=" << actions_started << ", expected 1";
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
     EXPECT_EQ(thread_pool->GetNumberOfBusyThreads(), 1);
 
     // Schedule another action and check that there are 2 workers threads now.
     thread_pool->Schedule(action);
 
-    actions_started_mutex.Lock();
+    actions_started_mutex.lock();
     EXPECT_TRUE(actions_started_mutex.AwaitWithTimeout(
         absl::Condition(
             +[](size_t* started) { return *started == 2; }, &actions_started),
         absl::Milliseconds(100)));
-    actions_started_mutex.Unlock();
+    actions_started_mutex.unlock();
     EXPECT_EQ(thread_pool->GetNumberOfBusyThreads(), 2);
 
     EXPECT_TRUE(actions_executed_mutex.AwaitWithTimeout(
@@ -407,9 +407,9 @@ TEST(ThreadPool, FutureBasic) {
   bool called = false;
 
   {
-    absl::MutexLock lock(&mutex);
+    absl::MutexLock lock(mutex);
     orbit_base::Future<void> future = thread_pool->Schedule([&]() {
-      absl::MutexLock lock(&mutex);
+      absl::MutexLock lock(mutex);
       called = true;
     });
 
@@ -442,9 +442,8 @@ TEST(ThreadPool, FutureContinuation) {
   std::atomic_bool called = false;
 
   {
-    absl::MutexLock lock(&mutex);
-    orbit_base::Future<void> future =
-        thread_pool->Schedule([&]() { absl::MutexLock lock(&mutex); });
+    absl::MutexLock lock(mutex);
+    orbit_base::Future<void> future = thread_pool->Schedule([&]() { absl::MutexLock lock(mutex); });
 
     auto const result = future.RegisterContinuation([&]() { called.store(true); });
     EXPECT_EQ(result, orbit_base::FutureRegisterContinuationResult::kSuccessfullyRegistered);
@@ -489,15 +488,15 @@ TEST(ThreadPool, FutureWithMoveOnlyResult) {
   absl::Mutex mutex;
 
   {
-    mutex.Lock();
+    mutex.lock();
     orbit_base::Future<MoveOnlyInt> future = thread_pool->Schedule([&]() {
-      absl::MutexLock lock(&mutex);
+      absl::MutexLock lock(mutex);
       return MoveOnlyInt{42};
     });
 
     EXPECT_TRUE(future.IsValid());
     EXPECT_FALSE(future.IsFinished());
-    mutex.Unlock();
+    mutex.unlock();
 
     EXPECT_TRUE(future.IsValid());
     EXPECT_EQ(future.Get().GetInt(), 42);
@@ -527,14 +526,14 @@ TEST(ThreadPool, WithRunActionParameter) {
   absl::Mutex mutex;
   bool called = false;
   {
-    absl::MutexLock called_lock(&mutex);
+    absl::MutexLock called_lock(mutex);
     int run_before_action_count_during_execution = -1;
     int run_after_action_count_during_execution = -1;
 
     thread_pool->Schedule([&]() {
       run_before_action_count_during_execution = run_before_action_count;
       run_after_action_count_during_execution = run_after_action_count;
-      absl::MutexLock called_lock(&mutex);
+      absl::MutexLock called_lock(mutex);
       called = true;
     });
 

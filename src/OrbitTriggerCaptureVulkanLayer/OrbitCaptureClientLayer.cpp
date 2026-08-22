@@ -70,7 +70,7 @@ OrbitCaptureClientCreateInstance(const VkInstanceCreateInfo* instance_create_inf
   VkResult result = create_instance(instance_create_info, allocator, instance);
 
   {
-    absl::WriterMutexLock lock(&layer_mutex);
+    absl::WriterMutexLock lock(layer_mutex);
     dispatch_table.CreateInstanceDispatchTable(*instance, get_instance_proc_addr);
     // Making the initializations needed for the layer here because vKCreateInstance is called at
     // the start of the dispatch chain.
@@ -83,7 +83,7 @@ OrbitCaptureClientCreateInstance(const VkInstanceCreateInfo* instance_create_inf
 void VKAPI_CALL OrbitCaptureClientDestroyInstance(VkInstance instance,
                                                   const VkAllocationCallbacks* /*allocator*/) {
   ORBIT_LOG("OrbitCaptureClientDestroyInstance called");
-  absl::WriterMutexLock lock(&layer_mutex);
+  absl::WriterMutexLock lock(layer_mutex);
   // Cleaning up the data initialized in the layer before the instance is destroyed. This method is
   // expected to be called before exiting the program so the data is not longer needed.
   layer_logic.Destroy();
@@ -119,7 +119,7 @@ VkResult VKAPI_CALL OrbitCaptureClientCreateDevice(VkPhysicalDevice physical_dev
   VkResult result = create_device(physical_device, device_create_info, allocator, device);
 
   {
-    absl::WriterMutexLock lock(&layer_mutex);
+    absl::WriterMutexLock lock(layer_mutex);
     dispatch_table.CreateDeviceDispatchTable(*device, get_device_proc_addr);
   }
 
@@ -128,7 +128,7 @@ VkResult VKAPI_CALL OrbitCaptureClientCreateDevice(VkPhysicalDevice physical_dev
 
 void VKAPI_CALL OrbitCaptureClientDestroyDevice(VkDevice device,
                                                 const VkAllocationCallbacks* /*allocator*/) {
-  absl::WriterMutexLock lock(&layer_mutex);
+  absl::WriterMutexLock lock(layer_mutex);
   dispatch_table.DestroyDevice(device);
 }
 
@@ -138,7 +138,7 @@ void VKAPI_CALL OrbitCaptureClientDestroyDevice(VkDevice device,
 
 VkResult VKAPI_CALL OrbitCaptureClientQueuePresentKHR(VkQueue queue,
                                                       const VkPresentInfoKHR* present_info) {
-  absl::WriterMutexLock lock(&layer_mutex);
+  absl::WriterMutexLock lock(layer_mutex);
   layer_logic.ProcessQueuePresentKHR();
   return dispatch_table.CallQueuePresentKHR(queue, present_info);
 }
@@ -188,7 +188,7 @@ VkResult VKAPI_CALL OrbitCaptureClientEnumerateDeviceExtensionProperties(
     if (physical_device == VK_NULL_HANDLE) {
       return VK_SUCCESS;
     }
-    absl::ReaderMutexLock lock(&layer_mutex);
+    absl::ReaderMutexLock lock(layer_mutex);
     return dispatch_table.CallEnumerateDeviceExtensionProperties(physical_device, layer_name,
                                                                  property_count, properties);
   }
@@ -217,7 +217,7 @@ OrbitCaptureClientGetDeviceProcAddr(VkDevice device, const char* name) {
   GETPROCADDR(DestroyDevice);
   GETPROCADDR(QueuePresentKHR);
 
-  absl::ReaderMutexLock lock(&layer_mutex);
+  absl::ReaderMutexLock lock(layer_mutex);
   return dispatch_table.CallGetDeviceProcAddr(device, name);
 }
 
@@ -238,6 +238,6 @@ OrbitCaptureClientGetInstanceProcAddr(VkInstance instance, const char* name) {
   GETPROCADDR(DestroyDevice);
   GETPROCADDR(QueuePresentKHR);
 
-  absl::ReaderMutexLock lock(&layer_mutex);
+  absl::ReaderMutexLock lock(layer_mutex);
   return dispatch_table.CallGetInstanceProcAddr(instance, name);
 }

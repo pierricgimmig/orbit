@@ -68,7 +68,7 @@ class NameEqualityScopeIdProvider : public ScopeIdProvider {
   [[nodiscard]] uint64_t ScopeIdToFunctionId(ScopeId scope_id) const override;
 
   [[nodiscard]] ScopeId GetMaxId() const override {
-    absl::ReaderMutexLock reader_lock{&mutex_};
+    absl::ReaderMutexLock reader_lock{mutex_};
     return ScopeId(*next_id_ - 1);
   }
 

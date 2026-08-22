@@ -123,12 +123,12 @@ class CaptureData {
   }
 
   [[nodiscard]] bool HasThreadStatesForThread(uint32_t tid) const {
-    absl::MutexLock lock{&thread_state_slices_mutex_};
+    absl::MutexLock lock{thread_state_slices_mutex_};
     return thread_state_slices_.count(tid) > 0;
   }
 
   void AddThreadStateSlice(ThreadStateSliceInfo state_slice) {
-    absl::MutexLock lock{&thread_state_slices_mutex_};
+    absl::MutexLock lock{thread_state_slices_mutex_};
     thread_state_slices_[state_slice.tid()].emplace_back(state_slice);
   }
 

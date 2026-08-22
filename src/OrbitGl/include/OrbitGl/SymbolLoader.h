@@ -31,7 +31,6 @@
 #include "OrbitBase/StopSource.h"
 #include "OrbitBase/StopToken.h"
 #include "OrbitBase/ThreadPool.h"
-#include "OrbitPaths/Paths.h"
 #include "RemoteSymbolProvider/MicrosoftSymbolServerSymbolProvider.h"
 #include "Symbols/SymbolHelper.h"
 
@@ -139,7 +138,7 @@ class SymbolLoader {
   orbit_client_services::ProcessManager* process_manager_;
   const orbit_client_data::ModuleIdentifierProvider* module_identifier_provider;
 
-  orbit_symbols::SymbolHelper symbol_helper_{orbit_paths::CreateOrGetCacheDirUnsafe()};
+  orbit_symbols::SymbolHelper symbol_helper_;
 
   // TODO(b/243520787) The SymbolProvider related logic should be moved to the ProxySymbolProvider
   //  as planned in our symbol refactoring discussion.

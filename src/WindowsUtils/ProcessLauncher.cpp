@@ -37,14 +37,14 @@ ErrorMessageOr<uint32_t> ProcessLauncher::LaunchProcessPausedAtEntryPoint(
   OUTCOME_TRY(BusyLoopInfo busy_loop_info,
               launcher->StartWithBusyLoopAtEntryPoint(executable, working_directory, arguments));
   uint32_t pid = busy_loop_info.process_id;
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   ORBIT_CHECK(busy_loop_launchers_by_pid_.count(pid) == 0);
   busy_loop_launchers_by_pid_.emplace(pid, std::move(launcher));
   return pid;
 }
 
 ErrorMessageOr<void> ProcessLauncher::SuspendProcessSpinningAtEntryPoint(uint32_t process_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = busy_loop_launchers_by_pid_.find(process_id);
   if (it == busy_loop_launchers_by_pid_.end()) {
     return ErrorMessage("Trying to suspend unknown process");
@@ -55,7 +55,7 @@ ErrorMessageOr<void> ProcessLauncher::SuspendProcessSpinningAtEntryPoint(uint32_
 }
 
 ErrorMessageOr<void> ProcessLauncher::ResumeProcessSuspendedAtEntryPoint(uint32_t process_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = busy_loop_launchers_by_pid_.find(process_id);
   if (it == busy_loop_launchers_by_pid_.end()) {
     return ErrorMessage("Trying to resume unknown process");

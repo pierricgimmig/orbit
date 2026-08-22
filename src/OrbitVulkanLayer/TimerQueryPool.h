@@ -77,7 +77,7 @@ class TimerQueryPool {
     dispatch_table_->ResetQueryPoolEXT(device)(device, query_pool, 0, num_timer_query_slots_);
 
     {
-      absl::WriterMutexLock lock(&mutex_);
+      absl::WriterMutexLock lock(mutex_);
       ORBIT_CHECK(!device_to_query_pool_.contains(device));
       device_to_query_pool_[device] = query_pool;
       std::vector<SlotState> slots{num_timer_query_slots_};
@@ -92,7 +92,7 @@ class TimerQueryPool {
 
   // Destroys the VkQueryPool for the given device
   void DestroyTimerQueryPool(VkDevice device) {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(device_to_query_pool_.contains(device));
     VkQueryPool query_pool = device_to_query_pool_.at(device);
     device_to_query_slots_.erase(device);
@@ -106,7 +106,7 @@ class TimerQueryPool {
   // Retrieves the query pool for a given device. Note that the pool must be initialized using
   // `InitializeTimerQueryPool` before.
   [[nodiscard]] VkQueryPool GetQueryPool(VkDevice device) {
-    absl::ReaderMutexLock lock(&mutex_);
+    absl::ReaderMutexLock lock(mutex_);
     ORBIT_CHECK(device_to_query_pool_.contains(device));
     return device_to_query_pool_.at(device);
   }
@@ -118,7 +118,7 @@ class TimerQueryPool {
   // Note that the pool must be initialized using `InitializeTimerQueryPool` before.
   // See also `ResetQuerySlots` to make occupied slots available again.
   [[nodiscard]] bool NextReadyQuerySlot(VkDevice device, uint32_t* allocated_index) {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(device_to_free_slots_.contains(device));
     ORBIT_CHECK(device_to_query_slots_.contains(device));
     std::vector<uint32_t>& free_slots = device_to_free_slots_.at(device);
@@ -149,7 +149,7 @@ class TimerQueryPool {
     if (slot_indices.empty()) {
       return;
     }
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(device_to_query_slots_.contains(device));
     std::vector<SlotState>& slot_states = device_to_query_slots_.at(device);
     ORBIT_CHECK(device_to_free_slots_.contains(device));
@@ -184,7 +184,7 @@ class TimerQueryPool {
     if (slot_indices.empty()) {
       return;
     }
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(device_to_query_slots_.contains(device));
     std::vector<SlotState>& slot_states = device_to_query_slots_.at(device);
     ORBIT_CHECK(device_to_free_slots_.contains(device));
@@ -216,7 +216,7 @@ class TimerQueryPool {
     if (slot_indices.empty()) {
       return;
     }
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(device_to_query_slots_.contains(device));
     std::vector<SlotState>& slot_states = device_to_query_slots_.at(device);
     ORBIT_CHECK(device_to_free_slots_.contains(device));

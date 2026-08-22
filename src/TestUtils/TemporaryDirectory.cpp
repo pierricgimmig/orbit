@@ -23,7 +23,7 @@ namespace orbit_test_utils {
 [[nodiscard]] static uint32_t Get4BytesOfRandomness() {
   // Since we keep the mersenne twister engine in static storage, we have to ensure thread safety.
   static absl::Mutex mutex{};
-  absl::MutexLock lock{&mutex};
+  absl::MutexLock lock{mutex};
 
   static std::random_device random_device{};
   static std::mt19937 gen{random_device()};

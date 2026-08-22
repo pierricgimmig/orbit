@@ -20,45 +20,45 @@ MultivariateTimeSeries::MultivariateTimeSeries(std::vector<std::string> series_n
 }
 
 double MultivariateTimeSeries::GetMin() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return min_;
 }
 
 double MultivariateTimeSeries::GetMax() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return max_;
 }
 
 bool MultivariateTimeSeries::IsEmpty() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return time_to_series_values_.empty();
 }
 
 size_t MultivariateTimeSeries::GetTimeToSeriesValuesSize() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return time_to_series_values_.size();
 }
 
 uint64_t MultivariateTimeSeries::StartTimeInNs() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   ORBIT_CHECK(!time_to_series_values_.empty());
   return time_to_series_values_.begin()->first;
 }
 
 uint64_t MultivariateTimeSeries::EndTimeInNs() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   ORBIT_CHECK(!time_to_series_values_.empty());
   return time_to_series_values_.rbegin()->first;
 }
 
 std::vector<double> MultivariateTimeSeries::GetPreviousOrFirstEntry(uint64_t time) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return GetPreviousOrFirstEntryIterator(time)->second;
 }
 
 std::vector<std::pair<uint64_t, std::vector<double>>>
 MultivariateTimeSeries::GetEntriesAffectedByTimeRange(uint64_t min_time, uint64_t max_time) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   if (time_to_series_values_.empty() || min_time >= max_time ||
       min_time >= time_to_series_values_.rbegin()->first ||
       max_time <= time_to_series_values_.begin()->first) {
@@ -81,7 +81,7 @@ MultivariateTimeSeries::GetEntriesAffectedByTimeRange(uint64_t min_time, uint64_
 void MultivariateTimeSeries::AddValues(uint64_t timestamp_ns, absl::Span<const double> values) {
   ORBIT_CHECK(values.size() == series_names_.size());
 
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   time_to_series_values_[timestamp_ns] = std::vector(values.begin(), values.end());
   for (double value : values) UpdateMinAndMax(value);
 }

@@ -124,6 +124,17 @@ void orbit_api_initialize_and_set_enabled(OrbitApiT* api,
   api->enabled = static_cast<uint32_t>(enabled);
 }
 
+// orbit_api_start and orbit_api_start_async are deprecated, but the v0 and v1 function tables are
+// part of the ABI that already-instrumented binaries rely on, so they keep pointing at them.
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif  // __GNUC__
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif  // _MSC_VER
+
 void orbit_api_initialize_v0(orbit_api_v0* api_v0) {
   api_v0->start = &orbit_api_start;
   api_v0->stop = &orbit_api_stop;
@@ -151,6 +162,13 @@ void orbit_api_initialize_v1(orbit_api_v1* api_v1) {
   api_v1->track_float = &orbit_api_track_float;
   api_v1->track_double = &orbit_api_track_double;
 }
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif  // __GNUC__
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif  // _MSC_VER
 
 void orbit_api_initialize_v2(orbit_api_v2* api_v2) {
   api_v2->start = &orbit_api_start_v1;

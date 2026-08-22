@@ -285,8 +285,14 @@ TEST(InstrumentProcessTest, GetErrorMessage) {
 extern "C" long double creall(_Complex long double z);
 extern "C" long double cimagl(_Complex long double z);
 
-// Sets st(0) and st(1). Use optnone instead of noinline to prevent constant folding.
-extern "C" __attribute__((optnone)) _Complex long double ReturnComplexLongDouble() {
+// Sets st(0) and st(1). Disabling optimizations for this function -- clang spells that "optnone",
+// gcc spells it optimize("O0") -- prevents constant folding, which noinline alone would not.
+#if defined(__clang__)
+#define ORBIT_NO_OPTIMIZE __attribute__((optnone))
+#else
+#define ORBIT_NO_OPTIMIZE __attribute__((optimize("O0")))
+#endif
+extern "C" ORBIT_NO_OPTIMIZE _Complex long double ReturnComplexLongDouble() {
   return {42.0L, 43.0L};
 }
 

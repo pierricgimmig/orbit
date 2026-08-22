@@ -47,7 +47,7 @@ IntrospectionListener::IntrospectionListener(IntrospectionEventCallback callback
       orbit_base::ThreadPool::Create(kMinNumThreads, kMaxNumThreads, absl::Milliseconds(500));
 
   // Activate listener (only one listener instance is supported).
-  absl::MutexLock lock(&global_introspection_mutex);
+  absl::MutexLock lock(global_introspection_mutex);
   ORBIT_CHECK(!IsActive());
   InitializeIntrospection();
   global_introspection_listener = this;
@@ -61,7 +61,7 @@ IntrospectionListener::~IntrospectionListener() {
   // Note that this is required, as otherwise, we might allow scheduling
   // new events on the already shut down thread pool.
   {
-    absl::MutexLock lock(&global_introspection_mutex);
+    absl::MutexLock lock(global_introspection_mutex);
     ORBIT_CHECK(IsActive());
     shutdown_initiated_ = true;
   }
@@ -70,7 +70,7 @@ IntrospectionListener::~IntrospectionListener() {
   thread_pool_->Wait();
 
   // Deactivate and destroy the listener.
-  absl::MutexLock lock(&global_introspection_mutex);
+  absl::MutexLock lock(global_introspection_mutex);
   active_ = false;
   global_introspection_listener = nullptr;
 }
@@ -92,11 +92,11 @@ void IntrospectionListener::DeferApiEventProcessing(const orbit_api::ApiEventVar
   if (is_internal_update) return;
 
   // User callback is called from a worker thread to minimize contention on instrumented threads.
-  absl::MutexLock lock(&global_introspection_mutex);
+  absl::MutexLock lock(global_introspection_mutex);
   if (IsShutdownInitiated()) return;
   global_introspection_listener->thread_pool_->Schedule([api_event]() {
     ScopeToggle scope_toggle(&is_internal_update, true);
-    absl::MutexLock lock(&global_introspection_mutex);
+    absl::MutexLock lock(global_introspection_mutex);
     if (!IsActive()) return;
     global_introspection_listener->user_callback_(api_event);
   });

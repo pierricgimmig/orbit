@@ -56,13 +56,13 @@ class ScopeTreeTimerData final : public TimerDataInterface {
   [[nodiscard]] bool IsEmpty() const override { return GetNumberOfTimers() == 0; };
   // Special case. ScopeTree has a root node in depth 0 which shouldn't be considered.
   [[nodiscard]] size_t GetNumberOfTimers() const override {
-    absl::MutexLock lock(&scope_tree_mutex_);
+    absl::MutexLock lock(scope_tree_mutex_);
     return scope_tree_.Size() - 1;
   }
   [[nodiscard]] uint64_t GetMinTime() const override { return timer_data_.GetMinTime(); }
   [[nodiscard]] uint64_t GetMaxTime() const override { return timer_data_.GetMaxTime(); }
   [[nodiscard]] uint32_t GetDepth() const override {
-    absl::MutexLock lock(&scope_tree_mutex_);
+    absl::MutexLock lock(scope_tree_mutex_);
     return scope_tree_.Depth();
   }
   [[nodiscard]] uint32_t GetProcessId() const override { return timer_data_.GetProcessId(); }

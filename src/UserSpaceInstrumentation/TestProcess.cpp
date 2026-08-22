@@ -77,7 +77,7 @@ void TestProcess::Worker() {
       break;
     }
   }
-  absl::MutexLock lock{&joinable_threads_mutex_};
+  absl::MutexLock lock{joinable_threads_mutex_};
   joinable_threads_.emplace(std::this_thread::get_id());
 }
 
@@ -96,7 +96,7 @@ void TestProcess::Workload() {
     // Join the finished threads.
     for (auto& t : threads) {
       const auto id = t.get_id();
-      absl::MutexLock lock{&joinable_threads_mutex_};
+      absl::MutexLock lock{joinable_threads_mutex_};
       if (joinable_threads_.count(id) != 0) {
         joinable_threads_.erase(id);
         t.join();

@@ -68,17 +68,17 @@ class LockFreeBufferCaptureEventProducer : public CaptureEventProducer {
 
  protected:
   void OnCaptureStart(orbit_grpc_protos::CaptureOptions /*capture_options*/) override {
-    absl::MutexLock lock{&status_mutex_};
+    absl::MutexLock lock{status_mutex_};
     status_ = ProducerStatus::kShouldSendEvents;
   }
 
   void OnCaptureStop() override {
-    absl::MutexLock lock{&status_mutex_};
+    absl::MutexLock lock{status_mutex_};
     status_ = ProducerStatus::kShouldNotifyAllEventsSent;
   }
 
   void OnCaptureFinished() override {
-    absl::MutexLock lock{&status_mutex_};
+    absl::MutexLock lock{status_mutex_};
     status_ = ProducerStatus::kShouldDropEvents;
   }
 
@@ -123,7 +123,7 @@ class LockFreeBufferCaptureEventProducer : public CaptureEventProducer {
 
         ProducerStatus current_status;
         {
-          absl::MutexLock lock{&status_mutex_};
+          absl::MutexLock lock{status_mutex_};
           current_status = status_;
           if (status_ == ProducerStatus::kShouldNotifyAllEventsSent && queue_was_emptied) {
             // We are about to send AllEventsSent: update status_ while we hold the mutex.

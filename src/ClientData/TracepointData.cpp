@@ -16,7 +16,7 @@ namespace orbit_client_data {
 void TracepointData::EmplaceTracepointEvent(uint64_t timestamp_ns, uint64_t tracepoint_id,
                                             uint32_t process_id, uint32_t thread_id, int32_t cpu,
                                             bool is_same_pid_as_target) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   num_total_tracepoint_events_++;
 
   TracepointEventInfo event(process_id, thread_id, cpu, timestamp_ns, tracepoint_id);
@@ -37,7 +37,7 @@ void TracepointData::EmplaceTracepointEvent(uint64_t timestamp_ns, uint64_t trac
 
 void TracepointData::ForEachTracepointEvent(
     const std::function<void(const TracepointEventInfo&)>& action) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   for (auto const& entry : thread_id_to_time_to_tracepoint_) {
     for (auto const& time_to_tracepoint_event : entry.second) {
       action(time_to_tracepoint_event.second);
@@ -62,7 +62,7 @@ void ForEachTracepointEventInRange(
 void TracepointData::ForEachTracepointEventOfThreadInTimeRange(
     uint32_t thread_id, uint64_t min_tick, uint64_t max_tick_exclusive,
     const std::function<void(const TracepointEventInfo&)>& action) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   if (thread_id == orbit_base::kAllThreadsOfAllProcessesTid) {
     for (const auto& [unused_thread_id, time_to_tracepoint] : thread_id_to_time_to_tracepoint_) {
       ForEachTracepointEventInRange(min_tick, max_tick_exclusive, time_to_tracepoint, action);
@@ -84,7 +84,7 @@ void TracepointData::ForEachTracepointEventOfThreadInTimeRange(
 }
 
 uint32_t TracepointData::GetNumTracepointEventsForThreadId(uint32_t thread_id) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   if (thread_id == orbit_base::kAllThreadsOfAllProcessesTid) {
     return num_total_tracepoint_events_;
   }
@@ -105,14 +105,14 @@ uint32_t TracepointData::GetNumTracepointEventsForThreadId(uint32_t thread_id) c
 }
 
 bool TracepointData::AddUniqueTracepointInfo(uint64_t key, TracepointInfo tracepoint) {
-  absl::MutexLock lock{&unique_tracepoints_mutex_};
+  absl::MutexLock lock{unique_tracepoints_mutex_};
   auto [unused_it, inserted] =
       unique_tracepoints_.try_emplace(key, std::make_unique<TracepointInfo>(std::move(tracepoint)));
   return inserted;
 }
 
 const TracepointInfo* TracepointData::GetTracepointInfo(uint64_t tracepoint_id) const {
-  absl::MutexLock lock{&unique_tracepoints_mutex_};
+  absl::MutexLock lock{unique_tracepoints_mutex_};
   auto it = unique_tracepoints_.find(tracepoint_id);
   if (it != unique_tracepoints_.end()) {
     return it->second.get();
@@ -121,13 +121,13 @@ const TracepointInfo* TracepointData::GetTracepointInfo(uint64_t tracepoint_id) 
 }
 
 bool TracepointData::HasTracepointId(uint64_t tracepoint_id) const {
-  absl::MutexLock lock{&unique_tracepoints_mutex_};
+  absl::MutexLock lock{unique_tracepoints_mutex_};
   return unique_tracepoints_.contains(tracepoint_id);
 }
 
 void TracepointData::ForEachUniqueTracepointInfo(
     const std::function<void(const TracepointInfo&)>& action) const {
-  absl::MutexLock lock(&unique_tracepoints_mutex_);
+  absl::MutexLock lock(unique_tracepoints_mutex_);
   for (const auto& it : unique_tracepoints_) {
     ORBIT_CHECK(it.second != nullptr);
     action(*it.second);

@@ -26,7 +26,7 @@ class ThreadTrackDataManager final {
                                     : ScopeTreeTimerData::ScopeTreeUpdateType::kAlways){};
 
   const orbit_client_protos::TimerInfo& AddTimer(orbit_client_protos::TimerInfo timer_info) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     uint32_t thread_id = timer_info.thread_id();
     // Get or create ScopeTreeTimerData optimized to only make one query to the map, as AddTimer
     // will be executed many times.
@@ -38,7 +38,7 @@ class ThreadTrackDataManager final {
   }
 
   const ScopeTreeTimerData* GetScopeTreeTimerData(uint32_t thread_id) const {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     auto it = scope_tree_timer_data_map_.find(thread_id);
     if (it == scope_tree_timer_data_map_.end()) {
       return nullptr;
@@ -48,14 +48,14 @@ class ThreadTrackDataManager final {
 
   // This function should be used only for Tracks that needs to be there before a Timer appears.
   const ScopeTreeTimerData* CreateScopeTreeTimerData(uint32_t thread_id) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     auto [it, unused_inserted] = scope_tree_timer_data_map_.try_emplace(
         thread_id, std::make_unique<ScopeTreeTimerData>(thread_id, scope_tree_update_type_));
     return it->second.get();
   };
 
   [[nodiscard]] std::vector<ScopeTreeTimerData*> GetAllScopeTreeTimerData() const {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     std::vector<ScopeTreeTimerData*> all_scope_tree_timer_data;
     all_scope_tree_timer_data.reserve(scope_tree_timer_data_map_.size());
     for (const auto& [unused_tid, scope_tree_timer_data] : scope_tree_timer_data_map_) {

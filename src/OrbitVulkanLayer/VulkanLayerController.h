@@ -627,7 +627,7 @@ class VulkanLayerController {
 
  private:
   void InitVulkanLayerProducerIfNecessary() {
-    absl::MutexLock lock{&vulkan_layer_producer_mutex_};
+    absl::MutexLock lock{vulkan_layer_producer_mutex_};
     if (vulkan_layer_producer_ == nullptr) {
       vulkan_layer_producer_ = std::make_unique<VulkanLayerProducerImpl>();
       ORBIT_LOG("Bringing up VulkanLayerProducer");
@@ -653,7 +653,7 @@ class VulkanLayerController {
   }
 
   void CloseVulkanLayerProducerIfNecessary() {
-    absl::MutexLock lock{&vulkan_layer_producer_mutex_};
+    absl::MutexLock lock{vulkan_layer_producer_mutex_};
     if (vulkan_layer_producer_ != nullptr) {
       // TODO: Only do this when DestroyInstance has been called the same number of times as
       //  CreateInstance.

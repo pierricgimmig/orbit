@@ -32,7 +32,7 @@ const TimerInfo& TimerData::AddTimer(TimerInfo timer_info, uint32_t depth) {
 
 std::vector<const TimerChain*> TimerData::GetChains() const {
   std::vector<const TimerChain*> chains;
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   for (const auto& it : timers_) {
     chains.push_back(it.second.get());
   }
@@ -41,7 +41,7 @@ std::vector<const TimerChain*> TimerData::GetChains() const {
 }
 
 const TimerChain* TimerData::GetChain(uint64_t depth) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = timers_.find(depth);
   if (it != timers_.end()) {
     return it->second.get();
@@ -55,7 +55,7 @@ std::vector<const orbit_client_protos::TimerInfo*> TimerData::GetTimers(uint64_t
                                                                         bool exclusive) const {
   ORBIT_SCOPE_WITH_COLOR("GetTimersAtDepthDiscretized", kOrbitColorBlueGrey);
   // TODO(b/204173236): use it in TimerTracks.
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<const orbit_client_protos::TimerInfo*> timers;
   for (const auto& [depth, chain] : timers_) {
     ORBIT_CHECK(chain != nullptr);
@@ -78,7 +78,7 @@ std::vector<const orbit_client_protos::TimerInfo*> TimerData::GetTimers(uint64_t
 std::vector<const orbit_client_protos::TimerInfo*> TimerData::GetTimersAtDepthDiscretized(
     uint32_t depth, uint32_t resolution, uint64_t start_ns, uint64_t end_ns) const {
   ORBIT_SCOPE_WITH_COLOR("GetTimersAtDepthDiscretized", kOrbitColorBlueGrey);
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   // The query is for the interval [start_ns, end_ns], but it's easier to work with the close-open
   // interval [start_ns, end_ns+1). We have to be careful with overflowing if end_ns is the maximum
   // unsigned value. In that case, we will just ignore this max_timestamp for simplicity.
@@ -157,7 +157,7 @@ void TimerData::UpdateMaxTime(uint64_t max_time) {
 }
 
 TimerChain* TimerData::GetOrCreateTimerChain(uint64_t depth) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = timers_.find(depth);
   if (it != timers_.end()) {
     return it->second.get();

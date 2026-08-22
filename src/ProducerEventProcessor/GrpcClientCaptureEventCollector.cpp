@@ -50,7 +50,7 @@ GrpcClientCaptureEventCollector::GrpcClientCaptureEventCollector(
 }
 
 void GrpcClientCaptureEventCollector::AddEvent(ClientCaptureEvent&& event) {
-  absl::MutexLock lock{&mutex_};
+  absl::MutexLock lock{mutex_};
   if (stop_requested_) {
     return;
   }
@@ -76,7 +76,7 @@ void GrpcClientCaptureEventCollector::StopAndWait() {
   {
     // Protect stop_requested_ with mutex_ so that we can use stop_requested_ in Conditions for
     // Await/LockWhen (specifically, in SenderThread).
-    absl::MutexLock lock{&mutex_};
+    absl::MutexLock lock{mutex_};
     stop_requested_ = true;
   }
   sender_thread_.join();
@@ -122,7 +122,7 @@ void GrpcClientCaptureEventCollector::SenderThread() {
       stopped = true;
     }
     if (capture_responses_being_built_.empty()) {
-      mutex_.Unlock();
+      mutex_.unlock();
       continue;
     }
 
@@ -130,7 +130,7 @@ void GrpcClientCaptureEventCollector::SenderThread() {
     // `arena_of_capture_response_to_send_` are effectively the two buffers.
     arena_of_capture_responses_being_built_.swap(arena_of_capture_responses_to_send_);
     capture_responses_being_built_.swap(capture_responses_to_send_);
-    mutex_.Unlock();
+    mutex_.unlock();
 
     uint64_t number_of_events_sent = 0;
     uint64_t number_of_bytes_sent = 0;

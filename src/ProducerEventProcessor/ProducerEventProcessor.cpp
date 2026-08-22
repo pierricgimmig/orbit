@@ -80,7 +80,7 @@ class InternPool final {
   // Return pair of <id, assigned>, where assigned is true if the entry was assigned a new id
   // and false if returning id for already existing entry.
   std::pair<uint64_t, bool> GetOrAssignId(const T& entry) {
-    absl::MutexLock lock(&entry_to_id_mutex_);
+    absl::MutexLock lock(entry_to_id_mutex_);
     auto it = entry_to_id_.find(entry);
     if (it != entry_to_id_.end()) {
       return std::make_pair(it->second, false);

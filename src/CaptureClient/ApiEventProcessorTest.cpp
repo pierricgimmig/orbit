@@ -34,7 +34,6 @@ using orbit_client_protos::TimerInfo;
 using google::protobuf::util::MessageDifferencer;
 using ::testing::AllOf;
 using ::testing::DoubleEq;
-using ::testing::Invoke;
 using ::testing::Property;
 using ::testing::SaveArg;
 
@@ -204,8 +203,7 @@ TEST_F(ApiEventProcessorTest, ScopesFromSameThread) {
 
   EXPECT_CALL(capture_listener_, OnTimer)
       .Times(3)
-      .WillRepeatedly(
-          Invoke([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); }));
+      .WillRepeatedly([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); });
 
   api_event_processor_.ProcessApiScopeStop(stop_2);
   api_event_processor_.ProcessApiScopeStop(stop_1);
@@ -243,8 +241,7 @@ TEST_F(ApiEventProcessorTest, ScopesFromDifferentThreads) {
 
   EXPECT_CALL(capture_listener_, OnTimer)
       .Times(2)
-      .WillRepeatedly(
-          Invoke([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); }));
+      .WillRepeatedly([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); });
 
   api_event_processor_.ProcessApiScopeStop(stop_2);
   api_event_processor_.ProcessApiScopeStop(stop_1);
@@ -282,8 +279,7 @@ TEST_F(ApiEventProcessorTest, AsyncScopes) {
 
   EXPECT_CALL(capture_listener_, OnTimer)
       .Times(3)
-      .WillRepeatedly(
-          Invoke([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); }));
+      .WillRepeatedly([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); });
 
   api_event_processor_.ProcessApiScopeStopAsync(stop_2);
   api_event_processor_.ProcessApiScopeStopAsync(stop_1);
@@ -314,7 +310,7 @@ TEST_F(ApiEventProcessorTest, AsyncScopesOverwrittenStartAndRepeatedStop) {
   orbit_client_protos::TimerInfo actual_timer;
   EXPECT_CALL(capture_listener_, OnTimer)
       .Times(1)
-      .WillRepeatedly(Invoke([&actual_timer](const TimerInfo& timer) { actual_timer = timer; }));
+      .WillRepeatedly([&actual_timer](const TimerInfo& timer) { actual_timer = timer; });
 
   api_event_processor_.ProcessApiScopeStartAsync(start0);
   api_event_processor_.ProcessApiScopeStartAsync(start1);
@@ -339,8 +335,7 @@ TEST_F(ApiEventProcessorTest, AsyncScopesWithIdsDifferingOnlyInUpperHalf) {
   std::vector<orbit_client_protos::TimerInfo> actual_timers;
   EXPECT_CALL(capture_listener_, OnTimer)
       .Times(2)
-      .WillRepeatedly(
-          Invoke([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); }));
+      .WillRepeatedly([&actual_timers](const TimerInfo& timer) { actual_timers.push_back(timer); });
 
   api_event_processor_.ProcessApiScopeStartAsync(start0);
   api_event_processor_.ProcessApiScopeStartAsync(start1);

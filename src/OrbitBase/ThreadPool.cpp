@@ -87,7 +87,7 @@ ThreadPoolImpl::ThreadPoolImpl(size_t thread_pool_min_size, size_t thread_pool_m
   // Ttl should not be too small
   ORBIT_CHECK(thread_ttl / absl::Nanoseconds(1) >= 1000);
 
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   for (size_t i = 0; i < thread_pool_min_size; ++i) {
     CreateWorker();
   }
@@ -108,7 +108,7 @@ void ThreadPoolImpl::ScheduleImpl(std::unique_ptr<Action> action) {
           ? CreateAction([this, action = std::move(action)]() mutable { run_action_(action); })
           : std::move(action);
 
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   ORBIT_CHECK(!shutdown_initiated_);
 
   scheduled_actions_.push_back(std::move(wrapped_action));
@@ -128,22 +128,22 @@ void ThreadPoolImpl::CleanupFinishedThreads() {
 }
 
 size_t ThreadPoolImpl::GetPoolSize() {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return worker_threads_.size();
 }
 
 size_t ThreadPoolImpl::GetNumberOfBusyThreads() {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return worker_threads_.size() - idle_threads_;
 }
 
 void ThreadPoolImpl::ShutdownInternal() {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   shutdown_initiated_ = true;
 }
 
 void ThreadPoolImpl::WaitInternal() {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   ORBIT_CHECK(shutdown_initiated_);
   // First wait until all worker threads finished their work
   // and moved to finished_threads_ list.
@@ -185,7 +185,7 @@ std::unique_ptr<Action> ThreadPoolImpl::TakeAction() {
 
 void ThreadPoolImpl::WorkerFunction() {
   while (true) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     std::unique_ptr<Action> action = TakeAction();
 
     ORBIT_CHECK(idle_threads_ > 0);  // Sanity check
@@ -201,9 +201,9 @@ void ThreadPoolImpl::WorkerFunction() {
       break;
     }
 
-    mutex_.Unlock();
+    mutex_.unlock();
     action->Execute();
-    mutex_.Lock();
+    mutex_.lock();
     ++idle_threads_;
   }
 }
@@ -221,7 +221,7 @@ std::shared_ptr<ThreadPool> ThreadPool::Create(
 
 void ThreadPool::InitializeDefaultThreadPool() {
   {
-    absl::MutexLock lock(&g_default_thread_pool_mutex);
+    absl::MutexLock lock(g_default_thread_pool_mutex);
     ORBIT_CHECK(g_default_thread_pool == nullptr);
   }
   (void)GetDefaultThreadPool();
@@ -229,13 +229,13 @@ void ThreadPool::InitializeDefaultThreadPool() {
 
 void ThreadPool::SetDefaultThreadPool(const std::shared_ptr<ThreadPool>& thread_pool) {
   ORBIT_CHECK(thread_pool != nullptr);
-  absl::MutexLock lock(&g_default_thread_pool_mutex);
+  absl::MutexLock lock(g_default_thread_pool_mutex);
   ORBIT_CHECK(g_default_thread_pool == nullptr);
   g_default_thread_pool = thread_pool;
 }
 
 ThreadPool* ThreadPool::GetDefaultThreadPool() {
-  absl::MutexLock lock(&g_default_thread_pool_mutex);
+  absl::MutexLock lock(g_default_thread_pool_mutex);
   if (g_default_thread_pool != nullptr) {
     return g_default_thread_pool.get();
   }

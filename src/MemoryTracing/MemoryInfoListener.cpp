@@ -63,7 +63,7 @@ void MemoryInfoListener::OnSystemMemoryUsage(
   uint64_t sampling_window_id = GetSamplingWindowId(
       system_memory_usage.timestamp_ns(), sampling_start_timestamp_ns_, sampling_period_ns_);
 
-  absl::MutexLock lock(&in_progress_memory_usage_events_mutex_);
+  absl::MutexLock lock(in_progress_memory_usage_events_mutex_);
   *in_progress_memory_usage_events_[sampling_window_id].mutable_system_memory_usage() =
       std::move(system_memory_usage);
   ProcessMemoryUsageEventIfReady(sampling_window_id);
@@ -74,7 +74,7 @@ void MemoryInfoListener::OnCGroupMemoryUsage(
   uint64_t sampling_window_id = GetSamplingWindowId(
       cgroup_memory_usage.timestamp_ns(), sampling_start_timestamp_ns_, sampling_period_ns_);
 
-  absl::MutexLock lock(&in_progress_memory_usage_events_mutex_);
+  absl::MutexLock lock(in_progress_memory_usage_events_mutex_);
   *in_progress_memory_usage_events_[sampling_window_id].mutable_cgroup_memory_usage() =
       std::move(cgroup_memory_usage);
   ProcessMemoryUsageEventIfReady(sampling_window_id);
@@ -85,7 +85,7 @@ void MemoryInfoListener::OnProcessMemoryUsage(
   uint64_t sampling_window_id = GetSamplingWindowId(
       process_memory_usage.timestamp_ns(), sampling_start_timestamp_ns_, sampling_period_ns_);
 
-  absl::MutexLock lock(&in_progress_memory_usage_events_mutex_);
+  absl::MutexLock lock(in_progress_memory_usage_events_mutex_);
   *in_progress_memory_usage_events_[sampling_window_id].mutable_process_memory_usage() =
       std::move(process_memory_usage);
   ProcessMemoryUsageEventIfReady(sampling_window_id);

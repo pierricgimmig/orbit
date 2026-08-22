@@ -9,7 +9,7 @@ namespace orbit_vulkan_layer {
 uint64_t VulkanLayerProducerImpl::InternStringIfNecessaryAndGetKey(std::string str) {
   uint64_t key = ComputeStringKey(str);
   {
-    absl::MutexLock lock{&string_keys_sent_mutex_};
+    absl::MutexLock lock{string_keys_sent_mutex_};
     bool inserted = string_keys_sent_.emplace(key).second;
     if (!inserted) {
       return key;

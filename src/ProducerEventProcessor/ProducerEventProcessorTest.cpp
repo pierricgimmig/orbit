@@ -81,7 +81,6 @@ using orbit_grpc_protos::WarningInstrumentingWithUserSpaceInstrumentationEvent;
 using google::protobuf::util::MessageDifferencer;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
-using ::testing::Invoke;
 using ::testing::SaveArg;
 
 namespace orbit_producer_event_processor {
@@ -1468,15 +1467,15 @@ TEST(ProducerEventProcessor, MergingThreadStateSliceWithCallstack) {
   std::optional<uint64_t> actual_callstack_key;
   EXPECT_CALL(collector, AddEvent)
       .Times(3)
-      .WillRepeatedly(Invoke([&actual_client_capture_events,
-                              &actual_callstack_key](ClientCaptureEvent&& client_capture_event) {
+      .WillRepeatedly([&actual_client_capture_events,
+                       &actual_callstack_key](ClientCaptureEvent&& client_capture_event) {
         if (client_capture_event.has_interned_callstack()) {
           // We are only expecting a single interned callstack
           ASSERT_FALSE(actual_callstack_key.has_value());
           actual_callstack_key = client_capture_event.interned_callstack().key();
         }
         actual_client_capture_events.push_back(std::move(client_capture_event));
-      }));
+      });
 
   producer_event_processor->ProcessEvent(orbit_grpc_protos::kLinuxTracingProducerId,
                                          std::move(thread_state_slice_callstack_event1));

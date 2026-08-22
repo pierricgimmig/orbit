@@ -96,7 +96,7 @@ TEST_F(TrackTypeItemModelTest, ViewInteraction) {
   int x =
       table.columnViewportPosition(static_cast<int>(TrackTypeItemModel::Column::kVisibility)) + 15;
   int y = table.rowViewportPosition(found_row) + 20;
-  QTest::mouseClick(table.viewport(), Qt::MouseButton::LeftButton, {0}, QPoint(x, y));
+  QTest::mouseClick(table.viewport(), Qt::MouseButton::LeftButton, Qt::NoModifier, QPoint(x, y));
   EXPECT_FALSE(track_manager_.GetTrackTypeVisibility(Track::Type::kThreadTrack));
 }
 

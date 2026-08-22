@@ -42,13 +42,13 @@ TEST(GetThreadState, LinuxTracingTestsMainAndAnother) {
   std::optional<char> thread_state_holding_mutex;
   std::optional<char> main_state_waiting_mutex;
 
-  mutex.Lock();
+  mutex.lock();
   std::thread thread{[&] {
     // Make sure /proc/<pid>/stat is parsed correctly
     // even when the thread name contains spaces and parentheses.
     orbit_base::SetCurrentThreadName(") )  )()( )(  )");
     {
-      absl::MutexLock lock{&mutex};
+      absl::MutexLock lock{mutex};
       thread_tid = syscall(SYS_gettid);
       thread_state_holding_mutex = GetThreadState(thread_tid);
       main_state_waiting_mutex = GetThreadState(main_tid);
@@ -59,7 +59,7 @@ TEST(GetThreadState, LinuxTracingTestsMainAndAnother) {
   }};
 
   mutex.Await(absl::Condition(+[](pid_t* tid) { return *tid != -1; }, &thread_tid));
-  mutex.Unlock();
+  mutex.unlock();
 
   ASSERT_TRUE(thread_state_holding_mutex.has_value());
   EXPECT_EQ('R', thread_state_holding_mutex.value());

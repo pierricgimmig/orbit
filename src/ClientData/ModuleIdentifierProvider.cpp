@@ -13,7 +13,7 @@ namespace orbit_client_data {
 
 ModuleIdentifier ModuleIdentifierProvider::CreateModuleIdentifier(
     const ModulePathAndBuildId& module_path_and_build_id) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
 
   // We are using the current size as next id. If insertion does not take place, size remains the
   // same and we are not wasting ids.
@@ -26,7 +26,7 @@ ModuleIdentifier ModuleIdentifierProvider::CreateModuleIdentifier(
 
 std::optional<ModuleIdentifier> ModuleIdentifierProvider::GetModuleIdentifier(
     const ModulePathAndBuildId& module_path_and_build_id) const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   const auto it = module_identifier_map_.find(module_path_and_build_id);
   if (it == module_identifier_map_.end()) return std::nullopt;
   return it->second;
@@ -34,7 +34,7 @@ std::optional<ModuleIdentifier> ModuleIdentifierProvider::GetModuleIdentifier(
 
 std::optional<ModulePathAndBuildId> ModuleIdentifierProvider::GetModulePathAndBuildId(
     ModuleIdentifier module_identifier) const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
 
   for (const auto& [current_module_path_and_build_id, current_module_identifier] :
        module_identifier_map_) {

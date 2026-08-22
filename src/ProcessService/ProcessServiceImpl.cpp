@@ -46,7 +46,7 @@ Status ProcessServiceImpl::GetProcessList(ServerContext* /*context*/,
                                           const GetProcessListRequest* /*request*/,
                                           GetProcessListResponse* response) {
   {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
 
     const auto refresh_result = process_list_.Refresh();
     if (refresh_result.has_error()) {
