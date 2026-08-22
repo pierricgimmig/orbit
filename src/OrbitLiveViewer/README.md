@@ -12,7 +12,7 @@ those packed events (and can also pull a rasterized frame from the service).
 ## Run
 
 ```
-# After building OrbitService (CMake) or the standalone Rust binary:
+# After building OrbitService (Bazel) or the standalone Rust binary:
 OrbitService --grpc_port 44765 \
              --http_port 44766 \
              --ring_buffer_bytes 67108864 \
@@ -52,7 +52,7 @@ egui `PaintCallback` — not millions of `RectShape`s.
 
 This workspace pins **rustc 1.88** via `rust-toolchain.toml` so current eframe
 (0.32) builds. That pin is **only** for `src/OrbitLiveViewer`. The C++ Orbit /
-CMake toolchain is unchanged. `viewer-dist/fallback.html` is a last-ditch
+Bazel toolchain is unchanged. `viewer-dist/fallback.html` is a last-ditch
 no-wasm page; it is not the UI we ship.
 
 ## Renderer (verified, not assumed)
@@ -86,17 +86,28 @@ the column walk regresses to O(n).
 
 ## Build
 
+There are **two** Cargo workspaces here:
+
+| Workspace | Crates | Built by |
+| --- | --- | --- |
+| `src/OrbitLiveViewer` | event, ring, protocol, render, server, ffi | Bazel (and Cargo) |
+| `src/OrbitLiveViewer/crates/orbit-live-viewer` | the wasm32 eframe front end | `build_wasm.sh` only |
+
+The split is deliberate: the viewer drags in eframe / wgpu / winit (~200 extra
+crates) that the service side never links, and Bazel resolves only the service
+workspace.
+
 ### Native crates (tests + benches, no browser)
 
 ```
 cd src/OrbitLiveViewer
-cargo test --workspace --exclude orbit-live-viewer
-cargo bench --workspace --exclude orbit-live-viewer
+cargo test --workspace
+cargo bench --workspace
 ```
 
-`--exclude orbit-live-viewer` skips the WASM crate’s heavier eframe graph.
-`cargo test -p orbit-live-viewer` still compiles the eframe app + callback
-on native (no window).
+The viewer is a separate workspace, so `--workspace` no longer reaches it.
+`cargo test` inside `crates/orbit-live-viewer` still compiles the eframe app +
+callback on native (no window).
 
 ### WASM pack (eframe WebRunner)
 
@@ -106,20 +117,30 @@ Needs `wasm32-unknown-unknown` and `wasm-bindgen-cli` matching `wasm-bindgen 0.2
 ./src/OrbitLiveViewer/build_wasm.sh
 ```
 
-This writes `viewer-dist/orbit_live_viewer.js` and `.wasm`. Rebuild
-`orbit-live-ffi` / OrbitService afterwards so the embed picks them up.
+This writes `viewer-dist/orbit_live_viewer.js` and `.wasm`, which are checked
+in. `orbit-live-server`’s build script embeds whatever is in `viewer-dist/`, so
+rebuild OrbitService afterwards to pick up a new pack.
 
 Without a WASM pack, `/` shows a link to `fallback.html` (HTML/JS last-ditch).
 
 ### Embed in OrbitService
 
-CMake (`src/OrbitLiveViewer/CMakeLists.txt`) runs
-`cargo build -p orbit-live-ffi` and links `liborbit_live_ffi.a` into
-`OrbitService`. Same flags as above (`--http_port`, `--ring_buffer_bytes`,
-`--spill_path`).
+`BUILD.bazel` here builds `//src/OrbitLiveViewer:orbit_live_ffi`, a
+`rust_static_library` wrapped in a `cc_library` that defines
+`ORBIT_LIVE_VIEWER=1`. `//src/Service:OrbitServiceLib` depends on it on Linux,
+which is what compiles `LiveViewerBridge.cpp` and un-`#ifdef`s the bridge in
+`OrbitService.cpp`:
 
-If `cargo` is missing, OrbitService still builds; the viewer is omitted and
-`--http_port != 0` logs an error.
+```
+bazel build //src/Service:OrbitService
+```
+
+No host Rust install is needed — rules_rust downloads its own toolchain, and
+third-party crates come from the `live_crates` repo pinned in `MODULE.bazel`
+against this workspace’s `Cargo.lock`. After changing a dependency, repin with
+`CARGO_BAZEL_REPIN=1 bazel build //src/Service:OrbitService`.
+
+Windows builds omit the bridge; `--http_port` is inert there.
 
 ## Protocol
 

@@ -20,13 +20,17 @@ if ! command -v wasm-bindgen >/dev/null || ! wasm-bindgen --version | grep -q "$
   cargo install wasm-bindgen-cli --version "$BINDGEN_VER" --locked
 fi
 
-cargo build -p orbit-live-viewer --target wasm32-unknown-unknown --release
+# orbit-live-viewer is its own Cargo workspace (see its Cargo.toml), so build
+# from its directory rather than with -p from the service workspace root.
+VIEWER="$ROOT/crates/orbit-live-viewer"
+cargo build --manifest-path "$VIEWER/Cargo.toml" \
+  --target wasm32-unknown-unknown --release
 
 wasm-bindgen \
   --target web \
   --out-dir "$ROOT/viewer-dist" \
   --out-name orbit_live_viewer \
-  "$ROOT/target/wasm32-unknown-unknown/release/orbit_live_viewer.wasm"
+  "$VIEWER/target/wasm32-unknown-unknown/release/orbit_live_viewer.wasm"
 
 echo "Wrote $ROOT/viewer-dist/orbit_live_viewer.js and .wasm"
-echo "Rebuild orbit-live-ffi / OrbitService so rust-embed picks up the pack."
+echo "Rebuild OrbitService so orbit-live-server's build script embeds the pack."

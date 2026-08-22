@@ -61,7 +61,7 @@ The shipped chrome is **eframe / egui** (WebRunner). Process list, capture
 and demo buttons, ring/spill, and status are widgets. The timeline is one
 egui `PaintCallback` (pixel-column blit when zoomed out; instanced SDF when
 zoomed in). `src/OrbitLiveViewer/rust-toolchain.toml` pins rustc **1.88**
-for this workspace only; the C++ / CMake toolchain is unchanged.
+for this workspace only; the C++ / Bazel toolchain is unchanged.
 
 Without a WASM pack, `/` links to `fallback.html` (last-ditch HTML). APIs
 `GET /api/timeline` and `GET /api/frame` stay for that fallback.

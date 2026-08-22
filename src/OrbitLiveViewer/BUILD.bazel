@@ -1,0 +1,121 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Service-side half of the live viewer: the crates that OrbitService links as
+# liborbit_live_ffi.a. The wasm32 eframe front end (crates/orbit-live-viewer)
+# is a separate Cargo workspace and is NOT built here -- run build_wasm.sh and
+# commit the result under viewer-dist/, which :build_script embeds.
+
+load("@live_crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+])
+
+ORBIT_LIVE_EDITION = "2021"
+
+rust_library(
+    name = "orbit_live_event",
+    srcs = glob(["crates/orbit-live-event/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-event/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-event"),
+)
+
+rust_library(
+    name = "orbit_live_protocol",
+    srcs = glob(["crates/orbit-live-protocol/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-protocol/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-protocol") + [
+        ":orbit_live_event",
+    ],
+)
+
+rust_library(
+    name = "orbit_live_render",
+    srcs = glob(["crates/orbit-live-render/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-render/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-render") + [
+        ":orbit_live_event",
+    ],
+)
+
+rust_library(
+    name = "orbit_live_ring",
+    srcs = glob(["crates/orbit-live-ring/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-ring/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-ring") + [
+        ":orbit_live_event",
+    ],
+)
+
+# Generates embedded_assets.rs from viewer-dist/. The script walks up from
+# CARGO_MANIFEST_DIR to find viewer-dist, so it works from this package as well
+# as from crates/orbit-live-server under plain Cargo.
+cargo_build_script(
+    name = "orbit_live_server_build_script",
+    srcs = ["crates/orbit-live-server/build.rs"],
+    crate_name = "build_script_build",
+    data = glob(["viewer-dist/**"]),
+    edition = ORBIT_LIVE_EDITION,
+)
+
+rust_library(
+    name = "orbit_live_server",
+    srcs = glob(["crates/orbit-live-server/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-server/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-server") + [
+        ":orbit_live_event",
+        ":orbit_live_protocol",
+        ":orbit_live_render",
+        ":orbit_live_ring",
+        ":orbit_live_server_build_script",
+    ],
+)
+
+rust_test(
+    name = "orbit_live_server_test",
+    crate = ":orbit_live_server",
+    edition = ORBIT_LIVE_EDITION,
+    size = "small",
+)
+
+# The staticlib OrbitService links. Only Linux: OrbitService's live bridge is
+# built alongside LinuxCaptureService.
+rust_static_library(
+    name = "orbit_live_ffi_rust",
+    srcs = glob(["crates/orbit-live-ffi/src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "crates/orbit-live-ffi/src/lib.rs",
+    edition = ORBIT_LIVE_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-ffi") + [
+        ":orbit_live_event",
+        ":orbit_live_server",
+    ],
+)
+
+cc_library(
+    name = "orbit_live_ffi",
+    hdrs = ["include/OrbitLiveViewer/orbit_live_ffi.h"],
+    defines = ["ORBIT_LIVE_VIEWER=1"],
+    includes = ["include"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_live_ffi_rust"],
+)

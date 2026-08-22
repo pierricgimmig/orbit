@@ -1,4 +1,8 @@
 //! Embed files under viewer-dist/ (including wasm-bindgen snippets/).
+//!
+//! Assets are copied into OUT_DIR and `include_bytes!`d relative to the
+//! generated file. Absolute source paths would not survive Bazel's
+//! sandbox, where the build script and the rustc action run separately.
 
 use std::env;
 use std::fs;
@@ -45,31 +49,57 @@ fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
     }
 }
 
+/// `viewer-dist/` sits at the workspace root, but the build script's manifest
+/// dir differs between Cargo (crates/orbit-live-server) and Bazel (the package
+/// holding BUILD.bazel), so walk up instead of hard-coding `../..`.
+fn find_viewer_dist() -> Option<PathBuf> {
+    if let Ok(explicit) = env::var("ORBIT_VIEWER_DIST") {
+        let path = PathBuf::from(explicit);
+        return path.is_dir().then_some(path);
+    }
+    let mut dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").ok()?);
+    loop {
+        let candidate = dir.join("viewer-dist");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 fn main() {
-    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let dist = manifest.join("../../viewer-dist");
-    println!("cargo:rerun-if-changed={}", dist.display());
+    println!("cargo:rerun-if-env-changed=ORBIT_VIEWER_DIST");
+    let dist = find_viewer_dist();
+    if let Some(dist) = &dist {
+        println!("cargo:rerun-if-changed={}", dist.display());
+    }
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let assets_dir = out_dir.join("viewer_assets");
 
     let mut code = String::from(
         "pub fn get(path: &str) -> Option<(&'static str, &'static [u8])> {\n    match path {\n",
     );
     let mut files = Vec::new();
-    if dist.is_dir() {
-        collect_files(&dist, "", &mut files);
+    if let Some(dist) = &dist {
+        collect_files(dist, "", &mut files);
     }
-    for (rel, path) in files {
+    for (index, (rel, path)) in files.into_iter().enumerate() {
         println!("cargo:rerun-if-changed={}", path.display());
-        let abs = path.canonicalize().unwrap();
+        // Flat, index-based names: asset paths carry subdirectories (wasm-bindgen
+        // snippets/) and would otherwise need mkdir -p under OUT_DIR.
+        let copied = format!("viewer_assets/{index}.bin");
+        fs::create_dir_all(&assets_dir).unwrap();
+        fs::copy(&path, out_dir.join(&copied)).unwrap();
         let mime = mime_for(&rel);
         code.push_str(&format!(
             "        \"{}\" => Some((\"{}\", include_bytes!(\"{}\"))),\n",
-            rel,
-            mime,
-            abs.display()
+            rel, mime, copied
         ));
     }
     code.push_str("        _ => None,\n    }\n}\n");
 
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("embedded_assets.rs");
-    fs::write(out, code).unwrap();
+    fs::write(out_dir.join("embedded_assets.rs"), code).unwrap();
 }

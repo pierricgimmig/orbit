@@ -33,16 +33,20 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src/OrbitLiveViewer
+          # Two workspaces: the service crates Bazel links into OrbitService,
+          # and the wasm32 eframe viewer. See src/OrbitLiveViewer/Cargo.toml.
+          workspaces: |
+            src/OrbitLiveViewer
+            src/OrbitLiveViewer/crates/orbit-live-viewer
       - name: Test native crates
         working-directory: src/OrbitLiveViewer
-        run: cargo test --workspace --exclude orbit-live-viewer
+        run: cargo test --workspace
       - name: Test viewer crate (eframe + callback, no window)
-        working-directory: src/OrbitLiveViewer
-        run: cargo test -p orbit-live-viewer
+        working-directory: src/OrbitLiveViewer/crates/orbit-live-viewer
+        run: cargo test
       - name: Compile eframe WebRunner for wasm32
-        working-directory: src/OrbitLiveViewer
-        run: cargo build -p orbit-live-viewer --target wasm32-unknown-unknown
+        working-directory: src/OrbitLiveViewer/crates/orbit-live-viewer
+        run: cargo build --target wasm32-unknown-unknown
       - name: Compile benches
         working-directory: src/OrbitLiveViewer
-        run: cargo bench --workspace --exclude orbit-live-viewer --no-run
+        run: cargo bench --workspace --no-run

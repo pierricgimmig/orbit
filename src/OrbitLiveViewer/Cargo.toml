@@ -10,9 +10,13 @@ members = [
     "crates/orbit-live-protocol",
     "crates/orbit-live-render",
     "crates/orbit-live-server",
-    "crates/orbit-live-viewer",
     "crates/orbit-live-ffi",
 ]
+# orbit-live-viewer is its own workspace: it is a wasm32 cdylib pulling the
+# whole eframe/wgpu tree, and Bazel resolves *this* workspace to build
+# liborbit_live_ffi.a. Keeping them apart keeps the eframe tree out of the
+# Bazel dep graph. See crates/orbit-live-viewer/Cargo.toml.
+exclude = ["crates/orbit-live-viewer"]
 
 [workspace.package]
 edition = "2021"
