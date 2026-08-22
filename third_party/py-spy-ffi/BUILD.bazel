@@ -25,9 +25,7 @@ rust_static_library(
         proc_macro = True,
     ),
     target_compatible_with = ["@platforms//os:linux"],
-    deps = all_crate_deps(package_name = "third_party/py-spy-ffi") + [
-        "//third_party:py_spy",
-    ],
+    deps = all_crate_deps(package_name = "third_party/py-spy-ffi"),
 )
 
 cc_library(

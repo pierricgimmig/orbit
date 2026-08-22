@@ -31,7 +31,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: '0'
-        submodules: 'recursive'
 
     - name: Mount Bazel cache
       if: ${{ matrix.language == 'cpp' }}
