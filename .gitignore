@@ -1,9 +1,6 @@
-build*/
 /.idea/
-/cmake-build*/
 compile_commands.json
 /.vscode/
-/conan.log
 
 # Ignore generated and compiled Python code
 *_pb2.py

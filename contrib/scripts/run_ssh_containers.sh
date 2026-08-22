@@ -15,7 +15,7 @@
 #
 # It supports both docker and podman as container runtimes. podman is preferred if available.
 #
-# Example call: ./contrib/scripts/run_ssh_containers.sh ./build/bin/OrbitSshQtTests
+# Example call: ./contrib/scripts/run_ssh_containers.sh bazel test //src/OrbitSshQt:all
 
 set -euo pipefail
 
