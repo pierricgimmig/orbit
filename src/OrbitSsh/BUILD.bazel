@@ -16,12 +16,18 @@ cc_library(
         "Error.cpp",
         "KnownHostsError.cpp",
         "LibSsh2Utils.cpp",
-        "LinuxSocket.cpp",
         "Session.cpp",
         "Sftp.cpp",
         "SftpFile.cpp",
         "Socket.cpp",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "WindowsSocket.cpp",
+        ],
+        "//conditions:default": [
+            "LinuxSocket.cpp",
+        ],
+    }),
     hdrs = [
         "HomeEnvironmentVariable.h",
         "LibSsh2Utils.h",

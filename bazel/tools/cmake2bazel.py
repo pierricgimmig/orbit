@@ -119,8 +119,11 @@ class Target:
         self.shared = False
         self.output_name = None
         self.srcs = []
-        self.win_srcs = []
+        self.win_srcs = []      # only when building for Windows
+        self.nonwin_srcs = []   # only when not building for Windows
         self.hdrs = []
+        self.win_hdrs = []
+        self.win_deps = []
         self.protos = []
         self.ui = []
         self.qrc = []
@@ -145,7 +148,9 @@ def parse_module(path):
     order = []
     unhandled = []
     stack = [True]  # if()/else() nesting; stack[-1] is "currently active"
-    windows_branch = [False]
+    # Which platform the current branch applies to: "windows", "other", or
+    # None for code that is not behind a platform condition at all.
+    platform = [None]
 
     def active():
         return all(stack)
@@ -158,29 +163,33 @@ def parse_module(path):
 
     for command, args in parse_commands(text):
         if command == "if":
-            branch_is_windows = args[:1] == ["WIN32"] or args[:2] == ["NOT", "WIN32"]
-            windows_branch.append(args[:1] == ["WIN32"])
+            platform.append(branch_platform(args))
             stack.append(evaluate(args))
             continue
         if command == "elseif":
-            windows_branch[-1] = args[:1] == ["WIN32"]
+            platform[-1] = branch_platform(args)
             stack[-1] = evaluate(args)
             continue
         if command == "else":
-            windows_branch[-1] = not windows_branch[-1] and False
+            platform[-1] = {"windows": "other", "other": "windows"}.get(platform[-1])
             stack[-1] = not stack[-1]
             continue
         if command == "endif":
             stack.pop()
-            windows_branch.pop()
+            platform.pop()
             continue
 
-        in_windows_branch = windows_branch[-1]
+        # The innermost enclosing platform condition, if any.
+        current_platform = next((p for p in reversed(platform) if p is not None), None)
+
         if not active():
-            # Windows-only sources are still collected, so that the headers
-            # they declare can be kept out of the Linux target.
-            if not (in_windows_branch and
-                    command in ("add_library", "add_executable", "target_sources")):
+            # A branch that is inactive purely because it is the Windows one is
+            # still collected: it becomes the windows arm of a select().
+            windows_only = current_platform == "windows" and all(
+                s for s, p in zip(stack[1:], platform[1:]) if p is None)
+            if not (windows_only and command in (
+                    "add_library", "add_executable", "target_sources",
+                    "target_link_libraries")):
                 continue
 
         if command in ("cmake_minimum_required", "project", "include",
@@ -200,14 +209,14 @@ def parse_module(path):
             rest = [a for a in args[1:]
                     if a not in ("STATIC", "SHARED", "OBJECT", "INTERFACE",
                                  "MODULE", "EXCLUDE_FROM_ALL")]
-            add_sources(target, rest, in_windows_branch)
+            add_sources(target, rest, current_platform)
             continue
 
         if command == "target_sources":
             add_sources(target_for(args[0]),
                         [a for a in args[1:]
                          if a not in ("PUBLIC", "PRIVATE", "INTERFACE")],
-                        in_windows_branch)
+                        current_platform)
             continue
 
         if command == "target_include_directories":
@@ -236,6 +245,8 @@ def parse_module(path):
                     scope = arg
                 elif arg.startswith("${"):
                     unhandled.append(("link", arg))
+                elif current_platform == "windows":
+                    target.win_deps.append(arg)
                 else:
                     bucket = target.private_deps if scope == "PRIVATE" else target.deps
                     bucket.append(arg)
@@ -293,7 +304,16 @@ def parse_module(path):
 _SOURCE_SUFFIXES = (".cpp", ".cc", ".c", ".S", ".asm")
 
 
-def add_sources(target, files, windows_only):
+def branch_platform(args):
+    """The platform an if() branch selects, if it selects one."""
+    if args[:1] == ["WIN32"] or args[:1] == ["MSVC"]:
+        return "windows"
+    if args[:2] == ["NOT", "WIN32"] or args[:1] == ["UNIX"]:
+        return "other"
+    return None
+
+
+def add_sources(target, files, platform):
     for name in files:
         name = name.replace("${CMAKE_CURRENT_LIST_DIR}/", "")
         name = name.replace("${CMAKE_CURRENT_SOURCE_DIR}/", "")
@@ -306,9 +326,16 @@ def add_sources(target, files, windows_only):
         elif name.endswith(".qrc"):
             target.qrc.append(name)
         elif name.endswith(_SOURCE_SUFFIXES):
-            (target.win_srcs if windows_only else target.srcs).append(name)
+            if platform == "windows":
+                target.win_srcs.append(name)
+            elif platform == "other":
+                target.nonwin_srcs.append(name)
+            else:
+                target.srcs.append(name)
         elif name.endswith((".h", ".hpp", ".inl")):
-            if not windows_only:
+            if platform == "windows":
+                target.win_hdrs.append(name)
+            else:
                 target.hdrs.append(name)
         else:
             target.srcs.append(name)
@@ -374,6 +401,14 @@ EXTERNAL = {
     "Libssh2::libssh2": "@libssh2//:libssh2",
     "ZLIB::ZLIB": "@zlib//:zlib",
     "llvm-core::llvm-core": "//bazel/deps:llvm",
+    # Windows-only.
+    "DIASDK::DIASDK": "@dia_sdk//:dia_sdk",
+    "krabsetw": "//third_party/krabsetw",
+    "krabsetw::krabsetw": "//third_party/krabsetw",
+    "PresentMon": "//third_party/PresentMon",
+    "PresentMon::PresentMon": "//third_party/PresentMon",
+    "cppwin32::cppwin32": "//third_party/cppwin32",
+    "minhook": "//third_party/minhook",
     "Qt5::Core": "@qt5//:Core",
     "Qt5::Gui": "@qt5//:Gui",
     "Qt5::Widgets": "@qt5//:Widgets",
@@ -430,6 +465,13 @@ EXTRA_DATA = {
 STATIC_LINK_TESTS = {
     "LinuxTracingIntegrationTests",
     "OrbitServiceIntegrationTests",
+}
+
+# Windows tests that CMake gave a requireAdministrator manifest, because they
+# debug and inject into other processes.
+REQUIRES_ADMIN_TESTS = {
+    "WindowsUtilsTests",
+    "WindowsTracingTests",
 }
 
 # Tests that measure real tracing fidelity. They assert that no perf records
@@ -499,7 +541,12 @@ SKIPPED = {
     "OrbitTriggerCaptureVulkanLayer",
     "OrbitVulkanLayer",
     "VulkanTutorial",
-    # if(WIN32) branches.
+}
+
+# Modules that only exist on Windows. Their BUILD files are generated with the
+# WIN32 branches taken, and the targets are constrained so that a Linux
+# `bazel build //...` skips rather than fails on them.
+WINDOWS_ONLY = {
     "WindowsCaptureService",
     "WindowsProcessLauncherService",
     "WindowsProcessService",
@@ -526,6 +573,36 @@ def render_list(name, values, indent="    ", raw=False):
         return "%s%s = [%s],\n" % (indent, name, quote(values[0]))
     lines = "".join("%s    %s,\n" % (indent, quote(v)) for v in values)
     return "%s%s = [\n%s%s],\n" % (indent, name, lines, indent)
+
+
+def render_platform_list(name, common, windows, other, indent="    "):
+    """A list attribute whose contents depend on the target platform."""
+    if not windows and not other:
+        return render_list(name, common, indent)
+    if not common and not other:
+        body = "".join('%s        "%s",\n' % (indent, v) for v in sorted(set(windows)))
+        return ('%s%s = select({\n'
+                '%s    "@platforms//os:windows": [\n%s%s    ],\n'
+                '%s    "//conditions:default": [],\n'
+                '%s}),\n') % (indent, name, indent, body, indent, indent, indent)
+
+    prefix = ""
+    if common:
+        prefix = render_list(name, common, indent).rstrip(",\n")[len(indent) + len(name) + 3:]
+        prefix = "%s%s = %s + select({\n" % (indent, name, prefix)
+    else:
+        prefix = "%s%s = select({\n" % (indent, name)
+
+    def arm(condition, values):
+        if not values:
+            return '%s    "%s": [],\n' % (indent, condition)
+        body = "".join('%s        "%s",\n' % (indent, v) for v in sorted(set(values)))
+        return '%s    "%s": [\n%s%s    ],\n' % (indent, condition, body, indent)
+
+    return (prefix +
+            arm("@platforms//os:windows", windows) +
+            arm("//conditions:default", other) +
+            "%s}),\n" % indent)
 
 
 _QT_MACRO = re.compile(r"^\s*(Q_OBJECT|Q_GADGET|Q_NAMESPACE)\b", re.M)
@@ -558,7 +635,7 @@ def package_headers(directory):
     return found
 
 
-def render_target(target, module_name, directory, windows_headers, extra_hdrs):
+def render_target(target, module_name, directory, extra_hdrs):
     package = "//src/" + module_name
     qt = target.automoc or target.autouic or target.autorcc
 
@@ -569,13 +646,20 @@ def render_target(target, module_name, directory, windows_headers, extra_hdrs):
             deps.append(label)
     deps = sorted(set(deps + EXTRA_DEPS.get(target.name, [])))
 
+    win_deps = []
+    for name in target.win_deps:
+        label = dependency_label(name, package)
+        if label:
+            win_deps.append(label)
+    win_deps = sorted(set(win_deps))
+
     if qt and target.autouic:
         target.ui = sorted(set(target.ui) | set(package_forms(directory)))
 
-    hdrs = list(target.hdrs) + extra_hdrs
-    hdrs = [h for h in dict.fromkeys(hdrs) if h not in windows_headers]
+    hdrs = list(dict.fromkeys(list(target.hdrs) + extra_hdrs))
     moc_hdrs = [h for h in hdrs if qt and has_qt_macro(directory / h)]
     plain_hdrs = [h for h in hdrs if h not in moc_hdrs]
+    win_hdrs = list(dict.fromkeys(target.win_hdrs))
 
     includes = list(dict.fromkeys(target.public_includes))
     private_includes = [d for d in dict.fromkeys(target.private_includes)
@@ -608,15 +692,17 @@ def render_target(target, module_name, directory, windows_headers, extra_hdrs):
     if rule in ("cc_binary", "cc_test", "qt_cc_test") or target.shared:
         # Binaries have no hdrs attribute; their headers are just sources.
         target.srcs += plain_hdrs + moc_hdrs
-        plain_hdrs, moc_hdrs = [], []
+        target.win_srcs += win_hdrs
+        plain_hdrs, moc_hdrs, win_hdrs = [], [], []
 
     name = target.name
     if target.shared:
         name = "lib%s.so" % (target.output_name or target.name)
 
     lines = ["%s(\n" % rule, '    name = "%s",\n' % name]
-    lines.append(render_list("srcs", target.srcs))
-    lines.append(render_list("hdrs", plain_hdrs))
+    lines.append(render_platform_list("srcs", target.srcs, target.win_srcs,
+                                      target.nonwin_srcs))
+    lines.append(render_platform_list("hdrs", plain_hdrs, win_hdrs, []))
     if rule == "qt_cc_library":
         lines.append(render_list("moc_hdrs", moc_hdrs))
         lines.append(render_list("ui", target.ui))
@@ -647,6 +733,11 @@ def render_target(target, module_name, directory, windows_headers, extra_hdrs):
         lines.append("    linkstatic = True,\n")
     if target.name in EXCLUSIVE_TESTS:
         lines.append('    tags = ["exclusive"],\n')
+    if target.name in REQUIRES_ADMIN_TESTS:
+        lines.append('    linkopts = ['
+                     '"/MANIFESTUAC:level=\'requireAdministrator\' uiAccess=\'false\'"],\n')
+    if module_name in WINDOWS_ONLY:
+        lines.append('    target_compatible_with = ["@platforms//os:windows"],\n')
     if rule == "qt_cc_library":
         lines.append(render_list("include_dirs", includes or ["."]))
     else:
@@ -654,33 +745,30 @@ def render_target(target, module_name, directory, windows_headers, extra_hdrs):
     if target.shared:
         lines.append("    linkshared = True,\n")
         lines.append("    linkstatic = True,\n")
-    lines.append(render_list("deps", deps))
+    lines.append(render_platform_list("deps", deps, win_deps, []))
     lines.append(")\n")
     return "".join(part for part in lines if part)
 
 
 def render_module(module_name, targets, directory):
-    windows_headers = set()
-    for target in targets:
-        windows_headers.update(target.win_srcs)
-
     declared = set()
     for target in targets:
         declared.update(target.hdrs)
+        declared.update(target.win_hdrs)
         declared.update(target.srcs)
+        declared.update(target.win_srcs)
+        declared.update(target.nonwin_srcs)
 
     # CMake does not need private headers listed; Bazel does.
     primary = next((t for t in targets if t.kind == "library"), None)
-    extra = [h for h in package_headers(directory)
-             if h not in declared and h not in windows_headers]
+    extra = [h for h in package_headers(directory) if h not in declared]
     if primary is None and extra:
         primary = targets[0]
 
     body = []
     for target in targets:
         body.append(render_target(
-            target, module_name, directory, windows_headers,
-            extra if target is primary else []))
+            target, module_name, directory, extra if target is primary else []))
 
     copied = COPIED_BINARIES.get(module_name, [])
     if copied:
@@ -730,6 +818,9 @@ def main():
 
     for module_name in modules:
         directory = REPO / "src" / module_name
+        CONDITIONS["WIN32"] = module_name in WINDOWS_ONLY
+        CONDITIONS["MSVC"] = CONDITIONS["WIN32"]
+        CONDITIONS["UNIX"] = not CONDITIONS["WIN32"]
         targets, unhandled = parse_module(directory / "CMakeLists.txt")
         if options.report:
             if unhandled:

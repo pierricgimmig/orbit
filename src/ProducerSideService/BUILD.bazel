@@ -10,10 +10,16 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "ProducerSideService",
     srcs = [
-        "BuildAndStartProducerSideServerLinux.cpp",
         "ProducerSideServer.cpp",
         "ProducerSideServiceImpl.cpp",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "BuildAndStartProducerSideServerWindows.cpp",
+        ],
+        "//conditions:default": [
+            "BuildAndStartProducerSideServerLinux.cpp",
+        ],
+    }),
     hdrs = [
         "BuildAndStartProducerSideServerWithUri.h",
         "include/ProducerSideService/BuildAndStartProducerSideServer.h",

@@ -453,9 +453,22 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//bazel/deps:extensions.bzl%dia": {
+      "general": {
+        "bzlTransitiveDigest": "W0SYp7A2fHkKQWgq+eyBxrbGMldUbI5Z199Z/LXprdo=",
+        "usagesDigest": "VenfCOcAZs6MX8EWmAWHT7p4MdTFRIFodamB4dPVDx0=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "dia_sdk": {
+            "repoRuleId": "@@//bazel/deps:dia_sdk.bzl%dia_sdk",
+            "attributes": {}
+          }
+        }
+      }
+    },
     "//bazel/deps:extensions.bzl%opengl": {
       "general": {
-        "bzlTransitiveDigest": "IcJqhpuheU1HWEQhuvur/xWqRf4XfUMlm1pfylbRvXY=",
+        "bzlTransitiveDigest": "W0SYp7A2fHkKQWgq+eyBxrbGMldUbI5Z199Z/LXprdo=",
         "usagesDigest": "0Q2SE3xbnAfRsjMuerD24f7xTq3CKlOzu6kkqtYmlGk=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -484,7 +497,7 @@
     },
     "//bazel/deps:extensions.bzl%qt5": {
       "general": {
-        "bzlTransitiveDigest": "IcJqhpuheU1HWEQhuvur/xWqRf4XfUMlm1pfylbRvXY=",
+        "bzlTransitiveDigest": "W0SYp7A2fHkKQWgq+eyBxrbGMldUbI5Z199Z/LXprdo=",
         "usagesDigest": "45rkbeC2xhJHZ2Qz/bwTe7CbM/ZEaExLiyM/K2SEU20=",
         "recordedInputs": [],
         "generatedRepoSpecs": {

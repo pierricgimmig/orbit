@@ -5,7 +5,6 @@
 module(
     name = "orbit",
     version = "0.0.0",
-    compatibility_level = 1,
 )
 
 # --- Rule sets -----------------------------------------------------------
@@ -86,6 +85,11 @@ use_repo(qt5, "qt5")
 # GL/gl.h and the unversioned libGL.so, likewise from pinned packages.
 opengl = use_extension("//bazel/deps:extensions.bzl", "opengl")
 use_repo(opengl, "opengl")
+
+# The DIA SDK, for reading PDBs on Windows. It ships with Visual Studio and is
+# not redistributable, so it is located rather than fetched.
+dia = use_extension("//bazel/deps:extensions.bzl", "dia")
+use_repo(dia, "dia_sdk")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 

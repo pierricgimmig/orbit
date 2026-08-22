@@ -1,0 +1,28 @@
+# Copyright (c) 2022 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # MIT
+
+# Consumed for its headers only, matching cmake/FindPresentMon.cmake, which
+# declares an INTERFACE library over this directory.
+cc_library(
+    name = "PresentMon",
+    hdrs = glob(
+        [
+            "PresentData/**/*.h",
+            "PresentData/**/*.hpp",
+            "PresentMon/**/*.h",
+            "PresentMon/**/*.hpp",
+        ],
+        allow_empty = True,
+    ),
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+exports_files(["LICENSE.txt"])

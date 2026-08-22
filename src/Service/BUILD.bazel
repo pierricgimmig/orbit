@@ -42,7 +42,13 @@ cc_library(
         "//src/ProcessService",
         "//src/ProducerSideService",
         "//src/TracepointService",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "//src/WindowsCaptureService",
+            "//src/WindowsProcessService",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 cc_binary(

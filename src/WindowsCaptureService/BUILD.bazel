@@ -1,0 +1,36 @@
+# Copyright (c) 2020 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "WindowsCaptureService",
+    srcs = [
+        "TracingHandler.cpp",
+        "WindowsCaptureService.cpp",
+    ],
+    hdrs = [
+        "TracingHandler.h",
+        "include/WindowsCaptureService/WindowsCaptureService.h",
+    ],
+    copts = ORBIT_COPTS + [
+        "-Isrc/WindowsCaptureService",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    includes = ["include"],
+    deps = [
+        "//src/ApiLoader",
+        "//src/ApiUtils",
+        "//src/CaptureServiceBase",
+        "//src/GrpcProtos",
+        "//src/Introspection",
+        "//src/OrbitBase",
+        "//src/OrbitVersion",
+        "//src/ProducerEventProcessor",
+        "//src/WindowsTracing",
+    ],
+)

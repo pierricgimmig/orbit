@@ -1,0 +1,34 @@
+# Copyright (c) 2021 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # BSD-2-Clause
+
+# MinHook, the Windows API hooking library. Mirrors the vendored
+# CMakeLists.txt: the three core sources plus the length-disassembler for the
+# target word size.
+cc_library(
+    name = "minhook",
+    srcs = [
+        "src/buffer.c",
+        "src/hook.c",
+        "src/trampoline.c",
+    ] + glob([
+        "src/*.h",
+        "src/hde/*.h",
+    ]) + select({
+        "@platforms//cpu:x86_64": ["src/hde/hde64.c"],
+        "@platforms//cpu:x86_32": ["src/hde/hde32.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = ["include/MinHook.h"],
+    copts = ["-w"],
+    includes = ["include"],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+exports_files(["LICENSE.txt"])

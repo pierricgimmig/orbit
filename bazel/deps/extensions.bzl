@@ -5,6 +5,7 @@
 """Module extensions for dependencies that are not Bazel modules."""
 
 load("//bazel/deps:deb.bzl", "deb_list", "deb_packages")
+load("//bazel/deps:dia_sdk.bzl", "dia_sdk")
 load("//bazel/deps:debs.bzl", "OPENGL_DEBS", "QT5_DEBS")
 
 # Ubuntu's multiarch directory, which every path inside the Qt packages is
@@ -35,4 +36,13 @@ def _opengl_impl(_module_ctx):
 opengl = module_extension(
     implementation = _opengl_impl,
     doc = "Materializes the OpenGL headers and link-time libraries.",
+)
+
+
+def _dia_sdk_impl(_module_ctx):
+    dia_sdk(name = "dia_sdk")
+
+dia = module_extension(
+    implementation = _dia_sdk_impl,
+    doc = "Locates the DIA SDK that ships with Visual Studio.",
 )

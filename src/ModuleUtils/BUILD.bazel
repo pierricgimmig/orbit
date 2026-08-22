@@ -9,11 +9,13 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "ModuleUtils",
-    srcs = [
-        "ReadLinuxMaps.cpp",
-        "ReadLinuxModules.cpp",
-        "VirtualAndAbsoluteAddresses.cpp",
-    ],
+    srcs = ["VirtualAndAbsoluteAddresses.cpp"] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "ReadLinuxMaps.cpp",
+            "ReadLinuxModules.cpp",
+        ],
+    }),
     hdrs = [
         "include/ModuleUtils/ReadLinuxMaps.h",
         "include/ModuleUtils/ReadLinuxModules.h",
@@ -34,11 +36,13 @@ cc_library(
 
 cc_test(
     name = "ModuleUtilsTests",
-    srcs = [
-        "ReadLinuxMapsTest.cpp",
-        "ReadLinuxModulesTest.cpp",
-        "VirtualAndAbsoluteAddressesTest.cpp",
-    ],
+    srcs = ["VirtualAndAbsoluteAddressesTest.cpp"] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "ReadLinuxMapsTest.cpp",
+            "ReadLinuxModulesTest.cpp",
+        ],
+    }),
     copts = ORBIT_COPTS,
     data = glob(["testdata/**"]),
     env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/ModuleUtils/testdata"},

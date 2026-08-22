@@ -47,6 +47,8 @@ _CLANG_WARNINGS = [
 ]
 
 _MSVC_WARNINGS = [
+    # add_definitions(-DWIN32) in the top-level CMakeLists.txt.
+    "/DWIN32",
     "/WX",
     "/utf-8",
     "/experimental:external",

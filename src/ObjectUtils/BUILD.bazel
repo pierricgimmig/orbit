@@ -17,18 +17,28 @@ cc_library(
         "PdbFileLlvm.cpp",
         "SymbolsFile.cpp",
         "WindowsBuildIdUtils.cpp",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "PdbFileDia.cpp",
+            "PdbUtilsDia.cpp",
+        ],
+        "//conditions:default": [],
+    }),
     hdrs = [
-        "PdbFileDia.h",
         "PdbFileLlvm.h",
         "include/ObjectUtils/CoffFile.h",
         "include/ObjectUtils/ElfFile.h",
         "include/ObjectUtils/ObjectFile.h",
         "include/ObjectUtils/PdbFile.h",
-        "include/ObjectUtils/PdbUtilsDia.h",
         "include/ObjectUtils/SymbolsFile.h",
         "include/ObjectUtils/WindowsBuildIdUtils.h",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "PdbFileDia.h",
+            "include/ObjectUtils/PdbUtilsDia.h",
+        ],
+        "//conditions:default": [],
+    }),
     copts = ORBIT_COPTS,
     includes = ["include"],
     deps = [
@@ -45,7 +55,12 @@ cc_library(
         "@abseil-cpp//absl/synchronization:synchronization",
         "@abseil-cpp//absl/time:time",
         "@abseil-cpp//absl/types:span",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "@dia_sdk//:dia_sdk",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 cc_test(
@@ -58,7 +73,12 @@ cc_test(
         "PdbFileTest.h",
         "SymbolsFileTest.cpp",
         "WindowsBuildIdUtilsTest.cpp",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "PdbFileDiaTest.cpp",
+        ],
+        "//conditions:default": [],
+    }),
     copts = ORBIT_COPTS,
     data = glob(["testdata/**"]),
     env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/ObjectUtils/testdata"},
