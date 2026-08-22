@@ -77,11 +77,11 @@ TEST(ThreadUtils, GetThreadName) {
   std::thread other_thread{[&mutex, &other_tid, &other_name_read] {
     orbit_base::SetCurrentThreadName(kThreadName);
     {
-      absl::MutexLock lock{&mutex};
+      absl::MutexLock lock{mutex};
       other_tid = orbit_base::GetCurrentThreadId();
     }
     {
-      absl::MutexLock lock{&mutex};
+      absl::MutexLock lock{mutex};
       // Wait for the main thread to read this thread's name before exiting.
       mutex.Await(absl::Condition(
           +[](bool* other_name_read) { return *other_name_read; }, &other_name_read));
@@ -89,7 +89,7 @@ TEST(ThreadUtils, GetThreadName) {
   }};
 
   {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     // Wait for other_thread to set its own name and communicate its pid.
     mutex.Await(absl::Condition(
         +[](uint32_t* other_tid) { return *other_tid != 0; }, &other_tid));
@@ -97,7 +97,7 @@ TEST(ThreadUtils, GetThreadName) {
   std::string other_name = orbit_base::GetThreadName(other_tid);
   EXPECT_EQ(other_name, kThreadName);
   {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     other_name_read = true;
   }
   other_thread.join();

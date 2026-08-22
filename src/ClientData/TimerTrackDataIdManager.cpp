@@ -42,7 +42,7 @@ uint32_t TimerTrackDataIdManager::GenerateTrackIdFromTimerInfo(const TimerInfo& 
 }
 
 uint32_t TimerTrackDataIdManager::GenerateFrameTrackId(uint64_t function_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto [it, inserted] = frame_track_ids_.try_emplace(function_id, next_track_id_);
   if (inserted) {
     next_track_id_++;
@@ -51,7 +51,7 @@ uint32_t TimerTrackDataIdManager::GenerateFrameTrackId(uint64_t function_id) {
 }
 
 uint32_t TimerTrackDataIdManager::GenerateGpuTrackId(uint64_t timeline_hash) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto [it, inserted] = gpu_track_ids_.try_emplace(timeline_hash, next_track_id_);
   if (inserted) {
     next_track_id_++;
@@ -60,7 +60,7 @@ uint32_t TimerTrackDataIdManager::GenerateGpuTrackId(uint64_t timeline_hash) {
 }
 
 uint32_t TimerTrackDataIdManager::GenerateAsyncTrackId(std::string_view name) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto [it, inserted] = async_track_ids_.try_emplace(name, next_track_id_);
   if (inserted) {
     next_track_id_++;
@@ -69,7 +69,7 @@ uint32_t TimerTrackDataIdManager::GenerateAsyncTrackId(std::string_view name) {
 }
 
 uint32_t TimerTrackDataIdManager::GenerateThreadTrackId(uint32_t thread_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto [it, inserted] = thread_track_ids_.try_emplace(thread_id, next_track_id_);
   if (inserted) {
     next_track_id_++;

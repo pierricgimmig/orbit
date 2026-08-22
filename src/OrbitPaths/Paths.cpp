@@ -83,6 +83,12 @@ static void CreateDirectoryOrDie(const std::filesystem::path& directory) {
   }
 }
 
+// The implementations behind the deprecated CreateOrGet*Unsafe functions. They exist so that those
+// functions can build on each other without triggering deprecation warnings.
+static std::filesystem::path CreateOrGetOrbitAppDataDirOrDie();
+static std::filesystem::path CreateOrGetOrbitUserDataDirOrDie();
+static std::filesystem::path CreateOrGetLogDirOrDie();
+
 static ErrorMessageOr<std::filesystem::path> CreateAndGetConfigPath() {
   OUTCOME_TRY(std::filesystem::path app_data_dir, CreateOrGetOrbitAppDataDir());
   std::filesystem::path config_dir = app_data_dir / kConfigFolderName;
@@ -96,7 +102,7 @@ ErrorMessageOr<std::filesystem::path> GetSymbolsFilePath() {
 }
 
 std::filesystem::path CreateOrGetCacheDirUnsafe() {
-  std::filesystem::path cache_dir = CreateOrGetOrbitAppDataDirUnsafe() / kCacheFolderName;
+  std::filesystem::path cache_dir = CreateOrGetOrbitAppDataDirOrDie() / kCacheFolderName;
   CreateDirectoryOrDie(cache_dir);
   return cache_dir;
 }
@@ -109,7 +115,7 @@ ErrorMessageOr<std::filesystem::path> CreateOrGetCacheDir() {
 }
 
 std::filesystem::path CreateOrGetPresetDirUnsafe() {
-  std::filesystem::path preset_dir = CreateOrGetOrbitUserDataDirUnsafe() / kPresetsFolderName;
+  std::filesystem::path preset_dir = CreateOrGetOrbitUserDataDirOrDie() / kPresetsFolderName;
   CreateDirectoryOrDie(preset_dir);
   return preset_dir;
 }
@@ -122,7 +128,7 @@ ErrorMessageOr<std::filesystem::path> CreateOrGetPresetDir() {
 }
 
 std::filesystem::path CreateOrGetCaptureDirUnsafe() {
-  std::filesystem::path capture_dir = CreateOrGetOrbitUserDataDirUnsafe() / kCapturesFolderName;
+  std::filesystem::path capture_dir = CreateOrGetOrbitUserDataDirOrDie() / kCapturesFolderName;
   CreateDirectoryOrDie(capture_dir);
   return capture_dir;
 }
@@ -135,7 +141,7 @@ ErrorMessageOr<std::filesystem::path> CreateOrGetCaptureDir() {
 }
 
 std::filesystem::path CreateOrGetDumpDirUnsafe() {
-  std::filesystem::path dumps_dir = CreateOrGetOrbitAppDataDirUnsafe() / kDumpsFolderName;
+  std::filesystem::path dumps_dir = CreateOrGetOrbitAppDataDirOrDie() / kDumpsFolderName;
   CreateDirectoryOrDie(dumps_dir);
   return dumps_dir;
 }
@@ -156,10 +162,14 @@ static std::filesystem::path GetOrbitAppDataDir() {
   return path;
 }
 
-std::filesystem::path CreateOrGetOrbitAppDataDirUnsafe() {
+static std::filesystem::path CreateOrGetOrbitAppDataDirOrDie() {
   std::filesystem::path path = GetOrbitAppDataDir();
   CreateDirectoryOrDie(path);
   return path;
+}
+
+std::filesystem::path CreateOrGetOrbitAppDataDirUnsafe() {
+  return CreateOrGetOrbitAppDataDirOrDie();
 }
 
 ErrorMessageOr<std::filesystem::path> CreateOrGetOrbitAppDataDir() {
@@ -197,10 +207,14 @@ static std::filesystem::path GetDocumentsPath() {
 #endif
 }
 
-std::filesystem::path CreateOrGetOrbitUserDataDirUnsafe() {
+static std::filesystem::path CreateOrGetOrbitUserDataDirOrDie() {
   std::filesystem::path path = GetDocumentsPath() / kOrbitFolderInDocumentsName;
   CreateDirectoryOrDie(path);
   return path;
+}
+
+std::filesystem::path CreateOrGetOrbitUserDataDirUnsafe() {
+  return CreateOrGetOrbitUserDataDirOrDie();
 }
 
 ErrorMessageOr<std::filesystem::path> CreateOrGetOrbitUserDataDir() {
@@ -217,12 +231,14 @@ static std::optional<std::filesystem::path> GetLogDirFromFlag() {
   return std::nullopt;
 }
 
-std::filesystem::path CreateOrGetLogDirUnsafe() {
+static std::filesystem::path CreateOrGetLogDirOrDie() {
   std::filesystem::path logs_dir =
-      GetLogDirFromFlag().value_or(CreateOrGetOrbitAppDataDirUnsafe() / kLogsFolderName);
+      GetLogDirFromFlag().value_or(CreateOrGetOrbitAppDataDirOrDie() / kLogsFolderName);
   CreateDirectoryOrDie(logs_dir);
   return logs_dir;
 }
+
+std::filesystem::path CreateOrGetLogDirUnsafe() { return CreateOrGetLogDirOrDie(); }
 
 ErrorMessageOr<std::filesystem::path> CreateOrGetLogDir() {
   OUTCOME_TRY(std::filesystem::path app_data_dir, CreateOrGetOrbitAppDataDir());
@@ -232,7 +248,7 @@ ErrorMessageOr<std::filesystem::path> CreateOrGetLogDir() {
 }
 
 std::filesystem::path GetLogFilePathUnsafe() {
-  return CreateOrGetLogDirUnsafe() / orbit_base::GetLogFileName();
+  return CreateOrGetLogDirOrDie() / orbit_base::GetLogFileName();
 }
 
 ErrorMessageOr<std::filesystem::path> GetLogFilePath() {

@@ -387,12 +387,12 @@ class SamplingReportDataViewTest : public testing::Test {
         .WillRepeatedly(ReturnRef(confidence_interval_estimator_));
 
     EXPECT_CALL(confidence_interval_estimator_, Estimate)
-        .WillRepeatedly(testing::Invoke([](float ratio, uint32_t /*trials*/) {
+        .WillRepeatedly([](float ratio, uint32_t /*trials*/) {
           orbit_statistics::BinomialConfidenceInterval confidence_interval{
               ratio - kConfidenceIntervalLeftSectionLength,
               ratio + kConfidenceIntervalRightSectionLength};
           return confidence_interval;
-        }));
+        });
 
     view_.Init();
     for (size_t i = 0; i < kNumFunctions; i++) {

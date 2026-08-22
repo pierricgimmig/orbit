@@ -89,7 +89,6 @@ using orbit_data_views::kMenuActionUnselect;
 using orbit_grpc_protos::InstrumentedFunction;
 using orbit_grpc_protos::ModuleInfo;
 
-using ::testing::Invoke;
 using ::testing::Return;
 using ::testing::ReturnRef;
 
@@ -901,9 +900,9 @@ TEST_F(LiveFunctionsDataViewTest, OnRefreshWithNoIndicesResetsHistogram) {
 }
 
 TEST_F(LiveFunctionsDataViewTest, HistogramIsProperlyUpdated) {
-  EXPECT_CALL(app_, ProvideScopeId).WillRepeatedly(Invoke([&](const TimerInfo& timer) {
+  EXPECT_CALL(app_, ProvideScopeId).WillRepeatedly([&](const TimerInfo& timer) {
     return timer.function_id();
-  }));
+  });
 
   AddFunctionsByIndices({0});
 

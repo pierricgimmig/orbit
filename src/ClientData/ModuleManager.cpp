@@ -24,7 +24,7 @@ namespace orbit_client_data {
 
 std::vector<ModuleData*> ModuleManager::AddOrUpdateModules(
     absl::Span<const orbit_grpc_protos::ModuleInfo> module_infos) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   std::vector<ModuleData*> unloaded_modules;
 
@@ -54,7 +54,7 @@ std::vector<ModuleData*> ModuleManager::AddOrUpdateModules(
 
 std::vector<ModuleData*> ModuleManager::AddOrUpdateNotLoadedModules(
     absl::Span<const orbit_grpc_protos::ModuleInfo> module_infos) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   std::vector<ModuleData*> not_updated_modules;
 
@@ -85,7 +85,7 @@ std::vector<ModuleData*> ModuleManager::AddOrUpdateNotLoadedModules(
 
 const ModuleData* ModuleManager::GetModuleByModuleInMemoryAndAbsoluteAddress(
     const ModuleInMemory& module_in_memory, uint64_t absolute_address) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto cache_it = absolute_address_to_module_data_cache_.find(absolute_address);
   if (cache_it != absolute_address_to_module_data_cache_.end()) {
     return cache_it->second;
@@ -111,7 +111,7 @@ const ModuleData* ModuleManager::GetModuleByModuleInMemoryAndAbsoluteAddress(
 
 ModuleData* ModuleManager::GetMutableModuleByModuleInMemoryAndAbsoluteAddress(
     const ModuleInMemory& module_in_memory, uint64_t absolute_address) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto cache_it = absolute_address_to_module_data_cache_.find(absolute_address);
   if (cache_it != absolute_address_to_module_data_cache_.end()) {
     return cache_it->second;
@@ -136,7 +136,7 @@ ModuleData* ModuleManager::GetMutableModuleByModuleInMemoryAndAbsoluteAddress(
 }
 
 const ModuleData* ModuleManager::GetModuleByModuleIdentifier(ModuleIdentifier module_id) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return GetModuleByModuleIdentifierInternal(module_id);
 }
 
@@ -149,7 +149,7 @@ const ModuleData* ModuleManager::GetModuleByModuleIdentifierInternal(
 }
 
 ModuleData* ModuleManager::GetMutableModuleByModuleIdentifier(ModuleIdentifier module_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return GetMutableModuleByModuleIdentifierInternal(module_id);
 }
 
@@ -162,7 +162,7 @@ ModuleData* ModuleManager::GetMutableModuleByModuleIdentifierInternal(ModuleIden
 
 const ModuleData* ModuleManager::GetModuleByModulePathAndBuildId(
     const ModulePathAndBuildId& module_path_and_build_id) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::optional<orbit_client_data::ModuleIdentifier> module_id =
       module_identifier_provider_->GetModuleIdentifier(module_path_and_build_id);
   if (!module_id.has_value()) return nullptr;
@@ -171,7 +171,7 @@ const ModuleData* ModuleManager::GetModuleByModulePathAndBuildId(
 
 ModuleData* ModuleManager::GetMutableModuleByModulePathAndBuildId(
     const ModulePathAndBuildId& module_path_and_build_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::optional<orbit_client_data::ModuleIdentifier> module_id =
       module_identifier_provider_->GetModuleIdentifier(module_path_and_build_id);
   if (!module_id.has_value()) return nullptr;
@@ -179,7 +179,7 @@ ModuleData* ModuleManager::GetMutableModuleByModulePathAndBuildId(
 }
 
 std::vector<const ModuleData*> ModuleManager::GetAllModuleData() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<const ModuleData*> result;
   for (const auto& [unused_module_id, module_data] : module_map_) {
     result.push_back(module_data.get());
@@ -189,7 +189,7 @@ std::vector<const ModuleData*> ModuleManager::GetAllModuleData() const {
 
 std::vector<const ModuleData*> ModuleManager::GetModulesByFilename(
     std::string_view filename) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<const ModuleData*> result;
   for (const auto& [module_id, module_data] : module_map_) {
     if (std::filesystem::path(module_data->file_path()).filename().string() == filename) {

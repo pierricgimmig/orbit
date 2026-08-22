@@ -132,7 +132,7 @@ class OrbitServiceIntegrationTestFixture {
     ORBIT_CHECK(capture_thread_.joinable());
 
     {
-      absl::ReaderMutexLock lock{&capture_reader_writer_mutex_};
+      absl::ReaderMutexLock lock{capture_reader_writer_mutex_};
       ORBIT_LOG("Stopping capture");
       bool writes_done_succeeded = capture_reader_writer_->WritesDone();
       ORBIT_CHECK(writes_done_succeeded);
@@ -142,7 +142,7 @@ class OrbitServiceIntegrationTestFixture {
 
     std::vector<ClientCaptureEvent> events;
     {
-      absl::MutexLock lock{&capture_events_mutex_};
+      absl::MutexLock lock{capture_events_mutex_};
       events = std::move(capture_events_);
       capture_events_.clear();
     }
@@ -158,13 +158,13 @@ class OrbitServiceIntegrationTestFixture {
         orbit_grpc_protos::CaptureService::NewStub(channel);
 
     {
-      absl::WriterMutexLock lock{&capture_reader_writer_mutex_};
+      absl::WriterMutexLock lock{capture_reader_writer_mutex_};
       ORBIT_CHECK(capture_reader_writer_ == nullptr);
       ORBIT_LOG("Starting capture");
       capture_reader_writer_ = capture_service->Capture(&context);
     }
     {
-      absl::ReaderMutexLock lock{&capture_reader_writer_mutex_};
+      absl::ReaderMutexLock lock{capture_reader_writer_mutex_};
       orbit_grpc_protos::CaptureRequest capture_request;
       *capture_request.mutable_capture_options() = std::move(capture_options);
       bool write_capture_request_result = capture_reader_writer_->Write(capture_request);
@@ -176,7 +176,7 @@ class OrbitServiceIntegrationTestFixture {
       orbit_grpc_protos::CaptureResponse capture_response;
       bool read_capture_response_result{};
       {
-        absl::ReaderMutexLock lock{&capture_reader_writer_mutex_};
+        absl::ReaderMutexLock lock{capture_reader_writer_mutex_};
         read_capture_response_result = capture_reader_writer_->Read(&capture_response);
       }
 
@@ -185,21 +185,21 @@ class OrbitServiceIntegrationTestFixture {
         break;
       }
       for (ClientCaptureEvent& event : *capture_response.mutable_capture_events()) {
-        absl::MutexLock lock{&capture_events_mutex_};
+        absl::MutexLock lock{capture_events_mutex_};
         capture_events_.emplace_back(std::move(event));
       }
     }
 
     ORBIT_LOG("Capture finished");
     {
-      absl::WriterMutexLock lock{&capture_reader_writer_mutex_};
+      absl::WriterMutexLock lock{capture_reader_writer_mutex_};
       ORBIT_CHECK(capture_reader_writer_ != nullptr);
       capture_reader_writer_ = nullptr;
     }
   }
 
   void WaitForFirstEvent() {
-    absl::MutexLock lock{&capture_events_mutex_};
+    absl::MutexLock lock{capture_events_mutex_};
     capture_events_mutex_.Await(absl::Condition(
         +[](std::vector<ClientCaptureEvent>* capture_events) { return !capture_events->empty(); },
         &capture_events_));

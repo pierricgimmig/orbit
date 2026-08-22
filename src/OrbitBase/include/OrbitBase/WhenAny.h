@@ -24,14 +24,14 @@ class SharedStateWhenAny {
   template <size_t index>
   void SetResult(const typename std::variant_alternative_t<index, std::variant<Ts...>>& argument)
       ABSL_LOCKS_EXCLUDED(mutex) {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     if (promise.HasResult()) return;
 
     promise.SetResult(std::variant<Ts...>{std::in_place_index_t<index>{}, argument});
   }
 
   [[nodiscard]] orbit_base::Future<std::variant<Ts...>> GetFuture() const {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     return promise.GetFuture();
   }
 

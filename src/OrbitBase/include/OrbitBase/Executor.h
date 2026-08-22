@@ -37,7 +37,7 @@ class Executor : public std::enable_shared_from_this<Executor> {
       explicit HandleData(Executor* executor) : executor_{executor} {}
 
       void InvalidateHandle() {
-        absl::WriterMutexLock lock{&mutex_};
+        absl::WriterMutexLock lock{mutex_};
         executor_ = nullptr;
       }
     };
@@ -119,7 +119,7 @@ class Executor : public std::enable_shared_from_this<Executor> {
 
     auto continuation = [this, function_reference, executor_handle = GetExecutorHandle(),
                          promise = std::move(promise)](auto&&... argument) mutable {
-      absl::ReaderMutexLock lock{&executor_handle.data_->mutex_};
+      absl::ReaderMutexLock lock{executor_handle.data_->mutex_};
       if (executor_handle.data_->executor_ == nullptr) return;
 
       auto function_wrapper =
@@ -184,7 +184,7 @@ class Executor : public std::enable_shared_from_this<Executor> {
         // in the non-locked context.
         promise.SetResult(outcome::failure(argument.error()));
 
-        absl::ReaderMutexLock lock{&executor_handle.data_->mutex_};
+        absl::ReaderMutexLock lock{executor_handle.data_->mutex_};
         if (executor_handle.data_->executor_ == nullptr) return;
 
         executor_handle.data_->executor_->ScheduleImpl(CreateAction(
@@ -203,7 +203,7 @@ class Executor : public std::enable_shared_from_this<Executor> {
         waiting_continuations_.erase(function_reference);
       };
 
-      absl::ReaderMutexLock lock{&executor_handle.data_->mutex_};
+      absl::ReaderMutexLock lock{executor_handle.data_->mutex_};
       if (executor_handle.data_->executor_ == nullptr) return;
 
       executor_handle.data_->executor_->ScheduleImpl(
@@ -236,7 +236,7 @@ class Executor : public std::enable_shared_from_this<Executor> {
 
 template <typename F>
 auto TrySchedule(const Executor::Handle& handle, F&& function_object) {
-  absl::ReaderMutexLock lock{&handle.data_->mutex_};
+  absl::ReaderMutexLock lock{handle.data_->mutex_};
   if (handle.data_->executor_ == nullptr) {
     return std::optional<decltype(std::declval<Executor>().Schedule(function_object))>{};
   }

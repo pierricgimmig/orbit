@@ -27,11 +27,11 @@ void ProducerSideServiceImpl::OnCaptureStartRequested(
   ORBIT_CHECK(producer_event_processor != nullptr);
   ORBIT_LOG("About to send StartCaptureCommand to CaptureEventProducers (if any)");
   {
-    absl::WriterMutexLock lock{&producer_event_processor_mutex_};
+    absl::WriterMutexLock lock{producer_event_processor_mutex_};
     producer_event_processor_ = producer_event_processor;
   }
   {
-    absl::MutexLock lock{&service_state_mutex_};
+    absl::MutexLock lock{service_state_mutex_};
     service_state_.capture_status = CaptureStatus::kCaptureStarted;
     service_state_.capture_options = std::move(capture_options);
   }
@@ -40,7 +40,7 @@ void ProducerSideServiceImpl::OnCaptureStartRequested(
 void ProducerSideServiceImpl::OnCaptureStopRequested() {
   ORBIT_LOG("About to send StopCaptureCommand to CaptureEventProducers (if any)");
   {
-    absl::MutexLock lock{&service_state_mutex_};
+    absl::MutexLock lock{service_state_mutex_};
     service_state_.capture_status = CaptureStatus::kCaptureStopping;
 
     // Wait (for a limited amount of time) for all producers to send AllEventsSent or to disconnect.
@@ -66,21 +66,21 @@ void ProducerSideServiceImpl::OnCaptureStopRequested() {
   }
 
   {
-    absl::WriterMutexLock lock{&producer_event_processor_mutex_};
+    absl::WriterMutexLock lock{producer_event_processor_mutex_};
     producer_event_processor_ = nullptr;
   }
 }
 
 void ProducerSideServiceImpl::OnExitRequest() {
   {
-    absl::MutexLock lock{&service_state_mutex_};
+    absl::MutexLock lock{service_state_mutex_};
     service_state_.exit_requested = true;
     service_state_.capture_options = std::nullopt;
   }
 
   ORBIT_LOG("Attempting to disconnect from CaptureEventProducers as exit was requested");
   {
-    absl::MutexLock lock{&server_contexts_mutex_};
+    absl::MutexLock lock{server_contexts_mutex_};
     for (grpc::ServerContext* context : server_contexts_) {
       // This should cause blocking Reads on ServerReaderWriter to fail immediately.
       context->TryCancel();
@@ -88,7 +88,7 @@ void ProducerSideServiceImpl::OnExitRequest() {
   }
 
   {
-    absl::WriterMutexLock lock{&producer_event_processor_mutex_};
+    absl::WriterMutexLock lock{producer_event_processor_mutex_};
     producer_event_processor_ = nullptr;
   }
 }
@@ -100,7 +100,7 @@ grpc::Status ProducerSideServiceImpl::ReceiveCommandsAndSendEvents(
   ORBIT_LOG("A CaptureEventProducer has connected calling ReceiveCommandsAndSendEvents");
 
   {
-    absl::MutexLock lock{&server_contexts_mutex_};
+    absl::MutexLock lock{server_contexts_mutex_};
     server_contexts_.emplace(context);
   }
 
@@ -136,7 +136,7 @@ grpc::Status ProducerSideServiceImpl::ReceiveCommandsAndSendEvents(
   send_commands_thread.join();
 
   {
-    absl::MutexLock lock{&server_contexts_mutex_};
+    absl::MutexLock lock{server_contexts_mutex_};
     server_contexts_.erase(context);
   }
 
@@ -222,7 +222,7 @@ void ProducerSideServiceImpl::SendCommandsThread(
     CaptureStatus curr_capture_status;
     std::optional<orbit_grpc_protos::CaptureOptions> curr_capture_options;
     {
-      absl::MutexLock lock{&service_state_mutex_};
+      absl::MutexLock lock{service_state_mutex_};
       if (service_state_.exit_requested) {
         return;
       }
@@ -293,7 +293,7 @@ void ProducerSideServiceImpl::SendCommandsThread(
       }
       curr_capture_status = service_state_.capture_status;
       curr_capture_options = service_state_.capture_options;
-    }  // absl::MutexLock lock{&service_state_mutex_}
+    }  // absl::MutexLock lock{service_state_mutex_}
 
     // curr_capture_status now holds the new service_state_.capture_status. Send commands
     // to the producer based on its value and also based on the value of prev_capture_status,
@@ -381,7 +381,7 @@ void ProducerSideServiceImpl::ReceiveEventsThread(
     if (!stream->Read(request)) break;
 
     {
-      absl::MutexLock lock{&service_state_mutex_};
+      absl::MutexLock lock{service_state_mutex_};
       if (service_state_.exit_requested) {
         break;
       }
@@ -392,7 +392,7 @@ void ProducerSideServiceImpl::ReceiveEventsThread(
         // We use ReaderMutexLock because the mutex guards the value of producer_event_processor_,
         // it does not guard calls to ProcessEvent nor the internal state of the object implementing
         // the interface. The interface implementation is by itself thread-safe.
-        absl::ReaderMutexLock lock{&producer_event_processor_mutex_};
+        absl::ReaderMutexLock lock{producer_event_processor_mutex_};
         // producer_event_processor_ can be nullptr if a producer sends events while not capturing.
         // Don't log an error in such a case as it could easily spam the logs.
         if (producer_event_processor_ != nullptr) {
@@ -405,7 +405,7 @@ void ProducerSideServiceImpl::ReceiveEventsThread(
 
       case orbit_grpc_protos::ReceiveCommandsAndSendEventsRequest::kAllEventsSent: {
         ORBIT_LOG("Received AllEventsSent from CaptureEventProducer");
-        absl::MutexLock lock{&service_state_mutex_};
+        absl::MutexLock lock{service_state_mutex_};
         switch (service_state_.capture_status) {
           case CaptureStatus::kCaptureStarted: {
             ORBIT_ERROR("CaptureEventProducer sent AllEventsSent while still capturing");
@@ -439,7 +439,7 @@ void ProducerSideServiceImpl::ReceiveEventsThread(
 
   ORBIT_ERROR("Receiving ReceiveCommandsAndSendEventsRequest from CaptureEventProducer");
   {
-    absl::MutexLock lock{&service_state_mutex_};
+    absl::MutexLock lock{service_state_mutex_};
     // Producer has disconnected: treat this as if it had sent all its CaptureEvents.
     if (!*all_events_sent_received &&
         (service_state_.capture_status == CaptureStatus::kCaptureStarted ||

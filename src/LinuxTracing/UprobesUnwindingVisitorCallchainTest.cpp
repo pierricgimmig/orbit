@@ -35,7 +35,6 @@ using ::testing::_;
 using ::testing::AllOf;
 using ::testing::ElementsAre;
 using ::testing::Ge;
-using ::testing::Invoke;
 using ::testing::Lt;
 using ::testing::Return;
 using ::testing::SaveArg;
@@ -405,9 +404,7 @@ TEST_F(UprobesUnwindingVisitorCallchainTest, VisitPatchableCallchainSampleSendsC
     callchain[2] = kTargetAddress2 + 1;
     return true;
   };
-  EXPECT_CALL(return_address_manager_, PatchCallchain)
-      .Times(1)
-      .WillOnce(Invoke(fake_patch_callchain));
+  EXPECT_CALL(return_address_manager_, PatchCallchain).Times(1).WillOnce(fake_patch_callchain);
 
   EXPECT_CALL(leaf_function_call_manager_, PatchCallerOfLeafFunction)
       .Times(1)
@@ -503,7 +500,7 @@ TEST_F(UprobesUnwindingVisitorCallchainTest,
   };
   EXPECT_CALL(leaf_function_call_manager_, PatchCallerOfLeafFunction)
       .Times(1)
-      .WillOnce(Invoke(fake_patch_caller_of_leaf_function));
+      .WillOnce(fake_patch_caller_of_leaf_function);
 
   orbit_grpc_protos::FullCallstackSample actual_callstack_sample;
   EXPECT_CALL(listener_, OnCallstackSample).Times(1).WillOnce(SaveArg<0>(&actual_callstack_sample));

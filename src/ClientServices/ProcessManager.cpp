@@ -71,7 +71,7 @@ ProcessManagerImpl::ProcessManagerImpl(const std::shared_ptr<grpc::Channel>& cha
 
 void ProcessManagerImpl::SetProcessListUpdateListener(
     const std::function<void(std::vector<orbit_grpc_protos::ProcessInfo>)>& listener) {
-  absl::MutexLock lock(&process_list_update_listener_mutex_);
+  absl::MutexLock lock(process_list_update_listener_mutex_);
   process_list_update_listener_ = listener;
 }
 
@@ -90,9 +90,9 @@ void ProcessManagerImpl::Start() {
 }
 
 void ProcessManagerImpl::ShutdownAndWait() {
-  shutdown_mutex_.Lock();
+  shutdown_mutex_.lock();
   shutdown_initiated_ = true;
-  shutdown_mutex_.Unlock();
+  shutdown_mutex_.unlock();
   if (worker_thread_.joinable()) {
     worker_thread_.join();
   }
@@ -105,10 +105,10 @@ void ProcessManagerImpl::WorkerFunction() {
     if (shutdown_mutex_.LockWhenWithTimeout(absl::Condition(IsTrue, &shutdown_initiated_),
                                             refresh_timeout_)) {
       // Shutdown was initiated we need to exit
-      shutdown_mutex_.Unlock();
+      shutdown_mutex_.unlock();
       return;
     }
-    shutdown_mutex_.Unlock();
+    shutdown_mutex_.unlock();
     // Timeout expired - refresh the list
 
     ErrorMessageOr<std::vector<ProcessInfo>> result = process_client_->GetProcessList();
@@ -120,7 +120,7 @@ void ProcessManagerImpl::WorkerFunction() {
     std::function<void(std::vector<orbit_grpc_protos::ProcessInfo>)>
         process_list_update_listener_copy;
     {
-      absl::MutexLock callback_lock(&process_list_update_listener_mutex_);
+      absl::MutexLock callback_lock(process_list_update_listener_mutex_);
       process_list_update_listener_copy = process_list_update_listener_;
     }
     if (process_list_update_listener_copy) {

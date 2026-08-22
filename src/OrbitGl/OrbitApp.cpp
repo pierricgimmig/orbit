@@ -348,7 +348,7 @@ void OrbitApp::OnCaptureStarted(const orbit_grpc_protos::CaptureStarted& capture
   // We need to block until initialization is complete to
   // avoid races when capture thread start processing data.
   absl::Mutex mutex;
-  absl::MutexLock mutex_lock(&mutex);
+  absl::MutexLock mutex_lock(mutex);
   bool initialization_complete = false;
 
   main_thread_executor_->Schedule([this, &initialization_complete, &mutex, &capture_started,
@@ -412,7 +412,7 @@ void OrbitApp::OnCaptureStarted(const orbit_grpc_protos::CaptureStarted& capture
       main_window_->AppendToCaptureLog(MainWindowInterface::CaptureLogSeverity::kWarning,
                                        absl::ZeroDuration(), warning_message);
     }
-    absl::MutexLock lock(&mutex);
+    absl::MutexLock lock(mutex);
     initialization_complete = true;
   });
 
@@ -823,8 +823,13 @@ static std::vector<std::filesystem::path> ListRegularFilesWithExtension(
 }
 
 void OrbitApp::ListPresets() {
+  ErrorMessageOr<std::filesystem::path> preset_dir_or_error = orbit_paths::CreateOrGetPresetDir();
+  if (preset_dir_or_error.has_error()) {
+    ORBIT_ERROR("Unable to create the preset directory: %s", preset_dir_or_error.error().message());
+    return;
+  }
   std::vector<std::filesystem::path> preset_filenames =
-      ListRegularFilesWithExtension(orbit_paths::CreateOrGetPresetDirUnsafe(), ".opr");
+      ListRegularFilesWithExtension(preset_dir_or_error.value(), ".opr");
   std::vector<PresetFile> presets;
   for (const std::filesystem::path& filename : preset_filenames) {
     ErrorMessageOr<PresetFile> preset_result = ReadPresetFromFile(filename);
@@ -847,6 +852,30 @@ void OrbitApp::RefreshCaptureView() {
   DoZoom = true;  // TODO: remove global, review logic
 }
 
+// FunctionInfo::GetAbsoluteAddress is deprecated because it cannot give a correct answer for a
+// module that is mapped more than once. The two callers below need an address in the running
+// process because they read its memory; TODO(b/191248550) tracks getting rid of that. Until then
+// this wrapper keeps the deprecation warning confined to a single place.
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif  // __GNUC__
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif  // _MSC_VER
+[[nodiscard]] static std::optional<uint64_t> GetAbsoluteAddressInProcess(
+    const FunctionInfo& function, const ProcessData& process, const ModuleData& module,
+    orbit_client_data::ModuleIdentifier module_identifier) {
+  return function.GetAbsoluteAddress(process, module, module_identifier);
+}
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif  // __GNUC__
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif  // _MSC_VER
+
 void OrbitApp::Disassemble(uint32_t pid, const FunctionInfo& function) {
   ORBIT_CHECK(process_ != nullptr);
   orbit_client_data::ModulePathAndBuildId module_path_and_build_id{
@@ -858,7 +887,7 @@ void OrbitApp::Disassemble(uint32_t pid, const FunctionInfo& function) {
 
   const bool is_64_bit = process_->is_64_bit();
   std::optional<uint64_t> absolute_address =
-      function.GetAbsoluteAddress(*process_, *module, module_identifier.value());
+      GetAbsoluteAddressInProcess(function, *process_, *module, module_identifier.value());
   if (!absolute_address.has_value()) {
     SendErrorToUi(
         "Error reading memory",
@@ -949,7 +978,7 @@ void OrbitApp::ShowSourceCode(const orbit_client_data::FunctionInfo& function) {
       ORBIT_CHECK(module_identifier.has_value());
 
       const auto absolute_address =
-          function.GetAbsoluteAddress(*process_, *module, module_identifier.value());
+          GetAbsoluteAddressInProcess(function, *process_, *module, module_identifier.value());
 
       if (!absolute_address.has_value()) {
         SendErrorToUi(
@@ -1108,10 +1137,12 @@ ErrorMessageOr<void> OrbitApp::SavePreset(std::string_view file_name) {
 }
 
 ErrorMessageOr<PresetFile> OrbitApp::ReadPresetFromFile(const std::filesystem::path& filename) {
-  std::filesystem::path file_path =
-      filename.is_absolute() ? filename : orbit_paths::CreateOrGetPresetDirUnsafe() / filename;
+  if (filename.is_absolute()) {
+    return orbit_preset_file::ReadPresetFromFile(filename);
+  }
 
-  return orbit_preset_file::ReadPresetFromFile(file_path);
+  OUTCOME_TRY(std::filesystem::path preset_dir, orbit_paths::CreateOrGetPresetDir());
+  return orbit_preset_file::ReadPresetFromFile(preset_dir / filename);
 }
 
 ErrorMessageOr<void> OrbitApp::OnLoadPreset(std::string_view filename) {
@@ -1217,9 +1248,18 @@ static std::unique_ptr<CaptureEventProcessor> CreateCaptureEventProcessor(
     CaptureListener* listener, std::string_view process_name,
     absl::flat_hash_set<uint64_t> frame_track_function_ids,
     const std::function<void(const ErrorMessage&)>& error_handler) {
-  std::filesystem::path file_path = orbit_paths::CreateOrGetCaptureDirUnsafe() /
-                                    orbit_client_model::capture_serializer::GenerateCaptureFileName(
-                                        process_name, absl::Now(), "_autosave");
+  ErrorMessageOr<std::filesystem::path> capture_dir_or_error = orbit_paths::CreateOrGetCaptureDir();
+  if (capture_dir_or_error.has_error()) {
+    error_handler(ErrorMessage{absl::StrFormat("Unable to set up automatic capture saving: %s",
+                                               capture_dir_or_error.error().message())});
+    return CaptureEventProcessor::CreateForCaptureListener(listener, std::nullopt,
+                                                           std::move(frame_track_function_ids));
+  }
+  const std::filesystem::path& capture_dir = capture_dir_or_error.value();
+
+  std::filesystem::path file_path =
+      capture_dir / orbit_client_model::capture_serializer::GenerateCaptureFileName(
+                        process_name, absl::Now(), "_autosave");
 
   uint64_t suffix_number = 0;
   while (true) {
@@ -1235,9 +1275,8 @@ static std::unique_ptr<CaptureEventProcessor> CreateCaptureEventProcessor(
     }
 
     std::string suffix = absl::StrFormat("_autosave(%d)", ++suffix_number);
-    file_path = orbit_paths::CreateOrGetCaptureDirUnsafe() /
-                orbit_client_model::capture_serializer::GenerateCaptureFileName(
-                    process_name, absl::Now(), suffix);
+    file_path = capture_dir / orbit_client_model::capture_serializer::GenerateCaptureFileName(
+                                  process_name, absl::Now(), suffix);
   }
 
   auto save_to_file_processor_or_error =

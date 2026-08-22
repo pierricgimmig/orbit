@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -27,6 +28,7 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/NotFoundOr.h"
 #include "OrbitBase/StopToken.h"
+#include "OrbitPaths/Paths.h"
 #include "SymbolProvider/SymbolLoadingOutcome.h"
 #include "Symbols/SymbolUtils.h"
 
@@ -44,6 +46,17 @@ using orbit_symbol_provider::SymbolLoadingOutcome;
 
 namespace orbit_gl {
 
+// The cache directory has to exist for symbol loading to work at all, so a failure to create it is
+// fatal -- which is also what the deprecated CreateOrGetCacheDirUnsafe() used to do here.
+[[nodiscard]] static std::filesystem::path GetSymbolCacheDir() {
+  ErrorMessageOr<std::filesystem::path> cache_dir_or_error = orbit_paths::CreateOrGetCacheDir();
+  if (cache_dir_or_error.has_error()) {
+    ORBIT_FATAL("Unable to create the symbol cache directory: %s",
+                cache_dir_or_error.error().message());
+  }
+  return std::move(cache_dir_or_error.value());
+}
+
 SymbolLoader::SymbolLoader(
     AppInterface* app_interface, std::thread::id main_thread_id,
     orbit_base::ThreadPool* thread_pool, orbit_base::Executor* main_thread_executor,
@@ -54,7 +67,8 @@ SymbolLoader::SymbolLoader(
       thread_pool_{thread_pool},
       main_thread_executor_{main_thread_executor},
       process_manager_{process_manager},
-      module_identifier_provider{module_identifier_provider} {
+      module_identifier_provider{module_identifier_provider},
+      symbol_helper_{GetSymbolCacheDir()} {
   ORBIT_CHECK(app_interface_ != nullptr);
   ORBIT_CHECK(thread_pool_ != nullptr);
   ORBIT_CHECK(main_thread_executor_ != nullptr);

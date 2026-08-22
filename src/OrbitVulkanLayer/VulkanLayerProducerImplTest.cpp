@@ -275,7 +275,7 @@ TEST_F(VulkanLayerProducerImplTest, InternStringIfNecessaryAndGetKey) {
       .Times(::testing::Between(1, 2))
       .WillRepeatedly([&events_received, &events_received_mutex](
                           absl::Span<const orbit_grpc_protos::ProducerCaptureEvent> events) {
-        absl::MutexLock lock{&events_received_mutex};
+        absl::MutexLock lock{events_received_mutex};
         events_received.insert(events_received.end(), events.begin(), events.end());
       });
   EXPECT_CALL(*fake_service_, OnAllEventsSentReceived).Times(0);
@@ -293,7 +293,7 @@ TEST_F(VulkanLayerProducerImplTest, InternStringIfNecessaryAndGetKey) {
   EXPECT_EQ(actual_key, kExpectedInternedString2Key);
   std::this_thread::sleep_for(kWaitMessagesSentDuration);
   {
-    absl::MutexLock lock{&events_received_mutex};
+    absl::MutexLock lock{events_received_mutex};
     ExpectInternedStrings(events_received, {{kInternedString1, kExpectedInternedString1Key},
                                             {kInternedString2, kExpectedInternedString2Key}});
   }
@@ -343,7 +343,7 @@ TEST_F(VulkanLayerProducerImplTest, DontSendInternTwice) {
       .Times(1)
       .WillRepeatedly([&events_received, &events_received_mutex](
                           absl::Span<const orbit_grpc_protos::ProducerCaptureEvent> events) {
-        absl::MutexLock lock{&events_received_mutex};
+        absl::MutexLock lock{events_received_mutex};
         events_received.insert(events_received.end(), events.begin(), events.end());
       });
   EXPECT_CALL(*fake_service_, OnAllEventsSentReceived).Times(0);
@@ -354,7 +354,7 @@ TEST_F(VulkanLayerProducerImplTest, DontSendInternTwice) {
   EXPECT_EQ(actual_key, kExpectedInternedString1Key);
   std::this_thread::sleep_for(kWaitMessagesSentDuration);
   {
-    absl::MutexLock lock{&events_received_mutex};
+    absl::MutexLock lock{events_received_mutex};
     ExpectInternedStrings(events_received, {{kInternedString1, kExpectedInternedString1Key}});
   }
 
@@ -391,7 +391,7 @@ TEST_F(VulkanLayerProducerImplTest, ReInternInNewCapture) {
       .Times(::testing::Between(1, 2))
       .WillRepeatedly([&events_received, &events_received_mutex](
                           absl::Span<const orbit_grpc_protos::ProducerCaptureEvent> events) {
-        absl::MutexLock lock{&events_received_mutex};
+        absl::MutexLock lock{events_received_mutex};
         events_received.insert(events_received.end(), events.begin(), events.end());
       });
   EXPECT_CALL(*fake_service_, OnAllEventsSentReceived).Times(0);
@@ -401,7 +401,7 @@ TEST_F(VulkanLayerProducerImplTest, ReInternInNewCapture) {
   EXPECT_EQ(actual_key, kExpectedInternedString2Key);
   std::this_thread::sleep_for(kWaitMessagesSentDuration);
   {
-    absl::MutexLock lock{&events_received_mutex};
+    absl::MutexLock lock{events_received_mutex};
     ExpectInternedStrings(events_received, {{kInternedString1, kExpectedInternedString1Key},
                                             {kInternedString2, kExpectedInternedString2Key}});
   }
@@ -437,14 +437,14 @@ TEST_F(VulkanLayerProducerImplTest, ReInternInNewCapture) {
   ::testing::Mock::VerifyAndClearExpectations(&*fake_service_);
 
   {
-    absl::MutexLock lock{&events_received_mutex};
+    absl::MutexLock lock{events_received_mutex};
     events_received.clear();
   }
   EXPECT_CALL(*fake_service_, OnCaptureEventsReceived)
       .Times(::testing::Between(1, 2))
       .WillRepeatedly([&events_received, &events_received_mutex](
                           absl::Span<const orbit_grpc_protos::ProducerCaptureEvent> events) {
-        absl::MutexLock lock{&events_received_mutex};
+        absl::MutexLock lock{events_received_mutex};
         events_received.insert(events_received.end(), events.begin(), events.end());
       });
   EXPECT_CALL(*fake_service_, OnAllEventsSentReceived).Times(0);
@@ -454,7 +454,7 @@ TEST_F(VulkanLayerProducerImplTest, ReInternInNewCapture) {
   EXPECT_EQ(actual_key, kExpectedInternedString2Key);
   std::this_thread::sleep_for(kWaitMessagesSentDuration);
   {
-    absl::MutexLock lock{&events_received_mutex};
+    absl::MutexLock lock{events_received_mutex};
     ExpectInternedStrings(events_received, {{kInternedString1, kExpectedInternedString1Key},
                                             {kInternedString2, kExpectedInternedString2Key}});
   }
@@ -532,7 +532,7 @@ TEST_F(VulkanLayerProducerImplTest, InternOnlyWhenCapturing) {
       .Times(::testing::Between(1, 2))
       .WillRepeatedly([&events_received, &events_received_mutex](
                           absl::Span<const orbit_grpc_protos::ProducerCaptureEvent> events) {
-        absl::MutexLock lock{&events_received_mutex};
+        absl::MutexLock lock{events_received_mutex};
         events_received.insert(events_received.end(), events.begin(), events.end());
       });
   EXPECT_CALL(*fake_service_, OnAllEventsSentReceived).Times(0);
@@ -542,7 +542,7 @@ TEST_F(VulkanLayerProducerImplTest, InternOnlyWhenCapturing) {
   EXPECT_EQ(actual_key, kExpectedInternedString2Key);
   std::this_thread::sleep_for(kWaitMessagesSentDuration);
   {
-    absl::MutexLock lock{&events_received_mutex};
+    absl::MutexLock lock{events_received_mutex};
     ExpectInternedStrings(events_received, {{kInternedString1, kExpectedInternedString1Key},
                                             {kInternedString2, kExpectedInternedString2Key}});
   }

@@ -47,13 +47,13 @@ class SharedStateWhenAll {
 
  public:
   void SetNumberOfFutures(size_t size) {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     incomplete_futures = size;
     results.resize(size);
   }
 
   void SetResult(size_t index, const T& argument) {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     if (!results[index].has_value()) {
       results[index] = argument;
       --incomplete_futures;
@@ -98,7 +98,7 @@ class SharedStateWhenAllTuple {
   template <size_t index>
   void SetResult(const typename std::tuple_element<index, std::tuple<Ts...>>::type& argument)
       ABSL_LOCKS_EXCLUDED(mutex) {
-    absl::MutexLock lock{&mutex};
+    absl::MutexLock lock{mutex};
     if (!std::get<index>(results).has_value()) {
       std::get<index>(results) = argument;
       --incomplete_futures;

@@ -37,7 +37,7 @@ void MemoryInfoProducer::Stop() {
 }
 
 void MemoryInfoProducer::SetExitRequested(bool exit_requested) {
-  absl::MutexLock lock(&exit_requested_mutex_);
+  absl::MutexLock lock(exit_requested_mutex_);
   exit_requested_ = exit_requested;
 }
 
@@ -48,7 +48,7 @@ void MemoryInfoProducer::Run() {
   ORBIT_CHECK(pid_ != kMissingInfo);
 
   absl::Time scheduled_time = absl::Now();
-  absl::MutexLock lock(&exit_requested_mutex_);
+  absl::MutexLock lock(exit_requested_mutex_);
   while (!exit_requested_) {
     producer_run_fn_(listener_, pid_);
     scheduled_time += absl::Nanoseconds(sampling_period_ns_);

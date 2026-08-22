@@ -64,7 +64,7 @@ TrackManager::TrackManager(TrackContainer* track_container, TimelineInfoInterfac
 }
 
 std::vector<Track*> TrackManager::GetAllTracks() const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   return GetAllTracksInternal();
 }
 
@@ -79,7 +79,7 @@ std::vector<Track*> TrackManager::GetAllTracksInternal() const {
 }
 
 std::vector<FrameTrack*> TrackManager::GetFrameTracks() const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   std::vector<FrameTrack*> tracks;
   for (const auto& [unused_id, track] : frame_tracks_) {
     tracks.push_back(track.get());
@@ -89,7 +89,7 @@ std::vector<FrameTrack*> TrackManager::GetFrameTracks() const {
 
 void TrackManager::SortTracks() {
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   // Gather all tracks regardless of the process in sorted order
   std::vector<Track*> all_processes_sorted_tracks;
 
@@ -236,7 +236,7 @@ void TrackManager::DeletePendingTracks() {
 
 void TrackManager::InsertPendingFrameTracks() {
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   // We are inserting the new frame tracks just after the last Frame Track with lower function_id
   // (and also after the Scheduler one).
   for (const auto& frame_track : pending_frame_tracks_) {
@@ -387,7 +387,7 @@ void TrackManager::AddFrameTrack(const std::shared_ptr<FrameTrack>& frame_track)
 
 void TrackManager::RemoveFrameTrack(uint64_t function_id) {
   ORBIT_CHECK(std::this_thread::get_id() == main_thread_id_);
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   deleted_tracks_.push_back(frame_tracks_[function_id]);
   frame_tracks_.erase(function_id);
 
@@ -470,7 +470,7 @@ Track* TrackManager::GetOrCreateTrackFromTimerInfo(const TimerInfo& timer_info) 
 }
 
 SchedulerTrack* TrackManager::GetOrCreateSchedulerTrack() {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   if (scheduler_track_ == nullptr) {
     auto [unused, timer_data] = capture_data_->CreateTimerData();
     scheduler_track_ =
@@ -482,7 +482,7 @@ SchedulerTrack* TrackManager::GetOrCreateSchedulerTrack() {
 }
 
 ThreadTrack* TrackManager::GetOrCreateThreadTrack(uint32_t tid) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   return GetOrCreateThreadTrackInternal(tid);
 }
 
@@ -501,7 +501,7 @@ ThreadTrack* TrackManager::GetOrCreateThreadTrackInternal(uint32_t tid) {
 }
 
 std::optional<ThreadTrack*> TrackManager::GetThreadTrack(uint32_t tid) const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   if (!thread_tracks_.contains(tid)) {
     return std::nullopt;
   }
@@ -510,7 +510,7 @@ std::optional<ThreadTrack*> TrackManager::GetThreadTrack(uint32_t tid) const {
 }
 
 GpuTrack* TrackManager::GetOrCreateGpuTrack(uint64_t timeline_hash) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   std::string timeline =
       app_->GetStringManager()->Get(timeline_hash).value_or(std::to_string(timeline_hash));
   std::shared_ptr<GpuTrack> track = gpu_tracks_[timeline];
@@ -527,7 +527,7 @@ GpuTrack* TrackManager::GetOrCreateGpuTrack(uint64_t timeline_hash) {
 }
 
 VariableTrack* TrackManager::GetOrCreateVariableTrack(std::string_view name) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
 
   auto existing_track = variable_tracks_.find(name);
   if (existing_track != variable_tracks_.end()) return existing_track->second.get();
@@ -540,7 +540,7 @@ VariableTrack* TrackManager::GetOrCreateVariableTrack(std::string_view name) {
 }
 
 AsyncTrack* TrackManager::GetOrCreateAsyncTrack(std::string_view name) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
 
   auto existing_track = async_tracks_.find(name);
   if (existing_track != async_tracks_.end()) return existing_track->second.get();
@@ -555,7 +555,7 @@ AsyncTrack* TrackManager::GetOrCreateAsyncTrack(std::string_view name) {
 }
 
 FrameTrack* TrackManager::GetOrCreateFrameTrack(uint64_t function_id) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   if (auto track_it = frame_tracks_.find(function_id); track_it != frame_tracks_.end()) {
     return track_it->second.get();
   }
@@ -576,22 +576,22 @@ FrameTrack* TrackManager::GetOrCreateFrameTrack(uint64_t function_id) {
 }
 
 SystemMemoryTrack* TrackManager::GetSystemMemoryTrack() const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   return system_memory_track_.get();
 }
 
 CGroupAndProcessMemoryTrack* TrackManager::GetCGroupAndProcessMemoryTrack() const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   return cgroup_and_process_memory_track_.get();
 }
 
 PageFaultsTrack* TrackManager::GetPageFaultsTrack() const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   return page_faults_track_.get();
 }
 
 SystemMemoryTrack* TrackManager::CreateAndGetSystemMemoryTrack() {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   if (system_memory_track_ == nullptr) {
     system_memory_track_ = std::make_shared<SystemMemoryTrack>(
         track_container_, timeline_info_, viewport_, layout_, module_manager_, capture_data_);
@@ -603,7 +603,7 @@ SystemMemoryTrack* TrackManager::CreateAndGetSystemMemoryTrack() {
 
 CGroupAndProcessMemoryTrack* TrackManager::CreateAndGetCGroupAndProcessMemoryTrack(
     std::string_view cgroup_name) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   if (cgroup_and_process_memory_track_ == nullptr) {
     cgroup_and_process_memory_track_ = std::make_shared<CGroupAndProcessMemoryTrack>(
         track_container_, timeline_info_, viewport_, layout_, std::string{cgroup_name},
@@ -616,7 +616,7 @@ CGroupAndProcessMemoryTrack* TrackManager::CreateAndGetCGroupAndProcessMemoryTra
 
 PageFaultsTrack* TrackManager::CreateAndGetPageFaultsTrack(std::string_view cgroup_name,
                                                            uint64_t memory_sampling_period_ms) {
-  absl::WriterMutexLock lock(&mutex_);
+  absl::WriterMutexLock lock(mutex_);
   if (page_faults_track_ == nullptr) {
     page_faults_track_ = std::make_shared<PageFaultsTrack>(
         track_container_, timeline_info_, viewport_, layout_, std::string{cgroup_name},
@@ -628,7 +628,7 @@ PageFaultsTrack* TrackManager::CreateAndGetPageFaultsTrack(std::string_view cgro
 
 // TODO(b/177200020): Move to TrackContainer after assuring to have only one thread in the UI.
 std::pair<uint64_t, uint64_t> TrackManager::GetTracksMinMaxTimestamps() const {
-  absl::ReaderMutexLock lock(&mutex_);
+  absl::ReaderMutexLock lock(mutex_);
   uint64_t min_time = std::numeric_limits<uint64_t>::max();
   uint64_t max_time = std::numeric_limits<uint64_t>::min();
 

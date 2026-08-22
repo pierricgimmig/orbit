@@ -903,8 +903,15 @@ void OrbitMainWindow::on_actionReport_Bug_triggered() {
 }
 
 void OrbitMainWindow::on_actionOpenUserDataDirectory_triggered() {
-  std::string user_data_dir = orbit_paths::CreateOrGetOrbitUserDataDirUnsafe().string();
-  QUrl user_data_url = QUrl::fromLocalFile(QString::fromStdString(user_data_dir));
+  ErrorMessageOr<std::filesystem::path> user_data_dir_or_error =
+      orbit_paths::CreateOrGetOrbitUserDataDir();
+  if (user_data_dir_or_error.has_error()) {
+    QMessageBox::critical(this, "Error opening directory",
+                          QString::fromStdString(user_data_dir_or_error.error().message()));
+    return;
+  }
+  QUrl user_data_url =
+      QUrl::fromLocalFile(QString::fromStdString(user_data_dir_or_error.value().string()));
   if (!QDesktopServices::openUrl(user_data_url)) {
     QMessageBox::critical(this, "Error opening directory",
                           "Could not open Orbit user data directory");
@@ -912,8 +919,15 @@ void OrbitMainWindow::on_actionOpenUserDataDirectory_triggered() {
 }
 
 void OrbitMainWindow::on_actionOpenAppDataDirectory_triggered() {
-  std::string app_data_dir = orbit_paths::CreateOrGetOrbitAppDataDirUnsafe().string();
-  QUrl app_data_url = QUrl::fromLocalFile(QString::fromStdString(app_data_dir));
+  ErrorMessageOr<std::filesystem::path> app_data_dir_or_error =
+      orbit_paths::CreateOrGetOrbitAppDataDir();
+  if (app_data_dir_or_error.has_error()) {
+    QMessageBox::critical(this, "Error opening directory",
+                          QString::fromStdString(app_data_dir_or_error.error().message()));
+    return;
+  }
+  QUrl app_data_url =
+      QUrl::fromLocalFile(QString::fromStdString(app_data_dir_or_error.value().string()));
   if (!QDesktopServices::openUrl(app_data_url)) {
     QMessageBox::critical(this, "Error opening directory",
                           "Could not open Orbit app data directory");
@@ -988,10 +1002,20 @@ void OrbitMainWindow::OnFilterTracksTextChanged(const QString& text) {
   app_->FilterTracks(text.toStdString());
 }
 
+// Returns the directory the preset file dialogs start in, or an empty string -- which makes the
+// dialog fall back to the current directory -- if it cannot be created.
+[[nodiscard]] static QString GetPresetDirAsQString() {
+  ErrorMessageOr<std::filesystem::path> preset_dir_or_error = orbit_paths::CreateOrGetPresetDir();
+  if (preset_dir_or_error.has_error()) {
+    ORBIT_ERROR("Unable to create the preset directory: %s", preset_dir_or_error.error().message());
+    return {};
+  }
+  return QString::fromStdString(preset_dir_or_error.value().string());
+}
+
 void OrbitMainWindow::on_actionOpen_Preset_triggered() {
-  QStringList list = QFileDialog::getOpenFileNames(
-      this, "Select a file to open...",
-      QString::fromStdString(orbit_paths::CreateOrGetPresetDirUnsafe().string()), "*.opr");
+  QStringList list = QFileDialog::getOpenFileNames(this, "Select a file to open...",
+                                                   GetPresetDirAsQString(), "*.opr");
   for (const auto& file : list) {
     ErrorMessageOr<void> result = app_->OnLoadPreset(file.toStdString());
     if (result.has_error()) {
@@ -1005,9 +1029,8 @@ void OrbitMainWindow::on_actionOpen_Preset_triggered() {
 }
 
 void OrbitMainWindow::on_actionSave_Preset_As_triggered() {
-  QString file = QFileDialog::getSaveFileName(
-      this, "Specify a file to save...",
-      QString::fromStdString(orbit_paths::CreateOrGetPresetDirUnsafe().string()), "*.opr");
+  QString file = QFileDialog::getSaveFileName(this, "Specify a file to save...",
+                                              GetPresetDirAsQString(), "*.opr");
   if (file.isEmpty()) {
     return;
   }

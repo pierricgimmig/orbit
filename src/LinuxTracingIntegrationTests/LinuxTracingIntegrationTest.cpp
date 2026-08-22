@@ -91,11 +91,11 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_scheduling_slice() = std::move(scheduling_slice);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
     {
-      absl::MutexLock lock{&one_scheduling_slice_received_mutex_};
+      absl::MutexLock lock{one_scheduling_slice_received_mutex_};
       one_scheduling_slice_received_ = true;
     }
   }
@@ -104,7 +104,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_full_callstack_sample() = std::move(callstack_sample);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -113,7 +113,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_function_call() = std::move(function_call);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -122,7 +122,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_full_gpu_job() = std::move(full_gpu_job_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -131,7 +131,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_thread_name() = std::move(thread_name);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -141,7 +141,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_thread_names_snapshot() = std::move(thread_names_snapshot);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -150,7 +150,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_thread_state_slice() = std::move(thread_state_slice);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -164,7 +164,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_full_address_info() = std::move(address_info);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -173,7 +173,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_full_tracepoint_event() = std::move(tracepoint_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -182,7 +182,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_module_update_event() = std::move(module_update_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -191,7 +191,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_modules_snapshot() = std::move(modules_snapshot);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -202,7 +202,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     *event.mutable_errors_with_perf_event_open_event() =
         std::move(errors_with_perf_event_open_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -212,7 +212,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     orbit_grpc_protos::ProducerCaptureEvent event;
     *event.mutable_lost_perf_records_event() = std::move(lost_perf_records_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -223,7 +223,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     *event.mutable_out_of_order_events_discarded_event() =
         std::move(out_of_order_events_discarded_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
@@ -235,13 +235,13 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     *event.mutable_warning_instrumenting_with_uprobes_event() =
         std::move(warning_instrumenting_with_uprobes_event);
     {
-      absl::MutexLock lock{&events_mutex_};
+      absl::MutexLock lock{events_mutex_};
       events_.emplace_back(std::move(event));
     }
   }
 
   [[nodiscard]] std::vector<orbit_grpc_protos::ProducerCaptureEvent> GetAndClearEvents() {
-    absl::MutexLock lock{&events_mutex_};
+    absl::MutexLock lock{events_mutex_};
     std::vector<orbit_grpc_protos::ProducerCaptureEvent> events = std::move(events_);
     events_.clear();
     return events;
@@ -251,7 +251,7 @@ class BufferTracerListener : public orbit_linux_tracing::TracerListener {
     one_scheduling_slice_received_mutex_.LockWhen(absl::Condition(
         +[](bool* one_scheduling_slice_received) { return *one_scheduling_slice_received; },
         &one_scheduling_slice_received_));
-    one_scheduling_slice_received_mutex_.Unlock();
+    one_scheduling_slice_received_mutex_.unlock();
   }
 
  private:

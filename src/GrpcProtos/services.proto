@@ -7,7 +7,6 @@ syntax = "proto3";
 package orbit_grpc_protos;
 
 import "capture.proto";
-import "code_block.proto";
 import "module.proto";
 import "process.proto";
 import "tracepoint.proto";

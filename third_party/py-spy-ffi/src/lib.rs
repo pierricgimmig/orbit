@@ -3,7 +3,7 @@
 //! This crate provides a C-compatible interface to py-spy's Python profiling
 //! capabilities, allowing C++ code to sample Python stack traces.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
@@ -290,6 +290,7 @@ pub extern "C" fn pyspy_error_string(error_code: c_int) -> *const c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[test]
     fn test_error_string() {

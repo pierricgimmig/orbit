@@ -15,7 +15,7 @@ namespace orbit_capture_file {
 bool BufferOutputStream::Write(const void* data, int size) {
   ORBIT_CHECK(data != nullptr);
   ORBIT_CHECK(size >= 0);
-  absl::MutexLock lock{&mutex_};
+  absl::MutexLock lock{mutex_};
 
   size_t old_size = buffer_.size();
   size_t new_size = old_size + size;
@@ -28,7 +28,7 @@ bool BufferOutputStream::Write(const void* data, int size) {
 }
 
 std::vector<unsigned char> BufferOutputStream::TakeBuffer() {
-  absl::MutexLock lock{&mutex_};
+  absl::MutexLock lock{mutex_};
 
   auto output_buffer = std::move(buffer_);
 

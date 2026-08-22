@@ -265,7 +265,7 @@ LinuxCaptureServiceBase::WaitForStopCaptureRequestOrMemoryThresholdExceeded(
         StopCaptureReason external_stop_reason =
             stop_capture_request_waiter->WaitForStopCaptureRequest();
 
-        absl::MutexLock lock{stop_capture_mutex.get()};
+        absl::MutexLock lock{*stop_capture_mutex};
         if (!*stop_capture) {
           ORBIT_LOG("Client finished writing on Capture's gRPC stream: stopping capture");
           *stop_capture = true;
@@ -283,7 +283,7 @@ LinuxCaptureServiceBase::WaitForStopCaptureRequestOrMemoryThresholdExceeded(
             kWatchdogThresholdBytes, kMemTotalBytes);
   while (true) {
     {
-      absl::MutexLock lock{stop_capture_mutex.get()};
+      absl::MutexLock lock{*stop_capture_mutex};
       static constexpr absl::Duration kWatchdogPollInterval = absl::Seconds(1);
       if (stop_capture_mutex->AwaitWithTimeout(absl::Condition(stop_capture.get()),
                                                kWatchdogPollInterval)) {
@@ -300,7 +300,7 @@ LinuxCaptureServiceBase::WaitForStopCaptureRequestOrMemoryThresholdExceeded(
     }
     if (rss_bytes.value() > kWatchdogThresholdBytes) {
       ORBIT_LOG("Memory threshold exceeded: stopping capture (and stopping memory watchdog)");
-      absl::MutexLock lock{stop_capture_mutex.get()};
+      absl::MutexLock lock{*stop_capture_mutex};
       *stop_capture = true;
       *stop_capture_reason = StopCaptureReason::kMemoryWatchdog;
       break;
@@ -310,7 +310,7 @@ LinuxCaptureServiceBase::WaitForStopCaptureRequestOrMemoryThresholdExceeded(
   // The memory watchdog loop exits when either the stop capture is requested, or the
   // memory threshold was exceeded. So at that point we can proceed with stopping the capture.
   {
-    absl::MutexLock lock{stop_capture_mutex.get()};
+    absl::MutexLock lock{*stop_capture_mutex};
     ORBIT_CHECK(stop_capture_reason->has_value());
     return stop_capture_reason->value();
   }

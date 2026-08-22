@@ -190,7 +190,7 @@ orbit_base::Future<ErrorMessageOr<CaptureListener::CaptureOutcome>> CaptureClien
     const orbit_client_data::ModuleManager& module_manager,
     const orbit_client_data::ProcessData& process_data,
     const ClientCaptureOptions& capture_options) {
-  absl::MutexLock lock(&state_mutex_);
+  absl::MutexLock lock(state_mutex_);
   if (state_ != State::kStopped) {
     return {
         ErrorMessage("Capture cannot be started, the previous capture is still "
@@ -214,7 +214,7 @@ ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
   writes_done_failed_ = false;
   try_abort_ = false;
   {
-    absl::WriterMutexLock lock{&context_and_stream_mutex_};
+    absl::WriterMutexLock lock{context_and_stream_mutex_};
     ORBIT_CHECK(client_context_ == nullptr);
     ORBIT_CHECK(reader_writer_ == nullptr);
     client_context_ = std::make_unique<grpc::ClientContext>();
@@ -226,7 +226,7 @@ ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
 
   bool request_write_succeeded{};
   {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     request_write_succeeded = reader_writer_->Write(request);
     if (!request_write_succeeded) {
       reader_writer_->WritesDone();
@@ -246,7 +246,7 @@ ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
     CaptureResponse response;
     bool read_succeeded{};
     {
-      absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+      absl::ReaderMutexLock lock{context_and_stream_mutex_};
       read_succeeded = reader_writer_->Read(&response);
     }
     if (read_succeeded) {
@@ -283,7 +283,7 @@ ErrorMessageOr<CaptureListener::CaptureOutcome> CaptureClient::CaptureSync(
 
 bool CaptureClient::StopCapture() {
   {
-    absl::MutexLock lock(&state_mutex_);
+    absl::MutexLock lock(state_mutex_);
     if (state_ == State::kStarting) {
       ORBIT_LOG("StopCapture ignored, because it is starting and cannot be stopped at this stage.");
       return false;
@@ -299,7 +299,7 @@ bool CaptureClient::StopCapture() {
 
   bool writes_done_succeeded = false;
   {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     ORBIT_CHECK(reader_writer_ != nullptr);
     writes_done_succeeded = reader_writer_->WritesDone();
   }
@@ -321,7 +321,7 @@ bool CaptureClient::StopCapture() {
 
 bool CaptureClient::AbortCaptureAndWait(int64_t max_wait_ms) {
   {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     if (client_context_ == nullptr) {
       ORBIT_LOG("AbortCaptureAndWait ignored: no ClientContext to TryCancel");
       return false;
@@ -334,7 +334,7 @@ bool CaptureClient::AbortCaptureAndWait(int64_t max_wait_ms) {
   // With this wait we want to leave at least some time for FinishCapture to be called, so that
   // reader_writer_ and in particular client_context_ are destroyed before returning to the caller.
   {
-    absl::MutexLock lock(&state_mutex_);
+    absl::MutexLock lock(state_mutex_);
     state_mutex_.AwaitWithTimeout(
         absl::Condition(
             +[](State* state) { return *state == State::kStopped; }, &state_),
@@ -348,7 +348,7 @@ ErrorMessageOr<void> CaptureClient::FinishCapture() {
 
   grpc::Status status;
   {
-    absl::WriterMutexLock lock{&context_and_stream_mutex_};
+    absl::WriterMutexLock lock{context_and_stream_mutex_};
     ORBIT_CHECK(reader_writer_ != nullptr);
     status = reader_writer_->Finish();
     reader_writer_.reset();
@@ -357,7 +357,7 @@ ErrorMessageOr<void> CaptureClient::FinishCapture() {
   }
 
   {
-    absl::MutexLock lock(&state_mutex_);
+    absl::MutexLock lock(state_mutex_);
     state_ = State::kStopped;
     ORBIT_LOG("State is now kStopped");
   }
@@ -375,7 +375,7 @@ void CaptureClient::ProcessEvents(
   for (const auto& event : events) {
     capture_event_processor->ProcessEvent(event);
     if (event.event_case() == ClientCaptureEvent::kCaptureStarted) {
-      absl::MutexLock lock{&state_mutex_};
+      absl::MutexLock lock{state_mutex_};
       state_ = State::kStarted;
       ORBIT_LOG("State is now kStarted");
     }

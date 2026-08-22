@@ -68,7 +68,7 @@ class Promise : public orbit_base_internal::PromiseBase<T> {
   using orbit_base_internal::PromiseBase<T>::PromiseBase;
 
   void SetResult(T result) {
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
 
     for (auto& continuation : this->shared_state_->continuations) {
       continuation(result);
@@ -79,7 +79,7 @@ class Promise : public orbit_base_internal::PromiseBase<T> {
 
   [[nodiscard]] bool HasResult() const {
     if (!this->IsValid()) return false;
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
     return this->shared_state_->result.has_value();
   }
 };
@@ -90,7 +90,7 @@ class Promise<void> : public orbit_base_internal::PromiseBase<void> {
   using PromiseBase<void>::PromiseBase;
 
   void MarkFinished() {
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
 
     for (auto& continuation : this->shared_state_->continuations) {
       continuation();
@@ -101,7 +101,7 @@ class Promise<void> : public orbit_base_internal::PromiseBase<void> {
 
   [[nodiscard]] bool IsFinished() const {
     if (!IsValid()) return false;
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
     return this->shared_state_->finished;
   }
 };

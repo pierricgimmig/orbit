@@ -16,6 +16,15 @@
 
 namespace orbit_paths {
 
+// The Unsafe variants are deprecated, but as long as they exist they need to be covered by tests.
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif  // __GNUC__
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif  // _MSC_VER
 TEST(Path, AllAutoCreatedDirsExistUnsafe) {
   auto test_fns = {CreateOrGetOrbitAppDataDirUnsafe, CreateOrGetDumpDirUnsafe,
                    CreateOrGetPresetDirUnsafe,       CreateOrGetCacheDirUnsafe,
@@ -54,6 +63,13 @@ TEST(Paths, AllDirsOfFilesExistUnsafe) {
     EXPECT_TRUE(std::filesystem::is_directory(path));
   }
 }
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif  // __GNUC__
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif  // _MSC_VER
 
 TEST(Paths, AllDirsOfFilesExist) {
   auto test_fns = {GetLogFilePath, GetSymbolsFilePath};

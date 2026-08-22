@@ -1608,7 +1608,7 @@ uint64_t TracerImpl::ProcessThrottleUnthrottleEventAndReturnTimestamp(
 }
 
 void TracerImpl::DeferEvent(PerfEvent&& event) {
-  absl::MutexLock lock{&deferred_events_being_buffered_mutex_};
+  absl::MutexLock lock{deferred_events_being_buffered_mutex_};
   deferred_events_being_buffered_.emplace_back(std::move(event));
 }
 
@@ -1622,7 +1622,7 @@ void TracerImpl::ProcessDeferredEvents() {
     should_exit = stop_deferred_thread_;
 
     {
-      absl::MutexLock lock{&deferred_events_being_buffered_mutex_};
+      absl::MutexLock lock{deferred_events_being_buffered_mutex_};
       deferred_events_being_buffered_.swap(deferred_events_to_process_);
     }
 
@@ -1702,7 +1702,7 @@ void TracerImpl::Reset() {
 
   stop_deferred_thread_ = false;
   {
-    absl::MutexLock lock{&deferred_events_being_buffered_mutex_};
+    absl::MutexLock lock{deferred_events_being_buffered_mutex_};
     deferred_events_being_buffered_.clear();
   }
   deferred_events_to_process_.clear();

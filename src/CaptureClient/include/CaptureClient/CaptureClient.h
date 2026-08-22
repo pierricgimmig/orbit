@@ -52,12 +52,12 @@ class CaptureClient {
   [[nodiscard]] bool StopCapture();
 
   [[nodiscard]] State state() const {
-    absl::MutexLock lock(&state_mutex_);
+    absl::MutexLock lock(state_mutex_);
     return state_;
   }
 
   [[nodiscard]] bool IsCapturing() const {
-    absl::MutexLock lock(&state_mutex_);
+    absl::MutexLock lock(state_mutex_);
     return state_ != State::kStopped;
   }
 

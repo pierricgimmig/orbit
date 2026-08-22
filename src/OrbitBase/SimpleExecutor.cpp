@@ -12,20 +12,20 @@
 
 namespace orbit_base {
 void SimpleExecutor::ScheduleImpl(std::unique_ptr<Action> action) {
-  absl::MutexLock lock{&mutex_};
+  absl::MutexLock lock{mutex_};
   scheduled_tasks_.emplace_back(std::move(action));
 }
 
 void SimpleExecutor::ExecuteScheduledTasks() {
   // Since each task can append to the list of scheduled tasks we have to make sure not to rely on
   // unstable iterators.
-  absl::MutexLock lock{&mutex_};
+  absl::MutexLock lock{mutex_};
   while (!scheduled_tasks_.empty()) {
     Action* action = scheduled_tasks_.front().get();
     {
-      mutex_.Unlock();
+      mutex_.unlock();
       action->Execute();
-      mutex_.Lock();
+      mutex_.lock();
     }
     scheduled_tasks_.pop_front();
   }

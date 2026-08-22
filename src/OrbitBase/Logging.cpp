@@ -44,7 +44,7 @@ ErrorMessageOr<void> TryRemoveOldLogFiles(const std::filesystem::path& log_dir) 
 }
 
 void InitLogFile(const std::filesystem::path& path) {
-  absl::MutexLock lock(&log_file_mutex);
+  absl::MutexLock lock(log_file_mutex);
   // Do not call CHECK here - it will end up calling LogToFile,
   // which tries to lock on the same mutex a second time. This will
   // lead to an error since the mutex is not recursive.
@@ -85,7 +85,7 @@ void LogStacktrace() {
 namespace orbit_base_internal {
 
 void LogToFile(std::string_view message) {
-  absl::MutexLock lock(&orbit_base::log_file_mutex);
+  absl::MutexLock lock(orbit_base::log_file_mutex);
   if (orbit_base::log_file.get() != nullptr) {
     // Ignore any errors that can happen, we cannot do anything about them at this point anyways.
     std::fwrite(message.data(), message.size(), 1, orbit_base::log_file.get());

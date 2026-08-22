@@ -25,37 +25,37 @@ using orbit_grpc_protos::ModuleInfo;
 namespace orbit_client_data {
 
 uint32_t ProcessData::pid() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.pid();
 }
 
 const std::string& ProcessData::name() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.name();
 }
 
 double ProcessData::cpu_usage() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.cpu_usage();
 }
 
 const std::string& ProcessData::full_path() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.full_path();
 }
 
 const std::string& ProcessData::command_line() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.command_line();
 }
 
 bool ProcessData::is_64_bit() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.is_64_bit();
 }
 
 const std::string& ProcessData::build_id() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return process_info_.build_id();
 }
 
@@ -72,7 +72,7 @@ const std::string& ProcessData::build_id() const {
 }
 
 void ProcessData::UpdateModuleInfos(absl::Span<const ModuleInfo> module_infos) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   start_address_to_module_in_memory_.clear();
   absolute_address_to_module_in_memory_cache_.clear();
 
@@ -92,7 +92,7 @@ void ProcessData::UpdateModuleInfos(absl::Span<const ModuleInfo> module_infos) {
 }
 
 std::vector<std::string> ProcessData::FindModuleBuildIdsByPath(std::string_view module_path) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::set<std::string> build_ids;
 
   for (const auto& [unused_address, module_in_memory] : start_address_to_module_in_memory_) {
@@ -108,7 +108,7 @@ std::vector<std::string> ProcessData::FindModuleBuildIdsByPath(std::string_view 
 }
 
 void ProcessData::AddOrUpdateModuleInfo(const ModuleInfo& module_info) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::optional<orbit_client_data::ModuleIdentifier> module_id_opt =
       module_identifier_provider_->GetModuleIdentifier(
           {.module_path = module_info.file_path(), .build_id = module_info.build_id()});
@@ -138,7 +138,7 @@ void ProcessData::AddOrUpdateModuleInfo(const ModuleInfo& module_info) {
 }
 
 ErrorMessageOr<ModuleInMemory> ProcessData::FindModuleByAddress(uint64_t absolute_address) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   if (start_address_to_module_in_memory_.empty()) {
     return ErrorMessage(
         absl::StrFormat("Unable to find module for address %016x: No modules loaded by process %s",
@@ -173,7 +173,7 @@ ErrorMessageOr<ModuleInMemory> ProcessData::FindModuleByAddress(uint64_t absolut
 
 std::vector<uint64_t> ProcessData::GetModuleBaseAddresses(
     orbit_client_data::ModuleIdentifier module_identifier) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<uint64_t> result;
   for (const auto& [start_address, module_in_memory] : start_address_to_module_in_memory_) {
     if (module_in_memory.module_id() == module_identifier) {
@@ -184,7 +184,7 @@ std::vector<uint64_t> ProcessData::GetModuleBaseAddresses(
 }
 
 std::vector<ModuleInMemory> ProcessData::FindModulesByFilename(std::string_view filename) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<ModuleInMemory> result;
   for (const auto& [unused_start_address, module_in_memory] : start_address_to_module_in_memory_) {
     std::optional<std::string> current_module_path =
@@ -199,20 +199,20 @@ std::vector<ModuleInMemory> ProcessData::FindModulesByFilename(std::string_view 
 }
 
 std::map<uint64_t, ModuleInMemory> ProcessData::GetMemoryMapCopy() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return start_address_to_module_in_memory_;
 }
 
 bool ProcessData::IsModuleLoadedByProcess(
     orbit_client_data::ModuleIdentifier module_identifier) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return std::any_of(
       start_address_to_module_in_memory_.begin(), start_address_to_module_in_memory_.end(),
       [&module_identifier](const auto& it) { return it.second.module_id() == module_identifier; });
 }
 
 std::vector<orbit_client_data::ModuleIdentifier> ProcessData::GetUniqueModuleIdentifiers() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   absl::flat_hash_set<orbit_client_data::ModuleIdentifier> module_ids;
   for (const auto& [unused_address, module_in_memory] : start_address_to_module_in_memory_) {
     module_ids.insert(module_in_memory.module_id());

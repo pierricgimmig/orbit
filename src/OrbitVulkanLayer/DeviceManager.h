@@ -34,7 +34,7 @@ class DeviceManager {
   explicit DeviceManager(DispatchTable* dispatch_table) : dispatch_table_(dispatch_table) {}
 
   void TrackLogicalDevice(VkPhysicalDevice physical_device, VkDevice logical_device) {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(!logical_device_to_physical_device_.contains(logical_device));
     logical_device_to_physical_device_[logical_device] = physical_device;
 
@@ -56,13 +56,13 @@ class DeviceManager {
   }
 
   [[nodiscard]] VkPhysicalDevice GetPhysicalDeviceOfLogicalDevice(VkDevice logical_device) {
-    absl::ReaderMutexLock lock(&mutex_);
+    absl::ReaderMutexLock lock(mutex_);
     ORBIT_CHECK(logical_device_to_physical_device_.contains(logical_device));
     return logical_device_to_physical_device_.at(logical_device);
   }
 
   void UntrackLogicalDevice(VkDevice logical_device) {
-    absl::WriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(mutex_);
     ORBIT_CHECK(logical_device_to_physical_device_.contains(logical_device));
     VkPhysicalDevice physical_device = logical_device_to_physical_device_.at(logical_device);
     logical_device_to_physical_device_.erase(logical_device);
@@ -82,7 +82,7 @@ class DeviceManager {
 
   [[nodiscard]] VkPhysicalDeviceProperties GetPhysicalDeviceProperties(
       VkPhysicalDevice physical_device) {
-    absl::ReaderMutexLock lock(&mutex_);
+    absl::ReaderMutexLock lock(mutex_);
     ORBIT_CHECK(physical_device_to_properties_.contains(physical_device));
     return physical_device_to_properties_.at(physical_device);
   }

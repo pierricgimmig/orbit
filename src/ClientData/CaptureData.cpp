@@ -73,7 +73,7 @@ CaptureData::CaptureData(CaptureStarted capture_started,
 void CaptureData::ForEachThreadStateSliceIntersectingTimeRange(
     uint32_t thread_id, uint64_t min_timestamp, uint64_t max_timestamp,
     const std::function<void(const ThreadStateSliceInfo&)>& action) const {
-  absl::MutexLock lock{&thread_state_slices_mutex_};
+  absl::MutexLock lock{thread_state_slices_mutex_};
   auto tid_thread_state_slices_it = thread_state_slices_.find(thread_id);
   if (tid_thread_state_slices_it == thread_state_slices_.end()) {
     return;
@@ -96,7 +96,7 @@ void CaptureData::ForEachThreadStateSliceIntersectingTimeRange(
 void CaptureData::ForEachThreadStateSliceIntersectingTimeRangeDiscretized(
     uint32_t thread_id, uint64_t min_timestamp, uint64_t max_timestamp, uint32_t resolution,
     const std::function<void(const ThreadStateSliceInfo&)>& action) const {
-  absl::MutexLock lock{&thread_state_slices_mutex_};
+  absl::MutexLock lock{thread_state_slices_mutex_};
   auto tid_thread_state_slices_it = thread_state_slices_.find(thread_id);
   if (tid_thread_state_slices_it == thread_state_slices_.end()) {
     return;
@@ -350,7 +350,7 @@ std::unique_ptr<const ScopeStatsCollection> CaptureData::CreateScopeStatsCollect
 
 [[nodiscard]] std::optional<ThreadStateSliceInfo>
 CaptureData::FindThreadStateSliceInfoFromTimestamp(int64_t thread_id, uint64_t timestamp) const {
-  absl::MutexLock lock{&thread_state_slices_mutex_};
+  absl::MutexLock lock{thread_state_slices_mutex_};
   if (!thread_state_slices_.contains(thread_id)) {
     return std::nullopt;
   }

@@ -23,47 +23,47 @@ namespace orbit_client_data {
 ModuleData::ModuleData(ModuleInfo module_info) : module_info_{std::move(module_info)} {}
 
 const std::string& ModuleData::name() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.name();
 }
 
 const std::string& ModuleData::file_path() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.file_path();
 }
 
 uint64_t ModuleData::file_size() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.file_size();
 }
 
 const std::string& ModuleData::build_id() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.build_id();
 }
 
 uint64_t ModuleData::load_bias() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.load_bias();
 }
 
 uint64_t ModuleData::executable_segment_offset() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.executable_segment_offset();
 }
 
 ModuleInfo::ObjectFileType ModuleData::object_file_type() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return module_info_.object_file_type();
 }
 
 std::vector<ModuleInfo::ObjectSegment> ModuleData::GetObjectSegments() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return {module_info_.object_segments().begin(), module_info_.object_segments().end()};
 }
 
 uint64_t ModuleData::ConvertFromVirtualAddressToOffsetInFile(uint64_t virtual_address) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   if (module_info_.object_file_type() == orbit_grpc_protos::ModuleInfo::kElfFile) {
     // For ELF files, we define the load bias as the difference between the executable loadable
@@ -88,7 +88,7 @@ uint64_t ModuleData::ConvertFromVirtualAddressToOffsetInFile(uint64_t virtual_ad
 }
 
 uint64_t ModuleData::ConvertFromOffsetInFileToVirtualAddress(uint64_t offset_in_file) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   if (module_info_.object_file_type() == orbit_grpc_protos::ModuleInfo::kElfFile) {
     return offset_in_file + module_info_.load_bias();
@@ -113,7 +113,7 @@ bool ModuleData::NeedsUpdate(const orbit_grpc_protos::ModuleInfo& new_module_inf
 }
 
 bool ModuleData::UpdateIfChangedAndUnload(ModuleInfo new_module_info) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   ORBIT_CHECK(module_info_.file_path() == new_module_info.file_path());
   ORBIT_CHECK(module_info_.build_id() == new_module_info.build_id());
@@ -143,7 +143,7 @@ bool ModuleData::UpdateIfChangedAndUnload(ModuleInfo new_module_info) {
 }
 
 bool ModuleData::UpdateIfChangedAndNotLoaded(orbit_grpc_protos::ModuleInfo new_module_info) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
 
   ORBIT_CHECK(module_info_.file_path() == new_module_info.file_path());
   ORBIT_CHECK(module_info_.build_id() == new_module_info.build_id());
@@ -162,7 +162,7 @@ bool ModuleData::UpdateIfChangedAndNotLoaded(orbit_grpc_protos::ModuleInfo new_m
 
 const FunctionInfo* ModuleData::FindFunctionByVirtualAddress(uint64_t virtual_address,
                                                              bool is_exact) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   if (functions_.empty()) return nullptr;
 
   auto cache_it = absolute_address_to_function_info_cache_.find(virtual_address);
@@ -197,18 +197,18 @@ const FunctionInfo* ModuleData::FindFunctionByVirtualAddress(uint64_t virtual_ad
 }
 
 const FunctionInfo* ModuleData::FindFunctionFromHash(uint64_t hash) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return hash_to_function_map_.contains(hash) ? hash_to_function_map_.at(hash) : nullptr;
 }
 
 const FunctionInfo* ModuleData::FindFunctionFromPrettyName(std::string_view pretty_name) const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = name_to_function_info_map_.find(pretty_name);
   return it != name_to_function_info_map_.end() ? it->second : nullptr;
 }
 
 std::vector<const FunctionInfo*> ModuleData::GetFunctions() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   std::vector<const FunctionInfo*> result;
   result.reserve(functions_.size());
   for (const auto& pair : functions_) {
@@ -218,28 +218,28 @@ std::vector<const FunctionInfo*> ModuleData::GetFunctions() const {
 }
 
 ModuleData::SymbolCompleteness ModuleData::GetLoadedSymbolsCompleteness() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return loaded_symbols_completeness_;
 }
 
 bool ModuleData::AreDebugSymbolsLoaded() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return loaded_symbols_completeness_ >= SymbolCompleteness::kDebugSymbols;
 }
 
 bool ModuleData::AreAtLeastFallbackSymbolsLoaded() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return loaded_symbols_completeness_ >= SymbolCompleteness::kDynamicLinkingAndUnwindInfo;
 }
 
 void ModuleData::AddSymbols(const orbit_grpc_protos::ModuleSymbols& module_symbols) {
   ORBIT_SCOPE_FUNCTION;
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   AddSymbolsInternal(module_symbols, SymbolCompleteness::kDebugSymbols);
 }
 
 void ModuleData::AddFallbackSymbols(const orbit_grpc_protos::ModuleSymbols& module_symbols) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   AddSymbolsInternal(module_symbols, SymbolCompleteness::kDynamicLinkingAndUnwindInfo);
 }
 

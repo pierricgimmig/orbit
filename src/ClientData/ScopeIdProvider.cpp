@@ -96,13 +96,13 @@ std::optional<ScopeId> NameEqualityScopeIdProvider::ProvideId(const TimerInfo& t
   const ScopeInfo scope_info{timer_info.api_scope_name(), scope_type};
 
   {
-    absl::ReaderMutexLock reader_lock{&mutex_};
+    absl::ReaderMutexLock reader_lock{mutex_};
     if (std::optional<ScopeId> id = GetExistingScopeId(scope_info); id.has_value()) {
       return id.value();
     }
   }
 
-  absl::WriterMutexLock writer_local{&mutex_};
+  absl::WriterMutexLock writer_local{mutex_};
 
   if (std::optional<ScopeId> id = GetExistingScopeId(scope_info); id.has_value()) {
     return id.value();
@@ -116,7 +116,7 @@ std::optional<ScopeId> NameEqualityScopeIdProvider::ProvideId(const TimerInfo& t
 }
 
 [[nodiscard]] std::vector<ScopeId> NameEqualityScopeIdProvider::GetAllProvidedScopeIds() const {
-  absl::ReaderMutexLock reader_lock{&mutex_};
+  absl::ReaderMutexLock reader_lock{mutex_};
   std::vector<ScopeId> ids;
   std::transform(std::begin(scope_id_to_info_), std::end(scope_id_to_info_),
                  std::back_inserter(ids), [](const auto& entry) { return entry.first; });
@@ -124,7 +124,7 @@ std::optional<ScopeId> NameEqualityScopeIdProvider::ProvideId(const TimerInfo& t
 }
 
 const ScopeInfo& NameEqualityScopeIdProvider::GetScopeInfo(ScopeId scope_id) const {
-  absl::ReaderMutexLock reader_lock{&mutex_};
+  absl::ReaderMutexLock reader_lock{mutex_};
   const auto it = scope_id_to_info_.find(scope_id);
   ORBIT_CHECK(it != scope_id_to_info_.end());
   return it->second;

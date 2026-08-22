@@ -228,12 +228,15 @@ int main(int argc, char* argv[]) {
   // Skip program name in positional_args[0].
   std::vector<std::string> capture_file_paths(positional_args.begin() + 1, positional_args.end());
 
-  std::filesystem::path log_file{orbit_paths::GetLogFilePathUnsafe()};
-  orbit_base::InitLogFile(log_file);
+  ErrorMessageOr<std::filesystem::path> log_dir_or_error = orbit_paths::CreateOrGetLogDir();
+  if (log_dir_or_error.has_error()) {
+    ORBIT_FATAL("Unable to create the log directory: %s", log_dir_or_error.error().message());
+  }
+  orbit_base::InitLogFile(log_dir_or_error.value() / orbit_base::GetLogFileName());
   ORBIT_LOG("You are running Orbit Profiler version %s", orbit_version::GetVersionString());
   LogCommandLine(argc, argv);
   ErrorMessageOr<void> remove_old_log_result =
-      orbit_base::TryRemoveOldLogFiles(orbit_paths::CreateOrGetLogDirUnsafe());
+      orbit_base::TryRemoveOldLogFiles(log_dir_or_error.value());
   if (remove_old_log_result.has_error()) {
     ORBIT_LOG("Warning: Unable to remove some old log files:\n%s",
               remove_old_log_result.error().message());

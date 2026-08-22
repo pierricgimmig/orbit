@@ -93,7 +93,7 @@ ErrorMessageOr<orbit_grpc_protos::ProcessInfo> WindowsProcessLauncherClientImpl:
                                 ? LaunchedProcess::State::kSpinningAtEntryPoint
                                 : LaunchedProcess::State::kExecutingOrExited;
   {
-    absl::MutexLock lock(&launched_processes_by_pid_mutex_);
+    absl::MutexLock lock(launched_processes_by_pid_mutex_);
     launched_processes_by_pid_.emplace(process_info.pid(), launched_process);
   }
 
@@ -146,20 +146,20 @@ ErrorMessageOr<void> WindowsProcessLauncherClientImpl::ResumeProcessSuspendedAtE
 
 void WindowsProcessLauncherClientImpl::UpdateLaunchedProcessState(
     uint32_t pid, LaunchedProcess::State new_state) {
-  absl::MutexLock lock(&launched_processes_by_pid_mutex_);
+  absl::MutexLock lock(launched_processes_by_pid_mutex_);
   LaunchedProcess& launched_process = launched_processes_by_pid_.at(pid);
   launched_process.state_ = new_state;
 }
 
 bool WindowsProcessLauncherClientImpl::IsProcessSpinningAtEntryPoint(uint32_t pid) {
-  absl::MutexLock lock(&launched_processes_by_pid_mutex_);
+  absl::MutexLock lock(launched_processes_by_pid_mutex_);
   auto launched_process_it = launched_processes_by_pid_.find(pid);
   if (launched_process_it == launched_processes_by_pid_.end()) return false;
   return launched_process_it->second.state_ == LaunchedProcess::State::kSpinningAtEntryPoint;
 }
 
 bool WindowsProcessLauncherClientImpl::IsProcessSuspendedAtEntryPoint(uint32_t pid) {
-  absl::MutexLock lock(&launched_processes_by_pid_mutex_);
+  absl::MutexLock lock(launched_processes_by_pid_mutex_);
   auto launched_process_it = launched_processes_by_pid_.find(pid);
   if (launched_process_it == launched_processes_by_pid_.end()) return false;
   return launched_process_it->second.state_ == LaunchedProcess::State::kSuspendedAtEntryPoint;

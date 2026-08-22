@@ -23,7 +23,7 @@ Future<void> WhenAll(absl::Span<const Future<void>> futures) {
 
   auto shared_state = std::make_shared<orbit_base_internal::SharedStateWhenAll<void>>();
   {
-    absl::MutexLock lock{&shared_state->mutex};
+    absl::MutexLock lock{shared_state->mutex};
     shared_state->incomplete_futures = futures.size();
   }
 
@@ -31,7 +31,7 @@ Future<void> WhenAll(absl::Span<const Future<void>> futures) {
     ORBIT_CHECK(future.IsValid());
     orbit_base::FutureRegisterContinuationResult const result =
         future.RegisterContinuation([shared_state]() {
-          absl::MutexLock lock{&shared_state->mutex};
+          absl::MutexLock lock{shared_state->mutex};
           --shared_state->incomplete_futures;
 
           if (shared_state->incomplete_futures == 0) {
@@ -40,13 +40,13 @@ Future<void> WhenAll(absl::Span<const Future<void>> futures) {
         });
 
     if (result != orbit_base::FutureRegisterContinuationResult::kSuccessfullyRegistered) {
-      absl::MutexLock lock{&shared_state->mutex};
+      absl::MutexLock lock{shared_state->mutex};
       --shared_state->incomplete_futures;
     }
   }
 
   {
-    absl::MutexLock lock{&shared_state->mutex};
+    absl::MutexLock lock{shared_state->mutex};
     if (shared_state->incomplete_futures == 0) {
       shared_state->promise.MarkFinished();
     }

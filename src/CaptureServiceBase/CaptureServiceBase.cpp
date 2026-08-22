@@ -38,7 +38,7 @@ CaptureServiceBase::CaptureInitializationResult CaptureServiceBase::InitializeCa
   ORBIT_CHECK(client_capture_event_collector != nullptr);
 
   {
-    absl::MutexLock lock(&capture_mutex_);
+    absl::MutexLock lock(capture_mutex_);
     if (is_capturing_) {
       return CaptureInitializationResult::kAlreadyInProgress;
     }
@@ -55,7 +55,7 @@ void CaptureServiceBase::TerminateCapture() {
   client_capture_event_collector_ = nullptr;
   capture_start_timestamp_ns_ = 0;
 
-  absl::MutexLock lock(&capture_mutex_);
+  absl::MutexLock lock(capture_mutex_);
   is_capturing_ = false;
 }
 

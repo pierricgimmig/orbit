@@ -11,6 +11,8 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QPainter>
+#include <QPoint>
+#include <QPointF>
 #include <QRect>
 #include <QSurfaceFormat>
 #include <Qt>
@@ -181,12 +183,15 @@ void OrbitGLWidget::keyReleaseEvent(QKeyEvent* event) {
 
 void OrbitGLWidget::wheelEvent(QWheelEvent* event) {
   if (gl_canvas_) {
-    if (event->orientation() == Qt::Vertical) {
-      gl_canvas_->MouseWheelMoved(event->x(), event->y(), event->delta() / 8,
-                                  (event->modifiers() & Qt::ControlModifier) != 0u);
-    } else {
-      gl_canvas_->MouseWheelMovedHorizontally(event->x(), event->y(), event->delta() / 8,
-                                              (event->modifiers() & Qt::ControlModifier) != 0u);
+    const QPoint angle_delta = event->angleDelta();
+    const QPointF position = event->position();
+    const int x = static_cast<int>(position.x());
+    const int y = static_cast<int>(position.y());
+    const bool ctrl = (event->modifiers() & Qt::ControlModifier) != 0u;
+    if (angle_delta.y() != 0) {
+      gl_canvas_->MouseWheelMoved(x, y, angle_delta.y() / 8, ctrl);
+    } else if (angle_delta.x() != 0) {
+      gl_canvas_->MouseWheelMovedHorizontally(x, y, angle_delta.x() / 8, ctrl);
     }
   }
 

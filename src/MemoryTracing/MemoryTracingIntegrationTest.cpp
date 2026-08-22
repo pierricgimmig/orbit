@@ -40,7 +40,7 @@ using orbit_memory_tracing::MemoryInfoProducer;
 class BufferMemoryInfoListener : public MemoryInfoListener {
  public:
   [[nodiscard]] std::vector<ProducerCaptureEvent> GetAndClearEvents() {
-    absl::MutexLock lock{&events_mutex_};
+    absl::MutexLock lock{events_mutex_};
     std::vector<ProducerCaptureEvent> events = std::move(events_);
     events_.clear();
     return events;
@@ -51,7 +51,7 @@ class BufferMemoryInfoListener : public MemoryInfoListener {
     ProducerCaptureEvent event;
     *event.mutable_memory_usage_event() = std::move(memory_usage_event);
 
-    absl::MutexLock lock{&events_mutex_};
+    absl::MutexLock lock{events_mutex_};
     events_.emplace_back(std::move(event));
   }
 

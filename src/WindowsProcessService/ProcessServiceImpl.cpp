@@ -50,7 +50,7 @@ Status ProcessServiceImpl::GetProcessList(ServerContext*, const GetProcessListRe
   std::vector<const Process*> processes;
 
   {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (process_list_ == nullptr) {
       process_list_ = orbit_windows_utils::ProcessList::Create();
     }

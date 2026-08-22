@@ -264,9 +264,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -344,13 +342,11 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
     actual_callstack_samples.push_back(std::move(actual_callstack_sample));
   };
   if constexpr (std::is_same_v<StackSamplePerfEvent, typename TypeParam::PerfEventT>) {
-    EXPECT_CALL(this->listener_, OnCallstackSample)
-        .Times(2)
-        .WillRepeatedly(::testing::Invoke(save_callstack));
+    EXPECT_CALL(this->listener_, OnCallstackSample).Times(2).WillRepeatedly(save_callstack);
   } else {
     EXPECT_CALL(this->listener_, OnThreadStateSliceCallstack)
         .Times(2)
-        .WillRepeatedly(::testing::Invoke(save_callstack));
+        .WillRepeatedly(save_callstack);
   }
 
   std::vector<orbit_grpc_protos::FullAddressInfo> actual_address_infos;
@@ -358,9 +354,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -452,9 +446,7 @@ TYPED_TEST_P(
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -564,9 +556,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(2)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(2).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -634,9 +624,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(1)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(1).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -696,9 +684,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(1)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(1).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -758,9 +744,7 @@ TYPED_TEST_P(
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(1)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(1).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -818,9 +802,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(2)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(2).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -890,9 +872,7 @@ TYPED_TEST_P(
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(2)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(2).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -963,9 +943,7 @@ TYPED_TEST_P(
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(4)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(4).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1054,9 +1032,7 @@ TYPED_TEST_P(
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1133,9 +1109,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(2)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(2).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1205,9 +1179,7 @@ TYPED_TEST_P(
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(2)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(2).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1278,9 +1250,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest, VisitStackSampleUsesUser
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1394,9 +1364,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1530,9 +1498,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;
@@ -1666,9 +1632,7 @@ TYPED_TEST_P(UprobesUnwindingVisitorDwarfUnwindingTest,
       [&actual_address_infos](orbit_grpc_protos::FullAddressInfo actual_address_info) {
         actual_address_infos.push_back(std::move(actual_address_info));
       };
-  EXPECT_CALL(this->listener_, OnAddressInfo)
-      .Times(3)
-      .WillRepeatedly(::testing::Invoke(save_address_info));
+  EXPECT_CALL(this->listener_, OnAddressInfo).Times(3).WillRepeatedly(save_address_info);
 
   std::atomic<uint64_t> unwinding_errors = 0;
   std::atomic<uint64_t> discarded_samples_in_uretprobes_counter = 0;

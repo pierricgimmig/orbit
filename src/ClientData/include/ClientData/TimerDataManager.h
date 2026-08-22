@@ -21,7 +21,7 @@ class TimerDataManager final {
   TimerDataManager() = default;
 
   [[nodiscard]] std::pair<uint64_t, TimerData*> CreateTimerData() {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     uint64_t id = timer_data_.size();
     timer_data_.emplace_back(std::make_unique<TimerData>());
     return std::make_pair(id, timer_data_.at(id).get());
@@ -32,7 +32,7 @@ class TimerDataManager final {
       uint64_t min_tick = std::numeric_limits<uint64_t>::min(),
       uint64_t max_tick = std::numeric_limits<uint64_t>::max(), bool exclusive = false) const {
     std::vector<const orbit_client_protos::TimerInfo*> timers;
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     for (const std::unique_ptr<TimerData>& timer_datum : timer_data_) {
       for (const orbit_client_protos::TimerInfo* timer :
            timer_datum->GetTimers(min_tick, max_tick, exclusive)) {

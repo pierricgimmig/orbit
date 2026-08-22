@@ -65,7 +65,7 @@ class InternalFutureBase {
       Invocable&& continuation) const {
     if (!IsValid()) return FutureRegisterContinuationResult::kFutureNotValid;
 
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
     if (this->shared_state_->IsFinished()) {
       return FutureRegisterContinuationResult::kFutureAlreadyCompleted;
     }
@@ -80,13 +80,13 @@ class InternalFutureBase {
   [[nodiscard]] bool IsFinished() const {
     if (this->shared_state_.use_count() == 0) return false;
 
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
     return this->shared_state_->IsFinished();
   }
 
   void Wait() const {
     ORBIT_CHECK(IsValid());
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
     this->shared_state_->mutex.Await(absl::Condition(
         +[](const std::shared_ptr<SharedState<T>>* shared_state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(
              shared_state->get()->mutex) { return shared_state->get()->IsFinished(); },
@@ -130,7 +130,7 @@ class InternalFuture : public orbit_base_internal::InternalFutureBase<T, Derived
   const T& Get() const {
     this->Wait();
 
-    absl::MutexLock lock{&this->shared_state_->mutex};
+    absl::MutexLock lock{this->shared_state_->mutex};
     return this->shared_state_->result.value();
   }
 

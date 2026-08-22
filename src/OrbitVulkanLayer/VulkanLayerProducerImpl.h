@@ -100,7 +100,7 @@ class VulkanLayerProducerImpl : public VulkanLayerProducer {
   }
 
   void ClearStringInternPool() {
-    absl::MutexLock lock{&string_keys_sent_mutex_};
+    absl::MutexLock lock{string_keys_sent_mutex_};
     string_keys_sent_.clear();
   }
 

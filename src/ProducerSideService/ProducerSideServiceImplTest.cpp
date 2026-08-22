@@ -38,7 +38,7 @@ class FakeProducer {
     ASSERT_NE(stub, nullptr);
 
     {
-      absl::WriterMutexLock lock{&context_and_stream_mutex_};
+      absl::WriterMutexLock lock{context_and_stream_mutex_};
       EXPECT_EQ(context_, nullptr);
       EXPECT_EQ(stream_, nullptr);
       context_ = std::make_unique<grpc::ClientContext>();
@@ -50,7 +50,7 @@ class FakeProducer {
       while (true) {
         orbit_grpc_protos::ReceiveCommandsAndSendEventsResponse response;
         {
-          absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+          absl::ReaderMutexLock lock{context_and_stream_mutex_};
           ASSERT_NE(stream_, nullptr);
           if (!stream_->Read(&response)) {
             break;
@@ -76,7 +76,7 @@ class FakeProducer {
   }
 
   void SendBufferedCaptureEvents(int32_t num_to_send) {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     ASSERT_NE(stream_, nullptr);
     orbit_grpc_protos::ReceiveCommandsAndSendEventsRequest request;
     request.mutable_buffered_capture_events();
@@ -85,20 +85,20 @@ class FakeProducer {
     }
 
     {
-      absl::MutexLock write_lock{&exclusive_writes_mutex_};
+      absl::MutexLock write_lock{exclusive_writes_mutex_};
       bool written = stream_->Write(request);
       EXPECT_TRUE(written);
     }
   }
 
   void SendAllEventsSent() {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     ASSERT_NE(stream_, nullptr);
     orbit_grpc_protos::ReceiveCommandsAndSendEventsRequest request;
     request.mutable_all_events_sent();
 
     {
-      absl::MutexLock write_lock{&exclusive_writes_mutex_};
+      absl::MutexLock write_lock{exclusive_writes_mutex_};
       bool written = stream_->Write(request);
       EXPECT_TRUE(written);
     }
@@ -106,7 +106,7 @@ class FakeProducer {
 
   void FinishRpc() {
     {
-      absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+      absl::ReaderMutexLock lock{context_and_stream_mutex_};
       if (context_ != nullptr) {
         context_->TryCancel();
         EXPECT_NE(stream_, nullptr);
@@ -117,7 +117,7 @@ class FakeProducer {
       }
     }
     {
-      absl::WriterMutexLock lock{&context_and_stream_mutex_};
+      absl::WriterMutexLock lock{context_and_stream_mutex_};
       stream_ = nullptr;
       context_ = nullptr;
     }

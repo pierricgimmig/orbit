@@ -29,7 +29,7 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
       return grpc::Status::CANCELLED;
     }
     {
-      absl::WriterMutexLock lock{&context_and_stream_mutex_};
+      absl::WriterMutexLock lock{context_and_stream_mutex_};
       EXPECT_EQ(context_, nullptr);
       EXPECT_EQ(stream_, nullptr);
       context_ = context;
@@ -39,7 +39,7 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
     while (true) {
       orbit_grpc_protos::ReceiveCommandsAndSendEventsRequest request;
       {
-        absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+        absl::ReaderMutexLock lock{context_and_stream_mutex_};
         if (!stream->Read(&request)) break;
       }
       EXPECT_NE(request.event_case(),
@@ -60,7 +60,7 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
     }
 
     {
-      absl::WriterMutexLock lock{&context_and_stream_mutex_};
+      absl::WriterMutexLock lock{context_and_stream_mutex_};
       context_ = nullptr;
       stream_ = nullptr;
     }
@@ -68,7 +68,7 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
   }
 
   void SendStartCaptureCommand(orbit_grpc_protos::CaptureOptions capture_options) {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     ASSERT_NE(stream_, nullptr);
     orbit_grpc_protos::ReceiveCommandsAndSendEventsResponse command;
     *command.mutable_start_capture_command()->mutable_capture_options() =
@@ -78,7 +78,7 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
   }
 
   void SendStopCaptureCommand() {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     ASSERT_NE(stream_, nullptr);
     orbit_grpc_protos::ReceiveCommandsAndSendEventsResponse command;
     command.mutable_stop_capture_command();
@@ -87,7 +87,7 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
   }
 
   void SendCaptureFinishedCommand() {
-    absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+    absl::ReaderMutexLock lock{context_and_stream_mutex_};
     ASSERT_NE(stream_, nullptr);
     orbit_grpc_protos::ReceiveCommandsAndSendEventsResponse command;
     command.mutable_capture_finished_command();
@@ -98,14 +98,14 @@ class FakeProducerSideService : public orbit_grpc_protos::ProducerSideService::S
   void FinishAndDisallowRpc() {
     rpc_allowed_ = false;
     {
-      absl::ReaderMutexLock lock{&context_and_stream_mutex_};
+      absl::ReaderMutexLock lock{context_and_stream_mutex_};
       if (context_ != nullptr) {
         EXPECT_NE(stream_, nullptr);
         context_->TryCancel();
       }
     }
     {
-      absl::WriterMutexLock lock{&context_and_stream_mutex_};
+      absl::WriterMutexLock lock{context_and_stream_mutex_};
       context_ = nullptr;
       stream_ = nullptr;
     }

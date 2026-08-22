@@ -13,7 +13,7 @@
 
 PickingId PickingManager::GetOrCreatePickableId(const std::shared_ptr<Pickable>& pickable,
                                                 BatcherId batcher_id) {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   uint32_t pickable_id = 0;
 
   auto it = pickable_pid_map_.find(pickable.get());
@@ -30,7 +30,7 @@ PickingId PickingManager::GetOrCreatePickableId(const std::shared_ptr<Pickable>&
 }
 
 void PickingManager::Reset() {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   pid_pickable_map_.clear();
   pickable_pid_map_.clear();
   pickable_id_counter_ = 0;
@@ -39,7 +39,7 @@ void PickingManager::Reset() {
 std::shared_ptr<Pickable> PickingManager::GetPickableFromId(PickingId id) const {
   ORBIT_CHECK(id.type == PickingType::kPickable);
 
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto it = pid_pickable_map_.find(id.element_id);
   if (it == pid_pickable_map_.end()) {
     return nullptr;
@@ -48,7 +48,7 @@ std::shared_ptr<Pickable> PickingManager::GetPickableFromId(PickingId id) const 
 }
 
 std::shared_ptr<Pickable> PickingManager::GetPicked() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   return currently_picked_.lock();
 }
 
@@ -58,7 +58,7 @@ void PickingManager::Pick(PickingId id, int x, int y) {
     picked->OnPick(x, y);
   }
 
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   currently_picked_ = picked;
 }
 
@@ -66,7 +66,7 @@ void PickingManager::Release() {
   auto picked = GetPicked();
   if (picked != nullptr) {
     picked->OnRelease();
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     currently_picked_.reset();
   }
 }
@@ -79,7 +79,7 @@ void PickingManager::Drag(int x, int y) const {
 }
 
 bool PickingManager::IsDragging() const {
-  absl::MutexLock lock(&mutex_);
+  absl::MutexLock lock(mutex_);
   auto picked = currently_picked_.lock();
   return picked && picked->Draggable();
 }
