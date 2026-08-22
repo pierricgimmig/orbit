@@ -6,7 +6,18 @@
 
 The subdirectories that carry build rules of their own -- libunwindstack,
 libbase, xxHash-r42, ... -- are packages in their own right. This file keeps
-the ones that do not (vulkan, libsystem, conan, ...) out of the root package.
+the ones that do not out of the root package.
+
+Those remaining directories fall into two groups:
+
+  * License text for dependencies Bazel fetches rather than vendors: capstone,
+    LLVM, Outcome, Qt, protobuf, vulkan, and the DIA SDK. The CMake build
+    collected these into a NOTICE file for the distribution; the Bazel build
+    has no equivalent yet, so they are kept as its inputs.
+
+  * Sources for features the Bazel port left disabled: libprotobuf-mutator
+    (the `*Fuzzer.cpp` targets) and VulkanTutorial (the Vulkan path of
+    IntegrationTestPuppet, behind `#ifdef VULKAN_ENABLED`).
 """
 
 package(default_visibility = ["//visibility:public"])
