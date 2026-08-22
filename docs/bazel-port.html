@@ -464,7 +464,7 @@
     <p class="eyebrow">Build system port &middot; Linux</p>
     <h1>Orbit on Bazel</h1>
     <p class="dek">Every dependency the Conan build used to hand over, re-sourced — and the handful of places where the new versions made the code wrong.</p>
-    <p class="byline">Branch <code>port-to-bazel</code> &middot; 10 commits &middot; 133 files &middot; Bazel 9.2.0, GCC 15.2, Ubuntu 26.04</p>
+    <p class="byline">Branch <code>port-to-bazel</code> &middot; 25 commits &middot; 291 files &middot; Bazel 9.2.0, GCC 15.2, Ubuntu 26.04</p>
 
     <div class="stats">
       <div class="stat"><b>6m35s</b><span>Cold build</span></div>
@@ -1141,7 +1141,7 @@
 
   <p>Two mechanisms do all of it.</p>
 
-  <p><strong><code>select()</code></strong> picks sources and dependencies inside a target that exists on both platforms. <code>src/Service</code> is the clearest case: the same <code>OrbitService</code> binary links <code>LinuxCaptureService</code> or <code>WindowsCaptureService</code>, and eight modules in total — <code>OrbitBase</code>, <code>ObjectUtils</code>, <code>ModuleUtils</code>, <code>ApiLoader</code>, <code>OrbitSsh</code>, <code>ProducerSideService</code>, <code>Service</code> — carry a platform branch.</p>
+  <p><strong><code>select()</code></strong> picks sources and dependencies inside a target that exists on both platforms. <code>src/Service</code> is the clearest case: the same <code>OrbitService</code> binary links <code>LinuxCaptureService</code> or <code>WindowsCaptureService</code>, and seven modules carry a platform branch: <code>OrbitBase</code>, <code>ObjectUtils</code>, <code>ModuleUtils</code>, <code>ApiLoader</code>, <code>OrbitSsh</code>, <code>ProducerSideService</code> and <code>Service</code>.</p>
 
   <p><strong><code>target_compatible_with</code></strong> handles the targets that exist on one platform only. The five Windows modules and the four Windows-only vendored libraries declare <code>["@platforms//os:windows"]</code>, which makes <code>bazel build //...</code> on Linux <em>skip</em> them rather than fail — the same wildcard build works on both machines, and asking for one explicitly on the wrong platform gives you a clear message instead of a compiler error.</p>
 
@@ -1224,6 +1224,10 @@
   <h3>The DIA SDK</h3>
 
   <p>The PDB reader needs Microsoft's Debug Interface Access SDK, which ships inside a Visual Studio installation rather than as a package. <code>bazel/deps/dia_sdk.bzl</code> is a repository rule that locates it through <code>VSINSTALLDIR</code> — the same search <code>cmake/FindDiaSdk.cmake</code> did — with <code>DIA_SDK_DIR</code> as an override. On Linux it generates an empty stub whose only source is an <code>#error</code>, so every BUILD file that references it still loads on a platform where the SDK cannot exist.</p>
+
+  <h3>What is verified, and what is not</h3>
+
+  <p>This was developed on Linux, so none of it has been through MSVC. What is checked is that the whole Windows dependency graph resolves &mdash; <code>bazel query</code> walks 6,555 nodes across the five modules without an unresolved label &mdash; and that <code>bazel build //...</code> on Linux skips them cleanly rather than failing. Compiling them is the first thing the MSVC leg of CI does.</p>
 
   <h3>C++20, on Windows only</h3>
 
