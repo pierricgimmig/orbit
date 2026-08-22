@@ -5,9 +5,13 @@
 #include "OrbitUserSpaceInstrumentation.h"
 
 #include <google/protobuf/arena.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/types.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <stack>
 #include <utility>
@@ -148,6 +152,19 @@ LockFreeUserSpaceInstrumentationEventProducer& GetCaptureEventProducer() {
   return producer;
 }
 
+// The id of the thread started by InitializeInstrumentationInNewThread, published by the thread
+// itself as soon as it starts running.
+std::atomic<pid_t> initialization_thread_tid{-1};
+
+// Initialize the LockFreeUserSpaceInstrumentationEventProducer and establish the connection to
+// OrbitService. Runs on the thread started by InitializeInstrumentationInNewThread below.
+void* InitializeInstrumentationThreadMain(void* /*argument*/) {
+  initialization_thread_tid.store(orbit_base::GetCurrentThreadIdNative(),
+                                  std::memory_order_release);
+  GetCaptureEventProducer();
+  return nullptr;
+}
+
 // Provide a thread local bool to keep track of whether the current thread is inside the payload we
 // injected. If that is the case we avoid further instrumentation.
 bool& GetIsInPayload() {
@@ -159,11 +176,29 @@ bool& GetIsInPayload() {
 
 // NOTE: All symbols defined here have private linker visibility by default. Symbols that
 // need to be visible to the tracee must be marked with `[[gnu::visibility("default")]]`. Check
-// out the CMakeLists.txt file for more information.
+// out the BUILD file for more information: the library is loaded into the target's own linker
+// namespace, and only the handful of symbols marked below may be visible there.
 
-// Initialize the LockFreeUserSpaceInstrumentationEventProducer and establish the connection to
-// OrbitService.
-[[gnu::visibility("default")]] void InitializeInstrumentation() { GetCaptureEventProducer(); }
+[[gnu::visibility("default")]] pid_t InitializeInstrumentationInNewThread() {
+  initialization_thread_tid.store(-1, std::memory_order_relaxed);
+
+  pthread_t thread{};
+  if (pthread_create(&thread, nullptr, &InitializeInstrumentationThreadMain, nullptr) != 0) {
+    return -1;
+  }
+  // Nobody joins this thread: OrbitService waits for it to disappear from the target's task list.
+  pthread_detach(thread);
+
+  // Hand the thread id back to OrbitService, which uses it to tell when the initialization is done.
+  // The new thread publishes it before doing any work, so this spins only for as long as it takes
+  // the scheduler to get to it. All the other threads of the target are stopped while we are called
+  // -- the new one is not, because OrbitService never attached to it.
+  pid_t tid = -1;
+  while ((tid = initialization_thread_tid.load(std::memory_order_acquire)) == -1) {
+    sched_yield();
+  }
+  return tid;
+}
 
 // Records up to six more of Orbit's own thread ids. Ids that are -1 are
 // ignored, so the caller can leave the last batch partially filled.

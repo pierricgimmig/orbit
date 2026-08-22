@@ -13,9 +13,16 @@
 // timestamp as obtained from orbit_base::CaptureTimestampNs.
 extern "C" void StartNewCapture(uint64_t capture_start_timestamp_ns);
 
-// InitializeInstrumentation needs to be called once after this library is injected into the target
-// process. It sets up the communication to OrbitService.
-extern "C" void InitializeInstrumentation();
+// InitializeInstrumentationInNewThread needs to be called once after this library is injected into
+// the target process. It starts a thread that sets up the communication to OrbitService and returns
+// the id of that thread, or -1 if the thread could not be started.
+//
+// The initialization runs on a thread of the target's own making, created with pthread_create, so
+// that it gets its own thread-local storage. It must not run on a thread that Orbit fabricated with
+// a raw clone syscall: such a thread shares the thread-local storage of the thread it was cloned
+// from, and the dynamic TLS and heap bookkeeping that gRPC's initialization performs then races
+// with the thread that storage really belongs to, which corrupts the target's heap.
+extern "C" pid_t InitializeInstrumentationInNewThread();
 
 // Injecting this library spawns threads, immediately after the call to
 // InitializeInstrumentation above: two of Orbit's own plus however many the gRPC version in use

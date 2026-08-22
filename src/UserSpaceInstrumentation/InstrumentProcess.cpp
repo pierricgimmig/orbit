@@ -12,7 +12,6 @@
 #include <absl/types/span.h>
 #include <capstone/capstone.h>
 #include <dlfcn.h>
-#include <sched.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -135,48 +134,6 @@ bool IsBlocklisted(std::string_view function_name) {
       "__GI_memcpy",
   };
   return kBlocklist.contains(function_name);
-}
-
-// MachineCodeForCloneCall creates the code to spawn a new thread inside the target process by using
-// the clone syscall. This thread is used to execute the initialization code inside the target.
-// Note that calling the result of the clone call a "thread" is a bit of a misnomer: We
-// do not create a new data structure for thread local storage but use the one of the thread we
-// halted.
-ErrorMessageOr<MachineCode> MachineCodeForCloneCall(pid_t pid, absl::Span<const ModuleInfo> modules,
-                                                    void* library_handle, uint64_t top_of_stack) {
-  constexpr uint64_t kCloneFlags =
-      CLONE_FILES | CLONE_FS | CLONE_IO | CLONE_SIGHAND | CLONE_SYSVSEM | CLONE_THREAD | CLONE_VM;
-  constexpr uint32_t kSyscallNumberClone = 0x38;
-  constexpr uint32_t kSyscallNumberExit = 0x3c;
-  constexpr const char* kInitializeInstrumentationFunctionName = "InitializeInstrumentation";
-  OUTCOME_TRY(void* initialize_instrumentation_function_address,
-              DlsymInTracee(pid, modules, library_handle, kInitializeInstrumentationFunctionName));
-  MachineCode code;
-  code.AppendBytes({0x48, 0xbf})
-      .AppendImmediate64(kCloneFlags)  // mov rdi, kCloneFlags
-      .AppendBytes({0x48, 0xbe})
-      .AppendImmediate64(top_of_stack)  // mov rsi, top_of_stack
-      .AppendBytes({0x48, 0xba})
-      .AppendImmediate64(0x0)  // mov rdx, parent_tid
-      .AppendBytes({0x49, 0xba})
-      .AppendImmediate64(0x0)  // mov r10, child_tid
-      .AppendBytes({0x49, 0xb8})
-      .AppendImmediate64(0x0)           // mov r8, tls
-      .AppendBytes({0x48, 0xc7, 0xc0})  // mov rax, kSyscallNumberClone
-      .AppendImmediate32(kSyscallNumberClone)
-      .AppendBytes({0x0f, 0x05})                          // syscall (clone)
-      .AppendBytes({0x48, 0x85, 0xc0})                    // testq	rax, rax
-      .AppendBytes({0x0f, 0x84, 0x01, 0x00, 0x00, 0x00})  // jz 0x01(rip)
-      .AppendBytes({0xcc})                                // int3
-      .AppendBytes({0x48, 0xb8})
-      .AppendImmediate64(absl::bit_cast<uint64_t>(
-          initialize_instrumentation_function_address))  // mov rax, initialize_instrumentation
-      .AppendBytes({0xff, 0xd0})                         // call rax
-      .AppendBytes({0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00})  // mov rdi, 0x0
-      .AppendBytes({0x48, 0xc7, 0xc0})                          // mov rax, kSyscallNumberExit
-      .AppendImmediate32(kSyscallNumberExit)
-      .AppendBytes({0x0f, 0x05});  // syscall (exit)
-  return code;
 }
 
 ErrorMessageOr<void> WaitForThreadToExit(pid_t pid, pid_t tid) {
@@ -436,8 +393,24 @@ ErrorMessageOr<std::unique_ptr<InstrumentedProcess>> InstrumentedProcess::Create
   // in the previous run.
   OUTCOME_TRY(const bool already_injected, AlreadyInjected(modules));
 
+  // Load the library into the linker namespace the target already has, not into one of its own.
+  //
+  // A namespace of its own comes with a second copy of libc, and the two copies grow the same brk
+  // heap from their own main arena, each assuming the memory above its top chunk is its own. They
+  // hand out overlapping memory and the target dies -- glibc reports "malloc(): unsorted double
+  // linked list corrupted" or asserts in sysmalloc that nothing else moved the program break --
+  // while the injected library is starting up, which is heavy on allocation.
+  //
+  // A namespace of its own was introduced (#4327) when Orbit could be built against gRPC and
+  // protobuf as *system* libraries, i.e. dynamically linked: the target and this library would then
+  // share one libprotobuf, and registering the same generated descriptors twice in one protobuf
+  // aborts. That is what the namespace kept apart. This build links gRPC, protobuf and abseil
+  // statically into liborbituserspaceinstrumentation.so and hides every one of their symbols
+  // (see the BUILD file), so this library carries its own copies with no way for them to meet the
+  // target's -- which is the same reason liborbit.so, the Orbit API library, is loaded into the
+  // initial namespace as well.
   auto library_handle_or_error =
-      DlmopenInTracee(pid, modules, library_path, RTLD_NOW, LinkerNamespace::kCreateNewNamespace);
+      DlmopenInTracee(pid, modules, library_path, RTLD_NOW, LinkerNamespace::kUseInitialNamespace);
   if (library_handle_or_error.has_error()) {
     return ErrorMessage(absl::StrFormat("Unable to open library in tracee: %s",
                                         library_handle_or_error.error().message()));
@@ -482,15 +455,38 @@ ErrorMessageOr<std::unique_ptr<InstrumentedProcess>> InstrumentedProcess::Create
   const absl::flat_hash_set<pid_t> tids_before_injection(tids_as_vector.begin(),
                                                          tids_as_vector.end());
 
-  // Call initialization code in a new thread.
+  // Let the injected library start a thread of its own and run the initialization code on it. The
+  // thread has to be created by the target's own libc, with pthread_create: a thread fabricated
+  // here with a raw clone syscall would share the thread-local storage of the thread we halted, and
+  // the dynamic TLS and heap bookkeeping done while gRPC starts up would then corrupt the target's
+  // heap.
   ORBIT_LOG("Initializing instrumentation library and setting up communication to OrbitService");
-  constexpr uint64_t kStackSize = 8ULL * 1024ULL * 1024ULL;
-  OUTCOME_TRY(auto&& thread_stack_memory, MemoryInTracee::Create(pid, 0, kStackSize));
-  const uint64_t top_of_stack = thread_stack_memory->GetAddress() + kStackSize;
-  OUTCOME_TRY(auto&& code, MachineCodeForCloneCall(pid, modules, library_handle, top_of_stack));
-  const uint64_t code_size = code.GetResultAsVector().size();
-  OUTCOME_TRY(auto&& code_memory, MemoryInTracee::Create(pid, 0, code_size));
-  OUTCOME_TRY(auto&& init_thread_tid, ExecuteMachineCode(*code_memory, code));
+  constexpr const char* kInitializeInstrumentationFunctionName =
+      "InitializeInstrumentationInNewThread";
+  OUTCOME_TRY(void* initialize_instrumentation_function_address,
+              DlsymInTracee(pid, modules, library_handle,
+                            kInitializeInstrumentationFunctionName));
+  // The code below is what ExecuteInProcess would generate, but the memory holding it is ours to
+  // free: ExecuteInProcess frees its scratch memory as soon as the call returns, and the munmap
+  // that takes needs a syscall instruction placed into a page of the target -- which is not safe to
+  // do once the initialization thread this call starts is running. The memory is freed further
+  // down, after we stopped the target again.
+  // movabsq rax, initialize_instrumentation    48 b8 initialize_instrumentation
+  // call rax                                   ff d0
+  // int3                                       cc
+  MachineCode code;
+  code.AppendBytes({0x48, 0xb8})
+      .AppendImmediate64(absl::bit_cast<uint64_t>(initialize_instrumentation_function_address))
+      .AppendBytes({0xff, 0xd0})
+      .AppendBytes({0xcc});
+  OUTCOME_TRY(auto&& code_memory, MemoryInTracee::Create(pid, 0, code.GetResultAsVector().size()));
+  OUTCOME_TRY(const uint64_t init_thread_tid_as_uint64, ExecuteMachineCode(*code_memory, code));
+  const auto init_thread_tid = static_cast<pid_t>(init_thread_tid_as_uint64);
+  if (init_thread_tid == -1) {
+    return ErrorMessage(
+        "Unable to start the initialization thread of the user space instrumentation library in "
+        "the target process.");
+  }
 
   // Manually detach such that we can wait for the initilization to finish and detect the newly
   // spawned threads.
@@ -510,7 +506,6 @@ ErrorMessageOr<std::unique_ptr<InstrumentedProcess>> InstrumentedProcess::Create
                                                  }
                                                }};
   OUTCOME_TRY(SetOrbitThreadsInTarget(pid, modules, library_handle, orbit_threads));
-  OUTCOME_TRY(thread_stack_memory->Free());
   OUTCOME_TRY(code_memory->Free());
 
   ORBIT_LOG("Initialization of instrumentation library done");

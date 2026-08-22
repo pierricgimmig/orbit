@@ -3,9 +3,20 @@
 # found in the LICENSE file.
 
 load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# OrbitService looks for the instrumentation library next to itself, so the test that runs
+# OrbitService needs a copy of it in its own output directory -- the same thing //src/Service does
+# for the service binary.
+copy_file(
+    name = "copy_liborbituserspaceinstrumentation_so",
+    src = "//src/UserSpaceInstrumentation:liborbituserspaceinstrumentation.so",
+    out = "liborbituserspaceinstrumentation.so",
+    is_executable = True,
+)
 
 cc_binary(
     name = "libIntegrationTestPuppetSharedObject.so",
@@ -85,7 +96,10 @@ cc_test(
         "OrbitServiceIntegrationTest.cpp",
     ],
     copts = ORBIT_COPTS,
-    data = [":libIntegrationTestPuppetSharedObject.so"],
+    data = [
+        ":libIntegrationTestPuppetSharedObject.so",
+        ":liborbituserspaceinstrumentation.so",
+    ],
     linkstatic = True,
     tags = [
         "exclusive",
