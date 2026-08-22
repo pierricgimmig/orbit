@@ -1,0 +1,20 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# How long does Orbit take to build, and how much disk does that cost?
+#
+#   bazel run //bazel/benchmark:build_benchmark             # everything, hours
+#   bazel run //bazel/benchmark:build_benchmark -- --quick  # iteration only
+#
+# The benchmark builds in an output base of its own, so it neither disturbs nor
+# benefits from the one you work in.
+sh_binary(
+    name = "build_benchmark",
+    srcs = ["build_benchmark.sh"],
+    data = ["build_benchmark.py"],
+)
