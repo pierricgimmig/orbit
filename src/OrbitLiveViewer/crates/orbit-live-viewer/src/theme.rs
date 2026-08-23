@@ -8,6 +8,8 @@ pub const CANVAS: Color32 = Color32::from_rgb(0x0B, 0x0C, 0x0E);
 pub const PANEL: Color32 = Color32::from_rgb(0x12, 0x14, 0x1A);
 pub const RAIL: Color32 = Color32::from_rgb(0x10, 0x12, 0x16);
 pub const TRACK: Color32 = Color32::from_rgb(0x16, 0x18, 0x1D);
+/// Neutral alt before per-process washes. Kept as the graphite baseline.
+#[allow(dead_code)]
 pub const TRACK_ALT: Color32 = Color32::from_rgb(0x14, 0x16, 0x1B);
 pub const INPUT: Color32 = Color32::from_rgb(0x0E, 0x10, 0x14);
 pub const TEXT: Color32 = Color32::from_rgb(0xC4, 0xC7, 0xCC);
@@ -152,5 +154,6 @@ mod tests {
         assert_eq!(process_track_wash(99), process_track_wash(99));
         assert_ne!(process_track_wash_role(1, WashRole::Process), a);
         assert_ne!(process_track_wash_role(1, WashRole::Leaf), a);
+        assert_ne!(a, TRACK_ALT);
     }
 }
