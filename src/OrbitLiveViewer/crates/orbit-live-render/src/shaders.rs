@@ -48,9 +48,8 @@ struct VsOut {
   @location(5) mark: f32,
 };
 
-const SHADOW_PAD: f32 = 10.0;
-const SHADOW_SIGMA: f32 = 2.2;
-const SHADE: f32 = 0.94;
+const SHADOW_PAD: f32 = 6.0;
+const SHADOW_SIGMA: f32 = 1.35;
 const SIBLING_RGB: vec3<f32> = vec3(0.392, 0.710, 0.965);
 
 @vertex
@@ -62,8 +61,8 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
   let uv = corners[vid];
   let mark = inst.extra.y;
   let selected = mark > 1.5 && mark < 2.5;
-  let lift = select(0.0, -1.6, selected);
-  let pad = SHADOW_PAD + select(0.0, 2.0, selected);
+  let lift = select(0.0, -0.8, selected);
+  let pad = SHADOW_PAD + select(0.0, 1.0, selected);
   let x = uni.origin.x + inst.rect.x - pad + uv.x * (inst.rect.z + 2.0 * pad);
   let y = uni.origin.y + inst.rect.y + lift - pad + uv.y * (inst.rect.w + 2.0 * pad);
   var o: VsOut;
@@ -133,25 +132,26 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   let d = sd_rounded_box(v.local, v.half_size, v.radius);
   let aa = fwidth(d) * 0.75;
   let fill = 1.0 - smoothstep(-aa, aa, d);
-  let border = 1.0 - smoothstep(-aa, aa, abs(d) - 0.6);
-  let sigma = SHADOW_SIGMA + select(0.0, 0.8, selected);
-  let shadow = rounded_box_shadow(v.local + vec2(0.8, 1.2), v.half_size, v.radius, sigma);
-  let shade_mix = select(1.0, SHADE, v.pix.x < 3.0 && fill > 0.5);
-  var rgb = v.color.rgb * shade_mix;
-  rgb = rgb * select(1.0, 1.04, hover);
-  rgb = rgb * select(1.0, 1.08, selected);
-  var rim = vec3(1.0);
-  var rim_w = 0.35;
+  let border = 1.0 - smoothstep(-aa, aa, abs(d) - 0.5);
+  let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected);
+  let shadow = rounded_box_shadow(v.local + vec2(0.4, 0.7), v.half_size, v.radius, sigma);
+  var rgb = v.color.rgb;
+  let top = v.pix.y < 1.15 && fill > 0.5;
+  rgb = rgb * select(1.0, 1.08, top);
+  rgb = rgb * select(1.0, 1.05, hover);
+  rgb = rgb * select(1.0, 1.07, selected);
+  var rim = vec3(0.92, 0.93, 0.95);
+  var rim_w = 0.18;
   if sibling {
     rim = SIBLING_RGB;
-    rim_w = 0.82;
+    rim_w = 0.70;
   } else if selected {
-    rim_w = 0.88;
+    rim_w = 0.78;
   } else if hover {
-    rim_w = 0.52;
+    rim_w = 0.36;
   }
   rgb = mix(rgb, rim, border * rim_w * fill);
-  let shadow_a = select(0.28, 0.46, selected);
+  let shadow_a = select(0.10, 0.20, selected);
   let alpha = max(fill * v.color.a, shadow * shadow_a * (1.0 - fill));
   return vec4(rgb, alpha);
 }

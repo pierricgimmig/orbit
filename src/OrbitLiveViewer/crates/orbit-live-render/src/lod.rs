@@ -38,6 +38,7 @@ pub struct ScopeInstance {
     pub radius: f32,
     pub name_id: u32,
     pub start_ns: u64,
+    pub duration_ns: u64,
     pub tid: u32,
     pub kind: u8,
     pub depth: u8,
@@ -50,6 +51,7 @@ pub struct ScopeInstance {
 pub struct ScopePick {
     pub name_id: u32,
     pub start_ns: u64,
+    pub duration_ns: u64,
     pub tid: u32,
     pub kind: u8,
     pub depth: u8,
@@ -61,6 +63,7 @@ impl ScopePick {
         Self {
             name_id: e.name_id,
             start_ns: e.start_ns,
+            duration_ns: e.duration_ns,
             tid: e.tid,
             kind: e.kind,
             depth: e.depth,
@@ -71,7 +74,7 @@ impl ScopePick {
     pub fn lane_key(self) -> LaneKey {
         LiveEvent {
             start_ns: self.start_ns,
-            duration_ns: 0,
+            duration_ns: self.duration_ns,
             tid: self.tid,
             pid: 0,
             kind: self.kind,
@@ -87,6 +90,7 @@ impl ScopePick {
         Self {
             name_id: i.name_id,
             start_ns: i.start_ns,
+            duration_ns: i.duration_ns,
             tid: i.tid,
             kind: i.kind,
             depth: i.depth,
@@ -109,9 +113,9 @@ pub struct InstanceFrame {
 
 pub fn lane_height(key: LaneKey) -> f32 {
     match key.kind {
-        kind::THREAD_STATE => 8.0,
-        kind::SCHEDULING_SLICE => 10.0,
-        _ => 16.0,
+        kind::THREAD_STATE => 10.0,
+        kind::SCHEDULING_SLICE => 12.0,
+        _ => 20.0,
     }
 }
 
@@ -274,12 +278,13 @@ pub fn pick_column_event(
     width: f32,
     x: f32,
     y: f32,
+    scale: f32,
 ) -> Option<LiveEvent> {
     if width <= 0.0 || t1 <= t0 {
         return None;
     }
     let key = layout.iter().find_map(|(k, ly)| {
-        let h = lane_height(*k) + lane_gap(*k);
+        let h = (lane_height(*k) + lane_gap(*k)) * scale.max(0.01);
         if y >= *ly && y < *ly + h {
             Some(*k)
         } else {
@@ -328,7 +333,7 @@ fn push_lane_instances(
     out: &mut Vec<ScopeInstance>,
 ) {
     let mut i = lane.first_ending_after(t0);
-    let radius = (h * 0.22).clamp(1.5, 4.0);
+    let radius = (h * 0.14).clamp(2.0, 3.0);
     while let Some(e) = lane.events().get(i) {
         if e.start_ns >= t1 {
             break;
@@ -359,6 +364,7 @@ pub fn instance_for_event(
         radius,
         name_id: e.name_id,
         start_ns: e.start_ns,
+        duration_ns: e.duration_ns,
         tid: e.tid,
         kind: e.kind,
         depth: e.depth,

@@ -4,7 +4,7 @@ use eframe::egui::{
     self, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId, Frame, Key, Layout,
     Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
 };
-use orbit_live_event::{chrome, kind, InternTable, LaneKey, THREAD_PALETTE};
+use orbit_live_event::{kind, InternTable, LaneKey, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
     apply_highlight_flags, choose_lod, collect_instances_layout, instance_for_event, kind_label,
@@ -17,13 +17,14 @@ use crate::net::{
     instances_from_timeline, scale_frame_rgba, Net, ProcessJson, ServiceFrame, StatusJson,
     TimelineJson,
 };
+use crate::theme;
 use crate::timeline::{paint_callback, TimelineGpu, TimelinePayload, ViewUniforms};
 use crate::tracks::TrackStrip;
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
-const SIDE: f32 = 256.0;
-const HEADER_W: f32 = 152.0;
-const RADIUS: f32 = 5.0;
+const SIDE: f32 = 228.0;
+const HEADER_W: f32 = 168.0;
+const RADIUS: f32 = theme::RADIUS;
 
 fn c32(argb: u32) -> Color32 {
     Color32::from_rgba_unmultiplied(
@@ -35,49 +36,46 @@ fn c32(argb: u32) -> Color32 {
 }
 
 fn hairline() -> Stroke {
-    Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 55))
+    theme::hairline()
 }
 
 fn muted() -> Color32 {
-    Color32::from_rgb(0x9A, 0x9A, 0x9A)
+    theme::MUTED
 }
 
 pub fn apply_orbit_visuals(ctx: &Context) {
     let mut v = egui::Visuals::dark();
-    let window = c32(chrome::QT_WINDOW);
-    let input = c32(chrome::INPUT_BASE);
-    let selected = c32(chrome::SELECTED_TAB);
     let r = egui::CornerRadius::same(RADIUS as u8);
-    v.override_text_color = Some(c32(chrome::TEXT));
-    v.panel_fill = window;
-    v.window_fill = window;
+    v.override_text_color = Some(theme::TEXT);
+    v.panel_fill = theme::PANEL;
+    v.window_fill = theme::PANEL;
     v.window_corner_radius = r;
     v.menu_corner_radius = r;
-    v.extreme_bg_color = input;
-    v.faint_bg_color = window;
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, c32(chrome::TEXT));
-    v.widgets.noninteractive.bg_fill = window;
-    v.widgets.noninteractive.weak_bg_fill = window;
+    v.extreme_bg_color = theme::INPUT;
+    v.faint_bg_color = theme::PANEL;
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, theme::TEXT);
+    v.widgets.noninteractive.bg_fill = theme::PANEL;
+    v.widgets.noninteractive.weak_bg_fill = theme::PANEL;
     v.widgets.noninteractive.corner_radius = r;
     v.widgets.noninteractive.bg_stroke = Stroke::NONE;
-    v.widgets.inactive.bg_fill = input;
-    v.widgets.inactive.weak_bg_fill = input;
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(0xE8, 0xE8, 0xE8));
-    v.widgets.inactive.bg_stroke = hairline();
+    v.widgets.inactive.bg_fill = theme::INPUT;
+    v.widgets.inactive.weak_bg_fill = theme::INPUT;
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, theme::TEXT);
+    v.widgets.inactive.bg_stroke = Stroke::NONE;
     v.widgets.inactive.corner_radius = r;
     v.widgets.inactive.expansion = 0.0;
-    v.widgets.hovered.bg_fill = Color32::from_rgb(0x22, 0x22, 0x22);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x22, 0x22, 0x22);
+    v.widgets.hovered.bg_fill = Color32::from_rgb(0x1A, 0x1C, 0x22);
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x1A, 0x1C, 0x22);
     v.widgets.hovered.bg_stroke =
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0x64, 0xB5, 0xF6, 90));
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 50));
     v.widgets.hovered.corner_radius = r;
     v.widgets.hovered.expansion = 0.0;
-    v.widgets.active.bg_fill = input;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, selected);
+    v.widgets.active.bg_fill = theme::INPUT;
+    v.widgets.active.bg_stroke = Stroke::new(1.0, theme::ACCENT);
     v.widgets.active.corner_radius = r;
     v.widgets.open.corner_radius = r;
-    v.selection.bg_fill = selected;
-    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+    v.selection.bg_fill = Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 60);
+    v.selection.stroke = Stroke::new(1.0, theme::ACCENT);
     ctx.set_visuals(v);
 }
 
@@ -112,6 +110,8 @@ pub struct OrbitLiveApp {
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_lod: orbit_live_render::TimelineLod,
+    compact: bool,
+    advanced: bool,
 }
 
 impl OrbitLiveApp {
@@ -157,6 +157,8 @@ impl OrbitLiveApp {
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
+            compact: false,
+            advanced: false,
         }
     }
 
@@ -264,19 +266,70 @@ impl OrbitLiveApp {
         }
     }
 
+    fn transport(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("ORBIT")
+                    .family(fonts::medium())
+                    .size(11.0)
+                    .extra_letter_spacing(1.6)
+                    .color(theme::TEXT),
+            );
+            ui.add_space(12.0);
+            if pill(ui, "Demo", self.status.demo).clicked() {
+                self.error.clear();
+                self.net.start_demo();
+                self.follow = true;
+            }
+            if icon_pill(ui, "■", "Stop demo").clicked() {
+                self.net.stop_demo();
+            }
+            if pill(ui, "Follow", self.follow).clicked() {
+                self.follow = !self.follow;
+            }
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(format!("{} live", fmt_int(self.status.events_live)))
+                    .font(FontId::monospace(11.5))
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(self.lod_label)
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            let link = format!(
+                "{}  {}",
+                if self.http_ok { "http" } else { "http…" },
+                if self.ws_ok { "ws" } else { "ws…" }
+            );
+            ui.label(
+                RichText::new(link)
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(8.0);
+                if icon_pill(ui, if self.compact { "≡" } else { "☰" }, "Track density").clicked()
+                {
+                    self.compact = !self.compact;
+                }
+                if icon_pill(ui, "···", "Inspector").clicked() {
+                    self.advanced = !self.advanced;
+                }
+            });
+        });
+    }
+
     fn chrome(&mut self, ui: &mut Ui) {
         ui.add_space(4.0);
         ui.label(
-            RichText::new("ORBIT")
+            RichText::new("INSPECTOR")
                 .family(fonts::medium())
-                .size(15.0)
+                .size(10.0)
                 .extra_letter_spacing(1.4)
-                .color(Color32::WHITE),
-        );
-        ui.label(
-            RichText::new("Live capture")
-                .size(12.0)
-                .color(c32(chrome::SELECTED_TAB)),
+                .color(theme::MUTED),
         );
 
         section(ui, "PROCESS");
@@ -305,32 +358,22 @@ impl OrbitLiveApp {
                 }
             });
         ui.add_space(6.0);
-        if primary_button(ui, "Start capture").clicked() {
-            if let Some(pid) = self.selected_pid {
-                self.error.clear();
-                self.net.start_capture(pid);
-            } else {
-                self.error = "Select a process, or start the demo.".into();
-            }
-        }
         ui.horizontal(|ui| {
-            if quiet_button(ui, "Refresh").clicked() {
+            if pill(ui, "Capture", false).clicked() {
+                if let Some(pid) = self.selected_pid {
+                    self.error.clear();
+                    self.net.start_capture(pid);
+                } else {
+                    self.error = "Select a process, or start the demo.".into();
+                }
+            }
+            if icon_pill(ui, "↻", "Refresh process list").clicked() {
                 self.net.get_processes();
             }
-            if quiet_button(ui, "Stop").clicked() {
+            if icon_pill(ui, "■", "Stop capture").clicked() {
                 self.net.stop_capture();
             }
         });
-
-        section(ui, "DEMO");
-        if primary_button(ui, "Start demo").clicked() {
-            self.error.clear();
-            self.net.start_demo();
-            self.follow = true;
-        }
-        if quiet_button(ui, "Stop demo").clicked() {
-            self.net.stop_demo();
-        }
 
         section(ui, "RING / SPILL");
         ui.label(RichText::new("Ring bytes").size(11.0).color(muted()));
@@ -338,7 +381,7 @@ impl OrbitLiveApp {
             egui::TextEdit::singleline(&mut self.ring_bytes)
                 .desired_width(ui.available_width())
                 .font(FontId::monospace(12.0))
-                .background_color(c32(chrome::INPUT_BASE)),
+                .background_color(theme::INPUT),
         );
         ui.add_space(4.0);
         ui.label(RichText::new("Spill path").size(11.0).color(muted()));
@@ -347,10 +390,10 @@ impl OrbitLiveApp {
                 .desired_width(ui.available_width())
                 .hint_text("/tmp/orbit-spill")
                 .font(FontId::proportional(12.5))
-                .background_color(c32(chrome::INPUT_BASE)),
+                .background_color(theme::INPUT),
         );
         ui.add_space(6.0);
-        if quiet_button(ui, "Apply ring / spill").clicked() {
+        if pill(ui, "Apply", false).clicked() {
             match self.ring_bytes.trim().parse::<u64>() {
                 Ok(n) => {
                     self.error.clear();
@@ -381,7 +424,7 @@ impl OrbitLiveApp {
                 .size(12.0)
                 .extra_letter_spacing(0.6)
                 .color(if self.status.demo || self.status.capturing {
-                    c32(chrome::SELECTED_TAB)
+                    theme::ACCENT
                 } else {
                     muted()
                 }),
@@ -422,22 +465,16 @@ impl OrbitLiveApp {
             );
         }
 
-        ui.add_space(18.0);
-        ui.separator();
-        ui.add_space(8.0);
+        ui.add_space(16.0);
         ui.label(
-            RichText::new("Wheel zoom  ·  Drag pan  ·  Space follow")
-                .size(10.5)
-                .color(Color32::from_rgb(0x7A, 0x7A, 0x7A)),
-        );
-        ui.label(
-            RichText::new("Handle reorders tracks  ·  Click a scope")
-                .size(10.5)
-                .color(Color32::from_rgb(0x7A, 0x7A, 0x7A)),
+            RichText::new("Wheel zoom · drag pan · space follow")
+                .size(10.0)
+                .color(theme::MUTED),
         );
     }
 
     fn timeline(&mut self, ui: &mut Ui, dt: f32) {
+        self.tracks.scale = if self.compact { 0.72 } else { 1.0 };
         self.tracks.sync(&self.index);
         self.tracks.tick(dt);
 
@@ -446,14 +483,13 @@ impl OrbitLiveApp {
             ui.allocate_exact_size(Vec2::new(ui.available_width(), timebar_h), Sense::hover());
         let header_cut = time_rect.with_max_x(time_rect.left() + HEADER_W);
         let ruler = time_rect.with_min_x(time_rect.left() + HEADER_W);
-        ui.painter()
-            .rect_filled(header_cut, 0.0, c32(chrome::TIME_BAR));
+        ui.painter().rect_filled(header_cut, 0.0, theme::RAIL);
         ui.painter().text(
-            header_cut.left_center() + Vec2::new(14.0, 0.0),
+            header_cut.left_center() + Vec2::new(12.0, 0.0),
             Align2::LEFT_CENTER,
-            "Tracks",
-            FontId::new(11.0, fonts::medium()),
-            muted(),
+            "TRACKS",
+            FontId::new(9.5, fonts::medium()),
+            theme::MUTED,
         );
         paint_timebar(ui, ruler, self.t0, self.t1);
         ui.painter().line_segment(
@@ -472,9 +508,9 @@ impl OrbitLiveApp {
             let head = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + HEADER_W, rect.max.y));
             let body = Rect::from_min_max(Pos2::new(rect.min.x + HEADER_W, rect.min.y), rect.max);
 
-            ui.painter()
-                .rect_filled(head, 0.0, Color32::from_rgb(0x2C, 0x2C, 0x2C));
-            ui.painter().rect_filled(body, 0.0, c32(chrome::CANVAS));
+            ui.painter().rect_filled(head, 0.0, theme::RAIL);
+            ui.painter().rect_filled(body, 0.0, theme::CANVAS);
+            paint_quiet_grid(ui, body, self.t0, self.t1);
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
 
@@ -512,6 +548,10 @@ impl OrbitLiveApp {
                 );
                 let payload = self.timeline_payload(t0, t1, width, lod, ppp);
                 ui.painter().add(paint_callback(body, payload, view));
+                paint_playhead(ui, body, self.t0, self.t1, self.status.newest_end_ns as f64);
+                if let Some(h) = self.hover {
+                    show_scope_tooltip(ui, &self.intern, h);
+                }
             } else {
                 ui.painter().text(
                     body.center(),
@@ -528,31 +568,35 @@ impl OrbitLiveApp {
         let layout = self.tracks.layout();
         let clip = ui.clip_rect();
         for &(key, y) in &layout {
-            let h = lane_height(key);
-            let r = Rect::from_min_size(
-                Pos2::new(head.left() + 6.0, head.top() + y + 1.0),
-                Vec2::new(head.width() - 10.0, h.max(1.0)),
+            let h = lane_height(key) * self.tracks.scale;
+            let row = Rect::from_min_size(
+                Pos2::new(head.left(), head.top() + y),
+                Vec2::new(head.width(), h.max(1.0)),
             );
-            if r.max.y < clip.min.y || r.min.y > clip.max.y {
+            if row.max.y < clip.min.y || row.min.y > clip.max.y {
                 continue;
             }
             let dragging = self.tracks.is_dragging(key);
             let painter = ui.painter();
+            let wash = if dragging {
+                theme::TRACK
+            } else if (y as i32 / 8) % 2 == 0 {
+                theme::TRACK
+            } else {
+                theme::TRACK_ALT
+            };
             if dragging {
                 painter.rect_filled(
-                    r.translate(Vec2::new(0.0, 4.0)).expand(1.5),
-                    6.0,
-                    Color32::from_black_alpha(100),
+                    row.translate(Vec2::new(0.0, 3.0)),
+                    0.0,
+                    Color32::from_black_alpha(90),
                 );
-                painter.rect_filled(
-                    r.translate(Vec2::new(0.0, -2.0)),
-                    RADIUS,
-                    c32(chrome::TRACK),
-                );
+                painter.rect_filled(row.translate(Vec2::new(1.0, -1.0)), 0.0, wash);
             } else {
-                painter.rect_filled(r, RADIUS, c32(chrome::TRACK));
+                painter.rect_filled(row, 0.0, wash);
             }
-            let handle = Rect::from_min_size(r.min, Vec2::new(18.0, r.height()));
+            painter.line_segment([row.left_bottom(), row.right_bottom()], hairline());
+            let handle = Rect::from_min_size(row.min, Vec2::new(16.0, row.height()));
             paint_handle_dots(painter, handle, dragging);
             let resp = ui.interact(
                 handle,
@@ -574,17 +618,45 @@ impl OrbitLiveApp {
                 self.tracks.end_drag();
             }
 
-            let chip = THREAD_PALETTE[(key.tid as usize) % THREAD_PALETTE.len()];
-            let chip_r =
-                Rect::from_center_size(Pos2::new(r.left() + 26.0, r.center().y), Vec2::splat(7.0));
-            painter.rect_filled(chip_r, 2.0, c32(chip));
+            let chip =
+                theme::display_argb(THREAD_PALETTE[(key.tid as usize) % THREAD_PALETTE.len()]);
+            let chip_r = Rect::from_center_size(
+                Pos2::new(row.left() + 24.0, row.center().y),
+                Vec2::splat(6.0),
+            );
+            painter.rect_filled(chip_r, theme::TRACK_RADIUS, c32(chip));
             let title = lane_title(key, &self.intern);
             painter.text(
-                Pos2::new(r.left() + 36.0, r.center().y),
+                Pos2::new(row.left() + 34.0, row.center().y),
                 Align2::LEFT_CENTER,
                 title,
                 FontId::new(11.0, FontFamily::Proportional),
-                Color32::from_rgb(0xE4, 0xE4, 0xE4),
+                theme::TEXT,
+            );
+            let stub = Color32::from_rgb(0x3A, 0x3E, 0x46);
+            painter.text(
+                Pos2::new(row.right() - 28.0, row.center().y),
+                Align2::RIGHT_CENTER,
+                "M",
+                FontId::new(8.5, fonts::medium()),
+                stub,
+            );
+            painter.text(
+                Pos2::new(row.right() - 14.0, row.center().y),
+                Align2::RIGHT_CENTER,
+                "S",
+                FontId::new(8.5, fonts::medium()),
+                stub,
+            );
+        }
+        if let Some(iy) = self.tracks.insert_y() {
+            let y = head.top() + iy;
+            ui.painter().line_segment(
+                [
+                    Pos2::new(head.left() + 8.0, y),
+                    Pos2::new(head.right() + 24.0, y),
+                ],
+                Stroke::new(1.25, theme::INSERT),
             );
         }
     }
@@ -603,6 +675,10 @@ impl OrbitLiveApp {
             let mut overlay = Vec::new();
             if lod == orbit_live_render::TimelineLod::Instanced {
                 let mut frame = collect_instances_layout(&self.index, t0, t1, width, &layout);
+                let d = self.tracks.scale;
+                for inst in &mut frame.instances {
+                    inst.h *= d;
+                }
                 apply_highlight_flags(&mut frame.instances, self.selected, self.hover);
                 self.last_instances = frame.instances.clone();
                 let s = ppp.max(0.01);
@@ -619,16 +695,24 @@ impl OrbitLiveApp {
             }
             self.last_instances.clear();
             if let Some(sel) = self.selected {
-                if let Some(mut inst) = overlay_instance(&self.index, &layout, t0, t1, width, sel) {
+                if let Some(mut inst) =
+                    overlay_instance(&self.index, &layout, t0, t1, width, sel, self.tracks.scale)
+                {
                     inst.flags = FLAG_SELECTED;
                     overlay.push(inst);
                 }
             }
             if let Some(hov) = self.hover {
                 if self.selected.map(|s| s != hov).unwrap_or(true) {
-                    if let Some(mut inst) =
-                        overlay_instance(&self.index, &layout, t0, t1, width, hov)
-                    {
+                    if let Some(mut inst) = overlay_instance(
+                        &self.index,
+                        &layout,
+                        t0,
+                        t1,
+                        width,
+                        hov,
+                        self.tracks.scale,
+                    ) {
                         inst.flags = FLAG_HOVER;
                         overlay.push(inst);
                     }
@@ -667,7 +751,8 @@ impl OrbitLiveApp {
         }
         if let Some(fr) = &self.service_frame {
             let row_h = ((16.0 * ppp).round() as u32).max(1);
-            let (rgba, height) = scale_frame_rgba(fr, row_h);
+            let (mut rgba, height) = scale_frame_rgba(fr, row_h);
+            theme::remap_rgba8(&mut rgba);
             return TimelinePayload::Pixel {
                 rgba,
                 width: fr.width.max(1),
@@ -739,8 +824,17 @@ impl OrbitLiveApp {
             return pick_instance_at(&self.last_instances, x, y)
                 .map(|i| ScopePick::from_instance(&self.last_instances[i]));
         }
-        pick_column_event(&self.index, &self.last_layout, t0, t1, width, x, y)
-            .map(ScopePick::from_event)
+        pick_column_event(
+            &self.index,
+            &self.last_layout,
+            t0,
+            t1,
+            width,
+            x,
+            y,
+            self.tracks.scale,
+        )
+        .map(ScopePick::from_event)
     }
 
     fn nudge_selection(&mut self, dir: isize) {
@@ -816,27 +910,44 @@ impl eframe::App for OrbitLiveApp {
             self.net.pull_view(t0, t1, self.view_width.max(16));
         }
 
-        let window = c32(chrome::QT_WINDOW);
-        egui::SidePanel::left("orbit_chrome")
-            .exact_width(SIDE)
-            .resizable(false)
+        egui::TopBottomPanel::top("orbit_transport")
+            .exact_height(36.0)
             .frame(
                 Frame::new()
-                    .fill(window)
-                    .inner_margin(Margin::symmetric(16, 12))
-                    .stroke(Stroke::NONE),
+                    .fill(theme::PANEL)
+                    .inner_margin(Margin::symmetric(4, 4))
+                    .stroke(Stroke::NONE)
+                    .shadow(egui::Shadow {
+                        offset: [0, 2],
+                        blur: 10,
+                        spread: 0,
+                        color: Color32::from_black_alpha(80),
+                    }),
             )
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.chrome(ui));
-            });
+            .show(ctx, |ui| self.transport(ui));
+
+        if self.advanced {
+            egui::SidePanel::left("orbit_chrome")
+                .exact_width(SIDE)
+                .resizable(false)
+                .frame(
+                    Frame::new()
+                        .fill(theme::PANEL)
+                        .inner_margin(Margin::symmetric(16, 12))
+                        .stroke(Stroke::NONE),
+                )
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.chrome(ui));
+                });
+            ui_hairline_sidebar(ctx);
+        }
 
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(c32(chrome::CANVAS)).inner_margin(0))
+            .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
             .show(ctx, |ui| self.timeline(ui, dt));
 
-        ui_hairline_sidebar(ctx);
         ctx.request_repaint();
     }
 }
@@ -859,39 +970,52 @@ fn section(ui: &mut Ui, label: &str) {
     ui.label(
         RichText::new(label)
             .family(fonts::medium())
-            .size(10.5)
-            .extra_letter_spacing(1.15)
-            .color(Color32::from_rgb(0xA0, 0xA0, 0xA0)),
+            .size(10.0)
+            .extra_letter_spacing(1.6)
+            .color(theme::MUTED),
     );
     ui.add_space(6.0);
 }
 
-fn primary_button(ui: &mut Ui, text: &str) -> egui::Response {
-    ui.add_sized(
-        Vec2::new(ui.available_width(), 30.0),
+fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let fill = if selected {
+        theme::ACCENT
+    } else {
+        theme::TRACK
+    };
+    let text = if selected { theme::CANVAS } else { theme::TEXT };
+    ui.add(
         egui::Button::new(
-            RichText::new(text)
+            RichText::new(label)
                 .family(fonts::medium())
-                .size(13.0)
-                .color(Color32::from_rgb(0x12, 0x16, 0x1A)),
+                .size(11.0)
+                .color(text),
         )
-        .fill(c32(chrome::SELECTED_TAB))
-        .stroke(Stroke::NONE)
-        .corner_radius(RADIUS),
+        .fill(fill)
+        .stroke(if selected {
+            Stroke::NONE
+        } else {
+            Stroke::new(1.0, theme::HAIR)
+        })
+        .min_size(Vec2::new(0.0, 22.0))
+        .corner_radius(4),
     )
 }
 
-fn quiet_button(ui: &mut Ui, text: &str) -> egui::Response {
+fn icon_pill(ui: &mut Ui, label: &str, tip: &str) -> egui::Response {
     ui.add(
         egui::Button::new(
-            RichText::new(text)
-                .size(12.5)
-                .color(Color32::from_rgb(0xD0, 0xD0, 0xD0)),
+            RichText::new(label)
+                .family(fonts::medium())
+                .size(12.0)
+                .color(theme::MUTED),
         )
-        .fill(Color32::TRANSPARENT)
-        .stroke(hairline())
-        .corner_radius(RADIUS),
+        .fill(theme::TRACK)
+        .stroke(Stroke::new(1.0, theme::HAIR))
+        .min_size(Vec2::new(28.0, 22.0))
+        .corner_radius(4),
     )
+    .on_hover_text(tip)
 }
 
 fn status_row(ui: &mut Ui, label: &str, value: &str) {
@@ -901,7 +1025,7 @@ fn status_row(ui: &mut Ui, label: &str, value: &str) {
             ui.label(
                 RichText::new(value)
                     .font(FontId::new(12.0, FontFamily::Monospace))
-                    .color(Color32::from_rgb(0xF2, 0xF2, 0xF2)),
+                    .color(theme::TEXT),
             );
         });
     });
@@ -937,9 +1061,9 @@ fn lane_title(key: LaneKey, _intern: &InternTable) -> String {
 
 fn paint_handle_dots(painter: &egui::Painter, r: Rect, active: bool) {
     let color = if active {
-        c32(chrome::SELECTED_TAB)
+        theme::INSERT
     } else {
-        Color32::from_rgb(0x6E, 0x6E, 0x6E)
+        Color32::from_rgb(0x3E, 0x42, 0x4A)
     };
     let cx = r.center().x;
     let cy = r.center().y;
@@ -952,20 +1076,97 @@ fn paint_handle_dots(painter: &egui::Painter, r: Rect, active: bool) {
 
 fn paint_empty(ui: &Ui, rect: Rect) {
     let painter = ui.painter_at(rect);
-    painter.text(
-        rect.center() + Vec2::new(0.0, -16.0),
-        Align2::CENTER_CENTER,
-        "Waiting for scopes",
-        FontId::new(18.0, fonts::medium()),
-        Color32::from_rgb(0xF4, 0xF4, 0xF4),
+    painter.rect_filled(
+        Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - 80.0), rect.max),
+        0.0,
+        Color32::from_rgba_unmultiplied(0, 0, 0, 48),
     );
     painter.text(
-        rect.center() + Vec2::new(0.0, 8.0),
+        rect.center() + Vec2::new(0.0, -10.0),
         Align2::CENTER_CENTER,
-        "Start a capture or run the demo to fill this view.",
-        FontId::new(13.0, FontFamily::Proportional),
+        "Idle",
+        FontId::new(15.0, fonts::medium()),
+        theme::TEXT,
+    );
+    painter.text(
+        rect.center() + Vec2::new(0.0, 12.0),
+        Align2::CENTER_CENTER,
+        "Press Demo in the transport.",
+        FontId::new(12.0, FontFamily::Proportional),
         muted(),
     );
+}
+
+fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, theme::CANVAS);
+    if t1 <= t0 {
+        return;
+    }
+    let span = (t1 - t0).max(1.0);
+    let (major, _) = tick_steps(span, rect.width());
+    let mut t = (t0 / major).floor() * major;
+    while t <= t1 {
+        let x = rect.left() + ((t - t0) / span) as f32 * rect.width();
+        if x >= rect.left() && x <= rect.right() {
+            painter.line_segment(
+                [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 10)),
+            );
+        }
+        let next = t + major;
+        if next <= t {
+            break;
+        }
+        t = next;
+    }
+}
+
+fn paint_playhead(ui: &Ui, rect: Rect, t0: f64, t1: f64, play_t: f64) {
+    if t1 <= t0 || play_t < t0 || play_t > t1 {
+        return;
+    }
+    let x = rect.left() + ((play_t - t0) / (t1 - t0)) as f32 * rect.width();
+    let painter = ui.painter_at(rect);
+    painter.line_segment(
+        [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+        Stroke::new(1.0, theme::PLAYHEAD),
+    );
+    painter.rect_filled(
+        Rect::from_center_size(Pos2::new(x, rect.top() + 3.0), Vec2::new(7.0, 6.0)),
+        1.0,
+        theme::PLAYHEAD,
+    );
+}
+
+fn show_scope_tooltip(ui: &Ui, intern: &InternTable, pick: ScopePick) {
+    let name = intern
+        .get(pick.name_id)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("#{}", pick.name_id));
+    let dur = format_ns(pick.duration_ns as f64);
+    let _ = egui::Tooltip::always_open(
+        ui.ctx().clone(),
+        ui.layer_id(),
+        egui::Id::new("orbit-scope-tip"),
+        egui::PopupAnchor::Pointer,
+    )
+    .at_pointer()
+    .gap(8.0)
+    .show(|ui| {
+        ui.set_min_width(148.0);
+        ui.label(
+            RichText::new(name)
+                .family(fonts::medium())
+                .size(12.0)
+                .color(theme::TEXT),
+        );
+        ui.label(
+            RichText::new(dur)
+                .font(FontId::monospace(11.0))
+                .color(theme::MUTED),
+        );
+    });
 }
 
 fn overlay_instance(
@@ -975,10 +1176,11 @@ fn overlay_instance(
     t1: u64,
     width: f32,
     pick: ScopePick,
+    scale: f32,
 ) -> Option<orbit_live_render::ScopeInstance> {
     let key = pick.lane_key();
     let y = layout.iter().find(|(k, _)| *k == key)?.1;
-    let h = lane_height(key);
+    let h = lane_height(key) * scale.max(0.01);
     let e = index
         .lane(key)?
         .events()
@@ -986,43 +1188,69 @@ fn overlay_instance(
         .copied()
         .find(|ev| ev.start_ns == pick.start_ns && ev.name_id == pick.name_id)?;
     let span = (t1 - t0) as f64;
-    let radius = (h * 0.22).clamp(1.5, 4.0);
+    let radius = (h * 0.14).clamp(2.0, 3.0);
     Some(instance_for_event(&e, t0, t1, span, width, y, h, radius))
+}
+
+fn tick_steps(span_ns: f64, width_px: f32) -> (f64, f64) {
+    let target = span_ns / (width_px.max(1.0) as f64 / 92.0);
+    let exp = target.max(1.0).log10().floor();
+    let base = 10f64.powf(exp);
+    let major = if target < base * 2.0 {
+        base
+    } else if target < base * 5.0 {
+        base * 2.0
+    } else {
+        base * 5.0
+    };
+    (major, major / 5.0)
 }
 
 fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, c32(chrome::TIME_BAR));
+    painter.rect_filled(rect, 0.0, theme::CANVAS);
+    if t1 <= t0 {
+        return;
+    }
     let span = (t1 - t0).max(1.0);
-    let ticks = 8usize;
-    for i in 0..=ticks {
-        let frac = i as f32 / ticks as f32;
-        let x = rect.left() + frac * rect.width();
-        let major = i % 2 == 0;
-        painter.line_segment(
-            [
-                Pos2::new(x, rect.bottom() - if major { 12.0 } else { 7.0 }),
-                Pos2::new(x, rect.bottom() - 3.0),
-            ],
-            Stroke::new(
-                1.0,
-                if major {
-                    c32(chrome::TICK_MAJOR)
-                } else {
-                    c32(chrome::TICK_MINOR)
-                },
-            ),
-        );
-        if major {
-            let t = t0 + span * frac as f64;
-            painter.text(
-                Pos2::new(x + 4.0, rect.top() + 5.0),
-                Align2::LEFT_TOP,
-                format_ns(t),
-                FontId::new(11.0, FontFamily::Monospace),
-                Color32::from_rgb(0xEE, 0xEE, 0xEE),
+    let (_major, minor) = tick_steps(span, rect.width());
+    let mut t = (t0 / minor).floor() * minor;
+    let mut step_i = ((t / minor).round() as i64).max(0);
+    while t <= t1 {
+        let x = rect.left() + ((t - t0) / span) as f32 * rect.width();
+        if x >= rect.left() && x <= rect.right() {
+            let is_major = step_i % 5 == 0;
+            let h = if is_major { 9.0 } else { 4.0 };
+            painter.line_segment(
+                [
+                    Pos2::new(x, rect.bottom() - h),
+                    Pos2::new(x, rect.bottom() - 2.0),
+                ],
+                Stroke::new(
+                    1.0,
+                    if is_major {
+                        Color32::from_gray(150)
+                    } else {
+                        Color32::from_gray(70)
+                    },
+                ),
             );
+            if is_major {
+                painter.text(
+                    Pos2::new(x + 4.0, rect.top() + 4.0),
+                    Align2::LEFT_TOP,
+                    format_ns(t),
+                    FontId::new(10.0, FontFamily::Monospace),
+                    theme::MUTED,
+                );
+            }
         }
+        let next = t + minor;
+        if next <= t {
+            break;
+        }
+        t = next;
+        step_i += 1;
     }
 }
 
@@ -1041,6 +1269,7 @@ fn format_ns(t: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbit_live_event::chrome;
 
     #[test]
     fn orbit_palette_matches_fusion() {
@@ -1060,5 +1289,12 @@ mod tests {
     fn tabular_grouping_uses_commas() {
         assert_eq!(fmt_int(2_000_000), "2,000,000");
         assert_eq!(fmt_int(64), "64");
+    }
+
+    #[test]
+    fn tick_steps_keep_major_minor_ratio() {
+        let (major, minor) = tick_steps(2e9, 800.0);
+        assert!(major > 0.0);
+        assert!((major / minor - 5.0).abs() < 1e-6);
     }
 }

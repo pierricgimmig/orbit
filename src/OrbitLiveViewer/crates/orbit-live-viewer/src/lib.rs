@@ -6,7 +6,7 @@
 
 use orbit_live_event::InternTable;
 use orbit_live_protocol::{decode_frame, LiveFrame};
-use orbit_live_render::{choose_lod, TrackIndex, TimelineLod, INSTANCE_MIN_PX};
+use orbit_live_render::{choose_lod, TimelineLod, TrackIndex, INSTANCE_MIN_PX};
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "egui")]
@@ -15,6 +15,8 @@ mod app;
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;
+#[cfg(feature = "egui")]
+mod theme;
 #[cfg(feature = "egui")]
 mod timeline;
 #[cfg(feature = "egui")]

@@ -91,10 +91,17 @@ impl Lane {
 
     /// Event that overlaps `[col0, col1)`, if any. O(log n).
     pub fn overlapping(&self, col0: u64, col1: u64) -> Option<&LiveEvent> {
+        self.last_overlapping(col0, col1)
+    }
+
+    /// Latest event that overlaps `[col0, col1)` (last-write-wins).
+    /// Two binary searches — still O(log n). Earlier first-wins hid later
+    /// members of the same column so they appeared to pop in on zoom.
+    pub fn last_overlapping(&self, col0: u64, col1: u64) -> Option<&LiveEvent> {
         let i = self.first_ending_after(col0);
-        let e = self.events.get(i)?;
-        if e.start_ns < col1 {
-            Some(e)
+        let j = self.events.partition_point(|e| e.start_ns < col1);
+        if i < j {
+            Some(&self.events[j - 1])
         } else {
             None
         }
@@ -406,6 +413,7 @@ mod tests {
         assert_eq!(lane.overlapping(25, 30).unwrap().name_id, 3);
         assert!(lane.overlapping(30, 40).is_none());
         assert_eq!(lane.first_ending_after(10), 1);
+        assert_eq!(lane.last_overlapping(0, 12).unwrap().name_id, 2);
     }
 
     #[test]
@@ -584,6 +592,7 @@ mod tests {
             radius: 2.0,
             name_id: 7,
             start_ns: 10,
+            duration_ns: 20,
             tid: 1,
             kind: kind::API_SCOPE,
             depth: 0,
@@ -599,6 +608,7 @@ mod tests {
             radius: 2.0,
             name_id: 7,
             start_ns: 40,
+            duration_ns: 20,
             tid: 1,
             kind: kind::API_SCOPE,
             depth: 0,
@@ -612,6 +622,7 @@ mod tests {
             Some(ScopePick {
                 name_id: 7,
                 start_ns: 40,
+                duration_ns: 20,
                 tid: 1,
                 kind: kind::API_SCOPE,
                 depth: 0,

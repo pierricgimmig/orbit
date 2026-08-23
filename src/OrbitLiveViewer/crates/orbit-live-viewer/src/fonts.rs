@@ -43,25 +43,27 @@ pub fn install(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.text_styles.insert(
         TextStyle::Small,
-        FontId::new(11.0, FontFamily::Proportional),
+        FontId::new(10.5, FontFamily::Proportional),
     );
     style
         .text_styles
-        .insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));
+        .insert(TextStyle::Body, FontId::new(12.5, FontFamily::Proportional));
     style.text_styles.insert(
         TextStyle::Button,
-        FontId::new(12.5, FontFamily::Proportional),
+        FontId::new(12.0, FontFamily::Proportional),
     );
     style
         .text_styles
-        .insert(TextStyle::Heading, FontId::new(16.0, medium()));
+        .insert(TextStyle::Heading, FontId::new(13.0, medium()));
     style.text_styles.insert(
         TextStyle::Monospace,
-        FontId::new(12.0, FontFamily::Monospace),
+        FontId::new(11.5, FontFamily::Monospace),
     );
-    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
-    style.spacing.button_padding = egui::vec2(11.0, 6.0);
-    style.spacing.interact_size.y = 28.0;
+    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    style.spacing.interact_size.y = 24.0;
+    style.spacing.scroll.bar_width = 6.0;
+    style.spacing.scroll.handle_min_length = 20.0;
     ctx.set_style(style);
 }
 

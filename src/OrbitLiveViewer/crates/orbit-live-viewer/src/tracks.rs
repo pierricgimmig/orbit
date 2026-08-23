@@ -10,6 +10,8 @@ use orbit_live_render::{
 
 pub struct TrackStrip {
     pub order: Vec<LaneKey>,
+    /// Uniform lane-height scale. `1.0` is the comfortable default; compact is ~0.72.
+    pub scale: f32,
     y: HashMap<LaneKey, f32>,
     drag: Option<Drag>,
 }
@@ -24,6 +26,7 @@ impl Default for TrackStrip {
     fn default() -> Self {
         Self {
             order: Vec::new(),
+            scale: 1.0,
             y: HashMap::new(),
             drag: None,
         }
@@ -51,7 +54,11 @@ impl TrackStrip {
         let Some(d) = &self.drag else {
             return self.order.clone();
         };
-        let dest = drop_index_for_y(&self.order, d.key, d.pointer_y - d.grab_off + 0.5);
+        let dest = drop_index_for_y(
+            &self.order,
+            d.key,
+            (d.pointer_y - d.grab_off + 0.5) / self.scale.max(0.01),
+        );
         reorder_insert(&self.order, d.key, dest)
     }
 
@@ -60,6 +67,7 @@ impl TrackStrip {
         let targets = stacked_layout(&preview, 0.0);
         let k = 1.0 - (-dt / 0.08).exp();
         for (key, target) in targets {
+            let target = target * self.scale;
             let y = self.y.entry(key).or_insert(target);
             *y += (target - *y) * k;
         }
@@ -99,8 +107,27 @@ impl TrackStrip {
     pub fn total_height(&self) -> f32 {
         self.order
             .iter()
-            .map(|k| lane_height(*k) + lane_gap(*k))
+            .map(|k| (lane_height(*k) + lane_gap(*k)) * self.scale)
             .sum()
+    }
+
+    /// Y of the Ableton-style insert line in stack space, if dragging.
+    pub fn insert_y(&self) -> Option<f32> {
+        let d = self.drag.as_ref()?;
+        let dest = drop_index_for_y(
+            &self.order,
+            d.key,
+            (d.pointer_y - d.grab_off + 0.5) / self.scale.max(0.01),
+        );
+        let rest: Vec<LaneKey> = self.order.iter().copied().filter(|k| *k != d.key).collect();
+        let mut y = 0.0;
+        for (i, k) in rest.iter().enumerate() {
+            if i == dest {
+                return Some(y * self.scale);
+            }
+            y += lane_height(*k) + lane_gap(*k);
+        }
+        Some(y * self.scale)
     }
 }
 

@@ -92,7 +92,8 @@ impl TimelinePayload {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
                 let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
                 let raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys);
-                let (rgba, height) = raster.to_rgba8_scaled();
+                let (mut rgba, height) = raster.to_rgba8_scaled();
+                crate::theme::remap_rgba8(&mut rgba);
                 let overlay = overlay
                     .iter()
                     .cloned()
@@ -544,9 +545,10 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
         bytes.extend_from_slice(&i.y.to_le_bytes());
         bytes.extend_from_slice(&i.w.to_le_bytes());
         bytes.extend_from_slice(&i.h.to_le_bytes());
-        let r = ((i.color >> 16) & 0xFF) as f32 / 255.0;
-        let g = ((i.color >> 8) & 0xFF) as f32 / 255.0;
-        let b = (i.color & 0xFF) as f32 / 255.0;
+        let color = crate::theme::display_argb(i.color);
+        let r = ((color >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((color >> 8) & 0xFF) as f32 / 255.0;
+        let b = (color & 0xFF) as f32 / 255.0;
         let a = ((i.color >> 24) & 0xFF) as f32 / 255.0;
         bytes.extend_from_slice(&r.to_le_bytes());
         bytes.extend_from_slice(&g.to_le_bytes());
@@ -577,6 +579,7 @@ mod tests {
             radius: 3.0,
             name_id: 1,
             start_ns: 0,
+            duration_ns: 10,
             tid: 1,
             kind: 1,
             depth: 0,
@@ -599,6 +602,7 @@ mod tests {
             radius: 1.0,
             name_id: 0,
             start_ns: 0,
+            duration_ns: 0,
             tid: 0,
             kind: 0,
             depth: 0,
@@ -671,13 +675,13 @@ mod tests {
         assert!(overlay.is_empty());
         assert!(width >= 8);
         assert!(height >= 16);
-        let expect = thread_scope_color(1, 1);
-        assert_ne!(expect, orbit_live_event::chrome::TRACK);
+        let expect = crate::theme::display_argb(thread_scope_color(1, 1));
+        assert_ne!(expect, crate::theme::DISPLAY_TRACK);
         assert_eq!(rgba[0], ((expect >> 16) & 0xFF) as u8);
         assert_eq!(rgba[1], ((expect >> 8) & 0xFF) as u8);
         assert_eq!(rgba[2], (expect & 0xFF) as u8);
         assert_eq!(rgba[3], 0xFF);
-        assert!(rgba.chunks_exact(4).any(|c| c == [0x32, 0x32, 0x32, 0xFF]));
+        assert!(rgba.chunks_exact(4).any(|c| c == [0x16, 0x18, 0x1D, 0xFF]));
     }
 
     #[test]

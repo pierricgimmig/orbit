@@ -141,6 +141,7 @@ pub fn instances_from_timeline(tl: &TimelineJson) -> Vec<orbit_live_render::Scop
             radius: i.r,
             name_id: 0,
             start_ns: 0,
+            duration_ns: 0,
             tid: 0,
             kind: 0,
             depth: 0,
