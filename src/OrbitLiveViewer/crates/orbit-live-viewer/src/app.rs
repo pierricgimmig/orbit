@@ -721,21 +721,6 @@ impl OrbitLiveApp {
                     FontId::new(11.0, FontFamily::Proportional),
                     theme::TEXT,
                 );
-                let stub = Color32::from_rgb(0x3A, 0x3E, 0x46);
-                ui.painter().text(
-                    Pos2::new(r.right() - 28.0, r.center().y),
-                    Align2::RIGHT_CENTER,
-                    "M",
-                    FontId::new(8.5, fonts::medium()),
-                    stub,
-                );
-                ui.painter().text(
-                    Pos2::new(r.right() - 14.0, r.center().y),
-                    Align2::RIGHT_CENTER,
-                    "S",
-                    FontId::new(8.5, fonts::medium()),
-                    stub,
-                );
             }
             RowId::Lane(key) => {
                 ui.painter().text(
