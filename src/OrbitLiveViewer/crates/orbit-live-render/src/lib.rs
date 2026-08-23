@@ -36,10 +36,10 @@ mod lod;
 mod shaders;
 pub use lod::{
     apply_highlight_flags, choose_lod, collect_instances, collect_instances_layout,
-    drop_index_for_y, empty_column_color, instance_for_event, lane_gap, lane_height,
-    pick_column_event, pick_instance_at, reorder_insert, stack_height, stack_height_keys,
-    stacked_layout, sync_lane_order, InstanceFrame, ScopeInstance, ScopePick, TimelineLod,
-    FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX,
+    drop_index_for_y, empty_column_color, instance_for_event, lane_gap, lane_height, leaf_label,
+    pick_column_event, pick_instance_at, reorder_insert, sort_thread_leaves, stack_height,
+    stack_height_keys, stacked_layout, sync_lane_order, InstanceFrame, ScopeInstance, ScopePick,
+    TimelineLod, FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX,
 };
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
@@ -454,6 +454,22 @@ mod tests {
         assert_eq!(idx.event_count(), 3);
     }
 
+    #[test]
+    fn track_index_scopes_lanes_by_pid() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            pid: 1,
+            tid: 7,
+            ..scope(0, 10, 0, 1)
+        });
+        idx.insert(LiveEvent {
+            pid: 2,
+            tid: 7,
+            ..scope(0, 10, 0, 2)
+        });
+        assert_eq!(idx.lane_count(), 2);
+    }
+
     /// The pixel-column path must not be linear in the number of scopes.
     /// 20× more events should not be ~20× slower (that would be the naive path).
     #[test]
@@ -593,6 +609,7 @@ mod tests {
             name_id: 7,
             start_ns: 10,
             duration_ns: 20,
+            pid: 1,
             tid: 1,
             kind: kind::API_SCOPE,
             depth: 0,
@@ -609,6 +626,7 @@ mod tests {
             name_id: 7,
             start_ns: 40,
             duration_ns: 20,
+            pid: 1,
             tid: 1,
             kind: kind::API_SCOPE,
             depth: 0,
@@ -623,6 +641,7 @@ mod tests {
                 name_id: 7,
                 start_ns: 40,
                 duration_ns: 20,
+                pid: 1,
                 tid: 1,
                 kind: kind::API_SCOPE,
                 depth: 0,

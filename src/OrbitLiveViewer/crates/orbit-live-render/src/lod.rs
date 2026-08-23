@@ -39,6 +39,7 @@ pub struct ScopeInstance {
     pub name_id: u32,
     pub start_ns: u64,
     pub duration_ns: u64,
+    pub pid: u32,
     pub tid: u32,
     pub kind: u8,
     pub depth: u8,
@@ -52,6 +53,7 @@ pub struct ScopePick {
     pub name_id: u32,
     pub start_ns: u64,
     pub duration_ns: u64,
+    pub pid: u32,
     pub tid: u32,
     pub kind: u8,
     pub depth: u8,
@@ -64,6 +66,7 @@ impl ScopePick {
             name_id: e.name_id,
             start_ns: e.start_ns,
             duration_ns: e.duration_ns,
+            pid: e.pid,
             tid: e.tid,
             kind: e.kind,
             depth: e.depth,
@@ -76,7 +79,7 @@ impl ScopePick {
             start_ns: self.start_ns,
             duration_ns: self.duration_ns,
             tid: self.tid,
-            pid: 0,
+            pid: self.pid,
             kind: self.kind,
             depth: self.depth,
             extra: self.extra,
@@ -91,6 +94,7 @@ impl ScopePick {
             name_id: i.name_id,
             start_ns: i.start_ns,
             duration_ns: i.duration_ns,
+            pid: i.pid,
             tid: i.tid,
             kind: i.kind,
             depth: i.depth,
@@ -123,6 +127,40 @@ pub fn lane_gap(key: LaneKey) -> f32 {
     match key.kind {
         kind::THREAD_STATE => 3.0,
         _ => 1.0,
+    }
+}
+
+/// Sort leaf lanes under one thread: state, cpu, then scopes by depth.
+pub fn sort_thread_leaves(lanes: &mut [LaneKey]) {
+    lanes.sort_by_key(|k| (leaf_rank(k.kind), k.depth, k.extra, k.tid));
+}
+
+fn leaf_rank(kind_id: u8) -> u8 {
+    match kind_id {
+        kind::THREAD_STATE => 0,
+        kind::SCHEDULING_SLICE => 1,
+        kind::API_SCOPE => 2,
+        kind::FUNCTION_CALL => 3,
+        kind::API_TRACK => 4,
+        _ => 5,
+    }
+}
+
+pub fn leaf_label(key: LaneKey) -> String {
+    match key.kind {
+        kind::THREAD_STATE => "state".into(),
+        kind::SCHEDULING_SLICE => {
+            if key.extra > 0 {
+                format!("cpu  {}", key.extra)
+            } else {
+                "cpu".into()
+            }
+        }
+        kind::FUNCTION_CALL => "calls".into(),
+        kind::API_TRACK => "async".into(),
+        kind::API_SCOPE if key.depth == 0 => "scopes".into(),
+        kind::API_SCOPE => format!("d{}", key.depth),
+        _ => "lane".into(),
     }
 }
 
@@ -365,6 +403,7 @@ pub fn instance_for_event(
         name_id: e.name_id,
         start_ns: e.start_ns,
         duration_ns: e.duration_ns,
+        pid: e.pid,
         tid: e.tid,
         kind: e.kind,
         depth: e.depth,

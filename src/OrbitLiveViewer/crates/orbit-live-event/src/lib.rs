@@ -14,8 +14,8 @@ mod color;
 pub use color::{
     argb_to_css, async_scope_color, encode_manual_color, event_color, material_index_to_argb,
     name_hash, palette_index, rgba_word_to_argb, scale_rgb, thread_scope_color, thread_state_color,
-    BOX_BORDER, ORBIT_API_COLORS_RGBA, ORBIT_COLOR_RED, SAME_SCOPE_HIGHLIGHT, SELECTION, SHADE_LEFT,
-    THREAD_PALETTE,
+    BOX_BORDER, ORBIT_API_COLORS_RGBA, ORBIT_COLOR_RED, SAME_SCOPE_HIGHLIGHT, SELECTION,
+    SHADE_LEFT, THREAD_PALETTE,
 };
 pub use color::{chrome, mode as color_mode};
 
@@ -72,6 +72,7 @@ impl LiveEvent {
 
     pub fn lane_key(self) -> LaneKey {
         LaneKey {
+            pid: self.pid,
             tid: self.tid,
             kind: self.kind,
             depth: self.depth,
@@ -118,14 +119,24 @@ impl LiveEvent {
 }
 
 /// Lane identity for the per-track, non-overlapping interval index.
+///
+/// Scoped by process so overlapping tids from different pids do not collide.
+/// `LiveEvent` stays 32 bytes; pid is already on the event.
 #[derive(
     Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
 pub struct LaneKey {
+    pub pid: u32,
     pub tid: u32,
     pub kind: u8,
     pub depth: u8,
     pub extra: u8,
+}
+
+impl LaneKey {
+    pub fn thread(self) -> (u32, u32) {
+        (self.pid, self.tid)
+    }
 }
 
 /// Kept for call sites that still pass `(kind, extra, name_id)`.
@@ -377,7 +388,10 @@ mod tests {
 
     #[test]
     fn manual_api_material_red_is_orbit_h_word() {
-        assert_eq!(encode_manual_color(0xF443_36FF), (color_mode::MANUAL_API, 1));
+        assert_eq!(
+            encode_manual_color(0xF443_36FF),
+            (color_mode::MANUAL_API, 1)
+        );
         assert_eq!(material_index_to_argb(1), 0xFFF4_4336);
         let ev = LiveEvent {
             kind: kind::API_SCOPE,
@@ -427,6 +441,25 @@ mod tests {
     fn packed_size_is_32() {
         assert_eq!(std::mem::size_of::<LiveEvent>(), 32);
         assert_eq!(LIVE_EVENT_SIZE, 32);
+    }
+
+    #[test]
+    fn lane_key_includes_pid_so_tids_do_not_collide() {
+        let a = LiveEvent {
+            tid: 7,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            ..LiveEvent::default()
+        };
+        let b = LiveEvent {
+            tid: 7,
+            pid: 2,
+            kind: kind::API_SCOPE,
+            ..LiveEvent::default()
+        };
+        assert_ne!(a.lane_key(), b.lane_key());
+        assert_eq!(a.lane_key().pid, 1);
+        assert_eq!(b.lane_key().pid, 2);
     }
 
     #[test]

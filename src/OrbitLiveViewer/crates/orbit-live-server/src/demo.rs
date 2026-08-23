@@ -23,6 +23,11 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
         let threads = 32u32;
         let period = Duration::from_millis(20);
         let tick_ns = 20_000_000u64;
+        svc.intern_id(100, "Main");
+        for th in 1..threads {
+            svc.intern_id(100 + th, &format!("Worker-{th}"));
+        }
+        svc.intern_id(10, "Async");
         svc.mark_capture_started(1, t);
         let async_names = ["GpuSubmit", "CopyQueue", "Present", "Encode"];
         loop {
@@ -142,8 +147,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, tid: u32, th: u32) {
         let inner_span = (*dur).saturating_sub(200_000);
         let step = (inner_span / inner_n as u64).max(1);
         for k in 0..inner_n {
-            let idur =
-                (320_000 + ((th + k) % 5) as u64 * 180_000).min(step.saturating_sub(20_000));
+            let idur = (320_000 + ((th + k) % 5) as u64 * 180_000).min(step.saturating_sub(20_000));
             events.push(scope(
                 start + 80_000 + k as u64 * step,
                 idur,

@@ -4,11 +4,11 @@ use eframe::egui::{
     self, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId, Frame, Key, Layout,
     Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
 };
-use orbit_live_event::{kind, InternTable, LaneKey, THREAD_PALETTE};
+use orbit_live_event::{InternTable, LaneKey, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
-    apply_highlight_flags, choose_lod, collect_instances_layout, instance_for_event, kind_label,
-    lane_height, pick_column_event, pick_instance_at, ScopeInstance, ScopePick, TrackIndex,
+    apply_highlight_flags, choose_lod, collect_instances_layout, instance_for_event, lane_height,
+    leaf_label, pick_column_event, pick_instance_at, ScopeInstance, ScopePick, TrackIndex,
     FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
 };
 
@@ -19,11 +19,11 @@ use crate::net::{
 };
 use crate::theme;
 use crate::timeline::{paint_callback, TimelineGpu, TimelinePayload, ViewUniforms};
-use crate::tracks::TrackStrip;
+use crate::tracks::{RowId, TrackRow, TrackStrip};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
 const SIDE: f32 = 228.0;
-const HEADER_W: f32 = 168.0;
+const HEADER_W: f32 = 196.0;
 const RADIUS: f32 = theme::RADIUS;
 
 fn c32(argb: u32) -> Color32 {
@@ -185,6 +185,15 @@ impl OrbitLiveApp {
             }
             self.processes = p;
         }
+        if self.status.demo && self.processes.is_empty() {
+            self.processes = vec![ProcessJson {
+                pid: 1,
+                name: "orbit-demo".into(),
+            }];
+            if self.selected_pid.is_none() {
+                self.selected_pid = Some(1);
+            }
+        }
         if let Some(tl) = inbox.timeline {
             self.service_timeline = Some(tl);
             self.service_frame = None;
@@ -260,6 +269,7 @@ impl OrbitLiveApp {
                     newest_end_ns,
                     ring_bytes,
                     spill_path: self.status.spill_path.clone(),
+                    machine: self.status.machine.clone(),
                 });
             }
             LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
@@ -475,8 +485,14 @@ impl OrbitLiveApp {
 
     fn timeline(&mut self, ui: &mut Ui, dt: f32) {
         self.tracks.scale = if self.compact { 0.72 } else { 1.0 };
-        self.tracks.sync(&self.index);
-        self.tracks.tick(dt);
+        if !self.status.machine.is_empty() {
+            self.tracks.machine = self.status.machine.clone();
+        }
+        let filter = self
+            .selected_pid
+            .filter(|_| self.status.capturing && !self.status.demo);
+        self.tracks.sync(&self.index, filter);
+        self.tracks.tick(dt, &self.index, filter);
 
         let timebar_h = 26.0;
         let (time_rect, _) =
@@ -514,7 +530,7 @@ impl OrbitLiveApp {
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
 
-            self.paint_headers(ui, head);
+            self.paint_headers(ui, head, body);
 
             let t0 = self.t0.max(0.0) as u64;
             let t1 = (self.t1 as u64).max(t0 + 1);
@@ -564,100 +580,172 @@ impl OrbitLiveApp {
         });
     }
 
-    fn paint_headers(&mut self, ui: &mut Ui, head: Rect) {
-        let layout = self.tracks.layout();
+    fn paint_headers(&mut self, ui: &mut Ui, head: Rect, body: Rect) {
+        let rows = self.tracks.rows();
         let clip = ui.clip_rect();
-        for &(key, y) in &layout {
-            let h = lane_height(key) * self.tracks.scale;
-            let row = Rect::from_min_size(
-                Pos2::new(head.left(), head.top() + y),
-                Vec2::new(head.width(), h.max(1.0)),
+        for row in &rows {
+            let r = Rect::from_min_size(
+                Pos2::new(head.left(), head.top() + row.y),
+                Vec2::new(head.width(), row.height.max(1.0)),
             );
-            if row.max.y < clip.min.y || row.min.y > clip.max.y {
+            if r.max.y < clip.min.y || r.min.y > clip.max.y {
                 continue;
             }
-            let dragging = self.tracks.is_dragging(key);
-            let painter = ui.painter();
-            let wash = if dragging {
-                theme::TRACK
-            } else if (y as i32 / 8) % 2 == 0 {
-                theme::TRACK
-            } else {
-                theme::TRACK_ALT
+            let dragging = match row.id {
+                RowId::Thread(t) => self.tracks.is_dragging_thread(t),
+                _ => false,
             };
-            if dragging {
-                painter.rect_filled(
-                    row.translate(Vec2::new(0.0, 3.0)),
-                    0.0,
-                    Color32::from_black_alpha(90),
-                );
-                painter.rect_filled(row.translate(Vec2::new(1.0, -1.0)), 0.0, wash);
-            } else {
-                painter.rect_filled(row, 0.0, wash);
-            }
-            painter.line_segment([row.left_bottom(), row.right_bottom()], hairline());
-            let handle = Rect::from_min_size(row.min, Vec2::new(16.0, row.height()));
-            paint_handle_dots(painter, handle, dragging);
-            let resp = ui.interact(
-                handle,
-                ui.id()
-                    .with(("th", key.tid, key.kind, key.depth, key.extra)),
-                Sense::drag(),
-            );
-            if resp.drag_started() {
-                if let Some(p) = resp.interact_pointer_pos() {
-                    self.tracks.begin_drag(key, y, p.y - head.top());
+            let wash = match row.id {
+                RowId::Machine | RowId::Process(_) => theme::RAIL,
+                RowId::Thread(_) if dragging => theme::TRACK,
+                RowId::Thread(_) => theme::TRACK_ALT,
+                RowId::Lane(_) => theme::TRACK,
+            };
+            {
+                let painter = ui.painter();
+                if dragging {
+                    let band = Rect::from_min_max(
+                        Pos2::new(head.left(), r.top()),
+                        Pos2::new(body.right(), r.bottom()),
+                    );
+                    painter.rect_filled(
+                        band.translate(Vec2::new(0.0, 3.0)),
+                        0.0,
+                        Color32::from_black_alpha(90),
+                    );
+                    painter.rect_filled(r.translate(Vec2::new(1.0, -1.0)), 0.0, wash);
+                } else {
+                    painter.rect_filled(r, 0.0, wash);
                 }
-            }
-            if resp.dragged() {
-                if let Some(p) = resp.interact_pointer_pos() {
-                    self.tracks.update_drag(p.y - head.top());
+                if !matches!(row.id, RowId::Lane(_)) {
+                    let band = Rect::from_min_max(
+                        Pos2::new(body.left(), r.top()),
+                        Pos2::new(body.right(), r.bottom()),
+                    );
+                    painter.rect_filled(
+                        band,
+                        0.0,
+                        Color32::from_rgba_premultiplied(18, 18, 20, 18),
+                    );
                 }
+                painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
             }
-            if resp.drag_stopped() {
-                self.tracks.end_drag();
-            }
-
-            let chip =
-                theme::display_argb(THREAD_PALETTE[(key.tid as usize) % THREAD_PALETTE.len()]);
-            let chip_r = Rect::from_center_size(
-                Pos2::new(row.left() + 24.0, row.center().y),
-                Vec2::splat(6.0),
-            );
-            painter.rect_filled(chip_r, theme::TRACK_RADIUS, c32(chip));
-            let title = lane_title(key, &self.intern);
-            painter.text(
-                Pos2::new(row.left() + 34.0, row.center().y),
-                Align2::LEFT_CENTER,
-                title,
-                FontId::new(11.0, FontFamily::Proportional),
-                theme::TEXT,
-            );
-            let stub = Color32::from_rgb(0x3A, 0x3E, 0x46);
-            painter.text(
-                Pos2::new(row.right() - 28.0, row.center().y),
-                Align2::RIGHT_CENTER,
-                "M",
-                FontId::new(8.5, fonts::medium()),
-                stub,
-            );
-            painter.text(
-                Pos2::new(row.right() - 14.0, row.center().y),
-                Align2::RIGHT_CENTER,
-                "S",
-                FontId::new(8.5, fonts::medium()),
-                stub,
-            );
+            self.paint_tree_row(ui, head, *row, r);
         }
         if let Some(iy) = self.tracks.insert_y() {
             let y = head.top() + iy;
             ui.painter().line_segment(
-                [
-                    Pos2::new(head.left() + 8.0, y),
-                    Pos2::new(head.right() + 24.0, y),
-                ],
+                [Pos2::new(head.left() + 8.0, y), Pos2::new(body.right(), y)],
                 Stroke::new(1.25, theme::INSERT),
             );
+        }
+    }
+
+    fn paint_tree_row(&mut self, ui: &mut Ui, head: Rect, row: TrackRow, r: Rect) {
+        match row.id {
+            RowId::Machine => {
+                let open = !self.tracks.collapsed(row.id);
+                if chevron(ui, r, 8.0, open, ("m", 0u32, 0u32)) {
+                    self.tracks.toggle(row.id);
+                }
+                ui.painter().text(
+                    Pos2::new(r.left() + 22.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    format!("MACHINE  {}", self.tracks.machine.to_uppercase()),
+                    FontId::new(9.5, fonts::medium()),
+                    theme::MUTED,
+                );
+            }
+            RowId::Process(pid) => {
+                let open = !self.tracks.collapsed(row.id);
+                if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
+                    self.tracks.toggle(row.id);
+                }
+                let name = self
+                    .processes
+                    .iter()
+                    .find(|p| p.pid == pid)
+                    .map(|p| p.name.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("process");
+                ui.painter().text(
+                    Pos2::new(r.left() + 30.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    format!("process  {pid}  {name}"),
+                    FontId::new(11.0, fonts::medium()),
+                    theme::TEXT,
+                );
+            }
+            RowId::Thread(th) => {
+                let open = !self.tracks.collapsed(row.id);
+                let dragging = self.tracks.is_dragging_thread(th);
+                let handle = Rect::from_min_size(
+                    Pos2::new(r.left() + 20.0, r.top()),
+                    Vec2::new(14.0, r.height()),
+                );
+                paint_handle_dots(ui.painter(), handle, dragging);
+                let resp = ui.interact(handle, ui.id().with(("th", th.pid, th.tid)), Sense::drag());
+                if resp.drag_started() {
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        self.tracks.begin_drag(th, row.y, p.y - head.top());
+                    }
+                }
+                if resp.dragged() {
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        self.tracks.update_drag(p.y - head.top());
+                    }
+                }
+                if resp.drag_stopped() {
+                    self.tracks.end_drag();
+                }
+                if chevron(ui, r, 36.0, open, ("t", th.pid, th.tid)) {
+                    self.tracks.toggle(row.id);
+                }
+                let chip =
+                    theme::display_argb(THREAD_PALETTE[(th.tid as usize) % THREAD_PALETTE.len()]);
+                let chip_r = Rect::from_center_size(
+                    Pos2::new(r.left() + 54.0, r.center().y),
+                    Vec2::splat(6.0),
+                );
+                ui.painter()
+                    .rect_filled(chip_r, theme::TRACK_RADIUS, c32(chip));
+                let tname = self
+                    .intern
+                    .get(th.tid)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("{}", th.tid));
+                ui.painter().text(
+                    Pos2::new(r.left() + 64.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    format!("thread  {}  {tname}", th.tid),
+                    FontId::new(11.0, FontFamily::Proportional),
+                    theme::TEXT,
+                );
+                let stub = Color32::from_rgb(0x3A, 0x3E, 0x46);
+                ui.painter().text(
+                    Pos2::new(r.right() - 28.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    "M",
+                    FontId::new(8.5, fonts::medium()),
+                    stub,
+                );
+                ui.painter().text(
+                    Pos2::new(r.right() - 14.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    "S",
+                    FontId::new(8.5, fonts::medium()),
+                    stub,
+                );
+            }
+            RowId::Lane(key) => {
+                ui.painter().text(
+                    Pos2::new(r.left() + 64.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    leaf_label(key),
+                    FontId::new(10.5, FontFamily::Proportional),
+                    theme::MUTED,
+                );
+            }
         }
     }
 
@@ -1043,20 +1131,21 @@ fn fmt_int(n: u64) -> String {
     out.chars().rev().collect()
 }
 
-fn lane_title(key: LaneKey, _intern: &InternTable) -> String {
-    let kind = kind_label(key.kind);
-    match key.kind {
-        kind::THREAD_STATE => format!("state  {}", key.tid),
-        kind::SCHEDULING_SLICE => format!("cpu {kind} {}", key.extra),
-        _ => {
-            let depth = if key.depth > 0 {
-                format!("  d{}", key.depth)
-            } else {
-                String::new()
-            };
-            format!("{kind}  {}{depth}", key.tid)
-        }
-    }
+fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> bool {
+    let hit = Rect::from_center_size(Pos2::new(row.left() + x, row.center().y), Vec2::splat(14.0));
+    let resp = ui.interact(hit, ui.id().with(id), Sense::click());
+    ui.painter().text(
+        hit.center(),
+        Align2::CENTER_CENTER,
+        if open { "▾" } else { "▸" },
+        FontId::new(10.0, fonts::medium()),
+        if resp.hovered() {
+            theme::TEXT
+        } else {
+            theme::MUTED
+        },
+    );
+    resp.clicked()
 }
 
 fn paint_handle_dots(painter: &egui::Painter, r: Rect, active: bool) {

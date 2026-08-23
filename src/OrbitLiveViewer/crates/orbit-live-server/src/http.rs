@@ -12,7 +12,9 @@ use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
 use orbit_live_event::argb_to_css;
-use orbit_live_render::{choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX};
+use orbit_live_render::{
+    choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
+};
 
 use crate::{CaptureFlags, LiveService, ServerConfig};
 
@@ -83,6 +85,7 @@ struct StatusBody {
     ring_bytes: u64,
     spill_path: Option<String>,
     http_bind: String,
+    machine: String,
 }
 
 impl StatusBody {
@@ -102,6 +105,7 @@ impl StatusBody {
             ring_bytes: stats.bytes_capacity,
             spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
             http_bind: cfg.bind.to_string(),
+            machine: "local".into(),
         }
     }
 }
@@ -113,7 +117,13 @@ async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
             Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         },
-        None => Json(Vec::<serde_json::Value>::new()).into_response(),
+        None => {
+            if svc.demo.load(std::sync::atomic::Ordering::Relaxed) {
+                Json(vec![serde_json::json!({"pid": 1, "name": "orbit-demo"})]).into_response()
+            } else {
+                Json(Vec::<serde_json::Value>::new()).into_response()
+            }
+        }
     }
 }
 
@@ -267,7 +277,10 @@ struct TimelineBody {
     instances: Vec<InstanceJson>,
 }
 
-async fn timeline(State(svc): State<Arc<LiveService>>, Query(q): Query<FrameQuery>) -> Json<TimelineBody> {
+async fn timeline(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<FrameQuery>,
+) -> Json<TimelineBody> {
     let width = q.width.unwrap_or(1280).clamp(16, 4096);
     let index = svc.build_index();
     let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));

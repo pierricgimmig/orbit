@@ -134,3 +134,25 @@ fn frame_body_is_16_byte_header_plus_exact_rgba() {
     assert_eq!(body.len(), 16 + width * lanes * 4);
     assert_eq!(&body[16..], raster.to_rgba8());
 }
+
+#[test]
+fn demo_thread_names_are_interned_for_the_rail() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.intern_id(100, "Main");
+    svc.intern_id(101, "Worker-1");
+    let intern = svc.hello_and_snapshot_frames();
+    let mut bytes = Vec::new();
+    for frame in intern {
+        bytes.extend_from_slice(&frame);
+    }
+    let frames = decode_all(&bytes).unwrap();
+    let texts: Vec<_> = frames
+        .iter()
+        .filter_map(|f| match f {
+            LiveFrame::InternedString { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.contains(&"Main"));
+    assert!(texts.contains(&"Worker-1"));
+}

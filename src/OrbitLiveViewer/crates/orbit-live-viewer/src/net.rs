@@ -25,6 +25,12 @@ pub struct StatusJson {
     #[serde(default)]
     pub ring_bytes: u64,
     pub spill_path: Option<String>,
+    #[serde(default = "default_machine")]
+    pub machine: String,
+}
+
+fn default_machine() -> String {
+    "local".into()
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -142,6 +148,7 @@ pub fn instances_from_timeline(tl: &TimelineJson) -> Vec<orbit_live_render::Scop
             name_id: 0,
             start_ns: 0,
             duration_ns: 0,
+            pid: 0,
             tid: 0,
             kind: 0,
             depth: 0,
@@ -234,7 +241,9 @@ mod wasm_impl {
             let inbox = self.inbox.clone();
             let busy = self.http_busy.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let result = get_text("/api/status").await.and_then(|t| parse_status_json(&t));
+                let result = get_text("/api/status")
+                    .await
+                    .and_then(|t| parse_status_json(&t));
                 {
                     let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                     match result {
@@ -303,7 +312,11 @@ mod wasm_impl {
         }
 
         pub fn start_demo(&self) {
-            self.send("POST", "/api/demo/start", r#"{"scopes_per_sec":50000}"#.into());
+            self.send(
+                "POST",
+                "/api/demo/start",
+                r#"{"scopes_per_sec":50000}"#.into(),
+            );
         }
 
         pub fn stop_demo(&self) {
@@ -354,7 +367,9 @@ mod wasm_impl {
         let resp = JsFuture::from(window.fetch_with_str(url))
             .await
             .map_err(js_err)?;
-        let resp: Response = resp.dyn_into().map_err(|_| "fetch: not a Response".to_string())?;
+        let resp: Response = resp
+            .dyn_into()
+            .map_err(|_| "fetch: not a Response".to_string())?;
         let status = resp.status();
         let text = JsFuture::from(resp.text().map_err(js_err)?)
             .await
@@ -371,7 +386,9 @@ mod wasm_impl {
         let resp = JsFuture::from(window.fetch_with_str(url))
             .await
             .map_err(js_err)?;
-        let resp: Response = resp.dyn_into().map_err(|_| "fetch: not a Response".to_string())?;
+        let resp: Response = resp
+            .dyn_into()
+            .map_err(|_| "fetch: not a Response".to_string())?;
         let status = resp.status();
         if !(200..300).contains(&status) {
             return Err(format!("{url}: {status}"));
@@ -401,7 +418,9 @@ mod wasm_impl {
         let resp = JsFuture::from(window.fetch_with_str_and_init(url, &opts))
             .await
             .map_err(js_err)?;
-        let resp: Response = resp.dyn_into().map_err(|_| "fetch: not a Response".to_string())?;
+        let resp: Response = resp
+            .dyn_into()
+            .map_err(|_| "fetch: not a Response".to_string())?;
         let status = resp.status();
         let text = JsFuture::from(resp.text().map_err(js_err)?)
             .await
@@ -450,16 +469,14 @@ mod wasm_impl {
         onopen.forget();
 
         let inbox_msg = inbox.clone();
-        let onmessage = Closure::wrap(Box::new(move |ev: MessageEvent| {
-            match ws_bytes(&ev) {
-                Ok(bytes) => {
-                    if let Ok(mut g) = inbox_msg.lock() {
-                        g.ws_ok = true;
-                        g.frames.push(bytes);
-                    }
+        let onmessage = Closure::wrap(Box::new(move |ev: MessageEvent| match ws_bytes(&ev) {
+            Ok(bytes) => {
+                if let Ok(mut g) = inbox_msg.lock() {
+                    g.ws_ok = true;
+                    g.frames.push(bytes);
                 }
-                Err(e) => push_err(&inbox_msg, &e),
             }
+            Err(e) => push_err(&inbox_msg, &e),
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
         onmessage.forget();
@@ -567,6 +584,7 @@ mod tests {
         assert_eq!(s.events_live, 2_000_000);
         assert_eq!(s.ring_bytes, 67_108_864);
         assert_eq!(s.newest_end_ns, 4_000_000_000);
+        assert_eq!(s.machine, "local");
     }
 
     #[test]
