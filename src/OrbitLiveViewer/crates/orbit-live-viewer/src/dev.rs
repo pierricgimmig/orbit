@@ -11,7 +11,7 @@ pub struct DevFrame {
 struct DevFrameInner {
     origin_ns: u64,
     scopes: RefCell<Vec<RelScope>>,
-    stack: RefCell<Vec<(u32, u64, u8)>>,
+    stack: RefCell<Vec<(u32, u32, u64)>>,
 }
 
 pub struct DevScope<'a> {
@@ -49,8 +49,13 @@ impl DevFrame {
             };
         };
         let start_rel = now_ns().saturating_sub(inner.origin_ns);
-        let depth = inner.stack.borrow().len() as u8;
-        inner.stack.borrow_mut().push((name_id, start_rel, depth));
+        let depth = inner
+            .stack
+            .borrow()
+            .iter()
+            .filter(|(t, _, _)| *t == tid)
+            .count() as u8;
+        inner.stack.borrow_mut().push((tid, name_id, start_rel));
         DevScope {
             frame: self,
             active: true,
@@ -156,11 +161,29 @@ mod tests {
         let scopes = frame.finish();
         assert!(scopes.len() >= 2);
         assert_eq!(scopes[0].name_id, NAME_NET);
-        assert_eq!(scopes[0].depth, 1);
+        assert_eq!(scopes[0].depth, 0);
         assert_eq!(scopes[1].name_id, NAME_FRAME);
         assert_eq!(scopes[1].depth, 0);
         assert_eq!(scopes[1].pid, VIEWER_PID);
         assert!(scopes[1].duration_ns >= scopes[0].duration_ns);
+    }
+
+    #[test]
+    fn same_thread_children_increment_depth() {
+        let frame = DevFrame::begin(true);
+        {
+            let _outer = frame.scope(TID_UI, NAME_FRAME);
+            busy_spin();
+            {
+                let _inner = frame.scope(TID_UI, NAME_NET);
+                busy_spin();
+            }
+        }
+        let scopes = frame.finish();
+        let inner = scopes.iter().find(|s| s.name_id == NAME_NET).unwrap();
+        let outer = scopes.iter().find(|s| s.name_id == NAME_FRAME).unwrap();
+        assert_eq!(inner.depth, 1);
+        assert_eq!(outer.depth, 0);
     }
 
     fn busy_spin() {

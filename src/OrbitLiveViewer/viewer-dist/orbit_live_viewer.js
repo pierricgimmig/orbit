@@ -276,7 +276,7 @@ export function start_eframe(canvas) {
 }
 
 function __wbg_adapter_34(arg0, arg1, arg2) {
-    wasm.closure87_externref_shim(arg0, arg1, arg2);
+    wasm.closure91_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_37(arg0, arg1, arg2) {
@@ -3060,8 +3060,8 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1041 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 88, __wbg_adapter_34);
+    imports.wbg.__wbindgen_closure_wrapper1026 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 92, __wbg_adapter_34);
         return ret;
     };
     imports.wbg.__wbindgen_closure_wrapper1525 = function(arg0, arg1, arg2) {
