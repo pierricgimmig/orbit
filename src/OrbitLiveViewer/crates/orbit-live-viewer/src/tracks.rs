@@ -36,6 +36,7 @@ pub struct TrackStrip {
     pub scale: f32,
     pub machine: String,
     collapsed: HashSet<RowId>,
+    hidden: HashSet<ThreadId>,
     y: HashMap<RowId, f32>,
     drag: Option<Drag>,
 }
@@ -54,6 +55,7 @@ impl Default for TrackStrip {
             scale: 1.0,
             machine: "local".into(),
             collapsed: HashSet::new(),
+            hidden: HashSet::new(),
             y: HashMap::new(),
             drag: None,
         }
@@ -149,6 +151,24 @@ impl TrackStrip {
         self.collapsed.contains(&id)
     }
 
+    pub fn hidden_count(&self) -> usize {
+        self.hidden.len()
+    }
+
+    pub fn toggle_hidden(&mut self, t: ThreadId) {
+        if !self.hidden.insert(t) {
+            self.hidden.remove(&t);
+        }
+    }
+
+    pub fn show_all_threads(&mut self) {
+        self.hidden.clear();
+    }
+
+    fn is_shown(&self, t: ThreadId) -> bool {
+        !self.hidden.contains(&t)
+    }
+
     pub fn dragging(&self) -> bool {
         self.drag.is_some()
     }
@@ -157,17 +177,24 @@ impl TrackStrip {
         self.drag.as_ref().map(|d| d.thread == t).unwrap_or(false)
     }
 
-    fn preview_threads(&self) -> Vec<ThreadId> {
-        let Some(d) = &self.drag else {
-            return self.thread_order.clone();
-        };
-        let dest = self.drop_thread_index(d.pointer_y - d.grab_off + 0.5);
-        let mut v: Vec<ThreadId> = self
-            .thread_order
+    fn shown_order(&self) -> Vec<ThreadId> {
+        self.thread_order
             .iter()
             .copied()
-            .filter(|t| *t != d.thread)
-            .collect();
+            .filter(|t| self.is_shown(*t))
+            .collect()
+    }
+
+    fn preview_threads(&self) -> Vec<ThreadId> {
+        let shown = self.shown_order();
+        let Some(d) = &self.drag else {
+            return shown;
+        };
+        if !self.is_shown(d.thread) {
+            return shown;
+        }
+        let dest = self.drop_thread_index(d.pointer_y - d.grab_off + 0.5);
+        let mut v: Vec<ThreadId> = shown.into_iter().filter(|t| *t != d.thread).collect();
         let dest = dest.min(v.len());
         v.insert(dest, d.thread);
         v
@@ -182,6 +209,7 @@ impl TrackStrip {
             .thread_order
             .iter()
             .copied()
+            .filter(|t| self.is_shown(*t))
             .filter(|t| self.drag.as_ref().map(|d| d.thread != *t).unwrap_or(true))
             .collect();
         let mut acc = 0.0;
@@ -293,7 +321,19 @@ impl TrackStrip {
 
     pub fn end_drag(&mut self) {
         if self.drag.is_some() {
-            self.thread_order = self.preview_threads();
+            let preview = self.preview_threads();
+            let mut pit = preview.iter();
+            self.thread_order = self
+                .thread_order
+                .iter()
+                .map(|t| {
+                    if self.is_shown(*t) {
+                        pit.next().copied().unwrap_or(*t)
+                    } else {
+                        *t
+                    }
+                })
+                .collect();
         }
         self.drag = None;
     }
@@ -318,7 +358,7 @@ impl TrackStrip {
             .thread_order
             .iter()
             .copied()
-            .filter(|t| *t != d.thread)
+            .filter(|t| self.is_shown(*t) && *t != d.thread)
             .collect();
         let header = self.y.get(&RowId::Thread(d.thread)).copied().unwrap_or(0.0);
         if dest == 0 {
@@ -377,12 +417,15 @@ impl TrackStrip {
             if !index.lanes().any(|(k, _)| k.pid == pid) {
                 continue;
             }
+            if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) {
+                continue;
+            }
             out.push((RowId::Process(pid), PROCESS_H * s));
             if self.collapsed.contains(&RowId::Process(pid)) {
                 continue;
             }
             for &th in threads {
-                if th.pid != pid {
+                if th.pid != pid || !self.is_shown(th) {
                     continue;
                 }
                 out.push((RowId::Thread(th), THREAD_H * s));
@@ -493,5 +536,51 @@ mod tests {
         strip.end_drag();
         assert_eq!(strip.thread_order[0], second);
         assert_eq!(strip.thread_order[1], first);
+    }
+
+    #[test]
+    fn hidden_thread_is_omitted_from_layout() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(1, 2, 2));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let first = strip.thread_order[0];
+        assert_eq!(strip.layout().len(), 2);
+        strip.toggle_hidden(first);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.layout().len(), 1);
+        assert!(!strip.rows().iter().any(|r| r.id == RowId::Thread(first)));
+        assert_eq!(strip.hidden_count(), 1);
+        strip.show_all_threads();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.layout().len(), 2);
+    }
+
+    #[test]
+    fn drag_skips_hidden_threads() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(1, 2, 2));
+        idx.insert(scope(1, 3, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let mid = strip.thread_order[1];
+        strip.toggle_hidden(mid);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let first = strip.thread_order[0];
+        let last = strip.thread_order[2];
+        let y0 = strip.y.get(&RowId::Thread(first)).copied().unwrap_or(0.0);
+        strip.begin_drag(first, y0, y0);
+        strip.update_drag(y0 + 80.0);
+        strip.end_drag();
+        assert_eq!(strip.thread_order[1], mid);
+        assert_eq!(strip.thread_order[0], last);
+        assert_eq!(strip.thread_order[2], first);
     }
 }

@@ -39,7 +39,7 @@ pub use lod::{
     drop_index_for_y, empty_column_color, instance_for_event, lane_gap, lane_height, leaf_label,
     pick_column_event, pick_instance_at, reorder_insert, sort_thread_leaves, stack_height,
     stack_height_keys, stacked_layout, sync_lane_order, InstanceFrame, ScopeInstance, ScopePick,
-    TimelineLod, FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX,
+    TimelineLod, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX,
 };
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
@@ -576,6 +576,7 @@ mod tests {
         assert!(INSTANCE_WGSL.contains("madebyevan.com"));
         assert!(INSTANCE_WGSL.contains("SIBLING_RGB"));
         assert!(INSTANCE_WGSL.contains("selected"));
+        assert!(INSTANCE_WGSL.contains("dimmed"));
     }
 
     #[test]
@@ -648,9 +649,39 @@ mod tests {
                 extra: 0,
             }),
             None,
+            None,
         );
         assert_eq!(insts[1].flags, FLAG_SELECTED);
         assert_eq!(insts[0].flags, FLAG_SIBLING);
+    }
+
+    #[test]
+    fn search_dims_non_matching_name_ids() {
+        let a = ScopeInstance {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 10.0,
+            color: 1,
+            radius: 2.0,
+            name_id: 7,
+            start_ns: 10,
+            duration_ns: 20,
+            pid: 1,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            flags: FLAG_NONE,
+        };
+        let mut b = a;
+        b.name_id = 9;
+        b.start_ns = 40;
+        let mut insts = vec![a, b];
+        let ids = std::collections::HashSet::from([7u32]);
+        apply_highlight_flags(&mut insts, None, None, Some(&ids));
+        assert_eq!(insts[0].flags, FLAG_NONE);
+        assert_eq!(insts[1].flags, FLAG_DIMMED);
     }
 
     #[test]

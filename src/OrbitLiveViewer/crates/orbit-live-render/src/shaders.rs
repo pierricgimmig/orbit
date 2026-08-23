@@ -128,7 +128,8 @@ fn rounded_box_shadow(point: vec2<f32>, half: vec2<f32>, corner: f32, sigma: f32
 fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   let hover = v.mark > 0.5 && v.mark < 1.5;
   let selected = v.mark > 1.5 && v.mark < 2.5;
-  let sibling = v.mark > 2.5;
+  let sibling = v.mark > 2.5 && v.mark < 3.5;
+  let dimmed = v.mark > 3.5 && v.mark < 4.5;
   let d = sd_rounded_box(v.local, v.half_size, v.radius);
   let aa = fwidth(d) * 0.75;
   let fill = 1.0 - smoothstep(-aa, aa, d);
@@ -136,6 +137,10 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected);
   let shadow = rounded_box_shadow(v.local + vec2(0.4, 0.7), v.half_size, v.radius, sigma);
   var rgb = v.color.rgb;
+  if dimmed {
+    let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    rgb = mix(rgb, vec3(luma), 0.84) * 0.36;
+  }
   let top = v.pix.y < 1.15 && fill > 0.5;
   rgb = rgb * select(1.0, 1.08, top);
   rgb = rgb * select(1.0, 1.05, hover);

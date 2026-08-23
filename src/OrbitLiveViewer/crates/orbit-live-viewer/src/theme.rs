@@ -117,6 +117,17 @@ pub fn remap_rgba8(bytes: &mut [u8]) {
     }
 }
 
+/// Desaturate + drop value for non-matching search hits. Empty cells stay put.
+pub fn dim_argb(argb: u32) -> u32 {
+    let r = ((argb >> 16) & 0xFF) as u32;
+    let g = ((argb >> 8) & 0xFF) as u32;
+    let b = (argb & 0xFF) as u32;
+    let a = argb & 0xFF00_0000;
+    let luma = (r * 54 + g * 183 + b * 19) / 256;
+    let mix = |c: u32| (c * 22 + luma * 78) / 100 * 38 / 100;
+    a | (mix(r) << 16) | (mix(g) << 8) | mix(b)
+}
+
 pub fn hairline() -> eframe::egui::Stroke {
     eframe::egui::Stroke::new(1.0, HAIR)
 }
@@ -155,5 +166,15 @@ mod tests {
         assert_ne!(process_track_wash_role(1, WashRole::Process), a);
         assert_ne!(process_track_wash_role(1, WashRole::Leaf), a);
         assert_ne!(a, TRACK_ALT);
+    }
+
+    #[test]
+    fn dim_argb_lowers_chroma_and_value() {
+        let src = 0xFFE7_4435;
+        let out = dim_argb(src);
+        assert_ne!(out, src);
+        let sr = (src >> 16) & 0xFF;
+        let or_ = (out >> 16) & 0xFF;
+        assert!(or_ < sr);
     }
 }

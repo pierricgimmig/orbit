@@ -27,6 +27,7 @@ pub const FLAG_NONE: f32 = 0.0;
 pub const FLAG_HOVER: f32 = 1.0;
 pub const FLAG_SELECTED: f32 = 2.0;
 pub const FLAG_SIBLING: f32 = 3.0;
+pub const FLAG_DIMMED: f32 = 4.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScopeInstance {
@@ -341,9 +342,15 @@ pub fn apply_highlight_flags(
     instances: &mut [ScopeInstance],
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
+    search: Option<&std::collections::HashSet<u32>>,
 ) {
     for inst in instances.iter_mut() {
         let mut f = FLAG_NONE;
+        if let Some(ids) = search {
+            if !ids.contains(&inst.name_id) {
+                f = FLAG_DIMMED;
+            }
+        }
         if let Some(h) = hover {
             if h.matches_instance(inst) {
                 f = FLAG_HOVER;

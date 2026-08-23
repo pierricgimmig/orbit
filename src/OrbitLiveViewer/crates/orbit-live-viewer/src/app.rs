@@ -15,6 +15,7 @@ use orbit_live_render::{
     leaf_label, pick_column_event, pick_instance_at, ScopeInstance, ScopePick, TrackIndex,
     FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
 };
+use std::collections::HashSet;
 
 use crate::dev::DevFrame;
 use crate::fonts;
@@ -118,6 +119,10 @@ pub struct OrbitLiveApp {
     compact: bool,
     advanced: bool,
     dev: bool,
+    search: String,
+    search_ids: HashSet<u32>,
+    search_resolved: String,
+    search_intern_len: usize,
 }
 
 impl OrbitLiveApp {
@@ -175,7 +180,30 @@ impl OrbitLiveApp {
             compact: false,
             advanced: false,
             dev,
+            search: String::new(),
+            search_ids: HashSet::new(),
+            search_resolved: String::new(),
+            search_intern_len: 0,
         }
+    }
+
+    fn refresh_search(&mut self) {
+        let q = self.search.trim().to_string();
+        let n = self.intern.len();
+        if q == self.search_resolved && n == self.search_intern_len {
+            return;
+        }
+        self.search_resolved = q.clone();
+        self.search_intern_len = n;
+        self.search_ids = if q.is_empty() {
+            HashSet::new()
+        } else {
+            self.intern.ids_matching(&q)
+        };
+    }
+
+    fn search_active(&self) -> bool {
+        !self.search_resolved.is_empty()
     }
 
     fn toggle_dev(&mut self) {
@@ -323,6 +351,31 @@ impl OrbitLiveApp {
         }
     }
 
+    fn paint_search(&mut self, ui: &mut Ui) {
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut self.search)
+                .id_salt("orbit_scope_search")
+                .desired_width(132.0)
+                .hint_text("scope")
+                .font(FontId::monospace(11.5))
+                .background_color(theme::INPUT),
+        );
+        resp.clone().on_hover_text("Grey scopes that do not match");
+        if self.search_active() {
+            ui.label(
+                RichText::new(format!("{}", self.search_ids.len()))
+                    .font(FontId::monospace(10.5))
+                    .color(theme::MUTED),
+            );
+            if icon_pill(ui, "×", "Clear search").clicked() {
+                self.search.clear();
+            }
+        }
+        if resp.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
+            self.search.clear();
+        }
+    }
+
     fn transport(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
@@ -351,6 +404,8 @@ impl OrbitLiveApp {
             if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
             }
+            ui.add_space(6.0);
+            self.paint_search(ui);
             ui.add_space(8.0);
             ui.label(
                 RichText::new(format!("{} live", fmt_int(self.status.events_live)))
@@ -541,6 +596,7 @@ impl OrbitLiveApp {
         if !self.status.machine.is_empty() {
             self.tracks.machine = self.status.machine.clone();
         }
+        self.refresh_search();
         let filter = self
             .selected_pid
             .filter(|_| self.status.capturing && !self.status.demo);
@@ -563,6 +619,28 @@ impl OrbitLiveApp {
             FontId::new(9.5, fonts::medium()),
             theme::MUTED,
         );
+        if self.tracks.hidden_count() > 0 {
+            let all = Rect::from_center_size(
+                Pos2::new(header_cut.right() - 28.0, header_cut.center().y),
+                Vec2::new(40.0, 18.0),
+            );
+            let hit = ui.interact(all, ui.id().with("orbit_show_all"), Sense::click());
+            ui.painter().text(
+                all.center(),
+                Align2::CENTER_CENTER,
+                "all",
+                FontId::new(10.0, fonts::medium()),
+                if hit.hovered() {
+                    theme::TEXT
+                } else {
+                    theme::MUTED
+                },
+            );
+            if hit.clicked() {
+                self.tracks.show_all_threads();
+            }
+            hit.on_hover_text("Show all threads");
+        }
         paint_timebar(ui, ruler, self.t0, self.t1);
         ui.painter().line_segment(
             [time_rect.left_bottom(), time_rect.right_bottom()],
@@ -780,6 +858,27 @@ impl OrbitLiveApp {
                     FontId::new(11.0, FontFamily::Proportional),
                     theme::TEXT,
                 );
+                let hide = Rect::from_center_size(
+                    Pos2::new(r.right() - 12.0, r.center().y),
+                    Vec2::splat(14.0),
+                );
+                let hide_r =
+                    ui.interact(hide, ui.id().with(("hide", th.pid, th.tid)), Sense::click());
+                ui.painter().text(
+                    hide.center(),
+                    Align2::CENTER_CENTER,
+                    "–",
+                    FontId::new(12.0, fonts::medium()),
+                    if hide_r.hovered() {
+                        theme::TEXT
+                    } else {
+                        theme::MUTED
+                    },
+                );
+                if hide_r.clicked() {
+                    self.tracks.toggle_hidden(th);
+                }
+                hide_r.on_hover_text("Hide thread");
             }
             RowId::Lane(key) => {
                 ui.painter().text(
@@ -811,7 +910,8 @@ impl OrbitLiveApp {
                 for inst in &mut frame.instances {
                     inst.h *= d;
                 }
-                apply_highlight_flags(&mut frame.instances, self.selected, self.hover);
+                let search = self.search_active().then_some(&self.search_ids);
+                apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search);
                 self.last_instances = frame.instances.clone();
                 let s = ppp.max(0.01);
                 for inst in &mut frame.instances {
@@ -859,6 +959,7 @@ impl OrbitLiveApp {
                 ppp,
                 &layout,
                 &overlay,
+                self.search_active().then_some(&self.search_ids),
             );
         }
         self.last_instances.clear();
@@ -924,7 +1025,11 @@ impl OrbitLiveApp {
             self.follow = !self.follow;
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            self.selected = None;
+            if self.search_active() || !self.search.is_empty() {
+                self.search.clear();
+            } else {
+                self.selected = None;
+            }
         }
         if ctx.input(|i| i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight)) {
             let dir = if ctx.input(|i| i.key_pressed(Key::ArrowRight)) {
@@ -1031,14 +1136,15 @@ impl eframe::App for OrbitLiveApp {
             {
                 let _net = devf.scope(TID_NET, NAME_NET);
                 self.drain_net();
+                self.refresh_search();
                 self.tick_follow(dt);
                 let now = ctx.input(|i| i.time);
                 if now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
-            if self.processes.is_empty() || self.dev {
-                self.net.get_processes();
-            }
+                    if self.processes.is_empty() || self.dev {
+                        self.net.get_processes();
+                    }
                 }
                 if now - self.last_view_request > 0.1 {
                     self.last_view_request = now;

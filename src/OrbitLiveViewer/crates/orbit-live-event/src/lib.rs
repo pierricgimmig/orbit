@@ -6,7 +6,7 @@
 //! ELF/DWARF/module parsing stays on the service; this crate only holds the
 //! already-decoded fields the viewer needs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -210,6 +210,27 @@ impl InternTable {
 
     pub fn iter(&self) -> impl Iterator<Item = (u32, &str)> {
         self.by_id.iter().map(|(&id, text)| (id, text.as_str()))
+    }
+
+    /// Resolve a scope search to matching `name_id`s. Empty query ⇒ empty set
+    /// (callers treat that as “no filter”, not “match nothing”).
+    pub fn ids_matching(&self, query: &str) -> HashSet<u32> {
+        let q = query.trim();
+        if q.is_empty() {
+            return HashSet::new();
+        }
+        let lower = q.to_ascii_lowercase();
+        let mut out = HashSet::new();
+        let numeric = lower.strip_prefix('#').unwrap_or(&lower);
+        if let Ok(id) = numeric.parse::<u32>() {
+            out.insert(id);
+        }
+        for (id, text) in self.iter() {
+            if text.to_ascii_lowercase().contains(&lower) {
+                out.insert(id);
+            }
+        }
+        out
     }
 }
 
@@ -512,5 +533,21 @@ mod tests {
         assert_eq!(ev.duration_ns, 40);
         assert_eq!(ev.kind, kind::FUNCTION_CALL);
         assert_eq!(ev.depth, 2);
+    }
+
+    #[test]
+    fn intern_ids_matching_is_substring_and_numeric() {
+        let mut intern = InternTable::default();
+        intern.insert_id(30_000, "Frame");
+        intern.insert_id(30_001, "TimelinePayload");
+        intern.insert_id(100, "Main");
+        assert!(intern.ids_matching("").is_empty());
+        let frame = intern.ids_matching("frame");
+        assert!(frame.contains(&30_000));
+        assert!(!frame.contains(&30_001));
+        let hash = intern.ids_matching("#30000");
+        assert!(hash.contains(&30_000));
+        let num = intern.ids_matching("100");
+        assert!(num.contains(&100));
     }
 }

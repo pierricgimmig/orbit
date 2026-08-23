@@ -63,6 +63,7 @@ impl TimelinePayload {
         pixels_per_point: f32,
         layout: &[(LaneKey, f32)],
         overlay: &[ScopeInstance],
+        search: Option<&std::collections::HashSet<u32>>,
     ) -> Self {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
@@ -91,7 +92,10 @@ impl TimelinePayload {
             TimelineLod::PixelColumns => {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
                 let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
-                let raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys);
+                let mut raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys);
+                if let Some(ids) = search {
+                    dim_raster_pixels(index, &mut raster, t0, t1, ids);
+                }
                 let (mut rgba, height) = raster.to_rgba8_scaled();
                 crate::theme::remap_rgba8(&mut rgba);
                 let overlay = overlay
@@ -111,6 +115,39 @@ impl TimelinePayload {
                     width: width_px as u32,
                     height: height.max(1),
                     overlay,
+                }
+            }
+        }
+    }
+}
+
+fn dim_raster_pixels(
+    index: &TrackIndex,
+    raster: &mut orbit_live_render::RasterizedFrame,
+    t0: u64,
+    t1: u64,
+    matches: &std::collections::HashSet<u32>,
+) {
+    if raster.width == 0 || t1 <= t0 {
+        return;
+    }
+    let dt = (t1 - t0) as f64 / raster.width as f64;
+    for (row, key) in raster.lanes.iter().enumerate() {
+        let Some(lane) = index.lane(*key) else {
+            continue;
+        };
+        let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+        for (x, px) in dest.iter_mut().enumerate() {
+            if *px == orbit_live_event::chrome::TRACK {
+                continue;
+            }
+            let col0 = t0.saturating_add((x as f64 * dt) as u64);
+            let col1 = t0
+                .saturating_add(((x + 1) as f64 * dt) as u64)
+                .max(col0 + 1);
+            if let Some(e) = lane.overlapping(col0, col1) {
+                if !matches.contains(&e.name_id) {
+                    *px = crate::theme::dim_argb(*px);
                 }
             }
         }
@@ -664,6 +701,7 @@ mod tests {
             1.0,
             &[],
             &[],
+            None,
         );
         let TimelinePayload::Pixel {
             rgba,
@@ -705,7 +743,7 @@ mod tests {
         });
         let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
-        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0, &[], &[]);
+        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0, &[], &[], None);
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
 }
