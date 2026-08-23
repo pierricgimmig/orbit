@@ -657,37 +657,34 @@ impl OrbitLiveApp {
                 RowId::Thread(t) => self.tracks.is_dragging_thread(t),
                 _ => false,
             };
-            let wash = match row.id {
-                RowId::Machine | RowId::Process(_) => theme::RAIL,
-                RowId::Thread(_) if dragging => theme::TRACK,
-                RowId::Thread(_) => theme::TRACK_ALT,
-                RowId::Lane(_) => theme::TRACK,
-            };
+            let wash = row_process_wash(row.id, dragging);
             {
                 let painter = ui.painter();
+                let band = Rect::from_min_max(
+                    Pos2::new(head.left(), r.top()),
+                    Pos2::new(
+                        if matches!(row.id, RowId::Machine) {
+                            r.right()
+                        } else {
+                            body.right()
+                        },
+                        r.bottom(),
+                    ),
+                );
                 if dragging {
-                    let band = Rect::from_min_max(
-                        Pos2::new(head.left(), r.top()),
-                        Pos2::new(body.right(), r.bottom()),
-                    );
                     painter.rect_filled(
                         band.translate(Vec2::new(0.0, 3.0)),
                         0.0,
                         Color32::from_black_alpha(90),
                     );
-                    painter.rect_filled(r.translate(Vec2::new(1.0, -1.0)), 0.0, wash);
+                    painter.rect_filled(band.translate(Vec2::new(1.0, -1.0)), 0.0, wash);
                 } else {
-                    painter.rect_filled(r, 0.0, wash);
+                    painter.rect_filled(band, 0.0, wash);
                 }
-                if !matches!(row.id, RowId::Lane(_)) {
-                    let band = Rect::from_min_max(
-                        Pos2::new(body.left(), r.top()),
-                        Pos2::new(body.right(), r.bottom()),
-                    );
-                    painter.rect_filled(
-                        band,
-                        0.0,
-                        Color32::from_rgba_premultiplied(18, 18, 20, 18),
+                if matches!(row.id, RowId::Process(_)) {
+                    painter.line_segment(
+                        [band.left_top(), band.right_top()],
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
                     );
                 }
                 painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
@@ -1124,6 +1121,23 @@ fn section(ui: &mut Ui, label: &str) {
             .color(theme::MUTED),
     );
     ui.add_space(6.0);
+}
+
+fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
+    match id {
+        RowId::Machine => theme::RAIL,
+        RowId::Process(pid) => theme::process_track_wash_role(pid, theme::WashRole::Process),
+        RowId::Thread(t) => {
+            if dragging {
+                theme::process_track_wash_role(t.pid, theme::WashRole::Process)
+            } else if t.tid % 2 == 1 {
+                theme::process_track_wash_role(t.pid, theme::WashRole::ThreadAlt)
+            } else {
+                theme::process_track_wash(t.pid)
+            }
+        }
+        RowId::Lane(key) => theme::process_track_wash_role(key.pid, theme::WashRole::Leaf),
+    }
 }
 
 fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {

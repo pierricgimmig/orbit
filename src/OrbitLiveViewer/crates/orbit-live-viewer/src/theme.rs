@@ -21,6 +21,59 @@ pub const TRACK_RADIUS: f32 = 2.0;
 
 pub const DISPLAY_TRACK: u32 = 0xFF16_181D;
 
+/// Near-black process washes: graphite with a hint of cool/warm. Low chroma.
+/// Index is a stable hash of `pid` (reserved 1/2/3 are pinned so they differ).
+const PROCESS_WASHES: [[u8; 3]; 8] = [
+    [0x1C, 0x16, 0x13], // warm ember — demo pid 1
+    [0x13, 0x17, 0x1E], // cool steel — viewer pid 2
+    [0x13, 0x1A, 0x16], // pine — service pid 3
+    [0x1A, 0x15, 0x1C], // plum
+    [0x15, 0x18, 0x1B], // slate
+    [0x1B, 0x18, 0x13], // ochre
+    [0x14, 0x16, 0x1A], // ink
+    [0x18, 0x15, 0x16], // rose-ash
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WashRole {
+    Process,
+    Thread,
+    ThreadAlt,
+    Leaf,
+}
+
+pub fn process_wash_index(pid: u32) -> usize {
+    match pid {
+        1 => 0,
+        2 => 1,
+        3 => 2,
+        _ => {
+            let x = pid.wrapping_mul(0x9E37_79B9) ^ pid.rotate_right(16);
+            3 + (x as usize % (PROCESS_WASHES.len() - 3))
+        }
+    }
+}
+
+/// Thread-row base wash for `pid`. Same process ⇒ same family.
+pub fn process_track_wash(pid: u32) -> Color32 {
+    process_track_wash_role(pid, WashRole::Thread)
+}
+
+pub fn process_track_wash_role(pid: u32, role: WashRole) -> Color32 {
+    let [r, g, b] = PROCESS_WASHES[process_wash_index(pid)];
+    let lift = match role {
+        WashRole::Process => 10,
+        WashRole::Thread => 0,
+        WashRole::ThreadAlt => -3,
+        WashRole::Leaf => -5,
+    };
+    Color32::from_rgb(chan(r, lift), chan(g, lift), chan(b, lift))
+}
+
+fn chan(v: u8, lift: i16) -> u8 {
+    (i16::from(v) + lift).clamp(0x0B, 0x28) as u8
+}
+
 /// Mix Avery / Material toward graphite so clips sit on a dark lane.
 pub fn display_argb(argb: u32) -> u32 {
     if argb == chrome::TRACK {
@@ -47,6 +100,13 @@ pub fn remap_rgba8(bytes: &mut [u8]) {
         } else {
             0xFF00_0000 | ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | px[2] as u32
         };
+        if argb == chrome::TRACK {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            px[3] = 0;
+            continue;
+        }
         let out = display_argb(argb);
         px[0] = ((out >> 16) & 0xFF) as u8;
         px[1] = ((out >> 8) & 0xFF) as u8;
@@ -73,5 +133,24 @@ mod tests {
         let or_ = (out >> 16) & 0xFF;
         assert!(or_ < sr);
         assert_eq!(display_argb(chrome::TRACK), DISPLAY_TRACK);
+    }
+
+    #[test]
+    fn reserved_pids_get_distinct_dark_washes() {
+        let a = process_track_wash(1);
+        let b = process_track_wash(2);
+        let c = process_track_wash(3);
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+        for wash in [a, b, c] {
+            assert!(wash.r() < 0x28 && wash.g() < 0x28 && wash.b() < 0x28);
+        }
+        assert_eq!(process_wash_index(1), 0);
+        assert_eq!(process_wash_index(2), 1);
+        assert_eq!(process_wash_index(3), 2);
+        assert_eq!(process_track_wash(99), process_track_wash(99));
+        assert_ne!(process_track_wash_role(1, WashRole::Process), a);
+        assert_ne!(process_track_wash_role(1, WashRole::Leaf), a);
     }
 }

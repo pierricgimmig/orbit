@@ -683,7 +683,10 @@ mod tests {
         assert_eq!(rgba[1], ((expect >> 8) & 0xFF) as u8);
         assert_eq!(rgba[2], (expect & 0xFF) as u8);
         assert_eq!(rgba[3], 0xFF);
-        assert!(rgba.chunks_exact(4).any(|c| c == [0x16, 0x18, 0x1D, 0xFF]));
+        assert!(
+            rgba.chunks_exact(4).any(|c| c == [0, 0, 0, 0]),
+            "empty columns stay transparent so process lane washes show through"
+        );
     }
 
     #[test]
