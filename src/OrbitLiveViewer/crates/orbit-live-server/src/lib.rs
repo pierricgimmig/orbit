@@ -3,17 +3,28 @@
 pub mod demo;
 pub mod http;
 
+use std::cell::Cell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
+use orbit_live_event::dev::{
+    stamp_batch, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_PUSH,
+    NAME_RASTER, NAME_TIMELINE_API, NAME_TRACKS, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER,
+    TID_UI,
+};
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
 use orbit_live_render::TrackIndex;
 use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
+
+thread_local! {
+    static IN_SELF: Cell<bool> = const { Cell::new(false) };
+}
 
 pub const DEFAULT_HTTP_PORT: u16 = 44766;
 pub const DEFAULT_RING_BYTES: u64 = 64 * 1024 * 1024;
@@ -23,6 +34,8 @@ pub struct ServerConfig {
     pub bind: SocketAddr,
     pub ring_buffer_bytes: u64,
     pub spill_path: Option<PathBuf>,
+    /// `--dev-self-profile` / `ORBIT_LIVE_DEV=1`. Default off.
+    pub dev_self_profile: bool,
 }
 
 impl Default for ServerConfig {
@@ -31,8 +44,13 @@ impl Default for ServerConfig {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HTTP_PORT)),
             ring_buffer_bytes: DEFAULT_RING_BYTES,
             spill_path: None,
+            dev_self_profile: false,
         }
     }
+}
+
+pub fn env_dev_self() -> bool {
+    matches!(std::env::var("ORBIT_LIVE_DEV").ok().as_deref(), Some("1"))
 }
 
 /// Optional hooks so OrbitService can list processes and start/stop a capture
@@ -96,8 +114,11 @@ pub struct LiveService {
     live_tx: broadcast::Sender<Vec<u8>>,
     pub capturing: AtomicBool,
     pub demo: AtomicBool,
+    pub self_profile: AtomicBool,
     pub hooks: Mutex<Option<ControlHooks>>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    origin: Instant,
+    self_names: AtomicBool,
 }
 
 // bytes crate - need to add dependency. I'll use Vec<u8> + broadcast instead.
@@ -105,13 +126,11 @@ pub struct LiveService {
 
 impl LiveService {
     pub fn new(config: ServerConfig) -> Result<Arc<Self>, String> {
-        let ring = EventRing::with_bytes(
-            config.ring_buffer_bytes,
-            config.spill_path.as_deref(),
-        )
-        .map_err(|e| e.to_string())?;
+        let ring = EventRing::with_bytes(config.ring_buffer_bytes, config.spill_path.as_deref())
+            .map_err(|e| e.to_string())?;
         let (live_tx, _) = broadcast::channel(256);
-        Ok(Arc::new(Self {
+        let self_on = config.dev_self_profile || env_dev_self();
+        let svc = Arc::new(Self {
             config: Mutex::new(config),
             ring: Mutex::new(Arc::new(ring)),
             pairer: Mutex::new(ScopePairer::default()),
@@ -119,9 +138,109 @@ impl LiveService {
             live_tx,
             capturing: AtomicBool::new(false),
             demo: AtomicBool::new(false),
+            self_profile: AtomicBool::new(self_on),
             hooks: Mutex::new(None),
             demo_stop: Mutex::new(None),
-        }))
+            origin: Instant::now(),
+            self_names: AtomicBool::new(false),
+        });
+        if self_on {
+            svc.ensure_self_names();
+        }
+        Ok(svc)
+    }
+
+    pub fn self_profile_enabled(&self) -> bool {
+        self.self_profile.load(Ordering::Relaxed)
+    }
+
+    pub fn enable_self_profile(&self) {
+        self.self_profile.store(true, Ordering::Relaxed);
+        self.ensure_self_names();
+    }
+
+    pub fn disable_self_profile(&self) {
+        self.self_profile.store(false, Ordering::Relaxed);
+    }
+
+    fn ensure_self_names(&self) {
+        if self.self_names.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        self.intern_id(TID_UI, "ui");
+        self.intern_id(TID_RENDER, "render");
+        self.intern_id(TID_NET, "net");
+        self.intern_id(TID_SERVER, "server");
+        self.intern_id(NAME_FRAME, "Frame");
+        self.intern_id(NAME_NET, "Net");
+        self.intern_id(NAME_TRACKS, "Tracks");
+        self.intern_id(NAME_LOD, "ChooseLod");
+        self.intern_id(NAME_PAYLOAD, "TimelinePayload");
+        self.intern_id(NAME_CHROME, "Chrome");
+        self.intern_id(NAME_PUSH, "PushEvents");
+        self.intern_id(NAME_RASTER, "Rasterize");
+        self.intern_id(NAME_TIMELINE_API, "TimelineApi");
+    }
+
+    fn wall_ns(&self) -> u64 {
+        self.origin.elapsed().as_nanos() as u64
+    }
+
+    /// Live edge of the active capture, or wall time when the ring is empty.
+    fn stamp_base(&self) -> u64 {
+        let newest = self.stats().newest_end_ns;
+        let live = self.demo.load(Ordering::Relaxed) || self.capturing.load(Ordering::Relaxed);
+        if live && newest > 0 {
+            newest
+        } else {
+            newest.max(self.wall_ns())
+        }
+    }
+
+    /// Insert viewer/service [`RelScope`]s as real [`LiveEvent`]s on the ring.
+    pub fn apply_self_scopes(&self, scopes: &[RelScope]) {
+        if !self.self_profile.load(Ordering::Relaxed) || scopes.is_empty() {
+            return;
+        }
+        if IN_SELF.with(Cell::get) {
+            return;
+        }
+        self.ensure_self_names();
+        let events = stamp_batch(scopes, self.stamp_base());
+        if events.is_empty() {
+            return;
+        }
+        let prev = IN_SELF.with(|c| {
+            let p = c.get();
+            c.set(true);
+            p
+        });
+        self.push_events(&events);
+        IN_SELF.with(|c| c.set(prev));
+    }
+
+    pub fn emit_server_scope(&self, name_id: u32, duration_ns: u64) {
+        if !self.self_profile.load(Ordering::Relaxed) || duration_ns == 0 {
+            return;
+        }
+        self.apply_self_scopes(&[RelScope {
+            pid: SERVICE_PID,
+            tid: TID_SERVER,
+            name_id,
+            start_rel_ns: 0,
+            duration_ns,
+            depth: 0,
+        }]);
+    }
+
+    fn with_server_scope<R>(&self, name_id: u32, f: impl FnOnce() -> R) -> R {
+        if !self.self_profile.load(Ordering::Relaxed) {
+            return f();
+        }
+        let t0 = Instant::now();
+        let r = f();
+        self.emit_server_scope(name_id, t0.elapsed().as_nanos() as u64);
+        r
     }
 
     pub fn set_hooks(&self, hooks: ControlHooks) {
@@ -166,10 +285,15 @@ impl LiveService {
         if events.is_empty() {
             return;
         }
+        let profile = self.self_profile.load(Ordering::Relaxed) && !IN_SELF.with(Cell::get);
+        let t0 = profile.then(Instant::now);
         self.ring().push_many(events);
         self.broadcast_frame(&LiveFrame::EventBatch {
             events: events.to_vec(),
         });
+        if let Some(t0) = t0 {
+            self.emit_server_scope(NAME_PUSH, t0.elapsed().as_nanos() as u64);
+        }
     }
 
     pub fn ingest_scope_start(
@@ -262,11 +386,13 @@ impl LiveService {
         t1: Option<u64>,
         width: usize,
     ) -> orbit_live_render::RasterizedFrame {
-        let index = self.build_index();
-        let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
-        let t0 = t0.unwrap_or(auto0);
-        let t1 = t1.unwrap_or(auto1.max(t0 + 1));
-        index.rasterize_pixel(t0, t1, width.max(1))
+        self.with_server_scope(NAME_RASTER, || {
+            let index = self.build_index();
+            let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
+            let t0 = t0.unwrap_or(auto0);
+            let t1 = t1.unwrap_or(auto1.max(t0 + 1));
+            index.rasterize_pixel(t0, t1, width.max(1))
+        })
     }
 
     pub fn replace_ring(&self, bytes: u64, spill: Option<PathBuf>) -> Result<(), String> {

@@ -136,6 +136,82 @@ fn frame_body_is_16_byte_header_plus_exact_rgba() {
 }
 
 #[test]
+fn self_scopes_are_ignored_when_disabled() {
+    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 1_000,
+        depth: 0,
+    }]);
+    assert!(svc.ring().snapshot().1.is_empty());
+    assert!(!svc.self_profile_enabled());
+}
+
+#[test]
+fn self_scopes_join_the_same_ring_at_the_live_edge() {
+    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
+    use std::sync::atomic::Ordering;
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.push_events(&[ev(50)]);
+    svc.enable_self_profile();
+    svc.capturing.store(true, Ordering::Relaxed);
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 80,
+        depth: 0,
+    }]);
+    let snap = svc.ring().snapshot().1;
+    let self_ev = snap
+        .iter()
+        .find(|e| e.pid == VIEWER_PID)
+        .expect("viewer pid on the ring");
+    let demo_end = ev(50).start_ns + ev(50).duration_ns;
+    assert_eq!(self_ev.start_ns + self_ev.duration_ns, demo_end);
+    assert_eq!(self_ev.kind, kind::API_SCOPE);
+    assert_eq!(self_ev.name_id, NAME_FRAME);
+}
+
+#[test]
+fn push_events_emits_server_scope_only_when_self_profile_is_on() {
+    use orbit_live_event::dev::{NAME_PUSH, NAME_RASTER, SERVICE_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.push_events(&[ev(1)]);
+    let _ = svc.rasterize_frame(Some(0), Some(40), 32);
+    assert!(!svc.ring().snapshot().1.iter().any(|e| e.pid == SERVICE_PID));
+
+    svc.enable_self_profile();
+    svc.push_events(&(2..80).map(ev).collect::<Vec<_>>());
+    let _ = svc.rasterize_frame(Some(0), Some(800), 64);
+    let snap = svc.ring().snapshot().1;
+    assert!(
+        snap.iter().any(|e| e.pid == SERVICE_PID
+            && e.tid == 4
+            && (e.name_id == NAME_PUSH || e.name_id == NAME_RASTER)),
+        "expected a service PushEvents or Rasterize scope"
+    );
+}
+
+#[test]
+fn self_names_are_interned_for_the_rail() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    let intern = svc.intern.lock();
+    assert_eq!(intern.get(1), Some("ui"));
+    assert_eq!(intern.get(30_000), Some("Frame"));
+    assert_eq!(intern.get(4), Some("server"));
+}
+
+#[test]
 fn demo_thread_names_are_interned_for_the_rail() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.intern_id(100, "Main");

@@ -27,6 +27,8 @@ pub struct StatusJson {
     pub spill_path: Option<String>,
     #[serde(default = "default_machine")]
     pub machine: String,
+    #[serde(default)]
+    pub self_profile: bool,
 }
 
 fn default_machine() -> String {
@@ -198,6 +200,7 @@ mod wasm_impl {
         inbox: Arc<Mutex<Inbox>>,
         http_busy: Arc<AtomicBool>,
         view_busy: Arc<AtomicBool>,
+        self_busy: Arc<AtomicBool>,
         /// Held so the JS WebSocket is not GC'd.
         #[allow(dead_code)]
         ws: Arc<Mutex<Option<WebSocket>>>,
@@ -212,6 +215,7 @@ mod wasm_impl {
                 inbox,
                 http_busy: Arc::new(AtomicBool::new(false)),
                 view_busy: Arc::new(AtomicBool::new(false)),
+                self_busy: Arc::new(AtomicBool::new(false)),
                 ws,
             }
         }
@@ -321,6 +325,41 @@ mod wasm_impl {
 
         pub fn stop_demo(&self) {
             self.send("POST", "/api/demo/stop", "{}".into());
+        }
+
+        pub fn start_self(&self) {
+            self.send("POST", "/api/self/start", "{}".into());
+        }
+
+        pub fn stop_self(&self) {
+            self.send("POST", "/api/self/stop", "{}".into());
+        }
+
+        pub fn push_self_scopes(&self, scopes: &[orbit_live_event::dev::RelScope]) {
+            if scopes.is_empty() {
+                return;
+            }
+            if self
+                .self_busy
+                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+            let Ok(body) = serde_json::to_string(&orbit_live_event::dev::RelScopeBatch {
+                scopes: scopes.to_vec(),
+            }) else {
+                self.self_busy.store(false, Ordering::Relaxed);
+                return;
+            };
+            let inbox = self.inbox.clone();
+            let busy = self.self_busy.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(e) = send_text("POST", "/api/self/events", &body).await {
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(e);
+                }
+                busy.store(false, Ordering::Relaxed);
+            });
         }
 
         pub fn apply_config(&self, ring_bytes: u64, spill: &str) {
@@ -564,6 +603,9 @@ mod native_impl {
         pub fn start_demo(&self) {}
         pub fn stop_demo(&self) {}
         pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}
+        pub fn start_self(&self) {}
+        pub fn stop_self(&self) {}
+        pub fn push_self_scopes(&self, _scopes: &[orbit_live_event::dev::RelScope]) {}
     }
 }
 

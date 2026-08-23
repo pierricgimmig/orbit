@@ -66,7 +66,10 @@ impl TrackStrip {
         let mut threads: Vec<ThreadId> = Vec::new();
         for (key, _) in index.lanes() {
             if let Some(pid) = filter_pid {
-                if key.pid != pid && index.lanes().any(|(k, _)| k.pid == pid) {
+                if key.pid != pid
+                    && !orbit_live_event::dev::is_self_pid(key.pid)
+                    && index.lanes().any(|(k, _)| k.pid == pid)
+                {
                     continue;
                 }
             }
@@ -341,7 +344,7 @@ impl TrackStrip {
             .map(|pid| index.lanes().any(|(k, _)| k.pid == pid))
             .unwrap_or(false);
         for &pid in &self.process_order {
-            if has_filter && filter_pid != Some(pid) {
+            if has_filter && filter_pid != Some(pid) && !orbit_live_event::dev::is_self_pid(pid) {
                 continue;
             }
             if !index.lanes().any(|(k, _)| k.pid == pid) {
@@ -425,6 +428,21 @@ mod tests {
             .rows()
             .iter()
             .any(|r| matches!(r.id, RowId::Thread(_))));
+    }
+
+    #[test]
+    fn capture_filter_keeps_self_pids() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 100, 1));
+        idx.insert(scope(orbit_live_event::dev::VIEWER_PID, 1, 30_000));
+        idx.insert(scope(9, 3, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, Some(1));
+        assert!(strip.process_order.contains(&1));
+        assert!(strip
+            .process_order
+            .contains(&orbit_live_event::dev::VIEWER_PID));
+        assert!(!strip.process_order.contains(&9));
     }
 
     #[test]

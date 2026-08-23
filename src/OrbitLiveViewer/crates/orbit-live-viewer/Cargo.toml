@@ -45,6 +45,7 @@ features = [
     "HtmlCanvasElement",
     "Location",
     "MessageEvent",
+    "Performance",
     "RequestInit",
     "Response",
     "WebSocket",

@@ -4,6 +4,10 @@ use eframe::egui::{
     self, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId, Frame, Key, Layout,
     Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
 };
+use orbit_live_event::dev::{
+    intern_self_names, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_TRACKS,
+    SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_UI, VIEWER_NAME, VIEWER_PID,
+};
 use orbit_live_event::{InternTable, LaneKey, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
@@ -12,6 +16,7 @@ use orbit_live_render::{
     FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
 };
 
+use crate::dev::DevFrame;
 use crate::fonts;
 use crate::net::{
     instances_from_timeline, scale_frame_rgba, Net, ProcessJson, ServiceFrame, StatusJson,
@@ -112,12 +117,22 @@ pub struct OrbitLiveApp {
     last_lod: orbit_live_render::TimelineLod,
     compact: bool,
     advanced: bool,
+    dev: bool,
 }
 
 impl OrbitLiveApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         fonts::install(&cc.egui_ctx);
         apply_orbit_visuals(&cc.egui_ctx);
+        let mut intern = InternTable::default();
+        let dev = crate::dev::query_dev_from_location();
+        if dev {
+            intern_self_names(&mut intern);
+        }
+        let net = Net::connect();
+        if dev {
+            net.start_self();
+        }
         let mut has_gpu = false;
         if let Some(rs) = &cc.wgpu_render_state {
             let mut renderer = rs.renderer.write();
@@ -128,9 +143,9 @@ impl OrbitLiveApp {
         }
         Self {
             index: TrackIndex::default(),
-            intern: InternTable::default(),
+            intern,
             leftover: Vec::new(),
-            net: Net::connect(),
+            net,
             processes: Vec::new(),
             selected_pid: None,
             status: StatusJson::default(),
@@ -159,6 +174,32 @@ impl OrbitLiveApp {
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
             compact: false,
             advanced: false,
+            dev,
+        }
+    }
+
+    fn toggle_dev(&mut self) {
+        self.dev = !self.dev;
+        if self.dev {
+            intern_self_names(&mut self.intern);
+            self.net.start_self();
+            self.follow = true;
+        } else {
+            self.net.stop_self();
+        }
+    }
+
+    fn merge_self_processes(&mut self) {
+        if !self.dev && !self.status.self_profile {
+            return;
+        }
+        for (pid, name) in [(VIEWER_PID, VIEWER_NAME), (SERVICE_PID, SERVICE_NAME)] {
+            if !self.processes.iter().any(|p| p.pid == pid) {
+                self.processes.push(ProcessJson {
+                    pid,
+                    name: name.into(),
+                });
+            }
         }
     }
 
@@ -167,6 +208,10 @@ impl OrbitLiveApp {
         self.ring_bytes = s.ring_bytes.to_string();
         if let Some(p) = &s.spill_path {
             self.spill_path = p.clone();
+        }
+        if s.self_profile && !self.dev {
+            intern_self_names(&mut self.intern);
+            self.dev = true;
         }
         self.status = s;
         self.error.clear();
@@ -194,6 +239,7 @@ impl OrbitLiveApp {
                 self.selected_pid = Some(1);
             }
         }
+        self.merge_self_processes();
         if let Some(tl) = inbox.timeline {
             self.service_timeline = Some(tl);
             self.service_frame = None;
@@ -270,6 +316,7 @@ impl OrbitLiveApp {
                     ring_bytes,
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
+                    self_profile: self.status.self_profile,
                 });
             }
             LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
@@ -291,6 +338,12 @@ impl OrbitLiveApp {
                 self.error.clear();
                 self.net.start_demo();
                 self.follow = true;
+            }
+            if pill(ui, "Dev", self.dev)
+                .on_hover_text("Profile the viewer into the same capture")
+                .clicked()
+            {
+                self.toggle_dev();
             }
             if icon_pill(ui, "■", "Stop demo").clicked() {
                 self.net.stop_demo();
@@ -483,7 +536,7 @@ impl OrbitLiveApp {
         );
     }
 
-    fn timeline(&mut self, ui: &mut Ui, dt: f32) {
+    fn timeline(&mut self, ui: &mut Ui, dt: f32, dev: &DevFrame) {
         self.tracks.scale = if self.compact { 0.72 } else { 1.0 };
         if !self.status.machine.is_empty() {
             self.tracks.machine = self.status.machine.clone();
@@ -491,8 +544,11 @@ impl OrbitLiveApp {
         let filter = self
             .selected_pid
             .filter(|_| self.status.capturing && !self.status.demo);
-        self.tracks.sync(&self.index, filter);
-        self.tracks.tick(dt, &self.index, filter);
+        {
+            let _tracks = dev.scope(TID_UI, NAME_TRACKS);
+            self.tracks.sync(&self.index, filter);
+            self.tracks.tick(dt, &self.index, filter);
+        }
 
         let timebar_h = 26.0;
         let (time_rect, _) =
@@ -537,7 +593,10 @@ impl OrbitLiveApp {
             let width = body.width().max(1.0);
             let ppp = ui.ctx().pixels_per_point();
             self.view_width = (width * ppp).round().clamp(16.0, 4096.0) as u32;
-            let lod = choose_lod(&self.index, t0, t1, width as usize, INSTANCE_MIN_PX);
+            let lod = {
+                let _lod = dev.scope(TID_RENDER, NAME_LOD);
+                choose_lod(&self.index, t0, t1, width as usize, INSTANCE_MIN_PX)
+            };
             self.lod_label = lod.as_str();
             self.last_lod = lod;
 
@@ -562,7 +621,10 @@ impl OrbitLiveApp {
                     ppp,
                     [screen.width() * ppp, screen.height() * ppp],
                 );
-                let payload = self.timeline_payload(t0, t1, width, lod, ppp);
+                let payload = {
+                    let _payload = dev.scope(TID_RENDER, NAME_PAYLOAD);
+                    self.timeline_payload(t0, t1, width, lod, ppp)
+                };
                 ui.painter().add(paint_callback(body, payload, view));
                 paint_playhead(ui, body, self.t0, self.t1, self.status.newest_end_ns as f64);
                 if let Some(h) = self.hover {
@@ -964,64 +1026,78 @@ impl OrbitLiveApp {
 
 impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        apply_orbit_visuals(ctx);
-        self.drain_net();
-        let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.05);
-        self.tick_follow(dt);
-        let now = ctx.input(|i| i.time);
-        if now - self.last_status_request > 0.25 {
-            self.last_status_request = now;
-            self.net.get_status();
-            if self.processes.is_empty() {
-                self.net.get_processes();
+        let devf = DevFrame::begin(self.dev);
+        {
+            let _frame_scope = devf.scope(TID_UI, NAME_FRAME);
+            apply_orbit_visuals(ctx);
+            let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.05);
+            {
+                let _net = devf.scope(TID_NET, NAME_NET);
+                self.drain_net();
+                self.tick_follow(dt);
+                let now = ctx.input(|i| i.time);
+                if now - self.last_status_request > 0.25 {
+                    self.last_status_request = now;
+                    self.net.get_status();
+                    if self.processes.is_empty() {
+                        self.net.get_processes();
+                    }
+                }
+                if now - self.last_view_request > 0.1 {
+                    self.last_view_request = now;
+                    let t0 = self.t0.max(0.0) as u64;
+                    let t1 = (self.t1 as u64).max(t0 + 1);
+                    self.net.pull_view(t0, t1, self.view_width.max(16));
+                }
             }
+
+            {
+                let _chrome = devf.scope(TID_UI, NAME_CHROME);
+                egui::TopBottomPanel::top("orbit_transport")
+                    .exact_height(36.0)
+                    .frame(
+                        Frame::new()
+                            .fill(theme::PANEL)
+                            .inner_margin(Margin::symmetric(4, 4))
+                            .stroke(Stroke::NONE)
+                            .shadow(egui::Shadow {
+                                offset: [0, 2],
+                                blur: 10,
+                                spread: 0,
+                                color: Color32::from_black_alpha(80),
+                            }),
+                    )
+                    .show(ctx, |ui| self.transport(ui));
+
+                if self.advanced {
+                    egui::SidePanel::left("orbit_chrome")
+                        .exact_width(SIDE)
+                        .resizable(false)
+                        .frame(
+                            Frame::new()
+                                .fill(theme::PANEL)
+                                .inner_margin(Margin::symmetric(16, 12))
+                                .stroke(Stroke::NONE),
+                        )
+                        .show(ctx, |ui| {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.chrome(ui));
+                        });
+                    ui_hairline_sidebar(ctx);
+                }
+            }
+
+            egui::CentralPanel::default()
+                .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
+                .show(ctx, |ui| self.timeline(ui, dt, &devf));
+
+            ctx.request_repaint();
         }
-        if now - self.last_view_request > 0.1 {
-            self.last_view_request = now;
-            let t0 = self.t0.max(0.0) as u64;
-            let t1 = (self.t1 as u64).max(t0 + 1);
-            self.net.pull_view(t0, t1, self.view_width.max(16));
+        let scopes = devf.finish();
+        if self.dev && !scopes.is_empty() {
+            self.net.push_self_scopes(&scopes);
         }
-
-        egui::TopBottomPanel::top("orbit_transport")
-            .exact_height(36.0)
-            .frame(
-                Frame::new()
-                    .fill(theme::PANEL)
-                    .inner_margin(Margin::symmetric(4, 4))
-                    .stroke(Stroke::NONE)
-                    .shadow(egui::Shadow {
-                        offset: [0, 2],
-                        blur: 10,
-                        spread: 0,
-                        color: Color32::from_black_alpha(80),
-                    }),
-            )
-            .show(ctx, |ui| self.transport(ui));
-
-        if self.advanced {
-            egui::SidePanel::left("orbit_chrome")
-                .exact_width(SIDE)
-                .resizable(false)
-                .frame(
-                    Frame::new()
-                        .fill(theme::PANEL)
-                        .inner_margin(Margin::symmetric(16, 12))
-                        .stroke(Stroke::NONE),
-                )
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| self.chrome(ui));
-                });
-            ui_hairline_sidebar(ctx);
-        }
-
-        egui::CentralPanel::default()
-            .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
-            .show(ctx, |ui| self.timeline(ui, dt));
-
-        ctx.request_repaint();
     }
 }
 

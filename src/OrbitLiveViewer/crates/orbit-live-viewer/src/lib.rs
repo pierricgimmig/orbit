@@ -12,6 +12,8 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "egui")]
 mod app;
 #[cfg(feature = "egui")]
+mod dev;
+#[cfg(feature = "egui")]
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;

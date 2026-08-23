@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 mod color;
+pub mod dev;
 pub use color::{
     argb_to_css, async_scope_color, encode_manual_color, event_color, material_index_to_argb,
     name_hash, palette_index, rgba_word_to_argb, scale_rgb, thread_scope_color, thread_state_color,

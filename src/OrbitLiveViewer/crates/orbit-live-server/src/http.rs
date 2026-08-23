@@ -12,6 +12,9 @@ use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
 use orbit_live_event::argb_to_css;
+use orbit_live_event::dev::{
+    RelScopeBatch, NAME_TIMELINE_API, SERVICE_NAME, SERVICE_PID, VIEWER_NAME, VIEWER_PID,
+};
 use orbit_live_render::{
     choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
 };
@@ -43,6 +46,9 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/capture/stop", post(capture_stop))
         .route("/api/demo/start", post(demo_start))
         .route("/api/demo/stop", post(demo_stop))
+        .route("/api/self/start", post(self_start))
+        .route("/api/self/stop", post(self_stop))
+        .route("/api/self/events", post(self_events))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
@@ -86,6 +92,7 @@ struct StatusBody {
     spill_path: Option<String>,
     http_bind: String,
     machine: String,
+    self_profile: bool,
 }
 
 impl StatusBody {
@@ -106,25 +113,48 @@ impl StatusBody {
             spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
             http_bind: cfg.bind.to_string(),
             machine: "local".into(),
+            self_profile: svc.self_profile_enabled(),
         }
     }
 }
 
 async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
     let hooks = svc.hooks.lock();
-    match hooks.as_ref() {
+    let raw = match hooks.as_ref() {
         Some(h) => match (h.list_processes_json)() {
-            Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+            Ok(json) => json,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         },
         None => {
             if svc.demo.load(std::sync::atomic::Ordering::Relaxed) {
-                Json(vec![serde_json::json!({"pid": 1, "name": "orbit-demo"})]).into_response()
+                serde_json::to_string(&[serde_json::json!({"pid": 1, "name": "orbit-demo"})])
+                    .unwrap_or_else(|_| "[]".into())
             } else {
-                Json(Vec::<serde_json::Value>::new()).into_response()
+                "[]".into()
             }
         }
+    };
+    drop(hooks);
+    let json = merge_self_processes(&svc, raw);
+    ([(header::CONTENT_TYPE, "application/json")], json).into_response()
+}
+
+fn merge_self_processes(svc: &LiveService, json: String) -> String {
+    if !svc.self_profile_enabled() {
+        return json;
     }
+    let mut list: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap_or_default();
+    for (pid, name) in [(VIEWER_PID, VIEWER_NAME), (SERVICE_PID, SERVICE_NAME)] {
+        let present = list.iter().any(|p| {
+            p.get("pid")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|n| n == u64::from(pid))
+        });
+        if !present {
+            list.push(serde_json::json!({"pid": pid, "name": name}));
+        }
+    }
+    serde_json::to_string(&list).unwrap_or(json)
 }
 
 #[derive(Deserialize)]
@@ -190,6 +220,24 @@ async fn demo_start(State(svc): State<Arc<LiveService>>, Json(body): Json<DemoBo
 async fn demo_stop(State(svc): State<Arc<LiveService>>) -> Response {
     crate::demo::stop(&svc);
     StatusCode::OK.into_response()
+}
+
+async fn self_start(State(svc): State<Arc<LiveService>>) -> StatusCode {
+    svc.enable_self_profile();
+    StatusCode::OK
+}
+
+async fn self_stop(State(svc): State<Arc<LiveService>>) -> StatusCode {
+    svc.disable_self_profile();
+    StatusCode::OK
+}
+
+async fn self_events(
+    State(svc): State<Arc<LiveService>>,
+    Json(body): Json<RelScopeBatch>,
+) -> StatusCode {
+    svc.apply_self_scopes(&body.scopes);
+    StatusCode::OK
 }
 
 async fn get_config(State(svc): State<Arc<LiveService>>) -> Json<ConfigBody> {
@@ -282,6 +330,7 @@ async fn timeline(
     Query(q): Query<FrameQuery>,
 ) -> Json<TimelineBody> {
     let width = q.width.unwrap_or(1280).clamp(16, 4096);
+    let t_prof = svc.self_profile_enabled().then(std::time::Instant::now);
     let index = svc.build_index();
     let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
     let t0 = q.t0.unwrap_or(auto0);
@@ -304,6 +353,9 @@ async fn timeline(
     } else {
         Vec::new()
     };
+    if let Some(t_prof) = t_prof {
+        svc.emit_server_scope(NAME_TIMELINE_API, t_prof.elapsed().as_nanos() as u64);
+    }
     Json(TimelineBody {
         lod: lod.as_str(),
         width,
