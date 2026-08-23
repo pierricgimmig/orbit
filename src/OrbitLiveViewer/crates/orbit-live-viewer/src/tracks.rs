@@ -85,13 +85,40 @@ impl TrackStrip {
             }
         }
         pids.sort_unstable();
-        threads.sort_by_key(|t| (t.pid, t.tid));
+        pids.sort_by_key(|p| {
+            if *p == orbit_live_event::dev::VIEWER_PID {
+                0u8
+            } else if *p == orbit_live_event::dev::SERVICE_PID {
+                1
+            } else {
+                2
+            }
+        });
+        threads.sort_by_key(|t| {
+            let rank = if t.pid == orbit_live_event::dev::VIEWER_PID {
+                0u8
+            } else if t.pid == orbit_live_event::dev::SERVICE_PID {
+                1
+            } else {
+                2
+            };
+            (rank, t.pid, t.tid)
+        });
         self.process_order.retain(|p| pids.contains(p));
         for p in pids {
             if !self.process_order.contains(&p) {
                 self.process_order.push(p);
             }
         }
+        self.process_order.sort_by_key(|p| {
+            if *p == orbit_live_event::dev::VIEWER_PID {
+                0u8
+            } else if *p == orbit_live_event::dev::SERVICE_PID {
+                1
+            } else {
+                2
+            }
+        });
         self.thread_order.retain(|t| threads.contains(t));
         for t in threads {
             if !self.thread_order.contains(&t) {
@@ -400,10 +427,10 @@ mod tests {
     fn same_tid_different_pid_are_separate_threads() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(1, 7, 1));
-        idx.insert(scope(2, 7, 2));
+        idx.insert(scope(4, 7, 2));
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
-        assert_eq!(strip.process_order, vec![1, 2]);
+        assert_eq!(strip.process_order, vec![1, 4]);
         assert_eq!(strip.thread_order.len(), 2);
         strip.tick(1.0, &idx, None);
         let lanes = strip.layout();
@@ -439,6 +466,11 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, Some(1));
         assert!(strip.process_order.contains(&1));
+        assert_eq!(
+            strip.process_order[0],
+            orbit_live_event::dev::VIEWER_PID,
+            "self-profile processes stay at the top of the rail"
+        );
         assert!(strip
             .process_order
             .contains(&orbit_live_event::dev::VIEWER_PID));

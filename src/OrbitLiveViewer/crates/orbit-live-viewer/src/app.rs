@@ -1039,9 +1039,9 @@ impl eframe::App for OrbitLiveApp {
                 if now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
-                    if self.processes.is_empty() {
-                        self.net.get_processes();
-                    }
+            if self.processes.is_empty() || self.dev {
+                self.net.get_processes();
+            }
                 }
                 if now - self.last_view_request > 0.1 {
                     self.last_view_request = now;
