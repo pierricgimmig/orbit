@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sampling - Orbit Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav class="breadcrumb"><a href="index.html">Orbit Manual</a></nav>
+<article>
+<h2>Sampling</h2>
+<p class="summary">Where the target spent its time, from periodically recorded callstacks rather than from instrumentation.</p>
+<p>Instrumentation only sees functions that were asked for by name. Sampling sees everything: Orbit interrupts the target at a fixed rate and records where each thread was, so that a function nobody thought to instrument still shows up if it is where the time goes.</p>
+<p>The upper list ranks functions by how often a sample landed in them. Selecting one shows, below, the callstacks those samples came from.</p>
+<figure>
+<img src="images/sampling.png" alt="The Sampling tab, ranking functions by how many callstack samples landed in them." loading="lazy">
+<figcaption>The Sampling tab, ranking functions by how many callstack samples landed in them.</figcaption>
+</figure>
+</article>
+<footer class="pager">
+<a href="manual-instrumentation.html">&larr; Manual instrumentation</a>
+<a href="top-down.html">Top-down &rarr;</a>
+</footer>
+</main>
+</body>
+</html>

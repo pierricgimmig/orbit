@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual instrumentation - Orbit Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav class="breadcrumb"><a href="index.html">Orbit Manual</a></nav>
+<article>
+<h2>Manual instrumentation</h2>
+<p class="summary">Scopes the target names itself, through the ORBIT_SCOPE macros, alongside everything else.</p>
+<p>Dynamic instrumentation can time any function, but only a function. Code that wants to time part of one, or to name what it is doing, includes Orbit&#39;s API header and brackets the region with ORBIT_SCOPE. Those scopes arrive in a capture as ordinary timed slices, with the name and colour the target gave them.</p>
+<p>OrbitTest uses the API throughout, which is why names like &quot;Sleep for two milliseconds&quot; appear in a capture of it next to the function names that came from symbols.</p>
+<figure>
+<img src="images/manual-instrumentation.png" alt="Scopes that OrbitTest named through ORBIT_SCOPE, filtered out of the Live tab." loading="lazy">
+<figcaption>Scopes that OrbitTest named through ORBIT_SCOPE, filtered out of the Live tab.</figcaption>
+</figure>
+</article>
+<footer class="pager">
+<a href="live-functions.html">&larr; Live functions</a>
+<a href="sampling.html">Sampling &rarr;</a>
+</footer>
+</main>
+</body>
+</html>

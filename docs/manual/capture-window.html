@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The capture window - Orbit Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav class="breadcrumb"><a href="index.html">Orbit Manual</a></nav>
+<article>
+<h2>The capture window</h2>
+<p class="summary">A track per thread and per data source, on one shared timeline.</p>
+<p>The capture window draws everything a capture recorded against time. Each thread gets a track; so does each other source of events, such as the scheduler or the GPU. Scrolling zooms the timeline, dragging pans it, and right-clicking a slice offers what can be done with it.</p>
+<p>OrbitTest runs a handful of worker threads that call the same few functions in a loop, so its tracks are regular in a way a real application&#39;s rarely are.</p>
+<figure>
+<img src="images/capture-window.png" alt="The capture window, with one track per thread of the target." loading="lazy">
+<figcaption>The capture window, with one track per thread of the target.</figcaption>
+</figure>
+<figure>
+<img src="images/capture-window-filtered.png" alt="The track filter hides every track whose name does not match." loading="lazy">
+<figcaption>The track filter hides every track whose name does not match.</figcaption>
+</figure>
+</article>
+<footer class="pager">
+<a href="taking-a-capture.html">&larr; Taking a capture</a>
+<a href="track-configuration.html">Configuring tracks &rarr;</a>
+</footer>
+</main>
+</body>
+</html>

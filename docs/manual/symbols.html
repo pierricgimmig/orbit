@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modules and functions - Orbit Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<nav class="breadcrumb"><a href="index.html">Orbit Manual</a></nav>
+<article>
+<h2>Modules and functions</h2>
+<p class="summary">The Symbols tab lists the modules loaded into the target and the functions their symbols name.</p>
+<p>Orbit cannot show a function it has no name for, so loading symbols is the first thing it does after connecting. The Symbols tab shows how far it got: every module the target has mapped, and whether its symbols were found.</p>
+<p>The lower list holds every function Orbit knows about. Selecting a function here is what marks it for dynamic instrumentation, so that the next capture times every call to it.</p>
+<figure>
+<img src="images/symbols-tab.png" alt="The Symbols tab: modules on top, the functions found in them below." loading="lazy">
+<figcaption>The Symbols tab: modules on top, the functions found in them below.</figcaption>
+</figure>
+<figure>
+<img src="images/symbols-filtered-functions.png" alt="Typing in the filter box narrows the function list; here, to OrbitTest&#39;s TestFunc and TestFunc2." loading="lazy">
+<figcaption>Typing in the filter box narrows the function list; here, to OrbitTest&#39;s TestFunc and TestFunc2.</figcaption>
+</figure>
+</article>
+<footer class="pager">
+<a href="main-window.html">&larr; The main window</a>
+<a href="capture-options.html">Capture options &rarr;</a>
+</footer>
+</main>
+</body>
+</html>
