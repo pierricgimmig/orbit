@@ -1138,8 +1138,11 @@ mod tests {
         assert_eq!(row_kinds, vec![kind::VALUE]);
         assert!(!strip.rows().iter().any(|r| matches!(
             r.id,
-            RowId::Lane(k) if k.kind == kind::THREAD_STATE || k.kind == kind::API_SCOPE
+            RowId::Lane(k) if k.kind == kind::THREAD_STATE
+                || k.kind == kind::API_SCOPE
+                || k.kind == kind::SCHEDULING_SLICE
         )));
+        assert!(strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
     }
 
     #[test]
@@ -1153,6 +1156,7 @@ mod tests {
         let th = strip.thread_order[0];
         let (y, h) = strip.thread_band(th).unwrap();
         assert!(h > THREAD_H);
+        assert_eq!(strip.hit_at_y(y + THREAD_H + 1.0), Some(RowId::Thread(th)));
         assert_eq!(strip.hit_at_y(y + h - 1.0), Some(RowId::Thread(th)));
         strip.toggle_hidden(th);
         strip.sync(&idx, None);

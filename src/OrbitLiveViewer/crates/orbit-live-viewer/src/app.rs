@@ -1210,7 +1210,8 @@ impl OrbitLiveApp {
                     }
                     _ => hover_row == Some(row.id) && !matches!(row.id, RowId::Thread(_)),
                 };
-                if highlight && !dragging {
+                if highlight && !dragging && !matches!(row.id, RowId::Lane(k) if k.kind == kind::VALUE)
+                {
                     let band_hl = if let RowId::Thread(t) = row.id {
                         self.tracks
                             .thread_band(t)
@@ -1327,14 +1328,20 @@ impl OrbitLiveApp {
                     Vec2::new(14.0, title.height()),
                 );
                 paint_handle_dots(ui.painter(), handle, dragging);
-                let drag_r = Rect::from_min_max(
-                    Pos2::new(title.left() + 18.0, r.top()),
-                    Pos2::new(r.right() - 22.0, r.bottom()),
+                let chevron_hit = Rect::from_center_size(
+                    Pos2::new(title.left() + 36.0, title.center().y),
+                    Vec2::splat(14.0),
                 );
-                let resp = ui.interact(drag_r, ui.id().with(("th", th.pid, th.tid)), Sense::drag());
+                let hide = Rect::from_center_size(
+                    Pos2::new(title.right() - 12.0, title.center().y),
+                    Vec2::splat(14.0),
+                );
+                let resp = ui.interact(r, ui.id().with(("th", th.pid, th.tid)), Sense::drag());
                 if resp.drag_started() {
                     if let Some(p) = resp.interact_pointer_pos() {
-                        self.tracks.begin_drag(th, row.y, p.y - head.top());
+                        if !chevron_hit.contains(p) && !hide.contains(p) {
+                            self.tracks.begin_drag(th, row.y, p.y - head.top());
+                        }
                     }
                 }
                 if resp.dragged() {
@@ -1368,10 +1375,6 @@ impl OrbitLiveApp {
                     format!("thread  {}  {tname}", th.tid),
                     FontId::new(11.0, FontFamily::Proportional),
                     theme::TEXT,
-                );
-                let hide = Rect::from_center_size(
-                    Pos2::new(title.right() - 12.0, title.center().y),
-                    Vec2::splat(14.0),
                 );
                 let hide_r =
                     ui.interact(hide, ui.id().with(("hide", th.pid, th.tid)), Sense::click());
