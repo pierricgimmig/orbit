@@ -2280,6 +2280,63 @@ fn wasm_mem_bytes() -> Option<f32> {
     }
 }
 
+const VALUE_STROKE_PX: f32 = 1.3;
+const VALUE_TICK_PTS: f32 = 4.0;
+
+/// Last sample in each rounded device-pixel column (step-after). One x → one y.
+fn bucket_last_per_device_px(samples: &[(f32, f32)], pixels_per_point: f32) -> Vec<(f32, f32)> {
+    let ppp = pixels_per_point.max(1e-6);
+    let mut out: Vec<(i32, f32)> = Vec::new();
+    for &(x, v) in samples {
+        let px = (x * ppp).round() as i32;
+        if let Some(last) = out.last_mut() {
+            if last.0 == px {
+                last.1 = v;
+                continue;
+            }
+        }
+        out.push((px, v));
+    }
+    out.into_iter()
+        .map(|(px, v)| (px as f32 / ppp, v))
+        .collect()
+}
+
+/// Hold-then-jump corners: `(x0,y0) → (x1,y0) → (x1,y1) → …`. No interpolation.
+/// A single sample is a short horizontal tick.
+fn step_graph_points(samples: &[(f32, f32)], tick: f32) -> Vec<(f32, f32)> {
+    match samples {
+        [] => Vec::new(),
+        &[(x, y)] => vec![(x - tick, y), (x + tick, y)],
+        _ => {
+            let mut out = Vec::with_capacity(samples.len() * 2);
+            out.push(samples[0]);
+            for w in samples.windows(2) {
+                let (_, y0) = w[0];
+                let (x1, y1) = w[1];
+                out.push((x1, y0));
+                if y1 != y0 {
+                    out.push((x1, y1));
+                }
+            }
+            out
+        }
+    }
+}
+
+fn value_extent(samples: &[(f32, f32)]) -> (f32, f32) {
+    let mut min_v = samples[0].1;
+    let mut max_v = samples[0].1;
+    for &(_, v) in samples {
+        min_v = min_v.min(v);
+        max_v = max_v.max(v);
+    }
+    if (max_v - min_v).abs() < 1e-6 {
+        max_v = min_v + 1.0;
+    }
+    (min_v, max_v)
+}
+
 fn paint_value_graphs(
     ui: &Ui,
     body: Rect,
@@ -2295,6 +2352,7 @@ fn paint_value_graphs(
     }
     let span = (t1 - t0) as f64;
     let painter = ui.painter_at(body);
+    let ppp = ui.pixels_per_point();
     for &(key, y) in layout {
         if key.kind != kind::VALUE {
             continue;
@@ -2318,19 +2376,8 @@ fn paint_value_graphs(
         if samples.is_empty() {
             continue;
         }
-        if samples.len() > body.width() as usize {
-            let step = (samples.len() / body.width().max(1.0) as usize).max(1);
-            samples = samples.into_iter().step_by(step).collect();
-        }
-        let mut min_v = samples[0].1;
-        let mut max_v = samples[0].1;
-        for &(_, v) in &samples {
-            min_v = min_v.min(v);
-            max_v = max_v.max(v);
-        }
-        if (max_v - min_v).abs() < 1e-6 {
-            max_v = min_v + 1.0;
-        }
+        let (min_v, max_v) = value_extent(&samples);
+        let bucketed = bucket_last_per_device_px(&samples, ppp);
         let color = c32(theme::display_argb(
             orbit_live_event::named_scope_color(
                 intern
@@ -2346,14 +2393,20 @@ fn paint_value_graphs(
             ),
         ));
         let pad = 3.0;
-        let mut pts = Vec::with_capacity(samples.len());
-        for (x, v) in samples {
-            let t = (v - min_v) / (max_v - min_v);
-            let py = body.top() + y + h - pad - t * (h - pad * 2.0);
-            pts.push(Pos2::new(body.left() + x, py));
-        }
-        if pts.len() >= 2 {
-            painter.add(Shape::line(pts, Stroke::new(1.4, color)));
+        let inner_h = (h - pad * 2.0).max(1.0);
+        let span_v = (max_v - min_v).max(1e-6);
+        let mapped: Vec<(f32, f32)> = bucketed
+            .into_iter()
+            .map(|(x, v)| {
+                let t = (v - min_v) / span_v;
+                let py = body.top() + y + h - pad - t * inner_h;
+                (body.left() + x, py)
+            })
+            .collect();
+        let stepped = step_graph_points(&mapped, VALUE_TICK_PTS);
+        if stepped.len() >= 2 {
+            let pts: Vec<Pos2> = stepped.iter().map(|&(px, py)| Pos2::new(px, py)).collect();
+            painter.add(Shape::line(pts, Stroke::new(VALUE_STROKE_PX, color)));
         }
     }
 }
@@ -3063,5 +3116,51 @@ mod tests {
         let hit = pick_value_at(&idx, &[(key, 0.0)], 0, 2_000, 100.0, 50.0, 10.0, 1.0);
         assert_eq!(hit.map(|p| p.name_id), Some(5_100));
         assert_eq!(hit.map(|p| p.kind), Some(kind::VALUE));
+    }
+
+    #[test]
+    fn value_graph_is_step_after_not_linear() {
+        let samples = [(0.0, 1.0), (10.0, 2.0), (20.0, 1.0)];
+        let bucketed = bucket_last_per_device_px(&samples, 1.0);
+        assert_eq!(bucketed, vec![(0.0, 1.0), (10.0, 2.0), (20.0, 1.0)]);
+        let pts = step_graph_points(&bucketed, VALUE_TICK_PTS);
+        assert_eq!(
+            pts,
+            vec![
+                (0.0, 1.0),
+                (10.0, 1.0),
+                (10.0, 2.0),
+                (20.0, 2.0),
+                (20.0, 1.0),
+            ]
+        );
+        assert_ne!(pts, vec![(0.0, 1.0), (10.0, 2.0), (20.0, 1.0)]);
+    }
+
+    #[test]
+    fn value_graph_keeps_last_sample_per_pixel() {
+        let samples = [(0.1, 1.0), (0.2, 9.0), (10.0, 2.0)];
+        let bucketed = bucket_last_per_device_px(&samples, 1.0);
+        assert_eq!(bucketed, vec![(0.0, 9.0), (10.0, 2.0)]);
+        assert_eq!(
+            bucketed.iter().map(|(x, _)| *x).collect::<Vec<_>>(),
+            bucketed
+                .iter()
+                .map(|(x, _)| *x)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        );
+        let pts = step_graph_points(&bucketed, VALUE_TICK_PTS);
+        assert_eq!(pts, vec![(0.0, 9.0), (10.0, 9.0), (10.0, 2.0)]);
+    }
+
+    #[test]
+    fn value_graph_single_sample_is_a_tick() {
+        let pts = step_graph_points(&[(5.0, 1.0)], VALUE_TICK_PTS);
+        assert_eq!(
+            pts,
+            vec![(5.0 - VALUE_TICK_PTS, 1.0), (5.0 + VALUE_TICK_PTS, 1.0)]
+        );
     }
 }
