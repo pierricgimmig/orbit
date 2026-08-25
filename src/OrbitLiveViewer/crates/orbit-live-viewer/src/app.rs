@@ -6,8 +6,9 @@ use eframe::egui::{
     StrokeKind, Ui, Vec2,
 };
 use orbit_live_event::dev::{
-    intern_self_names, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_TRACKS,
-    SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_UI, VIEWER_NAME, VIEWER_PID,
+    intern_self_names, stamp_batch, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET,
+    NAME_PAYLOAD, NAME_TRACKS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_UI, VIEWER_NAME,
+    VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
@@ -408,7 +409,7 @@ impl OrbitLiveApp {
         let mut ingested = 0usize;
         while !self.ws_queue.is_empty() {
             let next_len = self.ws_queue[0].len();
-            if ingested > 0 && ingested + next_len > 256 * 1024 {
+            if ingested > 0 && ingested + next_len > 1024 * 1024 {
                 break;
             }
             let bytes = self.ws_queue.remove(0);
@@ -434,6 +435,11 @@ impl OrbitLiveApp {
         match frame {
             LiveFrame::EventBatch { events } => {
                 for ev in events {
+                    // Viewer scopes are inserted locally on the capture clock
+                    // so a lagged WS (demo flood) cannot hide pid 2.
+                    if self.dev && ev.pid == VIEWER_PID {
+                        continue;
+                    }
                     self.index.insert(ev);
                 }
             }
@@ -1566,6 +1572,15 @@ impl eframe::App for OrbitLiveApp {
         }
         let scopes = devf.finish();
         if self.dev && !scopes.is_empty() {
+            intern_self_names(&mut self.intern);
+            let end = self
+                .status
+                .newest_end_ns
+                .max(self.t1.max(0.0) as u64)
+                .max(1);
+            for ev in stamp_batch(&scopes, end) {
+                self.index.insert(ev);
+            }
             self.net.push_self_scopes(&scopes);
         }
     }

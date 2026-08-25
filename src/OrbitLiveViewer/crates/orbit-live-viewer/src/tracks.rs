@@ -107,9 +107,17 @@ impl TrackStrip {
             (rank, t.pid, t.tid)
         });
         self.process_order.retain(|p| pids.contains(p));
+        let multi_demo = pids
+            .iter()
+            .filter(|p| !orbit_live_event::dev::is_self_pid(**p))
+            .count()
+            >= 2;
         for p in pids {
             if !self.process_order.contains(&p) {
                 self.process_order.push(p);
+                if multi_demo && !orbit_live_event::dev::is_self_pid(p) {
+                    self.collapsed.insert(RowId::Process(p));
+                }
             }
         }
         self.process_order.sort_by_key(|p| {
@@ -495,6 +503,8 @@ mod tests {
         strip.sync(&idx, None);
         assert_eq!(strip.process_order, vec![1, 4]);
         assert_eq!(strip.thread_order.len(), 2);
+        strip.toggle(RowId::Process(1));
+        strip.toggle(RowId::Process(4));
         strip.tick(1.0, &idx, None);
         let lanes = strip.layout();
         assert_eq!(lanes.len(), 2);
@@ -518,6 +528,34 @@ mod tests {
             .rows()
             .iter()
             .any(|r| matches!(r.id, RowId::Thread(_))));
+    }
+
+    #[test]
+    fn multi_process_demo_starts_collapsed() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 100, 1));
+        idx.insert(scope(10, 200, 1));
+        idx.insert(scope(11, 300, 1));
+        idx.insert(scope(orbit_live_event::dev::VIEWER_PID, 1, 30_000));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert!(strip.collapsed(RowId::Process(1)));
+        assert!(strip.collapsed(RowId::Process(10)));
+        assert!(strip.collapsed(RowId::Process(11)));
+        assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
+        assert!(strip
+            .rows()
+            .iter()
+            .any(|r| r.id == RowId::Process(1)));
+        assert!(strip
+            .rows()
+            .iter()
+            .any(|r| r.id == RowId::Process(10)));
+        assert!(strip
+            .rows()
+            .iter()
+            .any(|r| r.id == RowId::Process(11)));
     }
 
     #[test]
