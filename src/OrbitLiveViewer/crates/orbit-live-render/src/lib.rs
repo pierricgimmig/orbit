@@ -267,12 +267,16 @@ impl TrackIndex {
         intern: Option<&InternTable>,
     ) -> RasterizedFrame {
         let keys: Vec<LaneKey> = if order.is_empty() {
-            self.lanes.keys().copied().collect()
+            self.lanes
+                .keys()
+                .copied()
+                .filter(|k| k.kind != kind::VALUE)
+                .collect()
         } else {
             order
                 .iter()
                 .copied()
-                .filter(|k| self.lanes.contains_key(k))
+                .filter(|k| k.kind != kind::VALUE && self.lanes.contains_key(k))
                 .collect()
         };
         let mut pixels = vec![0u32; keys.len() * width];
@@ -335,16 +339,20 @@ impl RasterizedFrame {
 
     /// Repeat each lane row to its Orbit track height so a blit is not a barcode.
     pub fn to_rgba8_scaled(&self) -> (Vec<u8>, u32) {
+        self.to_rgba8_scaled_by(1.0)
+    }
+
+    pub fn to_rgba8_scaled_by(&self, scale: f32) -> (Vec<u8>, u32) {
+        let s = scale.max(0.01);
         let mut height = 0u32;
         let mut hs = Vec::with_capacity(self.lanes.len());
         for key in &self.lanes {
-            let h = lod::lane_height(*key).round().max(1.0) as u32;
-            let g = lod::lane_gap(*key).round() as u32;
+            let h = (lod::lane_height(*key) * s).round().max(1.0) as u32;
+            let g = (lod::lane_gap(*key) * s).round() as u32;
             hs.push((h, g));
             height = height.saturating_add(h.saturating_add(g));
         }
         let mut out = vec![0u8; self.width.saturating_mul(height as usize).saturating_mul(4)];
-        // Empty columns / lane gaps stay Orbit track gray, not 0 (transparent).
         for px in out.chunks_exact_mut(4) {
             px[0] = ((chrome::TRACK >> 16) & 0xFF) as u8;
             px[1] = ((chrome::TRACK >> 8) & 0xFF) as u8;
@@ -369,6 +377,80 @@ impl RasterizedFrame {
         }
         (out, height)
     }
+
+    /// Place each raster row at `layout` Y (already strip-scaled). Gaps between
+    /// lanes stay transparent so header washes show through; dest height is
+    /// last_y + lane_h − first_y, matching instanced clip space.
+    pub fn to_rgba8_placed(&self, layout: &[(LaneKey, f32)], scale: f32) -> (Vec<u8>, u32) {
+        let s = scale.max(0.01);
+        if self.lanes.is_empty() || self.width == 0 {
+            return (Vec::new(), 1);
+        }
+        let ys: BTreeMap<LaneKey, f32> = layout.iter().copied().collect();
+        let mut placed: Vec<(LaneKey, f32)> = self
+            .lanes
+            .iter()
+            .filter_map(|k| ys.get(k).copied().map(|y| (*k, y)))
+            .collect();
+        if placed.is_empty() {
+            let mut y = 0.0;
+            placed = self
+                .lanes
+                .iter()
+                .map(|k| {
+                    let at = y;
+                    y += (lod::lane_height(*k) + lod::lane_gap(*k)) * s;
+                    (*k, at)
+                })
+                .collect();
+        }
+        placed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let origin = placed[0].1;
+        let bot = placed
+            .iter()
+            .map(|(k, y)| *y + (lod::lane_height(*k) + lod::lane_gap(*k)) * s)
+            .fold(origin, f32::max);
+        let height = (bot - origin).round().max(1.0) as u32;
+        let mut out = vec![0u8; self.width.saturating_mul(height as usize).saturating_mul(4)];
+        for (row, key) in self.lanes.iter().enumerate() {
+            let Some(&y) = ys.get(key).or_else(|| {
+                placed
+                    .iter()
+                    .find(|(k, _)| *k == *key)
+                    .map(|(_, y)| y)
+            }) else {
+                continue;
+            };
+            let h = (lod::lane_height(*key) * s).round().max(1.0) as u32;
+            let y0 = ((y - origin).round()).max(0.0) as u32;
+            let src = self.row(row);
+            for dy in 0..h {
+                let yy = y0.saturating_add(dy);
+                if yy >= height {
+                    break;
+                }
+                let dest = (yy as usize) * self.width * 4;
+                for (i, p) in src.iter().enumerate() {
+                    let o = dest + i * 4;
+                    if o + 3 >= out.len() {
+                        break;
+                    }
+                    if *p == chrome::TRACK {
+                        out[o] = 0;
+                        out[o + 1] = 0;
+                        out[o + 2] = 0;
+                        out[o + 3] = 0;
+                    } else {
+                        out[o] = ((*p >> 16) & 0xFF) as u8;
+                        out[o + 1] = ((*p >> 8) & 0xFF) as u8;
+                        out[o + 2] = (*p & 0xFF) as u8;
+                        out[o + 3] = ((*p >> 24) & 0xFF) as u8;
+                    }
+                }
+            }
+        }
+        (out, height)
+    }
 }
 
 pub fn kind_label(kind_id: u8) -> &'static str {
@@ -378,6 +460,7 @@ pub fn kind_label(kind_id: u8) -> &'static str {
         kind::SCHEDULING_SLICE => "sched",
         kind::THREAD_STATE => "state",
         kind::API_TRACK => "track",
+        kind::VALUE => "value",
         _ => "other",
     }
 }
@@ -630,6 +713,37 @@ mod tests {
         let b = frame.instances.iter().find(|i| i.name_id == 1).unwrap();
         assert!((a.y - 40.0).abs() < 0.01);
         assert!(b.y.abs() < 0.01);
+    }
+
+    #[test]
+    fn scaled_raster_height_matches_layout_stack() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 50, 0, 1));
+        idx.insert(LiveEvent {
+            depth: 1,
+            name_id: 2,
+            ..scope(0, 50, 1, 2)
+        });
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let raster = idx.rasterize_pixel_ordered(0, 50, 8, &keys, None);
+        let scale = 0.72_f32;
+        let (_, h) = raster.to_rgba8_scaled_by(scale);
+        let expect: f32 = keys
+            .iter()
+            .map(|k| (lane_height(*k) + lane_gap(*k)) * scale)
+            .sum();
+        assert!((h as f32 - expect).abs() < 1.0, "h={h} expect={expect}");
+        let gapped = vec![(keys[0], 36.0), (keys[1], 80.0)];
+        let (_, placed_h) = raster.to_rgba8_placed(&gapped, scale);
+        let placed_expect = (80.0 + (lane_height(keys[1]) + lane_gap(keys[1])) * scale) - 36.0;
+        assert!(
+            (placed_h as f32 - placed_expect).abs() < 1.0,
+            "placed h={placed_h} expect={placed_expect}"
+        );
+        assert!(
+            placed_h as f32 > h as f32 + 1.0,
+            "header gaps must occupy rows, not stretch compact leaves"
+        );
     }
 
     #[test]

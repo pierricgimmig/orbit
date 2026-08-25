@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use orbit_live_event::dev::{is_self_pid, MachineId};
-use orbit_live_event::LaneKey;
+use orbit_live_event::{kind, LaneKey};
 use orbit_live_render::{lane_gap, lane_height, sort_thread_leaves, TrackIndex};
 
 pub const MACHINE_H: f32 = 16.0;
@@ -301,12 +301,41 @@ impl TrackStrip {
         }
         for (id, _) in self.y.iter() {
             if let RowId::Lane(k) = *id {
-                if k.pid == t.pid && k.tid == t.tid {
+                if k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(k) {
                     h += (lane_height(k) + lane_gap(k)) * scale;
                 }
             }
         }
         h
+    }
+
+    pub fn hidden_in_process(&self, pid: u32) -> usize {
+        self.hidden.iter().filter(|t| t.pid == pid).count()
+    }
+
+    pub fn show_process_threads(&mut self, pid: u32) {
+        self.hidden.retain(|t| t.pid != pid);
+    }
+
+    /// Hit test: machine/process/value rows, or the full thread block.
+    pub fn hit_at_y(&self, y: f32) -> Option<RowId> {
+        if let Some(id) = self.row_at_y(y) {
+            return Some(id);
+        }
+        for t in self.shown_order() {
+            if let Some(&ty) = self.y.get(&RowId::Thread(t)) {
+                let h = self.thread_block_h(t);
+                if y >= ty && y < ty + h {
+                    return Some(RowId::Thread(t));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn thread_band(&self, t: ThreadId) -> Option<(f32, f32)> {
+        let y = *self.y.get(&RowId::Thread(t))?;
+        Some((y, self.thread_block_h(t)))
     }
 
     /// Snap every visible row to its skeleton Y. Collapse must not lerp —
@@ -350,7 +379,9 @@ impl TrackStrip {
                     let mut leaves: Vec<LaneKey> = index
                         .lanes()
                         .map(|(k, _)| k)
-                        .filter(|k| k.pid == d.thread.pid && k.tid == d.thread.tid)
+                        .filter(|k| {
+                            k.pid == d.thread.pid && k.tid == d.thread.tid && !is_cpu_lane(*k)
+                        })
                         .collect();
                     sort_thread_leaves(&mut leaves);
                     for k in leaves {
@@ -360,12 +391,38 @@ impl TrackStrip {
                 }
             }
         }
+        self.assign_packed_leaf_ys(index, &mut next);
+        if next != self.y {
+            self.layout_gen = self.layout_gen.wrapping_add(1);
+        }
         self.y = next;
         self.rebuild_rows();
-        self.layout_gen = self.layout_gen.wrapping_add(1);
         if let (Some(hy), Some(d)) = (hole_y, self.drag.as_ref()) {
             let hole_h = self.thread_block_h(d.thread);
             self.cached_total_h = self.cached_total_h.max(hy + hole_h);
+        }
+    }
+
+    fn assign_packed_leaf_ys(&self, index: &TrackIndex, next: &mut HashMap<RowId, f32>) {
+        let s = self.scale.max(0.01);
+        for t in self.shown_order() {
+            if self.collapsed.contains(&RowId::Thread(t)) {
+                continue;
+            }
+            let Some(&ty) = next.get(&RowId::Thread(t)) else {
+                continue;
+            };
+            let mut ly = ty + THREAD_H * s;
+            let mut leaves: Vec<LaneKey> = index
+                .lanes()
+                .map(|(k, _)| k)
+                .filter(|k| k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(*k) && !is_rail_lane(*k))
+                .collect();
+            sort_thread_leaves(&mut leaves);
+            for k in leaves {
+                next.insert(RowId::Lane(k), ly);
+                ly += (lane_height(k) + lane_gap(k)) * s;
+            }
         }
     }
 
@@ -387,11 +444,17 @@ impl TrackStrip {
                 continue;
             };
             let height = self.height_of(id);
-            height_sum += height;
             bottom = bottom.max(y + height);
             if let RowId::Lane(k) = id {
+                if is_cpu_lane(k) {
+                    continue;
+                }
                 self.cached_layout.push((k, y));
+                if !is_rail_lane(k) {
+                    continue;
+                }
             }
+            height_sum += height;
             self.cached_rows.push(TrackRow { id, y, height });
         }
         self.cached_total_h = height_sum.max(bottom);
@@ -499,12 +562,28 @@ impl TrackStrip {
         self.cached_insert_y
     }
 
+    fn thread_scope_stack_h(&self, t: ThreadId) -> f32 {
+        let s = self.scale.max(0.01);
+        let mut h = THREAD_H * s;
+        if self.collapsed.contains(&RowId::Thread(t)) {
+            return h;
+        }
+        for (id, _) in self.y.iter() {
+            if let RowId::Lane(k) = *id {
+                if k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(k) && !is_rail_lane(k) {
+                    h += (lane_height(k) + lane_gap(k)) * s;
+                }
+            }
+        }
+        h
+    }
+
     fn height_of(&self, id: RowId) -> f32 {
         let s = self.scale.max(0.01);
         match id {
             RowId::Machine(_) => MACHINE_H * s,
             RowId::Process(_) => PROCESS_H * s,
-            RowId::Thread(_) => THREAD_H * s,
+            RowId::Thread(t) => self.thread_scope_stack_h(t),
             RowId::Lane(k) => (lane_height(k) + lane_gap(k)) * s,
         }
     }
@@ -614,24 +693,42 @@ impl TrackStrip {
                     if th.pid != pid || !self.is_shown(th) {
                         continue;
                     }
-                    out.push((RowId::Thread(th), THREAD_H * s));
-                    if self.collapsed.contains(&RowId::Thread(th)) {
-                        continue;
-                    }
                     let mut leaves: Vec<LaneKey> = index
                         .lanes()
                         .map(|(k, _)| k)
-                        .filter(|k| k.pid == th.pid && k.tid == th.tid)
+                        .filter(|k| k.pid == th.pid && k.tid == th.tid && !is_cpu_lane(*k))
                         .collect();
                     sort_thread_leaves(&mut leaves);
+                    let mut stack = THREAD_H * s;
+                    if !self.collapsed.contains(&RowId::Thread(th)) {
+                        for k in &leaves {
+                            if !is_rail_lane(*k) {
+                                stack += (lane_height(*k) + lane_gap(*k)) * s;
+                            }
+                        }
+                    }
+                    out.push((RowId::Thread(th), stack));
+                    if self.collapsed.contains(&RowId::Thread(th)) {
+                        continue;
+                    }
                     for k in leaves {
-                        out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+                        if is_rail_lane(k) {
+                            out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+                        }
                     }
                 }
             }
         }
         out
     }
+}
+
+fn is_cpu_lane(k: LaneKey) -> bool {
+    k.kind == kind::SCHEDULING_SLICE
+}
+
+fn is_rail_lane(k: LaneKey) -> bool {
+    k.kind == kind::VALUE
 }
 
 fn process_rank(pid: u32) -> u8 {
@@ -996,5 +1093,75 @@ mod tests {
         assert_eq!(strip.thread_order[1], mid);
         assert_eq!(strip.thread_order[0], last);
         assert_eq!(strip.thread_order[2], first);
+    }
+
+    fn ev(kind_id: u8, pid: u32, tid: u32, depth: u8, extra: u8) -> LiveEvent {
+        LiveEvent {
+            start_ns: 0,
+            duration_ns: 10,
+            tid,
+            pid,
+            kind: kind_id,
+            depth,
+            extra,
+            _pad: 0,
+            name_id: 1,
+        }
+    }
+
+    #[test]
+    fn layout_omits_cpu_and_rows_omit_state_scope_labels() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::THREAD_STATE, 1, 100, 0, 0));
+        idx.insert(ev(kind::SCHEDULING_SLICE, 1, 100, 0, 3));
+        idx.insert(ev(kind::API_SCOPE, 1, 100, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 1, 100, 1, 0));
+        idx.insert(ev(kind::VALUE, 1, 100, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert!(
+            strip.layout().iter().all(|(k, _)| k.kind != kind::SCHEDULING_SLICE),
+            "cpu lanes must not participate in layout"
+        );
+        assert!(strip.layout().iter().any(|(k, _)| k.kind == kind::API_SCOPE));
+        assert!(strip.layout().iter().any(|(k, _)| k.kind == kind::THREAD_STATE));
+        assert!(strip.layout().iter().any(|(k, _)| k.kind == kind::VALUE));
+        let row_kinds: Vec<_> = strip
+            .rows()
+            .iter()
+            .filter_map(|r| match r.id {
+                RowId::Lane(k) => Some(k.kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(row_kinds, vec![kind::VALUE]);
+        assert!(!strip.rows().iter().any(|r| matches!(
+            r.id,
+            RowId::Lane(k) if k.kind == kind::THREAD_STATE || k.kind == kind::API_SCOPE
+        )));
+    }
+
+    #[test]
+    fn thread_hit_covers_full_block_and_process_chip_restores() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::API_SCOPE, 1, 100, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 1, 100, 1, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let th = strip.thread_order[0];
+        let (y, h) = strip.thread_band(th).unwrap();
+        assert!(h > THREAD_H);
+        assert_eq!(strip.hit_at_y(y + h - 1.0), Some(RowId::Thread(th)));
+        strip.toggle_hidden(th);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.hidden_in_process(1), 1);
+        strip.show_process_threads(1);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.hidden_in_process(1), 0);
+        assert!(strip.thread_order.contains(&th));
     }
 }

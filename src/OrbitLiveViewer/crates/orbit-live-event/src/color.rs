@@ -172,7 +172,7 @@ pub fn event_color(
         return material_index_to_argb(extra);
     }
     match kind_id {
-        kind::API_SCOPE | kind::API_TRACK => {
+        kind::API_SCOPE | kind::API_TRACK | kind::VALUE => {
             let id = name_id.to_le_bytes();
             named_scope_color(name.unwrap_or(&id), depth)
         }

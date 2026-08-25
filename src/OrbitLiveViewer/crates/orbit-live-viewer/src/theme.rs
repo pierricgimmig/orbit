@@ -87,6 +87,9 @@ pub fn display_argb(argb: u32) -> u32 {
 
 pub fn remap_rgba8(bytes: &mut [u8]) {
     for px in bytes.chunks_exact_mut(4) {
+        if px[3] == 0 {
+            continue;
+        }
         let argb = if px == [0x32, 0x32, 0x32, 0xFF] {
             chrome::TRACK
         } else {

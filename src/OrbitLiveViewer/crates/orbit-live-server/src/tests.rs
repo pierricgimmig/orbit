@@ -250,6 +250,9 @@ fn demo_scope_names_are_interned_as_words() {
     assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE + 1), Some("Simulate"));
     assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE), Some("GpuSubmit"));
     assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE + 3), Some("Encode"));
+    assert_eq!(intern.get(600), Some("sine"));
+    assert_eq!(intern.get(5_100), Some("sine"));
+    assert_eq!(intern.get(5_101), Some("cosine"));
     assert_eq!(
         intern.get(crate::demo::scope_name_id(0, 0, 0)),
         Some("Tick")

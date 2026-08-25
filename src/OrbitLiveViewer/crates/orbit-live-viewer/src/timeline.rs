@@ -8,10 +8,10 @@ use egui::PaintCallback;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
-use orbit_live_event::{chrome, LaneKey};
+use orbit_live_event::{chrome, kind, LaneKey};
 use orbit_live_render::{
-    collect_instances_layout, stacked_layout, ScopeInstance, ScopePick, TimelineLod, TrackIndex,
-    BLIT_RECT_WGSL, INSTANCE_WGSL,
+    collect_instances_layout, lane_gap, lane_height, stacked_layout, ScopeInstance, ScopePick,
+    TimelineLod, TrackIndex, BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
 use std::collections::HashMap;
 
@@ -37,6 +37,34 @@ impl ViewUniforms {
             origin: [dest[0], dest[1]],
             dest,
         }
+    }
+
+    /// Pixel-column blit dest: leaf stack only, same Y space as instanced clips.
+    pub fn from_leaf_stack(
+        body: egui::Rect,
+        layout: &[(LaneKey, f32)],
+        scale: f32,
+        ppp: f32,
+        screen_px: [f32; 2],
+    ) -> Self {
+        let s = scale.max(0.01);
+        let paint: Vec<(LaneKey, f32)> = layout
+            .iter()
+            .copied()
+            .filter(|(k, _)| k.kind != kind::VALUE && k.kind != kind::SCHEDULING_SLICE)
+            .collect();
+        let Some(&(first_k, first_y)) = paint.first() else {
+            return Self::from_rect(body, ppp, screen_px);
+        };
+        let &(last_k, last_y) = paint.last().unwrap();
+        let top = paint.iter().map(|(_, y)| *y).fold(first_y, f32::min);
+        let bot = last_y + (lane_height(last_k) + lane_gap(last_k)) * s;
+        let _ = first_k;
+        let dest_rect = egui::Rect::from_min_size(
+            egui::pos2(body.left(), body.top() + top),
+            egui::vec2(body.width(), (bot - top).max(1.0)),
+        );
+        Self::from_rect(dest_rect, ppp, screen_px)
     }
 }
 
@@ -67,6 +95,7 @@ impl TimelinePayload {
         search: Option<&std::collections::HashSet<u32>>,
         punch: Option<(u32, u32)>,
         intern: Option<&orbit_live_event::InternTable>,
+        scale: f32,
     ) -> Self {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
@@ -102,7 +131,7 @@ impl TimelinePayload {
                 if let Some(ids) = search {
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
                 }
-                let (mut rgba, height) = raster.to_rgba8_scaled();
+                let (mut rgba, height) = raster.to_rgba8_placed(layout, scale);
                 crate::theme::remap_rgba8(&mut rgba);
                 let overlay = overlay
                     .iter()
@@ -855,6 +884,7 @@ mod tests {
             None,
             None,
             None,
+            1.0,
         );
         let TimelinePayload::Pixel {
             rgba,
@@ -908,6 +938,7 @@ mod tests {
             None,
             None,
             None,
+            1.0,
         );
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
@@ -1012,5 +1043,30 @@ mod tests {
         assert!(insts.iter().all(|i| i.tid != 2));
         assert!(insts.iter().all(|i| (i.y - origin).abs() > 0.5 || i.tid == 3));
         assert!((insts.iter().find(|i| i.tid == 3).unwrap().y - 80.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn leaf_stack_dest_is_not_the_full_body() {
+        let body = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 400.0));
+        let k0 = LaneKey {
+            pid: 1,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+        };
+        let k1 = LaneKey {
+            pid: 1,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 1,
+            extra: 0,
+        };
+        let layout = [(k0, 36.0), (k1, 57.0)];
+        let view = ViewUniforms::from_leaf_stack(body, &layout, 1.0, 1.0, [200.0, 400.0]);
+        assert!((view.dest[1] - 36.0).abs() < 0.5, "dest y follows first leaf");
+        let stack_h = (57.0 + lane_height(k1) + lane_gap(k1)) - 36.0;
+        assert!((view.dest[3] - stack_h).abs() < 1.0);
+        assert!(view.dest[3] < body.height() - 1.0);
     }
 }

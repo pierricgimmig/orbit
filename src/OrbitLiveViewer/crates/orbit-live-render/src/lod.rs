@@ -120,6 +120,7 @@ pub fn lane_height(key: LaneKey) -> f32 {
     match key.kind {
         kind::THREAD_STATE => 10.0,
         kind::SCHEDULING_SLICE => 12.0,
+        kind::VALUE => 38.0,
         _ => 20.0,
     }
 }
@@ -143,6 +144,7 @@ fn leaf_rank(kind_id: u8) -> u8 {
         kind::API_SCOPE => 2,
         kind::FUNCTION_CALL => 3,
         kind::API_TRACK => 4,
+        kind::VALUE => 6,
         _ => 5,
     }
 }
@@ -161,6 +163,7 @@ pub fn leaf_label(key: LaneKey) -> String {
         kind::API_TRACK => "async".into(),
         kind::API_SCOPE if key.depth == 0 => "scopes".into(),
         kind::API_SCOPE => format!("d{}", key.depth),
+        kind::VALUE => "graph".into(),
         _ => "lane".into(),
     }
 }
@@ -232,7 +235,10 @@ pub fn choose_lod(
         return TimelineLod::PixelColumns;
     }
     let mut sampled = 0usize;
-    for (_, lane) in index.lanes() {
+    for (key, lane) in index.lanes() {
+        if key.kind == kind::VALUE {
+            continue;
+        }
         if sampled >= 8 {
             break;
         }
@@ -244,6 +250,34 @@ pub fn choose_lod(
         }
     }
     TimelineLod::PixelColumns
+}
+
+#[cfg(test)]
+mod value_lod_tests {
+    use super::*;
+    use crate::TrackIndex;
+    use orbit_live_event::LiveEvent;
+
+    #[test]
+    fn value_bits_do_not_force_instanced_lod() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent::from_value(0, 1, 1, 1, 1.0e20));
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 8,
+            tid: 2,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 2,
+        });
+        assert_eq!(
+            choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX),
+            TimelineLod::PixelColumns
+        );
+    }
 }
 
 /// Visible events only: per-lane binary search then walk while `start < t1`.
@@ -286,6 +320,9 @@ pub fn collect_instances_layout(
     }
     let span = (t1 - t0) as f64;
     for &(key, y) in layout {
+        if key.kind == kind::VALUE {
+            continue;
+        }
         let h = lane_height(key);
         if let Some(lane) = index.lane(key) {
             push_lane_instances(lane, t0, t1, span, width, y, h, intern, &mut instances);

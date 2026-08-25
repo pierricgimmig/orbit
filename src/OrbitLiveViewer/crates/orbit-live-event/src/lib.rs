@@ -31,6 +31,9 @@ pub mod kind {
     pub const SCHEDULING_SLICE: u8 = 3;
     pub const THREAD_STATE: u8 = 4;
     pub const API_TRACK: u8 = 5;
+    /// Timestamped scalar sample. `duration_ns` holds `f32::to_bits(value) as u64`
+    /// — it is not a duration. [`LiveEvent::end_ns`] is `start_ns + 1`.
+    pub const VALUE: u8 = 6;
 }
 
 /// `ThreadStateSlice::ThreadState` values from `capture.proto`.
@@ -65,7 +68,34 @@ pub struct LiveEvent {
 
 impl LiveEvent {
     pub fn end_ns(self) -> u64 {
-        self.start_ns.saturating_add(self.duration_ns)
+        if self.kind == kind::VALUE {
+            self.start_ns.saturating_add(1)
+        } else {
+            self.start_ns.saturating_add(self.duration_ns)
+        }
+    }
+
+    /// Decode a [`kind::VALUE`] sample. `duration_ns` stores `f32` bits.
+    pub fn value_f32(self) -> Option<f32> {
+        if self.kind == kind::VALUE {
+            Some(f32::from_bits(self.duration_ns as u32))
+        } else {
+            None
+        }
+    }
+
+    pub fn from_value(start_ns: u64, pid: u32, tid: u32, name_id: u32, value: f32) -> Self {
+        Self {
+            start_ns,
+            duration_ns: f32::to_bits(value) as u64,
+            tid,
+            pid,
+            kind: kind::VALUE,
+            depth: 0,
+            extra: 0,
+            _pad: color_mode::AUTO_NAME,
+            name_id,
+        }
     }
 
     pub fn color_rgba(self) -> u32 {
@@ -532,6 +562,16 @@ mod tests {
     fn packed_size_is_32() {
         assert_eq!(std::mem::size_of::<LiveEvent>(), 32);
         assert_eq!(LIVE_EVENT_SIZE, 32);
+    }
+
+    #[test]
+    fn value_event_stores_f32_bits_in_duration() {
+        let ev = LiveEvent::from_value(1_000, 1, 600, 7, -0.5);
+        assert_eq!(ev.kind, kind::VALUE);
+        assert_eq!(ev.end_ns(), 1_001);
+        assert!((ev.value_f32().unwrap() + 0.5).abs() < 1e-6);
+        assert_eq!(ev.duration_ns, f32::to_bits(-0.5) as u64);
+        assert_eq!(std::mem::size_of_val(&ev), 32);
     }
 
     #[test]

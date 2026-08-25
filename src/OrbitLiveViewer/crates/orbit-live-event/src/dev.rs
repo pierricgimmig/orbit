@@ -60,6 +60,7 @@ pub const TID_UI: u32 = 1;
 pub const TID_RENDER: u32 = 2;
 pub const TID_NET: u32 = 3;
 pub const TID_SERVER: u32 = 4;
+pub const TID_STATS: u32 = 5;
 
 pub const NAME_FRAME: u32 = 30_000;
 pub const NAME_NET: u32 = 30_001;
@@ -83,6 +84,8 @@ pub const NAME_SPLIT_DRAG: u32 = 30_019;
 pub const NAME_COLLECT_DRAG: u32 = 30_020;
 pub const NAME_SCALE_PPP: u32 = 30_021;
 pub const NAME_RASTERIZE: u32 = 30_022;
+pub const NAME_FPS: u32 = 30_023;
+pub const NAME_WASM_MEM: u32 = 30_024;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +113,7 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(TID_RENDER, "render");
     intern.insert_id(TID_NET, "net");
     intern.insert_id(TID_SERVER, "server");
+    intern.insert_id(TID_STATS, "stats");
     intern.insert_id(NAME_FRAME, "Frame");
     intern.insert_id(NAME_NET, "Net");
     intern.insert_id(NAME_TRACKS, "Tracks");
@@ -132,6 +136,8 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_COLLECT_DRAG, "CollectDrag");
     intern.insert_id(NAME_SCALE_PPP, "ScalePpp");
     intern.insert_id(NAME_RASTERIZE, "Rasterize");
+    intern.insert_id(NAME_FPS, "fps");
+    intern.insert_id(NAME_WASM_MEM, "wasm_mem");
 }
 
 /// Inclusive span of a relative batch (`max(start_rel + duration)`).
@@ -309,5 +315,8 @@ mod tests {
         assert_eq!(intern.get(NAME_DRAIN_NET), Some("DrainNet"));
         assert_eq!(intern.get(NAME_COLLECT_INST), Some("CollectInstances"));
         assert_eq!(intern.get(NAME_RASTERIZE), Some("Rasterize"));
+        assert_eq!(intern.get(NAME_FPS), Some("fps"));
+        assert_eq!(intern.get(NAME_WASM_MEM), Some("wasm_mem"));
+        assert_eq!(intern.get(TID_STATS), Some("stats"));
     }
 }

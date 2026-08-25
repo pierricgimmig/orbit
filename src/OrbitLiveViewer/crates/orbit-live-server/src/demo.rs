@@ -102,6 +102,8 @@ pub fn intern_demo_names(svc: &LiveService) {
         (500, "Render"),
         (501, "Cull"),
         (502, "Draw"),
+        (600, "sine"),
+        (601, "cosine"),
     ] {
         svc.intern_id(tid, name);
     }
@@ -111,6 +113,8 @@ pub fn intern_demo_names(svc: &LiveService) {
     for (i, name) in DEMO_ASYNC_NAMES.iter().enumerate() {
         svc.intern_id(DEMO_ASYNC_BASE + i as u32, name);
     }
+    svc.intern_id(5_100, "sine");
+    svc.intern_id(5_101, "cosine");
 }
 
 pub fn process_list_json() -> String {
@@ -161,6 +165,21 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
             for (i, tid) in [500u32, 501, 502].into_iter().enumerate() {
                 push_thread_tick(&mut events, t, REMOTE_RENDER_PID, tid, i as u32 + 4);
             }
+            let phase = (t as f64) / 200_000_000.0;
+            events.push(LiveEvent::from_value(
+                t,
+                DEMO_PID,
+                600,
+                5_100,
+                phase.sin() as f32,
+            ));
+            events.push(LiveEvent::from_value(
+                t,
+                DEMO_PID,
+                601,
+                5_101,
+                phase.cos() as f32,
+            ));
             for (i, _name) in DEMO_ASYNC_NAMES.iter().enumerate() {
                 events.push(LiveEvent {
                     start_ns: t + 1_000_000 + (i as u64) * 4_000_000,

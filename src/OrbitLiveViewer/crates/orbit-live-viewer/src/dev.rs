@@ -126,7 +126,7 @@ pub fn query_dev_locked_off_from_location() -> bool {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        false
+        query_disables_dev("")
     }
 }
 
