@@ -283,15 +283,21 @@ fn demo_emits_three_processes_not_self_pids() {
     let svc = LiveService::new(small_cfg()).unwrap();
     crate::demo::intern_demo_names(&svc);
     let json = crate::demo::process_list_json();
+    let list: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+    let pids: Vec<u64> = list
+        .iter()
+        .map(|v| v["pid"].as_u64().expect("pid"))
+        .collect();
     assert!(json.contains("orbit-demo"));
     assert!(json.contains("orbit-render"));
     assert!(json.contains("orbit-audio"));
-    assert!(json.contains("\"pid\":10"));
-    assert!(json.contains("\"pid\":11"));
-    assert!(json.contains("\"pid\":20"));
-    assert!(json.contains("\"pid\":21"));
-    assert!(!json.contains("\"pid\":2"));
-    assert!(!json.contains("\"pid\":3"));
+    assert!(pids.contains(&1));
+    assert!(pids.contains(&10));
+    assert!(pids.contains(&11));
+    assert!(pids.contains(&20));
+    assert!(pids.contains(&21));
+    assert!(!pids.contains(&2), "must not reuse reserved viewer pid");
+    assert!(!pids.contains(&3), "must not reuse reserved service pid");
 }
 
 #[test]
