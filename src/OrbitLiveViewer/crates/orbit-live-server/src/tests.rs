@@ -366,6 +366,71 @@ fn successive_self_scopes_do_not_overlap_when_live_edge_is_frozen() {
 }
 
 #[test]
+fn live_edge_is_demo_end_not_self_newest() {
+    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 80_000_000,
+        depth: 0,
+    }]);
+    assert_eq!(svc.live_end_ns(), 0, "self must not move live_edge");
+    svc.push_events(&[ev(5)]);
+    let demo_end = ev(5).end_ns();
+    assert_eq!(svc.live_end_ns(), demo_end);
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 1_000,
+        depth: 0,
+    }]);
+    assert_eq!(svc.live_end_ns(), demo_end);
+}
+
+#[test]
+fn capture_started_resets_self_cursor_onto_demo_t() {
+    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    svc.note_live_end(80_000_000);
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 1_000,
+        depth: 0,
+    }]);
+    svc.mark_capture_started(1, 1_000_000);
+    assert_eq!(svc.live_end_ns(), 1_000_000);
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 500,
+        depth: 0,
+    }]);
+    let last = svc
+        .ring()
+        .snapshot()
+        .1
+        .into_iter()
+        .rev()
+        .find(|e| e.pid == VIEWER_PID)
+        .expect("viewer scope after reset");
+    assert_eq!(last.start_ns, 1_000_000);
+}
+
+#[test]
 fn timeline_cache_skips_rebuild_when_view_and_data_gen_match() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.disable_self_profile();

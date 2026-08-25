@@ -7,10 +7,12 @@
 //! Product choice **A**: self scopes share the active capture ring. Batches are
 //! sequential on the capture clock (`self_cursor_ns`): each occupies
 //! `[cursor, cursor+span)` and the cursor only moves forward. A live demo or
-//! capture may *align* the cursor up to `newest_end_ns` so they stay on one
-//! axis, but two frames never share an `end`. Events are ordinary
-//! [`LiveEvent`]s (32 bytes). Record starts demo + self-profile; `?dev=0`
-//! / `/api/self/stop` keep self-profile off.
+//! capture may *align* the cursor to demo/capture `live_edge` (not ring
+//! `newest_end` that includes pid 2/3) so they stay on one axis, but two
+//! frames never share an `end`. If the cursor runs more than ~50 ms ahead of
+//! that edge it snaps back. Events are ordinary [`LiveEvent`]s (32 bytes).
+//! Record starts demo + self-profile; `?dev=0` / `/api/self/stop` keep
+//! self-profile off.
 
 use serde::{Deserialize, Serialize};
 
@@ -175,9 +177,24 @@ pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
     stamp_batch_from(scopes, end_ns.saturating_sub(span))
 }
 
-/// Sequential self-profile placement. `live_edge` may push `cursor` forward
-/// (demo / capture axis); it never rewinds. The batch occupies
-/// `[cursor, cursor+span)` and `cursor` advances by `span`.
+/// Self-profile may run a few frames ahead of demo `t`. Snap back if the
+/// gap exceeds ~50 ms so dummy and self share one time domain.
+pub const SELF_AHEAD_SNAP_NS: u64 = 50_000_000;
+
+/// Align `cursor` onto demo/capture `live_edge` (never newest_end of pid 2/3).
+/// Catch up if the edge is ahead; snap back if the cursor ran >50 ms past it.
+pub fn align_self_cursor(cursor: u64, live_edge: u64) -> u64 {
+    if live_edge > cursor {
+        live_edge
+    } else if live_edge > 0 && cursor > live_edge.saturating_add(SELF_AHEAD_SNAP_NS) {
+        live_edge
+    } else {
+        cursor
+    }
+}
+
+/// Sequential self-profile placement. `live_edge` is demo/capture end only.
+/// The batch occupies `[cursor, cursor+span)` and `cursor` advances by `span`.
 pub fn place_self_batch(
     cursor: &mut u64,
     scopes: &[RelScope],
@@ -187,9 +204,7 @@ pub fn place_self_batch(
     if span == 0 {
         return Vec::new();
     }
-    if live_edge > *cursor {
-        *cursor = live_edge;
-    }
+    *cursor = align_self_cursor(*cursor, live_edge);
     let events = stamp_batch_from(scopes, *cursor);
     *cursor = cursor.saturating_add(span);
     events
@@ -283,6 +298,35 @@ mod tests {
             third[0].start_ns, 51_800,
             "live_edge must not rewind the cursor"
         );
+    }
+
+    #[test]
+    fn align_self_cursor_snaps_back_when_50ms_ahead() {
+        assert_eq!(align_self_cursor(10_000, 50_000), 50_000);
+        assert_eq!(
+            align_self_cursor(10_000_000 + SELF_AHEAD_SNAP_NS, 10_000_000),
+            10_000_000 + SELF_AHEAD_SNAP_NS
+        );
+        assert_eq!(
+            align_self_cursor(10_000_000 + SELF_AHEAD_SNAP_NS + 1, 10_000_000),
+            10_000_000
+        );
+        assert_eq!(align_self_cursor(80_000_000, 0), 80_000_000);
+        let mut cursor = 80_000_000u64;
+        let ev = place_self_batch(
+            &mut cursor,
+            &[RelScope {
+                pid: VIEWER_PID,
+                tid: TID_UI,
+                name_id: NAME_FRAME,
+                start_rel_ns: 0,
+                duration_ns: 1_000,
+                depth: 0,
+            }],
+            10_000_000,
+        );
+        assert_eq!(ev[0].start_ns, 10_000_000);
+        assert_eq!(cursor, 10_001_000);
     }
 
     #[test]

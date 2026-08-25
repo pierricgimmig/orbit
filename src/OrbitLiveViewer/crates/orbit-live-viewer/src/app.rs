@@ -6,7 +6,7 @@ use eframe::egui::{
     StrokeKind, Ui, Vec2,
 };
 use orbit_live_event::dev::{
-    intern_self_names, place_self_batch, NAME_APPLY_HL, NAME_CHROME, NAME_CLIP_LABELS,
+    intern_self_names, is_self_pid, place_self_batch, NAME_APPLY_HL, NAME_CHROME, NAME_CLIP_LABELS,
     NAME_COLLECT_DRAG, NAME_COLLECT_INST, NAME_DRAIN_NET, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LOD,
     NAME_NET, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_RASTERIZE, NAME_SCALE_PPP,
     NAME_FPS, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_WASM_MEM,
@@ -39,6 +39,8 @@ use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
 const FOLLOW_NS: f64 = 2_000_000_000.0;
 const SIDE: f32 = 228.0;
 const HEADER_W: f32 = 196.0;
+const TIME_SLIDER_H: f32 = 13.0;
+const TIME_SLIDER_MIN_THUMB: f32 = 8.0;
 const RADIUS: f32 = theme::RADIUS;
 /// `TimeGraph::ZoomTime` `kIncrementalZoomTimeRatio`.
 const ZOOM_TIME_RATIO: f64 = 0.1;
@@ -164,6 +166,47 @@ fn pan_time(t0: f64, t1: f64, ratio: f64) -> (f64, f64) {
     let span = (t1 - t0).max(1.0);
     let new_t0 = (t0 - ratio * span).max(0.0);
     (new_t0, new_t0 + span)
+}
+
+/// Capture span for the time slider: oldest → demo/capture `live_edge`.
+fn slider_capture_span(oldest_ns: u64, live_edge_ns: u64, t0: f64, t1: f64) -> (f64, f64) {
+    let cap0 = (oldest_ns as f64).min(t0).max(0.0);
+    let cap1 = (live_edge_ns as f64).max(t1).max(cap0 + 1.0);
+    (cap0, cap1)
+}
+
+/// Thumb left/width in track pixels. Visible window / capture span.
+fn slider_thumb_x(t0: f64, t1: f64, cap0: f64, cap1: f64, track_w: f32) -> (f32, f32) {
+    let span = (cap1 - cap0).max(1.0);
+    let w = track_w.max(1.0);
+    let left = (((t0 - cap0) / span) as f32 * w).clamp(0.0, w);
+    let right = (((t1 - cap0) / span) as f32 * w).clamp(0.0, w);
+    let mut tw = (right - left).max(TIME_SLIDER_MIN_THUMB).min(w);
+    let mut x = left.min(w - tw);
+    if x + tw > w {
+        x = (w - tw).max(0.0);
+        tw = tw.min(w);
+    }
+    (x, tw)
+}
+
+/// Drag the thumb: keep the visible span, move `t0`.
+fn slider_pan_to_norm(t0: f64, t1: f64, cap0: f64, cap1: f64, left_norm: f64) -> (f64, f64) {
+    let vis = (t1 - t0).max(1.0);
+    let span = (cap1 - cap0).max(1.0);
+    let max_t0 = (cap1 - vis).max(cap0);
+    let new_t0 = (cap0 + left_norm.clamp(0.0, 1.0) * span).clamp(cap0, max_t0);
+    (new_t0, new_t0 + vis)
+}
+
+/// Click the track: center the window on that time (keep span).
+fn slider_jump_to_norm(t0: f64, t1: f64, cap0: f64, cap1: f64, click_norm: f64) -> (f64, f64) {
+    let vis = (t1 - t0).max(1.0);
+    let span = (cap1 - cap0).max(1.0);
+    let click_t = cap0 + click_norm.clamp(0.0, 1.0) * span;
+    let max_t0 = (cap1 - vis).max(cap0);
+    let new_t0 = (click_t - vis * 0.5).clamp(cap0, max_t0);
+    (new_t0, new_t0 + vis)
 }
 
 pub fn apply_orbit_visuals(ctx: &Context) {
@@ -293,6 +336,9 @@ pub struct OrbitLiveApp {
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
     self_cursor_ns: u64,
+    /// Demo/capture end only. Not ring newest_end (pid 2/3).
+    live_edge_ns: u64,
+    slider_grab: Option<f32>,
     fps_ema: f32,
     fullscreen: bool,
     needs_repaint: bool,
@@ -364,6 +410,8 @@ impl OrbitLiveApp {
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
             self_cursor_ns: 0,
+            live_edge_ns: 0,
+            slider_grab: None,
             fps_ema: 0.0,
             fullscreen: false,
             needs_repaint: false,
@@ -419,6 +467,8 @@ impl OrbitLiveApp {
     fn start_record(&mut self) {
         self.error.clear();
         self.recording = true;
+        self.self_cursor_ns = 0;
+        self.live_edge_ns = 0;
         self.net.start_demo();
         if !self.dev_locked_off {
             intern_self_names(&mut self.intern);
@@ -584,6 +634,9 @@ impl OrbitLiveApp {
                     if self.dev && ev.pid == VIEWER_PID {
                         continue;
                     }
+                    if !is_self_pid(ev.pid) {
+                        self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
+                    }
                     self.index.insert(ev);
                 }
             }
@@ -595,6 +648,7 @@ impl OrbitLiveApp {
                 self.selected = None;
                 self.hover = None;
                 self.self_cursor_ns = 0;
+                self.live_edge_ns = 0;
             }
             LiveFrame::Status {
                 capturing,
@@ -954,6 +1008,18 @@ impl OrbitLiveApp {
             hairline(),
         );
 
+        egui::TopBottomPanel::bottom("orbit_time_slider")
+            .exact_height(TIME_SLIDER_H)
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(Frame::new().fill(theme::RAIL).inner_margin(0))
+            .show_inside(ui, |ui| {
+                let bar = ui.max_rect();
+                ui.painter().rect_filled(bar, 0.0, theme::RAIL);
+                let track = bar.with_min_x(bar.left() + HEADER_W);
+                self.handle_time_slider(ui, track);
+            });
+
         let avail = ui.available_size();
         let height = self.tracks.total_height().max(avail.y).max(72.0);
         let ctrl_zoom = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
@@ -1114,7 +1180,7 @@ impl OrbitLiveApp {
                     &self.intern,
                     self.tracks.scale,
                 );
-                paint_playhead(ui, body, self.t0, self.t1, self.status.newest_end_ns as f64);
+                paint_playhead(ui, body, self.t0, self.t1, self.live_edge_ns as f64);
                 self.paint_insert_line(ui, head, body);
                 if let Some(h) = self.hover {
                     show_scope_tooltip(ui, &self.intern, h);
@@ -1687,6 +1753,76 @@ impl OrbitLiveApp {
         }
     }
 
+    fn handle_time_slider(&mut self, ui: &mut Ui, track: Rect) {
+        if !track.is_positive() {
+            return;
+        }
+        let (cap0, cap1) = slider_capture_span(
+            self.status.oldest_start_ns,
+            self.live_edge_ns,
+            self.t0,
+            self.t1,
+        );
+        let w = track.width().max(1.0);
+        let (tx, tw) = slider_thumb_x(self.t0, self.t1, cap0, cap1, w);
+        let thumb = Rect::from_min_size(
+            Pos2::new(track.left() + tx, track.top() + 2.0),
+            Vec2::new(tw, (track.height() - 4.0).max(4.0)),
+        );
+        let resp = ui.interact(track, ui.id().with("orbit_time_slider"), Sense::click_and_drag());
+        let hover = resp.hovered();
+        ui.painter().rect_filled(track, 0.0, theme::INPUT);
+        ui.painter().rect_filled(
+            thumb,
+            2.0,
+            if hover || self.slider_grab.is_some() {
+                Color32::from_rgb(0x3A, 0x40, 0x4A)
+            } else {
+                Color32::from_rgb(0x2A, 0x2E, 0x36)
+            },
+        );
+        ui.painter().line_segment([track.left_top(), track.right_top()], hairline());
+        let pos = resp.interact_pointer_pos();
+        if resp.drag_started() {
+            self.follow = false;
+            if let Some(p) = pos {
+                if thumb.contains(p) {
+                    self.slider_grab = Some(p.x - thumb.left());
+                } else {
+                    let norm = ((p.x - track.left()) / w) as f64;
+                    let (t0, t1) = slider_jump_to_norm(self.t0, self.t1, cap0, cap1, norm);
+                    self.t0 = t0;
+                    self.t1 = t1;
+                    let (nx, _) = slider_thumb_x(self.t0, self.t1, cap0, cap1, w);
+                    self.slider_grab = Some((p.x - (track.left() + nx)).clamp(0.0, tw));
+                }
+            }
+        }
+        if resp.dragged() {
+            self.follow = false;
+            if let (Some(p), Some(grab)) = (pos, self.slider_grab) {
+                let left_norm = ((p.x - grab - track.left()) / w) as f64;
+                let (t0, t1) = slider_pan_to_norm(self.t0, self.t1, cap0, cap1, left_norm);
+                self.t0 = t0;
+                self.t1 = t1;
+            }
+        }
+        if resp.drag_stopped() {
+            self.slider_grab = None;
+        }
+        if resp.clicked() && self.slider_grab.is_none() {
+            if let Some(p) = pos.or(resp.interact_pointer_pos()) {
+                if !thumb.contains(p) {
+                    self.follow = false;
+                    let norm = ((p.x - track.left()) / w) as f64;
+                    let (t0, t1) = slider_jump_to_norm(self.t0, self.t1, cap0, cap1, norm);
+                    self.t0 = t0;
+                    self.t1 = t1;
+                }
+            }
+        }
+    }
+
     fn handle_keys(&mut self, ctx: &Context, body: Rect, ruler: Rect, view_h: f32) {
         if ctx.wants_keyboard_input() {
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
@@ -1880,10 +2016,10 @@ impl OrbitLiveApp {
     }
 
     fn tick_follow(&mut self, dt: f32) {
-        if !self.follow || self.status.newest_end_ns == 0 {
+        if !self.follow || self.live_edge_ns == 0 {
             return;
         }
-        let target_t1 = self.status.newest_end_ns as f64;
+        let target_t1 = self.live_edge_ns as f64;
         let target_t0 = (target_t1 - FOLLOW_NS).max(0.0);
         let k = 1.0 - (-dt / 0.10).exp();
         self.t0 += (target_t0 - self.t0) * k as f64;
@@ -1981,7 +2117,7 @@ impl eframe::App for OrbitLiveApp {
         let scopes = devf.finish();
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
-            let live_edge = self.status.newest_end_ns;
+            let live_edge = self.live_edge_ns;
             for ev in place_self_batch(&mut self.self_cursor_ns, &scopes, live_edge) {
                 self.index.insert(ev);
             }
@@ -3162,5 +3298,22 @@ mod tests {
             pts,
             vec![(5.0 - VALUE_TICK_PTS, 1.0), (5.0 + VALUE_TICK_PTS, 1.0)]
         );
+    }
+
+    #[test]
+    fn time_slider_thumb_is_visible_over_capture() {
+        let (x, w) = slider_thumb_x(80.0, 100.0, 0.0, 200.0, 200.0);
+        assert!((x - 80.0).abs() < 0.01);
+        assert!((w - 20.0).abs() < 0.01);
+        let (t0, t1) = slider_pan_to_norm(80.0, 100.0, 0.0, 200.0, 0.25);
+        assert!((t0 - 50.0).abs() < 1e-6);
+        assert!((t1 - 70.0).abs() < 1e-6);
+        assert!((t1 - t0 - 20.0).abs() < 1e-6);
+        let (j0, j1) = slider_jump_to_norm(80.0, 100.0, 0.0, 200.0, 0.5);
+        assert!((j0 - 90.0).abs() < 1e-6);
+        assert!((j1 - 110.0).abs() < 1e-6);
+        let (span0, span1) = slider_capture_span(0, 1_000, 100.0, 200.0);
+        assert_eq!(span0, 0.0);
+        assert_eq!(span1, 1_000.0);
     }
 }

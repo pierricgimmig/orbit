@@ -18,7 +18,6 @@ pub struct StatusJson {
     #[serde(default)]
     pub produced: u64,
     #[serde(default)]
-    #[allow(dead_code)]
     pub oldest_start_ns: u64,
     #[serde(default)]
     pub newest_end_ns: u64,

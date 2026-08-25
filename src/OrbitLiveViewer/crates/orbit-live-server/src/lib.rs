@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
-    batch_span, stamp_batch_from, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET,
-    NAME_PAYLOAD, NAME_PUSH, NAME_RASTER, NAME_TIMELINE_API, NAME_TRACKS, SERVICE_PID, TID_NET,
-    TID_RENDER, TID_SERVER, TID_UI,
+    align_self_cursor, batch_span, stamp_batch_from, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD,
+    NAME_NET, NAME_PAYLOAD, NAME_PUSH, NAME_RASTER, NAME_TIMELINE_API, NAME_TRACKS, SERVICE_PID,
+    TID_NET, TID_RENDER, TID_SERVER, TID_UI,
 };
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
@@ -118,7 +118,6 @@ pub struct LiveService {
     pub self_profile: AtomicBool,
     pub hooks: Mutex<Option<ControlHooks>>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    origin: Instant,
     self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
     data_gen: AtomicU64,
@@ -172,7 +171,6 @@ impl LiveService {
             self_profile: AtomicBool::new(self_on),
             hooks: Mutex::new(None),
             demo_stop: Mutex::new(None),
-            origin: Instant::now(),
             self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
             self_gen: AtomicU64::new(0),
@@ -220,24 +218,9 @@ impl LiveService {
         self.intern_id(NAME_TIMELINE_API, "TimelineApi");
     }
 
-    fn wall_ns(&self) -> u64 {
-        self.origin.elapsed().as_nanos() as u64
-    }
-
-    /// Demo/capture clock when those producers have written; never wall-time
-    /// self-profile events (those used to yank Follow off the demo axis).
+    /// Demo/capture end only. Ignores ring `newest_end` (pid 2/3 self-profile).
     fn live_edge_ns(&self) -> u64 {
-        let live_end = self.live_end_ns();
-        if live_end > 0 {
-            return live_end;
-        }
-        let newest = self.stats().newest_end_ns;
-        let live = self.demo.load(Ordering::Relaxed) || self.capturing.load(Ordering::Relaxed);
-        if live && newest > 0 {
-            newest
-        } else {
-            newest.max(self.wall_ns())
-        }
+        self.live_end_ns()
     }
 
     /// Allocate `[cursor, cursor+span)` on the self-profile axis.
@@ -247,7 +230,7 @@ impl LiveService {
         }
         let mut cursor = self.self_cursor_ns.load(Ordering::Relaxed);
         loop {
-            let origin = cursor.max(live_edge);
+            let origin = align_self_cursor(cursor, live_edge);
             let next = origin.saturating_add(span);
             match self.self_cursor_ns.compare_exchange_weak(
                 cursor,
@@ -413,9 +396,8 @@ impl LiveService {
 
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         self.capturing.store(true, Ordering::Relaxed);
-        if start_ns > 0 {
-            self.note_live_end(start_ns);
-        }
+        self.self_cursor_ns.store(0, Ordering::Relaxed);
+        self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
     }
 
