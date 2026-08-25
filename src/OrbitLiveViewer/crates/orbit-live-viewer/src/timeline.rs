@@ -53,13 +53,17 @@ impl ViewUniforms {
             .copied()
             .filter(|(k, _)| k.kind != kind::VALUE && k.kind != kind::SCHEDULING_SLICE)
             .collect();
-        let Some(&(first_k, first_y)) = paint.first() else {
+        if paint.is_empty() {
             return Self::from_rect(body, ppp, screen_px);
-        };
-        let &(last_k, last_y) = paint.last().unwrap();
-        let top = paint.iter().map(|(_, y)| *y).fold(first_y, f32::min);
-        let bot = last_y + (lane_height(last_k) + lane_gap(last_k)) * s;
-        let _ = first_k;
+        }
+        let top = paint
+            .iter()
+            .map(|(_, y)| *y)
+            .fold(f32::MAX, f32::min);
+        let bot = paint
+            .iter()
+            .map(|(k, y)| *y + (lane_height(*k) + lane_gap(*k)) * s)
+            .fold(top, f32::max);
         let dest_rect = egui::Rect::from_min_size(
             egui::pos2(body.left(), body.top() + top),
             egui::vec2(body.width(), (bot - top).max(1.0)),
