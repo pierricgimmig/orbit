@@ -37,6 +37,17 @@ GROUPS = {
         "libdouble-conversion3",
         "libpcre2-16-0",
         "libmd4c0",
+        # What libQt5XcbQpa needs. Without these the xcb platform plugin fails
+        # to load and no Qt application with a window can start at all.
+        "libxcb-icccm4",
+        "libxcb-image0",
+        "libxcb-keysyms1",
+        "libxcb-render-util0",
+        "libxcb-util1",
+        "libxcb-xinerama0",
+        "libxcb-xinput0",
+        "libxcb-xkb1",
+        "libxkbcommon-x11-0",
     ],
     "opengl": [
         # GL/gl.h and friends.

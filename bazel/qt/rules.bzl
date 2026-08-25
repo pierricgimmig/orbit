@@ -268,6 +268,9 @@ def qt_application(name, deps = [], data = [], **kwargs):
     qt.conf next to the executable before falling back to that prefix, so one is
     written there pointing at a plugin directory that is populated alongside it.
 
+    Finding the platform plugin is not enough to load it: see @qt5//:platform_libs
+    for why an application has to link its dependencies itself.
+
     Args:
       name: name of the binary.
       deps: as for cc_binary.
@@ -292,6 +295,6 @@ def qt_application(name, deps = [], data = [], **kwargs):
             name + ".plugins",
             name + ".qt_conf",
         ],
-        deps = deps,
+        deps = deps + ["@qt5//:platform_libs"],
         **kwargs
     )

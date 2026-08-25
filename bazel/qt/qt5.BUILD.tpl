@@ -30,6 +30,33 @@ cc_library(
     ],
 )
 
+# What the xcb platform plugin needs to load.
+#
+# libqxcb.so is dlopened by Qt and carries no RUNPATH, so the loader can only
+# resolve its dependencies against what is already in the process. Linking
+# these into the application puts them there: libQt5XcbQpa satisfies libqxcb,
+# and the executable's own RUNPATH then covers libQt5XcbQpa's xcb dependencies.
+#
+# Nothing in the application references a symbol from any of them, so the link
+# has to be told to keep them.
+cc_library(
+    name = "platform_libs",
+    srcs = [
+        _LIB + "/libQt5DBus.so.5",
+        _LIB + "/libQt5XcbQpa.so.5",
+        _LIB + "/libxcb-icccm.so.4",
+        _LIB + "/libxcb-image.so.0",
+        _LIB + "/libxcb-keysyms.so.1",
+        _LIB + "/libxcb-render-util.so.0",
+        _LIB + "/libxcb-util.so.1",
+        _LIB + "/libxcb-xinerama.so.0",
+        _LIB + "/libxcb-xinput.so.0",
+        _LIB + "/libxcb-xkb.so.1",
+        _LIB + "/libxkbcommon-x11.so.0",
+    ],
+    linkopts = ["-Wl,--no-as-needed"],
+)
+
 cc_library(
     name = "Core",
     srcs = [_LIB + "/libQt5Core.so.5"],
