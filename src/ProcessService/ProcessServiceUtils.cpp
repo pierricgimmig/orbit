@@ -217,7 +217,7 @@ static ErrorMessageOr<fs::path> FindSymbolsFilePathInStructuredDebugStore(
     const orbit_client_data::ModulePathAndBuildId& module_path_and_build_id) {
   orbit_symbol_provider::StructuredDebugDirectorySymbolProvider provider{
       structured_debug_store,
-      orbit_symbol_provider::SymbolLoadingSuccessResult::SymbolSource::kStadiaInstanceUsrLibDebug};
+      orbit_symbol_provider::SymbolLoadingSuccessResult::SymbolSource::kTargetMachineUsrLibDebug};
   orbit_base::StopSource stop_source;
   orbit_base::Future<orbit_symbol_provider::SymbolLoadingOutcome> retrieve_future =
       provider.RetrieveSymbols(module_path_and_build_id, stop_source.GetStopToken());

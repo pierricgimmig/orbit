@@ -123,8 +123,6 @@ SymbolLocationsDialog::~SymbolLocationsDialog() {
   persistent_storage_manager_->SaveModuleSymbolFileMappings(module_symbol_file_mappings_);
 
   if (absl::GetFlag(FLAGS_symbol_store_support)) {
-    persistent_storage_manager_->SaveEnableStadiaSymbolStore(
-        ui_->enableStadiaSymbolStoreCheckBox->isChecked());
     persistent_storage_manager_->SaveEnableMicrosoftSymbolServer(
         ui_->enableMicrosoftSymbolServerCheckBox->isChecked());
   }
@@ -155,8 +153,6 @@ SymbolLocationsDialog::SymbolLocationsDialog(
   if (!absl::GetFlag(FLAGS_symbol_store_support)) {
     ui_->symbolStoreGroupBox->hide();
   } else {
-    ui_->enableStadiaSymbolStoreCheckBox->setChecked(
-        persistent_storage_manager_->LoadEnableStadiaSymbolStore());
     ui_->enableMicrosoftSymbolServerCheckBox->setChecked(
         persistent_storage_manager_->LoadEnableMicrosoftSymbolServer());
   }

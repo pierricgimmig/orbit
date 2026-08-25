@@ -23,7 +23,7 @@ using orbit_test_utils::HasValue;
 namespace orbit_symbol_provider {
 
 constexpr SymbolLoadingSuccessResult::SymbolSource kSymbolSource =
-    SymbolLoadingSuccessResult::SymbolSource::kStadiaSymbolStore;
+    SymbolLoadingSuccessResult::SymbolSource::kStructuredDebugDirectory;
 
 class StructuredDebugDirectorySymbolProviderTest : public ::testing::Test {
  public:
