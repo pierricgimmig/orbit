@@ -2,15 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ORBIT_CLIENT_GGP_CLIENT_GGP_OPTIONS_H_
-#define ORBIT_CLIENT_GGP_CLIENT_GGP_OPTIONS_H_
+#ifndef ORBIT_CLI_ORBIT_CLI_OPTIONS_H_
+#define ORBIT_CLI_ORBIT_CLI_OPTIONS_H_
 
 #include <string>
 #include <vector>
 
-// The struct used to store Orbit Ggp Client options
+// The struct used to store OrbitCli options
 // The default values are set by main()
-struct ClientGgpOptions {
+struct OrbitCliOptions {
   // gRPC connection string
   std::string grpc_server_address;
   int32_t capture_pid;
@@ -22,4 +22,4 @@ struct ClientGgpOptions {
   bool use_framepointer_unwinding;
 };
 
-#endif  // ORBIT_CLIENT_GGP_CLIENT_GGP_OPTIONS_H_
+#endif  // ORBIT_CLI_ORBIT_CLI_OPTIONS_H_

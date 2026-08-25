@@ -8,14 +8,14 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
-    name = "OrbitClientGgpLib",
-    srcs = ["ClientGgp.cpp"],
+    name = "OrbitCliLib",
+    srcs = ["OrbitCli.cpp"],
     hdrs = [
-        "include/OrbitClientGgp/ClientGgp.h",
-        "include/OrbitClientGgp/ClientGgpOptions.h",
+        "include/OrbitCli/OrbitCli.h",
+        "include/OrbitCli/OrbitCliOptions.h",
     ],
     copts = ORBIT_COPTS + [
-        "-Isrc/OrbitClientGgp",
+        "-Isrc/OrbitCli",
     ],
     includes = ["include"],
     deps = [
@@ -31,11 +31,11 @@ cc_library(
 )
 
 cc_binary(
-    name = "OrbitClientGgp",
+    name = "OrbitCli",
     srcs = ["main.cpp"],
     copts = ORBIT_COPTS,
     deps = [
-        "//src/OrbitClientGgp:OrbitClientGgpLib",
+        "//src/OrbitCli:OrbitCliLib",
         "@abseil-cpp//absl/flags:flag",
         "@abseil-cpp//absl/flags:parse",
         "@abseil-cpp//absl/flags:usage",
