@@ -184,6 +184,22 @@ pub fn shift_instances_to_layout(
     true
 }
 
+/// Pin every remaining instance Y to `layout()`. Drops keys that are gone
+/// (hidden / dragged-out of the rest pass).
+pub fn snap_instances_to_layout(
+    instances: &mut Vec<ScopeInstance>,
+    layout: &[(LaneKey, f32)],
+) {
+    let ys: HashMap<LaneKey, f32> = layout.iter().copied().collect();
+    instances.retain(|i| ys.contains_key(&ScopePick::from_instance(i).lane_key()));
+    for inst in instances.iter_mut() {
+        let key = ScopePick::from_instance(inst).lane_key();
+        if let Some(&y) = ys.get(&key) {
+            inst.y = y;
+        }
+    }
+}
+
 fn dim_raster_pixels(
     index: &TrackIndex,
     raster: &mut orbit_live_render::RasterizedFrame,
@@ -960,5 +976,41 @@ mod tests {
         assert!((insts[1].y - 60.0).abs() < 1e-4);
         let expand = [(lane(1, 0), 20.0), (lane(2, 0), 40.0), (lane(3, 0), 60.0)];
         assert!(!shift_instances_to_layout(&mut insts, &new, &expand));
+    }
+
+    #[test]
+    fn snap_drops_dragged_origin_and_matches_rest_ys() {
+        let lane = |tid: u32| orbit_live_event::LaneKey {
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+        };
+        let mk = |tid: u32, y: f32| ScopeInstance {
+            x: 0.0,
+            y,
+            w: 4.0,
+            h: 8.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: tid,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
+        };
+        let origin = 80.0;
+        let mut insts = vec![mk(1, 20.0), mk(2, origin), mk(3, 140.0)];
+        let rest = [(lane(1), 20.0), (lane(3), 80.0)];
+        snap_instances_to_layout(&mut insts, &rest);
+        assert_eq!(insts.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![1, 3]);
+        assert!(insts.iter().all(|i| i.tid != 2));
+        assert!(insts.iter().all(|i| (i.y - origin).abs() > 0.5 || i.tid == 3));
+        assert!((insts.iter().find(|i| i.tid == 3).unwrap().y - 80.0).abs() < 1e-4);
     }
 }

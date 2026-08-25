@@ -4,11 +4,13 @@
 //! - [`VIEWER_PID`] `orbit-live-viewer` — WASM/egui `ui` / `render` / `net`
 //! - [`SERVICE_PID`] `orbit-live-service` — native HTTP / ring
 //!
-//! Product choice **A**: self scopes share the active capture ring. When demo
-//! or a capture is producing, batches are stamped so they end at
-//! `newest_end_ns` (same axis as the target). Otherwise they use wall time
-//! from service start. Events are ordinary [`LiveEvent`]s (32 bytes).
-//! Enable is **on** by default; `?dev=0` / Dev pill / `/api/self/stop` turn it off.
+//! Product choice **A**: self scopes share the active capture ring. Batches are
+//! sequential on the capture clock (`self_cursor_ns`): each occupies
+//! `[cursor, cursor+span)` and the cursor only moves forward. A live demo or
+//! capture may *align* the cursor up to `newest_end_ns` so they stay on one
+//! axis, but two frames never share an `end`. Events are ordinary
+//! [`LiveEvent`]s (32 bytes). Enable is **on** by default; `?dev=0` / Dev pill
+//! / `/api/self/stop` turn it off.
 
 use serde::{Deserialize, Serialize};
 
@@ -71,19 +73,23 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_TIMELINE_API, "TimelineApi");
 }
 
-/// Place a relative scope on the capture axis so it ends at `end_ns`.
-pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
-    let span = scopes
+/// Inclusive span of a relative batch (`max(start_rel + duration)`).
+pub fn batch_span(scopes: &[RelScope]) -> u64 {
+    scopes
         .iter()
+        .filter(|s| s.duration_ns > 0)
         .map(|s| s.start_rel_ns.saturating_add(s.duration_ns))
         .max()
-        .unwrap_or(0);
-    let origin = end_ns.saturating_sub(span);
+        .unwrap_or(0)
+}
+
+/// Place relative scopes so they start at `origin_ns` on the capture axis.
+pub fn stamp_batch_from(scopes: &[RelScope], origin_ns: u64) -> Vec<LiveEvent> {
     scopes
         .iter()
         .filter(|s| s.duration_ns > 0)
         .map(|s| LiveEvent {
-            start_ns: origin.saturating_add(s.start_rel_ns),
+            start_ns: origin_ns.saturating_add(s.start_rel_ns),
             duration_ns: s.duration_ns,
             tid: s.tid,
             pid: s.pid,
@@ -94,6 +100,32 @@ pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
             name_id: s.name_id,
         })
         .collect()
+}
+
+/// Place a relative scope on the capture axis so it ends at `end_ns`.
+pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
+    let span = batch_span(scopes);
+    stamp_batch_from(scopes, end_ns.saturating_sub(span))
+}
+
+/// Sequential self-profile placement. `live_edge` may push `cursor` forward
+/// (demo / capture axis); it never rewinds. The batch occupies
+/// `[cursor, cursor+span)` and `cursor` advances by `span`.
+pub fn place_self_batch(
+    cursor: &mut u64,
+    scopes: &[RelScope],
+    live_edge: u64,
+) -> Vec<LiveEvent> {
+    let span = batch_span(scopes);
+    if span == 0 {
+        return Vec::new();
+    }
+    if live_edge > *cursor {
+        *cursor = live_edge;
+    }
+    let events = stamp_batch_from(scopes, *cursor);
+    *cursor = cursor.saturating_add(span);
+    events
 }
 
 /// Default **on**. `?dev=0` / `false` / `off` force off. `?dev=1` / `?self=1`
@@ -150,6 +182,40 @@ mod tests {
         assert_eq!(ev[0].start_ns, 9_000);
         assert_eq!(ev[0].duration_ns, 1_000);
         assert_eq!(ev[0].kind, kind::API_SCOPE);
+    }
+
+    #[test]
+    fn successive_place_self_batch_does_not_overlap_on_frozen_edge() {
+        let a = RelScope {
+            pid: VIEWER_PID,
+            tid: TID_UI,
+            name_id: NAME_FRAME,
+            start_rel_ns: 0,
+            duration_ns: 1_000,
+            depth: 0,
+        };
+        let b = RelScope {
+            pid: VIEWER_PID,
+            tid: TID_UI,
+            name_id: NAME_FRAME,
+            start_rel_ns: 0,
+            duration_ns: 800,
+            depth: 0,
+        };
+        let mut cursor = 0u64;
+        let first = place_self_batch(&mut cursor, &[a.clone()], 50_000);
+        let second = place_self_batch(&mut cursor, &[b.clone()], 50_000);
+        assert_eq!(first[0].start_ns, 50_000);
+        assert_eq!(first[0].end_ns(), 51_000);
+        assert_eq!(second[0].start_ns, 51_000);
+        assert_eq!(second[0].end_ns(), 51_800);
+        assert!(first[0].end_ns() <= second[0].start_ns);
+        assert_eq!(cursor, 51_800);
+        let third = place_self_batch(&mut cursor, &[a], 40_000);
+        assert_eq!(
+            third[0].start_ns, 51_800,
+            "live_edge must not rewind the cursor"
+        );
     }
 
     #[test]

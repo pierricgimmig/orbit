@@ -6,7 +6,7 @@ use eframe::egui::{
     StrokeKind, Ui, Vec2,
 };
 use orbit_live_event::dev::{
-    intern_self_names, stamp_batch, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET,
+    intern_self_names, place_self_batch, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET,
     NAME_PAYLOAD, NAME_TRACKS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_UI, VIEWER_NAME,
     VIEWER_PID,
 };
@@ -28,7 +28,8 @@ use crate::net::{
 };
 use crate::theme;
 use crate::timeline::{
-    paint_callback, paint_overlay_callback, shift_instances_to_layout, split_drag_instances,
+    paint_callback, paint_overlay_callback, shift_instances_to_layout, snap_instances_to_layout,
+    split_drag_instances,
     TimelineGpu, TimelinePayload, ViewUniforms,
 };
 use crate::tracks::{RowId, TrackRow, TrackStrip};
@@ -289,6 +290,7 @@ pub struct OrbitLiveApp {
     last_lod: orbit_live_render::TimelineLod,
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
+    self_cursor_ns: u64,
     needs_repaint: bool,
     compact: bool,
     advanced: bool,
@@ -358,6 +360,7 @@ impl OrbitLiveApp {
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
+            self_cursor_ns: 0,
             needs_repaint: false,
             compact: false,
             advanced: false,
@@ -524,6 +527,7 @@ impl OrbitLiveApp {
                 self.index.clear();
                 self.selected = None;
                 self.hover = None;
+                self.self_cursor_ns = 0;
             }
             LiveFrame::Status {
                 capturing,
@@ -895,6 +899,12 @@ impl OrbitLiveApp {
             paint_quiet_grid(ui, body, self.t0, self.t1);
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
+            if self.tracks.dragging() {
+                if let Some(p) = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) {
+                    self.tracks.update_drag(p.y - head.top());
+                    self.tracks.tick(0.0, &self.index, filter);
+                }
+            }
 
             let hover_row = ui.input(|i| i.pointer.hover_pos()).and_then(|pos| {
                 if head.contains(pos) || body.contains(pos) {
@@ -1229,6 +1239,8 @@ impl OrbitLiveApp {
         ppp: f32,
     ) -> (TimelinePayload, Option<TimelinePayload>) {
         let layout = self.tracks.layout().to_vec();
+        let rest_layout = self.tracks.rest_layout();
+        let drag_layout = self.tracks.drag_layout();
         let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
         if self.index.event_count() > 0 {
             let mut overlay = Vec::new();
@@ -1238,14 +1250,14 @@ impl OrbitLiveApp {
                 let mut instances = std::mem::take(&mut self.last_instances);
                 let shifted = self.last_instanced_window == Some(window)
                     && !instances.is_empty()
-                    && shift_instances_to_layout(&mut instances, &self.last_layout, &layout);
+                    && shift_instances_to_layout(&mut instances, &self.last_layout, &rest_layout);
                 if !shifted {
                     let mut frame = collect_instances_layout(
                         &self.index,
                         t0,
                         t1,
                         width,
-                        &layout,
+                        &rest_layout,
                         Some(&self.intern),
                     );
                     for inst in &mut frame.instances {
@@ -1253,14 +1265,33 @@ impl OrbitLiveApp {
                     }
                     instances = frame.instances;
                 }
+                snap_instances_to_layout(&mut instances, &rest_layout);
                 let search = self.search_active().then_some(&self.search_ids);
                 apply_highlight_flags(&mut instances, self.selected, self.hover, search);
-                let (bg, fg) = split_drag_instances(instances, dragged);
+                let (mut bg, mut fg) = split_drag_instances(instances, dragged);
+                if dragged.is_some() && !drag_layout.is_empty() {
+                    let mut frame = collect_instances_layout(
+                        &self.index,
+                        t0,
+                        t1,
+                        width,
+                        &drag_layout,
+                        Some(&self.intern),
+                    );
+                    for inst in &mut frame.instances {
+                        inst.h *= d;
+                    }
+                    apply_highlight_flags(
+                        &mut frame.instances,
+                        self.selected,
+                        self.hover,
+                        search,
+                    );
+                    fg = frame.instances;
+                }
                 self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
-                self.last_layout = layout;
+                self.last_layout = rest_layout;
                 self.last_instanced_window = Some(window);
-                let mut bg = bg;
-                let mut fg = fg;
                 scale_instances_ppp(&mut bg, ppp);
                 scale_instances_ppp(&mut fg, ppp);
                 let lift = (!fg.is_empty()).then_some(TimelinePayload::Instanced { instances: fg });
@@ -1309,10 +1340,10 @@ impl OrbitLiveApp {
                 width,
                 lod,
                 ppp,
-                &layout,
+                &rest_layout,
                 &overlay,
                 self.search_active().then_some(&self.search_ids),
-                dragged,
+                None,
                 Some(&self.intern),
             );
             let lift = dragged.and_then(|(pid, tid)| {
@@ -1321,7 +1352,7 @@ impl OrbitLiveApp {
                     t0,
                     t1,
                     width,
-                    &layout,
+                    &drag_layout,
                     Some(&self.intern),
                 );
                 let d = self.tracks.scale;
@@ -1690,12 +1721,8 @@ impl eframe::App for OrbitLiveApp {
         let scopes = devf.finish();
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
-            let end = self
-                .status
-                .newest_end_ns
-                .max(self.t1.max(0.0) as u64)
-                .max(1);
-            for ev in stamp_batch(&scopes, end) {
+            let live_edge = self.status.newest_end_ns;
+            for ev in place_self_batch(&mut self.self_cursor_ns, &scopes, live_edge) {
                 self.index.insert(ev);
             }
             self.net.push_self_scopes(&scopes);

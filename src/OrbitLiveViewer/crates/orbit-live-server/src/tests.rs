@@ -162,6 +162,7 @@ fn self_scopes_join_the_same_ring_at_the_live_edge() {
     use std::sync::atomic::Ordering;
 
     let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
     svc.push_events(&[ev(50)]);
     svc.enable_self_profile();
     svc.capturing.store(true, Ordering::Relaxed);
@@ -179,7 +180,7 @@ fn self_scopes_join_the_same_ring_at_the_live_edge() {
         .find(|e| e.pid == VIEWER_PID)
         .expect("viewer pid on the ring");
     let demo_end = ev(50).start_ns + ev(50).duration_ns;
-    assert_eq!(self_ev.start_ns + self_ev.duration_ns, demo_end);
+    assert_eq!(self_ev.start_ns, demo_end);
     assert_eq!(self_ev.kind, kind::API_SCOPE);
     assert_eq!(self_ev.name_id, NAME_FRAME);
 }
@@ -314,7 +315,43 @@ fn self_scopes_stamp_to_demo_clock_not_wall() {
         .into_iter()
         .find(|e| e.pid == VIEWER_PID)
         .expect("viewer scope");
-    assert_eq!(self_ev.start_ns + self_ev.duration_ns, 50_000_000);
+    assert_eq!(self_ev.start_ns, 50_000_000);
+}
+
+#[test]
+fn successive_self_scopes_do_not_overlap_when_live_edge_is_frozen() {
+    use orbit_live_event::dev::{RelScope, NAME_FRAME, NAME_NET, VIEWER_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    svc.note_live_end(10_000);
+    svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
+    let mk = |name, dur| RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: name,
+        start_rel_ns: 0,
+        duration_ns: dur,
+        depth: 0,
+    };
+    svc.apply_self_scopes(&[mk(NAME_FRAME, 1_000)]);
+    svc.apply_self_scopes(&[mk(NAME_NET, 400)]);
+    let mut self_evs: Vec<_> = svc
+        .ring()
+        .snapshot()
+        .1
+        .into_iter()
+        .filter(|e| e.pid == VIEWER_PID && e.tid == 1 && e.depth == 0)
+        .collect();
+    self_evs.sort_by_key(|e| e.start_ns);
+    assert_eq!(self_evs.len(), 2);
+    assert_eq!(self_evs[0].start_ns, 10_000);
+    assert_eq!(self_evs[0].end_ns(), 11_000);
+    assert_eq!(self_evs[1].start_ns, 11_000);
+    assert!(
+        self_evs[0].end_ns() <= self_evs[1].start_ns,
+        "two depth-0 scopes on the same tid must not overlap"
+    );
 }
 
 #[test]

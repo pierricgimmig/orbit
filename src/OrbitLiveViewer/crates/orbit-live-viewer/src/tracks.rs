@@ -9,6 +9,11 @@ pub const MACHINE_H: f32 = 16.0;
 pub const PROCESS_H: f32 = 18.0;
 pub const THREAD_H: f32 = 20.0;
 
+enum SkelItem {
+    Row(RowId, f32),
+    Hole(f32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ThreadId {
     pub pid: u32,
@@ -42,12 +47,15 @@ pub struct TrackStrip {
     cached_rows: Vec<TrackRow>,
     cached_layout: Vec<(LaneKey, f32)>,
     cached_total_h: f32,
+    filter_pid: Option<u32>,
+    cached_insert_y: Option<f32>,
 }
 
 struct Drag {
     thread: ThreadId,
     grab_off: f32,
     pointer_y: f32,
+    dest: usize,
 }
 
 impl Default for TrackStrip {
@@ -64,12 +72,15 @@ impl Default for TrackStrip {
             cached_rows: Vec::new(),
             cached_layout: Vec::new(),
             cached_total_h: 0.0,
+            filter_pid: None,
+            cached_insert_y: None,
         }
     }
 }
 
 impl TrackStrip {
     pub fn sync(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
+        self.filter_pid = filter_pid;
         let mut pids: Vec<u32> = Vec::new();
         let mut threads: Vec<ThreadId> = Vec::new();
         for (key, _) in index.lanes() {
@@ -212,40 +223,73 @@ impl TrackStrip {
             .collect()
     }
 
-    fn preview_threads(&self) -> Vec<ThreadId> {
-        let shown = self.shown_order();
+    fn rest_threads(&self) -> Vec<ThreadId> {
+        self.shown_order()
+            .into_iter()
+            .filter(|t| self.drag.as_ref().map(|d| d.thread != *t).unwrap_or(true))
+            .collect()
+    }
+
+    fn process_rest(&self, pid: u32) -> Vec<ThreadId> {
+        self.rest_threads()
+            .into_iter()
+            .filter(|t| t.pid == pid)
+            .collect()
+    }
+
+    fn process_is_listed(&self, pid: u32) -> bool {
+        if let Some(fp) = self.filter_pid {
+            if fp != pid && !orbit_live_event::dev::is_self_pid(pid) {
+                return false;
+            }
+        }
+        self.thread_order
+            .iter()
+            .any(|t| t.pid == pid && self.is_shown(*t))
+    }
+
+    /// Top of the thread list for `pid` in rail Y space (machine + process
+    /// headers + packed rest blocks, no hole).
+    fn process_thread_list_y(&self, pid: u32) -> f32 {
+        let s = self.scale.max(0.01);
+        if self.collapsed.contains(&RowId::Machine) {
+            return 0.0;
+        }
+        let mut y = MACHINE_H * s;
+        for &p in &self.process_order {
+            if !self.process_is_listed(p) {
+                continue;
+            }
+            y += PROCESS_H * s;
+            if self.collapsed.contains(&RowId::Process(p)) {
+                continue;
+            }
+            if p == pid {
+                return y;
+            }
+            for t in self.process_rest(p) {
+                y += self.thread_block_h(t);
+            }
+        }
+        y
+    }
+
+    fn drop_index_in_process(&self) -> usize {
         let Some(d) = &self.drag else {
-            return shown;
+            return 0;
         };
         if !self.is_shown(d.thread) {
-            return shown;
+            return 0;
         }
-        let dest = self.drop_thread_index(d.pointer_y - d.grab_off + 0.5);
-        let mut v: Vec<ThreadId> = shown.into_iter().filter(|t| *t != d.thread).collect();
-        let dest = dest.min(v.len());
-        v.insert(dest, d.thread);
-        v
-    }
-
-    fn drop_thread_index(&self, y: f32) -> usize {
-        self.drop_thread_index_from_blocks(y)
-    }
-
-    fn drop_thread_index_from_blocks(&self, y: f32) -> usize {
-        let rest: Vec<ThreadId> = self
-            .thread_order
-            .iter()
-            .copied()
-            .filter(|t| self.is_shown(*t))
-            .filter(|t| self.drag.as_ref().map(|d| d.thread != *t).unwrap_or(true))
-            .collect();
-        let mut acc = 0.0;
+        let header_top = d.pointer_y - d.grab_off;
+        let rest = self.process_rest(d.thread.pid);
+        let mut y = self.process_thread_list_y(d.thread.pid);
         for (i, t) in rest.iter().enumerate() {
             let h = self.thread_block_h(*t);
-            if y < acc + h * 0.5 {
+            if header_top < y + h * 0.5 {
                 return i;
             }
-            acc += h;
+            y += h;
         }
         rest.len()
     }
@@ -273,34 +317,56 @@ impl TrackStrip {
     }
 
     fn apply_layout(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
-        let preview = self.preview_threads();
-        let skeleton = self.skeleton_with_threads(index, filter_pid, &preview);
-        let mut y = 0.0;
-        let mut next = HashMap::with_capacity(skeleton.len());
-        for (id, h) in &skeleton {
-            next.insert(*id, y);
-            y += *h;
+        self.filter_pid = filter_pid;
+        let dest = self.drop_index_in_process();
+        if let Some(d) = &mut self.drag {
+            d.dest = dest;
         }
+        let rest = self.rest_threads();
+        let skeleton = self.skeleton_with_threads(index, filter_pid, &rest);
+        let items = self.skeleton_with_hole(&skeleton, dest);
+        let mut y = 0.0;
+        let mut next = HashMap::with_capacity(skeleton.len() + 8);
+        let mut hole_y = None;
+        for item in &items {
+            match *item {
+                SkelItem::Hole(h) => {
+                    hole_y = Some(y);
+                    y += h;
+                }
+                SkelItem::Row(id, h) => {
+                    next.insert(id, y);
+                    y += h;
+                }
+            }
+        }
+        self.cached_insert_y = hole_y;
         if let Some(d) = &self.drag {
-            let header = RowId::Thread(d.thread);
-            let base = d.pointer_y - d.grab_off;
-            if let Some(hy) = next.get(&header).copied() {
-                let dy = base - hy;
-                next.insert(header, base);
-                for (id, slot) in next.iter_mut() {
-                    match *id {
-                        RowId::Lane(k) if k.pid == d.thread.pid && k.tid == d.thread.tid => {
-                            *slot += dy;
-                        }
-                        _ => {}
+            if self.is_shown(d.thread) {
+                let base = d.pointer_y - d.grab_off;
+                next.insert(RowId::Thread(d.thread), base);
+                let s = self.scale.max(0.01);
+                let mut ly = base + THREAD_H * s;
+                if !self.collapsed.contains(&RowId::Thread(d.thread)) {
+                    let mut leaves: Vec<LaneKey> = index
+                        .lanes()
+                        .map(|(k, _)| k)
+                        .filter(|k| k.pid == d.thread.pid && k.tid == d.thread.tid)
+                        .collect();
+                    sort_thread_leaves(&mut leaves);
+                    for k in leaves {
+                        next.insert(RowId::Lane(k), ly);
+                        ly += (lane_height(k) + lane_gap(k)) * s;
                     }
                 }
-            } else {
-                next.insert(header, base);
             }
         }
         self.y = next;
         self.rebuild_rows();
+        if let (Some(hy), Some(d)) = (hole_y, self.drag.as_ref()) {
+            let hole_h = self.thread_block_h(d.thread);
+            self.cached_total_h = self.cached_total_h.max(hy + hole_h);
+        }
     }
 
     fn rebuild_rows(&mut self) {
@@ -348,11 +414,36 @@ impl TrackStrip {
         &self.cached_layout
     }
 
+    /// Packed rest lanes (no dragged thread). Background raster / instance Ys.
+    pub fn rest_layout(&self) -> Vec<(LaneKey, f32)> {
+        let Some(d) = &self.drag else {
+            return self.cached_layout.clone();
+        };
+        self.cached_layout
+            .iter()
+            .copied()
+            .filter(|(k, _)| k.pid != d.thread.pid || k.tid != d.thread.tid)
+            .collect()
+    }
+
+    /// Dragged thread lanes at the floating pointer Y.
+    pub fn drag_layout(&self) -> Vec<(LaneKey, f32)> {
+        let Some(d) = &self.drag else {
+            return Vec::new();
+        };
+        self.cached_layout
+            .iter()
+            .copied()
+            .filter(|(k, _)| k.pid == d.thread.pid && k.tid == d.thread.tid)
+            .collect()
+    }
+
     pub fn begin_drag(&mut self, thread: ThreadId, lane_y: f32, pointer_y: f32) {
         self.drag = Some(Drag {
             thread,
             grab_off: pointer_y - lane_y,
             pointer_y,
+            dest: 0,
         });
     }
 
@@ -363,15 +454,28 @@ impl TrackStrip {
     }
 
     pub fn end_drag(&mut self) {
-        if self.drag.is_some() {
-            let preview = self.preview_threads();
-            let mut pit = preview.iter();
+        let Some(d) = self.drag.as_ref() else {
+            return;
+        };
+        if self.is_shown(d.thread) {
+            let dest = self.drop_index_in_process();
+            let pid = d.thread.pid;
+            let thread = d.thread;
+            let mut same: Vec<ThreadId> = self
+                .thread_order
+                .iter()
+                .copied()
+                .filter(|t| t.pid == pid && self.is_shown(*t) && *t != thread)
+                .collect();
+            let dest = dest.min(same.len());
+            same.insert(dest, thread);
+            let mut it = same.iter();
             self.thread_order = self
                 .thread_order
                 .iter()
                 .map(|t| {
-                    if self.is_shown(*t) {
-                        pit.next().copied().unwrap_or(*t)
+                    if t.pid == pid && self.is_shown(*t) {
+                        it.next().copied().unwrap_or(*t)
                     } else {
                         *t
                     }
@@ -379,6 +483,7 @@ impl TrackStrip {
                 .collect();
         }
         self.drag = None;
+        self.cached_insert_y = None;
     }
 
     pub fn total_height(&self) -> f32 {
@@ -386,30 +491,8 @@ impl TrackStrip {
     }
 
     pub fn insert_y(&self) -> Option<f32> {
-        let d = self.drag.as_ref()?;
-        let dest = self.drop_thread_index_from_blocks(d.pointer_y - d.grab_off + 0.5);
-        let rest: Vec<ThreadId> = self
-            .thread_order
-            .iter()
-            .copied()
-            .filter(|t| self.is_shown(*t) && *t != d.thread)
-            .collect();
-        let header = self.y.get(&RowId::Thread(d.thread)).copied().unwrap_or(0.0);
-        if dest == 0 {
-            return Some(
-                rest.first()
-                    .and_then(|t| self.y.get(&RowId::Thread(*t)).copied())
-                    .unwrap_or(header),
-            );
-        }
-        if dest >= rest.len() {
-            if let Some(last) = rest.last() {
-                let y = self.y.get(&RowId::Thread(*last)).copied().unwrap_or(0.0);
-                return Some(y + self.thread_block_h(*last));
-            }
-        }
-        rest.get(dest)
-            .and_then(|t| self.y.get(&RowId::Thread(*t)).copied())
+        self.drag.as_ref()?;
+        self.cached_insert_y
     }
 
     fn height_of(&self, id: RowId) -> f32 {
@@ -420,6 +503,62 @@ impl TrackStrip {
             RowId::Thread(_) => THREAD_H * s,
             RowId::Lane(k) => (lane_height(k) + lane_gap(k)) * s,
         }
+    }
+
+    fn skeleton_with_hole(&self, skeleton: &[(RowId, f32)], dest: usize) -> Vec<SkelItem> {
+        let Some(d) = &self.drag else {
+            return skeleton
+                .iter()
+                .map(|(id, h)| SkelItem::Row(*id, *h))
+                .collect();
+        };
+        if !self.is_shown(d.thread) {
+            return skeleton
+                .iter()
+                .map(|(id, h)| SkelItem::Row(*id, *h))
+                .collect();
+        }
+        let hole_h = self.thread_block_h(d.thread);
+        let rest_ids = self.process_rest(d.thread.pid);
+        let dest = dest.min(rest_ids.len());
+        let mut items: Vec<SkelItem> = Vec::with_capacity(skeleton.len() + 1);
+        let mut ri = 0usize;
+        let mut inserted = false;
+        for &(id, h) in skeleton {
+            if let RowId::Thread(t) = id {
+                if t.pid == d.thread.pid {
+                    if ri == dest && !inserted {
+                        items.push(SkelItem::Hole(hole_h));
+                        inserted = true;
+                    }
+                    ri += 1;
+                }
+            }
+            items.push(SkelItem::Row(id, h));
+        }
+        if !inserted {
+            if rest_ids.is_empty() {
+                if let Some(pos) = items.iter().position(|it| {
+                    matches!(it, SkelItem::Row(RowId::Process(p), _) if *p == d.thread.pid)
+                }) {
+                    items.insert(pos + 1, SkelItem::Hole(hole_h));
+                    inserted = true;
+                }
+            } else if let Some(last) = rest_ids.last() {
+                if let Some(pos) = items.iter().rposition(|it| match it {
+                    SkelItem::Row(RowId::Thread(t), _) => *t == *last,
+                    SkelItem::Row(RowId::Lane(k), _) => k.pid == last.pid && k.tid == last.tid,
+                    _ => false,
+                }) {
+                    items.insert(pos + 1, SkelItem::Hole(hole_h));
+                    inserted = true;
+                }
+            }
+        }
+        if !inserted {
+            items.push(SkelItem::Hole(hole_h));
+        }
+        items
     }
 
     fn skeleton(&self, index: &TrackIndex, filter_pid: Option<u32>) -> Vec<(RowId, f32)> {
@@ -451,7 +590,12 @@ impl TrackStrip {
             if !index.lanes().any(|(k, _)| k.pid == pid) {
                 continue;
             }
-            if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) {
+            let keep_drag_proc = self
+                .drag
+                .as_ref()
+                .map(|d| d.thread.pid == pid && self.is_shown(d.thread))
+                .unwrap_or(false);
+            if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) && !keep_drag_proc {
                 continue;
             }
             out.push((RowId::Process(pid), PROCESS_H * s));
@@ -689,6 +833,70 @@ mod tests {
         assert!(snapped < open_h);
         assert!(strip.layout().is_empty());
         assert_eq!(strip.rows().len(), control.rows().len());
+    }
+
+    #[test]
+    fn drag_middle_thread_packs_rest_and_moves_hole() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(1, 2, 2));
+        idx.insert(scope(1, 3, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let t0 = strip.thread_order[0];
+        let t1 = strip.thread_order[1];
+        let t2 = strip.thread_order[2];
+        let y0 = strip.y.get(&RowId::Thread(t0)).copied().unwrap();
+        let y1 = strip.y.get(&RowId::Thread(t1)).copied().unwrap();
+        let y2 = strip.y.get(&RowId::Thread(t2)).copied().unwrap();
+        assert!(y1 > y0 && y2 > y1);
+        strip.begin_drag(t1, y1, y1);
+        strip.update_drag(y1 + 80.0);
+        strip.tick(0.0, &idx, None);
+        let y0b = strip.y.get(&RowId::Thread(t0)).copied().unwrap();
+        let y2b = strip.y.get(&RowId::Thread(t2)).copied().unwrap();
+        assert!(
+            (y0b - y0).abs() < 0.01,
+            "first rest thread stays put ({y0b} vs {y0})"
+        );
+        assert!(
+            (y2b - y1).abs() < 0.5,
+            "origin gap closes so thread 3 packs into thread 2's row ({y2b} vs {y1})"
+        );
+        let hole = strip.insert_y().expect("insert hole");
+        let t2_bottom = y2b + strip.thread_block_h(t2);
+        assert!(
+            (hole - t2_bottom).abs() < 0.5,
+            "insert_y {hole} must match the hole after packed rest ({t2_bottom})"
+        );
+        let float_y = strip.y.get(&RowId::Thread(t1)).copied().unwrap();
+        assert!(
+            (float_y - (y1 + 80.0)).abs() < 0.01,
+            "dragged thread floats under the pointer"
+        );
+        assert!(
+            strip
+                .rest_layout()
+                .iter()
+                .all(|(k, _)| k.tid != t1.tid),
+            "dragged lanes are not reserved in the packed rest skeleton"
+        );
+        assert!(
+            !strip
+                .rows()
+                .iter()
+                .any(|r| r.id == RowId::Thread(t1) && (r.y - y1).abs() < 0.5),
+            "dragged header must leave the origin row"
+        );
+        let origin_lane = y1 + THREAD_H * strip.scale;
+        assert!(
+            strip
+                .rest_layout()
+                .iter()
+                .all(|(k, y)| k.tid != t1.tid && (*y - origin_lane).abs() > 0.5 || k.tid == t2.tid),
+            "no leftover rest instance Y at the vacated origin except the packed neighbor"
+        );
     }
 
     #[test]

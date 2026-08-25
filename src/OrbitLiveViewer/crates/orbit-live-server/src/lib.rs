@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
-    stamp_batch, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_PUSH,
-    NAME_RASTER, NAME_TIMELINE_API, NAME_TRACKS, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER,
-    TID_UI,
+    batch_span, stamp_batch_from, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET,
+    NAME_PAYLOAD, NAME_PUSH, NAME_RASTER, NAME_TIMELINE_API, NAME_TRACKS, SERVICE_PID, TID_NET,
+    TID_RENDER, TID_SERVER, TID_UI,
 };
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
@@ -126,6 +126,8 @@ pub struct LiveService {
     self_gen: AtomicU64,
     /// Capture/demo clock, ignoring self-profile events on the ring.
     live_end_ns: AtomicU64,
+    /// Next free ns on the self-profile axis. Only moves forward.
+    self_cursor_ns: AtomicU64,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
     last_timeline_prof: Mutex<Option<Instant>>,
@@ -175,6 +177,7 @@ impl LiveService {
             data_gen: AtomicU64::new(0),
             self_gen: AtomicU64::new(0),
             live_end_ns: AtomicU64::new(0),
+            self_cursor_ns: AtomicU64::new(0),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
             last_timeline_prof: Mutex::new(None),
@@ -223,7 +226,7 @@ impl LiveService {
 
     /// Demo/capture clock when those producers have written; never wall-time
     /// self-profile events (those used to yank Follow off the demo axis).
-    fn stamp_base(&self) -> u64 {
+    fn live_edge_ns(&self) -> u64 {
         let live_end = self.live_end_ns();
         if live_end > 0 {
             return live_end;
@@ -237,6 +240,27 @@ impl LiveService {
         }
     }
 
+    /// Allocate `[cursor, cursor+span)` on the self-profile axis.
+    fn take_self_origin(&self, span: u64, live_edge: u64) -> u64 {
+        if span == 0 {
+            return self.self_cursor_ns.load(Ordering::Relaxed);
+        }
+        let mut cursor = self.self_cursor_ns.load(Ordering::Relaxed);
+        loop {
+            let origin = cursor.max(live_edge);
+            let next = origin.saturating_add(span);
+            match self.self_cursor_ns.compare_exchange_weak(
+                cursor,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return origin,
+                Err(actual) => cursor = actual,
+            }
+        }
+    }
+
     /// Insert viewer/service [`RelScope`]s as real [`LiveEvent`]s on the ring.
     pub fn apply_self_scopes(&self, scopes: &[RelScope]) {
         if !self.self_profile.load(Ordering::Relaxed) || scopes.is_empty() {
@@ -246,7 +270,12 @@ impl LiveService {
             return;
         }
         self.ensure_self_names();
-        let events = stamp_batch(scopes, self.stamp_base());
+        let span = batch_span(scopes);
+        if span == 0 {
+            return;
+        }
+        let origin = self.take_self_origin(span, self.live_edge_ns());
+        let events = stamp_batch_from(scopes, origin);
         if events.is_empty() {
             return;
         }
