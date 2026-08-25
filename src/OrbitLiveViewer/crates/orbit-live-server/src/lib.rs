@@ -482,7 +482,8 @@ impl LiveService {
             let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
             let t0 = t0.unwrap_or(auto0);
             let t1 = t1.unwrap_or(auto1.max(t0 + 1));
-            index.rasterize_pixel(t0, t1, width.max(1))
+            let intern = self.intern.lock();
+            index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern))
         })
     }
 

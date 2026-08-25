@@ -370,8 +370,16 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
     }
     let lod = choose_lod(&index, t0, t1, width as usize, INSTANCE_MIN_PX);
     let height = stack_height(&index).ceil() as u32;
+    let intern = svc.intern.lock();
     let instances = if lod == TimelineLod::Instanced {
-        collect_instances(&index, t0, t1, width as f32, 0.0)
+        collect_instances(
+            &index,
+            t0,
+            t1,
+            width as f32,
+            0.0,
+            Some(&*intern),
+        )
             .instances
             .iter()
             .map(|i| InstanceJson {

@@ -66,6 +66,7 @@ impl TimelinePayload {
         overlay: &[ScopeInstance],
         search: Option<&std::collections::HashSet<u32>>,
         punch: Option<(u32, u32)>,
+        intern: Option<&orbit_live_event::InternTable>,
     ) -> Self {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
@@ -79,7 +80,7 @@ impl TimelinePayload {
         let s = pixels_per_point.max(0.01);
         match lod {
             TimelineLod::Instanced => {
-                let mut frame = collect_instances_layout(index, t0, t1, width_pts, layout);
+                let mut frame = collect_instances_layout(index, t0, t1, width_pts, layout, intern);
                 for inst in &mut frame.instances {
                     inst.x *= s;
                     inst.y *= s;
@@ -94,7 +95,7 @@ impl TimelinePayload {
             TimelineLod::PixelColumns => {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
                 let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
-                let mut raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys);
+                let mut raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys, intern);
                 if let Some((pid, tid)) = punch {
                     punch_raster_thread(&mut raster, pid, tid);
                 }
@@ -736,7 +737,7 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_live_event::{kind, thread_scope_color, LiveEvent};
+    use orbit_live_event::{kind, named_scope_color, LiveEvent};
     use orbit_live_render::{choose_lod, TrackIndex, INSTANCE_MIN_PX};
 
     #[test]
@@ -837,6 +838,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
         );
         let TimelinePayload::Pixel {
             rgba,
@@ -850,7 +852,7 @@ mod tests {
         assert!(overlay.is_empty());
         assert!(width >= 8);
         assert!(height >= 16);
-        let expect = crate::theme::display_argb(thread_scope_color(1, 1));
+        let expect = crate::theme::display_argb(named_scope_color(&1u32.to_le_bytes(), 1));
         assert_ne!(expect, crate::theme::DISPLAY_TRACK);
         assert_eq!(rgba[0], ((expect >> 16) & 0xFF) as u8);
         assert_eq!(rgba[1], ((expect >> 8) & 0xFF) as u8);
@@ -878,7 +880,19 @@ mod tests {
         });
         let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
-        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0, &[], &[], None, None);
+        let p = TimelinePayload::from_index(
+            &idx,
+            0,
+            1_000_000,
+            200.0,
+            lod,
+            1.0,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
 

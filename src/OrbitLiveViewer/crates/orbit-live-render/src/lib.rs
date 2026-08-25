@@ -30,7 +30,7 @@
 
 use std::collections::BTreeMap;
 
-use orbit_live_event::{chrome, kind, LaneKey, LiveEvent};
+use orbit_live_event::{chrome, kind, InternTable, LaneKey, LiveEvent};
 
 mod lod;
 mod shaders;
@@ -111,11 +111,18 @@ impl Lane {
     /// otherwise one binary search per column. Benches of the two raw paths
     /// (`cargo bench -p orbit-live-render`) show the column walk is the one
     /// that stays sub-linear in n; naive wins only while `n ≤ width`.
-    pub fn rasterize(&self, t0: u64, t1: u64, width: usize, out: &mut [u32]) {
+    pub fn rasterize(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        out: &mut [u32],
+        intern: Option<&InternTable>,
+    ) {
         if self.events.len() <= width {
-            self.rasterize_naive(t0, t1, width, out);
+            self.rasterize_naive(t0, t1, width, out, intern);
         } else {
-            self.rasterize_pixel_columns(t0, t1, width, out);
+            self.rasterize_pixel_columns(t0, t1, width, out, intern);
         }
     }
 
@@ -123,7 +130,14 @@ impl Lane {
     ///
     /// Each column is one binary search. This is the live-view hot path
     /// once `n > width`.
-    pub fn rasterize_pixel_columns(&self, t0: u64, t1: u64, width: usize, out: &mut [u32]) {
+    pub fn rasterize_pixel_columns(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        out: &mut [u32],
+        intern: Option<&InternTable>,
+    ) {
         assert!(out.len() >= width);
         if width == 0 || t1 <= t0 {
             out[..width].fill(chrome::TRACK);
@@ -137,14 +151,21 @@ impl Lane {
                 .max(col0 + 1);
             out[x] = self
                 .overlapping(col0, col1)
-                .map(|e| e.color_rgba())
+                .map(|e| e.color_for(intern))
                 .unwrap_or(chrome::TRACK);
         }
     }
 
     /// Walk every event and fill pixels. O(n) in the number of scopes.
     /// Used only as a bench/correctness baseline — do not ship as the renderer.
-    pub fn rasterize_naive(&self, t0: u64, t1: u64, width: usize, out: &mut [u32]) {
+    pub fn rasterize_naive(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        out: &mut [u32],
+        intern: Option<&InternTable>,
+    ) {
         assert!(out.len() >= width);
         out[..width].fill(chrome::TRACK);
         if width == 0 || t1 <= t0 {
@@ -158,7 +179,7 @@ impl Lane {
             let x0 = (((e.start_ns.max(t0) - t0) as f64 / span) * width as f64).floor() as usize;
             let x1 = (((e.end_ns().min(t1) - t0) as f64 / span) * width as f64).ceil() as usize;
             let x1 = x1.max(x0 + 1).min(width);
-            let color = e.color_rgba();
+            let color = e.color_for(intern);
             for pix in &mut out[x0.min(width)..x1] {
                 *pix = color;
             }
@@ -225,9 +246,15 @@ impl TrackIndex {
     }
 
     /// Flattened `lanes × width` RGBA8 pixels (row-major, one row per lane).
-    pub fn rasterize_pixel(&self, t0: u64, t1: u64, width: usize) -> RasterizedFrame {
+    pub fn rasterize_pixel(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        intern: Option<&InternTable>,
+    ) -> RasterizedFrame {
         let keys: Vec<LaneKey> = self.lanes.keys().copied().collect();
-        self.rasterize_pixel_ordered(t0, t1, width, &keys)
+        self.rasterize_pixel_ordered(t0, t1, width, &keys, intern)
     }
 
     /// Same hot path as [`Self::rasterize_pixel`], with a session lane order.
@@ -237,6 +264,7 @@ impl TrackIndex {
         t1: u64,
         width: usize,
         order: &[LaneKey],
+        intern: Option<&InternTable>,
     ) -> RasterizedFrame {
         let keys: Vec<LaneKey> = if order.is_empty() {
             self.lanes.keys().copied().collect()
@@ -250,7 +278,7 @@ impl TrackIndex {
         let mut pixels = vec![0u32; keys.len() * width];
         for (row, key) in keys.iter().enumerate() {
             let dest = &mut pixels[row * width..(row + 1) * width];
-            self.lanes[key].rasterize(t0, t1, width, dest);
+            self.lanes[key].rasterize(t0, t1, width, dest, intern);
         }
         RasterizedFrame {
             width,
@@ -259,12 +287,18 @@ impl TrackIndex {
         }
     }
 
-    pub fn rasterize_naive(&self, t0: u64, t1: u64, width: usize) -> RasterizedFrame {
+    pub fn rasterize_naive(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        intern: Option<&InternTable>,
+    ) -> RasterizedFrame {
         let keys: Vec<LaneKey> = self.lanes.keys().copied().collect();
         let mut pixels = vec![0u32; keys.len() * width];
         for (row, key) in keys.iter().enumerate() {
             let dest = &mut pixels[row * width..(row + 1) * width];
-            self.lanes[key].rasterize_naive(t0, t1, width, dest);
+            self.lanes[key].rasterize_naive(t0, t1, width, dest, intern);
         }
         RasterizedFrame {
             width,
@@ -387,7 +421,7 @@ pub fn generate_nested_scopes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_live_event::thread_scope_color;
+    use orbit_live_event::named_scope_color;
     use std::time::Instant;
 
     fn scope(start: u64, dur: u64, depth: u8, name: u32) -> LiveEvent {
@@ -425,8 +459,8 @@ mod tests {
         let width = 128usize;
         let mut pixel = vec![0u32; width];
         let mut naive = vec![0u32; width];
-        lane.rasterize_pixel_columns(0, 6400, width, &mut pixel);
-        lane.rasterize_naive(0, 6400, width, &mut naive);
+        lane.rasterize_pixel_columns(0, 6400, width, &mut pixel, None);
+        lane.rasterize_naive(0, 6400, width, &mut naive, None);
         assert_eq!(pixel, naive);
         assert!(pixel.iter().any(|&p| p != chrome::TRACK));
     }
@@ -489,25 +523,25 @@ mod tests {
         large_idx.extend(large);
 
         // Warm up.
-        let _ = small_idx.rasterize_pixel(t0, t1, width);
-        let _ = large_idx.rasterize_pixel(t0, t1, width);
-        let _ = large_idx.rasterize_naive(t0, t1, width);
+        let _ = small_idx.rasterize_pixel(t0, t1, width, None);
+        let _ = large_idx.rasterize_pixel(t0, t1, width, None);
+        let _ = large_idx.rasterize_naive(t0, t1, width, None);
 
         let start = Instant::now();
         for _ in 0..8 {
-            let _ = small_idx.rasterize_pixel(t0, t1, width);
+            let _ = small_idx.rasterize_pixel(t0, t1, width, None);
         }
         let small_ns = start.elapsed().as_nanos().max(1);
 
         let start = Instant::now();
         for _ in 0..8 {
-            let _ = large_idx.rasterize_pixel(t0, t1, width);
+            let _ = large_idx.rasterize_pixel(t0, t1, width, None);
         }
         let large_pixel_ns = start.elapsed().as_nanos().max(1);
 
         let start = Instant::now();
         for _ in 0..8 {
-            let _ = large_idx.rasterize_naive(t0, t1, width);
+            let _ = large_idx.rasterize_naive(t0, t1, width, None);
         }
         let large_naive_ns = start.elapsed().as_nanos().max(1);
 
@@ -536,12 +570,12 @@ mod tests {
             choose_lod(&idx, 0, 100_000, 100, INSTANCE_MIN_PX),
             TimelineLod::Instanced
         );
-        let frame = collect_instances(&idx, 0, 100_000, 100.0, 0.0);
+        let frame = collect_instances(&idx, 0, 100_000, 100.0, 0.0, None);
         assert_eq!(frame.instances.len(), 1);
         assert!((frame.instances[0].w - 100.0).abs() < 0.6);
         assert_eq!(
             frame.instances[0].color,
-            orbit_live_event::thread_scope_color(1, 0)
+            named_scope_color(&1u32.to_le_bytes(), 0)
         );
     }
 
@@ -563,7 +597,7 @@ mod tests {
         idx.insert(scope(0, 10, 0, 1));
         idx.insert(scope(1000, 10, 0, 2));
         idx.insert(scope(2000, 10, 0, 3));
-        let frame = collect_instances(&idx, 990, 1020, 100.0, 0.0);
+        let frame = collect_instances(&idx, 990, 1020, 100.0, 0.0, None);
         assert_eq!(frame.instances.len(), 1);
     }
 
@@ -590,7 +624,7 @@ mod tests {
         let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
         assert_eq!(keys.len(), 2);
         let flipped = vec![(keys[1], 40.0), (keys[0], 0.0)];
-        let frame = collect_instances_layout(&idx, 0, 50, 100.0, &flipped);
+        let frame = collect_instances_layout(&idx, 0, 50, 100.0, &flipped, None);
         assert_eq!(frame.instances.len(), 2);
         let a = frame.instances.iter().find(|i| i.name_id == 2).unwrap();
         let b = frame.instances.iter().find(|i| i.name_id == 1).unwrap();
@@ -704,8 +738,8 @@ mod tests {
     fn scaled_rgba_uses_event_color_not_track_gray() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(0, 100, 1, 1));
-        let frame = idx.rasterize_pixel(0, 100, 8);
-        let expect = thread_scope_color(1, 1);
+        let frame = idx.rasterize_pixel(0, 100, 8, None);
+        let expect = named_scope_color(&1u32.to_le_bytes(), 1);
         assert_eq!(frame.pixels[0], expect);
         assert_ne!(expect, chrome::TRACK);
         let (bytes, h) = frame.to_rgba8_scaled();
@@ -722,7 +756,7 @@ mod tests {
     fn rgba8_packing_matches_argb() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(0, 10, 0, 1));
-        let frame = idx.rasterize_pixel(0, 10, 1);
+        let frame = idx.rasterize_pixel(0, 10, 1, None);
         let bytes = frame.to_rgba8();
         assert_eq!(bytes.len(), 4);
         let p = frame.pixels[0];

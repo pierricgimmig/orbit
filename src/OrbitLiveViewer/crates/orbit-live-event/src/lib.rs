@@ -14,7 +14,8 @@ mod color;
 pub mod dev;
 pub use color::{
     argb_to_css, async_scope_color, encode_manual_color, event_color, material_index_to_argb,
-    name_hash, palette_index, rgba_word_to_argb, scale_rgb, thread_scope_color, thread_state_color,
+    name_hash, named_scope_color, palette_index, rgba_word_to_argb, scale_rgb, thread_scope_color,
+    thread_state_color,
     BOX_BORDER, ORBIT_API_COLORS_RGBA, ORBIT_COLOR_RED, SAME_SCOPE_HIGHLIGHT, SELECTION,
     SHADE_LEFT, THREAD_PALETTE,
 };
@@ -68,7 +69,20 @@ impl LiveEvent {
     }
 
     pub fn color_rgba(self) -> u32 {
-        event_color(self.kind, self.tid, self.depth, self.extra, self._pad)
+        self.color_for(None)
+    }
+
+    pub fn color_for(self, intern: Option<&InternTable>) -> u32 {
+        let name = intern.and_then(|t| t.get(self.name_id)).map(str::as_bytes);
+        event_color(
+            self.kind,
+            self.tid,
+            self.depth,
+            self.extra,
+            self._pad,
+            self.name_id,
+            name,
+        )
     }
 
     pub fn lane_key(self) -> LaneKey {
@@ -145,7 +159,7 @@ impl LaneKey {
 pub fn palette_color(kind: u8, extra: u8, name_id: u32) -> u32 {
     match kind {
         kind::THREAD_STATE => thread_state_color(extra),
-        kind::API_TRACK => palette_index(name_id),
+        kind::API_SCOPE | kind::API_TRACK => named_scope_color(&name_id.to_le_bytes(), extra),
         _ => thread_scope_color(name_id, extra),
     }
 }
@@ -378,7 +392,7 @@ mod tests {
         assert_ne!(even, odd);
         let ev = LiveEvent {
             tid: 7,
-            kind: kind::API_SCOPE,
+            kind: kind::FUNCTION_CALL,
             depth: 1,
             extra: 0,
             _pad: color_mode::AUTO_THREAD,
@@ -391,21 +405,76 @@ mod tests {
     }
 
     #[test]
+    fn api_scope_color_is_name_hash_not_tid() {
+        let mut intern = InternTable::default();
+        let tick = intern.intern("Tick");
+        let a = LiveEvent {
+            tid: 101,
+            kind: kind::API_SCOPE,
+            depth: 1,
+            extra: 0,
+            _pad: color_mode::AUTO_NAME,
+            name_id: tick,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+        };
+        let mut b = a;
+        b.tid = 107;
+        b.pid = 11;
+        assert_eq!(a.color_for(Some(&intern)), b.color_for(Some(&intern)));
+        assert_eq!(
+            a.color_for(Some(&intern)),
+            named_scope_color(b"Tick", 1)
+        );
+        assert_ne!(a.color_for(Some(&intern)), thread_scope_color(101, 1));
+        let even = LiveEvent { depth: 0, ..a };
+        assert_eq!(
+            even.color_for(Some(&intern)),
+            scale_rgb(named_scope_color(b"Tick", 1), 210, 255)
+        );
+        let miss = LiveEvent {
+            name_id: 99,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 1,
+            extra: 0,
+            _pad: color_mode::AUTO_NAME,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+        };
+        assert_eq!(
+            miss.color_rgba(),
+            named_scope_color(&99u32.to_le_bytes(), 1)
+        );
+    }
+
+    #[test]
     fn async_name_hash_indexes_the_same_six_colors() {
         let h = name_hash(b"GpuSubmit");
         assert_eq!(async_scope_color(h), THREAD_PALETTE[(h as usize) % 6]);
+        let mut intern = InternTable::default();
+        intern.insert_id(1, "GpuSubmit");
         let ev = LiveEvent {
             kind: kind::API_TRACK,
-            extra: (h % 6) as u8,
+            extra: 0,
             _pad: color_mode::AUTO_NAME,
             tid: 99,
-            depth: 0,
+            depth: 1,
             name_id: 1,
             start_ns: 0,
             duration_ns: 1,
             pid: 1,
         };
-        assert_eq!(ev.color_rgba(), THREAD_PALETTE[(h as usize) % 6]);
+        assert_eq!(
+            ev.color_for(Some(&intern)),
+            named_scope_color(b"GpuSubmit", 1)
+        );
+        assert_eq!(
+            ev.color_for(Some(&intern)),
+            THREAD_PALETTE[(h as usize) % 6]
+        );
     }
 
     #[test]

@@ -120,7 +120,7 @@ fn timeline_uses_instanced_lod_for_wide_orbit_colored_scopes() {
     );
     assert_eq!(
         index.lanes().next().unwrap().1.events()[0].color_rgba(),
-        orbit_live_event::thread_scope_color(100, 1)
+        orbit_live_event::named_scope_color(&1u32.to_le_bytes(), 1)
     );
 }
 

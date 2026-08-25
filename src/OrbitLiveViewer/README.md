@@ -38,11 +38,12 @@ Open `http://<host>:44766/`.
 ## Look (Orbit palette, not a barcode)
 
 Scope / thread colors come from `ThreadColor.cpp` / `TimeGraph::GetColor`
-(`#E74435 #2B91AF #B975B5 #57A64A #D7AB69 #F86516`). CPU scopes are
-`palette[tid % 6]`; even depth RGB *= 210/255. Async/GPU marker names use
-`palette[hash(name) % 6]`. Manual `orbit_api_color` is the Material-500 table
-in `ApiInterface/Orbit.h`. Thread states match `ThreadStateBar.cpp`. Chrome
-is the Qt capture window (`#434343` canvas, `#323232` track, `#353535` window).
+(`#E74435 #2B91AF #B975B5 #57A64A #D7AB69 #F86516`). API scopes and tracks
+are `palette[name_hash % 6]` (interned name, or `name_id` bytes on a miss);
+even depth RGB *= 210/255. Function-call / CPU lanes stay `palette[tid % 6]`.
+Manual `orbit_api_color` is the Material-500 table in `ApiInterface/Orbit.h`.
+Thread states match `ThreadStateBar.cpp`. Chrome is the Qt capture window
+(`#434343` canvas, `#323232` track, `#353535` window).
 
 The shipped page is **eframe / egui-wgpu** (WebRunner on a full-window canvas).
 Process list, Start/Stop capture, Start/Stop demo, ring/spill, and status are

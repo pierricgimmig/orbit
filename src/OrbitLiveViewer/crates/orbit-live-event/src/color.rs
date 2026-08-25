@@ -1,9 +1,10 @@
 //! Orbit capture-window colors. Copied from the C++ UI — do not invent replacements.
 //!
-//! * Thread / CPU-scope 6-color: `ThreadColor.cpp` / `TimeGraph::GetColor`
+//! * Function-call / CPU-scope 6-color: `ThreadColor.cpp` / `TimeGraph::GetColor(tid)`
+//! * API scopes / tracks: `TimeGraph::GetColor(string_view)` → `palette[name_hash % 6]`
 //! * Even-depth darken: `ThreadTrack.cpp` `kOddRowColorMultiplier` (210/255)
 //!   when `(depth & 1) == 0`
-//! * Async / GPU names: `TimeGraph::GetColor(string_view)` → `palette[hash % 6]`
+//! * Async / GPU names use the same name-hash palette as API scopes
 //! * Manual API: Material-500 `orbit_api_color` in `ApiInterface/Orbit.h` (`0xRRGGBBAA`)
 //! * Thread states: `ThreadStateBar.cpp` `GetThreadStateColor`
 //! * Chrome: Qt capture window (`#434343` canvas, `#323232` track, …)
@@ -65,7 +66,16 @@ pub fn scale_rgb(color: u32, num: u32, den: u32) -> u32 {
 }
 
 pub fn thread_scope_color(tid: u32, depth: u8) -> u32 {
-    let mut c = THREAD_PALETTE[(tid as usize) % THREAD_PALETTE.len()];
+    apply_even_depth(THREAD_PALETTE[(tid as usize) % THREAD_PALETTE.len()], depth)
+}
+
+/// Same 6-color palette as [`thread_scope_color`], keyed by FNV-1a of the
+/// interned scope name (or `name_id` bytes on an intern miss).
+pub fn named_scope_color(name: &[u8], depth: u8) -> u32 {
+    apply_even_depth(palette_index(name_hash(name)), depth)
+}
+
+fn apply_even_depth(mut c: u32, depth: u8) -> u32 {
     if depth & 1 == 0 {
         c = scale_rgb(c, 210, 255);
     }
@@ -117,7 +127,7 @@ pub fn material_index_to_argb(index_1based: u8) -> u32 {
 
 pub fn encode_manual_color(orbit_api_color: u32) -> (u8, u8) {
     if orbit_api_color == 0 || orbit_api_color == ORBIT_COLOR_AUTO {
-        return (mode::AUTO_THREAD, 0);
+        return (mode::AUTO_NAME, 0);
     }
     if let Some(i) = ORBIT_API_COLORS_RGBA.iter().position(|&c| c == orbit_api_color)
     {
@@ -129,7 +139,7 @@ pub fn encode_manual_color(orbit_api_color: u32) -> (u8, u8) {
     {
         return (mode::MANUAL_API, (i + 1) as u8);
     }
-    (mode::AUTO_THREAD, 0)
+    (mode::AUTO_NAME, 0)
 }
 
 pub fn thread_state_color(state: u8) -> u32 {
@@ -146,13 +156,26 @@ pub fn thread_state_color(state: u8) -> u32 {
     }
 }
 
-pub fn event_color(kind_id: u8, tid: u32, depth: u8, extra: u8, pad: u8) -> u32 {
+pub fn event_color(
+    kind_id: u8,
+    tid: u32,
+    depth: u8,
+    extra: u8,
+    pad: u8,
+    name_id: u32,
+    name: Option<&[u8]>,
+) -> u32 {
     if kind_id == kind::THREAD_STATE {
         return thread_state_color(extra);
     }
-    match pad {
-        mode::AUTO_NAME => palette_index(extra as u32),
-        mode::MANUAL_API => material_index_to_argb(extra),
+    if pad == mode::MANUAL_API {
+        return material_index_to_argb(extra);
+    }
+    match kind_id {
+        kind::API_SCOPE | kind::API_TRACK => {
+            let id = name_id.to_le_bytes();
+            named_scope_color(name.unwrap_or(&id), depth)
+        }
         _ => thread_scope_color(tid, depth),
     }
 }

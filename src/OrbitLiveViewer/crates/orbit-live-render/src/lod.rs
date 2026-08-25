@@ -1,7 +1,7 @@
 //! Timeline LOD: pixel columns when scopes are sub-pixel, instanced
 //! rounded-rect primitives when a visible scope is wider than a few pixels.
 
-use orbit_live_event::{chrome, kind, LaneKey, LiveEvent};
+use orbit_live_event::{chrome, kind, InternTable, LaneKey, LiveEvent};
 
 use crate::{Lane, TrackIndex};
 
@@ -253,10 +253,11 @@ pub fn collect_instances(
     t1: u64,
     width: f32,
     y0: f32,
+    intern: Option<&InternTable>,
 ) -> InstanceFrame {
     let keys: Vec<LaneKey> = index.lanes().map(|(k, _)| k).collect();
     let layout = stacked_layout(&keys, y0);
-    collect_instances_layout(index, t0, t1, width, &layout)
+    collect_instances_layout(index, t0, t1, width, &layout, intern)
 }
 
 /// Same as [`collect_instances`] with an explicit (lane, y) remap — session
@@ -267,6 +268,7 @@ pub fn collect_instances_layout(
     t1: u64,
     width: f32,
     layout: &[(LaneKey, f32)],
+    intern: Option<&InternTable>,
 ) -> InstanceFrame {
     let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
     let height = layout
@@ -286,7 +288,7 @@ pub fn collect_instances_layout(
     for &(key, y) in layout {
         let h = lane_height(key);
         if let Some(lane) = index.lane(key) {
-            push_lane_instances(lane, t0, t1, span, width, y, h, &mut instances);
+            push_lane_instances(lane, t0, t1, span, width, y, h, intern, &mut instances);
         }
     }
     InstanceFrame {
@@ -375,6 +377,7 @@ fn push_lane_instances(
     width: f32,
     y: f32,
     h: f32,
+    intern: Option<&InternTable>,
     out: &mut Vec<ScopeInstance>,
 ) {
     let mut i = lane.first_ending_after(t0);
@@ -383,7 +386,7 @@ fn push_lane_instances(
         if e.start_ns >= t1 {
             break;
         }
-        out.push(instance_for_event(e, t0, t1, span, width, y, h, radius));
+        out.push(instance_for_event(e, t0, t1, span, width, y, h, radius, intern));
         i += 1;
     }
 }
@@ -397,6 +400,7 @@ pub fn instance_for_event(
     y: f32,
     h: f32,
     radius: f32,
+    intern: Option<&InternTable>,
 ) -> ScopeInstance {
     let x0 = ((e.start_ns.max(t0) - t0) as f64 / span) * width as f64;
     let x1 = ((e.end_ns().min(t1) - t0) as f64 / span) * width as f64;
@@ -405,7 +409,7 @@ pub fn instance_for_event(
         y,
         w: (x1 - x0).max(1.0) as f32,
         h,
-        color: e.color_rgba(),
+        color: e.color_for(intern),
         radius,
         name_id: e.name_id,
         start_ns: e.start_ns,

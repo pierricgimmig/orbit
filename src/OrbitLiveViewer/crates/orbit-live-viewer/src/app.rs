@@ -1240,7 +1240,14 @@ impl OrbitLiveApp {
                     && !instances.is_empty()
                     && shift_instances_to_layout(&mut instances, &self.last_layout, &layout);
                 if !shifted {
-                    let mut frame = collect_instances_layout(&self.index, t0, t1, width, &layout);
+                    let mut frame = collect_instances_layout(
+                        &self.index,
+                        t0,
+                        t1,
+                        width,
+                        &layout,
+                        Some(&self.intern),
+                    );
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
@@ -1263,7 +1270,16 @@ impl OrbitLiveApp {
             self.last_instanced_window = None;
             if let Some(sel) = self.selected {
                 if let Some(mut inst) =
-                    overlay_instance(&self.index, &layout, t0, t1, width, sel, self.tracks.scale)
+                    overlay_instance(
+                        &self.index,
+                        &layout,
+                        t0,
+                        t1,
+                        width,
+                        sel,
+                        self.tracks.scale,
+                        Some(&self.intern),
+                    )
                 {
                     inst.flags = FLAG_SELECTED;
                     overlay.push(inst);
@@ -1279,6 +1295,7 @@ impl OrbitLiveApp {
                         width,
                         hov,
                         self.tracks.scale,
+                        Some(&self.intern),
                     ) {
                         inst.flags = FLAG_HOVER;
                         overlay.push(inst);
@@ -1296,9 +1313,17 @@ impl OrbitLiveApp {
                 &overlay,
                 self.search_active().then_some(&self.search_ids),
                 dragged,
+                Some(&self.intern),
             );
             let lift = dragged.and_then(|(pid, tid)| {
-                let mut frame = collect_instances_layout(&self.index, t0, t1, width, &layout);
+                let mut frame = collect_instances_layout(
+                    &self.index,
+                    t0,
+                    t1,
+                    width,
+                    &layout,
+                    Some(&self.intern),
+                );
                 let d = self.tracks.scale;
                 frame.instances.retain(|i| i.pid == pid && i.tid == tid);
                 if frame.instances.is_empty() {
@@ -1932,6 +1957,7 @@ fn overlay_instance(
     width: f32,
     pick: ScopePick,
     scale: f32,
+    intern: Option<&InternTable>,
 ) -> Option<orbit_live_render::ScopeInstance> {
     let key = pick.lane_key();
     let y = layout.iter().find(|(k, _)| *k == key)?.1;
@@ -1944,7 +1970,9 @@ fn overlay_instance(
         .find(|ev| ev.start_ns == pick.start_ns && ev.name_id == pick.name_id)?;
     let span = (t1 - t0) as f64;
     let radius = (h * 0.14).clamp(2.0, 3.0);
-    Some(instance_for_event(&e, t0, t1, span, width, y, h, radius))
+    Some(instance_for_event(
+        &e, t0, t1, span, width, y, h, radius, intern,
+    ))
 }
 
 fn scale_instances_ppp(instances: &mut [ScopeInstance], ppp: f32) {

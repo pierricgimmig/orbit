@@ -84,7 +84,9 @@ impl LiveViewer {
         let width = width.max(1) as usize;
         let t0 = t0.max(0.0) as u64;
         let t1 = (t1 as u64).max(t0 + 1);
-        self.index.rasterize_pixel(t0, t1, width).to_rgba8()
+        self.index
+            .rasterize_pixel(t0, t1, width, Some(&self.intern))
+            .to_rgba8()
     }
 
     /// `0` = pixel columns, `1` = instanced SDF primitives.
@@ -103,7 +105,14 @@ impl LiveViewer {
         let width = width.max(1) as f32;
         let t0 = t0.max(0.0) as u64;
         let t1 = (t1 as u64).max(t0 + 1);
-        let frame = orbit_live_render::collect_instances(&self.index, t0, t1, width, 0.0);
+        let frame = orbit_live_render::collect_instances(
+            &self.index,
+            t0,
+            t1,
+            width,
+            0.0,
+            Some(&self.intern),
+        );
         let mut out = Vec::with_capacity(8 + frame.instances.len() * 24);
         out.extend_from_slice(&frame.height.to_le_bytes());
         out.extend_from_slice(&(frame.instances.len() as u32).to_le_bytes());

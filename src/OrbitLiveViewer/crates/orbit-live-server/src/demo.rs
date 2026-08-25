@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use orbit_live_event::{color_mode, kind, name_hash, thread_state, LiveEvent};
+use orbit_live_event::{color_mode, kind, thread_state, LiveEvent};
 
 use crate::LiveService;
 
@@ -140,8 +140,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
             for (i, tid) in [300u32, 301, 302, 303].into_iter().enumerate() {
                 push_thread_tick(&mut events, t, AUDIO_PID, tid, i as u32 + 8);
             }
-            for (i, name) in DEMO_ASYNC_NAMES.iter().enumerate() {
-                let h = name_hash(name.as_bytes());
+            for (i, _name) in DEMO_ASYNC_NAMES.iter().enumerate() {
                 events.push(LiveEvent {
                     start_ns: t + 1_000_000 + (i as u64) * 4_000_000,
                     duration_ns: 3_200_000,
@@ -149,7 +148,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                     pid: DEMO_PID,
                     kind: kind::API_TRACK,
                     depth: 0,
-                    extra: (h % 6) as u8,
+                    extra: 0,
                     _pad: color_mode::AUTO_NAME,
                     name_id: DEMO_ASYNC_BASE + i as u32,
                 });
@@ -221,7 +220,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th:
     let outer_pad = if th == 0 {
         color_mode::MANUAL_API
     } else {
-        color_mode::AUTO_THREAD
+        color_mode::AUTO_NAME
     };
     let outer_extra = if th == 0 { 1 } else { 0 };
     events.push(scope(
@@ -248,7 +247,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th:
             tid,
             1,
             0,
-            color_mode::AUTO_THREAD,
+            color_mode::AUTO_NAME,
             scope_name_id(1, th, i as u32),
         ));
         let inner_n = 3 + (th % 3);
@@ -263,7 +262,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th:
                 tid,
                 2,
                 0,
-                color_mode::AUTO_THREAD,
+                color_mode::AUTO_NAME,
                 scope_name_id(2, th, k),
             ));
         }

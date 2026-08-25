@@ -21,10 +21,10 @@ fn vs_scopes(c: &mut Criterion) {
         let idx = build_index(n);
         group.throughput(Throughput::Elements(n as u64));
         group.bench_with_input(BenchmarkId::new("pixel_columns", n), &n, |b, _| {
-            b.iter(|| black_box(idx.rasterize_pixel(t0, t1, width)));
+            b.iter(|| black_box(idx.rasterize_pixel(t0, t1, width, None)));
         });
         group.bench_with_input(BenchmarkId::new("naive_quads", n), &n, |b, _| {
-            b.iter(|| black_box(idx.rasterize_naive(t0, t1, width)));
+            b.iter(|| black_box(idx.rasterize_naive(t0, t1, width, None)));
         });
     }
     group.finish();
@@ -39,10 +39,10 @@ fn vs_pixels(c: &mut Criterion) {
     for &width in &[64usize, 256, 1024, 4096] {
         group.throughput(Throughput::Elements(width as u64));
         group.bench_with_input(BenchmarkId::new("pixel_columns", width), &width, |b, &w| {
-            b.iter(|| black_box(idx.rasterize_pixel(t0, t1, w)));
+            b.iter(|| black_box(idx.rasterize_pixel(t0, t1, w, None)));
         });
         group.bench_with_input(BenchmarkId::new("naive_quads", width), &width, |b, &w| {
-            b.iter(|| black_box(idx.rasterize_naive(t0, t1, w)));
+            b.iter(|| black_box(idx.rasterize_naive(t0, t1, w, None)));
         });
     }
     group.finish();

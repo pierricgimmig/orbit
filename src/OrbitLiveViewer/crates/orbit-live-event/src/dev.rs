@@ -90,7 +90,7 @@ pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
             kind: kind::API_SCOPE,
             depth: s.depth,
             extra: 0,
-            _pad: color_mode::AUTO_THREAD,
+            _pad: color_mode::AUTO_NAME,
             name_id: s.name_id,
         })
         .collect()
