@@ -251,6 +251,8 @@ impl OrbitLiveApp {
         let net = Net::connect();
         if dev {
             net.start_self();
+        } else {
+            net.stop_self();
         }
         let mut has_gpu = false;
         if let Some(rs) = &cc.wgpu_render_state {
@@ -374,11 +376,19 @@ impl OrbitLiveApp {
             }
             self.processes = p;
         }
-        if self.status.demo && self.processes.is_empty() {
-            self.processes = vec![ProcessJson {
-                pid: 1,
-                name: "orbit-demo".into(),
-            }];
+        if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
+            for (pid, name) in [
+                (1u32, "orbit-demo"),
+                (10, "orbit-render"),
+                (11, "orbit-audio"),
+            ] {
+                if !self.processes.iter().any(|p| p.pid == pid) {
+                    self.processes.push(ProcessJson {
+                        pid,
+                        name: name.into(),
+                    });
+                }
+            }
             if self.selected_pid.is_none() {
                 self.selected_pid = Some(1);
             }
@@ -1491,7 +1501,9 @@ impl eframe::App for OrbitLiveApp {
                         self.net.get_processes();
                     }
                 }
-                if now - self.last_view_request > 0.1 {
+                // Local WS index is the paint path. Hitting /api/timeline every
+                // frame rebuilt the server index and pegged a core after Stop.
+                if self.index.event_count() == 0 && now - self.last_view_request > 0.1 {
                     self.last_view_request = now;
                     let t0 = self.t0.max(0.0) as u64;
                     let t1 = (self.t1 as u64).max(t0 + 1);
@@ -1540,7 +1552,17 @@ impl eframe::App for OrbitLiveApp {
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
                 .show(ctx, |ui| self.timeline(ui, dt, &devf));
 
-            ctx.request_repaint();
+            let live = self.status.demo
+                || self.status.capturing
+                || self.tracks.dragging()
+                || (self.follow
+                    && self.status.newest_end_ns > 0
+                    && (self.t1 - self.status.newest_end_ns as f64).abs() > 2_000_000.0);
+            if live {
+                ctx.request_repaint();
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
         }
         let scopes = devf.finish();
         if self.dev && !scopes.is_empty() {

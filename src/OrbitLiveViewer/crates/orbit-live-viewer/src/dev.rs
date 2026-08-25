@@ -106,12 +106,11 @@ pub fn query_dev_from_location() -> bool {
         web_sys::window()
             .and_then(|w| w.location().search().ok())
             .map(|s| query_enables_dev(&s))
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = query_enables_dev;
-        false
+        query_enables_dev("")
     }
 }
 
