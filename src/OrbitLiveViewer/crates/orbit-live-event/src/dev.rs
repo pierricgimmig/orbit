@@ -9,8 +9,9 @@
 //! `[cursor, cursor+span)` and the cursor only moves forward. A live demo or
 //! capture may *align* the cursor to demo/capture `live_edge` (not ring
 //! `newest_end` that includes pid 2/3) so they stay on one axis, but two
-//! frames never share an `end`. If the cursor runs more than ~50 ms ahead of
-//! that edge it snaps back. Events are ordinary [`LiveEvent`]s (32 bytes).
+//! frames never share an `end`. If the cursor runs more than two demo ticks
+//! ahead of that edge it snaps back. Events are ordinary [`LiveEvent`]s
+//! (32 bytes).
 //! Record starts demo + self-profile; `?dev=0` / `/api/self/stop` keep
 //! self-profile off.
 
@@ -177,31 +178,39 @@ pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
     stamp_batch_from(scopes, end_ns.saturating_sub(span))
 }
 
-/// Self-profile may run a few frames ahead of demo `t`. Snap back if the
-/// gap exceeds ~50 ms so dummy and self share one time domain.
-pub const SELF_AHEAD_SNAP_NS: u64 = 50_000_000;
+/// Demo producer origin (`demo.rs` `t`). First Tick and first Frame share this.
+pub const DEMO_ORIGIN_NS: u64 = 1_000_000;
+/// Demo sim step. Wall and capture both advance 20 ms per tick.
+pub const DEMO_TICK_NS: u64 = 20_000_000;
+/// If self runs more than two demo ticks ahead of producer `t`, snap back.
+pub const SELF_AHEAD_SNAP_NS: u64 = 2 * DEMO_TICK_NS;
 
 /// Align `cursor` onto demo/capture `live_edge` (never newest_end of pid 2/3).
-/// Catch up if the edge is ahead; snap back if the cursor ran >50 ms past it.
+/// No producer clock (`live_edge == 0`) → stay at 0 so we do not walk an
+/// independent axis. Catch up when behind; snap back when ahead by >2 ticks.
+/// Within one tick, keep `cursor` so sequential frames do not overlap.
 pub fn align_self_cursor(cursor: u64, live_edge: u64) -> u64 {
-    if live_edge > cursor {
+    if live_edge == 0 {
+        return 0;
+    }
+    if cursor < live_edge {
         live_edge
-    } else if live_edge > 0 && cursor > live_edge.saturating_add(SELF_AHEAD_SNAP_NS) {
+    } else if cursor > live_edge.saturating_add(SELF_AHEAD_SNAP_NS) {
         live_edge
     } else {
         cursor
     }
 }
 
-/// Sequential self-profile placement. `live_edge` is demo/capture end only.
-/// The batch occupies `[cursor, cursor+span)` and `cursor` advances by `span`.
+/// Sequential self-profile placement on the producer clock only.
+/// Empty when `live_edge == 0` (no demo/capture axis yet).
 pub fn place_self_batch(
     cursor: &mut u64,
     scopes: &[RelScope],
     live_edge: u64,
 ) -> Vec<LiveEvent> {
     let span = batch_span(scopes);
-    if span == 0 {
+    if span == 0 || live_edge == 0 {
         return Vec::new();
     }
     *cursor = align_self_cursor(*cursor, live_edge);
@@ -311,7 +320,20 @@ mod tests {
             align_self_cursor(10_000_000 + SELF_AHEAD_SNAP_NS + 1, 10_000_000),
             10_000_000
         );
-        assert_eq!(align_self_cursor(80_000_000, 0), 80_000_000);
+        assert_eq!(align_self_cursor(80_000_000, 0), 0);
+        assert!(place_self_batch(
+            &mut 80_000_000u64,
+            &[RelScope {
+                pid: VIEWER_PID,
+                tid: TID_UI,
+                name_id: NAME_FRAME,
+                start_rel_ns: 0,
+                duration_ns: 1_000,
+                depth: 0,
+            }],
+            0
+        )
+        .is_empty());
         let mut cursor = 80_000_000u64;
         let ev = place_self_batch(
             &mut cursor,
@@ -327,6 +349,50 @@ mod tests {
         );
         assert_eq!(ev[0].start_ns, 10_000_000);
         assert_eq!(cursor, 10_001_000);
+    }
+
+    fn frame_scope(dur: u64) -> RelScope {
+        RelScope {
+            pid: VIEWER_PID,
+            tid: TID_UI,
+            name_id: NAME_FRAME,
+            start_rel_ns: 0,
+            duration_ns: dur,
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn self_batches_stay_on_demo_clock_after_n_ticks() {
+        let n = 8u64;
+        let demo_t0 = DEMO_ORIGIN_NS;
+        let mut demo_t = demo_t0;
+        for _ in 0..n {
+            demo_t += DEMO_TICK_NS;
+        }
+        let mut cursor = DEMO_ORIGIN_NS;
+        let first = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
+        let second = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
+        let hi = demo_t.saturating_add(2 * DEMO_TICK_NS);
+        for ev in first.iter().chain(second.iter()) {
+            assert!(
+                ev.start_ns >= demo_t0 && ev.start_ns <= hi,
+                "self {} outside [{demo_t0}, {hi}] (demo_t={demo_t})",
+                ev.start_ns
+            );
+        }
+        assert!(!first.is_empty());
+        assert!(!second.is_empty());
+        assert!(first[0].end_ns() <= second[0].start_ns);
+    }
+
+    #[test]
+    fn demo_restart_resets_self_origin() {
+        let mut cursor = 80_000_000u64;
+        let _ = place_self_batch(&mut cursor, &[frame_scope(1_000)], 80_000_000);
+        cursor = DEMO_ORIGIN_NS;
+        let ev = place_self_batch(&mut cursor, &[frame_scope(1_000)], DEMO_ORIGIN_NS);
+        assert_eq!(ev[0].start_ns, DEMO_ORIGIN_NS);
     }
 
     #[test]

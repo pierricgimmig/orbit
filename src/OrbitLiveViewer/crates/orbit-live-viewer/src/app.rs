@@ -6,7 +6,8 @@ use eframe::egui::{
     StrokeKind, Ui, Vec2,
 };
 use orbit_live_event::dev::{
-    intern_self_names, is_self_pid, place_self_batch, NAME_APPLY_HL, NAME_CHROME, NAME_CLIP_LABELS,
+    intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
+    NAME_CLIP_LABELS,
     NAME_COLLECT_DRAG, NAME_COLLECT_INST, NAME_DRAIN_NET, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LOD,
     NAME_NET, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_RASTERIZE, NAME_SCALE_PPP,
     NAME_FPS, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_WASM_MEM,
@@ -467,8 +468,8 @@ impl OrbitLiveApp {
     fn start_record(&mut self) {
         self.error.clear();
         self.recording = true;
-        self.self_cursor_ns = 0;
-        self.live_edge_ns = 0;
+        self.self_cursor_ns = DEMO_ORIGIN_NS;
+        self.live_edge_ns = DEMO_ORIGIN_NS;
         self.net.start_demo();
         if !self.dev_locked_off {
             intern_self_names(&mut self.intern);
@@ -553,6 +554,9 @@ impl OrbitLiveApp {
         if s.self_profile && !self.dev {
             intern_self_names(&mut self.intern);
             self.dev = true;
+        }
+        if s.live_end_ns > 0 {
+            self.live_edge_ns = self.live_edge_ns.max(s.live_end_ns);
         }
         self.status = s;
         self.error.clear();
@@ -643,12 +647,13 @@ impl OrbitLiveApp {
             LiveFrame::InternedString { id, text } => {
                 self.intern.insert_id(id, &text);
             }
-            LiveFrame::CaptureStarted { .. } => {
+            LiveFrame::CaptureStarted { start_ns, .. } => {
                 self.index.clear();
                 self.selected = None;
                 self.hover = None;
-                self.self_cursor_ns = 0;
-                self.live_edge_ns = 0;
+                let origin = if start_ns > 0 { start_ns } else { DEMO_ORIGIN_NS };
+                self.self_cursor_ns = origin;
+                self.live_edge_ns = origin;
             }
             LiveFrame::Status {
                 capturing,
@@ -672,6 +677,7 @@ impl OrbitLiveApp {
                     produced,
                     oldest_start_ns,
                     newest_end_ns,
+                    live_end_ns: 0,
                     ring_bytes,
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
@@ -2118,10 +2124,15 @@ impl eframe::App for OrbitLiveApp {
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
             let live_edge = self.live_edge_ns;
-            for ev in place_self_batch(&mut self.self_cursor_ns, &scopes, live_edge) {
+            let placed = place_self_batch(&mut self.self_cursor_ns, &scopes, live_edge);
+            let sample_t = placed
+                .first()
+                .map(|e| e.start_ns)
+                .unwrap_or(live_edge)
+                .max(1);
+            for ev in placed {
                 self.index.insert(ev);
             }
-            let sample_t = self.self_cursor_ns.max(live_edge).max(1);
             self.index.insert(LiveEvent::from_value(
                 sample_t,
                 VIEWER_PID,

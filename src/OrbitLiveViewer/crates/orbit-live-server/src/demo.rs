@@ -139,9 +139,9 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
     let svc = Arc::clone(svc);
     let _ = scopes_per_sec;
     tokio::spawn(async move {
-        let mut t = 1_000_000u64;
+        let mut t = orbit_live_event::dev::DEMO_ORIGIN_NS;
         let period = Duration::from_millis(20);
-        let tick_ns = 20_000_000u64;
+        let tick_ns = orbit_live_event::dev::DEMO_TICK_NS;
         svc.mark_capture_started(DEMO_PID, t);
         loop {
             if rx.try_recv().is_ok() {

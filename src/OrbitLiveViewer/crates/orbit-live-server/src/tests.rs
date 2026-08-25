@@ -431,6 +431,60 @@ fn capture_started_resets_self_cursor_onto_demo_t() {
 }
 
 #[test]
+fn self_batches_after_demo_ticks_stay_on_demo_clock() {
+    use orbit_live_event::dev::{
+        RelScope, DEMO_ORIGIN_NS, DEMO_TICK_NS, NAME_FRAME, VIEWER_PID,
+    };
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    let n = 8u64;
+    let mut demo_t = DEMO_ORIGIN_NS;
+    svc.mark_capture_started(1, demo_t);
+    for i in 0..n {
+        demo_t = DEMO_ORIGIN_NS + (i + 1) * DEMO_TICK_NS;
+        svc.push_events(&[LiveEvent {
+            start_ns: demo_t,
+            duration_ns: DEMO_TICK_NS,
+            tid: 100,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 1,
+        }]);
+    }
+    let mk = || RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 5_000_000,
+        depth: 0,
+    };
+    svc.apply_self_scopes(&[mk()]);
+    svc.apply_self_scopes(&[mk()]);
+    let self_evs: Vec<_> = svc
+        .ring()
+        .snapshot()
+        .1
+        .into_iter()
+        .filter(|e| e.pid == VIEWER_PID)
+        .collect();
+    let hi = demo_t.saturating_add(2 * DEMO_TICK_NS);
+    assert_eq!(self_evs.len(), 2);
+    for e in &self_evs {
+        assert!(
+            e.start_ns >= DEMO_ORIGIN_NS && e.start_ns <= hi,
+            "self {} outside [{}, {hi}] demo_t={demo_t}",
+            e.start_ns,
+            DEMO_ORIGIN_NS
+        );
+    }
+}
+
+#[test]
 fn timeline_cache_skips_rebuild_when_view_and_data_gen_match() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.disable_self_profile();

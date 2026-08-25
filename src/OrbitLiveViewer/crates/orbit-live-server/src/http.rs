@@ -88,6 +88,8 @@ struct StatusBody {
     produced: u64,
     oldest_start_ns: u64,
     newest_end_ns: u64,
+    /// Demo/capture end only. Not ring newest_end (pid 2/3).
+    live_end_ns: u64,
     ring_bytes: u64,
     spill_path: Option<String>,
     http_bind: String,
@@ -109,6 +111,7 @@ impl StatusBody {
             produced: stats.produced,
             oldest_start_ns: stats.oldest_start_ns,
             newest_end_ns: stats.newest_end_ns,
+            live_end_ns: svc.live_end_ns(),
             ring_bytes: stats.bytes_capacity,
             spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
             http_bind: cfg.bind.to_string(),

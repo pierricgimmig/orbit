@@ -22,6 +22,9 @@ pub struct StatusJson {
     #[serde(default)]
     #[allow(dead_code)]
     pub newest_end_ns: u64,
+    /// Demo/capture producer clock. Not ring newest_end (pid 2/3).
+    #[serde(default)]
+    pub live_end_ns: u64,
     #[serde(default)]
     pub ring_bytes: u64,
     pub spill_path: Option<String>,

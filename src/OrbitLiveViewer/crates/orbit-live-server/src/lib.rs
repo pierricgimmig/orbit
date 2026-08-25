@@ -254,10 +254,11 @@ impl LiveService {
         }
         self.ensure_self_names();
         let span = batch_span(scopes);
-        if span == 0 {
+        let live_edge = self.live_edge_ns();
+        if span == 0 || live_edge == 0 {
             return;
         }
-        let origin = self.take_self_origin(span, self.live_edge_ns());
+        let origin = self.take_self_origin(span, live_edge);
         let events = stamp_batch_from(scopes, origin);
         if events.is_empty() {
             return;
@@ -396,7 +397,7 @@ impl LiveService {
 
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         self.capturing.store(true, Ordering::Relaxed);
-        self.self_cursor_ns.store(0, Ordering::Relaxed);
+        self.self_cursor_ns.store(start_ns, Ordering::Relaxed);
         self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
     }
