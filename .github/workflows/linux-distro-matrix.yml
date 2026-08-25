@@ -1,0 +1,162 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+#
+# Compatibility matrix: bazel build //src/Service:OrbitService inside a
+# real Docker userspace for every listed distro version.
+#
+# Triggers (there is NO pull_request or push trigger):
+#   - schedule: 07:00 UTC nightly, same as build-and-test.yml. A gate job
+#     no-ops when relevant paths are unchanged since the last completed
+#     run of this workflow on main.
+#   - workflow_dispatch: always runs. To test a PR, open Actions →
+#     linux-distro-matrix → Run workflow and pick the PR's branch.
+
+name: linux-distro-matrix
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: 'Limit to one distro (ubuntu, debian, fedora, rocky, almalinux, opensuse, alpine, amazonlinux, arch). Empty = every distro.'
+        required: false
+        default: ''
+        type: string
+      version:
+        description: 'Limit to one version (e.g. 22.04 or 44). Empty = every version of the selected distro(s).'
+        required: false
+        default: ''
+        type: string
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      reason: ${{ steps.decide.outputs.reason }}
+      baseline: ${{ steps.decide.outputs.baseline }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      WORKFLOW_FILE: linux-distro-matrix.yml
+      GATE_BRANCH: main
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+      - name: Decide whether to run the matrix
+        id: decide
+        run: ci/linux/gate.sh '${{ github.event_name }}'
+
+  prepare:
+    name: prepare-matrix
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      cells: ${{ steps.filter.outputs.cells }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Filter versions
+        id: filter
+        env:
+          DISTRO_FILTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.distro || '' }}
+          VERSION_FILTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
+        run: |
+          cells="$(ci/linux/filter-matrix.sh "${DISTRO_FILTER}" "${VERSION_FILTER}")"
+          echo "cells=${cells}" >> "${GITHUB_OUTPUT}"
+          echo "Matrix cells: $(echo "${cells}" | jq 'length')"
+
+  build:
+    name: ${{ matrix.distro }} ${{ matrix.version }}
+    needs: [gate, prepare]
+    if: needs.gate.outputs.run == 'true' && needs.prepare.outputs.cells != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.cells) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: '0'
+
+      - name: Mount Bazel cache
+        if: matrix.cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/orbit-ci/bazel-disk
+            ~/.cache/orbit-ci/bazel-repo
+            ~/.cache/orbit-ci/bazelisk
+          key: bazel-${{ matrix.distro }}-${{ matrix.version }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ matrix.distro }}-${{ matrix.version }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
+            bazel-${{ matrix.distro }}-${{ matrix.version }}-
+
+      - name: Build OrbitService in ${{ matrix.distro }} ${{ matrix.version }}
+        env:
+          DISTRO: ${{ matrix.distro }}
+          VERSION: ${{ matrix.version }}
+          CODENAME: ${{ matrix.codename }}
+          IMAGE: ${{ matrix.image }}
+          IMAGE_ALT: ${{ matrix.image_alt }}
+        run: ci/linux/run-job.sh
+
+      - name: Job summary
+        if: success() || failure()
+        run: |
+          file="ci-results/${{ matrix.distro }}-${{ matrix.version }}.json"
+          if [[ -f "${file}" ]]; then
+            echo "### ${{ matrix.distro }} ${{ matrix.version }}" >> "${GITHUB_STEP_SUMMARY}"
+            jq -r '"Status: **\(.status)**  ", "Error: \(.error)"' "${file}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: ci-result-${{ matrix.distro }}-${{ matrix.version }}
+          path: ci-results/${{ matrix.distro }}-${{ matrix.version }}.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  summarize:
+    name: summarize
+    needs: [gate, prepare, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        if: needs.gate.outputs.run == 'true'
+
+      - name: Skipped (no relevant changes)
+        if: needs.gate.outputs.run != 'true'
+        run: |
+          echo "no changes since \`${{ needs.gate.outputs.baseline }}\`, skipped" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Download results
+        if: needs.gate.outputs.run == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-result-*
+          path: ci-results
+          merge-multiple: true
+
+      - name: Write summary table
+        if: needs.gate.outputs.run == 'true'
+        run: ci/linux/summarize.sh ci-results

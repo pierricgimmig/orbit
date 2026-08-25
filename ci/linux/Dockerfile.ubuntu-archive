@@ -1,0 +1,27 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+#
+# Materialize an Ubuntu userspace when Docker Hub no longer has ubuntu:YY.MM.
+# Debootstrap from old-releases.ubuntu.com (or archive.ubuntu.com).
+
+FROM ubuntu:24.04 AS bootstrap
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG SUITE=cosmic
+ARG MIRROR=http://old-releases.ubuntu.com/ubuntu
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        debootstrap \
+        ca-certificates \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN debootstrap --variant=minbase --arch=amd64 --no-check-gpg \
+        "${SUITE}" /rootfs "${MIRROR}"
+
+FROM scratch
+COPY --from=bootstrap /rootfs /
+ENV DEBIAN_FRONTEND=noninteractive
+CMD ["/bin/bash"]
