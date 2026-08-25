@@ -1848,39 +1848,46 @@ fn page_is_fullscreen(ctx: &Context) -> bool {
 }
 
 fn set_page_fullscreen(ctx: &Context, on: bool) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = ctx;
         let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
             return;
         };
         if on {
-            if let Some(el) = doc.document_element() {
+            // Click lands on the eframe canvas; request on that element first
+            // (documentElement is the fallback the page contract asked for).
+            let el = doc
+                .get_element_by_id("the_canvas_id")
+                .or_else(|| doc.document_element());
+            if let Some(el) = el {
                 let _ = el.request_fullscreen();
             }
         } else {
             doc.exit_fullscreen();
         }
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
-    }
 }
 
 fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
-    let size = Vec2::new(28.0, 22.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let fill = if on { theme::ACCENT } else { theme::TRACK };
-    ui.painter().rect_filled(rect, 4.0, fill);
-    if !on {
-        ui.painter().rect_stroke(
-            rect,
-            4.0,
-            Stroke::new(1.0, theme::HAIR),
-            StrokeKind::Inside,
-        );
-    }
+    let resp = ui
+        .add(
+            egui::Button::new(RichText::new(" ").size(1.0))
+                .fill(fill)
+                .stroke(if on {
+                    Stroke::NONE
+                } else {
+                    Stroke::new(1.0, theme::HAIR)
+                })
+                .min_size(Vec2::new(28.0, 22.0))
+                .corner_radius(4),
+        )
+        .on_hover_text(if on {
+            "Exit fullscreen"
+        } else {
+            "Enter fullscreen"
+        });
     let color = if on {
         theme::CANVAS
     } else if resp.hovered() {
@@ -1888,12 +1895,8 @@ fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
     } else {
         theme::MUTED
     };
-    paint_fullscreen_icon(ui.painter(), rect, on, color);
-    resp.on_hover_text(if on {
-        "Exit fullscreen"
-    } else {
-        "Enter fullscreen"
-    })
+    paint_fullscreen_icon(ui.painter(), resp.rect, on, color);
+    resp
 }
 
 fn paint_fullscreen_icon(painter: &egui::Painter, rect: Rect, compressed: bool, color: Color32) {
