@@ -102,8 +102,7 @@ pub fn intern_demo_names(svc: &LiveService) {
         (500, "Render"),
         (501, "Cull"),
         (502, "Draw"),
-        (600, "sine"),
-        (601, "cosine"),
+        (600, "values"),
     ] {
         svc.intern_id(tid, name);
     }
@@ -173,13 +172,15 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                 5_100,
                 phase.sin() as f32,
             ));
-            events.push(LiveEvent::from_value(
+            let mut cosine = LiveEvent::from_value(
                 t,
                 DEMO_PID,
-                601,
+                600,
                 5_101,
                 phase.cos() as f32,
-            ));
+            );
+            cosine.extra = 1;
+            events.push(cosine);
             for (i, _name) in DEMO_ASYNC_NAMES.iter().enumerate() {
                 events.push(LiveEvent {
                     start_ns: t + 1_000_000 + (i as u64) * 4_000_000,

@@ -1773,6 +1773,9 @@ impl OrbitLiveApp {
     }
 
     fn zoom_to_scope(&mut self, pick: ScopePick) {
+        if pick.kind == kind::VALUE {
+            return;
+        }
         let start = pick.start_ns as f64;
         let end = start + pick.duration_ns.max(1) as f64;
         let (t0, t1) = zoom_scope_window(start, end);
@@ -1801,6 +1804,18 @@ impl OrbitLiveApp {
     }
 
     fn pick_at(&self, x: f32, y: f32, t0: u64, t1: u64, width: f32) -> Option<ScopePick> {
+        if let Some(v) = pick_value_at(
+            &self.index,
+            self.tracks.layout(),
+            t0,
+            t1,
+            width,
+            x,
+            y,
+            self.tracks.scale,
+        ) {
+            return Some(v);
+        }
         if self.last_lod == orbit_live_render::TimelineLod::Instanced
             && !self.last_instances.is_empty()
         {
@@ -1818,6 +1833,7 @@ impl OrbitLiveApp {
             self.tracks.scale,
         )
         .map(ScopePick::from_event)
+        .filter(|p| p.kind != kind::VALUE)
     }
 
     fn nudge_selection(&mut self, dir: isize) {
@@ -2512,12 +2528,75 @@ fn paint_playhead(ui: &Ui, rect: Rect, t0: f64, t1: f64, play_t: f64) {
     );
 }
 
+fn format_value_pick(intern: &InternTable, pick: ScopePick) -> Option<String> {
+    if pick.kind != kind::VALUE {
+        return None;
+    }
+    let v = f32::from_bits(pick.duration_ns as u32);
+    if intern.get(pick.name_id) == Some("wasm_mem") {
+        return Some(fmt_bytes(v));
+    }
+    if intern.get(pick.name_id) == Some("fps") {
+        return Some(format!("{v:.1}"));
+    }
+    Some(format!("{v:.2}"))
+}
+
+fn pick_value_at(
+    index: &TrackIndex,
+    layout: &[(LaneKey, f32)],
+    t0: u64,
+    t1: u64,
+    width: f32,
+    x: f32,
+    y: f32,
+    scale: f32,
+) -> Option<ScopePick> {
+    if width <= 0.0 || t1 <= t0 {
+        return None;
+    }
+    let s = scale.max(0.01);
+    let key = layout.iter().find_map(|(k, ly)| {
+        if k.kind != kind::VALUE {
+            return None;
+        }
+        let h = lane_height(*k) * s;
+        if y >= *ly && y < *ly + h {
+            Some(*k)
+        } else {
+            None
+        }
+    })?;
+    let lane = index.lane(key)?;
+    let span = (t1 - t0) as f64;
+    let t = t0.saturating_add((x.max(0.0) as f64 / width as f64 * span) as u64);
+    let mut i = lane.first_ending_after(t.saturating_sub(1));
+    let mut best: Option<(u64, LiveEvent)> = None;
+    while let Some(e) = lane.events().get(i) {
+        if e.start_ns >= t1 {
+            break;
+        }
+        if e.kind == kind::VALUE {
+            let dist = e.start_ns.abs_diff(t);
+            if best.map(|(d, _)| dist < d).unwrap_or(true) {
+                best = Some((dist, *e));
+            }
+            if e.start_ns >= t {
+                break;
+            }
+        }
+        i += 1;
+    }
+    best.map(|(_, e)| ScopePick::from_event(e))
+}
+
 fn show_scope_tooltip(ui: &Ui, intern: &InternTable, pick: ScopePick) {
     let name = intern
         .get(pick.name_id)
         .map(str::to_string)
         .unwrap_or_else(|| format!("#{}", pick.name_id));
-    let dur = format_ns(pick.duration_ns as f64);
+    let dur = format_value_pick(intern, pick)
+        .unwrap_or_else(|| format_ns(pick.duration_ns as f64));
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -2955,5 +3034,31 @@ mod tests {
         assert_eq!(count_visible_scopes(&idx, &layout, 90, 160), 1);
         assert_eq!(count_visible_scopes(&idx, &layout, 90, 400), 2);
         assert_eq!(count_visible_scopes(&idx, &[], 90, 400), 0);
+    }
+
+    #[test]
+    fn value_tooltip_uses_human_units_not_duration_bits() {
+        let mut intern = InternTable::default();
+        intern.insert_id(30_023, "fps");
+        intern.insert_id(30_024, "wasm_mem");
+        intern.insert_id(5_100, "sine");
+        let fps = ScopePick::from_event(LiveEvent::from_value(10, 2, 5, 30_023, 60.1));
+        let mem = ScopePick::from_event(LiveEvent::from_value(
+            10,
+            2,
+            5,
+            30_024,
+            12.4 * 1024.0 * 1024.0,
+        ));
+        let sine = ScopePick::from_event(LiveEvent::from_value(10, 1, 600, 5_100, 0.42));
+        assert_eq!(format_value_pick(&intern, fps).as_deref(), Some("60.1"));
+        assert_eq!(format_value_pick(&intern, mem).as_deref(), Some("12.4 MiB"));
+        assert_eq!(format_value_pick(&intern, sine).as_deref(), Some("0.42"));
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent::from_value(1_000, 1, 600, 5_100, 0.25));
+        let key = idx.lanes().next().unwrap().0;
+        let hit = pick_value_at(&idx, &[(key, 0.0)], 0, 2_000, 100.0, 50.0, 10.0, 1.0);
+        assert_eq!(hit.map(|p| p.name_id), Some(5_100));
+        assert_eq!(hit.map(|p| p.kind), Some(kind::VALUE));
     }
 }
