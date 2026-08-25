@@ -86,15 +86,15 @@ impl Drop for DevScope<'_> {
             .saturating_sub(inner.origin_ns)
             .saturating_sub(self.start_rel);
         inner.stack.borrow_mut().pop();
-        if dur == 0 {
-            return;
-        }
+        // Keep a 1 ns floor so a clock that does not tick still emits the
+        // scope. Skipping duration-0 scopes made d1/d2 lanes appear and
+        // vanish between frames and jumped the thread block height.
         inner.scopes.borrow_mut().push(RelScope {
             pid: VIEWER_PID,
             tid: self.tid,
             name_id: self.name_id,
             start_rel_ns: self.start_rel,
-            duration_ns: dur,
+            duration_ns: dur.max(1),
             depth: self.depth,
         });
     }
@@ -165,6 +165,17 @@ mod tests {
         assert_eq!(scopes[1].depth, 0);
         assert_eq!(scopes[1].pid, VIEWER_PID);
         assert!(scopes[1].duration_ns >= scopes[0].duration_ns);
+    }
+
+    #[test]
+    fn zero_duration_scope_still_emits() {
+        let frame = DevFrame::begin(true);
+        {
+            let _s = frame.scope(TID_UI, NAME_FRAME);
+        }
+        let scopes = frame.finish();
+        assert_eq!(scopes.len(), 1);
+        assert!(scopes[0].duration_ns >= 1);
     }
 
     #[test]

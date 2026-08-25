@@ -18,6 +18,41 @@ use crate::{color_mode, kind, InternTable, LiveEvent};
 
 pub const VIEWER_PID: u32 = 2;
 pub const SERVICE_PID: u32 = 3;
+
+/// Spoofed remote-demo pids. LiveEvent has no machine field — the rail maps
+/// pid ranges. Do not reuse 2/3.
+pub const REMOTE_DEMO_PID: u32 = 20;
+pub const REMOTE_RENDER_PID: u32 = 21;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MachineId {
+    Local,
+    Remote,
+}
+
+impl MachineId {
+    pub fn from_pid(pid: u32) -> Self {
+        match pid {
+            REMOTE_DEMO_PID | REMOTE_RENDER_PID => Self::Remote,
+            _ => Self::Local,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+        }
+    }
+
+    pub fn sort_key(self) -> u8 {
+        match self {
+            Self::Local => 0,
+            Self::Remote => 1,
+        }
+    }
+}
+
 pub const VIEWER_NAME: &str = "orbit-live-viewer";
 pub const SERVICE_NAME: &str = "orbit-live-service";
 
@@ -228,6 +263,13 @@ mod tests {
         assert!(is_self_pid(VIEWER_PID));
         assert!(is_self_pid(SERVICE_PID));
         assert!(!is_self_pid(1));
+        assert!(!is_self_pid(REMOTE_DEMO_PID));
+        assert_eq!(MachineId::from_pid(1), MachineId::Local);
+        assert_eq!(MachineId::from_pid(VIEWER_PID), MachineId::Local);
+        assert_eq!(MachineId::from_pid(REMOTE_DEMO_PID), MachineId::Remote);
+        assert_eq!(MachineId::from_pid(REMOTE_RENDER_PID), MachineId::Remote);
+        assert_ne!(REMOTE_DEMO_PID, VIEWER_PID);
+        assert_ne!(REMOTE_RENDER_PID, SERVICE_PID);
     }
 
     #[test]

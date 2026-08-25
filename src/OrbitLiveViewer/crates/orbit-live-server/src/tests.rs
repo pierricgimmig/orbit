@@ -288,6 +288,8 @@ fn demo_emits_three_processes_not_self_pids() {
     assert!(json.contains("orbit-audio"));
     assert!(json.contains("\"pid\":10"));
     assert!(json.contains("\"pid\":11"));
+    assert!(json.contains("\"pid\":20"));
+    assert!(json.contains("\"pid\":21"));
     assert!(!json.contains("\"pid\":2"));
     assert!(!json.contains("\"pid\":3"));
 }

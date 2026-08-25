@@ -291,6 +291,8 @@ pub struct OrbitLiveApp {
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
     self_cursor_ns: u64,
+    fps_ema: f32,
+    fullscreen: bool,
     needs_repaint: bool,
     compact: bool,
     advanced: bool,
@@ -361,6 +363,8 @@ impl OrbitLiveApp {
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
             self_cursor_ns: 0,
+            fps_ema: 0.0,
+            fullscreen: false,
             needs_repaint: false,
             compact: false,
             advanced: false,
@@ -400,6 +404,27 @@ impl OrbitLiveApp {
 
     fn wants_live_repaint(&self) -> bool {
         live_repaint(self.status.demo, self.status.capturing, self.tracks.dragging())
+    }
+
+    fn note_fps(&mut self, dt: f32) {
+        if dt <= 0.0 {
+            return;
+        }
+        let inst = 1.0 / dt;
+        if self.fps_ema <= 0.0 {
+            self.fps_ema = inst;
+        } else {
+            self.fps_ema = self.fps_ema * 0.85 + inst * 0.15;
+        }
+    }
+
+    fn sync_fullscreen(&mut self, ctx: &Context) {
+        self.fullscreen = page_is_fullscreen(ctx);
+    }
+
+    fn set_fullscreen(&mut self, ctx: &Context, on: bool) {
+        set_page_fullscreen(ctx, on);
+        self.fullscreen = on;
     }
 
     fn toggle_dev(&mut self) {
@@ -644,12 +669,22 @@ impl OrbitLiveApp {
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
+                if fullscreen_pill(ui, self.fullscreen).clicked() {
+                    self.set_fullscreen(ui.ctx(), !self.fullscreen);
+                }
                 if icon_pill(ui, if self.compact { "≡" } else { "☰" }, "Track density").clicked()
                 {
                     self.compact = !self.compact;
                 }
                 if icon_pill(ui, "···", "Inspector").clicked() {
                     self.advanced = !self.advanced;
+                }
+                if self.fps_ema > 0.0 {
+                    ui.label(
+                        RichText::new(format!("{:.0} fps", self.fps_ema))
+                            .font(FontId::monospace(11.0))
+                            .color(theme::MUTED),
+                    );
                 }
             });
         });
@@ -808,9 +843,6 @@ impl OrbitLiveApp {
 
     fn timeline(&mut self, ui: &mut Ui, dt: f32, dev: &DevFrame) {
         self.tracks.scale = if self.compact { 0.72 } else { 1.0 };
-        if !self.status.machine.is_empty() {
-            self.tracks.machine = self.status.machine.clone();
-        }
         self.refresh_search();
         let filter = self
             .selected_pid
@@ -1055,7 +1087,7 @@ impl OrbitLiveApp {
                 let band = Rect::from_min_max(
                     Pos2::new(head.left(), r.top()),
                     Pos2::new(
-                        if matches!(row.id, RowId::Machine) {
+                        if matches!(row.id, RowId::Machine(_)) {
                             r.right()
                         } else {
                             body.right()
@@ -1114,16 +1146,16 @@ impl OrbitLiveApp {
 
     fn paint_tree_row(&mut self, ui: &mut Ui, head: Rect, row: TrackRow, r: Rect) {
         match row.id {
-            RowId::Machine => {
+            RowId::Machine(m) => {
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 8.0, open, ("m", 0u32, 0u32)) {
+                if chevron(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32)) {
                     self.tracks.toggle(row.id);
                     self.mark_layout_changed();
                 }
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
                     Align2::LEFT_CENTER,
-                    format!("MACHINE  {}", self.tracks.machine.to_uppercase()),
+                    format!("MACHINE  {}", m.label().to_uppercase()),
                     FontId::new(9.5, fonts::medium()),
                     theme::MUTED,
                 );
@@ -1646,7 +1678,10 @@ impl eframe::App for OrbitLiveApp {
         {
             let _frame_scope = devf.scope(TID_UI, NAME_FRAME);
             apply_orbit_visuals(ctx);
-            let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.05);
+            let dt_raw = ctx.input(|i| i.stable_dt);
+            let dt = dt_raw.clamp(0.0, 0.05);
+            self.note_fps(dt_raw);
+            self.sync_fullscreen(ctx);
             {
                 let _net = devf.scope(TID_NET, NAME_NET);
                 self.drain_net();
@@ -1757,7 +1792,7 @@ fn section(ui: &mut Ui, label: &str) {
 
 fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
     match id {
-        RowId::Machine => theme::RAIL,
+        RowId::Machine(_) => theme::RAIL,
         RowId::Process(pid) => theme::process_track_wash_role(pid, theme::WashRole::Process),
         RowId::Thread(t) => {
             if dragging {
@@ -1795,6 +1830,102 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         .min_size(Vec2::new(0.0, 22.0))
         .corner_radius(4),
     )
+}
+
+fn page_is_fullscreen(ctx: &Context) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.fullscreen_element())
+            .is_some()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))
+    }
+}
+
+fn set_page_fullscreen(ctx: &Context, on: bool) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = ctx;
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+            return;
+        };
+        if on {
+            if let Some(el) = doc.document_element() {
+                let _ = el.request_fullscreen();
+            }
+        } else {
+            doc.exit_fullscreen();
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+    }
+}
+
+fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
+    let size = Vec2::new(28.0, 22.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let fill = if on { theme::ACCENT } else { theme::TRACK };
+    ui.painter().rect_filled(rect, 4.0, fill);
+    if !on {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0, theme::HAIR),
+            StrokeKind::Inside,
+        );
+    }
+    let color = if on {
+        theme::CANVAS
+    } else if resp.hovered() {
+        theme::TEXT
+    } else {
+        theme::MUTED
+    };
+    paint_fullscreen_icon(ui.painter(), rect, on, color);
+    resp.on_hover_text(if on {
+        "Exit fullscreen"
+    } else {
+        "Enter fullscreen"
+    })
+}
+
+fn paint_fullscreen_icon(painter: &egui::Painter, rect: Rect, compressed: bool, color: Color32) {
+    let stroke = Stroke::new(1.35, color);
+    let box_r = Rect::from_center_size(rect.center(), Vec2::splat(11.0));
+    let arm = 3.4;
+    let corners = if compressed {
+        let inner = box_r.shrink(2.2);
+        [
+            (inner.left_top(), -1.0, -1.0),
+            (inner.right_top(), 1.0, -1.0),
+            (inner.left_bottom(), -1.0, 1.0),
+            (inner.right_bottom(), 1.0, 1.0),
+        ]
+    } else {
+        [
+            (box_r.left_top(), 1.0, 1.0),
+            (box_r.right_top(), -1.0, 1.0),
+            (box_r.left_bottom(), 1.0, -1.0),
+            (box_r.right_bottom(), -1.0, -1.0),
+        ]
+    };
+    for (origin, dx, dy) in corners {
+        painter.line_segment(
+            [origin, origin + Vec2::new(dx * arm, 0.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [origin, origin + Vec2::new(0.0, dy * arm)],
+            stroke,
+        );
+    }
 }
 
 fn icon_pill(ui: &mut Ui, label: &str, tip: &str) -> egui::Response {

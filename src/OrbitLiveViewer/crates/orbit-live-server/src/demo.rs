@@ -60,15 +60,22 @@ pub fn scope_name_id(depth: u8, th: u32, slot: u32) -> u32 {
 }
 
 /// Dummy processes on the same capture clock. Pids 2/3 are reserved for
-/// viewer / service self-profile.
+/// viewer / service self-profile. Pids 20/21 spoof a second machine.
 pub const DEMO_PID: u32 = 1;
 pub const RENDER_PID: u32 = 10;
 pub const AUDIO_PID: u32 = 11;
+pub const REMOTE_DEMO_PID: u32 = orbit_live_event::dev::REMOTE_DEMO_PID;
+pub const REMOTE_RENDER_PID: u32 = orbit_live_event::dev::REMOTE_RENDER_PID;
 
 pub const DEMO_PROCESSES: &[(u32, &str)] = &[
     (DEMO_PID, "orbit-demo"),
     (RENDER_PID, "orbit-render"),
     (AUDIO_PID, "orbit-audio"),
+];
+
+pub const REMOTE_PROCESSES: &[(u32, &str)] = &[
+    (REMOTE_DEMO_PID, "orbit-demo"),
+    (REMOTE_RENDER_PID, "orbit-render"),
 ];
 
 pub fn intern_demo_names(svc: &LiveService) {
@@ -88,6 +95,13 @@ pub fn intern_demo_names(svc: &LiveService) {
         (301, "Mixer"),
         (302, "Decode"),
         (303, "Capture"),
+        (400, "Main"),
+        (401, "Worker-1"),
+        (402, "Worker-2"),
+        (403, "Worker-3"),
+        (500, "Render"),
+        (501, "Cull"),
+        (502, "Draw"),
     ] {
         svc.intern_id(tid, name);
     }
@@ -102,6 +116,7 @@ pub fn intern_demo_names(svc: &LiveService) {
 pub fn process_list_json() -> String {
     let list: Vec<serde_json::Value> = DEMO_PROCESSES
         .iter()
+        .chain(REMOTE_PROCESSES.iter())
         .map(|(pid, name)| serde_json::json!({"pid": pid, "name": name}))
         .collect();
     serde_json::to_string(&list).unwrap_or_else(|_| "[]".into())
@@ -130,7 +145,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                 break;
             }
             let start = Instant::now();
-            let mut events = Vec::with_capacity(28 * 16);
+            let mut events = Vec::with_capacity(40 * 16);
             for th in 0..16 {
                 push_thread_tick(&mut events, t, DEMO_PID, 100 + th, th);
             }
@@ -139,6 +154,12 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
             }
             for (i, tid) in [300u32, 301, 302, 303].into_iter().enumerate() {
                 push_thread_tick(&mut events, t, AUDIO_PID, tid, i as u32 + 8);
+            }
+            for (i, tid) in [400u32, 401, 402, 403].into_iter().enumerate() {
+                push_thread_tick(&mut events, t, REMOTE_DEMO_PID, tid, i as u32);
+            }
+            for (i, tid) in [500u32, 501, 502].into_iter().enumerate() {
+                push_thread_tick(&mut events, t, REMOTE_RENDER_PID, tid, i as u32 + 4);
             }
             for (i, _name) in DEMO_ASYNC_NAMES.iter().enumerate() {
                 events.push(LiveEvent {

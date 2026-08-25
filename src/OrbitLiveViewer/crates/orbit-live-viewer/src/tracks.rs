@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use orbit_live_event::dev::{is_self_pid, MachineId};
 use orbit_live_event::LaneKey;
 use orbit_live_render::{lane_gap, lane_height, sort_thread_leaves, TrackIndex};
 
@@ -22,7 +23,7 @@ pub struct ThreadId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RowId {
-    Machine,
+    Machine(MachineId),
     Process(u32),
     Thread(ThreadId),
     Lane(LaneKey),
@@ -39,7 +40,6 @@ pub struct TrackStrip {
     pub thread_order: Vec<ThreadId>,
     pub process_order: Vec<u32>,
     pub scale: f32,
-    pub machine: String,
     collapsed: HashSet<RowId>,
     hidden: HashSet<ThreadId>,
     y: HashMap<RowId, f32>,
@@ -64,7 +64,6 @@ impl Default for TrackStrip {
             thread_order: Vec::new(),
             process_order: Vec::new(),
             scale: 1.0,
-            machine: "local".into(),
             collapsed: HashSet::new(),
             hidden: HashSet::new(),
             y: HashMap::new(),
@@ -86,7 +85,7 @@ impl TrackStrip {
         for (key, _) in index.lanes() {
             if let Some(pid) = filter_pid {
                 if key.pid != pid
-                    && !orbit_live_event::dev::is_self_pid(key.pid)
+                    && !is_self_pid(key.pid)
                     && index.lanes().any(|(k, _)| k.pid == pid)
                 {
                     continue;
@@ -104,48 +103,27 @@ impl TrackStrip {
             }
         }
         pids.sort_unstable();
-        pids.sort_by_key(|p| {
-            if *p == orbit_live_event::dev::VIEWER_PID {
-                0u8
-            } else if *p == orbit_live_event::dev::SERVICE_PID {
-                1
-            } else {
-                2
-            }
-        });
+        pids.sort_by_key(|p| (MachineId::from_pid(*p).sort_key(), process_rank(*p), *p));
         threads.sort_by_key(|t| {
-            let rank = if t.pid == orbit_live_event::dev::VIEWER_PID {
-                0u8
-            } else if t.pid == orbit_live_event::dev::SERVICE_PID {
-                1
-            } else {
-                2
-            };
-            (rank, t.pid, t.tid)
+            (
+                MachineId::from_pid(t.pid).sort_key(),
+                process_rank(t.pid),
+                t.pid,
+                t.tid,
+            )
         });
         self.process_order.retain(|p| pids.contains(p));
-        let multi_demo = pids
-            .iter()
-            .filter(|p| !orbit_live_event::dev::is_self_pid(**p))
-            .count()
-            >= 2;
+        let multi_demo = pids.iter().filter(|p| !is_self_pid(**p)).count() >= 2;
         for p in pids {
             if !self.process_order.contains(&p) {
                 self.process_order.push(p);
-                if multi_demo && !orbit_live_event::dev::is_self_pid(p) {
+                if multi_demo && !is_self_pid(p) {
                     self.collapsed.insert(RowId::Process(p));
                 }
             }
         }
-        self.process_order.sort_by_key(|p| {
-            if *p == orbit_live_event::dev::VIEWER_PID {
-                0u8
-            } else if *p == orbit_live_event::dev::SERVICE_PID {
-                1
-            } else {
-                2
-            }
-        });
+        self.process_order
+            .sort_by_key(|p| (MachineId::from_pid(*p).sort_key(), process_rank(*p), *p));
         self.thread_order.retain(|t| threads.contains(t));
         for t in threads {
             if !self.thread_order.contains(&t) {
@@ -239,7 +217,7 @@ impl TrackStrip {
 
     fn process_is_listed(&self, pid: u32) -> bool {
         if let Some(fp) = self.filter_pid {
-            if fp != pid && !orbit_live_event::dev::is_self_pid(pid) {
+            if fp != pid && !is_self_pid(pid) {
                 return false;
             }
         }
@@ -252,26 +230,45 @@ impl TrackStrip {
     /// headers + packed rest blocks, no hole).
     fn process_thread_list_y(&self, pid: u32) -> f32 {
         let s = self.scale.max(0.01);
-        if self.collapsed.contains(&RowId::Machine) {
-            return 0.0;
-        }
-        let mut y = MACHINE_H * s;
-        for &p in &self.process_order {
-            if !self.process_is_listed(p) {
+        let want = MachineId::from_pid(pid);
+        let mut y = 0.0;
+        for m in self.machines_present() {
+            y += MACHINE_H * s;
+            if self.collapsed.contains(&RowId::Machine(m)) {
                 continue;
             }
-            y += PROCESS_H * s;
-            if self.collapsed.contains(&RowId::Process(p)) {
-                continue;
+            for &p in &self.process_order {
+                if MachineId::from_pid(p) != m || !self.process_is_listed(p) {
+                    continue;
+                }
+                y += PROCESS_H * s;
+                if self.collapsed.contains(&RowId::Process(p)) {
+                    continue;
+                }
+                if p == pid {
+                    return y;
+                }
+                for t in self.process_rest(p) {
+                    y += self.thread_block_h(t);
+                }
             }
-            if p == pid {
+            if m == want {
                 return y;
-            }
-            for t in self.process_rest(p) {
-                y += self.thread_block_h(t);
             }
         }
         y
+    }
+
+    fn machines_present(&self) -> Vec<MachineId> {
+        let mut out = Vec::new();
+        for p in &self.process_order {
+            let m = MachineId::from_pid(*p);
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        out.sort_by_key(|m| m.sort_key());
+        out
     }
 
     fn drop_index_in_process(&self) -> usize {
@@ -498,7 +495,7 @@ impl TrackStrip {
     fn height_of(&self, id: RowId) -> f32 {
         let s = self.scale.max(0.01);
         match id {
-            RowId::Machine => MACHINE_H * s,
+            RowId::Machine(_) => MACHINE_H * s,
             RowId::Process(_) => PROCESS_H * s,
             RowId::Thread(_) => THREAD_H * s,
             RowId::Lane(k) => (lane_height(k) + lane_gap(k)) * s,
@@ -576,52 +573,67 @@ impl TrackStrip {
         if threads.is_empty() && self.process_order.is_empty() {
             return out;
         }
-        out.push((RowId::Machine, MACHINE_H * s));
-        if self.collapsed.contains(&RowId::Machine) {
-            return out;
-        }
         let has_filter = filter_pid
             .map(|pid| index.lanes().any(|(k, _)| k.pid == pid))
             .unwrap_or(false);
-        for &pid in &self.process_order {
-            if has_filter && filter_pid != Some(pid) && !orbit_live_event::dev::is_self_pid(pid) {
+        for m in self.machines_present() {
+            out.push((RowId::Machine(m), MACHINE_H * s));
+            if self.collapsed.contains(&RowId::Machine(m)) {
                 continue;
             }
-            if !index.lanes().any(|(k, _)| k.pid == pid) {
-                continue;
-            }
-            let keep_drag_proc = self
-                .drag
-                .as_ref()
-                .map(|d| d.thread.pid == pid && self.is_shown(d.thread))
-                .unwrap_or(false);
-            if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) && !keep_drag_proc {
-                continue;
-            }
-            out.push((RowId::Process(pid), PROCESS_H * s));
-            if self.collapsed.contains(&RowId::Process(pid)) {
-                continue;
-            }
-            for &th in threads {
-                if th.pid != pid || !self.is_shown(th) {
+            for &pid in &self.process_order {
+                if MachineId::from_pid(pid) != m {
                     continue;
                 }
-                out.push((RowId::Thread(th), THREAD_H * s));
-                if self.collapsed.contains(&RowId::Thread(th)) {
+                if has_filter && filter_pid != Some(pid) && !is_self_pid(pid) {
                     continue;
                 }
-                let mut leaves: Vec<LaneKey> = index
-                    .lanes()
-                    .map(|(k, _)| k)
-                    .filter(|k| k.pid == th.pid && k.tid == th.tid)
-                    .collect();
-                sort_thread_leaves(&mut leaves);
-                for k in leaves {
-                    out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+                if !index.lanes().any(|(k, _)| k.pid == pid) {
+                    continue;
+                }
+                let keep_drag_proc = self
+                    .drag
+                    .as_ref()
+                    .map(|d| d.thread.pid == pid && self.is_shown(d.thread))
+                    .unwrap_or(false);
+                if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) && !keep_drag_proc {
+                    continue;
+                }
+                out.push((RowId::Process(pid), PROCESS_H * s));
+                if self.collapsed.contains(&RowId::Process(pid)) {
+                    continue;
+                }
+                for &th in threads {
+                    if th.pid != pid || !self.is_shown(th) {
+                        continue;
+                    }
+                    out.push((RowId::Thread(th), THREAD_H * s));
+                    if self.collapsed.contains(&RowId::Thread(th)) {
+                        continue;
+                    }
+                    let mut leaves: Vec<LaneKey> = index
+                        .lanes()
+                        .map(|(k, _)| k)
+                        .filter(|k| k.pid == th.pid && k.tid == th.tid)
+                        .collect();
+                    sort_thread_leaves(&mut leaves);
+                    for k in leaves {
+                        out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+                    }
                 }
             }
         }
         out
+    }
+}
+
+fn process_rank(pid: u32) -> u8 {
+    if pid == orbit_live_event::dev::VIEWER_PID {
+        0
+    } else if pid == orbit_live_event::dev::SERVICE_PID {
+        1
+    } else {
+        2
     }
 }
 
@@ -706,6 +718,62 @@ mod tests {
             .rows()
             .iter()
             .any(|r| r.id == RowId::Process(11)));
+        assert!(strip
+            .rows()
+            .iter()
+            .any(|r| r.id == RowId::Machine(MachineId::Local)));
+        assert!(!strip
+            .rows()
+            .iter()
+            .any(|r| r.id == RowId::Machine(MachineId::Remote)));
+    }
+
+    #[test]
+    fn remote_machine_gets_its_own_header() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 100, 1));
+        idx.insert(scope(orbit_live_event::dev::REMOTE_DEMO_PID, 400, 1));
+        idx.insert(scope(orbit_live_event::dev::REMOTE_RENDER_PID, 500, 1));
+        idx.insert(scope(orbit_live_event::dev::VIEWER_PID, 1, 30_000));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        assert!(ids.contains(&RowId::Machine(MachineId::Local)));
+        assert!(ids.contains(&RowId::Machine(MachineId::Remote)));
+        let local_i = ids
+            .iter()
+            .position(|id| *id == RowId::Machine(MachineId::Local))
+            .unwrap();
+        let remote_i = ids
+            .iter()
+            .position(|id| *id == RowId::Machine(MachineId::Remote))
+            .unwrap();
+        assert!(local_i < remote_i, "local machine stays above remote");
+        assert!(strip.collapsed(RowId::Process(1)));
+        assert!(strip.collapsed(RowId::Process(orbit_live_event::dev::REMOTE_DEMO_PID)));
+        assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
+        let viewer_i = ids
+            .iter()
+            .position(|id| *id == RowId::Process(orbit_live_event::dev::VIEWER_PID))
+            .unwrap();
+        assert!(viewer_i > local_i && viewer_i < remote_i);
+    }
+
+    #[test]
+    fn collapse_remote_machine_hides_its_processes() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 100, 1));
+        idx.insert(scope(orbit_live_event::dev::REMOTE_DEMO_PID, 400, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        strip.toggle(RowId::Machine(MachineId::Remote));
+        strip.tick(1.0, &idx, None);
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        assert!(ids.contains(&RowId::Machine(MachineId::Remote)));
+        assert!(!ids.contains(&RowId::Process(orbit_live_event::dev::REMOTE_DEMO_PID)));
+        assert!(ids.contains(&RowId::Process(1)));
     }
 
     #[test]

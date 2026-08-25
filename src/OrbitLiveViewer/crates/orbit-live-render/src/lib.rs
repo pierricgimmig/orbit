@@ -633,6 +633,47 @@ mod tests {
     }
 
     #[test]
+    fn self_and_demo_scope_instances_share_height_and_radius() {
+        fn ev(pid: u32, depth: u8) -> LiveEvent {
+            LiveEvent {
+                start_ns: 0,
+                duration_ns: 1_000,
+                tid: 1,
+                pid,
+                kind: kind::API_SCOPE,
+                depth,
+                extra: 0,
+                _pad: 0,
+                name_id: 1,
+            }
+        }
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(1, 0));
+        idx.insert(ev(orbit_live_event::dev::VIEWER_PID, 0));
+        idx.insert(ev(1, 1));
+        idx.insert(ev(orbit_live_event::dev::VIEWER_PID, 1));
+        let frame = collect_instances(&idx, 0, 2_000, 100.0, 0.0, None);
+        for depth in [0u8, 1] {
+            let demo = frame
+                .instances
+                .iter()
+                .find(|i| i.pid == 1 && i.depth == depth)
+                .unwrap();
+            let slf = frame
+                .instances
+                .iter()
+                .find(|i| i.pid == orbit_live_event::dev::VIEWER_PID && i.depth == depth)
+                .unwrap();
+            let key = ev(1, depth).lane_key();
+            let expect_h = lane_height(key);
+            assert_eq!(demo.h, expect_h);
+            assert_eq!(slf.h, expect_h);
+            assert_eq!(demo.radius, slf.radius);
+            assert_eq!(demo.radius, (expect_h * 0.14).clamp(2.0, 3.0));
+        }
+    }
+
+    #[test]
     fn pick_instance_hits_topmost_and_flags_siblings() {
         let a = ScopeInstance {
             x: 0.0,
