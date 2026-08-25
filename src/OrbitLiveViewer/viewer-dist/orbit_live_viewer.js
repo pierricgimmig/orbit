@@ -299,7 +299,7 @@ function __wbg_adapter_45(arg0, arg1, arg2) {
     wasm.closure936_externref_shim(arg0, arg1, arg2);
 }
 
-function __wbg_adapter_1410(arg0, arg1, arg2, arg3) {
+function __wbg_adapter_1412(arg0, arg1, arg2, arg3) {
     wasm.closure2411_externref_shim(arg0, arg1, arg2, arg3);
 }
 
@@ -1245,6 +1245,10 @@ function __wbg_get_imports() {
         getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
         getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
     }, arguments) };
+    imports.wbg.__wbg_getElementById_f827f0d6648718a8 = function(arg0, arg1, arg2) {
+        const ret = arg0.getElementById(getStringFromWasm0(arg1, arg2));
+        return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+    };
     imports.wbg.__wbg_getExtension_ff0fb1398bcf28c3 = function() { return handleError(function (arg0, arg1, arg2) {
         const ret = arg0.getExtension(getStringFromWasm0(arg1, arg2));
         return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
@@ -1858,7 +1862,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return __wbg_adapter_1410(a, state0.b, arg0, arg1);
+                    return __wbg_adapter_1412(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
