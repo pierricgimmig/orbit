@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ORBIT_CLIENT_GGP_CLIENT_GGP_H_
-#define ORBIT_CLIENT_GGP_CLIENT_GGP_H_
+#ifndef ORBIT_CLI_ORBIT_CLI_H_
+#define ORBIT_CLI_ORBIT_CLI_H_
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -30,13 +30,13 @@
 #include "GrpcProtos/tracepoint.pb.h"
 #include "OrbitBase/Result.h"
 #include "OrbitBase/ThreadPool.h"
-#include "OrbitClientGgp/ClientGgpOptions.h"
+#include "OrbitCli/OrbitCliOptions.h"
 
-class ClientGgp {
+class OrbitCli {
  public:
-  ClientGgp() = default;
+  OrbitCli() = default;
 
-  explicit ClientGgp(ClientGgpOptions&& options) : options_(std::move(options)) {}
+  explicit OrbitCli(OrbitCliOptions&& options) : options_(std::move(options)) {}
 
   bool InitClient();
   ErrorMessageOr<void> RequestStartCapture(orbit_base::ThreadPool* thread_pool);
@@ -48,7 +48,7 @@ class ClientGgp {
  private:
   std::filesystem::path GenerateFilePath();
 
-  ClientGgpOptions options_;
+  OrbitCliOptions options_;
   std::shared_ptr<grpc::Channel> grpc_channel_;
   std::unique_ptr<orbit_client_data::ProcessData> target_process_;
   orbit_client_data::ModuleIdentifierProvider module_identifier_provider_;
@@ -69,4 +69,4 @@ class ClientGgp {
       const absl::flat_hash_set<std::string>& capture_functions_used);
 };
 
-#endif  // ORBIT_CLIENT_GGP_CLIENT_GGP_H_
+#endif  // ORBIT_CLI_ORBIT_CLI_H_

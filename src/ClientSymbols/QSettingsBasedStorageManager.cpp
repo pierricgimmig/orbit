@@ -21,7 +21,6 @@ constexpr const char* kModuleSymbolFileMappingSymbolFileKey =
     "module_symbol_file_mapping_symbol_file_key";
 constexpr const char* kDisabledModulesKey = "disabled_modules_key";
 constexpr const char* kDisabledModuleKey = "disabled_module_key";
-constexpr const char* kEnableStadiaSymbolStoreKey = "enable_stadia_symbol_store_key";
 constexpr const char* kEnableMicrosoftSymbolServerKey = "enable_microsoft_symbol_server_key";
 
 namespace orbit_client_symbols {
@@ -100,14 +99,6 @@ absl::flat_hash_set<std::string> QSettingsBasedStorageManager::LoadDisabledModul
   }
   settings_.endArray();
   return paths;
-}
-
-void QSettingsBasedStorageManager::SaveEnableStadiaSymbolStore(bool enable_stadia_symbol_store) {
-  settings_.setValue(kEnableStadiaSymbolStoreKey, enable_stadia_symbol_store);
-}
-
-bool QSettingsBasedStorageManager::LoadEnableStadiaSymbolStore() {
-  return settings_.value(kEnableStadiaSymbolStoreKey, false).toBool();
 }
 
 void QSettingsBasedStorageManager::SaveEnableMicrosoftSymbolServer(

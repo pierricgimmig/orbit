@@ -48,7 +48,6 @@ class CGroupAndProcessMemoryTrack final : public MemoryTrack {
 
  private:
   [[nodiscard]] std::string GetLegendTooltips(size_t legend_index) const override;
-  [[nodiscard]] std::string GetValueUpperBoundTooltip() const override;
   std::string cgroup_name_;
 };
 

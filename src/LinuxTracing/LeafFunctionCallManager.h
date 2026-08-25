@@ -73,8 +73,7 @@ class LeafFunctionCallManager {
   // Note that we cannot simply set libunwindstack to unwind always two frames and compare the
   // outer frame with the respective one in the callchain carried by the perf_event_open event, as
   // in case of uprobes overriding the return addresses, both addresses would be identical even if
-  // the actual addresses (after uprobe patching) are not. More (internal) documentation on this
-  // in: go/stadia-orbit-leaf-frame-pointer
+  // the actual addresses (after uprobe patching) are not.
   template <typename CallchainPerfEventDataT>
   orbit_grpc_protos::Callstack::CallstackType PatchCallerOfLeafFunctionImpl(
       const CallchainPerfEventDataT* event_data, LibunwindstackMaps* current_maps,

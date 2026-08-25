@@ -17,7 +17,6 @@ orbit_proto_library(
         "process.proto",
         "producer_side_services.proto",
         "services.proto",
-        "services_ggp.proto",
         "symbol.proto",
         "tracepoint.proto",
     ],

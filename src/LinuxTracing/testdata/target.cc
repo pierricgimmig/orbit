@@ -22,7 +22,7 @@ inline uint64_t timestamp_ns() {
 
 uint64_t every_1us() {
   uint64_t result = 0;
-  for (int i = 0; i < 342; ++i) {  // 333 on gamelet
+  for (int i = 0; i < 342; ++i) {
     result += i;
   }
   return result;

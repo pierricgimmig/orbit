@@ -19,7 +19,7 @@ using orbit_test_utils::HasValue;
 
 TEST(ExtractSignalFromMinidump, ExtractSignal4) {
   std::filesystem::path file_path =
-      orbit_test::GetTestdataDir() / "hello_ggp_stand.10849.1657182631.core.dmp";
+      orbit_test::GetTestdataDir() / "crashed_target.10849.1657182631.core.dmp";
   const auto signal_or_error = ExtractSignalFromMinidump(file_path);
   // The core file in testdata was produced by a `kill -4 pid`.
   EXPECT_THAT(signal_or_error, HasValue(4));

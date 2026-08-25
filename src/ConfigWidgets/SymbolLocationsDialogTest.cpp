@@ -48,8 +48,6 @@ class MockPersistentStorageManager : public orbit_client_symbols::PersistentStor
   MOCK_METHOD((ModuleSymbolFileMappings), LoadModuleSymbolFileMappings, (), (override));
   MOCK_METHOD(void, SaveDisabledModulePaths, (const absl::flat_hash_set<std::string>&), (override));
   MOCK_METHOD(absl::flat_hash_set<std::string>, LoadDisabledModulePaths, (), (override));
-  MOCK_METHOD(void, SaveEnableStadiaSymbolStore, (bool), (override));
-  MOCK_METHOD(bool, LoadEnableStadiaSymbolStore, (), (override));
   MOCK_METHOD(void, SaveEnableMicrosoftSymbolServer, (bool), (override));
   MOCK_METHOD(bool, LoadEnableMicrosoftSymbolServer, (), (override));
 };

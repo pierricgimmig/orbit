@@ -492,9 +492,9 @@ class OrbitApp final : public DataViewFactory,
   void DisableDownloadForModule(std::string_view module_file_path);
 
   // Triggers symbol loading for all modules in ModuleManager that are not loaded yet. This is done
-  // with a simple prioritization. The module `ggpvlk.so` is queued to be loaded first, the "main
-  // module" (binary of the process) is queued to be loaded second. All other modules are queued in
-  // no particular order.
+  // with a simple prioritization. The module `ntdll.so`, which a process running under Wine goes
+  // through, is queued to be loaded first, the "main module" (binary of the process) is queued to
+  // be loaded second. All other modules are queued in no particular order.
   orbit_base::Future<std::vector<ErrorMessageOr<orbit_base::CanceledOr<void>>>> LoadAllSymbols();
 
   // Automatically add a default Frame Track. It will choose only one frame track from an internal

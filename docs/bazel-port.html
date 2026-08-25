@@ -1123,7 +1123,7 @@
 
   <h3>What still needs actual root</h3>
 
-  <p>Seven integration tests call <code>geteuid() == 0</code> directly and skip otherwise &mdash; <code>SchedulingSlices</code>, <code>FunctionCalls</code>, two callstack-with-uprobes tests, <code>ThreadStateSlices</code>, <code>ThreadNames</code>, and <code>GpuJobs</code> (which also wants Stadia hardware). No sysctl or permission change unskips them: they read kernel tracepoints under <code>/sys/kernel/debug/tracing</code>, which is <code>0700 root</code>. Running the test binary under <code>sudo</code> is the only way.</p>
+  <p>Seven integration tests call <code>geteuid() == 0</code> directly and skip otherwise &mdash; <code>SchedulingSlices</code>, <code>FunctionCalls</code>, two callstack-with-uprobes tests, <code>ThreadStateSlices</code>, <code>ThreadNames</code>, and <code>GpuJobs</code> (which also wants an AMD GPU). No sysctl or permission change unskips them: they read kernel tracepoints under <code>/sys/kernel/debug/tracing</code>, which is <code>0700 root</code>. Running the test binary under <code>sudo</code> is the only way.</p>
 
   <h3>Timing, not correctness</h3>
 

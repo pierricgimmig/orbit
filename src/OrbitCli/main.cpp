@@ -23,8 +23,8 @@
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/Result.h"
 #include "OrbitBase/ThreadPool.h"
-#include "OrbitClientGgp/ClientGgp.h"
-#include "OrbitClientGgp/ClientGgpOptions.h"
+#include "OrbitCli/OrbitCli.h"
+#include "OrbitCli/OrbitCliOptions.h"
 #include "OrbitVersion/OrbitVersion.h"
 
 ABSL_FLAG(uint64_t, grpc_port, 44765, "Grpc service's port");
@@ -33,8 +33,8 @@ ABSL_FLAG(uint32_t, capture_length, 10, "duration of capture in seconds");
 ABSL_FLAG(std::vector<std::string>, functions, {},
           "Comma-separated list of functions to hook to the capture");
 ABSL_FLAG(std::string, file_name, "", "File name used for saving the capture");
-ABSL_FLAG(std::string, file_directory, "/var/game/",
-          "Path to locate orbit file. By default it is /var/game/");
+ABSL_FLAG(std::string, file_directory, ".",
+          "Directory the .orbit capture file is written to");
 ABSL_FLAG(std::string, log_directory, "",
           "Path to locate debug file. By default only stdout is used for logs");
 ABSL_FLAG(uint16_t, sampling_rate, 1000, "Frequency of callstack sampling in samples per second");
@@ -50,7 +50,7 @@ namespace {
 std::string GetLogFilePath(std::string_view log_directory) {
   std::filesystem::path log_directory_path{log_directory};
   std::filesystem::create_directory(log_directory_path);
-  std::filesystem::path log_file_path = log_directory_path / "OrbitClientGgp.log";
+  std::filesystem::path log_file_path = log_directory_path / "OrbitCli.log";
   ORBIT_LOG("Log file: %s", log_file_path);
   return log_file_path;
 }
@@ -58,7 +58,9 @@ std::string GetLogFilePath(std::string_view log_directory) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  absl::SetProgramUsageMessage("Orbit CPU Profiler Ggp Client");
+  absl::SetProgramUsageMessage(
+      "Orbit CPU Profiler command line client: records a capture of a running process and "
+      "saves it to an .orbit file");
   absl::SetFlagsUsageConfig(absl::FlagsUsageConfig{{}, {}, {}, &orbit_version::GetBuildReport, {}});
   absl::ParseCommandLine(argc, argv);
 
@@ -71,7 +73,7 @@ int main(int argc, char** argv) {
     ORBIT_FATAL("pid to capture not provided; set using -pid");
   }
 
-  ClientGgpOptions options;
+  OrbitCliOptions options;
   uint64_t grpc_port = absl::GetFlag(FLAGS_grpc_port);
   options.grpc_server_address = absl::StrFormat("127.0.0.1:%d", grpc_port);
   options.capture_pid = absl::GetFlag(FLAGS_pid);
@@ -84,8 +86,8 @@ int main(int argc, char** argv) {
   options.stack_dump_size = stack_dump_size;
   options.use_framepointer_unwinding = absl::GetFlag(FLAGS_frame_pointer_unwinding);
 
-  ClientGgp client_ggp(std::move(options));
-  if (!client_ggp.InitClient()) {
+  OrbitCli orbit_cli(std::move(options));
+  if (!orbit_cli.InitClient()) {
     return -1;
   }
 
@@ -93,7 +95,7 @@ int main(int argc, char** argv) {
   // It is needed to provide a thread pool
   std::shared_ptr<orbit_base::ThreadPool> thread_pool =
       orbit_base::ThreadPool::Create(1, 1, absl::Seconds(1));
-  auto start_capture_result = client_ggp.RequestStartCapture(thread_pool.get());
+  auto start_capture_result = orbit_cli.RequestStartCapture(thread_pool.get());
   if (start_capture_result.has_error()) {
     thread_pool->ShutdownAndWait();
     ORBIT_FATAL("Unable to start capture: %s", start_capture_result.error().message());
@@ -106,7 +108,7 @@ int main(int argc, char** argv) {
   ORBIT_LOG("Back from sleep");
 
   // Requests to stop the capture and waits for thread to finish
-  if (!client_ggp.StopCapture()) {
+  if (!orbit_cli.StopCapture()) {
     thread_pool->ShutdownAndWait();
     ORBIT_FATAL("Unable to stop the capture; exiting");
   }

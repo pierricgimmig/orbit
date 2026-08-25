@@ -184,7 +184,6 @@ namespace {
 
 constexpr const char* kNtdllSoFileName = "ntdll.so";
 constexpr const char* kWineSyscallDispatcherFunctionName = "__wine_syscall_dispatcher";
-constexpr std::string_view kGgpVlkModulePathSubstring = "ggpvlk.so";
 const TimeRange kDefaultTimeRange =
     TimeRange(std::numeric_limits<uint64_t>::min(), std::numeric_limits<uint64_t>::max());
 const CallstackData kEmptyCallstackData;
@@ -1933,7 +1932,7 @@ Future<std::vector<ErrorMessageOr<CanceledOr<void>>>> OrbitApp::LoadAllSymbols()
 
   std::vector<const ModuleData*> sorted_module_list = SortModuleListWithPrioritizationList(
       module_manager_->GetAllModuleData(),
-      {kGgpVlkModulePathSubstring, kNtdllSoFileName, process.full_path()});
+      {kNtdllSoFileName, process.full_path()});
 
   std::vector<Future<ErrorMessageOr<CanceledOr<void>>>> loading_futures;
 
@@ -1965,12 +1964,18 @@ void OrbitApp::AddDefaultFrameTrackOrLogError() {
   // was already added before, we won't log an error in this case.
   if (default_frame_track_was_added_) return;
 
-  const std::filesystem::path default_auto_preset_folder_path =
+  // Every preset in the "autopresets" folder next to the executable holds a FrameTrack that the
+  // user may want by default -- typically one that tracks the function a frame ends in. Which
+  // presets are there is up to whoever installed Orbit.
+  const std::filesystem::path auto_preset_folder_path =
       orbit_base::GetExecutableDir() / "autopresets";
-  const std::filesystem::path stadia_default_preset_path =
-      default_auto_preset_folder_path / "stadia-default-frame-track.opr";
-
-  std::vector<std::filesystem::path> auto_preset_paths = {stadia_default_preset_path};
+  std::vector<std::filesystem::path> auto_preset_paths;
+  std::error_code error{};
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(auto_preset_folder_path, error)) {
+    if (entry.path().extension() == ".opr") auto_preset_paths.push_back(entry.path());
+  }
+  std::sort(auto_preset_paths.begin(), auto_preset_paths.end());
 
   // Each preset in auto_preset_paths contains a FrameTrack that users might be interested in
   // loading by default. Orbit will try to load automatically just the first loadable preset from
@@ -2004,10 +2009,11 @@ void OrbitApp::AddDefaultFrameTrackOrLogError() {
       return;
     }
   }
-  std::string error_message =
+  std::string error_message = absl::StrFormat(
       "It was not possible to add a frame track automatically, because none of the presets "
-      "available for auto-loading could be loaded. The reason might be that you are not profiling "
-      "a Stadia-game running with Vulkan.";
+      "available for auto-loading could be loaded. Presets are looked for in \"%s\", and have to "
+      "apply to the process being profiled.",
+      auto_preset_folder_path.string());
   ORBIT_ERROR("%s", error_message);
 }
 

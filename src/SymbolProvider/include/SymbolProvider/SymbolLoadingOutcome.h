@@ -20,15 +20,14 @@ struct SymbolLoadingSuccessResult {
   enum class SymbolSource {
     kUnknown,
     kOrbitCache,
-    kLocalStadiaSdk,
-    kStadiaInstance,
+    kStructuredDebugDirectory,
+    kTargetMachine,
     kSymbolLocationsDialog,
     kAdditionalSymbolPathsFlag,
-    kStadiaSymbolStore,
     kMicrosoftSymbolServer,
     kUserDefinedSymbolStore,
     kUsrLibDebugDirectory,
-    kStadiaInstanceUsrLibDebug
+    kTargetMachineUsrLibDebug
   };
   enum class SymbolFileSeparation { kDifferentFile, kModuleFile };
 

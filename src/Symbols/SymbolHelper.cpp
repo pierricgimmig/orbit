@@ -130,24 +130,6 @@ std::vector<fs::path> ReadSymbolsFile(const fs::path& file_name) {
 FindStructuredDebugDirectorySymbolProviders() {
   std::vector<StructuredDebugDirectorySymbolProvider> providers;
 
-  const char* const ggp_sdk_path = std::getenv("GGP_SDK_PATH");
-  if (ggp_sdk_path != nullptr) {
-    auto path = std::filesystem::path{ggp_sdk_path} / "sysroot" / "usr" / "lib" / "debug";
-    std::error_code error{};
-    if (std::filesystem::is_directory(path, error)) {
-      providers.emplace_back(path, SymbolSource::kLocalStadiaSdk);
-    }
-  }
-
-  {  // Other way of finding the Stadia SDK, via parent path
-    auto path = orbit_base::GetExecutableDir().parent_path().parent_path() / "sysroot" / "usr" /
-                "lib" / "debug";
-    std::error_code error{};
-    if (std::filesystem::is_directory(path, error)) {
-      providers.emplace_back(path, SymbolSource::kLocalStadiaSdk);
-    }
-  }
-
 #ifndef _WIN32
   {
     std::filesystem::path path{"/usr/lib/debug"};
@@ -167,7 +149,7 @@ CreateStructuredDebugDirectorySymbolProviders(absl::Span<const std::filesystem::
   std::vector<StructuredDebugDirectorySymbolProvider> result;
   result.reserve(paths.size());
   for (const auto& path : paths) {
-    result.emplace_back(path, SymbolSource::kLocalStadiaSdk);
+    result.emplace_back(path, SymbolSource::kStructuredDebugDirectory);
   }
   return result;
 }

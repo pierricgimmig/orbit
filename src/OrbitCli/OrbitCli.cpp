@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "OrbitClientGgp/ClientGgp.h"
+#include "OrbitCli/OrbitCli.h"
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -62,7 +62,7 @@ using DynamicInstrumentationMethod =
     orbit_grpc_protos::CaptureOptions::DynamicInstrumentationMethod;
 using UnwindingMethod = orbit_grpc_protos::CaptureOptions::UnwindingMethod;
 
-bool ClientGgp::InitClient() {
+bool OrbitCli::InitClient() {
   if (options_.grpc_server_address.empty()) {
     ORBIT_ERROR("gRPC server address not provided");
     return false;
@@ -92,7 +92,7 @@ bool ClientGgp::InitClient() {
 }
 
 // Client requests to start the capture
-ErrorMessageOr<void> ClientGgp::RequestStartCapture(orbit_base::ThreadPool* thread_pool) {
+ErrorMessageOr<void> OrbitCli::RequestStartCapture(orbit_base::ThreadPool* thread_pool) {
   uint32_t pid = target_process_->pid();
   if (pid == orbit_base::kInvalidThreadId) {
     return ErrorMessage{
@@ -143,12 +143,12 @@ ErrorMessageOr<void> ClientGgp::RequestStartCapture(orbit_base::ThreadPool* thre
   return outcome::success();
 }
 
-bool ClientGgp::StopCapture() {
+bool OrbitCli::StopCapture() {
   ORBIT_LOG("Request to stop capture");
   return capture_client_->StopCapture();
 }
 
-std::filesystem::path ClientGgp::GenerateFilePath() {
+std::filesystem::path OrbitCli::GenerateFilePath() {
   std::string file_name = options_.capture_file_name;
   if (file_name.empty()) {
     file_name = orbit_client_model::capture_serializer::GenerateCaptureFileName(
@@ -162,7 +162,7 @@ std::filesystem::path ClientGgp::GenerateFilePath() {
   return std::filesystem::path(options_.capture_file_directory) / file_name;
 }
 
-ErrorMessageOr<std::unique_ptr<ProcessData>> ClientGgp::GetOrbitProcessByPid(uint32_t pid) {
+ErrorMessageOr<std::unique_ptr<ProcessData>> OrbitCli::GetOrbitProcessByPid(uint32_t pid) {
   // We retrieve the information of the process to later get the module corresponding to its binary
   OUTCOME_TRY(auto&& process_infos, process_client_->GetProcessList());
   ORBIT_LOG("List of processes:");
@@ -182,7 +182,7 @@ ErrorMessageOr<std::unique_ptr<ProcessData>> ClientGgp::GetOrbitProcessByPid(uin
   return process;
 }
 
-ErrorMessageOr<void> ClientGgp::LoadModuleAndSymbols() {
+ErrorMessageOr<void> OrbitCli::LoadModuleAndSymbols() {
   // Load modules for target_process_
   OUTCOME_TRY(auto&& module_infos, process_client_->LoadModuleList(target_process_->pid()));
 
@@ -232,7 +232,7 @@ ErrorMessageOr<void> ClientGgp::LoadModuleAndSymbols() {
   return outcome::success();
 }
 
-bool ClientGgp::InitCapture() {
+bool OrbitCli::InitCapture() {
   ErrorMessageOr<std::unique_ptr<ProcessData>> target_process_result =
       GetOrbitProcessByPid(options_.capture_pid);
   if (target_process_result.has_error()) {
@@ -252,7 +252,7 @@ bool ClientGgp::InitCapture() {
   return true;
 }
 
-void ClientGgp::LoadSelectedFunctions() {
+void OrbitCli::LoadSelectedFunctions() {
   // Load selected functions if provided
   if (!options_.capture_functions.empty()) {
     ORBIT_LOG("Loading selected functions");
@@ -268,7 +268,7 @@ void ClientGgp::LoadSelectedFunctions() {
   }
 }
 
-void ClientGgp::InformUsedSelectedCaptureFunctions(
+void OrbitCli::InformUsedSelectedCaptureFunctions(
     const absl::flat_hash_set<std::string>& capture_functions_used) {
   if (capture_functions_used.size() != options_.capture_functions.size()) {
     for (const std::string& selected_function : options_.capture_functions) {
@@ -282,7 +282,7 @@ void ClientGgp::InformUsedSelectedCaptureFunctions(
   }
 }
 
-std::string ClientGgp::SelectedFunctionMatch(const FunctionInfo& func) {
+std::string OrbitCli::SelectedFunctionMatch(const FunctionInfo& func) {
   for (const std::string& selected_function : options_.capture_functions) {
     if (func.pretty_name().find(selected_function) != std::string::npos) {
       return selected_function;
@@ -291,7 +291,7 @@ std::string ClientGgp::SelectedFunctionMatch(const FunctionInfo& func) {
   return {};
 }
 
-absl::flat_hash_map<uint64_t, FunctionInfo> ClientGgp::GetSelectedFunctions() {
+absl::flat_hash_map<uint64_t, FunctionInfo> OrbitCli::GetSelectedFunctions() {
   uint64_t function_id = 1;
   absl::flat_hash_map<uint64_t, FunctionInfo> selected_functions;
   absl::flat_hash_set<std::string> capture_functions_used;
@@ -308,7 +308,7 @@ absl::flat_hash_map<uint64_t, FunctionInfo> ClientGgp::GetSelectedFunctions() {
   return selected_functions;
 }
 
-void ClientGgp::UpdateCaptureFunctions(std::vector<std::string> capture_functions) {
+void OrbitCli::UpdateCaptureFunctions(std::vector<std::string> capture_functions) {
   options_.capture_functions = std::move(capture_functions);
   LoadSelectedFunctions();
 }

@@ -17,7 +17,7 @@ namespace {
 
 const SymbolLoadingSuccessResult kSuccessOutcome{
     std::filesystem::path{"/tmp/test/path"},
-    SymbolLoadingSuccessResult::SymbolSource::kStadiaInstance,
+    SymbolLoadingSuccessResult::SymbolSource::kTargetMachine,
     SymbolLoadingSuccessResult::SymbolFileSeparation::kDifferentFile};
 
 const orbit_base::NotFound kNotFound{"Did not find symbols"};

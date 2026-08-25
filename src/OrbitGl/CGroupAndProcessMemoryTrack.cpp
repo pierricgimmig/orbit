@@ -111,20 +111,6 @@ std::string CGroupAndProcessMemoryTrack::GetLegendTooltips(size_t legend_index) 
   }
 }
 
-std::string CGroupAndProcessMemoryTrack::GetValueUpperBoundTooltip() const {
-  // The developer instances have all of the same cgroup limits as the production instances, except
-  // the game cgroup limit. More detailed information can be found in go/gamelet-ram-budget.
-  std::string_view game_c_group_name = "user.slice/user-1000.slice/game";
-  constexpr float kGameCGroupLimitGB = 7;
-
-  if (cgroup_name_ != game_c_group_name) return "";
-  return absl::StrFormat(
-      "<b>The memory production limit of the %s cgroup is %.2fGB</b>.<br/><br/>"
-      "<i>To launch game with the production cgroup limits, add the flag "
-      "'--enforce-production-ram' to the 'ggp run' command</i>.",
-      game_c_group_name, kGameCGroupLimitGB);
-}
-
 void CGroupAndProcessMemoryTrack::OnCgroupAndProcessMemoryInfo(
     const orbit_client_data::CgroupAndProcessMemoryInfo& cgroup_and_process_memory_info) {
   if (cgroup_and_process_memory_info.HasMissingInfo()) {

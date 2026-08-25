@@ -1888,10 +1888,10 @@ TEST(LinuxTracingIntegrationTest, ModuleUpdateOnDlopen) {
 }
 
 TEST(LinuxTracingIntegrationTest, GpuJobs) {
-  if (!CheckIsStadiaInstance()) {
+  if (!CheckIsRunningAsRoot()) {
     GTEST_SKIP();
   }
-  if (!CheckIsRunningAsRoot()) {
+  if (!CheckAmdGpuTracepointsAvailable()) {
     GTEST_SKIP();
   }
   LinuxTracingIntegrationTestFixture fixture;
