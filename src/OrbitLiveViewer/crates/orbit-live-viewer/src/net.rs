@@ -20,6 +20,7 @@ pub struct StatusJson {
     #[serde(default)]
     pub oldest_start_ns: u64,
     #[serde(default)]
+    #[allow(dead_code)]
     pub newest_end_ns: u64,
     #[serde(default)]
     pub ring_bytes: u64,

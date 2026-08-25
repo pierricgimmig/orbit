@@ -3278,15 +3278,7 @@ mod tests {
         let samples = [(0.1, 1.0), (0.2, 9.0), (10.0, 2.0)];
         let bucketed = bucket_last_per_device_px(&samples, 1.0);
         assert_eq!(bucketed, vec![(0.0, 9.0), (10.0, 2.0)]);
-        assert_eq!(
-            bucketed.iter().map(|(x, _)| *x).collect::<Vec<_>>(),
-            bucketed
-                .iter()
-                .map(|(x, _)| *x)
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-        );
+        assert_ne!(bucketed[0].0, bucketed[1].0);
         let pts = step_graph_points(&bucketed, VALUE_TICK_PTS);
         assert_eq!(pts, vec![(0.0, 9.0), (10.0, 9.0), (10.0, 2.0)]);
     }
