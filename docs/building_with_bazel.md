@@ -35,9 +35,14 @@ are required.
 
 The service-side live viewer crates (`orbit-live-ffi` and the HTTP/ring stack)
 are fetched the same way, from `src/OrbitLiveViewer/Cargo.lock`. The wasm32
-eframe pack is **not** built by Bazel; run `src/OrbitLiveViewer/build_wasm.sh`
-and commit the result under `viewer-dist/`. See
-[src/OrbitLiveViewer/README.md](../src/OrbitLiveViewer/README.md).
+eframe pack is a local/manual genrule (host rustup + cargo):
+
+```
+bazel build //:wasm          # or //src/OrbitLiveViewer:wasm
+bazel run //:live            # or //src/OrbitLiveViewer:serve  (port 44766)
+```
+
+See [src/OrbitLiveViewer/README.md](../src/OrbitLiveViewer/README.md).
 
 ## Building
 

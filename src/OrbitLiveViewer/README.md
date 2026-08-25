@@ -19,8 +19,8 @@ OrbitService --grpc_port 44765 \
              --spill_path /tmp/orbit-spill
 
 # Or, viewer + demo producer only (no C++ capture stack):
-cargo run -p orbit-live-server --release -- \
-  --http-port 44766 --ring-buffer-bytes 64M --spill-path /tmp/orbit-spill
+bazel run //:live
+# cargo run -p orbit-live-server --release -- --http-port 44766
 ```
 
 Open `http://<host>:44766/`.
@@ -91,7 +91,7 @@ There are **two** Cargo workspaces here:
 | Workspace | Crates | Built by |
 | --- | --- | --- |
 | `src/OrbitLiveViewer` | event, ring, protocol, render, server, ffi | Bazel (and Cargo) |
-| `src/OrbitLiveViewer/crates/orbit-live-viewer` | the wasm32 eframe front end | `build_wasm.sh` only |
+| `src/OrbitLiveViewer/crates/orbit-live-viewer` | the wasm32 eframe front end | `bazel build //:wasm` |
 
 The split is deliberate: the viewer drags in eframe / wgpu / winit (~200 extra
 crates) that the service side never links, and Bazel resolves only the service
@@ -114,8 +114,14 @@ callback on native (no window).
 Needs `wasm32-unknown-unknown` and `wasm-bindgen-cli` matching `wasm-bindgen 0.2.100`:
 
 ```
-./src/OrbitLiveViewer/build_wasm.sh
+bazel build //:wasm
+bazel run //:live
 ```
+
+Package-level: `bazel build //src/OrbitLiveViewer:wasm` and
+`bazel run //src/OrbitLiveViewer:serve`. `:wasm` is a genrule (do not
+`bazel run` it). The same pack can still be built with
+`./src/OrbitLiveViewer/build_wasm.sh`.
 
 This writes `viewer-dist/orbit_live_viewer.js` and `.wasm`, which are checked
 in. `orbit-live-server`’s build script embeds whatever is in `viewer-dist/`, so

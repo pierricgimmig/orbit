@@ -3,14 +3,19 @@
 # found in the LICENSE file.
 
 # Service-side half of the live viewer: the crates that OrbitService links as
-# liborbit_live_ffi.a. The wasm32 eframe front end (crates/orbit-live-viewer)
-# is a separate Cargo workspace and is NOT built here -- run build_wasm.sh and
-# commit the result under viewer-dist/, which :build_script embeds.
+# liborbit_live_ffi.a. The wasm32 eframe front end is a separate Cargo workspace.
+#
+#   bazel build //:wasm                     # or //src/OrbitLiveViewer:wasm
+#   bazel run //:live                       # or //src/OrbitLiveViewer:serve
+#
+# :wasm is a genrule (build, not run). :serve starts :orbit_live_service on
+# 44766 and does not rebuild the pack. viewer-dist/ is embedded by :build_script.
 
 load("@live_crates//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -147,6 +152,39 @@ rust_test(
     size = "small",
 )
 
+# Rebuild viewer-dist/ via build_wasm.sh. `bazel build` only — not an
+# sh_binary. local/manual: needs host rustup + cargo + wasm-bindgen.
+genrule(
+    name = "wasm",
+    srcs = glob(
+        [
+            "build_wasm.sh",
+            "rust-toolchain.toml",
+            "crates/orbit-live-viewer/**",
+            "crates/orbit-live-event/**",
+            "crates/orbit-live-protocol/**",
+            "crates/orbit-live-render/**",
+        ],
+        exclude = [
+            "**/target/**",
+            "**/*.d.ts",
+        ],
+    ),
+    outs = [
+        "orbit_live_viewer.js",
+        "orbit_live_viewer_bg.wasm",
+    ],
+    cmd = "$(execpath wasm_pack.sh) $(execpath build_wasm.sh) $(execpath orbit_live_viewer.js) $(execpath orbit_live_viewer_bg.wasm)",
+    local = True,
+    tags = [
+        "local",
+        "manual",
+        "no-sandbox",
+        "requires-network",
+    ],
+    tools = ["wasm_pack.sh"],
+)
+
 # Standalone HTTP server (demo producer, no C++ capture stack). Same crates
 # OrbitService links through :orbit_live_ffi.
 rust_binary(
@@ -162,6 +200,13 @@ rust_binary(
     deps = all_crate_deps(package_name = "src/OrbitLiveViewer/crates/orbit-live-server") + [
         ":orbit_live_server",
     ],
+)
+
+sh_binary(
+    name = "serve",
+    srcs = ["serve.sh"],
+    args = ["$(rootpath :orbit_live_service)"],
+    data = [":orbit_live_service"],
 )
 
 # The staticlib OrbitService links. Only Linux: OrbitService's live bridge is
