@@ -129,8 +129,8 @@ code that check fails").
 Seven integration tests check `geteuid() == 0` directly and skip otherwise:
 `SchedulingSlices`, `FunctionCalls`, `CallstackSamplesTogetherWithFunctionCalls`,
 `CallstackSamplesWithFramePointersTogetherWithFunctionCalls`,
-`ThreadStateSlices`, `ThreadNames` and `GpuJobs` (which additionally needs
-Stadia hardware). No sysctl or filesystem permission unskips these -- they read
+`ThreadStateSlices`, `ThreadNames` and `GpuJobs` (which additionally needs an
+AMD GPU). No sysctl or filesystem permission unskips these -- they read
 kernel tracepoints under `/sys/kernel/debug/tracing`, which is `0700 root`.
 To run them:
 
