@@ -1,8 +1,8 @@
 //! Orbit Fusion chrome as egui widgets. The timeline is one PaintCallback.
 
 use eframe::egui::{
-    self, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId, Frame, Key, Layout,
-    Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
+    self, scroll_area::ScrollSource, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId,
+    Frame, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
 };
 use orbit_live_event::dev::{
     intern_self_names, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_TRACKS,
@@ -31,6 +31,15 @@ const FOLLOW_NS: f64 = 2_000_000_000.0;
 const SIDE: f32 = 228.0;
 const HEADER_W: f32 = 196.0;
 const RADIUS: f32 = theme::RADIUS;
+/// `TimeGraph::ZoomTime` `kIncrementalZoomTimeRatio`.
+const ZOOM_TIME_RATIO: f64 = 0.1;
+/// `TimeGraph::Zoom` window = 1.1 × [min, max].
+const ZOOM_SCOPE_PAD: f64 = 1.1;
+/// `CaptureWindow::Pan` / arrow keys.
+const PAN_RATIO: f64 = 0.1;
+/// `CaptureWindow` Up/Down and PageUp/PageDown.
+const VSCROLL_ARROW: f32 = 0.05;
+const VSCROLL_PAGE: f32 = 0.9;
 
 fn c32(argb: u32) -> Color32 {
     Color32::from_rgba_unmultiplied(
@@ -47,6 +56,91 @@ fn hairline() -> Stroke {
 
 fn muted() -> Color32 {
     theme::MUTED
+}
+
+/// Native `TimeGraph::OnMouseWheel` vs `TimelineUi::OnMouseWheel`.
+#[derive(Clone, Copy)]
+enum WheelMode {
+    /// Track / capture body: Ctrl/Cmd+wheel zooms; plain wheel pans vertically.
+    CtrlZoom,
+    /// Time ruler: wheel always zooms time (TimeGraphTest MouseWheel).
+    AlwaysZoom,
+}
+
+fn consume_scroll(ctx: &Context) {
+    ctx.input_mut(|i| {
+        i.raw_scroll_delta = Vec2::ZERO;
+        i.smooth_scroll_delta = Vec2::ZERO;
+    });
+}
+
+/// Discrete ±1 step matching `TimeGraph::ZoomTime` (`kIncrementalZoomTimeRatio`).
+/// Positive `scroll_y` zooms in (same sign as the previous live-viewer mapping).
+fn time_zoom_step(scroll_y: f32, zoom_delta: f32) -> i32 {
+    if scroll_y != 0.0 {
+        if scroll_y > 0.0 {
+            1
+        } else {
+            -1
+        }
+    } else if (zoom_delta - 1.0).abs() > 1e-3 {
+        if zoom_delta > 1.0 {
+            1
+        } else {
+            -1
+        }
+    } else {
+        0
+    }
+}
+
+/// `TimeGraph::ZoomTime`: scale 1.1 or 1/1.1 around `center_ratio`.
+fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64) {
+    if zoom_delta == 0 {
+        return (t0, t1);
+    }
+    let scale = if zoom_delta > 0 {
+        1.0 + ZOOM_TIME_RATIO
+    } else {
+        1.0 / (1.0 + ZOOM_TIME_RATIO)
+    };
+    let center_ratio = center_ratio.clamp(0.0, 1.0);
+    let span = (t1 - t0).max(1.0);
+    let ref_t = t0 + center_ratio * span;
+    let time_left = (ref_t - t0).max(0.0);
+    let time_right = (t1 - ref_t).max(0.0);
+    let mut new_t0 = ref_t - time_left / scale;
+    let mut new_t1 = ref_t + time_right / scale;
+    let duration = new_t1 - new_t0;
+    // TimeGraph::kTimeGraphMinTimeWindowsUs = 0.1 µs = 100 ns.
+    const MIN_NS: f64 = 100.0;
+    const MAX_NS: f64 = 60_000_000_000.0;
+    if duration < MIN_NS {
+        let diff = MIN_NS - duration;
+        new_t0 -= diff * center_ratio;
+        new_t1 += diff * (1.0 - center_ratio);
+    }
+    new_t0 = new_t0.max(0.0);
+    let span = (new_t1 - new_t0).clamp(MIN_NS, MAX_NS);
+    (new_t0, new_t0 + span)
+}
+
+/// `TimeGraph::Zoom(min, max)`: window = 1.1 × duration, scope centered.
+fn zoom_scope_window(start_ns: f64, end_ns: f64) -> (f64, f64) {
+    let start = start_ns.min(end_ns);
+    let end = start_ns.max(end_ns);
+    let mid = start + (end - start) / 2.0;
+    let extent = ZOOM_SCOPE_PAD * (end - start) / 2.0;
+    let t0 = (mid - extent).max(0.0);
+    let t1 = (mid + extent).max(t0 + 1.0);
+    (t0, t1)
+}
+
+/// `CaptureWindow::Pan(ratio)`: positive ratio reveals earlier time.
+fn pan_time(t0: f64, t1: f64, ratio: f64) -> (f64, f64) {
+    let span = (t1 - t0).max(1.0);
+    let new_t0 = (t0 - ratio * span).max(0.0);
+    (new_t0, new_t0 + span)
 }
 
 pub fn apply_orbit_visuals(ctx: &Context) {
@@ -123,6 +217,8 @@ pub struct OrbitLiveApp {
     search_ids: HashSet<u32>,
     search_resolved: String,
     search_intern_len: usize,
+    lane_scroll: f32,
+    pending_vscroll: Option<f32>,
 }
 
 impl OrbitLiveApp {
@@ -184,6 +280,8 @@ impl OrbitLiveApp {
             search_ids: HashSet::new(),
             search_resolved: String::new(),
             search_intern_len: 0,
+            lane_scroll: 0.0,
+            pending_vscroll: None,
         }
     }
 
@@ -388,18 +486,20 @@ impl OrbitLiveApp {
             );
             ui.add_space(12.0);
             if pill(ui, "Demo", self.status.demo).clicked() {
-                self.error.clear();
-                self.net.start_demo();
-                self.follow = true;
+                if !self.status.demo {
+                    self.error.clear();
+                    self.net.start_demo();
+                    self.follow = true;
+                }
+            }
+            if self.status.demo && pill(ui, "Stop", false).clicked() {
+                self.net.stop_demo();
             }
             if pill(ui, "Dev", self.dev)
                 .on_hover_text("Profile the viewer into the same capture")
                 .clicked()
             {
                 self.toggle_dev();
-            }
-            if icon_pill(ui, "■", "Stop demo").clicked() {
-                self.net.stop_demo();
             }
             if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
@@ -585,7 +685,7 @@ impl OrbitLiveApp {
 
         ui.add_space(16.0);
         ui.label(
-            RichText::new("Wheel zoom · drag pan · space follow")
+            RichText::new("Ruler wheel zoom · Ctrl+wheel zoom · wheel pan · drag pan · space follow")
                 .size(10.0)
                 .color(theme::MUTED),
         );
@@ -642,6 +742,8 @@ impl OrbitLiveApp {
             hit.on_hover_text("Show all threads");
         }
         paint_timebar(ui, ruler, self.t0, self.t1);
+        let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
+        self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom);
         ui.painter().line_segment(
             [time_rect.left_bottom(), time_rect.right_bottom()],
             hairline(),
@@ -649,10 +751,19 @@ impl OrbitLiveApp {
 
         let avail = ui.available_size();
         let height = self.tracks.total_height().max(avail.y).max(72.0);
-        let scroll = egui::ScrollArea::vertical()
+        let ctrl_zoom = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        let mut scroll_source = ScrollSource::ALL;
+        if ctrl_zoom {
+            scroll_source.mouse_wheel = false;
+        }
+        let mut scroll = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .id_salt("orbit_lanes");
-        scroll.show(ui, |ui| {
+            .id_salt("orbit_lanes")
+            .scroll_source(scroll_source);
+        if let Some(y) = self.pending_vscroll.take() {
+            scroll = scroll.vertical_scroll_offset(y);
+        }
+        let out = scroll.show(ui, |ui| {
             let (rect, _) =
                 ui.allocate_exact_size(Vec2::new(avail.x.max(1.0), height), Sense::hover());
             let head = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + HEADER_W, rect.max.y));
@@ -680,7 +791,8 @@ impl OrbitLiveApp {
 
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
             if !self.tracks.dragging() {
-                self.handle_nav(&body_resp, body);
+                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom);
+                self.handle_keys(&body_resp.ctx, body, ruler, avail.y);
                 self.handle_pick(&body_resp, body, t0, t1, width);
             }
 
@@ -718,6 +830,7 @@ impl OrbitLiveApp {
                 );
             }
         });
+        self.lane_scroll = out.state.offset.y;
     }
 
     fn paint_headers(&mut self, ui: &mut Ui, head: Rect, body: Rect) {
@@ -996,21 +1109,38 @@ impl OrbitLiveApp {
         TimelinePayload::Empty
     }
 
-    fn handle_nav(&mut self, response: &egui::Response, rect: Rect) {
+    fn handle_time_nav(&mut self, response: &egui::Response, rect: Rect, mode: WheelMode) {
         let ctx = response.ctx.clone();
         if response.hovered() {
-            let scroll = ctx.input(|i| i.raw_scroll_delta.y);
-            if scroll != 0.0 {
+            let (scroll, zoom, ctrl_like) = ctx.input(|i| {
+                (
+                    i.raw_scroll_delta,
+                    i.zoom_delta(),
+                    i.modifiers.ctrl || i.modifiers.command,
+                )
+            });
+            if scroll.x != 0.0 {
+                // CaptureWindow::MouseWheelMovedHorizontally → Pan(±0.1).
+                let ratio = if scroll.x > 0.0 { PAN_RATIO } else { -PAN_RATIO };
+                let (t0, t1) = pan_time(self.t0, self.t1, ratio);
+                self.t0 = t0;
+                self.t1 = t1;
+                self.follow = false;
+            }
+            let zoom_step = time_zoom_step(scroll.y, zoom);
+            let want_zoom = match mode {
+                WheelMode::AlwaysZoom => zoom_step != 0,
+                WheelMode::CtrlZoom => ctrl_like && zoom_step != 0,
+            };
+            if want_zoom {
                 if let Some(pos) = response.hover_pos() {
-                    let span = (self.t1 - self.t0).max(1.0);
-                    let frac = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64;
-                    let anchor = self.t0 + frac * span;
-                    let factor = 1.1_f64.powf(-scroll as f64 / 40.0);
-                    let new_span = (span * factor).clamp(1_000.0, 60_000_000_000.0);
-                    self.t0 = (anchor - frac * new_span).max(0.0);
-                    self.t1 = self.t0 + new_span;
+                    let frac = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
+                    let (t0, t1) = zoom_time(self.t0, self.t1, zoom_step, frac);
+                    self.t0 = t0;
+                    self.t1 = t1;
                     self.follow = false;
                 }
+                consume_scroll(&ctx);
             }
         }
         if response.dragged_by(PointerButton::Primary) {
@@ -1020,6 +1150,17 @@ impl OrbitLiveApp {
             self.t0 = (self.t0 + dt).max(0.0);
             self.t1 = self.t0 + span;
             self.follow = false;
+        }
+    }
+
+    fn handle_keys(&mut self, ctx: &Context, body: Rect, ruler: Rect, view_h: f32) {
+        if ctx.wants_keyboard_input() {
+            if ctx.input(|i| i.key_pressed(Key::Escape)) {
+                if self.search_active() || !self.search.is_empty() {
+                    self.search.clear();
+                }
+            }
+            return;
         }
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
@@ -1031,7 +1172,26 @@ impl OrbitLiveApp {
                 self.selected = None;
             }
         }
-        if ctx.input(|i| i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight)) {
+        // CaptureWindow::KeyPressed A / D / Left / Right (no selection): Pan ±10%.
+        if ctx.input(|i| i.key_pressed(Key::A))
+            || (self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowLeft)))
+        {
+            let (t0, t1) = pan_time(self.t0, self.t1, PAN_RATIO);
+            self.t0 = t0;
+            self.t1 = t1;
+            self.follow = false;
+        }
+        if ctx.input(|i| i.key_pressed(Key::D))
+            || (self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowRight)))
+        {
+            let (t0, t1) = pan_time(self.t0, self.t1, -PAN_RATIO);
+            self.t0 = t0;
+            self.t1 = t1;
+            self.follow = false;
+        }
+        if self.selected.is_some()
+            && ctx.input(|i| i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight))
+        {
             let dir = if ctx.input(|i| i.key_pressed(Key::ArrowRight)) {
                 1isize
             } else {
@@ -1039,6 +1199,55 @@ impl OrbitLiveApp {
             };
             self.nudge_selection(dir);
         }
+        // W / S → ZoomHorizontally around the pointer (TimeGraph::ZoomTime).
+        if ctx.input(|i| i.key_pressed(Key::W)) {
+            self.zoom_horizontally(ctx, body, ruler, 1);
+        }
+        if ctx.input(|i| i.key_pressed(Key::S)) {
+            self.zoom_horizontally(ctx, body, ruler, -1);
+        }
+        if self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowUp)) {
+            self.nudge_vscroll(VSCROLL_ARROW, view_h);
+        }
+        if self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowDown)) {
+            self.nudge_vscroll(-VSCROLL_ARROW, view_h);
+        }
+        if ctx.input(|i| i.key_pressed(Key::PageUp)) {
+            self.nudge_vscroll(VSCROLL_PAGE, view_h);
+        }
+        if ctx.input(|i| i.key_pressed(Key::PageDown)) {
+            self.nudge_vscroll(-VSCROLL_PAGE, view_h);
+        }
+    }
+
+    fn zoom_horizontally(&mut self, ctx: &Context, body: Rect, ruler: Rect, delta: i32) {
+        let pos = ctx.pointer_latest_pos();
+        let rect = if pos.map(|p| ruler.contains(p)).unwrap_or(false) {
+            ruler
+        } else {
+            body
+        };
+        let pos = pos.unwrap_or(rect.center());
+        let frac = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
+        let (t0, t1) = zoom_time(self.t0, self.t1, delta, frac);
+        self.t0 = t0;
+        self.t1 = t1;
+        self.follow = false;
+    }
+
+    fn nudge_vscroll(&mut self, ratio: f32, view_h: f32) {
+        let next = (self.lane_scroll - ratio * view_h.max(1.0)).max(0.0);
+        self.pending_vscroll = Some(next);
+        self.lane_scroll = next;
+    }
+
+    fn zoom_to_scope(&mut self, pick: ScopePick) {
+        let start = pick.start_ns as f64;
+        let end = start + pick.duration_ns.max(1) as f64;
+        let (t0, t1) = zoom_scope_window(start, end);
+        self.t0 = t0;
+        self.t1 = t1;
+        self.follow = false;
     }
 
     fn handle_pick(&mut self, response: &egui::Response, rect: Rect, t0: u64, t1: u64, width: f32) {
@@ -1049,7 +1258,13 @@ impl OrbitLiveApp {
         let x = pos.x - rect.left();
         let y = pos.y - rect.top();
         self.hover = self.pick_at(x, y, t0, t1, width);
-        if response.clicked() {
+        if response.double_clicked() {
+            // CaptureWindow::SelectTimer + TimeGraph::Zoom (1.1 × duration).
+            if let Some(pick) = self.hover {
+                self.selected = Some(pick);
+                self.zoom_to_scope(pick);
+            }
+        } else if response.clicked() {
             self.selected = self.hover;
         }
     }
@@ -1566,5 +1781,49 @@ mod tests {
         let (major, minor) = tick_steps(2e9, 800.0);
         assert!(major > 0.0);
         assert!((major / minor - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zoom_time_matches_timegraph_incremental_ratio() {
+        let (t0, t1) = zoom_time(0.0, 2e9, 1, 0.5);
+        let half = 1e9 / 1.1;
+        assert!((t0 - (1e9 - half)).abs() < 1e-3);
+        assert!((t1 - (1e9 + half)).abs() < 1e-3);
+        let (back0, back1) = zoom_time(t0, t1, -1, 0.5);
+        assert!((back0 - 0.0).abs() < 1e-3);
+        assert!((back1 - 2e9).abs() < 1e-3);
+    }
+
+    #[test]
+    fn zoom_time_at_left_keeps_t0() {
+        // TimeGraphTest MouseWheel: leftmost timeline keeps min timestamp.
+        let (t0, t1) = zoom_time(100.0, 100.0 + 2e9, 1, 0.0);
+        assert!((t0 - 100.0).abs() < 1e-3);
+        assert!(t1 < 100.0 + 2e9);
+    }
+
+    #[test]
+    fn zoom_scope_window_is_1_1x_duration_centered() {
+        // TimeGraph::Zoom: mid ± 1.1 * (end-start) / 2
+        let (t0, t1) = zoom_scope_window(1_000.0, 2_000.0);
+        assert!((t0 - 950.0).abs() < 1e-6);
+        assert!((t1 - 2_050.0).abs() < 1e-6);
+        assert!(((t1 - t0) - 1_100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pan_time_a_key_moves_window_earlier() {
+        let (t0, t1) = pan_time(1_000.0, 2_000.0, PAN_RATIO);
+        assert!((t0 - 900.0).abs() < 1e-6);
+        assert!((t1 - 1_900.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn time_zoom_step_uses_scroll_then_egui_zoom_delta() {
+        assert_eq!(time_zoom_step(20.0, 1.0), 1);
+        assert_eq!(time_zoom_step(-20.0, 1.0), -1);
+        assert_eq!(time_zoom_step(0.0, 1.2), 1);
+        assert_eq!(time_zoom_step(0.0, 0.8), -1);
+        assert_eq!(time_zoom_step(0.0, 1.0), 0);
     }
 }

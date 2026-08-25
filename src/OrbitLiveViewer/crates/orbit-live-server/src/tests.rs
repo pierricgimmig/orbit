@@ -232,3 +232,42 @@ fn demo_thread_names_are_interned_for_the_rail() {
     assert!(texts.contains(&"Main"));
     assert!(texts.contains(&"Worker-1"));
 }
+
+#[test]
+fn demo_scope_names_are_interned_as_words() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    crate::demo::intern_demo_names(&svc);
+    let intern = svc.intern.lock();
+    assert_eq!(intern.get(100), Some("Main"));
+    assert_eq!(intern.get(10), Some("Async"));
+    assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE), Some("Tick"));
+    assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE + 1), Some("Simulate"));
+    assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE), Some("GpuSubmit"));
+    assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE + 3), Some("Encode"));
+    assert_eq!(
+        intern.get(crate::demo::scope_name_id(0, 0, 0)),
+        Some("Tick")
+    );
+}
+
+#[test]
+fn demo_stop_clears_status_flag_and_allows_restart() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let svc = LiveService::new(small_cfg()).unwrap();
+        crate::demo::start(&svc, 1_000).unwrap();
+        assert!(svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        crate::demo::stop(&svc);
+        assert!(
+            !svc.demo.load(std::sync::atomic::Ordering::Relaxed),
+            "stop must clear status.demo immediately"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        assert!(!svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        crate::demo::start(&svc, 1_000).expect("stop must release the producer");
+        crate::demo::stop(&svc);
+    });
+}
