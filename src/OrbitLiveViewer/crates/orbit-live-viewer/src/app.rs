@@ -2,7 +2,7 @@
 
 use eframe::egui::{
     self, scroll_area::ScrollSource, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId,
-    Frame, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
+    Frame, Galley, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2,
 };
 use orbit_live_event::dev::{
@@ -17,7 +17,8 @@ use orbit_live_render::{
     leaf_label, pick_column_event, pick_instance_at, ScopeInstance, ScopePick, TrackIndex,
     FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::dev::DevFrame;
 use crate::fonts;
@@ -27,8 +28,8 @@ use crate::net::{
 };
 use crate::theme;
 use crate::timeline::{
-    paint_callback, paint_overlay_callback, split_drag_instances, TimelineGpu, TimelinePayload,
-    ViewUniforms,
+    paint_callback, paint_overlay_callback, shift_instances_to_layout, split_drag_instances,
+    TimelineGpu, TimelinePayload, ViewUniforms,
 };
 use crate::tracks::{RowId, TrackRow, TrackStrip};
 
@@ -198,6 +199,62 @@ pub fn apply_orbit_visuals(ctx: &Context) {
     ctx.set_visuals(v);
 }
 
+#[derive(Default)]
+struct ClipLabelCache {
+    min_w: f32,
+    fitted: HashMap<(u32, u64, u16), Arc<Galley>>,
+    widths: HashMap<String, f32>,
+}
+
+impl ClipLabelCache {
+    fn measure(&mut self, fonts: &egui::text::Fonts, font: &FontId, s: &str) -> f32 {
+        if let Some(&w) = self.widths.get(s) {
+            return w;
+        }
+        if self.widths.len() > 4096 {
+            self.widths.clear();
+        }
+        let w = fonts
+            .layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x;
+        self.widths.insert(s.to_owned(), w);
+        w
+    }
+
+    fn galley(
+        &mut self,
+        fonts: &egui::text::Fonts,
+        font: &FontId,
+        intern: &InternTable,
+        inst: &ScopeInstance,
+        max_w: f32,
+    ) -> Option<Arc<Galley>> {
+        let name = intern.get(inst.name_id)?;
+        if name.is_empty() {
+            return None;
+        }
+        let max_q = max_w.clamp(0.0, 65535.0).round() as u16;
+        let key = (inst.name_id, inst.duration_ns, max_q);
+        if let Some(g) = self.fitted.get(&key) {
+            return Some(g.clone());
+        }
+        let elapsed = display_time_ns(inst.duration_ns);
+        let label = timeslice_label_fitting(name, &elapsed, max_q as f32, &mut |s| {
+            self.measure(fonts, font, s)
+        });
+        if label.is_empty() {
+            return None;
+        }
+        if self.fitted.len() > 4096 {
+            self.fitted.clear();
+        }
+        let g = fonts.layout_no_wrap(label, font.clone(), Color32::WHITE);
+        self.fitted.insert(key, g.clone());
+        Some(g)
+    }
+}
+
 pub struct OrbitLiveApp {
     index: TrackIndex,
     intern: InternTable,
@@ -228,7 +285,11 @@ pub struct OrbitLiveApp {
     hover: Option<ScopePick>,
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
+    last_instanced_window: Option<(u64, u64, u32)>,
     last_lod: orbit_live_render::TimelineLod,
+    clip_labels: ClipLabelCache,
+    skip_clip_labels: bool,
+    needs_repaint: bool,
     compact: bool,
     advanced: bool,
     dev: bool,
@@ -293,7 +354,11 @@ impl OrbitLiveApp {
             hover: None,
             last_instances: Vec::new(),
             last_layout: Vec::new(),
+            last_instanced_window: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
+            clip_labels: ClipLabelCache::default(),
+            skip_clip_labels: false,
+            needs_repaint: false,
             compact: false,
             advanced: false,
             dev,
@@ -323,6 +388,15 @@ impl OrbitLiveApp {
 
     fn search_active(&self) -> bool {
         !self.search_resolved.is_empty()
+    }
+
+    fn mark_layout_changed(&mut self) {
+        self.skip_clip_labels = true;
+        self.needs_repaint = true;
+    }
+
+    fn wants_live_repaint(&self) -> bool {
+        live_repaint(self.status.demo, self.status.capturing, self.tracks.dragging())
     }
 
     fn toggle_dev(&mut self) {
@@ -784,6 +858,7 @@ impl OrbitLiveApp {
             );
             if hit.clicked() {
                 self.tracks.show_all_threads();
+                self.mark_layout_changed();
             }
             hit.on_hover_text("Show all threads");
         }
@@ -880,7 +955,9 @@ impl OrbitLiveApp {
                     self.timeline_payload(t0, t1, width, lod, ppp)
                 };
                 ui.painter().add(paint_callback(body, payload, view));
-                if self.last_lod == orbit_live_render::TimelineLod::Instanced {
+                if self.last_lod == orbit_live_render::TimelineLod::Instanced
+                    && !self.skip_clip_labels
+                {
                     paint_clip_labels(
                         ui,
                         body,
@@ -892,6 +969,7 @@ impl OrbitLiveApp {
                             ClipLabelSet::All
                         },
                         self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
+                        &mut self.clip_labels,
                     );
                 }
                 if lifting {
@@ -899,7 +977,9 @@ impl OrbitLiveApp {
                     if let Some(fg) = overlay {
                         ui.painter().add(paint_overlay_callback(body, fg, view));
                     }
-                    if self.last_lod == orbit_live_render::TimelineLod::Instanced {
+                    if self.last_lod == orbit_live_render::TimelineLod::Instanced
+                        && !self.skip_clip_labels
+                    {
                         paint_clip_labels(
                             ui,
                             body,
@@ -907,6 +987,7 @@ impl OrbitLiveApp {
                             &self.last_instances,
                             ClipLabelSet::Dragged,
                             self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
+                            &mut self.clip_labels,
                         );
                     }
                 }
@@ -926,6 +1007,7 @@ impl OrbitLiveApp {
             }
         });
         self.lane_scroll = out.state.offset.y;
+        self.skip_clip_labels = false;
     }
 
     fn paint_headers(
@@ -937,7 +1019,7 @@ impl OrbitLiveApp {
         pass: HeaderPass,
     ) {
         let dragged = self.tracks.dragging_thread();
-        let rows = self.tracks.rows();
+        let rows: Vec<TrackRow> = self.tracks.rows().to_vec();
         let clip = ui.clip_rect();
         for row in &rows {
             let on_drag = dragged
@@ -1026,6 +1108,7 @@ impl OrbitLiveApp {
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 8.0, open, ("m", 0u32, 0u32)) {
                     self.tracks.toggle(row.id);
+                    self.mark_layout_changed();
                 }
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
@@ -1039,6 +1122,7 @@ impl OrbitLiveApp {
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
                     self.tracks.toggle(row.id);
+                    self.mark_layout_changed();
                 }
                 let name = self
                     .processes
@@ -1079,6 +1163,7 @@ impl OrbitLiveApp {
                 }
                 if chevron(ui, r, 36.0, open, ("t", th.pid, th.tid)) {
                     self.tracks.toggle(row.id);
+                    self.mark_layout_changed();
                 }
                 let chip =
                     theme::display_argb(THREAD_PALETTE[(th.tid as usize) % THREAD_PALETTE.len()]);
@@ -1119,6 +1204,7 @@ impl OrbitLiveApp {
                 );
                 if hide_r.clicked() {
                     self.tracks.toggle_hidden(th);
+                    self.mark_layout_changed();
                 }
                 hide_r.on_hover_text("Hide thread");
             }
@@ -1142,21 +1228,30 @@ impl OrbitLiveApp {
         lod: orbit_live_render::TimelineLod,
         ppp: f32,
     ) -> (TimelinePayload, Option<TimelinePayload>) {
-        let layout = self.tracks.layout();
-        self.last_layout = layout.clone();
+        let layout = self.tracks.layout().to_vec();
         let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
         if self.index.event_count() > 0 {
             let mut overlay = Vec::new();
             if lod == orbit_live_render::TimelineLod::Instanced {
-                let mut frame = collect_instances_layout(&self.index, t0, t1, width, &layout);
                 let d = self.tracks.scale;
-                for inst in &mut frame.instances {
-                    inst.h *= d;
+                let window = (t0, t1, width.to_bits());
+                let mut instances = std::mem::take(&mut self.last_instances);
+                let shifted = self.last_instanced_window == Some(window)
+                    && !instances.is_empty()
+                    && shift_instances_to_layout(&mut instances, &self.last_layout, &layout);
+                if !shifted {
+                    let mut frame = collect_instances_layout(&self.index, t0, t1, width, &layout);
+                    for inst in &mut frame.instances {
+                        inst.h *= d;
+                    }
+                    instances = frame.instances;
                 }
                 let search = self.search_active().then_some(&self.search_ids);
-                apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search);
-                let (bg, fg) = split_drag_instances(frame.instances, dragged);
+                apply_highlight_flags(&mut instances, self.selected, self.hover, search);
+                let (bg, fg) = split_drag_instances(instances, dragged);
                 self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
+                self.last_layout = layout;
+                self.last_instanced_window = Some(window);
                 let mut bg = bg;
                 let mut fg = fg;
                 scale_instances_ppp(&mut bg, ppp);
@@ -1165,6 +1260,7 @@ impl OrbitLiveApp {
                 return (TimelinePayload::Instanced { instances: bg }, lift);
             }
             self.last_instances.clear();
+            self.last_instanced_window = None;
             if let Some(sel) = self.selected {
                 if let Some(mut inst) =
                     overlay_instance(&self.index, &layout, t0, t1, width, sel, self.tracks.scale)
@@ -1219,6 +1315,7 @@ impl OrbitLiveApp {
             return (bg, lift);
         }
         self.last_instances.clear();
+        self.last_instanced_window = None;
         if let Some(tl) = &self.service_timeline {
             if tl.lod == "instanced" && !tl.instances.is_empty() {
                 let mut instances = instances_from_timeline(tl);
@@ -1558,13 +1655,8 @@ impl eframe::App for OrbitLiveApp {
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
                 .show(ctx, |ui| self.timeline(ui, dt, &devf));
 
-            let live = self.status.demo
-                || self.status.capturing
-                || self.tracks.dragging()
-                || (self.follow
-                    && self.status.newest_end_ns > 0
-                    && (self.t1 - self.status.newest_end_ns as f64).abs() > 2_000_000.0);
-            if live {
+            if self.wants_live_repaint() || self.needs_repaint {
+                self.needs_repaint = false;
                 ctx.request_repaint();
             } else {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -1949,7 +2041,7 @@ fn display_time_ns(ns: u64) -> String {
 }
 
 /// `QtTextRenderer::AddTextTrailingCharsPrioritized`: keep `elapsed`, ellipsize the name.
-fn elide_to_width(s: &str, max_w: f32, measure: &impl Fn(&str) -> f32) -> String {
+fn elide_to_width(s: &str, max_w: f32, measure: &mut impl FnMut(&str) -> f32) -> String {
     if s.is_empty() || measure(s) <= max_w {
         return s.to_string();
     }
@@ -1978,6 +2070,10 @@ fn elide_to_width(s: &str, max_w: f32, measure: &impl Fn(&str) -> f32) -> String
     }
 }
 
+fn live_repaint(demo: bool, capturing: bool, dragging: bool) -> bool {
+    demo || capturing || dragging
+}
+
 fn timeslice_text(name: &str, elapsed: &str) -> String {
     format!("{name} {elapsed}")
 }
@@ -1986,7 +2082,7 @@ fn timeslice_label_fitting(
     name: &str,
     elapsed: &str,
     max_w: f32,
-    measure: &impl Fn(&str) -> f32,
+    measure: &mut impl FnMut(&str) -> f32,
 ) -> String {
     let full = timeslice_text(name, elapsed);
     if measure(&full) <= max_w {
@@ -2009,14 +2105,17 @@ fn paint_clip_labels(
     instances: &[ScopeInstance],
     set: ClipLabelSet,
     dragged: Option<(u32, u32)>,
+    cache: &mut ClipLabelCache,
 ) {
     if instances.is_empty() {
         return;
     }
     let font = FontId::new(11.0, fonts::medium());
     let fonts = ui.fonts(|f| f.clone());
-    let measure = |s: &str| fonts.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x;
-    let min_w = measure("W");
+    if cache.min_w <= 0.0 {
+        cache.min_w = cache.measure(&fonts, &font, "W");
+    }
+    let min_w = cache.min_w;
     let view = body.intersect(ui.clip_rect());
     if !view.is_positive() {
         return;
@@ -2039,12 +2138,6 @@ fn paint_clip_labels(
         if inst.w <= min_w {
             continue;
         }
-        let Some(name) = intern.get(inst.name_id) else {
-            continue;
-        };
-        if name.is_empty() {
-            continue;
-        }
         let box_rect = Rect::from_min_size(
             Pos2::new(body.left() + inst.x, body.top() + inst.y),
             Vec2::new(inst.w, inst.h),
@@ -2058,19 +2151,16 @@ fn paint_clip_labels(
         if max_size <= min_w {
             continue;
         }
-        let elapsed = display_time_ns(inst.duration_ns);
-        let label = timeslice_label_fitting(name, &elapsed, max_size - 2.0, &measure);
-        if label.is_empty() {
+        let Some(galley) = cache.galley(&fonts, &font, intern, inst, max_size - 2.0) else {
             continue;
-        }
+        };
         let pad_y = 5.0_f32.min(inst.h * 0.25).max(1.5);
-        ui.painter_at(clip).text(
+        let pos = Align2::LEFT_BOTTOM.anchor_size(
             Pos2::new(pos_x + 2.0, box_rect.bottom() - pad_y),
-            Align2::LEFT_BOTTOM,
-            label,
-            font.clone(),
-            Color32::WHITE,
+            galley.size(),
         );
+        ui.painter_at(clip)
+            .galley(pos.min, galley, Color32::WHITE);
     }
 }
 
@@ -2172,8 +2262,8 @@ mod tests {
 
     #[test]
     fn timeslice_keeps_duration_when_name_is_elided() {
-        let measure = |s: &str| s.chars().count() as f32;
-        let label = timeslice_label_fitting("UpdateTransforms", "4.800 ms", 14.0, &measure);
+        let mut measure = |s: &str| s.chars().count() as f32;
+        let label = timeslice_label_fitting("UpdateTransforms", "4.800 ms", 14.0, &mut measure);
         assert!(
             label.ends_with("4.800 ms"),
             "duration tail must stay: {label}"
@@ -2183,10 +2273,18 @@ mod tests {
 
     #[test]
     fn timeslice_full_string_when_box_is_wide() {
-        let measure = |s: &str| s.chars().count() as f32;
+        let mut measure = |s: &str| s.chars().count() as f32;
         assert_eq!(
-            timeslice_label_fitting("Tick", "18.000 ms", 80.0, &measure),
+            timeslice_label_fitting("Tick", "18.000 ms", 80.0, &mut measure),
             "Tick 18.000 ms"
         );
+    }
+
+    #[test]
+    fn live_repaint_is_demo_capture_drag_only() {
+        assert!(!live_repaint(false, false, false));
+        assert!(live_repaint(true, false, false));
+        assert!(live_repaint(false, true, false));
+        assert!(live_repaint(false, false, true));
     }
 }

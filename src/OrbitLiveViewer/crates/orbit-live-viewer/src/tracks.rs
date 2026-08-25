@@ -39,6 +39,9 @@ pub struct TrackStrip {
     hidden: HashSet<ThreadId>,
     y: HashMap<RowId, f32>,
     drag: Option<Drag>,
+    cached_rows: Vec<TrackRow>,
+    cached_layout: Vec<(LaneKey, f32)>,
+    cached_total_h: f32,
 }
 
 struct Drag {
@@ -58,6 +61,9 @@ impl Default for TrackStrip {
             hidden: HashSet::new(),
             y: HashMap::new(),
             drag: None,
+            cached_rows: Vec::new(),
+            cached_layout: Vec::new(),
+            cached_total_h: 0.0,
         }
     }
 }
@@ -144,6 +150,7 @@ impl TrackStrip {
         for id in visible {
             self.y.entry(id).or_insert(0.0);
         }
+        self.apply_layout(index, filter_pid);
     }
 
     pub fn toggle(&mut self, id: RowId) {
@@ -259,27 +266,28 @@ impl TrackStrip {
         h
     }
 
-    pub fn tick(&mut self, dt: f32, index: &TrackIndex, filter_pid: Option<u32>) {
+    /// Snap every visible row to its skeleton Y. Collapse must not lerp —
+    /// the old 80ms exponential ease made process headers crawl for many frames.
+    pub fn tick(&mut self, _dt: f32, index: &TrackIndex, filter_pid: Option<u32>) {
+        self.apply_layout(index, filter_pid);
+    }
+
+    fn apply_layout(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
         let preview = self.preview_threads();
         let skeleton = self.skeleton_with_threads(index, filter_pid, &preview);
         let mut y = 0.0;
-        let k = 1.0 - (-dt / 0.08).exp();
-        let mut targets = HashMap::new();
+        let mut next = HashMap::with_capacity(skeleton.len());
         for (id, h) in &skeleton {
-            targets.insert(*id, y);
+            next.insert(*id, y);
             y += *h;
-        }
-        for (id, target) in targets {
-            let slot = self.y.entry(id).or_insert(target);
-            *slot += (target - *slot) * k;
         }
         if let Some(d) = &self.drag {
             let header = RowId::Thread(d.thread);
             let base = d.pointer_y - d.grab_off;
-            if let Some(hy) = self.y.get(&header).copied() {
+            if let Some(hy) = next.get(&header).copied() {
                 let dy = base - hy;
-                self.y.insert(header, base);
-                for (id, slot) in self.y.iter_mut() {
+                next.insert(header, base);
+                for (id, slot) in next.iter_mut() {
                     match *id {
                         RowId::Lane(k) if k.pid == d.thread.pid && k.tid == d.thread.tid => {
                             *slot += dy;
@@ -288,20 +296,14 @@ impl TrackStrip {
                     }
                 }
             } else {
-                self.y.insert(header, base);
+                next.insert(header, base);
             }
         }
+        self.y = next;
+        self.rebuild_rows();
     }
 
-    /// Visible row whose vertical band contains `y` (strip-local, 0 at top).
-    pub fn row_at_y(&self, y: f32) -> Option<RowId> {
-        self.rows()
-            .into_iter()
-            .find(|r| y >= r.y && y < r.y + r.height)
-            .map(|r| r.id)
-    }
-
-    pub fn rows(&self) -> Vec<TrackRow> {
+    fn rebuild_rows(&mut self) {
         let mut ids: Vec<RowId> = self.y.keys().copied().collect();
         ids.sort_by(|a, b| {
             self.y
@@ -310,27 +312,40 @@ impl TrackStrip {
                 .partial_cmp(self.y.get(b).unwrap_or(&0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        ids.into_iter()
-            .filter_map(|id| {
-                let y = *self.y.get(&id)?;
-                Some(TrackRow {
-                    id,
-                    y,
-                    height: self.height_of(id),
-                })
-            })
-            .collect()
+        self.cached_rows.clear();
+        self.cached_layout.clear();
+        let mut bottom = 0.0_f32;
+        let mut height_sum = 0.0_f32;
+        for id in ids {
+            let Some(&y) = self.y.get(&id) else {
+                continue;
+            };
+            let height = self.height_of(id);
+            height_sum += height;
+            bottom = bottom.max(y + height);
+            if let RowId::Lane(k) = id {
+                self.cached_layout.push((k, y));
+            }
+            self.cached_rows.push(TrackRow { id, y, height });
+        }
+        self.cached_total_h = height_sum.max(bottom);
+    }
+
+    /// Visible row whose vertical band contains `y` (strip-local, 0 at top).
+    pub fn row_at_y(&self, y: f32) -> Option<RowId> {
+        self.cached_rows
+            .iter()
+            .find(|r| y >= r.y && y < r.y + r.height)
+            .map(|r| r.id)
+    }
+
+    pub fn rows(&self) -> &[TrackRow] {
+        &self.cached_rows
     }
 
     /// Leaf lanes only, y matching the rail (headers occupy space above them).
-    pub fn layout(&self) -> Vec<(LaneKey, f32)> {
-        self.rows()
-            .into_iter()
-            .filter_map(|r| match r.id {
-                RowId::Lane(k) => Some((k, r.y)),
-                _ => None,
-            })
-            .collect()
+    pub fn layout(&self) -> &[(LaneKey, f32)] {
+        &self.cached_layout
     }
 
     pub fn begin_drag(&mut self, thread: ThreadId, lane_y: f32, pointer_y: f32) {
@@ -367,16 +382,7 @@ impl TrackStrip {
     }
 
     pub fn total_height(&self) -> f32 {
-        self.y
-            .keys()
-            .map(|id| self.height_of(*id))
-            .sum::<f32>()
-            .max(
-                self.rows()
-                    .iter()
-                    .map(|r| r.y + r.height)
-                    .fold(0.0, f32::max),
-            )
+        self.cached_total_h
     }
 
     pub fn insert_y(&self) -> Option<f32> {
@@ -652,6 +658,37 @@ mod tests {
             Some(mid.id)
         );
         assert_eq!(strip.row_at_y(-4.0), None);
+    }
+
+    #[test]
+    fn collapse_snaps_ys_in_one_tick() {
+        let mut idx = TrackIndex::default();
+        for tid in 1..=8u32 {
+            idx.insert(scope(1, tid, tid));
+        }
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let open_h = strip.total_height();
+        assert!(
+            !strip.layout().is_empty(),
+            "single-process demo starts expanded"
+        );
+        strip.toggle(RowId::Process(1));
+        strip.tick(1.0 / 60.0, &idx, None);
+        let snapped = strip.total_height();
+        let mut control = TrackStrip::default();
+        control.sync(&idx, None);
+        control.toggle(RowId::Process(1));
+        control.tick(1.0, &idx, None);
+        assert!(
+            (snapped - control.total_height()).abs() < 0.01,
+            "one 16ms tick must land on the final Y, not an 80ms ease ({snapped} vs {})",
+            control.total_height()
+        );
+        assert!(snapped < open_h);
+        assert!(strip.layout().is_empty());
+        assert_eq!(strip.rows().len(), control.rows().len());
     }
 
     #[test]

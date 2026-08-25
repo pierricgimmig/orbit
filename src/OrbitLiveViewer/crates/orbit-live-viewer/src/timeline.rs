@@ -10,9 +10,10 @@ use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use orbit_live_event::{chrome, LaneKey};
 use orbit_live_render::{
-    collect_instances_layout, stacked_layout, ScopeInstance, TimelineLod, TrackIndex,
+    collect_instances_layout, stacked_layout, ScopeInstance, ScopePick, TimelineLod, TrackIndex,
     BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
+use std::collections::HashMap;
 
 pub const INSTANCE_STRIDE: u64 = 48;
 
@@ -157,6 +158,29 @@ pub fn split_drag_instances(
         }
     }
     (bg, fg)
+}
+
+/// Collapse / hide / drag only changes row Y. Remap existing instances instead
+/// of walking the ring. Returns false when `new` has lanes `old` did not
+/// (expand) so the caller should collect from the index.
+pub fn shift_instances_to_layout(
+    instances: &mut Vec<ScopeInstance>,
+    old: &[(LaneKey, f32)],
+    new: &[(LaneKey, f32)],
+) -> bool {
+    let old_y: HashMap<LaneKey, f32> = old.iter().copied().collect();
+    let new_y: HashMap<LaneKey, f32> = new.iter().copied().collect();
+    if new.iter().any(|(k, _)| !old_y.contains_key(k)) {
+        return false;
+    }
+    instances.retain(|i| new_y.contains_key(&ScopePick::from_instance(i).lane_key()));
+    for inst in instances.iter_mut() {
+        let key = ScopePick::from_instance(inst).lane_key();
+        if let (Some(&from), Some(&to)) = (old_y.get(&key), new_y.get(&key)) {
+            inst.y += to - from;
+        }
+    }
+    true
 }
 
 fn dim_raster_pixels(
@@ -883,5 +907,44 @@ mod tests {
         let (all, none) = split_drag_instances(vec![mk(1)], None);
         assert_eq!(all.len(), 1);
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn shift_instances_moves_ys_and_drops_hidden_lanes() {
+        let lane = |tid: u32, extra: u8| orbit_live_event::LaneKey {
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra,
+        };
+        let mk = |tid: u32, y: f32| ScopeInstance {
+            x: 0.0,
+            y,
+            w: 4.0,
+            h: 8.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: tid,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
+        };
+        let old = [(lane(1, 0), 20.0), (lane(2, 0), 80.0), (lane(3, 0), 140.0)];
+        let new = [(lane(1, 0), 20.0), (lane(3, 0), 60.0)];
+        let mut insts = vec![mk(1, 20.0), mk(2, 80.0), mk(3, 140.0)];
+        assert!(shift_instances_to_layout(&mut insts, &old, &new));
+        assert_eq!(insts.len(), 2);
+        assert_eq!(insts[0].tid, 1);
+        assert!((insts[0].y - 20.0).abs() < 1e-4);
+        assert_eq!(insts[1].tid, 3);
+        assert!((insts[1].y - 60.0).abs() < 1e-4);
+        let expand = [(lane(1, 0), 20.0), (lane(2, 0), 40.0), (lane(3, 0), 60.0)];
+        assert!(!shift_instances_to_layout(&mut insts, &new, &expand));
     }
 }
