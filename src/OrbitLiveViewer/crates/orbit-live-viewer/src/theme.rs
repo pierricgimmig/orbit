@@ -76,23 +76,13 @@ fn chan(v: u8, lift: i16) -> u8 {
     (i16::from(v) + lift).clamp(0x0B, 0x28) as u8
 }
 
-/// Mix Avery / Material toward graphite so clips sit on a dark lane.
+/// Scope / event colors stay the raw Avery / Fusion hex. Only the Orbit
+/// track-gray chrome value is remapped onto the DAW graphite lane.
 pub fn display_argb(argb: u32) -> u32 {
     if argb == chrome::TRACK {
         return DISPLAY_TRACK;
     }
-    let r = ((argb >> 16) & 0xFF) as i32;
-    let g = ((argb >> 8) & 0xFF) as i32;
-    let b = (argb & 0xFF) as i32;
-    let a = argb & 0xFF00_0000;
-    let mix = 62; // /255 toward #1A1C22
-    let r = (r * (255 - mix) + 0x1A * mix) / 255;
-    let g = (g * (255 - mix) + 0x1C * mix) / 255;
-    let b = (b * (255 - mix) + 0x22 * mix) / 255;
-    let r = (r * 214 / 255) as u32;
-    let g = (g * 214 / 255) as u32;
-    let b = (b * 214 / 255) as u32;
-    a | (r << 16) | (g << 8) | b
+    argb
 }
 
 pub fn remap_rgba8(bytes: &mut [u8]) {
@@ -138,13 +128,11 @@ mod tests {
     use orbit_live_event::THREAD_PALETTE;
 
     #[test]
-    fn display_keeps_hue_family_and_darkens() {
+    fn display_keeps_raw_scope_palette() {
         let src = THREAD_PALETTE[0];
-        let out = display_argb(src);
-        assert_ne!(out, src);
-        let sr = (src >> 16) & 0xFF;
-        let or_ = (out >> 16) & 0xFF;
-        assert!(or_ < sr);
+        assert_eq!(src, 0xFFE7_4435);
+        assert_eq!(display_argb(src), src);
+        assert_eq!(display_argb(THREAD_PALETTE[1]), THREAD_PALETTE[1]);
         assert_eq!(display_argb(chrome::TRACK), DISPLAY_TRACK);
     }
 

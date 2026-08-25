@@ -8,7 +8,7 @@ use egui::PaintCallback;
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
-use orbit_live_event::LaneKey;
+use orbit_live_event::{chrome, LaneKey};
 use orbit_live_render::{
     collect_instances_layout, stacked_layout, ScopeInstance, TimelineLod, TrackIndex,
     BLIT_RECT_WGSL, INSTANCE_WGSL,
@@ -64,6 +64,7 @@ impl TimelinePayload {
         layout: &[(LaneKey, f32)],
         overlay: &[ScopeInstance],
         search: Option<&std::collections::HashSet<u32>>,
+        punch: Option<(u32, u32)>,
     ) -> Self {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
@@ -93,6 +94,9 @@ impl TimelinePayload {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
                 let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
                 let mut raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys);
+                if let Some((pid, tid)) = punch {
+                    punch_raster_thread(&mut raster, pid, tid);
+                }
                 if let Some(ids) = search {
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
                 }
@@ -119,6 +123,40 @@ impl TimelinePayload {
             }
         }
     }
+}
+
+/// Lifted-drag z-order: keep raster height, punch that thread's rows to track gray
+/// so the blit does not cover the overlay pass.
+fn punch_raster_thread(raster: &mut orbit_live_render::RasterizedFrame, pid: u32, tid: u32) {
+    if raster.width == 0 {
+        return;
+    }
+    for (row, key) in raster.lanes.iter().enumerate() {
+        if key.pid == pid && key.tid == tid {
+            let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+            dest.fill(chrome::TRACK);
+        }
+    }
+}
+
+/// Later GPU instances win. Dragged thread scopes go in `fg` so they paint last.
+pub fn split_drag_instances(
+    instances: Vec<ScopeInstance>,
+    dragged: Option<(u32, u32)>,
+) -> (Vec<ScopeInstance>, Vec<ScopeInstance>) {
+    let Some((pid, tid)) = dragged else {
+        return (instances, Vec::new());
+    };
+    let mut bg = Vec::with_capacity(instances.len());
+    let mut fg = Vec::new();
+    for inst in instances {
+        if inst.pid == pid && inst.tid == tid {
+            fg.push(inst);
+        } else {
+            bg.push(inst);
+        }
+    }
+    (bg, fg)
 }
 
 fn dim_raster_pixels(
@@ -154,17 +192,48 @@ fn dim_raster_pixels(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimelineLayer {
+    Base,
+    Overlay,
+}
+
 pub fn paint_callback(
     rect: egui::Rect,
     payload: TimelinePayload,
     view: ViewUniforms,
 ) -> PaintCallback {
-    Callback::new_paint_callback(rect, TimelineCallback { payload, view })
+    paint_callback_layer(rect, payload, view, TimelineLayer::Base)
+}
+
+pub fn paint_overlay_callback(
+    rect: egui::Rect,
+    payload: TimelinePayload,
+    view: ViewUniforms,
+) -> PaintCallback {
+    paint_callback_layer(rect, payload, view, TimelineLayer::Overlay)
+}
+
+fn paint_callback_layer(
+    rect: egui::Rect,
+    payload: TimelinePayload,
+    view: ViewUniforms,
+    layer: TimelineLayer,
+) -> PaintCallback {
+    Callback::new_paint_callback(
+        rect,
+        TimelineCallback {
+            payload,
+            view,
+            layer,
+        },
+    )
 }
 
 struct TimelineCallback {
     payload: TimelinePayload,
     view: ViewUniforms,
+    layer: TimelineLayer,
 }
 
 impl CallbackTrait for TimelineCallback {
@@ -177,7 +246,10 @@ impl CallbackTrait for TimelineCallback {
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         if let Some(gpu) = callback_resources.get_mut::<TimelineGpu>() {
-            gpu.upload(device, queue, &self.payload, self.view);
+            if self.layer == TimelineLayer::Base {
+                gpu.clear_overlay();
+            }
+            gpu.upload(device, queue, &self.payload, self.view, self.layer);
         }
         Vec::new()
     }
@@ -197,7 +269,7 @@ impl CallbackTrait for TimelineCallback {
             render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
         }
         if let Some(gpu) = callback_resources.get::<TimelineGpu>() {
-            gpu.draw(render_pass);
+            gpu.draw(render_pass, self.layer);
         }
     }
 }
@@ -211,12 +283,27 @@ pub struct TimelineGpu {
     blit_uni: wgpu::Buffer,
     inst_uni: wgpu::Buffer,
     inst_bind: wgpu::BindGroup,
+    base: GpuDrawLayer,
+    overlay: GpuDrawLayer,
+}
+
+struct GpuDrawLayer {
     instance_buf: Option<wgpu::Buffer>,
     instance_count: u32,
     /// Kept alive so the WebGPU `GPUTexture` is not dropped while bound.
     column_tex: Option<wgpu::Texture>,
     column_bind: Option<wgpu::BindGroup>,
-    lod: TimelineLod,
+}
+
+impl GpuDrawLayer {
+    fn empty() -> Self {
+        Self {
+            instance_buf: None,
+            instance_count: 0,
+            column_tex: None,
+            column_bind: None,
+        }
+    }
 }
 
 impl TimelineGpu {
@@ -389,12 +476,27 @@ impl TimelineGpu {
             blit_uni,
             inst_uni,
             inst_bind,
-            instance_buf: None,
-            instance_count: 0,
-            column_tex: None,
-            column_bind: None,
-            lod: TimelineLod::PixelColumns,
+            base: GpuDrawLayer::empty(),
+            overlay: GpuDrawLayer::empty(),
         }
+    }
+
+    fn layer_mut(&mut self, layer: TimelineLayer) -> &mut GpuDrawLayer {
+        match layer {
+            TimelineLayer::Base => &mut self.base,
+            TimelineLayer::Overlay => &mut self.overlay,
+        }
+    }
+
+    fn layer(&self, layer: TimelineLayer) -> &GpuDrawLayer {
+        match layer {
+            TimelineLayer::Base => &self.base,
+            TimelineLayer::Overlay => &self.overlay,
+        }
+    }
+
+    fn clear_overlay(&mut self) {
+        self.overlay = GpuDrawLayer::empty();
     }
 
     fn upload(
@@ -403,6 +505,7 @@ impl TimelineGpu {
         queue: &wgpu::Queue,
         payload: &TimelinePayload,
         view: ViewUniforms,
+        layer: TimelineLayer,
     ) {
         queue.write_buffer(
             &self.blit_uni,
@@ -417,11 +520,7 @@ impl TimelineGpu {
 
         match payload {
             TimelinePayload::Empty => {
-                self.lod = TimelineLod::PixelColumns;
-                self.instance_count = 0;
-                self.instance_buf = None;
-                self.column_tex = None;
-                self.column_bind = None;
+                *self.layer_mut(layer) = GpuDrawLayer::empty();
             }
             TimelinePayload::Pixel {
                 rgba,
@@ -429,11 +528,11 @@ impl TimelineGpu {
                 height,
                 overlay,
             } => {
-                self.lod = TimelineLod::PixelColumns;
-                self.upload_instances(device, overlay);
+                self.upload_instances(device, overlay, layer);
                 if *width == 0 || *height == 0 || rgba.is_empty() {
-                    self.column_tex = None;
-                    self.column_bind = None;
+                    let slot = self.layer_mut(layer);
+                    slot.column_tex = None;
+                    slot.column_bind = None;
                     return;
                 }
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -471,7 +570,7 @@ impl TimelineGpu {
                     },
                 );
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                self.column_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("orbit-columns-bind"),
                     layout: &self.blit_layout,
                     entries: &[
@@ -488,46 +587,57 @@ impl TimelineGpu {
                             resource: wgpu::BindingResource::Sampler(&self.sampler),
                         },
                     ],
-                }));
-                self.column_tex = Some(texture);
+                });
+                let slot = self.layer_mut(layer);
+                slot.column_bind = Some(bind);
+                slot.column_tex = Some(texture);
             }
             TimelinePayload::Instanced { instances } => {
-                self.lod = TimelineLod::Instanced;
-                self.column_tex = None;
-                self.column_bind = None;
-                self.upload_instances(device, instances);
+                {
+                    let slot = self.layer_mut(layer);
+                    slot.column_tex = None;
+                    slot.column_bind = None;
+                }
+                self.upload_instances(device, instances, layer);
             }
         }
     }
 
-    fn upload_instances(&mut self, device: &wgpu::Device, instances: &[ScopeInstance]) {
+    fn upload_instances(
+        &mut self,
+        device: &wgpu::Device,
+        instances: &[ScopeInstance],
+        layer: TimelineLayer,
+    ) {
         let bytes = pack_instances(instances);
-        self.instance_count = instances.len() as u32;
+        let slot = self.layer_mut(layer);
+        slot.instance_count = instances.len() as u32;
         if bytes.is_empty() {
-            self.instance_buf = None;
+            slot.instance_buf = None;
             return;
         }
-        self.instance_buf = Some(
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        slot.instance_buf = Some(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
                 label: Some("orbit-instances"),
                 contents: &bytes,
                 usage: wgpu::BufferUsages::VERTEX,
-            }),
-        );
+            },
+        ));
     }
 
-    fn draw(&self, pass: &mut wgpu::RenderPass<'static>) {
-        if let Some(bind) = &self.column_bind {
+    fn draw(&self, pass: &mut wgpu::RenderPass<'static>, layer: TimelineLayer) {
+        let slot = self.layer(layer);
+        if let Some(bind) = &slot.column_bind {
             pass.set_pipeline(&self.blit_pipeline);
             pass.set_bind_group(0, bind, &[]);
             pass.draw(0..6, 0..1);
         }
-        if let Some(buf) = &self.instance_buf {
-            if self.instance_count > 0 {
+        if let Some(buf) = &slot.instance_buf {
+            if slot.instance_count > 0 {
                 pass.set_pipeline(&self.inst_pipeline);
                 pass.set_bind_group(0, &self.inst_bind, &[]);
                 pass.set_vertex_buffer(0, buf.slice(..));
-                pass.draw(0..6, 0..self.instance_count);
+                pass.draw(0..6, 0..slot.instance_count);
             }
         }
     }
@@ -702,6 +812,7 @@ mod tests {
             &[],
             &[],
             None,
+            None,
         );
         let TimelinePayload::Pixel {
             rgba,
@@ -743,7 +854,34 @@ mod tests {
         });
         let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
-        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0, &[], &[], None);
+        let p = TimelinePayload::from_index(&idx, 0, 1_000_000, 200.0, lod, 1.0, &[], &[], None, None);
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
+    }
+
+    #[test]
+    fn split_drag_instances_paints_thread_last() {
+        let mk = |tid: u32| ScopeInstance {
+            x: 0.0,
+            y: tid as f32,
+            w: 4.0,
+            h: 8.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: tid,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
+        };
+        let (bg, fg) = split_drag_instances(vec![mk(1), mk(2), mk(3)], Some((1, 2)));
+        assert_eq!(bg.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(fg.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![2]);
+        let (all, none) = split_drag_instances(vec![mk(1)], None);
+        assert_eq!(all.len(), 1);
+        assert!(none.is_empty());
     }
 }

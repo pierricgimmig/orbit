@@ -177,6 +177,18 @@ impl TrackStrip {
         self.drag.as_ref().map(|d| d.thread == t).unwrap_or(false)
     }
 
+    pub fn dragging_thread(&self) -> Option<ThreadId> {
+        self.drag.as_ref().map(|d| d.thread)
+    }
+
+    pub fn row_on_thread(row: RowId, t: ThreadId) -> bool {
+        match row {
+            RowId::Thread(th) => th == t,
+            RowId::Lane(k) => k.pid == t.pid && k.tid == t.tid,
+            _ => false,
+        }
+    }
+
     fn shown_order(&self) -> Vec<ThreadId> {
         self.thread_order
             .iter()
@@ -526,6 +538,24 @@ mod tests {
             .process_order
             .contains(&orbit_live_event::dev::VIEWER_PID));
         assert!(!strip.process_order.contains(&9));
+    }
+
+    #[test]
+    fn dragging_thread_is_set_while_held() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(1, 2, 2));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let first = strip.thread_order[0];
+        assert!(strip.dragging_thread().is_none());
+        let y0 = strip.y.get(&RowId::Thread(first)).copied().unwrap_or(0.0);
+        strip.begin_drag(first, y0, y0);
+        assert_eq!(strip.dragging_thread(), Some(first));
+        assert!(TrackStrip::row_on_thread(RowId::Thread(first), first));
+        strip.end_drag();
+        assert!(strip.dragging_thread().is_none());
     }
 
     #[test]

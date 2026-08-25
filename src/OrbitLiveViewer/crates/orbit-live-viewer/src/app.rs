@@ -2,8 +2,8 @@
 
 use eframe::egui::{
     self, scroll_area::ScrollSource, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId,
-    Frame, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Ui,
-    Vec2,
+    Frame, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
+    StrokeKind, Ui, Vec2,
 };
 use orbit_live_event::dev::{
     intern_self_names, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_TRACKS,
@@ -25,7 +25,10 @@ use crate::net::{
     TimelineJson,
 };
 use crate::theme;
-use crate::timeline::{paint_callback, TimelineGpu, TimelinePayload, ViewUniforms};
+use crate::timeline::{
+    paint_callback, paint_overlay_callback, split_drag_instances, TimelineGpu, TimelinePayload,
+    ViewUniforms,
+};
 use crate::tracks::{RowId, TrackRow, TrackStrip};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
@@ -57,6 +60,20 @@ fn hairline() -> Stroke {
 
 fn muted() -> Color32 {
     theme::MUTED
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeaderPass {
+    All,
+    Rest,
+    Dragged,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClipLabelSet {
+    All,
+    Rest,
+    Dragged,
 }
 
 /// Native `TimeGraph::OnMouseWheel` vs `TimelineUi::OnMouseWheel`.
@@ -496,8 +513,11 @@ impl OrbitLiveApp {
             if self.status.demo && pill(ui, "Stop", false).clicked() {
                 self.net.stop_demo();
             }
-            if pill(ui, "Dev", self.dev)
-                .on_hover_text("Profile the viewer into the same capture")
+            let dev_on = self.dev || self.status.self_profile;
+            if pill(ui, "Dev", dev_on)
+                .on_hover_text(
+                    "Self-profile: viewer (pid 2) and service (pid 3) pin to the top of TRACKS. Also ?dev=1 or --dev-self-profile.",
+                )
                 .clicked()
             {
                 self.toggle_dev();
@@ -720,6 +740,15 @@ impl OrbitLiveApp {
             FontId::new(9.5, fonts::medium()),
             theme::MUTED,
         );
+        if self.dev || self.status.self_profile {
+            ui.painter().text(
+                header_cut.left_center() + Vec2::new(62.0, 0.0),
+                Align2::LEFT_CENTER,
+                "DEV",
+                FontId::new(9.5, fonts::medium()),
+                theme::ACCENT,
+            );
+        }
         if self.tracks.hidden_count() > 0 {
             let all = Rect::from_center_size(
                 Pos2::new(header_cut.right() - 28.0, header_cut.center().y),
@@ -783,7 +812,18 @@ impl OrbitLiveApp {
                     None
                 }
             });
-            self.paint_headers(ui, head, body, hover_row);
+            let lifting = self.tracks.dragging();
+            self.paint_headers(
+                ui,
+                head,
+                body,
+                hover_row,
+                if lifting {
+                    HeaderPass::Rest
+                } else {
+                    HeaderPass::All
+                },
+            );
 
             let t0 = self.t0.max(0.0) as u64;
             let t1 = (self.t1 as u64).max(t0 + 1);
@@ -798,7 +838,7 @@ impl OrbitLiveApp {
             self.last_lod = lod;
 
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
-            if !self.tracks.dragging() {
+            if !lifting {
                 self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom);
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y);
                 self.handle_pick(&body_resp, body, t0, t1, width);
@@ -819,15 +859,43 @@ impl OrbitLiveApp {
                     ppp,
                     [screen.width() * ppp, screen.height() * ppp],
                 );
-                let payload = {
+                let (payload, overlay) = {
                     let _payload = dev.scope(TID_RENDER, NAME_PAYLOAD);
                     self.timeline_payload(t0, t1, width, lod, ppp)
                 };
                 ui.painter().add(paint_callback(body, payload, view));
                 if self.last_lod == orbit_live_render::TimelineLod::Instanced {
-                    paint_clip_labels(ui, body, &self.intern, &self.last_instances);
+                    paint_clip_labels(
+                        ui,
+                        body,
+                        &self.intern,
+                        &self.last_instances,
+                        if lifting {
+                            ClipLabelSet::Rest
+                        } else {
+                            ClipLabelSet::All
+                        },
+                        self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
+                    );
+                }
+                if lifting {
+                    self.paint_headers(ui, head, body, hover_row, HeaderPass::Dragged);
+                    if let Some(fg) = overlay {
+                        ui.painter().add(paint_overlay_callback(body, fg, view));
+                    }
+                    if self.last_lod == orbit_live_render::TimelineLod::Instanced {
+                        paint_clip_labels(
+                            ui,
+                            body,
+                            &self.intern,
+                            &self.last_instances,
+                            ClipLabelSet::Dragged,
+                            self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
+                        );
+                    }
                 }
                 paint_playhead(ui, body, self.t0, self.t1, self.status.newest_end_ns as f64);
+                self.paint_insert_line(ui, head, body);
                 if let Some(h) = self.hover {
                     show_scope_tooltip(ui, &self.intern, h);
                 }
@@ -844,10 +912,27 @@ impl OrbitLiveApp {
         self.lane_scroll = out.state.offset.y;
     }
 
-    fn paint_headers(&mut self, ui: &mut Ui, head: Rect, body: Rect, hover_row: Option<RowId>) {
+    fn paint_headers(
+        &mut self,
+        ui: &mut Ui,
+        head: Rect,
+        body: Rect,
+        hover_row: Option<RowId>,
+        pass: HeaderPass,
+    ) {
+        let dragged = self.tracks.dragging_thread();
         let rows = self.tracks.rows();
         let clip = ui.clip_rect();
         for row in &rows {
+            let on_drag = dragged
+                .map(|t| TrackStrip::row_on_thread(row.id, t))
+                .unwrap_or(false);
+            match pass {
+                HeaderPass::All => {}
+                HeaderPass::Rest if on_drag => continue,
+                HeaderPass::Dragged if !on_drag => continue,
+                _ => {}
+            }
             let r = Rect::from_min_size(
                 Pos2::new(head.left(), head.top() + row.y),
                 Vec2::new(head.width(), row.height.max(1.0)),
@@ -855,10 +940,7 @@ impl OrbitLiveApp {
             if r.max.y < clip.min.y || r.min.y > clip.max.y {
                 continue;
             }
-            let dragging = match row.id {
-                RowId::Thread(t) => self.tracks.is_dragging_thread(t),
-                _ => false,
-            };
+            let dragging = on_drag && pass != HeaderPass::Rest;
             let wash = row_process_wash(row.id, dragging);
             {
                 let painter = ui.painter();
@@ -910,6 +992,9 @@ impl OrbitLiveApp {
             }
             self.paint_tree_row(ui, head, *row, r);
         }
+    }
+
+    fn paint_insert_line(&self, ui: &Ui, head: Rect, body: Rect) {
         if let Some(iy) = self.tracks.insert_y() {
             let y = head.top() + iy;
             ui.painter().line_segment(
@@ -1040,9 +1125,10 @@ impl OrbitLiveApp {
         width: f32,
         lod: orbit_live_render::TimelineLod,
         ppp: f32,
-    ) -> TimelinePayload {
+    ) -> (TimelinePayload, Option<TimelinePayload>) {
         let layout = self.tracks.layout();
         self.last_layout = layout.clone();
+        let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
         if self.index.event_count() > 0 {
             let mut overlay = Vec::new();
             if lod == orbit_live_render::TimelineLod::Instanced {
@@ -1053,18 +1139,14 @@ impl OrbitLiveApp {
                 }
                 let search = self.search_active().then_some(&self.search_ids);
                 apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search);
-                self.last_instances = frame.instances.clone();
-                let s = ppp.max(0.01);
-                for inst in &mut frame.instances {
-                    inst.x *= s;
-                    inst.y *= s;
-                    inst.w *= s;
-                    inst.h *= s;
-                    inst.radius *= s;
-                }
-                return TimelinePayload::Instanced {
-                    instances: frame.instances,
-                };
+                let (bg, fg) = split_drag_instances(frame.instances, dragged);
+                self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
+                let mut bg = bg;
+                let mut fg = fg;
+                scale_instances_ppp(&mut bg, ppp);
+                scale_instances_ppp(&mut fg, ppp);
+                let lift = (!fg.is_empty()).then_some(TimelinePayload::Instanced { instances: fg });
+                return (TimelinePayload::Instanced { instances: bg }, lift);
             }
             self.last_instances.clear();
             if let Some(sel) = self.selected {
@@ -1091,7 +1173,7 @@ impl OrbitLiveApp {
                     }
                 }
             }
-            return TimelinePayload::from_index(
+            let bg = TimelinePayload::from_index(
                 &self.index,
                 t0,
                 t1,
@@ -1101,7 +1183,24 @@ impl OrbitLiveApp {
                 &layout,
                 &overlay,
                 self.search_active().then_some(&self.search_ids),
+                dragged,
             );
+            let lift = dragged.and_then(|(pid, tid)| {
+                let mut frame = collect_instances_layout(&self.index, t0, t1, width, &layout);
+                let d = self.tracks.scale;
+                frame.instances.retain(|i| i.pid == pid && i.tid == tid);
+                if frame.instances.is_empty() {
+                    return None;
+                }
+                for inst in &mut frame.instances {
+                    inst.h *= d;
+                }
+                scale_instances_ppp(&mut frame.instances, ppp);
+                Some(TimelinePayload::Instanced {
+                    instances: frame.instances,
+                })
+            });
+            return (bg, lift);
         }
         self.last_instances.clear();
         if let Some(tl) = &self.service_timeline {
@@ -1120,21 +1219,24 @@ impl OrbitLiveApp {
                     inst.h *= s;
                     inst.radius *= s;
                 }
-                return TimelinePayload::Instanced { instances };
+                return (TimelinePayload::Instanced { instances }, None);
             }
         }
         if let Some(fr) = &self.service_frame {
             let row_h = ((16.0 * ppp).round() as u32).max(1);
             let (mut rgba, height) = scale_frame_rgba(fr, row_h);
             theme::remap_rgba8(&mut rgba);
-            return TimelinePayload::Pixel {
-                rgba,
-                width: fr.width.max(1),
-                height,
-                overlay: Vec::new(),
-            };
+            return (
+                TimelinePayload::Pixel {
+                    rgba,
+                    width: fr.width.max(1),
+                    height,
+                    overlay: Vec::new(),
+                },
+                None,
+            );
         }
-        TimelinePayload::Empty
+        (TimelinePayload::Empty, None)
     }
 
     fn handle_time_nav(&mut self, response: &egui::Response, rect: Rect, mode: WheelMode) {
@@ -1558,17 +1660,28 @@ fn fmt_int(n: u64) -> String {
 fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> bool {
     let hit = Rect::from_center_size(Pos2::new(row.left() + x, row.center().y), Vec2::splat(14.0));
     let resp = ui.interact(hit, ui.id().with(id), Sense::click());
-    ui.painter().text(
-        hit.center(),
-        Align2::CENTER_CENTER,
-        if open { "▾" } else { "▸" },
-        FontId::new(10.0, fonts::medium()),
-        if resp.hovered() {
-            theme::TEXT
-        } else {
-            theme::MUTED
-        },
-    );
+    let c = hit.center();
+    let color = if resp.hovered() {
+        theme::TEXT
+    } else {
+        theme::MUTED
+    };
+    // WASM font atlas lacks ▾/▸; paint a 5–6px triangle instead.
+    let pts = if open {
+        vec![
+            Pos2::new(c.x - 3.5, c.y - 2.0),
+            Pos2::new(c.x + 3.5, c.y - 2.0),
+            Pos2::new(c.x, c.y + 2.5),
+        ]
+    } else {
+        vec![
+            Pos2::new(c.x - 2.0, c.y - 3.5),
+            Pos2::new(c.x + 2.5, c.y),
+            Pos2::new(c.x - 2.0, c.y + 3.5),
+        ]
+    };
+    ui.painter()
+        .add(Shape::convex_polygon(pts, color, Stroke::NONE));
     resp.clicked()
 }
 
@@ -1703,6 +1816,17 @@ fn overlay_instance(
     let span = (t1 - t0) as f64;
     let radius = (h * 0.14).clamp(2.0, 3.0);
     Some(instance_for_event(&e, t0, t1, span, width, y, h, radius))
+}
+
+fn scale_instances_ppp(instances: &mut [ScopeInstance], ppp: f32) {
+    let s = ppp.max(0.01);
+    for inst in instances {
+        inst.x *= s;
+        inst.y *= s;
+        inst.w *= s;
+        inst.h *= s;
+        inst.radius *= s;
+    }
 }
 
 fn tick_steps(span_ns: f64, width_px: f32) -> (f64, f64) {
@@ -1841,7 +1965,14 @@ fn timeslice_label_fitting(
 }
 
 /// `TimerTrack::DrawTimesliceText` as an egui overlay on instanced boxes.
-fn paint_clip_labels(ui: &Ui, body: Rect, intern: &InternTable, instances: &[ScopeInstance]) {
+fn paint_clip_labels(
+    ui: &Ui,
+    body: Rect,
+    intern: &InternTable,
+    instances: &[ScopeInstance],
+    set: ClipLabelSet,
+    dragged: Option<(u32, u32)>,
+) {
     if instances.is_empty() {
         return;
     }
@@ -1854,6 +1985,17 @@ fn paint_clip_labels(ui: &Ui, body: Rect, intern: &InternTable, instances: &[Sco
         return;
     }
     for inst in instances {
+        if let Some((pid, tid)) = dragged {
+            let on = inst.pid == pid && inst.tid == tid;
+            match set {
+                ClipLabelSet::All => {}
+                ClipLabelSet::Rest if on => continue,
+                ClipLabelSet::Dragged if !on => continue,
+                _ => {}
+            }
+        } else if set == ClipLabelSet::Dragged {
+            continue;
+        }
         if inst.kind != kind::API_SCOPE && inst.kind != kind::API_TRACK {
             continue;
         }
