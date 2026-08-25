@@ -2,7 +2,8 @@
 
 use eframe::egui::{
     self, scroll_area::ScrollSource, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId,
-    Frame, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
+    Frame, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Ui,
+    Vec2,
 };
 use orbit_live_event::dev::{
     intern_self_names, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_TRACKS,
@@ -775,7 +776,14 @@ impl OrbitLiveApp {
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
 
-            self.paint_headers(ui, head, body);
+            let hover_row = ui.input(|i| i.pointer.hover_pos()).and_then(|pos| {
+                if head.contains(pos) || body.contains(pos) {
+                    self.tracks.row_at_y(pos.y - head.top())
+                } else {
+                    None
+                }
+            });
+            self.paint_headers(ui, head, body, hover_row);
 
             let t0 = self.t0.max(0.0) as u64;
             let t1 = (self.t1 as u64).max(t0 + 1);
@@ -833,7 +841,7 @@ impl OrbitLiveApp {
         self.lane_scroll = out.state.offset.y;
     }
 
-    fn paint_headers(&mut self, ui: &mut Ui, head: Rect, body: Rect) {
+    fn paint_headers(&mut self, ui: &mut Ui, head: Rect, body: Rect, hover_row: Option<RowId>) {
         let rows = self.tracks.rows();
         let clip = ui.clip_rect();
         for row in &rows {
@@ -879,6 +887,23 @@ impl OrbitLiveApp {
                     );
                 }
                 painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
+                // Track.cpp: header highlight on hover (`IsMouseOver`).
+                if hover_row == Some(row.id) && !dragging {
+                    painter.rect_filled(
+                        r,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 28),
+                    );
+                    painter.rect_stroke(
+                        r,
+                        0.0,
+                        Stroke::new(
+                            1.0,
+                            Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 70),
+                        ),
+                        StrokeKind::Inside,
+                    );
+                }
             }
             self.paint_tree_row(ui, head, *row, r);
         }

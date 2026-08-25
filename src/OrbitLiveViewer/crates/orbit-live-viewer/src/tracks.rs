@@ -273,6 +273,14 @@ impl TrackStrip {
         }
     }
 
+    /// Visible row whose vertical band contains `y` (strip-local, 0 at top).
+    pub fn row_at_y(&self, y: f32) -> Option<RowId> {
+        self.rows()
+            .into_iter()
+            .find(|r| y >= r.y && y < r.y + r.height)
+            .map(|r| r.id)
+    }
+
     pub fn rows(&self) -> Vec<TrackRow> {
         let mut ids: Vec<RowId> = self.y.keys().copied().collect();
         ids.sort_by(|a, b| {
@@ -558,6 +566,24 @@ mod tests {
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
         assert_eq!(strip.layout().len(), 2);
+    }
+
+    #[test]
+    fn row_at_y_hits_one_visible_row() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(1, 2, 2));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let rows = strip.rows();
+        assert!(rows.len() >= 3);
+        let mid = rows[1];
+        assert_eq!(
+            strip.row_at_y(mid.y + mid.height * 0.5),
+            Some(mid.id)
+        );
+        assert_eq!(strip.row_at_y(-4.0), None);
     }
 
     #[test]
