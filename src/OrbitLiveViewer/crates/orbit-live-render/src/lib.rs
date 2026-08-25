@@ -692,6 +692,8 @@ mod tests {
         assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
         assert!(INSTANCE_WGSL.contains("madebyevan.com"));
         assert!(INSTANCE_WGSL.contains("SIBLING_RGB"));
+        assert!(INSTANCE_WGSL.contains("SELECTED_RGB"));
+        assert!(INSTANCE_WGSL.contains("if sibling"));
         assert!(INSTANCE_WGSL.contains("selected"));
         assert!(INSTANCE_WGSL.contains("dimmed"));
     }
@@ -871,6 +873,45 @@ mod tests {
         apply_highlight_flags(&mut insts, None, None, Some(&ids));
         assert_eq!(insts[0].flags, FLAG_NONE);
         assert_eq!(insts[1].flags, FLAG_DIMMED);
+        apply_highlight_flags(
+            &mut insts,
+            Some(ScopePick {
+                name_id: 7,
+                start_ns: 10,
+                duration_ns: 20,
+                pid: 1,
+                tid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+            }),
+            None,
+            Some(&ids),
+        );
+        assert_eq!(insts[0].flags, FLAG_SELECTED);
+        assert_eq!(
+            insts[1].flags, FLAG_DIMMED,
+            "other names stay dimmed"
+        );
+        insts[1].name_id = 7;
+        insts[1].start_ns = 40;
+        apply_highlight_flags(
+            &mut insts,
+            Some(ScopePick {
+                name_id: 7,
+                start_ns: 10,
+                duration_ns: 20,
+                pid: 1,
+                tid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+            }),
+            None,
+            Some(&ids),
+        );
+        assert_eq!(insts[0].flags, FLAG_SELECTED);
+        assert_eq!(insts[1].flags, FLAG_SIBLING);
     }
 
     #[test]

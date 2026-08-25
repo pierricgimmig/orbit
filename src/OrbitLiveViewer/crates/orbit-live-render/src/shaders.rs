@@ -51,6 +51,7 @@ struct VsOut {
 const SHADOW_PAD: f32 = 6.0;
 const SHADOW_SIGMA: f32 = 1.35;
 const SIBLING_RGB: vec3<f32> = vec3(0.392, 0.710, 0.965);
+const SELECTED_RGB: vec3<f32> = vec3(0.0, 0.502, 1.0);
 
 @vertex
 fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
@@ -141,17 +142,18 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
     let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
     rgb = mix(rgb, vec3(luma), 0.84) * 0.36;
   }
+  if sibling {
+    rgb = SIBLING_RGB;
+  } else if selected {
+    rgb = SELECTED_RGB;
+  }
   let top = v.pix.y < 1.15 && fill > 0.5;
   rgb = rgb * select(1.0, 1.08, top);
   rgb = rgb * select(1.0, 1.05, hover);
-  rgb = rgb * select(1.0, 1.07, selected);
   var rim = vec3(0.92, 0.93, 0.95);
   var rim_w = 0.18;
-  if sibling {
-    rim = SIBLING_RGB;
-    rim_w = 0.70;
-  } else if selected {
-    rim_w = 0.78;
+  if selected {
+    rim_w = 0.40;
   } else if hover {
     rim_w = 0.36;
   }

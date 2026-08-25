@@ -42,6 +42,8 @@ const SIDE: f32 = 228.0;
 const HEADER_W: f32 = 196.0;
 const TIME_SLIDER_H: f32 = 13.0;
 const TIME_SLIDER_MIN_THUMB: f32 = 8.0;
+/// `CaptureWindow` overlay: Color(0,0,0,128).
+const MEASURE_DIM: Color32 = Color32::from_black_alpha(128);
 const RADIUS: f32 = theme::RADIUS;
 /// `TimeGraph::ZoomTime` `kIncrementalZoomTimeRatio`.
 const ZOOM_TIME_RATIO: f64 = 0.1;
@@ -357,6 +359,16 @@ pub struct OrbitLiveApp {
     search_intern_len: usize,
     lane_scroll: f32,
     pending_vscroll: Option<f32>,
+    measure: Option<TimeMeasure>,
+    measure_dragging: bool,
+}
+
+/// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
+#[derive(Clone, Copy, Debug)]
+struct TimeMeasure {
+    start_ns: u64,
+    stop_ns: u64,
+    label_y: f32,
 }
 
 impl OrbitLiveApp {
@@ -430,6 +442,8 @@ impl OrbitLiveApp {
             search_intern_len: 0,
             lane_scroll: 0.0,
             pending_vscroll: None,
+            measure: None,
+            measure_dragging: false,
         }
     }
 
@@ -651,6 +665,7 @@ impl OrbitLiveApp {
                 self.index.clear();
                 self.selected = None;
                 self.hover = None;
+                self.measure = None;
                 let origin = if start_ns > 0 { start_ns } else { DEMO_ORIGIN_NS };
                 self.self_cursor_ns = origin;
                 self.live_edge_ns = origin;
@@ -1009,6 +1024,8 @@ impl OrbitLiveApp {
         paint_timebar(ui, ruler, self.t0, self.t1);
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom);
+        self.handle_measure(&ruler_resp, ruler, false);
+        paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
         ui.painter().line_segment(
             [time_rect.left_bottom(), time_rect.right_bottom()],
             hairline(),
@@ -1099,6 +1116,7 @@ impl OrbitLiveApp {
                 self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom);
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y);
                 self.handle_pick(&body_resp, body, t0, t1, width);
+                self.handle_measure(&body_resp, body, true);
             }
 
             let empty = self.index.event_count() == 0
@@ -1106,6 +1124,7 @@ impl OrbitLiveApp {
                 && self.service_frame.is_none();
             if empty {
                 paint_empty(ui, body);
+                paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
                 self.refresh_scope_stats(t0, t1);
                 return;
             }
@@ -1187,6 +1206,7 @@ impl OrbitLiveApp {
                     self.tracks.scale,
                 );
                 paint_playhead(ui, body, self.t0, self.t1, self.live_edge_ns as f64);
+                paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
                 self.paint_insert_line(ui, head, body);
                 if let Some(h) = self.hover {
                     show_scope_tooltip(ui, &self.intern, h);
@@ -1945,6 +1965,58 @@ impl OrbitLiveApp {
             }
         } else if response.clicked() {
             self.selected = self.hover;
+            if self.hover.is_none() {
+                self.measure = None;
+            }
+        }
+    }
+
+    fn handle_measure(&mut self, response: &egui::Response, rect: Rect, label_here: bool) {
+        if !rect.is_positive() {
+            return;
+        }
+        if response.drag_started_by(PointerButton::Secondary) {
+            if let Some(p) = response.interact_pointer_pos() {
+                let t = time_at_x(p.x, rect, self.t0, self.t1);
+                self.measure = Some(TimeMeasure {
+                    start_ns: t,
+                    stop_ns: t,
+                    label_y: p.y,
+                });
+                self.measure_dragging = true;
+                self.follow = false;
+            }
+        }
+        if self.measure_dragging && response.dragged_by(PointerButton::Secondary) {
+            if let Some(p) = response.interact_pointer_pos() {
+                if let Some(m) = &mut self.measure {
+                    m.stop_ns = time_at_x(p.x, rect, self.t0, self.t1);
+                    if label_here {
+                        m.label_y = p.y;
+                    }
+                }
+                self.follow = false;
+            }
+        }
+        if self.measure_dragging && response.drag_stopped() {
+            self.measure_dragging = false;
+            let ctrl = response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+            if let Some(m) = self.measure {
+                if m.start_ns == m.stop_ns {
+                    self.measure = None;
+                } else if ctrl {
+                    let a = m.start_ns.min(m.stop_ns) as f64;
+                    let b = m.start_ns.max(m.stop_ns) as f64;
+                    self.t0 = a;
+                    self.t1 = b.max(a + 1.0);
+                    self.measure = None;
+                    self.follow = false;
+                }
+            }
+        }
+        if response.clicked_by(PointerButton::Secondary) {
+            self.measure = None;
+            self.measure_dragging = false;
         }
     }
 
@@ -2923,6 +2995,81 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
     }
 }
 
+fn time_at_x(x: f32, rect: Rect, t0: f64, t1: f64) -> u64 {
+    let span = (t1 - t0).max(1.0);
+    let frac = ((x - rect.left()) / rect.width().max(1.0)) as f64;
+    (t0 + frac.clamp(0.0, 1.0) * span).max(0.0) as u64
+}
+
+fn x_at_time(t: u64, rect: Rect, t0: f64, t1: f64) -> f32 {
+    let span = (t1 - t0).max(1.0);
+    rect.left() + (((t as f64 - t0) / span) as f32 * rect.width()).clamp(0.0, rect.width())
+}
+
+/// `CaptureWindow::RenderSelectionOverlay`: dim outside, white edges, duration at drag-end.
+fn paint_measure_overlay(
+    ui: &Ui,
+    rect: Rect,
+    t0: f64,
+    t1: f64,
+    measure: Option<TimeMeasure>,
+    draw_label: bool,
+) {
+    let Some(m) = measure else {
+        return;
+    };
+    if m.start_ns == m.stop_ns || t1 <= t0 || !rect.is_positive() {
+        return;
+    }
+    let min_t = m.start_ns.min(m.stop_ns);
+    let max_t = m.start_ns.max(m.stop_ns);
+    let x0 = x_at_time(min_t, rect, t0, t1);
+    let x1 = x_at_time(max_t, rect, t0, t1);
+    if (x1 - x0).abs() < 0.5 {
+        return;
+    }
+    let painter = ui.painter_at(rect);
+    if x0 > rect.left() {
+        painter.rect_filled(
+            Rect::from_min_max(rect.min, Pos2::new(x0, rect.bottom())),
+            0.0,
+            MEASURE_DIM,
+        );
+        painter.line_segment(
+            [Pos2::new(x0, rect.top()), Pos2::new(x0, rect.bottom())],
+            Stroke::new(1.0, Color32::WHITE),
+        );
+    }
+    if x1 < rect.right() {
+        painter.rect_filled(
+            Rect::from_min_max(Pos2::new(x1, rect.top()), rect.max),
+            0.0,
+            MEASURE_DIM,
+        );
+        painter.line_segment(
+            [Pos2::new(x1, rect.top()), Pos2::new(x1, rect.bottom())],
+            Stroke::new(1.0, Color32::WHITE),
+        );
+    }
+    if draw_label {
+        let text = display_time_ns(max_t.saturating_sub(min_t));
+        let stop_x = x_at_time(m.stop_ns, rect, t0, t1);
+        let y = m.label_y.clamp(rect.top() + 8.0, rect.bottom() - 8.0);
+        let align = if m.stop_ns < m.start_ns {
+            Align2::LEFT_CENTER
+        } else {
+            Align2::RIGHT_CENTER
+        };
+        painter.text(
+            Pos2::new(stop_x, y),
+            align,
+            text,
+            FontId::new(12.0, fonts::medium()),
+            Color32::WHITE,
+        );
+    }
+}
+
 /// `orbit_display_formats::GetDisplayTime`: `"%.3f %s"` with the same unit steps.
 fn display_time_ns(ns: u64) -> String {
     let ns = ns as f64;
@@ -3164,6 +3311,20 @@ mod tests {
         assert_eq!(display_time_ns(12_345), "12.345 us");
         assert_eq!(display_time_ns(12_345_600), "12.346 ms");
         assert_eq!(display_time_ns(12_345_600_000), "12.346 s");
+    }
+
+    #[test]
+    fn measure_maps_x_to_time_and_formats_span() {
+        let rect = Rect::from_min_size(Pos2::new(100.0, 0.0), Vec2::new(200.0, 20.0));
+        let t0 = 0.0;
+        let t1 = 4_000_000_000.0;
+        assert_eq!(time_at_x(100.0, rect, t0, t1), 0);
+        assert_eq!(time_at_x(150.0, rect, t0, t1), 1_000_000_000);
+        assert_eq!(time_at_x(200.0, rect, t0, t1), 2_000_000_000);
+        let mid = time_at_x(150.0, rect, t0, t1);
+        let end = time_at_x(200.0, rect, t0, t1);
+        assert_eq!(display_time_ns(end - mid), "1.000 s");
+        assert!((x_at_time(1_000_000_000, rect, t0, t1) - 150.0).abs() < 0.5);
     }
 
     #[test]
