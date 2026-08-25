@@ -89,6 +89,7 @@ class CallstackData {
   template <typename Action>
   void ForEachCallstackEventInTimeRangeDiscretized(uint64_t min_timestamp, uint64_t max_timestamp,
                                                    uint32_t resolution, Action&& action) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto get_next_callstack = [&](uint64_t timestamp) -> std::optional<CallstackEvent> {
       std::optional<CallstackEvent> next_callstack;
       const uint32_t current_pixel =
