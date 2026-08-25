@@ -49,6 +49,7 @@ pub struct TrackStrip {
     cached_total_h: f32,
     filter_pid: Option<u32>,
     cached_insert_y: Option<f32>,
+    layout_gen: u64,
 }
 
 struct Drag {
@@ -73,6 +74,7 @@ impl Default for TrackStrip {
             cached_total_h: 0.0,
             filter_pid: None,
             cached_insert_y: None,
+            layout_gen: 0,
         }
     }
 }
@@ -360,6 +362,7 @@ impl TrackStrip {
         }
         self.y = next;
         self.rebuild_rows();
+        self.layout_gen = self.layout_gen.wrapping_add(1);
         if let (Some(hy), Some(d)) = (hole_y, self.drag.as_ref()) {
             let hole_h = self.thread_block_h(d.thread);
             self.cached_total_h = self.cached_total_h.max(hy + hole_h);
@@ -409,6 +412,10 @@ impl TrackStrip {
     /// Leaf lanes only, y matching the rail (headers occupy space above them).
     pub fn layout(&self) -> &[(LaneKey, f32)] {
         &self.cached_layout
+    }
+
+    pub fn layout_gen(&self) -> u64 {
+        self.layout_gen
     }
 
     /// Packed rest lanes (no dragged thread). Background raster / instance Ys.

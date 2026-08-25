@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use orbit_live_event::dev::{query_enables_dev, RelScope, VIEWER_PID};
+use orbit_live_event::dev::{query_disables_dev, query_enables_dev, RelScope, VIEWER_PID};
 
 pub struct DevFrame {
     inner: Option<DevFrameInner>,
@@ -100,6 +100,7 @@ impl Drop for DevScope<'_> {
     }
 }
 
+#[allow(dead_code)]
 pub fn query_dev_from_location() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
@@ -111,6 +112,21 @@ pub fn query_dev_from_location() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         query_enables_dev("")
+    }
+}
+
+/// `?dev=0` / `?self=0` — Record starts demo only.
+pub fn query_dev_locked_off_from_location() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .map(|s| query_disables_dev(&s))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
     }
 }
 

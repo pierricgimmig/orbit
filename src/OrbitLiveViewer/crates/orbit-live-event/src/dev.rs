@@ -9,8 +9,8 @@
 //! `[cursor, cursor+span)` and the cursor only moves forward. A live demo or
 //! capture may *align* the cursor up to `newest_end_ns` so they stay on one
 //! axis, but two frames never share an `end`. Events are ordinary
-//! [`LiveEvent`]s (32 bytes). Enable is **on** by default; `?dev=0` / Dev pill
-//! / `/api/self/stop` turn it off.
+//! [`LiveEvent`]s (32 bytes). Record starts demo + self-profile; `?dev=0`
+//! / `/api/self/stop` keep self-profile off.
 
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +70,19 @@ pub const NAME_CHROME: u32 = 30_005;
 pub const NAME_PUSH: u32 = 30_007;
 pub const NAME_RASTER: u32 = 30_008;
 pub const NAME_TIMELINE_API: u32 = 30_009;
+pub const NAME_DRAIN_NET: u32 = 30_010;
+pub const NAME_TICK_FOLLOW: u32 = 30_011;
+pub const NAME_PAINT_HEADERS: u32 = 30_012;
+pub const NAME_PAINT_CALLBACK: u32 = 30_013;
+pub const NAME_CLIP_LABELS: u32 = 30_014;
+pub const NAME_HANDLE_INPUT: u32 = 30_015;
+pub const NAME_SHIFT_INST: u32 = 30_016;
+pub const NAME_COLLECT_INST: u32 = 30_017;
+pub const NAME_APPLY_HL: u32 = 30_018;
+pub const NAME_SPLIT_DRAG: u32 = 30_019;
+pub const NAME_COLLECT_DRAG: u32 = 30_020;
+pub const NAME_SCALE_PPP: u32 = 30_021;
+pub const NAME_RASTERIZE: u32 = 30_022;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +119,19 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_PUSH, "PushEvents");
     intern.insert_id(NAME_RASTER, "Rasterize");
     intern.insert_id(NAME_TIMELINE_API, "TimelineApi");
+    intern.insert_id(NAME_DRAIN_NET, "DrainNet");
+    intern.insert_id(NAME_TICK_FOLLOW, "TickFollow");
+    intern.insert_id(NAME_PAINT_HEADERS, "PaintHeaders");
+    intern.insert_id(NAME_PAINT_CALLBACK, "PaintCallback");
+    intern.insert_id(NAME_CLIP_LABELS, "ClipLabels");
+    intern.insert_id(NAME_HANDLE_INPUT, "HandleInput");
+    intern.insert_id(NAME_SHIFT_INST, "ShiftInstances");
+    intern.insert_id(NAME_COLLECT_INST, "CollectInstances");
+    intern.insert_id(NAME_APPLY_HL, "ApplyHighlights");
+    intern.insert_id(NAME_SPLIT_DRAG, "SplitDrag");
+    intern.insert_id(NAME_COLLECT_DRAG, "CollectDrag");
+    intern.insert_id(NAME_SCALE_PPP, "ScalePpp");
+    intern.insert_id(NAME_RASTERIZE, "Rasterize");
 }
 
 /// Inclusive span of a relative batch (`max(start_rel + duration)`).
@@ -280,5 +306,8 @@ mod tests {
         assert_eq!(intern.get(TID_RENDER), Some("render"));
         assert_eq!(intern.get(NAME_FRAME), Some("Frame"));
         assert_eq!(intern.get(NAME_PAYLOAD), Some("TimelinePayload"));
+        assert_eq!(intern.get(NAME_DRAIN_NET), Some("DrainNet"));
+        assert_eq!(intern.get(NAME_COLLECT_INST), Some("CollectInstances"));
+        assert_eq!(intern.get(NAME_RASTERIZE), Some("Rasterize"));
     }
 }
