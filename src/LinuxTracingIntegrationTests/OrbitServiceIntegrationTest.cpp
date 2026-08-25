@@ -627,11 +627,11 @@ TEST(OrbitServiceIntegrationTest, OrbitApi) {
 }
 
 TEST(OrbitServiceIntegrationTest, MemoryTracing) {
-  // Memory tracing won't work if the target doesn't have a memory cgroup. See http://b/208998708.
-  if (!CheckIsStadiaInstance()) {
+  if (!CheckIsRunningAsRoot()) {
     GTEST_SKIP();
   }
-  if (!CheckIsRunningAsRoot()) {
+  // Memory tracing won't work if the target doesn't have a memory cgroup. See http://b/208998708.
+  if (!CheckHasCgroupV1MemoryController()) {
     GTEST_SKIP();
   }
 

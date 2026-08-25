@@ -181,8 +181,7 @@ class ProducerEventProcessorImpl : public ProducerEventProcessor {
   absl::flat_hash_map<std::pair<uint64_t, uint64_t>, uint64_t>
       producer_interned_string_id_to_client_string_id_;
 
-  // Needed to allow merging of thread state slices and their callstacks, see:
-  // http://go/stadia-orbit-tracepoint-callstack.
+  // Needed to allow merging of thread state slices and their callstacks.
   // NOTE: A thread state slice always gets constructed using two tracepoint events. It is always
   // the begin tracepoint event that results in the ThreadStateSliceCallstack, so we will always
   // see the ThreadStateSliceCallstack before we see the matching ThreadStateSlice. Thus, we do not

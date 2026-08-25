@@ -888,17 +888,17 @@ void OrbitMainWindow::OnSetClipboard(std::string_view text) {
 
 void OrbitMainWindow::on_actionReport_Missing_Feature_triggered() {
   if (!QDesktopServices::openUrl(
-          QUrl("https://community.stadia.dev/s/feature-requests", QUrl::StrictMode))) {
+          QUrl("https://github.com/pierricgimmig/orbit/issues/new", QUrl::StrictMode))) {
     QMessageBox::critical(this, "Error opening URL",
-                          "Could not open community.stadia.dev/s/feature-request");
+                          "Could not open github.com/pierricgimmig/orbit/issues/new");
   }
 }
 
 void OrbitMainWindow::on_actionReport_Bug_triggered() {
   if (!QDesktopServices::openUrl(
-          QUrl("https://community.stadia.dev/s/contactsupport", QUrl::StrictMode))) {
+          QUrl("https://github.com/pierricgimmig/orbit/issues/new", QUrl::StrictMode))) {
     QMessageBox::critical(this, "Error opening URL",
-                          "Could not open community.stadia.dev/s/contactsupport");
+                          "Could not open github.com/pierricgimmig/orbit/issues/new");
   }
 }
 

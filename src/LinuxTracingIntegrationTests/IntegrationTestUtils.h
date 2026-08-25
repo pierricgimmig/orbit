@@ -44,7 +44,13 @@ namespace orbit_linux_tracing_integration_tests {
   return false;
 }
 
-[[nodiscard]] bool CheckIsStadiaInstance();
+// Orbit's GPU tracing reads AMD's tracepoints, and the tracepoint directory is only readable by
+// root, so check this after CheckIsRunningAsRoot.
+[[nodiscard]] bool CheckAmdGpuTracepointsAvailable();
+
+// Orbit reads a process's memory usage from the cgroup v1 memory controller, which a machine
+// running cgroup v2 alone does not have.
+[[nodiscard]] bool CheckHasCgroupV1MemoryController();
 
 [[nodiscard]] std::filesystem::path GetExecutableBinaryPath(pid_t pid);
 

@@ -417,30 +417,30 @@ int main(int argc, char* argv[]) {
   const bool calculate_frame_time = absl::GetFlag(FLAGS_frame_time);
   ORBIT_LOG("frame_time=%d", calculate_frame_time);
   if (calculate_frame_time) {
-    // Instrument vkQueuePresentKHR, if possible.
-    // Some application don't call libVulkan library directly; instead, they just query the
-    // function addresses and use those. So let's just instrument the `ggpvlk QueuePresentKHR`
-    static const std::string kGgpvlkModuleName = "ggpvlk.so";
-    static const std::string kQueuePresentFunctionName{
-        "yeti::internal::vulkan::(anonymous namespace)::QueuePresentKHR(VkQueue_T*, "
-        "VkPresentInfoKHR const*)"};
+    // Instrument the function that ends a frame. By default that is the Vulkan loader's
+    // vkQueuePresentKHR, which works as long as the application goes through the loader; an
+    // application that resolves the function address itself, or one that presents through another
+    // library altogether, needs --frame_boundary_module and --frame_boundary_function.
+    const std::string frame_boundary_module_name = absl::GetFlag(FLAGS_frame_boundary_module);
+    const std::string frame_boundary_function_name = absl::GetFlag(FLAGS_frame_boundary_function);
 
-    std::string libvulkan_file_path;
+    std::string frame_boundary_module_path;
     for (const orbit_grpc_protos::ModuleInfo& module : modules_or_error.value()) {
-      if (module.soname() == kGgpvlkModuleName) {
-        libvulkan_file_path = module.file_path();
+      if (module.soname() == frame_boundary_module_name) {
+        frame_boundary_module_path = module.file_path();
         break;
       }
     }
-    if (!libvulkan_file_path.empty()) {
-      ORBIT_LOG("%s found: instrumenting %s", kGgpvlkModuleName, kQueuePresentFunctionName);
+    if (!frame_boundary_module_path.empty()) {
+      ORBIT_LOG("%s found: instrumenting %s", frame_boundary_module_name,
+                frame_boundary_function_name);
       ManipulateModuleManagerAndSelectedFunctionsToAddInstrumentedFunctionFromFunctionNameInDebugSymbols(
-          &module_manager, &options.selected_functions, libvulkan_file_path,
-          kQueuePresentFunctionName,
+          &module_manager, &options.selected_functions, frame_boundary_module_path,
+          frame_boundary_function_name,
           orbit_fake_client::FakeCaptureEventProcessor::kFrameBoundaryFunctionId);
-      ORBIT_LOG("%s instrumented", kQueuePresentFunctionName);
+      ORBIT_LOG("%s instrumented", frame_boundary_function_name);
     } else {
-      ORBIT_LOG("%s not found", kGgpvlkModuleName);
+      ORBIT_LOG("%s not found", frame_boundary_module_name);
     }
   }
 

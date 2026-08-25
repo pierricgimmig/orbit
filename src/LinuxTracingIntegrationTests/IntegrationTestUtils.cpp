@@ -4,12 +4,11 @@
 
 #include "IntegrationTestUtils.h"
 
-#include <absl/strings/match.h>
 #include <sys/types.h>
-#include <sys/utsname.h>
 
 #include <filesystem>
 #include <memory>
+#include <system_error>
 #include <string>
 #include <vector>
 
@@ -23,20 +22,29 @@
 
 namespace orbit_linux_tracing_integration_tests {
 
-[[nodiscard]] static std::string ReadUnameKernelRelease() {
-  utsname utsname{};
-  int uname_result = uname(&utsname);
-  ORBIT_CHECK(uname_result == 0);
-  return utsname.release;
-}
-
-bool CheckIsStadiaInstance() {
-  std::string release = ReadUnameKernelRelease();
-  if (absl::StrContains(release, "-ggp-")) {
+bool CheckAmdGpuTracepointsAvailable() {
+  const std::filesystem::path tracepoint_path{
+      "/sys/kernel/debug/tracing/events/amdgpu/amdgpu_cs_ioctl"};
+  std::error_code error{};
+  if (std::filesystem::is_directory(tracepoint_path, error)) {
     return true;
   }
 
-  ORBIT_ERROR("Stadia instance required for this test (but kernel release is \"%s\")", release);
+  ORBIT_ERROR("An AMD GPU is required for this test (missing \"%s\")", tracepoint_path.string());
+  return false;
+}
+
+bool CheckHasCgroupV1MemoryController() {
+  const std::filesystem::path memory_cgroup_path{"/sys/fs/cgroup/memory"};
+  std::error_code error{};
+  if (std::filesystem::is_directory(memory_cgroup_path, error)) {
+    return true;
+  }
+
+  ORBIT_ERROR(
+      "A cgroup v1 memory controller is required for this test (missing \"%s\"): that is where "
+      "Orbit reads a process's memory usage from",
+      memory_cgroup_path.string());
   return false;
 }
 

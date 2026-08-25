@@ -55,7 +55,12 @@ ABSL_FLAG(bool, gpu_jobs, true, "Collect GPU jobs");
 ABSL_FLAG(bool, orbit_api, false, "Enable Orbit API");
 ABSL_FLAG(uint16_t, memory_sampling_rate, 0,
           "Memory usage sampling rate in samples per second (0: no sampling)");
-ABSL_FLAG(bool, frame_time, true, "Instrument vkQueuePresentKHR to compute avg. frame time");
+ABSL_FLAG(bool, frame_time, true,
+          "Instrument the frame boundary function to compute avg. frame time");
+ABSL_FLAG(std::string, frame_boundary_module, "libvulkan.so.1",
+          "Soname of the module holding the frame boundary function");
+ABSL_FLAG(std::string, frame_boundary_function, "vkQueuePresentKHR",
+          "Name of the frame boundary function, as it appears in the debug symbols");
 ABSL_FLAG(EventProcessorType, event_processor, EventProcessorType::kFake, "");
 ABSL_FLAG(std::string, pid_file_path, "",
           "Path of the file to watch that will contain the target PID (the file must exists)");
