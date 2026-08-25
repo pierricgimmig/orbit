@@ -6,9 +6,9 @@ pub mod http;
 use std::cell::Cell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
     stamp_batch, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_PUSH,
@@ -34,7 +34,8 @@ pub struct ServerConfig {
     pub bind: SocketAddr,
     pub ring_buffer_bytes: u64,
     pub spill_path: Option<PathBuf>,
-    /// `--dev-self-profile` / `ORBIT_LIVE_DEV=1`. Default off.
+    /// `--dev-self-profile` / `ORBIT_LIVE_DEV=1`. Self-profile is on by default;
+    /// the viewer Dev pill / `?dev=0` still toggles via `/api/self/*`.
     pub dev_self_profile: bool,
 }
 
@@ -119,6 +120,34 @@ pub struct LiveService {
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     origin: Instant,
     self_names: AtomicBool,
+    /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
+    data_gen: AtomicU64,
+    /// Incremented on self-profile pushes. Does not bust the timeline cache.
+    self_gen: AtomicU64,
+    /// Capture/demo clock, ignoring self-profile events on the ring.
+    live_end_ns: AtomicU64,
+    index_cache: Mutex<Option<CachedIndex>>,
+    pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
+    last_timeline_prof: Mutex<Option<Instant>>,
+}
+
+struct CachedIndex {
+    data_gen: u64,
+    self_gen: u64,
+    built_at: Instant,
+    index: Arc<TrackIndex>,
+}
+
+pub(crate) struct CachedTimeline {
+    pub t0: u64,
+    pub t1: u64,
+    pub width: u32,
+    pub data_gen: u64,
+    pub lod: &'static str,
+    pub height: u32,
+    pub lane_count: u32,
+    pub instance_count: u32,
+    pub instances: Vec<crate::http::InstanceJson>,
 }
 
 // bytes crate - need to add dependency. I'll use Vec<u8> + broadcast instead.
@@ -129,7 +158,7 @@ impl LiveService {
         let ring = EventRing::with_bytes(config.ring_buffer_bytes, config.spill_path.as_deref())
             .map_err(|e| e.to_string())?;
         let (live_tx, _) = broadcast::channel(256);
-        let self_on = config.dev_self_profile || env_dev_self();
+        let self_on = true;
         let svc = Arc::new(Self {
             config: Mutex::new(config),
             ring: Mutex::new(Arc::new(ring)),
@@ -143,6 +172,12 @@ impl LiveService {
             demo_stop: Mutex::new(None),
             origin: Instant::now(),
             self_names: AtomicBool::new(false),
+            data_gen: AtomicU64::new(0),
+            self_gen: AtomicU64::new(0),
+            live_end_ns: AtomicU64::new(0),
+            index_cache: Mutex::new(None),
+            timeline_cache: Mutex::new(None),
+            last_timeline_prof: Mutex::new(None),
         });
         if self_on {
             svc.ensure_self_names();
@@ -186,8 +221,13 @@ impl LiveService {
         self.origin.elapsed().as_nanos() as u64
     }
 
-    /// Live edge of the active capture, or wall time when the ring is empty.
+    /// Demo/capture clock when those producers have written; never wall-time
+    /// self-profile events (those used to yank Follow off the demo axis).
     fn stamp_base(&self) -> u64 {
+        let live_end = self.live_end_ns();
+        if live_end > 0 {
+            return live_end;
+        }
         let newest = self.stats().newest_end_ns;
         let live = self.demo.load(Ordering::Relaxed) || self.capturing.load(Ordering::Relaxed);
         if live && newest > 0 {
@@ -285,15 +325,42 @@ impl LiveService {
         if events.is_empty() {
             return;
         }
-        let profile = self.self_profile.load(Ordering::Relaxed) && !IN_SELF.with(Cell::get);
+        let in_self = IN_SELF.with(Cell::get);
+        let profile = self.self_profile.load(Ordering::Relaxed) && !in_self;
         let t0 = profile.then(Instant::now);
         self.ring().push_many(events);
+        if in_self {
+            self.self_gen.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.data_gen.fetch_add(1, Ordering::Relaxed);
+            let mut end = 0u64;
+            for e in events {
+                if !orbit_live_event::dev::is_self_pid(e.pid) {
+                    end = end.max(e.end_ns());
+                }
+            }
+            if end > 0 {
+                self.note_live_end(end);
+            }
+        }
         self.broadcast_frame(&LiveFrame::EventBatch {
             events: events.to_vec(),
         });
         if let Some(t0) = t0 {
             self.emit_server_scope(NAME_PUSH, t0.elapsed().as_nanos() as u64);
         }
+    }
+
+    pub fn note_live_end(&self, end_ns: u64) {
+        self.live_end_ns.fetch_max(end_ns, Ordering::Relaxed);
+    }
+
+    pub fn live_end_ns(&self) -> u64 {
+        self.live_end_ns.load(Ordering::Relaxed)
+    }
+
+    pub fn data_gen(&self) -> u64 {
+        self.data_gen.load(Ordering::Relaxed)
     }
 
     pub fn ingest_scope_start(
@@ -317,6 +384,9 @@ impl LiveService {
 
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         self.capturing.store(true, Ordering::Relaxed);
+        if start_ns > 0 {
+            self.note_live_end(start_ns);
+        }
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
     }
 
@@ -374,9 +444,30 @@ impl LiveService {
     }
 
     pub fn build_index(&self) -> TrackIndex {
+        (*self.cached_index()).clone()
+    }
+
+    pub fn cached_index(&self) -> Arc<TrackIndex> {
+        let data = self.data_gen.load(Ordering::Relaxed);
+        let selfg = self.self_gen.load(Ordering::Relaxed);
+        let mut cache = self.index_cache.lock();
+        if let Some(c) = cache.as_ref() {
+            if c.data_gen == data
+                && (c.self_gen == selfg || c.built_at.elapsed() < Duration::from_millis(250))
+            {
+                return Arc::clone(&c.index);
+            }
+        }
         let (_, events) = self.ring().snapshot();
         let mut index = TrackIndex::default();
         index.extend(events);
+        let index = Arc::new(index);
+        *cache = Some(CachedIndex {
+            data_gen: data,
+            self_gen: selfg,
+            built_at: Instant::now(),
+            index: Arc::clone(&index),
+        });
         index
     }
 
@@ -387,12 +478,28 @@ impl LiveService {
         width: usize,
     ) -> orbit_live_render::RasterizedFrame {
         self.with_server_scope(NAME_RASTER, || {
-            let index = self.build_index();
+            let index = self.cached_index();
             let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
             let t0 = t0.unwrap_or(auto0);
             let t1 = t1.unwrap_or(auto1.max(t0 + 1));
             index.rasterize_pixel(t0, t1, width.max(1))
         })
+    }
+
+    /// Sampled TimelineApi scopes — never on a cache hit, at most every 250ms.
+    pub fn maybe_emit_timeline_scope(&self, duration_ns: u64) {
+        if !self.self_profile_enabled() || duration_ns == 0 {
+            return;
+        }
+        let mut last = self.last_timeline_prof.lock();
+        if let Some(t0) = *last {
+            if t0.elapsed() < Duration::from_millis(250) {
+                return;
+            }
+        }
+        *last = Some(Instant::now());
+        drop(last);
+        self.emit_server_scope(NAME_TIMELINE_API, duration_ns);
     }
 
     pub fn replace_ring(&self, bytes: u64, spill: Option<PathBuf>) -> Result<(), String> {
@@ -401,6 +508,10 @@ impl LiveService {
         let mut cfg = self.config.lock();
         cfg.ring_buffer_bytes = bytes;
         cfg.spill_path = spill;
+        drop(cfg);
+        self.data_gen.fetch_add(1, Ordering::Relaxed);
+        *self.index_cache.lock() = None;
+        *self.timeline_cache.lock() = None;
         Ok(())
     }
 

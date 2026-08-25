@@ -8,7 +8,7 @@
 //! or a capture is producing, batches are stamped so they end at
 //! `newest_end_ns` (same axis as the target). Otherwise they use wall time
 //! from service start. Events are ordinary [`LiveEvent`]s (32 bytes).
-//! Enable is off by default.
+//! Enable is **on** by default; `?dev=0` / Dev pill / `/api/self/stop` turn it off.
 
 use serde::{Deserialize, Serialize};
 
@@ -96,8 +96,14 @@ pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
         .collect()
 }
 
-/// `?dev=1` / `?self=1` (and bare `?dev`). `0` / `false` / `off` disable.
+/// Default **on**. `?dev=0` / `false` / `off` force off. `?dev=1` / `?self=1`
+/// / bare `?dev` stay on. Other query keys do not disable.
 pub fn query_enables_dev(search: &str) -> bool {
+    !query_disables_dev(search)
+}
+
+/// `?dev=0` / `?self=0` / `false` / `off`.
+pub fn query_disables_dev(search: &str) -> bool {
     let s = search.trim().trim_start_matches('?');
     if s.is_empty() {
         return false;
@@ -106,7 +112,7 @@ pub fn query_enables_dev(search: &str) -> bool {
         let mut kv = part.splitn(2, '=');
         let key = kv.next().unwrap_or("");
         let val = kv.next().unwrap_or("1");
-        matches!(key, "dev" | "self") && !matches!(val, "0" | "false" | "off")
+        matches!(key, "dev" | "self") && matches!(val, "0" | "false" | "off")
     })
 }
 
@@ -119,9 +125,13 @@ mod tests {
         assert!(query_enables_dev("?dev=1"));
         assert!(query_enables_dev("self=1&foo=bar"));
         assert!(query_enables_dev("?dev"));
+        assert!(query_enables_dev(""));
+        assert!(query_enables_dev("?other=1"));
         assert!(!query_enables_dev("?dev=0"));
-        assert!(!query_enables_dev(""));
-        assert!(!query_enables_dev("?other=1"));
+        assert!(!query_enables_dev("?self=false"));
+        assert!(!query_enables_dev("dev=off"));
+        assert!(query_disables_dev("?dev=0"));
+        assert!(!query_disables_dev(""));
     }
 
     #[test]
@@ -146,6 +156,8 @@ mod tests {
     fn reserved_pids_are_not_demo() {
         assert_ne!(VIEWER_PID, 1);
         assert_ne!(SERVICE_PID, 1);
+        assert_ne!(VIEWER_PID, 10);
+        assert_ne!(SERVICE_PID, 11);
         assert_ne!(VIEWER_PID, SERVICE_PID);
         assert!(is_self_pid(VIEWER_PID));
         assert!(is_self_pid(SERVICE_PID));

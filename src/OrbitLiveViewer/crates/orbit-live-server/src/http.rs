@@ -13,7 +13,7 @@ use tower_http::cors::CorsLayer;
 
 use orbit_live_event::argb_to_css;
 use orbit_live_event::dev::{
-    RelScopeBatch, NAME_TIMELINE_API, SERVICE_NAME, SERVICE_PID, VIEWER_NAME, VIEWER_PID,
+    RelScopeBatch, SERVICE_NAME, SERVICE_PID, VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_render::{
     choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
@@ -126,9 +126,8 @@ async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         },
         None => {
-            if svc.demo.load(std::sync::atomic::Ordering::Relaxed) {
-                serde_json::to_string(&[serde_json::json!({"pid": 1, "name": "orbit-demo"})])
-                    .unwrap_or_else(|_| "[]".into())
+            if svc.demo.load(std::sync::atomic::Ordering::Relaxed) || svc.live_end_ns() > 0 {
+                crate::demo::process_list_json()
             } else {
                 "[]".into()
             }
@@ -305,8 +304,8 @@ async fn frame(State(svc): State<Arc<LiveService>>, Query(q): Query<FrameQuery>)
         .into_response()
 }
 
-#[derive(Serialize)]
-struct InstanceJson {
+#[derive(Clone, Serialize)]
+pub(crate) struct InstanceJson {
     x: f32,
     y: f32,
     w: f32,
@@ -315,7 +314,7 @@ struct InstanceJson {
     r: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct TimelineBody {
     lod: &'static str,
     width: u32,
@@ -325,16 +324,50 @@ struct TimelineBody {
     instances: Vec<InstanceJson>,
 }
 
-async fn timeline(
-    State(svc): State<Arc<LiveService>>,
-    Query(q): Query<FrameQuery>,
-) -> Json<TimelineBody> {
+fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
     let width = q.width.unwrap_or(1280).clamp(16, 4096);
-    let t_prof = svc.self_profile_enabled().then(std::time::Instant::now);
-    let index = svc.build_index();
+    let data_gen = svc.data_gen();
+    {
+        let cache = svc.timeline_cache.lock();
+        if let Some(c) = cache.as_ref() {
+            if c.t0 == q.t0.unwrap_or(c.t0)
+                && c.t1 == q.t1.unwrap_or(c.t1)
+                && c.width == width
+                && c.data_gen == data_gen
+                && q.t0.is_some()
+                && q.t1.is_some()
+            {
+                return TimelineBody {
+                    lod: c.lod,
+                    width,
+                    height: c.height,
+                    lane_count: c.lane_count,
+                    instance_count: c.instance_count,
+                    instances: c.instances.clone(),
+                };
+            }
+        }
+    }
+    let t_prof = std::time::Instant::now();
+    let index = svc.cached_index();
     let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
     let t0 = q.t0.unwrap_or(auto0);
     let t1 = q.t1.unwrap_or(auto1.max(t0 + 1));
+    {
+        let cache = svc.timeline_cache.lock();
+        if let Some(c) = cache.as_ref() {
+            if c.t0 == t0 && c.t1 == t1 && c.width == width && c.data_gen == data_gen {
+                return TimelineBody {
+                    lod: c.lod,
+                    width,
+                    height: c.height,
+                    lane_count: c.lane_count,
+                    instance_count: c.instance_count,
+                    instances: c.instances.clone(),
+                };
+            }
+        }
+    }
     let lod = choose_lod(&index, t0, t1, width as usize, INSTANCE_MIN_PX);
     let height = stack_height(&index).ceil() as u32;
     let instances = if lod == TimelineLod::Instanced {
@@ -353,17 +386,34 @@ async fn timeline(
     } else {
         Vec::new()
     };
-    if let Some(t_prof) = t_prof {
-        svc.emit_server_scope(NAME_TIMELINE_API, t_prof.elapsed().as_nanos() as u64);
-    }
-    Json(TimelineBody {
+    let body = TimelineBody {
         lod: lod.as_str(),
         width,
         height,
         lane_count: index.lane_count() as u32,
         instance_count: instances.len() as u32,
         instances,
-    })
+    };
+    *svc.timeline_cache.lock() = Some(crate::CachedTimeline {
+        t0,
+        t1,
+        width,
+        data_gen,
+        lod: body.lod,
+        height: body.height,
+        lane_count: body.lane_count,
+        instance_count: body.instance_count,
+        instances: body.instances.clone(),
+    });
+    svc.maybe_emit_timeline_scope(t_prof.elapsed().as_nanos() as u64);
+    body
+}
+
+async fn timeline(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<FrameQuery>,
+) -> Json<TimelineBody> {
+    Json(timeline_body(&svc, q))
 }
 
 async fn ws_upgrade(

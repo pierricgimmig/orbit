@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use orbit_live_event::{kind, LiveEvent, LIVE_EVENT_SIZE};
 use orbit_live_protocol::{decode_all, LiveFrame, VERSION};
 use orbit_live_ring::read_spill_file;
@@ -28,6 +30,7 @@ fn ev(i: u64) -> LiveEvent {
 #[test]
 fn snapshot_frames_are_decodable_hello_status_and_events() {
     let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
     svc.intern_string("main");
     svc.push_events(&[ev(1), ev(2), ev(3)]);
     let mut bytes = Vec::new();
@@ -140,6 +143,7 @@ fn self_scopes_are_ignored_when_disabled() {
     use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
 
     let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
     svc.apply_self_scopes(&[RelScope {
         pid: VIEWER_PID,
         tid: 1,
@@ -185,6 +189,7 @@ fn push_events_emits_server_scope_only_when_self_profile_is_on() {
     use orbit_live_event::dev::{NAME_PUSH, NAME_RASTER, SERVICE_PID};
 
     let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
     svc.push_events(&[ev(1)]);
     let _ = svc.rasterize_frame(Some(0), Some(40), 32);
     assert!(!svc.ring().snapshot().1.iter().any(|e| e.pid == SERVICE_PID));
@@ -270,4 +275,68 @@ fn demo_stop_clears_status_flag_and_allows_restart() {
         crate::demo::start(&svc, 1_000).expect("stop must release the producer");
         crate::demo::stop(&svc);
     });
+}
+
+#[test]
+fn demo_emits_three_processes_not_self_pids() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    crate::demo::intern_demo_names(&svc);
+    let json = crate::demo::process_list_json();
+    assert!(json.contains("orbit-demo"));
+    assert!(json.contains("orbit-render"));
+    assert!(json.contains("orbit-audio"));
+    assert!(json.contains("\"pid\":10"));
+    assert!(json.contains("\"pid\":11"));
+    assert!(!json.contains("\"pid\":2"));
+    assert!(!json.contains("\"pid\":3"));
+}
+
+#[test]
+fn self_scopes_stamp_to_demo_clock_not_wall() {
+    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    svc.note_live_end(50_000_000);
+    svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
+    svc.apply_self_scopes(&[RelScope {
+        pid: VIEWER_PID,
+        tid: 1,
+        name_id: NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 1_000,
+        depth: 0,
+    }]);
+    let self_ev = svc
+        .ring()
+        .snapshot()
+        .1
+        .into_iter()
+        .find(|e| e.pid == VIEWER_PID)
+        .expect("viewer scope");
+    assert_eq!(self_ev.start_ns + self_ev.duration_ns, 50_000_000);
+}
+
+#[test]
+fn timeline_cache_skips_rebuild_when_view_and_data_gen_match() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
+    svc.push_events(&[ev(1), ev(2)]);
+    let a = svc.cached_index();
+    let b = svc.cached_index();
+    assert!(Arc::ptr_eq(&a, &b), "index cache must reuse the same Arc");
+    svc.enable_self_profile();
+    svc.apply_self_scopes(&[orbit_live_event::dev::RelScope {
+        pid: orbit_live_event::dev::VIEWER_PID,
+        tid: 1,
+        name_id: orbit_live_event::dev::NAME_FRAME,
+        start_rel_ns: 0,
+        duration_ns: 10,
+        depth: 0,
+    }]);
+    let c = svc.cached_index();
+    assert!(
+        Arc::ptr_eq(&b, &c),
+        "self-only pushes must not immediately rebuild the index"
+    );
 }

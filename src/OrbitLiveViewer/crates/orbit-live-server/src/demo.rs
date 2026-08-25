@@ -59,12 +59,38 @@ pub fn scope_name_id(depth: u8, th: u32, slot: u32) -> u32 {
     DEMO_SCOPE_BASE + idx
 }
 
+/// Dummy processes on the same capture clock. Pids 2/3 are reserved for
+/// viewer / service self-profile.
+pub const DEMO_PID: u32 = 1;
+pub const RENDER_PID: u32 = 10;
+pub const AUDIO_PID: u32 = 11;
+
+pub const DEMO_PROCESSES: &[(u32, &str)] = &[
+    (DEMO_PID, "orbit-demo"),
+    (RENDER_PID, "orbit-render"),
+    (AUDIO_PID, "orbit-audio"),
+];
+
 pub fn intern_demo_names(svc: &LiveService) {
     svc.intern_id(100, "Main");
-    for th in 1..32 {
+    for th in 1..16 {
         svc.intern_id(100 + th, &format!("Worker-{th}"));
     }
     svc.intern_id(10, "Async");
+    for (tid, name) in [
+        (200u32, "Render"),
+        (201, "Cull"),
+        (202, "Draw"),
+        (203, "GpuQueue"),
+        (204, "Upload"),
+        (205, "Present"),
+        (300, "Audio"),
+        (301, "Mixer"),
+        (302, "Decode"),
+        (303, "Capture"),
+    ] {
+        svc.intern_id(tid, name);
+    }
     for (i, name) in DEMO_SCOPE_NAMES.iter().enumerate() {
         svc.intern_id(DEMO_SCOPE_BASE + i as u32, name);
     }
@@ -73,7 +99,15 @@ pub fn intern_demo_names(svc: &LiveService) {
     }
 }
 
-/// Dense Orbit-colored demo: 32 threads, nested scopes, switches, states.
+pub fn process_list_json() -> String {
+    let list: Vec<serde_json::Value> = DEMO_PROCESSES
+        .iter()
+        .map(|(pid, name)| serde_json::json!({"pid": pid, "name": name}))
+        .collect();
+    serde_json::to_string(&list).unwrap_or_else(|_| "[]".into())
+}
+
+/// Dense Orbit-colored demo: three processes on one clock, nested scopes.
 ///
 /// Sim time advances 20 ms per 20 ms wall tick so a 2 s follow window shows
 /// millisecond-wide boxes (instanced LOD), not 60 ns specks.
@@ -88,18 +122,23 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
     let _ = scopes_per_sec;
     tokio::spawn(async move {
         let mut t = 1_000_000u64;
-        let threads = 32u32;
         let period = Duration::from_millis(20);
         let tick_ns = 20_000_000u64;
-        svc.mark_capture_started(1, t);
+        svc.mark_capture_started(DEMO_PID, t);
         loop {
             if rx.try_recv().is_ok() {
                 break;
             }
             let start = Instant::now();
-            let mut events = Vec::with_capacity((threads as usize) * 16);
-            for th in 0..threads {
-                push_thread_tick(&mut events, t, 100 + th, th);
+            let mut events = Vec::with_capacity(28 * 16);
+            for th in 0..16 {
+                push_thread_tick(&mut events, t, DEMO_PID, 100 + th, th);
+            }
+            for (i, tid) in [200u32, 201, 202, 203, 204, 205].into_iter().enumerate() {
+                push_thread_tick(&mut events, t, RENDER_PID, tid, i as u32);
+            }
+            for (i, tid) in [300u32, 301, 302, 303].into_iter().enumerate() {
+                push_thread_tick(&mut events, t, AUDIO_PID, tid, i as u32 + 8);
             }
             for (i, name) in DEMO_ASYNC_NAMES.iter().enumerate() {
                 let h = name_hash(name.as_bytes());
@@ -107,7 +146,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                     start_ns: t + 1_000_000 + (i as u64) * 4_000_000,
                     duration_ns: 3_200_000,
                     tid: 10,
-                    pid: 1,
+                    pid: DEMO_PID,
                     kind: kind::API_TRACK,
                     depth: 0,
                     extra: (h % 6) as u8,
@@ -121,11 +160,16 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                 svc.broadcast_status();
             }
             let elapsed = start.elapsed();
-            if elapsed < period {
-                tokio::select! {
-                    _ = tokio::time::sleep(period - elapsed) => {}
-                    _ = &mut rx => break,
-                }
+            // Always yield — a 32-thread tick that overruns 20ms used to
+            // busy-loop at 100% of a core and ignore the stop oneshot.
+            let wait = if elapsed < period {
+                period - elapsed
+            } else {
+                Duration::from_millis(1)
+            };
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = &mut rx => break,
             }
         }
         svc.demo.store(false, Ordering::Relaxed);
@@ -135,8 +179,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
     Ok(())
 }
 
-fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, tid: u32, th: u32) {
-    let pid = 1u32;
+fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th: u32) {
     events.push(LiveEvent {
         start_ns: t,
         duration_ns: 14_000_000,
@@ -184,6 +227,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, tid: u32, th: u32) {
     events.push(scope(
         t + 500_000,
         18_000_000,
+        pid,
         tid,
         0,
         outer_extra,
@@ -200,6 +244,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, tid: u32, th: u32) {
         events.push(scope(
             *start,
             *dur,
+            pid,
             tid,
             1,
             0,
@@ -214,6 +259,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, tid: u32, th: u32) {
             events.push(scope(
                 start + 80_000 + k as u64 * step,
                 idur,
+                pid,
                 tid,
                 2,
                 0,
@@ -227,6 +273,7 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, tid: u32, th: u32) {
 fn scope(
     start_ns: u64,
     duration_ns: u64,
+    pid: u32,
     tid: u32,
     depth: u8,
     extra: u8,
@@ -237,7 +284,7 @@ fn scope(
         start_ns,
         duration_ns,
         tid,
-        pid: 1,
+        pid,
         kind: kind::API_SCOPE,
         depth,
         extra,
