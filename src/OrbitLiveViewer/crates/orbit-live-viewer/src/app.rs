@@ -9,7 +9,7 @@ use orbit_live_event::dev::{
     intern_self_names, NAME_CHROME, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD, NAME_TRACKS,
     SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_UI, VIEWER_NAME, VIEWER_PID,
 };
-use orbit_live_event::{InternTable, LaneKey, THREAD_PALETTE};
+use orbit_live_event::{kind, InternTable, LaneKey, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
     apply_highlight_flags, choose_lod, collect_instances_layout, instance_for_event, lane_height,
@@ -824,6 +824,9 @@ impl OrbitLiveApp {
                     self.timeline_payload(t0, t1, width, lod, ppp)
                 };
                 ui.painter().add(paint_callback(body, payload, view));
+                if self.last_lod == orbit_live_render::TimelineLod::Instanced {
+                    paint_clip_labels(ui, body, &self.intern, &self.last_instances);
+                }
                 paint_playhead(ui, body, self.t0, self.t1, self.status.newest_end_ns as f64);
                 if let Some(h) = self.hover {
                     show_scope_tooltip(ui, &self.intern, h);
@@ -1764,6 +1767,134 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
     }
 }
 
+/// `orbit_display_formats::GetDisplayTime`: `"%.3f %s"` with the same unit steps.
+fn display_time_ns(ns: u64) -> String {
+    let ns = ns as f64;
+    if ns < 1_000.0 {
+        format!("{ns:.3} ns")
+    } else if ns < 1_000_000.0 {
+        format!("{:.3} us", ns / 1_000.0)
+    } else if ns < 1_000_000_000.0 {
+        format!("{:.3} ms", ns / 1_000_000.0)
+    } else if ns < 60_000_000_000.0 {
+        format!("{:.3} s", ns / 1_000_000_000.0)
+    } else if ns < 3_600_000_000_000.0 {
+        format!("{:.3} min", ns / 60_000_000_000.0)
+    } else if ns < 86_400_000_000_000.0 {
+        format!("{:.3} h", ns / 3_600_000_000_000.0)
+    } else {
+        format!("{:.3} days", ns / 86_400_000_000_000.0)
+    }
+}
+
+/// `QtTextRenderer::AddTextTrailingCharsPrioritized`: keep `elapsed`, ellipsize the name.
+fn elide_to_width(s: &str, max_w: f32, measure: &impl Fn(&str) -> f32) -> String {
+    if s.is_empty() || measure(s) <= max_w {
+        return s.to_string();
+    }
+    if measure("…") > max_w {
+        return String::new();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let mut cand: String = chars[..mid].iter().collect();
+        cand.push('…');
+        if measure(&cand) <= max_w {
+            lo = mid;
+        } else {
+            hi = mid.saturating_sub(1);
+        }
+    }
+    if lo == 0 {
+        "…".into()
+    } else {
+        let mut out: String = chars[..lo].iter().collect();
+        out.push('…');
+        out
+    }
+}
+
+fn timeslice_text(name: &str, elapsed: &str) -> String {
+    format!("{name} {elapsed}")
+}
+
+fn timeslice_label_fitting(
+    name: &str,
+    elapsed: &str,
+    max_w: f32,
+    measure: &impl Fn(&str) -> f32,
+) -> String {
+    let full = timeslice_text(name, elapsed);
+    if measure(&full) <= max_w {
+        return full;
+    }
+    if measure(elapsed) < max_w {
+        let leading = format!("{name} ");
+        let elided = elide_to_width(&leading, max_w - measure(elapsed), measure);
+        format!("{elided}{elapsed}")
+    } else {
+        elide_to_width(&full, max_w, measure)
+    }
+}
+
+/// `TimerTrack::DrawTimesliceText` as an egui overlay on instanced boxes.
+fn paint_clip_labels(ui: &Ui, body: Rect, intern: &InternTable, instances: &[ScopeInstance]) {
+    if instances.is_empty() {
+        return;
+    }
+    let font = FontId::new(11.0, fonts::medium());
+    let fonts = ui.fonts(|f| f.clone());
+    let measure = |s: &str| fonts.layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE).size().x;
+    let min_w = measure("W");
+    let view = body.intersect(ui.clip_rect());
+    if !view.is_positive() {
+        return;
+    }
+    for inst in instances {
+        if inst.kind != kind::API_SCOPE && inst.kind != kind::API_TRACK {
+            continue;
+        }
+        if inst.w <= min_w {
+            continue;
+        }
+        let Some(name) = intern.get(inst.name_id) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let box_rect = Rect::from_min_size(
+            Pos2::new(body.left() + inst.x, body.top() + inst.y),
+            Vec2::new(inst.w, inst.h),
+        );
+        let clip = box_rect.intersect(view);
+        if clip.width() <= min_w || clip.height() < 8.0 {
+            continue;
+        }
+        let pos_x = box_rect.left().max(body.left());
+        let max_size = (box_rect.right() - pos_x).max(0.0);
+        if max_size <= min_w {
+            continue;
+        }
+        let elapsed = display_time_ns(inst.duration_ns);
+        let label = timeslice_label_fitting(name, &elapsed, max_size - 2.0, &measure);
+        if label.is_empty() {
+            continue;
+        }
+        let pad_y = 5.0_f32.min(inst.h * 0.25).max(1.5);
+        ui.painter_at(clip).text(
+            Pos2::new(pos_x + 2.0, box_rect.bottom() - pad_y),
+            Align2::LEFT_BOTTOM,
+            label,
+            font.clone(),
+            Color32::WHITE,
+        );
+    }
+}
+
 fn format_ns(t: f64) -> String {
     if t >= 1e9 {
         format!("{:.3}s", t / 1e9)
@@ -1850,5 +1981,33 @@ mod tests {
         assert_eq!(time_zoom_step(0.0, 1.2), 1);
         assert_eq!(time_zoom_step(0.0, 0.8), -1);
         assert_eq!(time_zoom_step(0.0, 1.0), 0);
+    }
+
+    #[test]
+    fn display_time_matches_orbit_get_display_time() {
+        assert_eq!(display_time_ns(12), "12.000 ns");
+        assert_eq!(display_time_ns(12_345), "12.345 us");
+        assert_eq!(display_time_ns(12_345_600), "12.346 ms");
+        assert_eq!(display_time_ns(12_345_600_000), "12.346 s");
+    }
+
+    #[test]
+    fn timeslice_keeps_duration_when_name_is_elided() {
+        let measure = |s: &str| s.chars().count() as f32;
+        let label = timeslice_label_fitting("UpdateTransforms", "4.800 ms", 14.0, &measure);
+        assert!(
+            label.ends_with("4.800 ms"),
+            "duration tail must stay: {label}"
+        );
+        assert!(label.contains('…'), "name should ellipsize first: {label}");
+    }
+
+    #[test]
+    fn timeslice_full_string_when_box_is_wide() {
+        let measure = |s: &str| s.chars().count() as f32;
+        assert_eq!(
+            timeslice_label_fitting("Tick", "18.000 ms", 80.0, &measure),
+            "Tick 18.000 ms"
+        );
     }
 }
