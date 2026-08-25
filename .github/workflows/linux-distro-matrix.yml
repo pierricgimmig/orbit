@@ -143,8 +143,13 @@ jobs:
       - uses: actions/checkout@v4
         if: needs.gate.outputs.run == 'true'
 
+      - name: Gate failed
+        if: needs.gate.result != 'success'
+        run: |
+          echo "Gate job failed; matrix was not started." >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Skipped (no relevant changes)
-        if: needs.gate.outputs.run != 'true'
+        if: needs.gate.result == 'success' && needs.gate.outputs.run != 'true'
         run: |
           echo "no changes since \`${{ needs.gate.outputs.baseline }}\`, skipped" >> "${GITHUB_STEP_SUMMARY}"
 
