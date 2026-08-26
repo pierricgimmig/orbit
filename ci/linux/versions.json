@@ -1,38 +1,6 @@
 [
   {
     "distro": "ubuntu",
-    "version": "18.04",
-    "codename": "bionic",
-    "image": "ubuntu:18.04",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "ubuntu",
-    "version": "18.10",
-    "codename": "cosmic",
-    "image": "ubuntu:18.10",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "ubuntu",
-    "version": "19.04",
-    "codename": "disco",
-    "image": "ubuntu:19.04",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "ubuntu",
-    "version": "19.10",
-    "codename": "eoan",
-    "image": "ubuntu:19.10",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "ubuntu",
     "version": "20.04",
     "codename": "focal",
     "image": "ubuntu:20.04",
@@ -137,22 +105,6 @@
   },
   {
     "distro": "debian",
-    "version": "9",
-    "codename": "stretch",
-    "image": "debian:9",
-    "image_alt": "debian:stretch",
-    "cache": false
-  },
-  {
-    "distro": "debian",
-    "version": "10",
-    "codename": "buster",
-    "image": "debian:10",
-    "image_alt": "debian:buster",
-    "cache": false
-  },
-  {
-    "distro": "debian",
     "version": "11",
     "codename": "bullseye",
     "image": "debian:11",
@@ -174,38 +126,6 @@
     "image": "debian:13",
     "image_alt": "debian:trixie",
     "cache": true
-  },
-  {
-    "distro": "fedora",
-    "version": "28",
-    "codename": "f28",
-    "image": "fedora:28",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "fedora",
-    "version": "29",
-    "codename": "f29",
-    "image": "fedora:29",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "fedora",
-    "version": "30",
-    "codename": "f30",
-    "image": "fedora:30",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "fedora",
-    "version": "31",
-    "codename": "f31",
-    "image": "fedora:31",
-    "image_alt": "",
-    "cache": false
   },
   {
     "distro": "fedora",
@@ -313,14 +233,6 @@
   },
   {
     "distro": "rocky",
-    "version": "8",
-    "codename": "greenobsidian",
-    "image": "rockylinux:8",
-    "image_alt": "rockylinux/rockylinux:8",
-    "cache": false
-  },
-  {
-    "distro": "rocky",
     "version": "9",
     "codename": "blueonyx",
     "image": "rockylinux:9",
@@ -337,14 +249,6 @@
   },
   {
     "distro": "almalinux",
-    "version": "8",
-    "codename": "",
-    "image": "almalinux:8",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "almalinux",
     "version": "9",
     "codename": "",
     "image": "almalinux:9",
@@ -356,54 +260,6 @@
     "version": "10",
     "codename": "",
     "image": "almalinux:10",
-    "image_alt": "",
-    "cache": true
-  },
-  {
-    "distro": "opensuse",
-    "version": "15.0",
-    "codename": "leap15.0",
-    "image": "opensuse/leap:15.0",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "opensuse",
-    "version": "15.1",
-    "codename": "leap15.1",
-    "image": "opensuse/leap:15.1",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "opensuse",
-    "version": "15.2",
-    "codename": "leap15.2",
-    "image": "opensuse/leap:15.2",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "opensuse",
-    "version": "15.3",
-    "codename": "leap15.3",
-    "image": "opensuse/leap:15.3",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "opensuse",
-    "version": "15.4",
-    "codename": "leap15.4",
-    "image": "opensuse/leap:15.4",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "opensuse",
-    "version": "15.5",
-    "codename": "leap15.5",
-    "image": "opensuse/leap:15.5",
     "image_alt": "",
     "cache": true
   },
@@ -432,150 +288,6 @@
     "cache": true
   },
   {
-    "distro": "alpine",
-    "version": "3.8",
-    "codename": "v3.8",
-    "image": "alpine:3.8",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.9",
-    "codename": "v3.9",
-    "image": "alpine:3.9",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.10",
-    "codename": "v3.10",
-    "image": "alpine:3.10",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.11",
-    "codename": "v3.11",
-    "image": "alpine:3.11",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.12",
-    "codename": "v3.12",
-    "image": "alpine:3.12",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.13",
-    "codename": "v3.13",
-    "image": "alpine:3.13",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.14",
-    "codename": "v3.14",
-    "image": "alpine:3.14",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.15",
-    "codename": "v3.15",
-    "image": "alpine:3.15",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.16",
-    "codename": "v3.16",
-    "image": "alpine:3.16",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.17",
-    "codename": "v3.17",
-    "image": "alpine:3.17",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.18",
-    "codename": "v3.18",
-    "image": "alpine:3.18",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.19",
-    "codename": "v3.19",
-    "image": "alpine:3.19",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.20",
-    "codename": "v3.20",
-    "image": "alpine:3.20",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.21",
-    "codename": "v3.21",
-    "image": "alpine:3.21",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.22",
-    "codename": "v3.22",
-    "image": "alpine:3.22",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.23",
-    "codename": "v3.23",
-    "image": "alpine:3.23",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "alpine",
-    "version": "3.24",
-    "codename": "v3.24",
-    "image": "alpine:3.24",
-    "image_alt": "",
-    "cache": false
-  },
-  {
-    "distro": "amazonlinux",
-    "version": "2",
-    "codename": "amzn2",
-    "image": "amazonlinux:2",
-    "image_alt": "",
-    "cache": false
-  },
-  {
     "distro": "amazonlinux",
     "version": "2023",
     "codename": "amzn2023",
@@ -585,6 +297,14 @@
   },
   {
     "distro": "arch",
+    "version": "rolling",
+    "codename": "rolling",
+    "image": "archlinux:latest",
+    "image_alt": "",
+    "cache": true
+  },
+  {
+    "distro": "omarchy",
     "version": "rolling",
     "codename": "rolling",
     "image": "archlinux:latest",

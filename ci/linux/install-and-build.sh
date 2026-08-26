@@ -69,6 +69,16 @@ fix_debian_archive() {
   esac
 }
 
+# Minimal EL/Amazon images ship curl-minimal. Installing the full `curl`
+# package conflicts with it and dnf aborts the whole transaction — gcc
+# never gets installed. Those images already provide /usr/bin/curl.
+dnf_skip_full_curl() {
+  case "${DISTRO:-}:${VERSION:-}" in
+    almalinux:9|rocky:9|amazonlinux:2023) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 install_apt() {
   fix_debian_archive
   if ! apt-get update; then
@@ -84,13 +94,28 @@ install_apt() {
   for pkg in ca-certificates curl wget git gcc g++ python3 unzip zip findutils; do
     try_install "apt ${pkg}" apt-get install -y --no-install-recommends "${pkg}" || true
   done
+  # Ubuntu 20.04's default GCC is 9; Abseil needs GCC 10+.
+  if [[ "${DISTRO:-}" == "ubuntu" && "${VERSION:-}" == "20.04" ]]; then
+    try_install "apt gcc-10" apt-get install -y --no-install-recommends gcc-10 g++-10 || true
+    if command -v gcc-10 >/dev/null 2>&1 && command -v g++-10 >/dev/null 2>&1; then
+      export CC=gcc-10
+      export CXX=g++-10
+      echo "Using CC=${CC} CXX=${CXX} (Ubuntu 20.04)"
+    fi
+  fi
 }
 
 install_dnf_yum() {
   if command -v dnf >/dev/null 2>&1; then
     dnf -y update --refresh || true
-    try_install dnf dnf install -y gcc gcc-c++ python3 git curl ca-certificates unzip zip findutils || \
-      try_install dnf-minimal dnf install -y gcc gcc-c++ python3 git curl ca-certificates unzip zip || true
+    if dnf_skip_full_curl; then
+      echo "Skipping full curl package (${DISTRO} ${VERSION} ships curl-minimal)"
+      try_install dnf dnf install -y gcc gcc-c++ python3 git ca-certificates unzip zip findutils || \
+        try_install dnf-minimal dnf install -y gcc gcc-c++ python3 git ca-certificates unzip zip || true
+    else
+      try_install dnf dnf install -y gcc gcc-c++ python3 git curl ca-certificates unzip zip findutils || \
+        try_install dnf-minimal dnf install -y gcc gcc-c++ python3 git curl ca-certificates unzip zip || true
+    fi
   elif command -v yum >/dev/null 2>&1; then
     yum -y update || true
     try_install yum yum install -y gcc gcc-c++ python3 git curl ca-certificates unzip zip findutils || true
@@ -100,9 +125,23 @@ install_dnf_yum() {
 }
 
 install_zypper() {
-  zypper --non-interactive refresh || true
-  try_install zypper zypper --non-interactive install -y \
-    gcc gcc-c++ python3 git curl ca-certificates unzip zip findutils || true
+  if [[ "${DISTRO:-}" == "opensuse" && "${VERSION:-}" == "15.6" ]]; then
+    # Leap 15.6 default gcc is gcc7 (too old for Abseil). gcc13 is in-tree.
+    # Force-refresh so SLE-update metadata is not stale (that repo 404'd
+    # versioned RPMs such as libatomic1 during the first matrix run).
+    zypper --non-interactive refresh --force || zypper --non-interactive refresh || true
+    try_install zypper zypper --non-interactive install -y \
+      gcc13 gcc13-c++ python3 git curl ca-certificates unzip zip findutils || true
+    if command -v gcc-13 >/dev/null 2>&1 && command -v g++-13 >/dev/null 2>&1; then
+      export CC=gcc-13
+      export CXX=g++-13
+      echo "Using CC=${CC} CXX=${CXX} (openSUSE Leap 15.6)"
+    fi
+  else
+    zypper --non-interactive refresh || true
+    try_install zypper zypper --non-interactive install -y \
+      gcc gcc-c++ python3 git curl ca-certificates unzip zip findutils || true
+  fi
 }
 
 install_apk() {
@@ -131,7 +170,10 @@ else
   echo "WARN: no known package manager"
 fi
 
-if ! command -v gcc >/dev/null 2>&1 && ! command -v cc >/dev/null 2>&1 && ! command -v g++ >/dev/null 2>&1; then
+if ! command -v gcc >/dev/null 2>&1 \
+    && ! command -v cc >/dev/null 2>&1 \
+    && ! command -v g++ >/dev/null 2>&1 \
+    && ! { [[ -n "${CC:-}" ]] && command -v "${CC}" >/dev/null 2>&1; }; then
   echo "ERROR: missing compiler: gcc/g++/cc not installed"
 fi
 
@@ -160,6 +202,21 @@ build --disk_cache=/cache/bazel-disk
 build --repository_cache=/cache/bazel-repo
 build --keep_going
 EOF
+
+# .bazelrc uses --incompatible_strict_action_env; export the pinned
+# toolchain into both repo config and compile actions when set.
+if [[ -n "${CC:-}" ]]; then
+  {
+    echo "build --repo_env=CC=${CC}"
+    echo "build --action_env=CC=${CC}"
+  } >> /tmp/ci.bazelrc
+fi
+if [[ -n "${CXX:-}" ]]; then
+  {
+    echo "build --repo_env=CXX=${CXX}"
+    echo "build --action_env=CXX=${CXX}"
+  } >> /tmp/ci.bazelrc
+fi
 
 echo "=== bazel build //src/Service:OrbitService ==="
 bazel --bazelrc=/tmp/ci.bazelrc build //src/Service:OrbitService
