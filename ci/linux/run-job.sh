@@ -52,7 +52,7 @@ useful_error() {
       grep -E -i \
         'no image:|ERROR: |error: |FATAL: |GLIBC_[0-9]|missing compiler|no Bazel|cannot execute|not found|Cannot connect|debootstrap|failed to solve|permission denied' \
         "${log}" \
-        | grep -v -E '^(Get:|Hit:|Ign:|Fetched |Reading package|Selecting previously|Preparing to unpack|Unpacking |Setting up )' \
+        | grep -v -E -i '^(Get:|Hit:|Ign:|Fetched |Reading package|Selecting previously|Preparing to unpack|Unpacking |Setting up |Error:[[:space:]]*$)' \
         | ${pick} -n 1 || true
     )"
     if [[ -z "${line}" ]]; then
