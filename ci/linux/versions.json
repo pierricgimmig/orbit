@@ -302,5 +302,13 @@
     "image": "archlinux:latest",
     "image_alt": "",
     "cache": true
+  },
+  {
+    "distro": "omarchy",
+    "version": "rolling",
+    "codename": "rolling",
+    "image": "archlinux:latest",
+    "image_alt": "",
+    "cache": true
   }
 ]
