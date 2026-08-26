@@ -56,9 +56,11 @@ fix_ubuntu_mirrors() {
 fix_debian_archive() {
   local code=""
   if [[ -f /etc/os-release ]]; then
+    # Source in a subshell. /etc/os-release assigns VERSION=
+    # ("20.04.6 LTS (Focal Fossa)"), which must not clobber the
+    # matrix VERSION=20.04 used to pin GCC 10.
     # shellcheck disable=SC1091
-    . /etc/os-release
-    code="${VERSION_CODENAME:-}"
+    code="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")"
   fi
   case "${code}" in
     stretch|buster)
