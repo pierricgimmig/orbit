@@ -93,6 +93,17 @@ jobs:
         with:
           fetch-depth: '0'
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Docker diagnostics
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            sudo service docker start || sudo systemctl start docker || true
+          fi
+          docker version
+          docker info
+
       - name: Mount Bazel cache
         if: matrix.cache
         uses: actions/cache@v4
@@ -101,6 +112,7 @@ jobs:
             ~/.cache/orbit-ci/bazel-disk
             ~/.cache/orbit-ci/bazel-repo
             ~/.cache/orbit-ci/bazelisk
+            ~/.cache/orbit-ci/bazelisk-linux-amd64
           key: bazel-${{ matrix.distro }}-${{ matrix.version }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
           restore-keys: |
             bazel-${{ matrix.distro }}-${{ matrix.version }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
