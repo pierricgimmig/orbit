@@ -115,6 +115,14 @@ install_apt() {
   if [[ "${DISTRO:-}" == "ubuntu" && "${VERSION:-}" == "20.04" ]] \
       || { [[ "$(os_release_field ID)" == "ubuntu" ]] \
            && [[ "$(os_release_field VERSION_ID)" == "20.04" ]]; }; then
+    # gcc-10/g++-10 are in universe on Focal (main only has gcc-9).
+    # Official ubuntu:20.04 already enables universe; this covers slim/debootstrap.
+    echo "Ensuring Ubuntu 20.04 universe (needed for gcc-10)"
+    if [[ -f /etc/apt/sources.list ]]; then
+      sed -i -E '/ubuntu\.com\/ubuntu/ { /[[:space:]]universe([[:space:]]|$)/! s/[[:space:]]*$/ universe/ }' \
+        /etc/apt/sources.list
+    fi
+    apt-get update || echo "WARN: apt-get update after enabling universe failed"
     if ! try_install "apt gcc-10" apt-get install -y --no-install-recommends gcc-10 g++-10; then
       echo "ERROR: Ubuntu 20.04 needs gcc-10/g++-10 (Abseil requires GCC 10+)"
       exit 1
