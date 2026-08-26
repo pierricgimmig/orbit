@@ -17,6 +17,25 @@ if [[ -f /etc/os-release ]]; then
   cat /etc/os-release
   echo "======================="
 fi
+echo "Matrix DISTRO=${DISTRO:-} VERSION=${VERSION:-} CODENAME=${CODENAME:-}"
+
+# Read one field from /etc/os-release without leaking assignments into this
+# shell. Ubuntu's file sets VERSION="20.04.6 LTS (Focal Fossa)", which would
+# clobber the matrix VERSION=20.04 used to pin compilers.
+os_release_field() {
+  local field="$1"
+  [[ -f /etc/os-release ]] || return 0
+  # shellcheck disable=SC1091
+  (
+    . /etc/os-release
+    case "${field}" in
+      ID) printf '%s' "${ID:-}" ;;
+      VERSION_ID) printf '%s' "${VERSION_ID:-}" ;;
+      VERSION_CODENAME) printf '%s' "${VERSION_CODENAME:-}" ;;
+      *) return 1 ;;
+    esac
+  )
+}
 
 if command -v git >/dev/null 2>&1; then
   git config --global --add safe.directory /workspace || true
@@ -55,11 +74,7 @@ fix_ubuntu_mirrors() {
 
 fix_debian_archive() {
   local code=""
-  if [[ -f /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    code="${VERSION_CODENAME:-}"
-  fi
+  code="$(os_release_field VERSION_CODENAME)"
   case "${code}" in
     stretch|buster)
       echo "deb http://archive.debian.org/debian ${code} main" > /etc/apt/sources.list
@@ -94,13 +109,50 @@ install_apt() {
   for pkg in ca-certificates curl wget git gcc g++ python3 unzip zip findutils; do
     try_install "apt ${pkg}" apt-get install -y --no-install-recommends "${pkg}" || true
   done
-  # Ubuntu 20.04's default GCC is 9; Abseil needs GCC 10+.
-  if [[ "${DISTRO:-}" == "ubuntu" && "${VERSION:-}" == "20.04" ]]; then
-    try_install "apt gcc-10" apt-get install -y --no-install-recommends gcc-10 g++-10 || true
-    if command -v gcc-10 >/dev/null 2>&1 && command -v g++-10 >/dev/null 2>&1; then
-      export CC=gcc-10
-      export CXX=g++-10
-      echo "Using CC=${CC} CXX=${CXX} (Ubuntu 20.04)"
+  # Ubuntu 20.04's default GCC is 9; Abseil needs GCC 10+. Detect from
+  # the matrix env *or* os-release VERSION_ID so a leaked VERSION= from
+  # /etc/os-release cannot skip this pin (that is what failed run #4).
+  if [[ "${DISTRO:-}" == "ubuntu" && "${VERSION:-}" == "20.04" ]] \
+      || { [[ "$(os_release_field ID)" == "ubuntu" ]] \
+           && [[ "$(os_release_field VERSION_ID)" == "20.04" ]]; }; then
+    if ! try_install "apt gcc-10" apt-get install -y --no-install-recommends gcc-10 g++-10; then
+      echo "ERROR: Ubuntu 20.04 needs gcc-10/g++-10 (Abseil requires GCC 10+)"
+      exit 1
+    fi
+    if ! command -v gcc-10 >/dev/null 2>&1 || ! command -v g++-10 >/dev/null 2>&1; then
+      echo "ERROR: gcc-10/g++-10 did not land on PATH"
+      exit 1
+    fi
+    # /usr/bin/gcc is a metapackage symlink to gcc-9, not an alternatives
+    # slave. Bazel 9 + --incompatible_strict_action_env execs /usr/bin/gcc
+    # for both target and [for tool] (exec/host) compiles; --action_env=CC
+    # does not change that. Make the names Bazel actually runs be GCC 10.
+    pin_cc_name() {
+      local name="$1"
+      local bin="$2"
+      local dest="/usr/bin/${name}"
+      if command -v update-alternatives >/dev/null 2>&1; then
+        rm -f "${dest}"
+        if update-alternatives --install "${dest}" "${name}" "${bin}" 100 \
+            && update-alternatives --set "${name}" "${bin}"; then
+          return 0
+        fi
+      fi
+      ln -sfn "${bin}" "${dest}"
+    }
+    pin_cc_name gcc /usr/bin/gcc-10
+    pin_cc_name g++ /usr/bin/g++-10
+    pin_cc_name cc /usr/bin/gcc-10
+    pin_cc_name c++ /usr/bin/g++-10
+    export CC=/usr/bin/gcc-10
+    export CXX=/usr/bin/g++-10
+    local gcc_major=""
+    gcc_major="$(gcc -dumpversion | cut -d. -f1)"
+    echo "Using CC=${CC} CXX=${CXX} (Ubuntu 20.04); /usr/bin/gcc major=${gcc_major}"
+    gcc -v || true
+    if ! [[ "${gcc_major}" =~ ^[0-9]+$ ]] || [[ "${gcc_major}" -lt 10 ]]; then
+      echo "ERROR: /usr/bin/gcc is still GCC ${gcc_major:-unknown}; need 10+"
+      exit 1
     fi
   fi
 }
@@ -203,18 +255,21 @@ build --repository_cache=/cache/bazel-repo
 build --keep_going
 EOF
 
-# .bazelrc uses --incompatible_strict_action_env; export the pinned
-# toolchain into both repo config and compile actions when set.
+# .bazelrc uses --incompatible_strict_action_env. Pin the compiler for
+# repository configuration, target actions, and exec/host ([for tool])
+# actions. --action_env alone does not reach the exec configuration.
 if [[ -n "${CC:-}" ]]; then
   {
     echo "build --repo_env=CC=${CC}"
     echo "build --action_env=CC=${CC}"
+    echo "build --host_action_env=CC=${CC}"
   } >> /tmp/ci.bazelrc
 fi
 if [[ -n "${CXX:-}" ]]; then
   {
     echo "build --repo_env=CXX=${CXX}"
     echo "build --action_env=CXX=${CXX}"
+    echo "build --host_action_env=CXX=${CXX}"
   } >> /tmp/ci.bazelrc
 fi
 
