@@ -175,7 +175,11 @@ if [[ ! -x "${BAZELISK}" ]]; then
 fi
 
 echo "Running ${DISTRO} ${VERSION} (${CODENAME}) in ${TAG}"
+# Stream guest stdout/stderr into the workflow log as they happen, and keep a
+# copy for post-run error extraction. pipefail so docker's exit (not tee's)
+# is what we record.
 set +e
+set -o pipefail
 docker run --rm --privileged \
   --network host \
   -v "${ROOT}:/workspace:rw" \
@@ -198,10 +202,10 @@ docker run --rm --privileged \
       exec bash /workspace/ci/linux/install-and-build.sh
     fi
     exec /bin/sh /workspace/ci/linux/install-and-build.sh
-  ' >"${LOG_FILE}" 2>&1
+  ' 2>&1 | tee "${LOG_FILE}"
 rc=$?
+set +o pipefail
 set -e
-cat "${LOG_FILE}"
 
 if [[ ${rc} -eq 0 ]]; then
   write_result pass ""
