@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: '0'
       - name: Install dependencies
@@ -32,7 +32,7 @@ jobs:
         run: ./contrib/scripts/check-clang-format.sh
         shell: bash
       - name: 'Upload clang-format diff'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
           name: clang_format_diff
@@ -41,7 +41,7 @@ jobs:
       - run: echo "${{ github.event.number }}" > pr_number.txt
         if: success() || failure()
       - name: 'Upload PR number'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
           name: pr_number
@@ -52,14 +52,14 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         fetch-depth: '0'
     - name: Check license headers
       run: ./contrib/scripts/check-license-headers.sh
       shell: bash
     - name: 'Upload missing license headers'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: success() || failure()
       with:
         name: missing_license_headers
