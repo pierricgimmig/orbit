@@ -48,18 +48,13 @@ useful_error() {
   fi
   local line=""
   if [[ -f "${log}" ]]; then
-    # Prefer a compiler #error (Abseil "requires GCC 10+") over Bazel's
-    # wrapping "ERROR: … gcc failed: error executing CppCompile command (".
-    line="$(grep -E '#error' "${log}" | ${pick} -n 1 || true)"
-    if [[ -z "${line}" ]]; then
-      line="$(
-        grep -E -i \
-          'no image:|ERROR: |error: |FATAL: |GLIBC_[0-9]|missing compiler|no Bazel|cannot execute|not found|Cannot connect|debootstrap|failed to solve|permission denied' \
-          "${log}" \
-          | grep -v -E -i '^(Get:|Hit:|Ign:|Fetched |Reading package|Selecting previously|Preparing to unpack|Unpacking |Setting up |Error:[[:space:]]*$)' \
-          | ${pick} -n 1 || true
-      )"
-    fi
+    line="$(
+      grep -E -i \
+        'no image:|ERROR: |error: |FATAL: |GLIBC_[0-9]|missing compiler|no Bazel|cannot execute|not found|Cannot connect|debootstrap|failed to solve|permission denied' \
+        "${log}" \
+        | grep -v -E -i '^(Get:|Hit:|Ign:|Fetched |Reading package|Selecting previously|Preparing to unpack|Unpacking |Setting up |Error:[[:space:]]*$)' \
+        | ${pick} -n 1 || true
+    )"
     if [[ -z "${line}" ]]; then
       line="$(grep -E -i 'error|fail|fatal' "${log}" | tail -n 1 || true)"
     fi
