@@ -37,19 +37,29 @@ write_result() {
     > "${RESULT_FILE}"
 }
 
-first_useful_error() {
+# Pick a compact, human-readable line from a build/materialize log.
+# $2 is "first" (guest compile) or "last" (docker/debootstrap retries).
+useful_error() {
   local log="$1"
+  local which="${2:-first}"
+  local pick="head"
+  if [[ "${which}" == "last" ]]; then
+    pick="tail"
+  fi
   local line=""
   if [[ -f "${log}" ]]; then
     line="$(
       grep -E -i \
-        'no image:|ERROR: |error: |FATAL: |GLIBC_[0-9]|missing compiler|no Bazel|cannot execute|not found|debootstrap' \
+        'no image:|ERROR: |error: |FATAL: |GLIBC_[0-9]|missing compiler|no Bazel|cannot execute|not found|Cannot connect|debootstrap|failed to solve|permission denied' \
         "${log}" \
         | grep -v -E '^(Get:|Hit:|Ign:|Fetched |Reading package|Selecting previously|Preparing to unpack|Unpacking |Setting up )' \
-        | head -n 1 || true
+        | ${pick} -n 1 || true
     )"
     if [[ -z "${line}" ]]; then
       line="$(grep -E -i 'error|fail|fatal' "${log}" | tail -n 1 || true)"
+    fi
+    if [[ -z "${line}" ]]; then
+      line="$(grep -E -v '^[[:space:]]*$' "${log}" | tail -n 1 || true)"
     fi
   fi
   if [[ -z "${line}" ]]; then
@@ -58,7 +68,35 @@ first_useful_error() {
   printf '%s' "${line}" | tr '\n' ' ' | head -c 240
 }
 
+first_useful_error() {
+  useful_error "$1" first
+}
+
+last_useful_error() {
+  useful_error "$1" last
+}
+
+ensure_docker() {
+  echo "=== docker version ==="
+  if ! docker version; then
+    write_result fail "docker not available: docker version failed"
+    exit 1
+  fi
+  echo "=== docker info ==="
+  if ! docker info; then
+    echo "docker info failed; trying to start the daemon"
+    sudo service docker start 2>/dev/null || sudo systemctl start docker 2>/dev/null || true
+    if ! docker info; then
+      write_result fail "docker not available: docker info failed (daemon not running?)"
+      exit 1
+    fi
+  fi
+  echo "====================="
+}
+
 trap 'if [[ ! -f "${RESULT_FILE}" ]]; then write_result fail "script aborted before writing a result"; fi' EXIT
+
+ensure_docker
 
 try_build_from() {
   local from_image="$1"
@@ -105,18 +143,30 @@ materialize() {
 
 if ! materialize >"${LOG_FILE}" 2>&1; then
   cat "${LOG_FILE}"
-  err="no image: cannot materialize ${DISTRO} ${VERSION} (${IMAGE})"
+  detail="$(last_useful_error "${LOG_FILE}")"
+  err="no image: cannot materialize ${DISTRO} ${VERSION} (${IMAGE}): ${detail}"
   echo "${err}"
   write_result fail "${err}"
   exit 1
 fi
 cat "${LOG_FILE}"
 
+# v1.26.1 is not a bazelisk release (404). Pin a real tag; bazelisk then
+# downloads the Bazel in .bazelversion.
+BAZELISK_VERSION="v1.26.0"
+BAZELISK_URL="https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64"
+
 if [[ ! -x "${BAZELISK}" ]]; then
-  echo "Downloading bazelisk"
-  if ! curl -fsSL -o "${BAZELISK}" \
-      "https://github.com/bazelbuild/bazelisk/releases/download/v1.26.1/bazelisk-linux-amd64"; then
-    err="no Bazel: failed to download bazelisk on the runner"
+  echo "Downloading bazelisk ${BAZELISK_VERSION}"
+  curl_err=""
+  if ! curl_err="$(curl -fsSL -o "${BAZELISK}" "${BAZELISK_URL}" 2>&1)"; then
+    err="no Bazel: failed to download bazelisk ${BAZELISK_VERSION} (${BAZELISK_URL}): ${curl_err}"
+    echo "${err}"
+    write_result fail "${err}"
+    exit 1
+  fi
+  if [[ "$(head -c 4 "${BAZELISK}")" != $'\x7fELF' ]]; then
+    err="no Bazel: downloaded bazelisk ${BAZELISK_VERSION} is not an ELF binary"
     echo "${err}"
     write_result fail "${err}"
     exit 1
