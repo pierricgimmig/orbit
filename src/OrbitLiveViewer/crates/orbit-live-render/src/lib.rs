@@ -44,7 +44,7 @@ pub use lod::{
     ScopeInstance, ScopePick, TimelineLod, YCull, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE,
     FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX, Y_CULL_PAD,
 };
-pub use par::{is_parallel, parallelism, WorkerSpan};
+pub use par::{is_parallel, parallelism, set_wasm_pool_threads, WorkerSpan};
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
 /// One horizontal lane of non-overlapping intervals, sorted by `start_ns`.

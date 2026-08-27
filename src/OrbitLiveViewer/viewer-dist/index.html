@@ -33,6 +33,22 @@
     try {
       const mod = await import("./orbit_live_viewer.js");
       await mod.default();
+      // SAB + COOP/COEP: init the rayon pool once, before the first collect.
+      // Old browsers / missing isolation headers → sequential, no crash.
+      if (typeof SharedArrayBuffer !== "undefined" && typeof mod.initThreadPool === "function") {
+        try {
+          const hw = Number(navigator.hardwareConcurrency) || 4;
+          const n = Math.max(1, Math.min(hw, 32));
+          await mod.initThreadPool(n);
+          if (typeof mod.markWasmPoolReady === "function") {
+            mod.markWasmPoolReady(n);
+          }
+        } catch (poolErr) {
+          console.warn("WASM lane pool unavailable; sequential collect/raster", poolErr);
+        }
+      } else if (typeof SharedArrayBuffer === "undefined") {
+        console.warn("SharedArrayBuffer unavailable; sequential lane collect/raster");
+      }
       await mod.start_eframe(canvas);
     } catch (e) {
       showFallback(e);

@@ -87,7 +87,8 @@ the column walk regresses to O(n).
 
 Y-cull, instanced early-out, dirty GPU upload, density LOD, idle chrome,
 native lane parallelism (`render-wN` self-profile threads; viewer native
-Cargo enables `--features parallel`), and selected-scope pulse: see
+Cargo enables `--features parallel`), WASM rayon/SAB pool when isolation
+headers allow SharedArrayBuffer (else sequential), and selected-scope pulse: see
 `crates/orbit-live-render/RENDER_OPTS.md` for what landed and **measured**
 CPU-prepare medians (this VM has no discrete GPU).
 

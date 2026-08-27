@@ -9,6 +9,9 @@ use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{choose_lod, TimelineLod, TrackIndex, INSTANCE_MIN_PX};
 use wasm_bindgen::prelude::*;
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+pub use wasm_bindgen_rayon::init_thread_pool;
+
 #[cfg(feature = "egui")]
 mod app;
 #[cfg(feature = "egui")]
@@ -39,6 +42,7 @@ impl LiveViewer {
     #[wasm_bindgen(constructor)]
     pub fn new() -> LiveViewer {
         console_error_panic_hook::set_once();
+        install_wasm_clock();
         Self {
             index: TrackIndex::default(),
             intern: InternTable::default(),
@@ -153,11 +157,55 @@ impl LiveViewer {
     }
 }
 
+/// `globalThis.performance.now` — works on Window and DedicatedWorker.
+#[cfg(target_arch = "wasm32")]
+fn wasm_now_ns() -> u64 {
+    use wasm_bindgen::JsCast;
+    let global = js_sys::global();
+    let Ok(perf) = js_sys::Reflect::get(&global, &JsValue::from_str("performance")) else {
+        return 0;
+    };
+    if perf.is_undefined() || perf.is_null() {
+        return 0;
+    }
+    let Ok(now_fn) = js_sys::Reflect::get(&perf, &JsValue::from_str("now")) else {
+        return 0;
+    };
+    let Ok(now_fn) = now_fn.dyn_into::<js_sys::Function>() else {
+        return 0;
+    };
+    now_fn
+        .call0(&perf)
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|ms| (ms * 1_000_000.0) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_wasm_clock() {
+    orbit_live_event::dev::set_now_hook(wasm_now_ns);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_wasm_clock() {}
+
+/// Called after JS `initThreadPool` resolves. `n == 1` keeps collect/raster
+/// sequential (SAB missing / init failed).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = markWasmPoolReady)]
+pub fn mark_wasm_pool_ready(n: u32) {
+    orbit_live_render::set_wasm_pool_threads(n as usize);
+}
+
 /// Browser entry: eframe WebRunner on the given canvas. Native window is not used.
+/// JS must call `initThreadPool` (when present) *before* this, then
+/// `markWasmPoolReady`.
 #[cfg(all(feature = "egui", target_arch = "wasm32"))]
 #[wasm_bindgen]
 pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
+    install_wasm_clock();
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     eframe::WebRunner::new()
         .start(

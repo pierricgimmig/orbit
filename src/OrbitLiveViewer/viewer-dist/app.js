@@ -311,6 +311,18 @@ async function tryWasm() {
   try {
     const mod = await import("./orbit_live_viewer.js");
     await mod.default();
+    if (typeof SharedArrayBuffer !== "undefined" && typeof mod.initThreadPool === "function") {
+      try {
+        const hw = Number(navigator.hardwareConcurrency) || 4;
+        const n = Math.max(1, Math.min(hw, 32));
+        await mod.initThreadPool(n);
+        if (typeof mod.markWasmPoolReady === "function") {
+          mod.markWasmPoolReady(n);
+        }
+      } catch (poolErr) {
+        console.warn("WASM lane pool unavailable; sequential collect/raster", poolErr);
+      }
+    }
     wasm = new mod.LiveViewer();
     setRenderer("wasm pixel-columns (2d blit)");
     try {

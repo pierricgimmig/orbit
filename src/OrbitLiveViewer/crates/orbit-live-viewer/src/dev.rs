@@ -152,8 +152,15 @@ pub fn query_dev_locked_off_from_location() -> bool {
 }
 
 fn now_ns() -> u64 {
+    // Same clock as lane-worker spans (`orbit_live_event::dev::now_ns`).
+    // WASM: installed hook (`globalThis.performance.now`) so DedicatedWorkers
+    // and the UI thread share an origin. Native: Instant.
     #[cfg(target_arch = "wasm32")]
     {
+        let hooked = orbit_live_event::dev::now_ns();
+        if hooked != 0 {
+            return hooked;
+        }
         web_sys::window()
             .and_then(|w| w.performance())
             .map(|p| (p.now() * 1_000_000.0) as u64)

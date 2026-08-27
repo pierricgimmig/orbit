@@ -71,10 +71,40 @@ egui idle-chrome widget skip; on-screen FPS / `fps_sweep`.
    `--features parallel` (viewer native Cargo.toml enables this), else
    `std::thread::scope` chunks so Bazel `//:live` / cargo without a
    crate_universe rayon pin still emit `render-wN` worker tids. WASM
-   stays sequential (pool deferred; COOP/COEP/CORP already on the serve
-   path). Self-profile: parent `PrimitiveListing` plus per-worker
-   `CollectLane` / `RasterLane` on distinct tids; `n_prims` / `n_lanes`
-   VALUE samples on stats.
+   uses **wasm-bindgen-rayon** + `SharedArrayBuffer` when the eframe
+   bootstrap can init the pool (`initThreadPool` then
+   `markWasmPoolReady`). SAB missing (old browser / missing
+   COOP/COEP/CORP) stays sequential — no crash, no invert-default.
+   Self-profile: parent `PrimitiveListing` plus per-worker
+   `CollectLane` / `RasterLane` on distinct `render-wN` tids when the
+   pool is up; `n_prims` / `n_lanes` VALUE samples on stats.
+
+   Headers required on every served response (HTML, js, wasm, worker
+   `snippets/`): `Cross-Origin-Opener-Policy: same-origin`,
+   `Cross-Origin-Embedder-Policy: require-corp`,
+   `Cross-Origin-Resource-Policy: same-origin`. The axum serve path
+   (`//:live` / orbit-live-server) applies these as a router layer.
+
+   Rebuild the checked-in pack (needs rustup nightly + rust-src):
+
+   ```
+   ./src/OrbitLiveViewer/build_wasm.sh
+   # or: bazel build //:wasm
+   ```
+
+   That runs `nightly-2025-11-15` with `-Z build-std=panic_abort,std`,
+   `+atomics,+bulk-memory,+mutable-globals`, shared/import memory, and
+   `--features wasm-threads`. Override the pin with
+   `ORBIT_WASM_NIGHTLY`. Plain `cargo build --target wasm32-unknown-unknown`
+   (CI) stays sequential so it does not need a rebuilt std.
+
+   This agent ran native `cargo test` for the live-viewer crates and a
+   sequential wasm32 compile. It could not run `bazel build //:wasm` /
+   `bazel run //:live` (no Bazel in the environment) and could not
+   confirm SharedArrayBuffer + `render-wN` in a browser. If
+   `build_wasm.sh` fails here, the checked-in pack is left unchanged —
+   rebuild on a machine with rustup nightly + rust-src +
+   `wasm-bindgen-cli` 0.2.100.
 8. **Shader animation.** `uni.time` + selected pulse (~1.2 s, small
    radius/sigma/brightness) on `FLAG_SELECTED` (`#0080FF`, lift, Wallace
    shadow). Idle + selected writes `u_time` every frame without rebuilding

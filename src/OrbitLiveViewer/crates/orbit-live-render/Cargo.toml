@@ -8,7 +8,8 @@ description = "Pixel-column live-trace rasterizer (O(width * log n) per lane)"
 [features]
 default = []
 # Native rayon lane split. Bazel builds omit this so crate_universe does not
-# need a repin; cargo bench/test can pass `--features parallel`.
+# need a repin; cargo bench/test can pass `--features parallel`. The wasm
+# viewer enables this via `--features wasm-threads` (nightly + atomics).
 parallel = ["dep:rayon"]
 
 [dependencies]

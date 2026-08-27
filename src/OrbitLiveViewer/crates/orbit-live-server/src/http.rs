@@ -52,7 +52,18 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/timeline", get(timeline))
         .route("/*path", get(static_asset))
         .layer(CorsLayer::permissive())
+        // Outermost: HTML, js, wasm, worker snippets, and API all get
+        // COOP/COEP/CORP so SharedArrayBuffer is not blocked by a missing
+        // header on one worker URL.
+        .layer(axum::middleware::from_fn(isolation_middleware))
         .with_state(service)
+}
+
+async fn isolation_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    apply_isolation(next.run(req).await)
 }
 
 async fn index() -> Response {
@@ -68,8 +79,9 @@ async fn static_asset(axum::extract::Path(path): axum::extract::Path<String>) ->
     asset_response(&path).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
-/// COOP/COEP so a future wasm-bindgen-rayon pool can use SharedArrayBuffer.
-/// CORP lets same-origin assets load under `require-corp`.
+/// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.
+/// CORP lets same-origin assets (including worker snippets/) load under
+/// `require-corp`. Applied to every response, not only viewer-dist.
 const ISOLATION: [(&'static str, &'static str); 3] = [
     ("cross-origin-opener-policy", "same-origin"),
     ("cross-origin-embedder-policy", "require-corp"),
@@ -492,6 +504,9 @@ use tokio::sync::broadcast;
 
 #[cfg(test)]
 mod isolation_tests {
+    use super::*;
+    use axum::http::StatusCode;
+
     #[test]
     fn coop_coep_ready_for_shared_array_buffer() {
         assert_eq!(
@@ -505,6 +520,43 @@ mod isolation_tests {
         assert_eq!(
             super::ISOLATION[2],
             ("cross-origin-resource-policy", "same-origin")
+        );
+    }
+
+    #[test]
+    fn apply_isolation_sets_all_three_on_any_response() {
+        let resp = apply_isolation(StatusCode::OK.into_response());
+        let h = resp.headers();
+        assert_eq!(
+            h.get("cross-origin-opener-policy").unwrap(),
+            "same-origin"
+        );
+        assert_eq!(
+            h.get("cross-origin-embedder-policy").unwrap(),
+            "require-corp"
+        );
+        assert_eq!(
+            h.get("cross-origin-resource-policy").unwrap(),
+            "same-origin"
+        );
+    }
+
+    #[test]
+    fn apply_isolation_covers_worker_snippet_404s() {
+        // Missing snippet URL must still carry isolation so a Worker
+        // fetch is not a COEP violation on the error response.
+        let resp = apply_isolation(StatusCode::NOT_FOUND.into_response());
+        assert_eq!(
+            resp.headers()
+                .get("cross-origin-embedder-policy")
+                .unwrap(),
+            "require-corp"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("cross-origin-resource-policy")
+                .unwrap(),
+            "same-origin"
         );
     }
 }

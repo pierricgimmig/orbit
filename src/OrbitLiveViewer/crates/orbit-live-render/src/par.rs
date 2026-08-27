@@ -3,7 +3,11 @@
 //! * Native: rayon when `--features parallel`, otherwise `std::thread::scope`
 //!   chunks so Bazel `//:live` / cargo without a crate_universe rayon pin
 //!   still shows distinct worker tids.
-//! * WASM: sequential. SharedArrayBuffer + wasm-bindgen-rayon stay deferred.
+//! * WASM: sequential until the eframe bootstrap inits a
+//!   wasm-bindgen-rayon pool (`SharedArrayBuffer` + COOP/COEP). SAB
+//!   failure leaves [`parallelism`] at 1 — no rayon calls, no crash.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use orbit_live_event::dev::{render_worker_tid, NAME_COLLECT_LANE, NAME_RASTER_LANE};
 
@@ -17,12 +21,26 @@ pub struct WorkerSpan {
 }
 
 /// Skip the pool for tiny walks (tests, a handful of lanes).
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
 const PARALLEL_MIN: usize = 8;
+
+/// WASM pool size after a successful `initThreadPool`. Stays 1 (sequential)
+/// until the viewer calls [`set_wasm_pool_threads`].
+static WASM_THREADS: AtomicUsize = AtomicUsize::new(1);
+
+/// Record a successful wasm-bindgen-rayon init. Pass `1` to force sequential.
+/// Native ignores this — [`parallelism`] still uses `available_parallelism`.
+pub fn set_wasm_pool_threads(n: usize) {
+    WASM_THREADS.store(n.max(1), Ordering::SeqCst);
+}
 
 pub fn parallelism() -> usize {
     #[cfg(target_arch = "wasm32")]
     {
-        1
+        WASM_THREADS.load(Ordering::Relaxed).max(1)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -34,18 +52,15 @@ pub fn parallelism() -> usize {
 }
 
 pub fn is_parallel() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        false
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        parallelism() > 1
-    }
+    parallelism() > 1
 }
 
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
 fn worker_tid() -> u32 {
-    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    #[cfg(feature = "parallel")]
     {
         if let Some(i) = rayon::current_thread_index() {
             return render_worker_tid(i as u32);
@@ -61,13 +76,35 @@ fn worker_tid() -> u32 {
     render_worker_tid(SLOT.with(|s| *s))
 }
 
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
 fn now_ns() -> u64 {
     orbit_live_event::dev::now_ns()
 }
 
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
 fn chunk_size(n: usize, threads: usize) -> usize {
     let parts = threads.min(n).max(1);
     n.div_ceil(parts).max(1)
+}
+
+/// Rayon only when the `parallel` feature is on *and* a pool is live.
+/// WASM with SAB down (or `wasm-threads` not compiled in) stays sequential.
+fn use_rayon_pool(n_items: usize) -> bool {
+    #[cfg(feature = "parallel")]
+    {
+        parallelism() > 1 && n_items >= PARALLEL_MIN
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = n_items;
+        false
+    }
 }
 
 pub fn map_collect_lanes<T, R, F>(items: &[T], f: F) -> (Vec<R>, Vec<WorkerSpan>)
@@ -92,42 +129,43 @@ where
     if items.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    #[cfg(target_arch = "wasm32")]
-    {
+    if !use_rayon_pool(items.len()) {
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "parallel")))]
+        {
+            let threads = parallelism();
+            if threads > 1 && items.len() >= PARALLEL_MIN {
+                let chunk = chunk_size(items.len(), threads);
+                return thread_scope_map(items, chunk, span_name, f);
+            }
+        }
         let _ = span_name;
         return (items.iter().map(f).collect(), Vec::new());
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    let chunk = chunk_size(items.len(), parallelism());
+    #[cfg(feature = "parallel")]
     {
-        let threads = parallelism();
-        if threads <= 1 || items.len() < PARALLEL_MIN {
-            return (items.iter().map(f).collect(), Vec::new());
-        }
-        let chunk = chunk_size(items.len(), threads);
-        #[cfg(feature = "parallel")]
-        {
-            use rayon::prelude::*;
-            let pieces: Vec<(Vec<R>, Option<WorkerSpan>)> = items
-                .par_chunks(chunk)
-                .map(|part| {
-                    let t0 = now_ns();
-                    let out: Vec<R> = part.iter().map(&f).collect();
-                    let t1 = now_ns();
-                    let span = span_name.map(|name_id| WorkerSpan {
-                        tid: worker_tid(),
-                        name_id,
-                        t0_ns: t0,
-                        t1_ns: t1,
-                    });
-                    (out, span)
-                })
-                .collect();
-            return flatten_pieces(pieces);
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            return thread_scope_map(items, chunk, span_name, f);
-        }
+        use rayon::prelude::*;
+        let pieces: Vec<(Vec<R>, Option<WorkerSpan>)> = items
+            .par_chunks(chunk)
+            .map(|part| {
+                let t0 = now_ns();
+                let out: Vec<R> = part.iter().map(&f).collect();
+                let t1 = now_ns();
+                let span = span_name.map(|name_id| WorkerSpan {
+                    tid: worker_tid(),
+                    name_id,
+                    t0_ns: t0,
+                    t1_ns: t1,
+                });
+                (out, span)
+            })
+            .collect();
+        return flatten_pieces(pieces);
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = chunk;
+        (items.iter().map(f).collect(), Vec::new())
     }
 }
 
@@ -167,6 +205,10 @@ where
     })
 }
 
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
 fn flatten_pieces<R>(pieces: Vec<(Vec<R>, Option<WorkerSpan>)>) -> (Vec<R>, Vec<WorkerSpan>) {
     let mut out = Vec::new();
     let mut spans = Vec::new();
@@ -207,50 +249,51 @@ where
     if items.is_empty() || width == 0 {
         return Vec::new();
     }
-    #[cfg(target_arch = "wasm32")]
-    {
+    if !use_rayon_pool(items.len()) {
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "parallel")))]
+        {
+            let threads = parallelism();
+            if threads > 1 && items.len() >= PARALLEL_MIN {
+                let chunk = chunk_size(items.len(), threads);
+                return thread_scope_rows(items, dest, width, chunk, span_name, f);
+            }
+        }
         let _ = span_name;
         for (item, row) in items.iter().zip(dest.chunks_mut(width)) {
             f(item, row);
         }
         return Vec::new();
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    let chunk = chunk_size(items.len(), parallelism());
+    #[cfg(feature = "parallel")]
     {
-        let threads = parallelism();
-        if threads <= 1 || items.len() < PARALLEL_MIN {
-            for (item, row) in items.iter().zip(dest.chunks_mut(width)) {
-                f(item, row);
-            }
-            return Vec::new();
-        }
-        let chunk = chunk_size(items.len(), threads);
-        #[cfg(feature = "parallel")]
-        {
-            use rayon::prelude::*;
-            return dest
-                .par_chunks_mut(chunk * width)
-                .zip(items.par_chunks(chunk))
-                .map(|(rows, part)| {
-                    let t0 = now_ns();
-                    for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
-                        f(item, row);
-                    }
-                    let t1 = now_ns();
-                    span_name.map(|name_id| WorkerSpan {
-                        tid: worker_tid(),
-                        name_id,
-                        t0_ns: t0,
-                        t1_ns: t1,
-                    })
+        use rayon::prelude::*;
+        return dest
+            .par_chunks_mut(chunk * width)
+            .zip(items.par_chunks(chunk))
+            .map(|(rows, part)| {
+                let t0 = now_ns();
+                for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
+                    f(item, row);
+                }
+                let t1 = now_ns();
+                span_name.map(|name_id| WorkerSpan {
+                    tid: worker_tid(),
+                    name_id,
+                    t0_ns: t0,
+                    t1_ns: t1,
                 })
-                .flatten()
-                .collect();
+            })
+            .flatten()
+            .collect();
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = chunk;
+        for (item, row) in items.iter().zip(dest.chunks_mut(width)) {
+            f(item, row);
         }
-        #[cfg(not(feature = "parallel"))]
-        {
-            return thread_scope_rows(items, dest, width, chunk, span_name, f);
-        }
+        Vec::new()
     }
 }
 
@@ -289,4 +332,40 @@ where
             .filter_map(|j| j.join().expect("raster worker"))
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tiny_walk_stays_sequential_without_worker_spans() {
+        let items: Vec<u32> = (0..3).collect();
+        let (out, spans) = map_collect_lanes(&items, |x| x + 1);
+        assert_eq!(out, vec![1, 2, 3]);
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn empty_walk_is_empty() {
+        let items: [u32; 0] = [];
+        let (out, spans) = map_collect_lanes(&items, |x| *x);
+        assert!(out.is_empty());
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn wasm_pool_flag_defaults_to_one_until_marked() {
+        // Native ignores the flag for parallelism(); just ensure it is safe.
+        set_wasm_pool_threads(1);
+        #[cfg(target_arch = "wasm32")]
+        {
+            assert_eq!(parallelism(), 1);
+            assert!(!is_parallel());
+            set_wasm_pool_threads(4);
+            assert_eq!(parallelism(), 4);
+            assert!(is_parallel());
+            set_wasm_pool_threads(1);
+        }
+    }
 }

@@ -226,8 +226,21 @@ pub fn intern_render_worker_names(intern: &mut InternTable) {
 }
 
 /// Shared monotonic clock for native self-profile + render-worker spans.
-/// WASM viewer uses `performance.now` in the egui crate instead.
+///
+/// Native uses [`std::time::Instant`]. WASM returns 0 until the viewer
+/// installs [`set_now_hook`] (`globalThis.performance.now` works on both
+/// the window and rayon workers).
 pub fn now_ns() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::sync::atomic::Ordering;
+        let p = wasm_now_hook().load(Ordering::Acquire);
+        if !p.is_null() {
+            let f: fn() -> u64 = unsafe { std::mem::transmute(p) };
+            return f();
+        }
+        0
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::sync::OnceLock;
@@ -235,10 +248,27 @@ pub fn now_ns() -> u64 {
         static ORIGIN: OnceLock<Instant> = OnceLock::new();
         ORIGIN.get_or_init(Instant::now).elapsed().as_nanos() as u64
     }
+}
+
+/// Install the WASM clock (`globalThis.performance.now`). No-op on native.
+/// Must work on DedicatedWorkers as well as Window — do not use `window`.
+pub fn set_now_hook(f: fn() -> u64) {
     #[cfg(target_arch = "wasm32")]
     {
-        0
+        use std::sync::atomic::Ordering;
+        wasm_now_hook().store(f as *mut (), Ordering::SeqCst);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = f;
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_now_hook() -> &'static std::sync::atomic::AtomicPtr<()> {
+    use std::sync::atomic::AtomicPtr;
+    static HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+    &HOOK
 }
 
 /// Parent scope name covering collect + Y-cull + early-out.
@@ -544,5 +574,14 @@ mod tests {
         );
         assert!(is_render_worker_tid(TID_RENDER_W0));
         assert!(!is_render_worker_tid(TID_RENDER));
+    }
+
+    #[test]
+    fn set_now_hook_is_safe_on_native() {
+        // WASM-only hook. Native must ignore it so Instant stays the clock.
+        let before = now_ns();
+        set_now_hook(|| 1);
+        let after = now_ns();
+        assert!(after >= before, "native now_ns must keep using Instant");
     }
 }
