@@ -2,11 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
   <title>Orbit Live Viewer</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #0B0C0E; overflow: hidden; }
-    canvas { width: 100%; height: 100%; display: block; outline: none; }
+    html, body {
+      margin: 0; height: 100%; background: #0B0C0E; overflow: hidden;
+      overscroll-behavior: none; touch-action: none;
+    }
+    canvas {
+      width: 100%; height: 100%; display: block; outline: none;
+      /* Without this iOS Safari keeps pan and pinch for itself and never
+         delivers a usable touchmove stream, so egui sees no gesture at all:
+         no pinch-zoom, no drag. */
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
     #fallback {
       display: none; color: #ffffff; font: 13px/1.4 "Segoe UI", ui-sans-serif, system-ui, sans-serif;
       padding: 16px; max-width: 36rem;
@@ -24,6 +35,16 @@
   </div>
   <script type="module">
     const canvas = document.getElementById("the_canvas_id");
+
+    // iOS Safari fires these non-standard events for pinch and double-tap and
+    // zooms the *page* unless they are cancelled. touch-action alone does not
+    // stop them.
+    for (const ev of ["gesturestart", "gesturechange", "gestureend"]) {
+      document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+    }
+    // Double-tap-to-zoom is a separate path again.
+    document.addEventListener("dblclick", (e) => e.preventDefault(), { passive: false });
+
     const fallback = document.getElementById("fallback");
     function showFallback(err) {
       console.error(err);

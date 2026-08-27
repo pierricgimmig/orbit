@@ -97,6 +97,12 @@ enum WheelMode {
     AlwaysZoom,
 }
 
+/// Lane-scroll offset after a touch pan of `drag_y`. Content follows the
+/// finger: dragging down reveals what is above, so the offset decreases.
+fn touch_vscroll_target(current: f32, drag_y: f32) -> f32 {
+    (current - drag_y).max(0.0)
+}
+
 fn consume_scroll(ctx: &Context) {
     ctx.input_mut(|i| {
         i.raw_scroll_delta = Vec2::ZERO;
@@ -1055,7 +1061,7 @@ impl OrbitLiveApp {
         }
         paint_timebar(ui, ruler, self.t0, self.t1);
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
-        self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom);
+        self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false);
         self.handle_measure(&ruler_resp, ruler, false);
         paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
         ui.painter().line_segment(
@@ -1156,7 +1162,7 @@ impl OrbitLiveApp {
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
-                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom);
+                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true);
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y);
                 self.handle_pick(&body_resp, body, t0, t1, width);
                 self.handle_measure(&body_resp, body, true);
@@ -1289,7 +1295,13 @@ impl OrbitLiveApp {
                 );
             }
         });
-        self.lane_scroll = out.state.offset.y;
+        // A touch pan inside the closure above queues its target in
+        // `pending_vscroll` and applies it next frame, so re-syncing from the
+        // offset egui used *this* frame would throw that target away and the
+        // drag would never accumulate.
+        if self.pending_vscroll.is_none() {
+            self.lane_scroll = out.state.offset.y;
+        }
         self.skip_clip_labels = false;
     }
 
@@ -1928,7 +1940,13 @@ impl OrbitLiveApp {
         (TimelinePayload::Empty, None)
     }
 
-    fn handle_time_nav(&mut self, response: &egui::Response, rect: Rect, mode: WheelMode) {
+    fn handle_time_nav(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        mode: WheelMode,
+        touch_vpan: bool,
+    ) {
         let ctx = response.ctx.clone();
         if response.hovered() {
             let (scroll, zoom, ctrl_like) = ctx.input(|i| {
@@ -1968,12 +1986,21 @@ impl OrbitLiveApp {
             }
         }
         if response.dragged_by(PointerButton::Primary) {
-            let dx = response.drag_delta().x as f64;
+            let drag = response.drag_delta();
             let span = (self.t1 - self.t0).max(1.0);
-            let dt = -dx / rect.width().max(1.0) as f64 * span;
+            let dt = -(drag.x as f64) / rect.width().max(1.0) as f64 * span;
             self.t0 = (self.t0 + dt).max(0.0);
             self.t1 = self.t0 + span;
             self.follow = false;
+            // A tablet has no wheel, and this drag never reaches the lane
+            // ScrollArea's own drag-to-scroll because the timeline body claims
+            // it first -- so one finger pans both axes. Touch only: a mouse
+            // drag keeps panning time alone.
+            if touch_vpan && drag.y != 0.0 && ctx.input(|i| i.any_touches()) {
+                let next = touch_vscroll_target(self.lane_scroll, drag.y);
+                self.lane_scroll = next;
+                self.pending_vscroll = Some(next);
+            }
         }
     }
 
@@ -3569,6 +3596,16 @@ mod tests {
         let (t0, t1) = pan_time(1_000.0, 2_000.0, PAN_RATIO);
         assert!((t0 - 900.0).abs() < 1e-6);
         assert!((t1 - 1_900.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn touch_vscroll_follows_the_finger_and_clamps_at_top() {
+        // Finger down -> see earlier lanes -> smaller offset.
+        assert_eq!(touch_vscroll_target(100.0, 30.0), 70.0);
+        // Finger up -> scroll further down the stack.
+        assert_eq!(touch_vscroll_target(100.0, -30.0), 130.0);
+        // Never past the top.
+        assert_eq!(touch_vscroll_target(10.0, 40.0), 0.0);
     }
 
     #[test]
