@@ -115,13 +115,12 @@ impl TrackStrip {
             )
         });
         self.process_order.retain(|p| pids.contains(p));
-        let multi_demo = pids.iter().filter(|p| !is_self_pid(**p)).count() >= 2;
+        // Processes arrive expanded. Collapsing is a deliberate act, not a
+        // state a track shows up in -- a collapsed track hides the very thing
+        // the viewer is for.
         for p in pids {
             if !self.process_order.contains(&p) {
                 self.process_order.push(p);
-                if multi_demo && !is_self_pid(p) {
-                    self.collapsed.insert(RowId::Process(p));
-                }
             }
         }
         self.process_order
@@ -773,8 +772,6 @@ mod tests {
         strip.sync(&idx, None);
         assert_eq!(strip.process_order, vec![1, 4]);
         assert_eq!(strip.thread_order.len(), 2);
-        strip.toggle(RowId::Process(1));
-        strip.toggle(RowId::Process(4));
         strip.tick(1.0, &idx, None);
         let lanes = strip.layout();
         assert_eq!(lanes.len(), 2);
@@ -801,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_process_demo_starts_collapsed() {
+    fn multi_process_demo_starts_expanded() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(1, 100, 1));
         idx.insert(scope(10, 200, 1));
@@ -810,10 +807,14 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        assert!(strip.collapsed(RowId::Process(1)));
-        assert!(strip.collapsed(RowId::Process(10)));
-        assert!(strip.collapsed(RowId::Process(11)));
+        assert!(!strip.collapsed(RowId::Process(1)));
+        assert!(!strip.collapsed(RowId::Process(10)));
+        assert!(!strip.collapsed(RowId::Process(11)));
         assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
+        assert!(
+            strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))),
+            "expanded processes must show their threads"
+        );
         assert!(strip
             .rows()
             .iter()
@@ -858,8 +859,8 @@ mod tests {
             .position(|id| *id == RowId::Machine(MachineId::Remote))
             .unwrap();
         assert!(local_i < remote_i, "local machine stays above remote");
-        assert!(strip.collapsed(RowId::Process(1)));
-        assert!(strip.collapsed(RowId::Process(orbit_live_event::dev::REMOTE_DEMO_PID)));
+        assert!(!strip.collapsed(RowId::Process(1)));
+        assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::REMOTE_DEMO_PID)));
         assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
         let viewer_i = ids
             .iter()
