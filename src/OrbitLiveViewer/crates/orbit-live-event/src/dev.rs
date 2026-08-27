@@ -101,6 +101,12 @@ pub const NAME_N_PRIMS: u32 = 30_029;
 pub const NAME_LANES_KEPT: u32 = 30_030;
 pub const NAME_COLLECT_LANE: u32 = 30_031;
 pub const NAME_RASTER_LANE: u32 = 30_032;
+/// CPU cost of staging the packed instance buffer for the GPU
+/// (`Queue::write_buffer`), in microseconds. Not the bus transfer -- see
+/// `GpuTimeline::last_instance_upload_ns`.
+pub const NAME_UPLOAD_INST_US: u32 = 30_033;
+/// Bytes handed to `write_buffer` for the instance vertex buffer.
+pub const NAME_UPLOAD_INST_BYTES: u32 = 30_034;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +167,8 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_LANES_KEPT, "n_lanes");
     intern.insert_id(NAME_COLLECT_LANE, "CollectLane");
     intern.insert_id(NAME_RASTER_LANE, "RasterLane");
+    intern.insert_id(NAME_UPLOAD_INST_US, "inst_upload_us");
+    intern.insert_id(NAME_UPLOAD_INST_BYTES, "inst_upload_bytes");
     intern_render_worker_names(intern);
 }
 

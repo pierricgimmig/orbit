@@ -7,11 +7,11 @@ use eframe::egui::{
 };
 use orbit_live_event::dev::{
     intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
-    NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_COLLECT_INST, NAME_DRAIN_NET, NAME_EARLY_OUT,
+    NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET,
     NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS,
     NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
     NAME_SCALE_PPP, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD,
-    NAME_WASM_MEM, NAME_YCULL, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
+    NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
@@ -1747,10 +1747,14 @@ impl OrbitLiveApp {
                     false
                 };
                 if !shifted {
+                    // One scope, not four: stacked guards in the same block all
+                    // start and drop together, so the four names reported one
+                    // duration each -- a fake 4-deep stack of identical bars.
+                    // Per-lane collect still reports itself as a worker span
+                    // (absorb_worker_spans below). Y-cull and early-out have no
+                    // measurement of their own; splitting them needs scopes
+                    // inside collect_instances_layout_opts, not out here.
                     let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
-                    let _ycull = dev.scope(TID_RENDER, NAME_YCULL);
-                    let _collect = dev.scope(TID_RENDER, NAME_COLLECT_INST);
-                    let _eo = dev.scope(TID_RENDER, NAME_EARLY_OUT);
                     let mut frame = collect_instances_layout_opts(
                         &self.index,
                         t0,
@@ -2465,7 +2469,23 @@ impl eframe::App for OrbitLiveApp {
                 NAME_LANES_KEPT,
                 self.last_n_lanes_kept as f32,
             ));
-
+            // One frame behind: the wgpu prepare phase that does the upload
+            // runs after update() returns.
+            let (up_ns, up_bytes) = crate::timeline::last_instance_upload();
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_UPLOAD_INST_US,
+                up_ns as f32 / 1_000.0,
+            ));
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_UPLOAD_INST_BYTES,
+                up_bytes as f32,
+            ));
             if let Some(mem) = wasm_mem_bytes() {
                 let mut ev =
                     LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, NAME_WASM_MEM, mem);

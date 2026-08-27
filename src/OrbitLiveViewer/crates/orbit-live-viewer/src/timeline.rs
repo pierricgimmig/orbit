@@ -7,6 +7,8 @@
 use egui::PaintCallback;
 use egui_wgpu::wgpu;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use orbit_live_event::{chrome, LaneKey};
 use orbit_live_render::{
     collect_instances_layout_opts, stacked_layout, CollectOpts,
@@ -809,11 +811,14 @@ impl TimelineGpu {
         if bytes.is_empty() {
             slot.instance_buf = None;
             slot.instance_cap = 0;
+            record_instance_upload(0, 0);
             return;
         }
         if let Some(buf) = &slot.instance_buf {
             if slot.instance_cap >= need {
+                let t0 = upload_clock_ns();
                 queue.write_buffer(buf, 0, &bytes);
+                record_instance_upload(upload_clock_ns().saturating_sub(t0), need);
                 return;
             }
         }
@@ -824,7 +829,9 @@ impl TimelineGpu {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let t0 = upload_clock_ns();
         queue.write_buffer(&buf, 0, &bytes);
+        record_instance_upload(upload_clock_ns().saturating_sub(t0), need);
         slot.instance_cap = cap;
         slot.instance_buf = Some(buf);
     }
@@ -1337,3 +1344,39 @@ mod blit_align_tests {
     }
 }
 
+/// Last `Queue::write_buffer` of the packed instance buffer: (nanoseconds,
+/// bytes). Written in the egui-wgpu `prepare` phase, which runs *after*
+/// `App::update` returns, so the app reads it one frame late.
+///
+/// This is the CPU cost of staging the copy, not the bus transfer: wgpu
+/// memcpys into a staging belt here and the GPU-visible copy happens at
+/// `Queue::submit`. Timing the real device-side transfer needs
+/// `Features::TIMESTAMP_QUERY`, which browsers gate off by default.
+static INST_UPLOAD_NS: AtomicU64 = AtomicU64::new(0);
+static INST_UPLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
+
+fn record_instance_upload(ns: u64, bytes: u64) {
+    INST_UPLOAD_NS.store(ns, Ordering::Relaxed);
+    INST_UPLOAD_BYTES.store(bytes, Ordering::Relaxed);
+}
+
+/// (nanoseconds, bytes) for the most recent instance-buffer upload.
+pub fn last_instance_upload() -> (u64, u64) {
+    (
+        INST_UPLOAD_NS.load(Ordering::Relaxed),
+        INST_UPLOAD_BYTES.load(Ordering::Relaxed),
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn upload_clock_ns() -> u64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| (p.now() * 1_000_000.0) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn upload_clock_ns() -> u64 {
+    orbit_live_event::dev::now_ns()
+}
