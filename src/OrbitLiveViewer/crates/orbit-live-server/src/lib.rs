@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
     align_self_cursor, batch_span, render_worker_label, render_worker_tid, stamp_batch_from,
-    SELF_AHEAD_SNAP_NS,
     RelScope, NAME_CHROME, NAME_COLLECT_LANE, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD,
     NAME_PRIMITIVE_LISTING, NAME_PUSH, NAME_RASTER, NAME_RASTER_LANE, NAME_TIMELINE_API,
     NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
@@ -265,11 +264,15 @@ impl LiveService {
         }
         let mut cursor = self.self_cursor_ns.load(Ordering::Relaxed);
         loop {
-            let edge_unchanged = self.self_edge_ns.load(Ordering::Relaxed) == live_edge;
-            if edge_unchanged && cursor > live_edge.saturating_add(SELF_AHEAD_SNAP_NS) {
-                return None;
-            }
-            let origin = align_self_cursor(cursor, live_edge);
+            let frozen = self.self_edge_ns.load(Ordering::Relaxed) == live_edge;
+            // Frozen producer clock: march forward rather than snapping back
+            // onto scopes already in the ring. Dropping the batch would stop
+            // self-profiling entirely while the service sits idle.
+            let origin = if frozen {
+                cursor.max(live_edge)
+            } else {
+                align_self_cursor(cursor, live_edge)
+            };
             let next = origin.saturating_add(span);
             match self.self_cursor_ns.compare_exchange_weak(
                 cursor,

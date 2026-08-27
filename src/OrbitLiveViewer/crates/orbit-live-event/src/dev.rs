@@ -391,22 +391,27 @@ pub fn place_self_batch(
     if span == 0 || live_edge == 0 {
         return Vec::new();
     }
-    // The producer clock has stopped -- capture stopped, demo paused -- and the
-    // window ahead of the live edge is already full. `align_self_cursor` would
-    // snap back to `live_edge` and restamp this batch on top of scopes already
-    // in the index: a pile of overlapping self scopes just past the capture
-    // end, rewritten every frame, which reads as flicker. Drop the batch and
-    // wait for the axis to move.
-    //
-    // Only when the edge has NOT moved. A cursor left far ahead by an axis that
-    // jumped backwards still needs the snap-back rescue, or self-profiling
-    // would never resume.
-    if live_edge == cursor.edge_ns && cursor.next_ns > live_edge.saturating_add(SELF_AHEAD_SNAP_NS)
-    {
-        return Vec::new();
-    }
+    let frozen = live_edge == cursor.edge_ns;
     cursor.edge_ns = live_edge;
-    cursor.next_ns = align_self_cursor(cursor.next_ns, live_edge);
+    if frozen {
+        // Producer clock stopped: capture stopped, demo paused. Keep laying
+        // batches end to end from wherever the cursor is.
+        //
+        // `align_self_cursor` would snap back to `live_edge` once the cursor
+        // ran a window ahead of it, restamping this batch on top of scopes
+        // already in the index -- the pile of overlapping self scopes just past
+        // the capture end, rewritten every frame. Marching forward instead
+        // keeps them non-overlapping.
+        //
+        // Dropping the batch also stops the overlap, but it stops
+        // self-profiling altogether while the viewer sits idle, which is
+        // exactly when profiling it is interesting.
+        cursor.next_ns = cursor.next_ns.max(live_edge);
+    } else {
+        // The axis moved: re-pin to it, including the snap back that rescues a
+        // cursor left far ahead by an axis that jumped backwards.
+        cursor.next_ns = align_self_cursor(cursor.next_ns, live_edge);
+    }
     let events = stamp_batch_from(scopes, cursor.next_ns);
     cursor.next_ns = cursor.next_ns.saturating_add(span);
     events
@@ -679,6 +684,11 @@ mod frozen_edge_tests {
                 starts.push(ev.start_ns);
             }
         }
+        assert_eq!(
+            starts.len(),
+            40,
+            "a frozen producer clock must not stop self-profiling"
+        );
         let mut sorted = starts.clone();
         sorted.sort_unstable();
         sorted.dedup();
