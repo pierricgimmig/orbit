@@ -9,6 +9,10 @@ use egui_wgpu::wgpu;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use orbit_live_event::dev::{
+    NAME_DIM_SEARCH, NAME_PLACE_EXTENT, NAME_PUNCH_DRAG, NAME_RASTER_WALK, NAME_REMAP_THEME,
+    NAME_TO_RGBA8, TID_RENDER,
+};
 use orbit_live_event::{chrome, LaneKey};
 use orbit_live_render::{
     collect_instances_layout_opts, stacked_layout, CollectOpts,
@@ -151,6 +155,7 @@ impl TimelinePayload {
         intern: Option<&orbit_live_event::InternTable>,
         scale: f32,
         y_cull: Option<YCull>,
+        dev: &crate::dev::DevFrame,
     ) -> (Self, Vec<orbit_live_render::WorkerSpan>) {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
@@ -193,25 +198,43 @@ impl TimelinePayload {
             TimelineLod::PixelColumns => {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
                 let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
-                let mut raster = index.rasterize_pixel_layout(
-                    t0,
-                    t1,
-                    width_px,
-                    &keys,
-                    Some(layout),
-                    y_cull,
-                    intern,
-                );
+                let mut raster = {
+                    // The parallel column walk. Its per-lane RasterLane spans
+                    // nest under this one.
+                    let _walk = dev.scope(TID_RENDER, NAME_RASTER_WALK);
+                    index.rasterize_pixel_layout(
+                        t0,
+                        t1,
+                        width_px,
+                        &keys,
+                        Some(layout),
+                        y_cull,
+                        intern,
+                    )
+                };
                 if let Some((pid, tid)) = punch {
+                    let _punch = dev.scope(TID_RENDER, NAME_PUNCH_DRAG);
                     punch_raster_thread(&mut raster, pid, tid);
                 }
                 if let Some(ids) = search {
+                    let _dim = dev.scope(TID_RENDER, NAME_DIM_SEARCH);
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
                 }
                 let raster_spans = std::mem::take(&mut raster.worker_spans);
-                let (origin, _) = raster.placed_extent(layout, scale);
-                let (mut rgba, height) = raster.to_rgba8_placed(layout, scale);
-                crate::theme::remap_rgba8(&mut rgba);
+                let (origin, _) = {
+                    let _place = dev.scope(TID_RENDER, NAME_PLACE_EXTENT);
+                    raster.placed_extent(layout, scale)
+                };
+                // Single-threaded, one write per pixel of the whole timeline.
+                let (mut rgba, height) = {
+                    let _rgba = dev.scope(TID_RENDER, NAME_TO_RGBA8);
+                    raster.to_rgba8_placed(layout, scale)
+                };
+                // A second full pass over the same buffer.
+                {
+                    let _remap = dev.scope(TID_RENDER, NAME_REMAP_THEME);
+                    crate::theme::remap_rgba8(&mut rgba);
+                }
                 let overlay = overlay
                     .iter()
                     .cloned()
@@ -1062,6 +1085,7 @@ mod tests {
             None,
             1.0,
             None,
+            &crate::dev::DevFrame::begin(false),
         );
         let TimelinePayload::Pixel {
             rgba,
@@ -1118,6 +1142,7 @@ mod tests {
             None,
             1.0,
             None,
+            &crate::dev::DevFrame::begin(false),
         );
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
@@ -1333,6 +1358,7 @@ mod blit_align_tests {
             None,
             scale,
             None,
+            &crate::dev::DevFrame::begin(false),
         );
         let TimelinePayload::Pixel { height, place, .. } = p else {
             panic!("expected pixel payload");
@@ -1460,6 +1486,7 @@ mod worker_span_tests {
             None,
             1.0,
             None,
+            &crate::dev::DevFrame::begin(false),
         );
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
         assert!(

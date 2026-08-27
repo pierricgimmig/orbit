@@ -107,6 +107,15 @@ pub const NAME_RASTER_LANE: u32 = 30_032;
 pub const NAME_UPLOAD_INST_US: u32 = 30_033;
 /// Bytes handed to `write_buffer` for the instance vertex buffer.
 pub const NAME_UPLOAD_INST_BYTES: u32 = 30_034;
+/// Sub-steps of the pixel-column payload, all inside `Rasterize`. The parallel
+/// column walk reports per-lane spans of its own; these cover the
+/// single-threaded full-buffer passes that follow it.
+pub const NAME_RASTER_WALK: u32 = 30_035;
+pub const NAME_TO_RGBA8: u32 = 30_036;
+pub const NAME_REMAP_THEME: u32 = 30_037;
+pub const NAME_PUNCH_DRAG: u32 = 30_038;
+pub const NAME_DIM_SEARCH: u32 = 30_039;
+pub const NAME_PLACE_EXTENT: u32 = 30_040;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +178,12 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_RASTER_LANE, "RasterLane");
     intern.insert_id(NAME_UPLOAD_INST_US, "inst_upload_us");
     intern.insert_id(NAME_UPLOAD_INST_BYTES, "inst_upload_bytes");
+    intern.insert_id(NAME_RASTER_WALK, "RasterWalk");
+    intern.insert_id(NAME_TO_RGBA8, "ToRgba8");
+    intern.insert_id(NAME_REMAP_THEME, "RemapTheme");
+    intern.insert_id(NAME_PUNCH_DRAG, "PunchDrag");
+    intern.insert_id(NAME_DIM_SEARCH, "DimSearch");
+    intern.insert_id(NAME_PLACE_EXTENT, "PlaceExtent");
     intern_render_worker_names(intern);
 }
 

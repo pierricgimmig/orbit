@@ -1889,6 +1889,7 @@ impl OrbitLiveApp {
                     Some(&self.intern),
                     self.tracks.scale,
                     y_cull,
+                    dev,
                 )
             };
             // Per-lane raster spans are the render-w* lanes in the self profile;
