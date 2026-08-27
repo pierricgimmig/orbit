@@ -430,14 +430,10 @@ impl RasterizedFrame {
         (out, height)
     }
 
-    /// Place each raster row at `layout` Y (already strip-scaled). Gaps between
-    /// lanes stay transparent so header washes show through; dest height is
-    /// last_y + lane_h − first_y, matching instanced clip space.
-    pub fn to_rgba8_placed(&self, layout: &[(LaneKey, f32)], scale: f32) -> (Vec<u8>, u32) {
-        let s = scale.max(0.01);
-        if self.lanes.is_empty() || self.width == 0 {
-            return (Vec::new(), 1);
-        }
+    /// Lanes this frame actually rasterized, paired with their layout Y and
+    /// sorted top-down. Falls back to a self-stacked layout when none of the
+    /// raster's lanes appear in `layout`.
+    fn placed_ys(&self, layout: &[(LaneKey, f32)], s: f32) -> Vec<(LaneKey, f32)> {
         let ys: BTreeMap<LaneKey, f32> = layout.iter().copied().collect();
         let mut placed: Vec<(LaneKey, f32)> = self
             .lanes
@@ -457,12 +453,44 @@ impl RasterizedFrame {
                 .collect();
         }
         placed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let origin = placed[0].1;
+        placed
+    }
+
+    fn extent_of(placed: &[(LaneKey, f32)], s: f32) -> (f32, u32) {
+        let Some(&(_, origin)) = placed.first() else {
+            return (0.0, 1);
+        };
         let bot = placed
             .iter()
             .map(|(k, y)| *y + (lod::lane_height(*k) + lod::lane_gap(*k)) * s)
             .fold(origin, f32::max);
-        let height = (bot - origin).round().max(1.0) as u32;
+        (origin, (bot - origin).round().max(1.0) as u32)
+    }
+
+    /// Layout-space Y of the first rasterized row, and the row count
+    /// [`Self::to_rgba8_placed`] will emit. The pixel-column blit's dest rect
+    /// must be built from these — recomputing the extent from the full layout
+    /// disagrees whenever the rasterizer dropped lanes (VALUE kinds, lanes with
+    /// no events, anything `y_cull` cut), which stretches and offsets the blit.
+    pub fn placed_extent(&self, layout: &[(LaneKey, f32)], scale: f32) -> (f32, u32) {
+        let s = scale.max(0.01);
+        if self.lanes.is_empty() || self.width == 0 {
+            return (0.0, 1);
+        }
+        Self::extent_of(&self.placed_ys(layout, s), s)
+    }
+
+    /// Place each raster row at `layout` Y (already strip-scaled). Gaps between
+    /// lanes stay transparent so header washes show through; dest height is
+    /// last_y + lane_h − first_y, matching instanced clip space.
+    pub fn to_rgba8_placed(&self, layout: &[(LaneKey, f32)], scale: f32) -> (Vec<u8>, u32) {
+        let s = scale.max(0.01);
+        if self.lanes.is_empty() || self.width == 0 {
+            return (Vec::new(), 1);
+        }
+        let ys: BTreeMap<LaneKey, f32> = layout.iter().copied().collect();
+        let placed = self.placed_ys(layout, s);
+        let (origin, height) = Self::extent_of(&placed, s);
         let mut out = vec![0u8; self.width.saturating_mul(height as usize).saturating_mul(4)];
         for (row, key) in self.lanes.iter().enumerate() {
             let Some(&y) = ys

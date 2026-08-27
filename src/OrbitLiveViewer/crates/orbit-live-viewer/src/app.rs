@@ -339,6 +339,8 @@ pub struct OrbitLiveApp {
     last_instanced_window: Option<(u64, u64, u32)>,
     last_dirty: Option<GpuDirtyKey>,
     last_lod: orbit_live_render::TimelineLod,
+    /// Dest of the last painted frame; `TimelinePayload::Keep` reuses it.
+    last_view: Option<ViewUniforms>,
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
     self_cursor_ns: u64,
@@ -428,6 +430,7 @@ impl OrbitLiveApp {
             last_instanced_window: None,
             last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
+            last_view: None,
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
             self_cursor_ns: 0,
@@ -1174,23 +1177,37 @@ impl OrbitLiveApp {
                 let screen_px = [screen.width() * ppp, screen.height() * ppp];
                 let now = ui.ctx().input(|i| i.time) as f32;
                 let mut view_body = ViewUniforms::from_rect(body, ppp, screen_px);
-                let mut view_leaf = ViewUniforms::from_leaf_stack(
-                    body,
-                    &self.tracks.rest_layout(),
-                    self.tracks.scale,
-                    ppp,
-                    screen_px,
-                );
                 view_body.time = now;
-                view_leaf.time = now;
                 let (payload, overlay) = {
                     let _payload = dev.scope(TID_RENDER, NAME_PAYLOAD);
                     self.timeline_payload(t0, t1, width, lod, ppp, Some(y_cull), body, dev)
                 };
+                // The blit dest must come from the raster that produced the rows.
+                // Recomputing it from the layout disagrees whenever the
+                // rasterizer dropped lanes, which stretches the whole timeline.
                 let view = match &payload {
-                    TimelinePayload::Pixel { .. } => view_leaf,
+                    TimelinePayload::Pixel {
+                        place: Some((top, rows)),
+                        ..
+                    } => {
+                        let dest = Rect::from_min_size(
+                            egui::pos2(body.left(), body.top() + *top),
+                            egui::vec2(body.width(), rows.max(1.0)),
+                        );
+                        let mut v = ViewUniforms::from_rect(dest, ppp, screen_px);
+                        v.time = now;
+                        v
+                    }
+                    // Keep redraws last frame's texture, so it must keep last
+                    // frame's dest or the blit jumps between LOD rects.
+                    TimelinePayload::Keep => {
+                        let mut v = self.last_view.unwrap_or(view_body);
+                        v.time = now;
+                        v
+                    }
                     _ => view_body,
                 };
+                self.last_view = Some(view);
                 {
                     let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
                     ui.painter().add(paint_callback(body, payload, view));
@@ -1832,8 +1849,7 @@ impl OrbitLiveApp {
                 }
             }
             let bg = {
-                let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
-                let _ycull = dev.scope(TID_RENDER, NAME_YCULL);
+                // One scope, not three — see the note in the instanced arm.
                 let _raster = dev.scope(TID_RENDER, NAME_RASTERIZE);
                 TimelinePayload::from_index(
                     &self.index,
@@ -1911,6 +1927,7 @@ impl OrbitLiveApp {
                     width: fr.width.max(1),
                     height,
                     overlay: Vec::new(),
+                    place: None,
                 },
                 None,
             );
@@ -2448,6 +2465,7 @@ impl eframe::App for OrbitLiveApp {
                 NAME_LANES_KEPT,
                 self.last_n_lanes_kept as f32,
             ));
+
             if let Some(mem) = wasm_mem_bytes() {
                 let mut ev =
                     LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, NAME_WASM_MEM, mem);

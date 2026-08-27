@@ -7,9 +7,9 @@
 use egui::PaintCallback;
 use egui_wgpu::wgpu;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
-use orbit_live_event::{chrome, kind, LaneKey};
+use orbit_live_event::{chrome, LaneKey};
 use orbit_live_render::{
-    collect_instances_layout_opts, lane_gap, lane_height, stacked_layout, CollectOpts,
+    collect_instances_layout_opts, stacked_layout, CollectOpts,
     ScopeInstance, ScopePick, TimelineLod, TrackIndex, YCull, BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
 use std::collections::HashMap;
@@ -108,34 +108,6 @@ impl ViewUniforms {
         }
     }
 
-    /// Pixel-column blit dest: leaf stack only, same Y space as instanced clips.
-    pub fn from_leaf_stack(
-        body: egui::Rect,
-        layout: &[(LaneKey, f32)],
-        scale: f32,
-        ppp: f32,
-        screen_px: [f32; 2],
-    ) -> Self {
-        let s = scale.max(0.01);
-        let paint: Vec<(LaneKey, f32)> = layout
-            .iter()
-            .copied()
-            .filter(|(k, _)| k.kind != kind::VALUE && k.kind != kind::SCHEDULING_SLICE)
-            .collect();
-        if paint.is_empty() {
-            return Self::from_rect(body, ppp, screen_px);
-        }
-        let top = paint.iter().map(|(_, y)| *y).fold(f32::MAX, f32::min);
-        let bot = paint
-            .iter()
-            .map(|(k, y)| *y + (lane_height(*k) + lane_gap(*k)) * s)
-            .fold(top, f32::max);
-        let dest_rect = egui::Rect::from_min_size(
-            egui::pos2(body.left(), body.top() + top),
-            egui::vec2(body.width(), (bot - top).max(1.0)),
-        );
-        Self::from_rect(dest_rect, ppp, screen_px)
-    }
 }
 
 #[derive(Clone)]
@@ -148,6 +120,10 @@ pub enum TimelinePayload {
         width: u32,
         height: u32,
         overlay: Vec<ScopeInstance>,
+        /// Dest in body-relative points: (top, rows), straight from
+        /// `RasterizedFrame::placed_extent`. `None` = cover the whole body
+        /// (service-rasterized frames, which carry no lane layout).
+        place: Option<(f32, f32)>,
     },
     Instanced {
         instances: Vec<ScopeInstance>,
@@ -223,6 +199,7 @@ impl TimelinePayload {
                 if let Some(ids) = search {
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
                 }
+                let (origin, _) = raster.placed_extent(layout, scale);
                 let (mut rgba, height) = raster.to_rgba8_placed(layout, scale);
                 crate::theme::remap_rgba8(&mut rgba);
                 let overlay = overlay
@@ -242,6 +219,7 @@ impl TimelinePayload {
                     width: width_px as u32,
                     height: height.max(1),
                     overlay,
+                    place: Some((origin, height.max(1) as f32)),
                 }
             }
         }
@@ -693,6 +671,7 @@ impl TimelineGpu {
                 width,
                 height,
                 overlay,
+                place: _,
             } => {
                 self.upload_instances(device, queue, overlay, layer);
                 if *width == 0 || *height == 0 || rgba.is_empty() {
@@ -1048,6 +1027,7 @@ mod tests {
             width,
             height,
             overlay,
+            ..
         } = p
         else {
             panic!("expected pixel payload");
@@ -1205,33 +1185,6 @@ mod tests {
         assert!((insts.iter().find(|i| i.tid == 3).unwrap().y - 80.0).abs() < 1e-4);
     }
 
-    #[test]
-    fn leaf_stack_dest_is_not_the_full_body() {
-        let body = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 400.0));
-        let k0 = LaneKey {
-            pid: 1,
-            tid: 1,
-            kind: kind::API_SCOPE,
-            depth: 0,
-            extra: 0,
-        };
-        let k1 = LaneKey {
-            pid: 1,
-            tid: 1,
-            kind: kind::API_SCOPE,
-            depth: 1,
-            extra: 0,
-        };
-        let layout = [(k0, 36.0), (k1, 57.0)];
-        let view = ViewUniforms::from_leaf_stack(body, &layout, 1.0, 1.0, [200.0, 400.0]);
-        assert!(
-            (view.dest[1] - 36.0).abs() < 0.5,
-            "dest y follows first leaf"
-        );
-        let stack_h = (57.0 + lane_height(k1) + lane_gap(k1)) - 36.0;
-        assert!((view.dest[3] - stack_h).abs() < 1.0);
-        assert!(view.dest[3] < body.height() - 1.0);
-    }
 
     #[test]
     fn upload_mode_skips_idle_and_flags_hover() {
@@ -1289,3 +1242,98 @@ mod tests {
         assert_eq!(&u[8..12], &4f32.to_le_bytes());
     }
 }
+
+#[cfg(test)]
+mod blit_align_tests {
+    use super::*;
+    use orbit_live_event::{kind, LiveEvent};
+    use orbit_live_render::{lane_height, stacked_layout, TrackIndex};
+
+    fn ev(kind: u8, tid: u32, start: u64, dur: u64, name: u32) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid: 1,
+            kind,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        }
+    }
+
+    /// The pixel blit dest must cover exactly the rows the raster produced.
+    #[test]
+    fn blit_dest_matches_raster_rows_with_sched_lane() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::SCHEDULING_SLICE, 7, 0, 50, 1));
+        idx.insert(ev(kind::API_SCOPE, 8, 0, 50, 2));
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let scale = 1.0_f32;
+
+        assert!(
+            keys.iter().any(|k| k.kind == kind::SCHEDULING_SLICE),
+            "fixture must contain the sched lane this regresses on"
+        );
+
+        let p = TimelinePayload::from_index(
+            &idx,
+            0,
+            50,
+            64.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            scale,
+            None,
+        );
+        let TimelinePayload::Pixel { height, place, .. } = p else {
+            panic!("expected pixel payload");
+        };
+        let (top, rows) = place.expect("layout-placed raster must declare its dest");
+
+        // The payload's dest must cover exactly the rows it emitted. The old
+        // dest walk excluded sched lanes the rasterizer keeps, so it reported a
+        // shorter rect and the blit was stretched over the whole stack.
+        assert!(
+            (rows - height as f32).abs() < 1e-4,
+            "dest rows {rows} must equal emitted rows {height}"
+        );
+        let (origin, _) = idx
+            .rasterize_pixel_layout(0, 50, 64, &keys, Some(&layout), None, None)
+            .placed_extent(&layout, scale);
+        assert!(
+            (top - origin).abs() < 1e-4,
+            "dest top {top} must be the raster's first placed row {origin}"
+        );
+
+        // The removed dest walk skipped VALUE and SCHEDULING_SLICE lanes, so it
+        // started below the sched lane the rasterizer had already emitted rows
+        // for. Anchor on that gap so a re-introduced filter fails here.
+        let old_top = layout
+            .iter()
+            .filter(|(k, _)| k.kind != kind::VALUE && k.kind != kind::SCHEDULING_SLICE)
+            .map(|(_, y)| *y)
+            .fold(f32::MAX, f32::min);
+        assert!(
+            top < old_top - 1.0,
+            "dest must start at the sched lane ({top}), not below it ({old_top})"
+        );
+        let sched_rows = layout
+            .iter()
+            .find(|(k, _)| k.kind == kind::SCHEDULING_SLICE)
+            .map(|(k, _)| lane_height(*k))
+            .unwrap();
+        assert!(
+            rows > sched_rows,
+            "dest rows {rows} must cover the sched lane plus the leaf stack"
+        );
+    }
+}
+
