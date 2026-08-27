@@ -32,22 +32,26 @@ egui idle-chrome widget skip; on-screen FPS / `fps_sweep`.
 
 ## What landed
 
-1. **Vertical Y-cull.** `YCull` (scroll + viewport height + 48 px pad) is
-   passed into `collect_instances_layout_opts`, `rasterize_pixel_layout`,
-   value-graph paint, and visible counts. Off-screen lanes are skipped
-   before instance collection and before the pixel-column walk. Biggest
-   measured CPU win on a tall stack.
+1. **Vertical Y-cull.** `YCull::from_clip` (content top + clip + 48 px pad)
+   is passed into `collect_instances_layout_opts`, `rasterize_pixel_layout`,
+   value-graph paint, and visible counts. `GpuDirtyKey` also stores dest
+   rect, explicit cull `[y0,y1]`, and scale so resize / inspector / compact
+   / collapse / follow recollect. Instanced `shift` is disabled while
+   Y-cull is on (same time window is not the same visible set). VALUE
+   graphs use `value_lanes_in_view` (egui polylines, never SDF). Header
+   rows use their own clip, not the body-leaf window.
 2. **Instanced early-out.** After `first_ending_after(t0)`, if that scope
    covers `[t0, t1)` and its (min-1px) width spans the remaining view, the
    lane stops — unless a later scope still starts before `t1` and is not
    covered. On non-overlapping fill this matches the existing walk (see
    table). The flag + test keep the path from regressing.
 3. **Dirty-flag upload.** `GpuDirtyKey` covers `(t0,t1,width,scroll,view_h,
-   layout_gen,lod,events,selected,hover,search)`. `UploadMode::Skip` emits
-   `TimelinePayload::Keep` (uniforms + `u_time` only). `Flags` re-applies
-   highlights and `write_buffer`s. GPU instance buffers / column textures
-   grow in place (`VERTEX|COPY_DST`, `write_texture` when size matches).
-   Follow still moves `t0/t1` so it stays dirty.
+   dest,cull_y0/y1,scale,layout_gen,lod,events,selected,hover,search)`.
+   `UploadMode::Skip` emits `TimelinePayload::Keep` (uniforms + `u_time`
+   only). `Flags` re-applies highlights and `write_buffer`s. GPU instance
+   buffers / column textures grow in place (`VERTEX|COPY_DST`,
+   `write_texture` when size matches). Follow still moves `t0/t1` so it
+   stays dirty.
 4. **End-time index.** Verified: non-overlapping start-sorted lanes have
    sorted `end_ns`, so `partition_point` is a real binary search. Comment +
    `ends_are_sorted` / overlapping-ends tests. No dual index (would cost
@@ -58,22 +62,25 @@ egui idle-chrome widget skip; on-screen FPS / `fps_sweep`.
    (`value_bits_do_not_force_instanced_lod`). Old first-8 path remains as
    `choose_lod_first8` for A/B. Density is a few hundred ns slower and
    actually sees a busy row the old sample missed.
-6. **Idle chrome.** `skip_idle_chrome` skips `apply_orbit_visuals` and
-   header widget `interact` (paint-only labels) on the 100 ms timer wake
-   when not live/follow/dragging and inputs/search/selection did not
-   change. Transport stays up so the next click is not missed. Follow,
-   drag, and hover tooltips are unchanged. Selected scopes keep a live
-   repaint so the pulse animates.
-7. **Multi-threading.** Native lane `par` is **cfg-gated**:
-   `cargo test/bench -p orbit-live-render --features parallel` uses rayon.
-   Default / Bazel stays sequential so crate_universe does not need a
-   repin. WASM thread pool is **deferred**: the serve path now sends COOP
-   `same-origin` + COEP `require-corp` + CORP `same-origin`. Left:
-   wasm-bindgen-rayon + atomics/shared-memory pack + worker init.
+6. **Idle chrome.** `skip_idle_chrome` still skips `apply_orbit_visuals`
+   on the 100 ms timer wake when not live/follow/dragging. Header rows
+   stay full widgets (title-band names, chevrons, hide chips, drag
+   handles) so idle skip cannot park a thread name in the middle of the
+   scope stack.
+7. **Multi-threading.** Native lane `par` always splits: rayon when
+   `--features parallel` (viewer native Cargo.toml enables this), else
+   `std::thread::scope` chunks so Bazel `//:live` / cargo without a
+   crate_universe rayon pin still emit `render-wN` worker tids. WASM
+   stays sequential (pool deferred; COOP/COEP/CORP already on the serve
+   path). Self-profile: parent `PrimitiveListing` plus per-worker
+   `CollectLane` / `RasterLane` on distinct tids; `n_prims` / `n_lanes`
+   VALUE samples on stats.
 8. **Shader animation.** `uni.time` + selected pulse (~1.2 s, small
    radius/sigma/brightness) on `FLAG_SELECTED` (`#0080FF`, lift, Wallace
    shadow). Idle + selected writes `u_time` every frame without rebuilding
    instances.
 
-Self-profile names: `YCull`, `EarlyOut`, `Upload` (plus existing
+Self-profile names: `PrimitiveListing` (parent of Y-cull + early-out +
+collect), `YCull`, `EarlyOut`, `CollectLane` / `RasterLane` on
+`render-w0`…, `n_prims` / `n_lanes`, `Upload` (plus existing
 `CollectInstances` / `Rasterize` / `PaintCallback`).

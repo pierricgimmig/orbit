@@ -11,13 +11,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
-    align_self_cursor, batch_span, stamp_batch_from, RelScope, NAME_CHROME, NAME_FRAME, NAME_LOD,
-    NAME_NET, NAME_PAYLOAD, NAME_PUSH, NAME_RASTER, NAME_TIMELINE_API, NAME_TRACKS, SERVICE_PID,
-    TID_NET, TID_RENDER, TID_SERVER, TID_UI,
+    align_self_cursor, batch_span, render_worker_label, render_worker_tid, stamp_batch_from,
+    RelScope, NAME_CHROME, NAME_COLLECT_LANE, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD,
+    NAME_PRIMITIVE_LISTING, NAME_PUSH, NAME_RASTER, NAME_RASTER_LANE, NAME_TIMELINE_API,
+    NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
 };
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
-use orbit_live_render::TrackIndex;
+use orbit_live_render::{TrackIndex, WorkerSpan};
 use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
@@ -216,6 +217,31 @@ impl LiveService {
         self.intern_id(NAME_PUSH, "PushEvents");
         self.intern_id(NAME_RASTER, "Rasterize");
         self.intern_id(NAME_TIMELINE_API, "TimelineApi");
+        self.intern_id(NAME_PRIMITIVE_LISTING, "PrimitiveListing");
+        self.intern_id(NAME_COLLECT_LANE, "CollectLane");
+        self.intern_id(NAME_RASTER_LANE, "RasterLane");
+        for i in 0..RENDER_WORKER_COUNT {
+            self.intern_id(render_worker_tid(i), render_worker_label(i));
+        }
+    }
+
+    pub fn apply_worker_spans(&self, spans: &[WorkerSpan]) {
+        if spans.is_empty() || !self.self_profile_enabled() {
+            return;
+        }
+        let t0 = spans.iter().map(|s| s.t0_ns).min().unwrap_or(0);
+        let scopes: Vec<RelScope> = spans
+            .iter()
+            .map(|s| RelScope {
+                pid: SERVICE_PID,
+                tid: s.tid,
+                name_id: s.name_id,
+                start_rel_ns: s.t0_ns.saturating_sub(t0),
+                duration_ns: s.t1_ns.saturating_sub(s.t0_ns).max(1),
+                depth: 0,
+            })
+            .collect();
+        self.apply_self_scopes(&scopes);
     }
 
     /// Demo/capture end only. Ignores ring `newest_end` (pid 2/3 self-profile).
@@ -495,7 +521,10 @@ impl LiveService {
             let t0 = t0.unwrap_or(auto0);
             let t1 = t1.unwrap_or(auto1.max(t0 + 1));
             let intern = self.intern.lock();
-            index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern))
+            let frame = index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern));
+            drop(intern);
+            self.apply_worker_spans(&frame.worker_spans);
+            frame
         })
     }
 

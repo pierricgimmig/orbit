@@ -23,7 +23,6 @@ egui = ["dep:eframe", "dep:egui", "dep:egui-wgpu"]
 [dependencies]
 orbit-live-event = { path = "../orbit-live-event" }
 orbit-live-protocol = { path = "../orbit-live-protocol" }
-orbit-live-render = { path = "../orbit-live-render" }
 wasm-bindgen = "=0.2.100"
 js-sys = "=0.3.77"
 console_error_panic_hook = "0.1"
@@ -53,7 +52,11 @@ features = [
     "Window",
 ]
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+orbit-live-render = { path = "../orbit-live-render", features = ["parallel"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+orbit-live-render = { path = "../orbit-live-render" }
 wasm-bindgen-futures = "=0.4.50"
 # WebGPU first, WebGL fallback (egui-wgpu default).
 wgpu = { version = "25", default-features = false, features = ["webgpu", "webgl", "wgsl"] }

@@ -23,12 +23,23 @@ pub struct GpuDirtyKey {
     pub width_bits: u32,
     pub scroll_q: i32,
     pub view_h_q: i32,
+    pub dest_x_q: i32,
+    pub dest_y_q: i32,
+    pub dest_w_q: i32,
+    pub dest_h_q: i32,
+    pub cull_y0_q: i32,
+    pub cull_y1_q: i32,
+    pub scale_q: i32,
     pub layout_gen: u64,
     pub lod: u8,
     pub events: u64,
     pub selected: Option<(u32, u64)>,
     pub hover: Option<(u32, u64)>,
     pub search: u64,
+}
+
+pub fn quant_px(v: f32) -> i32 {
+    (v * 16.0).round() as i32
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +61,13 @@ pub fn upload_mode(prev: Option<&GpuDirtyKey>, next: &GpuDirtyKey) -> UploadMode
         || p.width_bits != next.width_bits
         || p.scroll_q != next.scroll_q
         || p.view_h_q != next.view_h_q
+        || p.dest_x_q != next.dest_x_q
+        || p.dest_y_q != next.dest_y_q
+        || p.dest_w_q != next.dest_w_q
+        || p.dest_h_q != next.dest_h_q
+        || p.cull_y0_q != next.cull_y0_q
+        || p.cull_y1_q != next.cull_y1_q
+        || p.scale_q != next.scale_q
         || p.layout_gen != next.layout_gen
         || p.lod != next.lod
         || p.events != next.events
@@ -1223,6 +1241,13 @@ mod tests {
             width_bits: 200f32.to_bits(),
             scroll_q: 0,
             view_h_q: 400,
+            dest_x_q: 0,
+            dest_y_q: 0,
+            dest_w_q: 200,
+            dest_h_q: 400,
+            cull_y0_q: 0,
+            cull_y1_q: 400,
+            scale_q: 16,
             layout_gen: 1,
             lod: 1,
             events: 10,
@@ -1241,6 +1266,20 @@ mod tests {
         let mut scroll = base;
         scroll.scroll_q = 80;
         assert_eq!(upload_mode(Some(&base), &scroll), UploadMode::Full);
+        let mut view_h = base;
+        view_h.view_h_q = 800;
+        view_h.cull_y1_q = 800;
+        assert_eq!(upload_mode(Some(&base), &view_h), UploadMode::Full);
+        let mut dest = base;
+        dest.dest_h_q = 240;
+        dest.dest_y_q = 40;
+        assert_eq!(upload_mode(Some(&base), &dest), UploadMode::Full);
+        let mut scale = base;
+        scale.scale_q = quant_px(0.72);
+        assert_eq!(upload_mode(Some(&base), &scale), UploadMode::Full);
+        let mut layout = base;
+        layout.layout_gen = 2;
+        assert_eq!(upload_mode(Some(&base), &layout), UploadMode::Full);
     }
 
     #[test]

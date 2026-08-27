@@ -4,6 +4,9 @@ use std::cell::RefCell;
 
 use orbit_live_event::dev::{query_disables_dev, query_enables_dev, RelScope, VIEWER_PID};
 
+#[cfg(not(target_arch = "wasm32"))]
+use orbit_live_event::dev::now_ns as shared_now_ns;
+
 pub struct DevFrame {
     inner: Option<DevFrameInner>,
 }
@@ -70,6 +73,24 @@ impl DevFrame {
         match self.inner {
             None => Vec::new(),
             Some(inner) => inner.scopes.into_inner(),
+        }
+    }
+
+    pub fn absorb_worker_spans(&self, spans: &[orbit_live_render::WorkerSpan]) {
+        let Some(inner) = self.inner.as_ref() else {
+            return;
+        };
+        for s in spans {
+            let start_rel = s.t0_ns.saturating_sub(inner.origin_ns);
+            let dur = s.t1_ns.saturating_sub(s.t0_ns).max(1);
+            inner.scopes.borrow_mut().push(RelScope {
+                pid: VIEWER_PID,
+                tid: s.tid,
+                name_id: s.name_id,
+                start_rel_ns: start_rel,
+                duration_ns: dur,
+                depth: 0,
+            });
         }
     }
 }
@@ -140,10 +161,7 @@ fn now_ns() -> u64 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use std::sync::OnceLock;
-        use std::time::Instant;
-        static ORIGIN: OnceLock<Instant> = OnceLock::new();
-        ORIGIN.get_or_init(Instant::now).elapsed().as_nanos() as u64
+        shared_now_ns()
     }
 }
 

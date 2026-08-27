@@ -64,6 +64,9 @@ pub const TID_RENDER: u32 = 2;
 pub const TID_NET: u32 = 3;
 pub const TID_SERVER: u32 = 4;
 pub const TID_STATS: u32 = 5;
+/// First native render-worker tid (`render-w0` … `render-w31`).
+pub const TID_RENDER_W0: u32 = 10;
+pub const RENDER_WORKER_COUNT: u32 = 32;
 
 pub const NAME_FRAME: u32 = 30_000;
 pub const NAME_NET: u32 = 30_001;
@@ -92,6 +95,12 @@ pub const NAME_WASM_MEM: u32 = 30_024;
 pub const NAME_UPLOAD: u32 = 30_025;
 pub const NAME_YCULL: u32 = 30_026;
 pub const NAME_EARLY_OUT: u32 = 30_027;
+/// Parent of Y-cull + early-out + instance collect ("we listed what we draw").
+pub const NAME_PRIMITIVE_LISTING: u32 = 30_028;
+pub const NAME_N_PRIMS: u32 = 30_029;
+pub const NAME_LANES_KEPT: u32 = 30_030;
+pub const NAME_COLLECT_LANE: u32 = 30_031;
+pub const NAME_RASTER_LANE: u32 = 30_032;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +156,86 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_UPLOAD, "Upload");
     intern.insert_id(NAME_YCULL, "YCull");
     intern.insert_id(NAME_EARLY_OUT, "EarlyOut");
+    intern.insert_id(NAME_PRIMITIVE_LISTING, "PrimitiveListing");
+    intern.insert_id(NAME_N_PRIMS, "n_prims");
+    intern.insert_id(NAME_LANES_KEPT, "n_lanes");
+    intern.insert_id(NAME_COLLECT_LANE, "CollectLane");
+    intern.insert_id(NAME_RASTER_LANE, "RasterLane");
+    intern_render_worker_names(intern);
+}
+
+const RENDER_WORKER_LABELS: [&str; RENDER_WORKER_COUNT as usize] = [
+    "render-w0",
+    "render-w1",
+    "render-w2",
+    "render-w3",
+    "render-w4",
+    "render-w5",
+    "render-w6",
+    "render-w7",
+    "render-w8",
+    "render-w9",
+    "render-w10",
+    "render-w11",
+    "render-w12",
+    "render-w13",
+    "render-w14",
+    "render-w15",
+    "render-w16",
+    "render-w17",
+    "render-w18",
+    "render-w19",
+    "render-w20",
+    "render-w21",
+    "render-w22",
+    "render-w23",
+    "render-w24",
+    "render-w25",
+    "render-w26",
+    "render-w27",
+    "render-w28",
+    "render-w29",
+    "render-w30",
+    "render-w31",
+];
+
+pub fn render_worker_tid(index: u32) -> u32 {
+    TID_RENDER_W0 + (index % RENDER_WORKER_COUNT)
+}
+
+pub fn is_render_worker_tid(tid: u32) -> bool {
+    tid >= TID_RENDER_W0 && tid < TID_RENDER_W0 + RENDER_WORKER_COUNT
+}
+
+pub fn render_worker_label(index: u32) -> &'static str {
+    RENDER_WORKER_LABELS[(index % RENDER_WORKER_COUNT) as usize]
+}
+
+pub fn intern_render_worker_names(intern: &mut InternTable) {
+    for i in 0..RENDER_WORKER_COUNT {
+        intern.insert_id(render_worker_tid(i), render_worker_label(i));
+    }
+}
+
+/// Shared monotonic clock for native self-profile + render-worker spans.
+/// WASM viewer uses `performance.now` in the egui crate instead.
+pub fn now_ns() -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::OnceLock;
+        use std::time::Instant;
+        static ORIGIN: OnceLock<Instant> = OnceLock::new();
+        ORIGIN.get_or_init(Instant::now).elapsed().as_nanos() as u64
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0
+    }
+}
+
+/// Parent scope name covering collect + Y-cull + early-out.
+pub fn primitive_listing_name() -> &'static str {
+    "PrimitiveListing"
 }
 
 /// Inclusive span of a relative batch (`max(start_rel + duration)`).
@@ -432,6 +521,20 @@ mod tests {
         assert_eq!(intern.get(NAME_UPLOAD), Some("Upload"));
         assert_eq!(intern.get(NAME_YCULL), Some("YCull"));
         assert_eq!(intern.get(NAME_EARLY_OUT), Some("EarlyOut"));
+        assert_eq!(intern.get(NAME_PRIMITIVE_LISTING), Some("PrimitiveListing"));
+        assert_eq!(
+            intern.get(NAME_PRIMITIVE_LISTING),
+            Some(primitive_listing_name())
+        );
+        assert_eq!(intern.get(NAME_N_PRIMS), Some("n_prims"));
+        assert_eq!(intern.get(NAME_COLLECT_LANE), Some("CollectLane"));
         assert_eq!(intern.get(TID_STATS), Some("stats"));
+        assert_eq!(intern.get(TID_RENDER_W0), Some("render-w0"));
+        assert_eq!(
+            intern.get(render_worker_tid(3)),
+            Some(render_worker_label(3))
+        );
+        assert!(is_render_worker_tid(TID_RENDER_W0));
+        assert!(!is_render_worker_tid(TID_RENDER));
     }
 }

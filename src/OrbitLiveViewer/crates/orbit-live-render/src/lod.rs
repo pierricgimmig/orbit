@@ -29,6 +29,12 @@ impl YCull {
         Self::new(scroll - pad, scroll + view_h + pad)
     }
 
+    /// Content-space window from a scroll clip. `content_min_y` is the full
+    /// strip top (same origin as `tracks.layout()` / VALUE rail Y).
+    pub fn from_clip(content_min_y: f32, clip_min_y: f32, clip_h: f32, pad: f32) -> Self {
+        Self::padded(clip_min_y - content_min_y, clip_h, pad)
+    }
+
     pub fn hits(self, y: f32, h: f32) -> bool {
         y + h >= self.y0 && y <= self.y1
     }
@@ -166,6 +172,8 @@ pub struct InstanceFrame {
     pub height: f32,
     pub lanes: Vec<LaneKey>,
     pub instances: Vec<ScopeInstance>,
+    pub worker_spans: Vec<crate::WorkerSpan>,
+    pub lanes_kept: u32,
 }
 
 pub fn lane_height(key: LaneKey) -> f32 {
@@ -517,6 +525,92 @@ mod value_lod_tests {
             "must still emit later scopes that start before t1"
         );
     }
+
+    #[test]
+    fn value_lanes_in_view_follow_y_cull_not_gpu() {
+        let vk = LaneKey {
+            pid: 1,
+            tid: 1,
+            kind: kind::VALUE,
+            depth: 0,
+            extra: 0,
+        };
+        let sk = LaneKey {
+            pid: 1,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+        };
+        let layout = [(sk, 0.0), (vk, 100.0)];
+        let all = value_lanes_in_view(&layout, 1.0, None);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, vk);
+        assert!((all[0].2 - lane_height(vk)).abs() < 0.01);
+        let kept = value_lanes_in_view(&layout, 1.0, Some(YCull::new(80.0, 200.0)));
+        assert_eq!(kept.len(), 1);
+        let skipped = value_lanes_in_view(&layout, 1.0, Some(YCull::new(0.0, 50.0)));
+        assert!(skipped.is_empty());
+        let compact = value_lanes_in_view(&layout, 0.72, Some(YCull::new(90.0, 140.0)));
+        assert_eq!(compact.len(), 1);
+        let inst = collect_instances_layout_opts(
+            &TrackIndex::default(),
+            0,
+            10,
+            40.0,
+            &layout,
+            None,
+            CollectOpts {
+                y_cull: Some(YCull::new(80.0, 200.0)),
+                early_out: true,
+            },
+        );
+        assert!(inst.instances.iter().all(|i| i.kind != kind::VALUE));
+    }
+
+    #[test]
+    fn y_cull_from_clip_tracks_viewport_height() {
+        let a = YCull::from_clip(0.0, 10.0, 100.0, 0.0);
+        let b = YCull::from_clip(0.0, 10.0, 200.0, 0.0);
+        assert_ne!(a, b);
+        assert!((a.y1 - a.y0 - 100.0).abs() < 0.01);
+        let scrolled = YCull::from_clip(-80.0, 10.0, 100.0, 0.0);
+        assert!((scrolled.y0 - 90.0).abs() < 0.01);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_collect_emits_distinct_worker_tids() {
+        if crate::parallelism() < 2 {
+            return;
+        }
+        let run = || {
+            let mut idx = TrackIndex::default();
+            for i in 0..64u32 {
+                idx.insert(scope(0, 50, i, i + 1));
+            }
+            let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+            let layout = stacked_layout(&keys, 0.0);
+            collect_instances_layout(&idx, 0, 50, 100.0, &layout, None)
+        };
+        #[cfg(feature = "parallel")]
+        let frame = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .expect("rayon pool")
+            .install(run);
+        #[cfg(not(feature = "parallel"))]
+        let frame = run();
+        let tids: std::collections::HashSet<u32> =
+            frame.worker_spans.iter().map(|s| s.tid).collect();
+        assert!(
+            tids.len() >= 2,
+            "expected distinct render-worker tids, got {tids:?}"
+        );
+        assert!(tids
+            .iter()
+            .all(|t| orbit_live_event::dev::is_render_worker_tid(*t)));
+    }
 }
 
 /// Visible events only: per-lane binary search then walk while `start < t1`.
@@ -567,10 +661,12 @@ pub fn collect_instances_layout_opts(
             height,
             lanes: keys,
             instances: Vec::new(),
+            worker_spans: Vec::new(),
+            lanes_kept: 0,
         };
     }
     let span = (t1 - t0) as f64;
-    let parts: Vec<Vec<ScopeInstance>> = par::map_collect(layout, |&(key, y)| {
+    let (parts, worker_spans) = par::map_collect_lanes(layout, |&(key, y)| {
         if key.kind == kind::VALUE {
             return Vec::new();
         }
@@ -597,13 +693,39 @@ pub fn collect_instances_layout_opts(
         }
         row
     });
+    let lanes_kept = parts.iter().filter(|p| !p.is_empty()).count() as u32;
     let instances = parts.into_iter().flatten().collect();
     InstanceFrame {
         width,
         height,
         lanes: keys,
         instances,
+        worker_spans,
+        lanes_kept,
     }
+}
+
+/// VALUE graph lanes whose `[y, y+h]` intersects `y_cull` (or all if `None`).
+/// Not an SDF/instance path — egui polylines only.
+pub fn value_lanes_in_view(
+    layout: &[(LaneKey, f32)],
+    scale: f32,
+    y_cull: Option<YCull>,
+) -> Vec<(LaneKey, f32, f32)> {
+    let s = scale.max(0.01);
+    layout
+        .iter()
+        .filter_map(|&(k, y)| {
+            if k.kind != kind::VALUE {
+                return None;
+            }
+            let h = lane_height(k) * s;
+            if y_cull.is_some_and(|c| !c.hits(y, h)) {
+                return None;
+            }
+            Some((k, y, h))
+        })
+        .collect()
 }
 
 /// Topmost instance whose rect contains `(x, y)` in the same space as `x/y/w/h`.

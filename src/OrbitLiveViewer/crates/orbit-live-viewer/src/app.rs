@@ -8,17 +8,19 @@ use eframe::egui::{
 use orbit_live_event::dev::{
     intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
     NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_COLLECT_INST, NAME_DRAIN_NET, NAME_EARLY_OUT,
-    NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LOD, NAME_NET, NAME_PAINT_CALLBACK,
-    NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_RASTERIZE, NAME_SCALE_PPP, NAME_SHIFT_INST,
-    NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD, NAME_WASM_MEM, NAME_YCULL,
-    SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_NAME, VIEWER_PID,
+    NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS,
+    NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
+    NAME_SCALE_PPP, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD,
+    NAME_WASM_MEM, NAME_YCULL, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
+    VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
     apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
-    lane_height, leaf_label, pick_column_event, pick_instance_at, CollectOpts, ScopeInstance,
-    ScopePick, TrackIndex, YCull, FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX, Y_CULL_PAD,
+    lane_height, leaf_label, pick_column_event, pick_instance_at, value_lanes_in_view, CollectOpts,
+    ScopeInstance, ScopePick, TrackIndex, YCull, FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
+    Y_CULL_PAD,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use crate::net::{
 };
 use crate::theme;
 use crate::timeline::{
-    paint_callback, paint_overlay_callback, pick_key, shift_instances_to_layout,
+    paint_callback, paint_overlay_callback, pick_key, quant_px, shift_instances_to_layout,
     snap_instances_to_layout, split_drag_instances, upload_mode, GpuDirtyKey, TimelineGpu,
     TimelinePayload, UploadMode, ViewUniforms,
 };
@@ -363,6 +365,8 @@ pub struct OrbitLiveApp {
     measure: Option<TimeMeasure>,
     measure_dragging: bool,
     idle_skip_chrome: bool,
+    last_n_prims: u32,
+    last_n_lanes_kept: u32,
 }
 
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
@@ -448,6 +452,8 @@ impl OrbitLiveApp {
             measure: None,
             measure_dragging: false,
             idle_skip_chrome: false,
+            last_n_prims: 0,
+            last_n_lanes_kept: 0,
         }
     }
 
@@ -1110,7 +1116,7 @@ impl OrbitLiveApp {
                     } else {
                         HeaderPass::All
                     },
-                    !self.idle_skip_chrome || lifting,
+                    header_widgets_enabled(self.idle_skip_chrome),
                 );
             }
 
@@ -1120,9 +1126,7 @@ impl OrbitLiveApp {
             let ppp = ui.ctx().pixels_per_point();
             self.view_width = (width * ppp).round().clamp(16.0, 4096.0) as u32;
             let clip = ui.clip_rect();
-            let y_cull = YCull::padded(clip.min.y - rect.min.y, clip.height(), Y_CULL_PAD);
-            let _ycull = dev.scope(TID_RENDER, NAME_YCULL);
-            drop(_ycull);
+            let y_cull = YCull::from_clip(rect.min.y, clip.min.y, clip.height(), Y_CULL_PAD);
             let lod = {
                 let _lod = dev.scope(TID_RENDER, NAME_LOD);
                 choose_lod_hint(
@@ -1172,7 +1176,7 @@ impl OrbitLiveApp {
                 view_leaf.time = now;
                 let (payload, overlay) = {
                     let _payload = dev.scope(TID_RENDER, NAME_PAYLOAD);
-                    self.timeline_payload(t0, t1, width, lod, ppp, Some(y_cull), dev)
+                    self.timeline_payload(t0, t1, width, lod, ppp, Some(y_cull), body, dev)
                 };
                 let view = match &payload {
                     TimelinePayload::Pixel { .. } => view_leaf,
@@ -1283,7 +1287,7 @@ impl OrbitLiveApp {
                 Pos2::new(head.left(), head.top() + row.y),
                 Vec2::new(head.width(), row.height.max(1.0)),
             );
-            if r.max.y < clip.min.y || r.min.y > clip.max.y {
+            if !header_row_intersects_clip(r.min.y, r.height(), clip.min.y, clip.max.y) {
                 continue;
             }
             let dragging = on_drag && pass != HeaderPass::Rest;
@@ -1634,6 +1638,7 @@ impl OrbitLiveApp {
         lod: orbit_live_render::TimelineLod,
         ppp: f32,
         y_cull: Option<YCull>,
+        body: Rect,
         dev: &DevFrame,
     ) -> (TimelinePayload, Option<TimelinePayload>) {
         let layout = self.tracks.layout().to_vec();
@@ -1644,8 +1649,15 @@ impl OrbitLiveApp {
             t0,
             t1,
             width_bits: width.to_bits(),
-            scroll_q: y_cull.map(|c| (c.y0 * 4.0) as i32).unwrap_or(0),
-            view_h_q: y_cull.map(|c| ((c.y1 - c.y0) * 4.0) as i32).unwrap_or(0),
+            scroll_q: y_cull.map(|c| quant_px(c.y0)).unwrap_or(0),
+            view_h_q: y_cull.map(|c| quant_px(c.y1 - c.y0)).unwrap_or(0),
+            dest_x_q: quant_px(body.min.x),
+            dest_y_q: quant_px(body.min.y),
+            dest_w_q: quant_px(body.width()),
+            dest_h_q: quant_px(body.height()),
+            cull_y0_q: y_cull.map(|c| quant_px(c.y0)).unwrap_or(0),
+            cull_y1_q: y_cull.map(|c| quant_px(c.y1)).unwrap_or(0),
+            scale_q: quant_px(self.tracks.scale),
             layout_gen: self.tracks.layout_gen(),
             lod: match lod {
                 orbit_live_render::TimelineLod::Instanced => 1,
@@ -1685,7 +1697,9 @@ impl OrbitLiveApp {
                 let d = self.tracks.scale;
                 let window = (t0, t1, width.to_bits());
                 let mut instances = std::mem::take(&mut self.last_instances);
-                let can_shift = self.last_instanced_window == Some(window) && !instances.is_empty();
+                let can_shift = y_cull.is_none()
+                    && self.last_instanced_window == Some(window)
+                    && !instances.is_empty();
                 let shifted = if can_shift {
                     let _shift = dev.scope(TID_RENDER, NAME_SHIFT_INST);
                     shift_instances_to_layout(&mut instances, &self.last_layout, &rest_layout)
@@ -1693,6 +1707,8 @@ impl OrbitLiveApp {
                     false
                 };
                 if !shifted {
+                    let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
+                    let _ycull = dev.scope(TID_RENDER, NAME_YCULL);
                     let _collect = dev.scope(TID_RENDER, NAME_COLLECT_INST);
                     let _eo = dev.scope(TID_RENDER, NAME_EARLY_OUT);
                     let mut frame = collect_instances_layout_opts(
@@ -1707,6 +1723,9 @@ impl OrbitLiveApp {
                             early_out: true,
                         },
                     );
+                    dev.absorb_worker_spans(&frame.worker_spans);
+                    self.last_n_prims = frame.instances.len() as u32;
+                    self.last_n_lanes_kept = frame.lanes_kept;
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
@@ -1790,6 +1809,8 @@ impl OrbitLiveApp {
                 }
             }
             let bg = {
+                let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
+                let _ycull = dev.scope(TID_RENDER, NAME_YCULL);
                 let _raster = dev.scope(TID_RENDER, NAME_RASTERIZE);
                 TimelinePayload::from_index(
                     &self.index,
@@ -2390,6 +2411,20 @@ impl eframe::App for OrbitLiveApp {
                 NAME_FPS,
                 self.fps_ema.max(0.0),
             ));
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_N_PRIMS,
+                self.last_n_prims as f32,
+            ));
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_LANES_KEPT,
+                self.last_n_lanes_kept as f32,
+            ));
             if let Some(mem) = wasm_mem_bytes() {
                 let mut ev =
                     LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, NAME_WASM_MEM, mem);
@@ -2743,16 +2778,7 @@ fn paint_value_graphs(
     let span = (t1 - t0) as f64;
     let painter = ui.painter_at(body);
     let ppp = ui.pixels_per_point();
-    for &(key, y) in layout {
-        if key.kind != kind::VALUE {
-            continue;
-        }
-        let h = lane_height(key) * scale.max(0.01);
-        if let Some(cull) = y_cull {
-            if !cull.hits(y, h) {
-                continue;
-            }
-        }
+    for &(key, y, h) in &value_lanes_in_view(layout, scale, y_cull) {
         let Some(lane) = index.lane(key) else {
             continue;
         };
@@ -3313,6 +3339,16 @@ fn skip_idle_chrome(live: bool, interaction: bool, search_sel_changed: bool) -> 
     !live && !interaction && !search_sel_changed
 }
 
+/// Headers stay full widgets even on idle skip (names live on the title band).
+fn header_widgets_enabled(_idle_skip_chrome: bool) -> bool {
+    true
+}
+
+/// Header rail uses the row's own clip, not the body-leaf Y-cull window.
+fn header_row_intersects_clip(row_y: f32, row_h: f32, clip_y0: f32, clip_y1: f32) -> bool {
+    row_y + row_h >= clip_y0 && row_y <= clip_y1
+}
+
 fn timeslice_text(name: &str, elapsed: &str) -> String {
     format!("{name} {elapsed}")
 }
@@ -3550,6 +3586,73 @@ mod tests {
         assert!(!skip_idle_chrome(true, false, false));
         assert!(!skip_idle_chrome(false, true, false));
         assert!(!skip_idle_chrome(false, false, true));
+    }
+
+    #[test]
+    fn headers_stay_interactive_when_idle_skip() {
+        assert!(header_widgets_enabled(true));
+        assert!(header_widgets_enabled(false));
+    }
+
+    #[test]
+    fn header_rows_not_dropped_by_body_ycull() {
+        let thread_y = 0.0;
+        let thread_h = 220.0;
+        let clip_y0 = 0.0;
+        let clip_y1 = 400.0;
+        assert!(header_row_intersects_clip(
+            thread_y, thread_h, clip_y0, clip_y1
+        ));
+        let body_cull = YCull::new(500.0, 700.0);
+        assert!(
+            !body_cull.hits(thread_y, 20.0),
+            "title band is outside the body-leaf window"
+        );
+        assert!(
+            header_row_intersects_clip(thread_y, thread_h, clip_y0, clip_y1),
+            "visible thread keeps its header even if GPU Y-cull missed the title"
+        );
+        assert!(!header_row_intersects_clip(800.0, 40.0, clip_y0, clip_y1));
+    }
+
+    #[test]
+    fn value_graphs_produced_under_y_cull() {
+        let vk = LaneKey {
+            pid: 1,
+            tid: 1,
+            kind: kind::VALUE,
+            depth: 0,
+            extra: 0,
+        };
+        let sk = LaneKey {
+            pid: 1,
+            tid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+        };
+        let layout = [(sk, 0.0), (vk, 100.0)];
+        let none = value_lanes_in_view(&layout, 1.0, None);
+        assert_eq!(none.len(), 1);
+        assert_eq!(none[0].0.kind, kind::VALUE);
+        let hit = value_lanes_in_view(&layout, 1.0, Some(YCull::new(80.0, 200.0)));
+        assert_eq!(hit.len(), 1);
+        let miss = value_lanes_in_view(&layout, 1.0, Some(YCull::new(0.0, 40.0)));
+        assert!(miss.is_empty());
+        let compact = value_lanes_in_view(&layout, 0.72, Some(YCull::new(90.0, 150.0)));
+        assert_eq!(compact.len(), 1);
+    }
+
+    #[test]
+    fn primitive_listing_scope_name_exists() {
+        assert_eq!(
+            orbit_live_event::dev::primitive_listing_name(),
+            "PrimitiveListing"
+        );
+        assert_eq!(NAME_PRIMITIVE_LISTING, 30_028);
+        let mut intern = InternTable::default();
+        intern_self_names(&mut intern);
+        assert_eq!(intern.get(NAME_PRIMITIVE_LISTING), Some("PrimitiveListing"));
     }
 
     #[test]

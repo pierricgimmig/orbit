@@ -396,8 +396,9 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
     let lod = choose_lod(&index, t0, t1, width as usize, INSTANCE_MIN_PX);
     let height = stack_height(&index).ceil() as u32;
     let intern = svc.intern.lock();
-    let instances = if lod == TimelineLod::Instanced {
-        collect_instances(&index, t0, t1, width as f32, 0.0, Some(&*intern))
+    let (instances, worker_spans) = if lod == TimelineLod::Instanced {
+        let frame = collect_instances(&index, t0, t1, width as f32, 0.0, Some(&*intern));
+        let instances = frame
             .instances
             .iter()
             .map(|i| InstanceJson {
@@ -408,10 +409,13 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
                 color: argb_to_css(i.color),
                 r: i.radius,
             })
-            .collect()
+            .collect();
+        (instances, frame.worker_spans)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
+    drop(intern);
+    svc.apply_worker_spans(&worker_spans);
     let body = TimelineBody {
         lod: lod.as_str(),
         width,

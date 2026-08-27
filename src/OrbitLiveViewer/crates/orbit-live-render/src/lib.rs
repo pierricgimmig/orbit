@@ -40,10 +40,11 @@ pub use lod::{
     collect_instances_layout, collect_instances_layout_opts, drop_index_for_y, empty_column_color,
     instance_for_event, lane_gap, lane_height, leaf_label, pick_column_event, pick_instance_at,
     reorder_insert, sample_lod_lanes, sort_thread_leaves, stack_height, stack_height_keys,
-    stacked_layout, sync_lane_order, CollectOpts, InstanceFrame, ScopeInstance, ScopePick,
-    TimelineLod, YCull, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING,
-    INSTANCE_MIN_PX, Y_CULL_PAD,
+    stacked_layout, sync_lane_order, value_lanes_in_view, CollectOpts, InstanceFrame,
+    ScopeInstance, ScopePick, TimelineLod, YCull, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE,
+    FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX, Y_CULL_PAD,
 };
+pub use par::{is_parallel, parallelism, WorkerSpan};
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
 /// One horizontal lane of non-overlapping intervals, sorted by `start_ns`.
@@ -329,13 +330,14 @@ impl TrackIndex {
             keys
         };
         let mut pixels = vec![0u32; keys.len() * width];
-        par::for_each_row(&keys, &mut pixels, width, |key, dest| {
+        let worker_spans = par::for_each_row_lanes(&keys, &mut pixels, width, |key, dest| {
             self.lanes[key].rasterize(t0, t1, width, dest, intern);
         });
         RasterizedFrame {
             width,
             lanes: keys,
             pixels,
+            worker_spans,
         }
     }
 
@@ -356,6 +358,7 @@ impl TrackIndex {
             width,
             lanes: keys,
             pixels,
+            worker_spans: Vec::new(),
         }
     }
 }
@@ -365,6 +368,7 @@ pub struct RasterizedFrame {
     pub width: usize,
     pub lanes: Vec<LaneKey>,
     pub pixels: Vec<u32>,
+    pub worker_spans: Vec<WorkerSpan>,
 }
 
 impl RasterizedFrame {
