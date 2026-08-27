@@ -97,6 +97,15 @@ enum WheelMode {
     AlwaysZoom,
 }
 
+/// Where a point on the capture track sits inside the current view window, as
+/// the 0..1 fraction `zoom_time` anchors on. The track spans the whole capture,
+/// so a pinch outside the visible window clamps to the nearest edge.
+fn capture_anchor_ratio(x_frac: f32, cap0: f64, cap1: f64, t0: f64, t1: f64) -> f64 {
+    let cap_span = (cap1 - cap0).max(1.0);
+    let at = cap0 + (x_frac.clamp(0.0, 1.0) as f64) * cap_span;
+    ((at - t0) / (t1 - t0).max(1.0)).clamp(0.0, 1.0)
+}
+
 /// Lane-scroll offset after a touch pan of `drag_y`. Content follows the
 /// finger: dragging down reveals what is above, so the offset decreases.
 fn touch_vscroll_target(current: f32, drag_y: f32) -> f32 {
@@ -1949,11 +1958,12 @@ impl OrbitLiveApp {
     ) {
         let ctx = response.ctx.clone();
         if response.hovered() {
-            let (scroll, zoom, ctrl_like) = ctx.input(|i| {
+            let (scroll, zoom, ctrl_like, pinch) = ctx.input(|i| {
                 (
                     i.raw_scroll_delta,
                     i.zoom_delta(),
                     i.modifiers.ctrl || i.modifiers.command,
+                    i.multi_touch().is_some(),
                 )
             });
             if scroll.x != 0.0 {
@@ -1971,7 +1981,9 @@ impl OrbitLiveApp {
             let zoom_step = time_zoom_step(scroll.y, zoom);
             let want_zoom = match mode {
                 WheelMode::AlwaysZoom => zoom_step != 0,
-                WheelMode::CtrlZoom => ctrl_like && zoom_step != 0,
+                // A tablet has no ctrl key, so a two-finger pinch stands in for
+                // it. Wheel-without-ctrl still scrolls the lanes.
+                WheelMode::CtrlZoom => (ctrl_like || pinch) && zoom_step != 0,
             };
             if want_zoom {
                 if let Some(pos) = response.hover_pos() {
@@ -2026,6 +2038,28 @@ impl OrbitLiveApp {
             Sense::click_and_drag(),
         );
         let hover = resp.hovered();
+        // The capture track is the only place to zoom from when the lanes are
+        // scrolled away, and on a tablet a pinch is the only way to ask.
+        if hover {
+            let (scroll_y, zoom, pinch) = ui
+                .ctx()
+                .input(|i| (i.raw_scroll_delta.y, i.zoom_delta(), i.multi_touch().is_some()));
+            let step = time_zoom_step(scroll_y, zoom);
+            if step != 0 {
+                let anchor = resp
+                    .hover_pos()
+                    .map(|p| (p.x - track.left()) / w)
+                    .map(|f| capture_anchor_ratio(f, cap0, cap1, self.t0, self.t1))
+                    .unwrap_or(0.5);
+                let (t0, t1) = zoom_time(self.t0, self.t1, step, anchor);
+                self.t0 = t0;
+                self.t1 = t1;
+                self.follow = false;
+                if pinch || scroll_y != 0.0 {
+                    consume_scroll(&resp.ctx);
+                }
+            }
+        }
         ui.painter().rect_filled(track, 0.0, theme::INPUT);
         ui.painter().rect_filled(
             thumb,
@@ -3596,6 +3630,17 @@ mod tests {
         let (t0, t1) = pan_time(1_000.0, 2_000.0, PAN_RATIO);
         assert!((t0 - 900.0).abs() < 1e-6);
         assert!((t1 - 1_900.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn capture_anchor_maps_track_x_into_the_view_window() {
+        // View 200..300 inside a 0..1000 capture. Pinching at the track point
+        // that is the view's midpoint anchors at 0.5.
+        let f = 250.0f32 / 1000.0;
+        assert!((capture_anchor_ratio(f, 0.0, 1000.0, 200.0, 300.0) - 0.5).abs() < 1e-6);
+        // Left of the window clamps to its left edge, not to the capture start.
+        assert_eq!(capture_anchor_ratio(0.0, 0.0, 1000.0, 200.0, 300.0), 0.0);
+        assert_eq!(capture_anchor_ratio(1.0, 0.0, 1000.0, 200.0, 300.0), 1.0);
     }
 
     #[test]
