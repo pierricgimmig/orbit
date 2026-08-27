@@ -342,13 +342,19 @@ pub fn sample_lod_lanes(index: &TrackIndex, hint: Option<LaneKey>) -> Vec<LaneKe
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     let mut out = Vec::with_capacity(LOD_SAMPLE_LANES + 1);
+    let mut hinted = None;
     if let Some(h) = hint {
         if h.kind != kind::VALUE && index.lane(h).is_some() {
             out.push(h);
+            hinted = Some(h);
         }
     }
+    // The hint is extra, not a replacement. Counting it against the budget
+    // dropped the least dense of the sampled lanes, so moving the cursor could
+    // evict the one lane holding a wide scope.
+    let budget = LOD_SAMPLE_LANES + usize::from(hinted.is_some());
     for (_, k) in scored {
-        if out.len() >= LOD_SAMPLE_LANES {
+        if out.len() >= budget {
             break;
         }
         if !out.contains(&k) {
@@ -373,7 +379,7 @@ fn choose_lod_from_keys(
     if ns_per_px <= 0.0 {
         return TimelineLod::PixelColumns;
     }
-    let mut saw_any = false;
+    // Fast path. A hit here is conclusive: one wide scope in view is enough.
     for key in keys {
         if key.kind == kind::VALUE {
             continue;
@@ -382,21 +388,19 @@ fn choose_lod_from_keys(
             continue;
         };
         if let Some(e) = lane.overlapping(t0, t1) {
-            saw_any = true;
             if (e.duration_ns as f64 / ns_per_px) >= min_wide_px as f64 {
                 return TimelineLod::Instanced;
             }
         }
     }
-    if saw_any {
-        return TimelineLod::PixelColumns;
-    }
-    // Nothing sampled was in view at all. `sample_lod_lanes` ranks by lifetime
-    // event count, so a window holding only sparse lanes -- self-profile
-    // scopes, an idle thread -- samples none of them and would answer
-    // PixelColumns however far you zoom in. That drops clip labels exactly
-    // when the few visible scopes are finally wide enough to read them.
-    // The sample told us nothing, so look wider before concluding.
+    // A miss is not conclusive, so finish the question over every lane.
+    //
+    // Answering PixelColumns straight from a sample miss made the verdict
+    // depend on which lanes happened to be sampled, and the sample moves: it
+    // is ranked by lifetime event count and takes the hovered lane as a hint.
+    // Moving the cursor, changing nothing else, could flip instanced to blit.
+    // The cost is two binary searches per lane, paid only when the sample
+    // already failed to find anything wide.
     for (key, lane) in index.lanes() {
         if key.kind == kind::VALUE {
             continue;
@@ -460,10 +464,23 @@ mod value_lod_tests {
         for i in 0..24u32 {
             idx.insert(scope(u64::from(i) * 5_000, 4_800, 99, 100 + i));
         }
+        // The first-8 BTreeMap sample still misses tid 99 -- that is the point
+        // of ranking by density -- but a sample miss no longer decides the
+        // verdict, so both samplers now agree.
+        let first8: Vec<LaneKey> = idx
+            .lanes()
+            .map(|(k, _)| k)
+            .filter(|k| k.kind != kind::VALUE)
+            .take(8)
+            .collect();
+        assert!(
+            !first8.iter().any(|k| k.tid == 99),
+            "fixture is only meaningful while first-8 misses the busy lane"
+        );
         assert_eq!(
             choose_lod_first8(&idx, 0, 100_000, 100, INSTANCE_MIN_PX),
-            TimelineLod::PixelColumns,
-            "BTreeMap first-8 misses tid 99"
+            TimelineLod::Instanced,
+            "a sample miss must not decide the verdict"
         );
         assert_eq!(
             choose_lod(&idx, 0, 100_000, 100, INSTANCE_MIN_PX),
@@ -943,6 +960,34 @@ mod sparse_lod_tests {
             TimelineLod::Instanced,
             "wide scope in view must render instanced so its label is drawn"
         );
+    }
+
+    /// Hovering must never change the LOD. The sample takes the hovered lane
+    /// as a hint and is otherwise ranked by lifetime event count, so a verdict
+    /// read off the sample moved as the cursor moved -- instanced flipping to
+    /// blit on hover alone, with nothing else changed.
+    #[test]
+    fn the_hover_hint_never_changes_the_verdict() {
+        let mut idx = TrackIndex::default();
+        // Busy lanes with sub-pixel scopes, more than the sample holds.
+        for tid in 0..(LOD_SAMPLE_LANES as u32 + 6) {
+            for i in 0..64u64 {
+                idx.insert(ev(tid, i * 100, 20, tid + 1));
+            }
+        }
+        // One quiet lane carrying the only wide scope in the window.
+        idx.insert(ev(9_001, 0, 4_000, 999));
+
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let base = choose_lod(&idx, 0, 6_400, 100, INSTANCE_MIN_PX);
+        assert_eq!(base, TimelineLod::Instanced, "the wide scope is in view");
+        for k in keys {
+            assert_eq!(
+                choose_lod_hint(&idx, 0, 6_400, 100, INSTANCE_MIN_PX, Some(k)),
+                base,
+                "hovering lane {k:?} changed the LOD"
+            );
+        }
     }
 
     /// The wider search must not override a genuine pixel-columns verdict.
