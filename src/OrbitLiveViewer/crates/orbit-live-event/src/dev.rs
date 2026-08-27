@@ -116,6 +116,13 @@ pub const NAME_REMAP_THEME: u32 = 30_037;
 pub const NAME_PUNCH_DRAG: u32 = 30_038;
 pub const NAME_DIM_SEARCH: u32 = 30_039;
 pub const NAME_PLACE_EXTENT: u32 = 30_040;
+/// Why worker lanes are or are not there. `pool_threads` is
+/// `orbit_live_render::parallelism()`: 1 means no pool, so the walks run
+/// sequentially and emit no spans at all. `worker_spans` counts what reached
+/// the frame, `spans_dropped` what the absorb guard refused.
+pub const NAME_POOL_THREADS: u32 = 30_041;
+pub const NAME_WORKER_SPANS: u32 = 30_042;
+pub const NAME_SPANS_DROPPED: u32 = 30_043;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +191,9 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_PUNCH_DRAG, "PunchDrag");
     intern.insert_id(NAME_DIM_SEARCH, "DimSearch");
     intern.insert_id(NAME_PLACE_EXTENT, "PlaceExtent");
+    intern.insert_id(NAME_POOL_THREADS, "pool_threads");
+    intern.insert_id(NAME_WORKER_SPANS, "worker_spans");
+    intern.insert_id(NAME_SPANS_DROPPED, "spans_dropped");
     intern_render_worker_names(intern);
 }
 

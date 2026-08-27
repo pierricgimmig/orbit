@@ -1496,3 +1496,66 @@ mod worker_span_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod span_pipeline_tests {
+    use super::*;
+    use orbit_live_event::{dev::is_render_worker_tid, kind, LiveEvent};
+    use orbit_live_render::{stacked_layout, TrackIndex};
+
+    /// End to end: the parallel walk's spans must survive from_index, the
+    /// absorb guard, and land as scopes on render-worker lanes.
+    #[test]
+    fn worker_spans_reach_the_dev_frame() {
+        if !orbit_live_render::is_parallel() {
+            return;
+        }
+        let mut idx = TrackIndex::default();
+        for tid in 0..24u32 {
+            for i in 0..32u64 {
+                idx.insert(LiveEvent {
+                    start_ns: i * 100,
+                    duration_ns: 40,
+                    tid,
+                    pid: 1,
+                    kind: kind::API_SCOPE,
+                    depth: 0,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: tid + 1,
+                });
+            }
+        }
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let dev = crate::dev::DevFrame::begin(true);
+        let (_p, spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            3_200,
+            512.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &dev,
+        );
+        assert!(!spans.is_empty(), "the walk produced no spans at all");
+        dev.absorb_worker_spans(&spans);
+        let scopes = dev.finish();
+        let worker: Vec<_> = scopes
+            .iter()
+            .filter(|s| is_render_worker_tid(s.tid))
+            .collect();
+        assert!(
+            !worker.is_empty(),
+            "{} spans produced but none survived absorb into worker lanes",
+            spans.len()
+        );
+    }
+}

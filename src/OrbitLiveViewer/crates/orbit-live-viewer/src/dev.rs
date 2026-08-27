@@ -13,6 +13,10 @@ pub struct DevFrame {
 
 struct DevFrameInner {
     origin_ns: u64,
+    /// Worker spans kept / refused this frame, so the UI can tell "no pool"
+    /// apart from "the guard ate them".
+    absorbed: std::cell::Cell<u32>,
+    dropped: std::cell::Cell<u32>,
     scopes: RefCell<Vec<RelScope>>,
     stack: RefCell<Vec<(u32, u32, u64)>>,
 }
@@ -34,6 +38,8 @@ impl DevFrame {
         Self {
             inner: Some(DevFrameInner {
                 origin_ns: now_ns(),
+                absorbed: std::cell::Cell::new(0),
+                dropped: std::cell::Cell::new(0),
                 scopes: RefCell::new(Vec::with_capacity(16)),
                 stack: RefCell::new(Vec::with_capacity(8)),
             }),
@@ -69,6 +75,14 @@ impl DevFrame {
         }
     }
 
+    /// (worker spans kept, refused) so far this frame.
+    pub fn worker_span_counts(&self) -> (u32, u32) {
+        match self.inner.as_ref() {
+            None => (0, 0),
+            Some(i) => (i.absorbed.get(), i.dropped.get()),
+        }
+    }
+
     pub fn finish(self) -> Vec<RelScope> {
         match self.inner {
             None => Vec::new(),
@@ -93,16 +107,21 @@ impl DevFrame {
             // pool worker's span on the same spot.
             .filter(|s| s.t0_ns >= inner.origin_ns && s.t1_ns >= s.t0_ns)
             .collect();
+        inner
+            .dropped
+            .set(inner.dropped.get() + (spans.len() - ordered.len()) as u32);
         ordered.sort_by_key(|s| (s.tid, s.t0_ns));
         let mut last_end: Option<(u32, u64)> = None;
         for s in ordered {
             if let Some((tid, end)) = last_end {
                 if tid == s.tid && s.t0_ns < end {
+                    inner.dropped.set(inner.dropped.get() + 1);
                     continue;
                 }
             }
             let dur = s.t1_ns.saturating_sub(s.t0_ns).max(1);
             last_end = Some((s.tid, s.t0_ns.saturating_add(dur)));
+            inner.absorbed.set(inner.absorbed.get() + 1);
             inner.scopes.borrow_mut().push(RelScope {
                 pid: VIEWER_PID,
                 tid: s.tid,

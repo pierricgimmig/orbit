@@ -11,7 +11,8 @@ use orbit_live_event::dev::{
     NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS,
     NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
     NAME_SCALE_PPP, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD,
-    NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
+    NAME_POOL_THREADS, NAME_SPANS_DROPPED, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US,
+    NAME_WASM_MEM, NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
@@ -2500,6 +2501,7 @@ impl eframe::App for OrbitLiveApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
+        let devf_counts = devf.worker_span_counts();
         let scopes = devf.finish();
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
@@ -2536,6 +2538,30 @@ impl eframe::App for OrbitLiveApp {
             ));
             // One frame behind: the wgpu prepare phase that does the upload
             // runs after update() returns.
+            // Why worker lanes are or are not there: pool_threads == 1 means no
+            // pool, so the walks are sequential and emit nothing at all.
+            let (kept, dropped) = devf_counts;
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_POOL_THREADS,
+                orbit_live_render::parallelism() as f32,
+            ));
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_WORKER_SPANS,
+                kept as f32,
+            ));
+            self.index.insert(LiveEvent::from_value(
+                sample_t,
+                VIEWER_PID,
+                TID_STATS,
+                NAME_SPANS_DROPPED,
+                dropped as f32,
+            ));
             let (up_ns, up_bytes) = crate::timeline::last_instance_upload();
             self.index.insert(LiveEvent::from_value(
                 sample_t,
