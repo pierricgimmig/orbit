@@ -6,22 +6,72 @@
 
 use egui::PaintCallback;
 use egui_wgpu::wgpu;
-use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use orbit_live_event::{chrome, kind, LaneKey};
 use orbit_live_render::{
-    collect_instances_layout, lane_gap, lane_height, stacked_layout, ScopeInstance, ScopePick,
-    TimelineLod, TrackIndex, BLIT_RECT_WGSL, INSTANCE_WGSL,
+    collect_instances_layout_opts, lane_gap, lane_height, stacked_layout, CollectOpts,
+    ScopeInstance, ScopePick, TimelineLod, TrackIndex, YCull, BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
 use std::collections::HashMap;
 
 pub const INSTANCE_STRIDE: u64 = 48;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GpuDirtyKey {
+    pub t0: u64,
+    pub t1: u64,
+    pub width_bits: u32,
+    pub scroll_q: i32,
+    pub view_h_q: i32,
+    pub layout_gen: u64,
+    pub lod: u8,
+    pub events: u64,
+    pub selected: Option<(u32, u64)>,
+    pub hover: Option<(u32, u64)>,
+    pub search: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadMode {
+    /// Geometry + flags unchanged: write uniforms only (`u_time`).
+    Skip,
+    /// Hover/selection/search only: re-pack flags, `write_buffer`.
+    Flags,
+    /// Zoom/scroll/layout/lod/events: full collect + upload.
+    Full,
+}
+
+pub fn upload_mode(prev: Option<&GpuDirtyKey>, next: &GpuDirtyKey) -> UploadMode {
+    let Some(p) = prev else {
+        return UploadMode::Full;
+    };
+    if p.t0 != next.t0
+        || p.t1 != next.t1
+        || p.width_bits != next.width_bits
+        || p.scroll_q != next.scroll_q
+        || p.view_h_q != next.view_h_q
+        || p.layout_gen != next.layout_gen
+        || p.lod != next.lod
+        || p.events != next.events
+    {
+        return UploadMode::Full;
+    }
+    if p.selected != next.selected || p.hover != next.hover || p.search != next.search {
+        return UploadMode::Flags;
+    }
+    UploadMode::Skip
+}
+
+pub fn pick_key(p: Option<ScopePick>) -> Option<(u32, u64)> {
+    p.map(|s| (s.name_id, s.start_ns))
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ViewUniforms {
     pub viewport: [f32; 2],
     pub origin: [f32; 2],
     pub dest: [f32; 4],
+    pub time: f32,
 }
 
 impl ViewUniforms {
@@ -36,6 +86,7 @@ impl ViewUniforms {
             viewport: [screen_px[0].max(1.0), screen_px[1].max(1.0)],
             origin: [dest[0], dest[1]],
             dest,
+            time: 0.0,
         }
     }
 
@@ -56,10 +107,7 @@ impl ViewUniforms {
         if paint.is_empty() {
             return Self::from_rect(body, ppp, screen_px);
         }
-        let top = paint
-            .iter()
-            .map(|(_, y)| *y)
-            .fold(f32::MAX, f32::min);
+        let top = paint.iter().map(|(_, y)| *y).fold(f32::MAX, f32::min);
         let bot = paint
             .iter()
             .map(|(k, y)| *y + (lane_height(*k) + lane_gap(*k)) * s)
@@ -75,6 +123,8 @@ impl ViewUniforms {
 #[derive(Clone)]
 pub enum TimelinePayload {
     Empty,
+    /// Reuse last GPU buffers; still write view + `u_time`.
+    Keep,
     Pixel {
         rgba: Vec<u8>,
         width: u32,
@@ -100,6 +150,7 @@ impl TimelinePayload {
         punch: Option<(u32, u32)>,
         intern: Option<&orbit_live_event::InternTable>,
         scale: f32,
+        y_cull: Option<YCull>,
     ) -> Self {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
@@ -113,7 +164,18 @@ impl TimelinePayload {
         let s = pixels_per_point.max(0.01);
         match lod {
             TimelineLod::Instanced => {
-                let mut frame = collect_instances_layout(index, t0, t1, width_pts, layout, intern);
+                let mut frame = collect_instances_layout_opts(
+                    index,
+                    t0,
+                    t1,
+                    width_pts,
+                    layout,
+                    intern,
+                    CollectOpts {
+                        y_cull,
+                        early_out: true,
+                    },
+                );
                 for inst in &mut frame.instances {
                     inst.x *= s;
                     inst.y *= s;
@@ -128,7 +190,15 @@ impl TimelinePayload {
             TimelineLod::PixelColumns => {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
                 let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
-                let mut raster = index.rasterize_pixel_ordered(t0, t1, width_px, &keys, intern);
+                let mut raster = index.rasterize_pixel_layout(
+                    t0,
+                    t1,
+                    width_px,
+                    &keys,
+                    Some(layout),
+                    y_cull,
+                    intern,
+                );
                 if let Some((pid, tid)) = punch {
                     punch_raster_thread(&mut raster, pid, tid);
                 }
@@ -219,10 +289,7 @@ pub fn shift_instances_to_layout(
 
 /// Pin every remaining instance Y to `layout()`. Drops keys that are gone
 /// (hidden / dragged-out of the rest pass).
-pub fn snap_instances_to_layout(
-    instances: &mut Vec<ScopeInstance>,
-    layout: &[(LaneKey, f32)],
-) {
+pub fn snap_instances_to_layout(instances: &mut Vec<ScopeInstance>, layout: &[(LaneKey, f32)]) {
     let ys: HashMap<LaneKey, f32> = layout.iter().copied().collect();
     instances.retain(|i| ys.contains_key(&ScopePick::from_instance(i).lane_key()));
     for inst in instances.iter_mut() {
@@ -320,7 +387,7 @@ impl CallbackTrait for TimelineCallback {
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         if let Some(gpu) = callback_resources.get_mut::<TimelineGpu>() {
-            if self.layer == TimelineLayer::Base {
+            if self.layer == TimelineLayer::Base && !matches!(self.payload, TimelinePayload::Keep) {
                 gpu.clear_overlay();
             }
             gpu.upload(device, queue, &self.payload, self.view, self.layer);
@@ -363,9 +430,12 @@ pub struct TimelineGpu {
 
 struct GpuDrawLayer {
     instance_buf: Option<wgpu::Buffer>,
+    instance_cap: u64,
     instance_count: u32,
     /// Kept alive so the WebGPU `GPUTexture` is not dropped while bound.
     column_tex: Option<wgpu::Texture>,
+    column_w: u32,
+    column_h: u32,
     column_bind: Option<wgpu::BindGroup>,
 }
 
@@ -373,8 +443,11 @@ impl GpuDrawLayer {
     fn empty() -> Self {
         Self {
             instance_buf: None,
+            instance_cap: 0,
             instance_count: 0,
             column_tex: None,
+            column_w: 0,
+            column_h: 0,
             column_bind: None,
         }
     }
@@ -426,7 +499,7 @@ impl TimelineGpu {
             label: Some("orbit-inst-uni"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -529,7 +602,7 @@ impl TimelineGpu {
         });
         let inst_uni = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("orbit-inst-uni"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -589,10 +662,11 @@ impl TimelineGpu {
         queue.write_buffer(
             &self.inst_uni,
             0,
-            &pack_inst_uniforms(view.viewport, view.origin),
+            &pack_inst_uniforms(view.viewport, view.origin, view.time),
         );
 
         match payload {
+            TimelinePayload::Keep => {}
             TimelinePayload::Empty => {
                 *self.layer_mut(layer) = GpuDrawLayer::empty();
             }
@@ -602,31 +676,50 @@ impl TimelineGpu {
                 height,
                 overlay,
             } => {
-                self.upload_instances(device, overlay, layer);
+                self.upload_instances(device, queue, overlay, layer);
                 if *width == 0 || *height == 0 || rgba.is_empty() {
                     let slot = self.layer_mut(layer);
                     slot.column_tex = None;
                     slot.column_bind = None;
+                    slot.column_w = 0;
+                    slot.column_h = 0;
                     return;
                 }
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("orbit-columns"),
-                    size: wgpu::Extent3d {
-                        width: *width,
-                        height: *height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                let (padded, bytes_per_row) = pack_rgba_aligned(rgba, *width, *height);
+                self.upload_columns(device, queue, rgba, *width, *height, layer);
+            }
+            TimelinePayload::Instanced { instances } => {
+                {
+                    let slot = self.layer_mut(layer);
+                    slot.column_tex = None;
+                    slot.column_bind = None;
+                    slot.column_w = 0;
+                    slot.column_h = 0;
+                }
+                self.upload_instances(device, queue, instances, layer);
+            }
+        }
+    }
+
+    fn upload_columns(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        layer: TimelineLayer,
+    ) {
+        let reuse = {
+            let slot = self.layer(layer);
+            slot.column_tex.is_some() && slot.column_w == width && slot.column_h == height
+        };
+        let (padded, bytes_per_row) = pack_rgba_aligned(rgba, width, height);
+        if reuse {
+            let slot = self.layer_mut(layer);
+            if let Some(texture) = &slot.column_tex {
                 queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
+                        texture,
                         mip_level: 0,
                         origin: wgpu::Origin3d::ZERO,
                         aspect: wgpu::TextureAspect::All,
@@ -635,68 +728,108 @@ impl TimelineGpu {
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(*height),
+                        rows_per_image: Some(height),
                     },
                     wgpu::Extent3d {
-                        width: *width,
-                        height: *height,
+                        width,
+                        height,
                         depth_or_array_layers: 1,
                     },
                 );
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("orbit-columns-bind"),
-                    layout: &self.blit_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.blit_uni.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                    ],
-                });
-                let slot = self.layer_mut(layer);
-                slot.column_bind = Some(bind);
-                slot.column_tex = Some(texture);
             }
-            TimelinePayload::Instanced { instances } => {
-                {
-                    let slot = self.layer_mut(layer);
-                    slot.column_tex = None;
-                    slot.column_bind = None;
-                }
-                self.upload_instances(device, instances, layer);
-            }
+            return;
         }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("orbit-columns"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &padded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("orbit-columns-bind"),
+            layout: &self.blit_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.blit_uni.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        let slot = self.layer_mut(layer);
+        slot.column_bind = Some(bind);
+        slot.column_tex = Some(texture);
+        slot.column_w = width;
+        slot.column_h = height;
     }
 
     fn upload_instances(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         instances: &[ScopeInstance],
         layer: TimelineLayer,
     ) {
         let bytes = pack_instances(instances);
+        let need = bytes.len() as u64;
         let slot = self.layer_mut(layer);
         slot.instance_count = instances.len() as u32;
         if bytes.is_empty() {
             slot.instance_buf = None;
+            slot.instance_cap = 0;
             return;
         }
-        slot.instance_buf = Some(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("orbit-instances"),
-                contents: &bytes,
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        ));
+        if let Some(buf) = &slot.instance_buf {
+            if slot.instance_cap >= need {
+                queue.write_buffer(buf, 0, &bytes);
+                return;
+            }
+        }
+        let cap = need.next_multiple_of(256).max(need.saturating_mul(3) / 2);
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("orbit-instances"),
+            size: cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buf, 0, &bytes);
+        slot.instance_cap = cap;
+        slot.instance_buf = Some(buf);
     }
 
     fn draw(&self, pass: &mut wgpu::RenderPass<'static>, layer: TimelineLayer) {
@@ -750,12 +883,13 @@ pub fn pack_blit_uniforms(viewport: [f32; 2], dest: [f32; 4]) -> [u8; 32] {
     out
 }
 
-pub fn pack_inst_uniforms(viewport: [f32; 2], origin: [f32; 2]) -> [u8; 16] {
-    let mut out = [0u8; 16];
+pub fn pack_inst_uniforms(viewport: [f32; 2], origin: [f32; 2], time: f32) -> [u8; 32] {
+    let mut out = [0u8; 32];
     out[0..4].copy_from_slice(&viewport[0].to_le_bytes());
     out[4..8].copy_from_slice(&viewport[1].to_le_bytes());
     out[8..12].copy_from_slice(&origin[0].to_le_bytes());
     out[12..16].copy_from_slice(&origin[1].to_le_bytes());
+    out[16..20].copy_from_slice(&time.to_le_bytes());
     out
 }
 
@@ -889,6 +1023,7 @@ mod tests {
             None,
             None,
             1.0,
+            None,
         );
         let TimelinePayload::Pixel {
             rgba,
@@ -943,6 +1078,7 @@ mod tests {
             None,
             None,
             1.0,
+            None,
         );
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
@@ -1045,7 +1181,9 @@ mod tests {
         snap_instances_to_layout(&mut insts, &rest);
         assert_eq!(insts.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![1, 3]);
         assert!(insts.iter().all(|i| i.tid != 2));
-        assert!(insts.iter().all(|i| (i.y - origin).abs() > 0.5 || i.tid == 3));
+        assert!(insts
+            .iter()
+            .all(|i| (i.y - origin).abs() > 0.5 || i.tid == 3));
         assert!((insts.iter().find(|i| i.tid == 3).unwrap().y - 80.0).abs() < 1e-4);
     }
 
@@ -1068,9 +1206,47 @@ mod tests {
         };
         let layout = [(k0, 36.0), (k1, 57.0)];
         let view = ViewUniforms::from_leaf_stack(body, &layout, 1.0, 1.0, [200.0, 400.0]);
-        assert!((view.dest[1] - 36.0).abs() < 0.5, "dest y follows first leaf");
+        assert!(
+            (view.dest[1] - 36.0).abs() < 0.5,
+            "dest y follows first leaf"
+        );
         let stack_h = (57.0 + lane_height(k1) + lane_gap(k1)) - 36.0;
         assert!((view.dest[3] - stack_h).abs() < 1.0);
         assert!(view.dest[3] < body.height() - 1.0);
+    }
+
+    #[test]
+    fn upload_mode_skips_idle_and_flags_hover() {
+        let base = GpuDirtyKey {
+            t0: 0,
+            t1: 100,
+            width_bits: 200f32.to_bits(),
+            scroll_q: 0,
+            view_h_q: 400,
+            layout_gen: 1,
+            lod: 1,
+            events: 10,
+            selected: None,
+            hover: None,
+            search: 0,
+        };
+        assert_eq!(upload_mode(None, &base), UploadMode::Full);
+        assert_eq!(upload_mode(Some(&base), &base), UploadMode::Skip);
+        let mut hover = base;
+        hover.hover = Some((7, 10));
+        assert_eq!(upload_mode(Some(&base), &hover), UploadMode::Flags);
+        let mut zoom = base;
+        zoom.t0 = 10;
+        assert_eq!(upload_mode(Some(&base), &zoom), UploadMode::Full);
+        let mut scroll = base;
+        scroll.scroll_q = 80;
+        assert_eq!(upload_mode(Some(&base), &scroll), UploadMode::Full);
+    }
+
+    #[test]
+    fn pack_inst_uniforms_includes_time() {
+        let u = pack_inst_uniforms([1920.0, 1080.0], [4.0, 8.0], 1.25);
+        assert_eq!(&u[16..20], &1.25f32.to_le_bytes());
+        assert_eq!(&u[8..12], &4f32.to_le_bytes());
     }
 }

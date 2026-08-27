@@ -29,6 +29,8 @@ pub const INSTANCE_WGSL: &str = r#"
 struct Uniforms {
   viewport: vec2<f32>,
   origin: vec2<f32>,
+  time: f32,
+  _pad: f32,
 };
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 
@@ -52,6 +54,14 @@ const SHADOW_PAD: f32 = 6.0;
 const SHADOW_SIGMA: f32 = 1.35;
 const SIBLING_RGB: vec3<f32> = vec3(0.392, 0.710, 0.965);
 const SELECTED_RGB: vec3<f32> = vec3(0.0, 0.502, 1.0);
+const PULSE_PERIOD: f32 = 1.2;
+const PULSE_RADIUS: f32 = 0.45;
+const PULSE_SIGMA: f32 = 0.18;
+const PULSE_BRIGHT: f32 = 0.05;
+
+fn selected_pulse(time: f32) -> f32 {
+  return 0.5 + 0.5 * sin(time * 6.28318530718 / PULSE_PERIOD);
+}
 
 @vertex
 fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
@@ -62,8 +72,9 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
   let uv = corners[vid];
   let mark = inst.extra.y;
   let selected = mark > 1.5 && mark < 2.5;
+  let pulse = select(0.0, selected_pulse(uni.time), selected);
   let lift = select(0.0, -0.8, selected);
-  let pad = SHADOW_PAD + select(0.0, 1.0, selected);
+  let pad = SHADOW_PAD + select(0.0, 1.0, selected) + pulse * PULSE_RADIUS;
   let x = uni.origin.x + inst.rect.x - pad + uv.x * (inst.rect.z + 2.0 * pad);
   let y = uni.origin.y + inst.rect.y + lift - pad + uv.y * (inst.rect.w + 2.0 * pad);
   var o: VsOut;
@@ -131,11 +142,12 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   let selected = v.mark > 1.5 && v.mark < 2.5;
   let sibling = v.mark > 2.5 && v.mark < 3.5;
   let dimmed = v.mark > 3.5 && v.mark < 4.5;
+  let pulse = select(0.0, selected_pulse(uni.time), selected);
   let d = sd_rounded_box(v.local, v.half_size, v.radius);
   let aa = fwidth(d) * 0.75;
   let fill = 1.0 - smoothstep(-aa, aa, d);
   let border = 1.0 - smoothstep(-aa, aa, abs(d) - 0.5);
-  let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected);
+  let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected) + pulse * PULSE_SIGMA;
   let shadow = rounded_box_shadow(v.local + vec2(0.4, 0.7), v.half_size, v.radius, sigma);
   var rgb = v.color.rgb;
   if dimmed {
@@ -145,7 +157,7 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   if sibling {
     rgb = SIBLING_RGB;
   } else if selected {
-    rgb = SELECTED_RGB;
+    rgb = SELECTED_RGB * (1.0 + pulse * PULSE_BRIGHT);
   }
   let top = v.pix.y < 1.15 && fill > 0.5;
   rgb = rgb * select(1.0, 1.08, top);

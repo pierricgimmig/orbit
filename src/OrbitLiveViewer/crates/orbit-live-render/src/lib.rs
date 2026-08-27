@@ -33,13 +33,16 @@ use std::collections::BTreeMap;
 use orbit_live_event::{chrome, kind, InternTable, LaneKey, LiveEvent};
 
 mod lod;
+mod par;
 mod shaders;
 pub use lod::{
-    apply_highlight_flags, choose_lod, collect_instances, collect_instances_layout,
-    drop_index_for_y, empty_column_color, instance_for_event, lane_gap, lane_height, leaf_label,
-    pick_column_event, pick_instance_at, reorder_insert, sort_thread_leaves, stack_height,
-    stack_height_keys, stacked_layout, sync_lane_order, InstanceFrame, ScopeInstance, ScopePick,
-    TimelineLod, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX,
+    apply_highlight_flags, choose_lod, choose_lod_first8, choose_lod_hint, collect_instances,
+    collect_instances_layout, collect_instances_layout_opts, drop_index_for_y, empty_column_color,
+    instance_for_event, lane_gap, lane_height, leaf_label, pick_column_event, pick_instance_at,
+    reorder_insert, sample_lod_lanes, sort_thread_leaves, stack_height, stack_height_keys,
+    stacked_layout, sync_lane_order, CollectOpts, InstanceFrame, ScopeInstance, ScopePick,
+    TimelineLod, YCull, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE, FLAG_SELECTED, FLAG_SIBLING,
+    INSTANCE_MIN_PX, Y_CULL_PAD,
 };
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
@@ -85,8 +88,26 @@ impl Lane {
     }
 
     /// First event with `end_ns > t` (binary search). O(log n).
+    ///
+    /// Lanes are **non-overlapping** and kept sorted by `start_ns`. Then
+    /// `end_ns` is also non-decreasing: `e[i].end <= e[i+1].start <= e[i+1].end`
+    /// (duration > 0). `partition_point` on `end_ns() <= t` is therefore a
+    /// real binary search, not a linear probe. Do not add a second end-sorted
+    /// index unless that invariant is dropped — append-mostly live insert
+    /// stays O(1).
     pub fn first_ending_after(&self, t: u64) -> usize {
+        debug_assert!(
+            self.ends_are_sorted(),
+            "first_ending_after assumes non-overlapping start-sorted ends"
+        );
         self.events.partition_point(|e| e.end_ns() <= t)
+    }
+
+    /// `end_ns` non-decreasing. True for non-overlapping start-sorted lanes.
+    pub fn ends_are_sorted(&self) -> bool {
+        self.events
+            .windows(2)
+            .all(|w| w[0].end_ns() <= w[1].end_ns())
     }
 
     /// Event that overlaps `[col0, col1)`, if any. O(log n).
@@ -266,6 +287,24 @@ impl TrackIndex {
         order: &[LaneKey],
         intern: Option<&InternTable>,
     ) -> RasterizedFrame {
+        self.rasterize_pixel_layout(t0, t1, width, order, None, None, intern)
+    }
+
+    /// Pixel-column raster with optional stack-Y cull. `ys` is `(lane, y)` in
+    /// the same space as [`lod::stacked_layout`]; when `y_cull` is set, off-
+    /// screen lanes are skipped before the column walk.
+    pub fn rasterize_pixel_layout(
+        &self,
+        t0: u64,
+        t1: u64,
+        width: usize,
+        order: &[LaneKey],
+        ys: Option<&[(LaneKey, f32)]>,
+        y_cull: Option<YCull>,
+        intern: Option<&InternTable>,
+    ) -> RasterizedFrame {
+        let ymap: Option<std::collections::BTreeMap<LaneKey, f32>> =
+            ys.map(|l| l.iter().copied().collect());
         let keys: Vec<LaneKey> = if order.is_empty() {
             self.lanes
                 .keys()
@@ -279,11 +318,20 @@ impl TrackIndex {
                 .filter(|k| k.kind != kind::VALUE && self.lanes.contains_key(k))
                 .collect()
         };
+        let keys: Vec<LaneKey> = if let (Some(cull), Some(ym)) = (y_cull, ymap.as_ref()) {
+            keys.into_iter()
+                .filter(|k| {
+                    let y = ym.get(k).copied().unwrap_or(0.0);
+                    cull.hits(y, lane_height(*k) + lane_gap(*k))
+                })
+                .collect()
+        } else {
+            keys
+        };
         let mut pixels = vec![0u32; keys.len() * width];
-        for (row, key) in keys.iter().enumerate() {
-            let dest = &mut pixels[row * width..(row + 1) * width];
+        par::for_each_row(&keys, &mut pixels, width, |key, dest| {
             self.lanes[key].rasterize(t0, t1, width, dest, intern);
-        }
+        });
         RasterizedFrame {
             width,
             lanes: keys,
@@ -413,12 +461,10 @@ impl RasterizedFrame {
         let height = (bot - origin).round().max(1.0) as u32;
         let mut out = vec![0u8; self.width.saturating_mul(height as usize).saturating_mul(4)];
         for (row, key) in self.lanes.iter().enumerate() {
-            let Some(&y) = ys.get(key).or_else(|| {
-                placed
-                    .iter()
-                    .find(|(k, _)| *k == *key)
-                    .map(|(_, y)| y)
-            }) else {
+            let Some(&y) = ys
+                .get(key)
+                .or_else(|| placed.iter().find(|(k, _)| *k == *key).map(|(_, y)| y))
+            else {
                 continue;
             };
             let h = (lod::lane_height(*key) * s).round().max(1.0) as u32;
@@ -531,6 +577,36 @@ mod tests {
         assert!(lane.overlapping(30, 40).is_none());
         assert_eq!(lane.first_ending_after(10), 1);
         assert_eq!(lane.last_overlapping(0, 12).unwrap().name_id, 2);
+        assert!(
+            lane.ends_are_sorted(),
+            "non-overlapping start-sorted lane must have sorted ends"
+        );
+    }
+
+    #[test]
+    fn overlapping_ends_break_the_end_index_invariant() {
+        let mut lane = Lane::default();
+        lane.insert(scope(0, 100, 0, 1));
+        lane.insert(scope(10, 5, 0, 2));
+        assert!(
+            !lane.ends_are_sorted(),
+            "overlapping insert (end 100 then 15) must fail this test — \
+             that is why first_ending_after stays a single partition_point \
+             and we do not add a dual index"
+        );
+    }
+
+    #[test]
+    fn first_ending_after_is_binary_search_on_sorted_ends() {
+        let mut lane = Lane::default();
+        for i in 0..64u64 {
+            lane.insert(scope(i * 100, 80, 0, i as u32));
+        }
+        assert!(lane.ends_are_sorted());
+        assert_eq!(lane.first_ending_after(0), 0);
+        assert_eq!(lane.first_ending_after(80), 1);
+        assert_eq!(lane.first_ending_after(79), 0);
+        assert_eq!(lane.first_ending_after(6400), 64);
     }
 
     #[test]
@@ -696,6 +772,36 @@ mod tests {
         assert!(INSTANCE_WGSL.contains("if sibling"));
         assert!(INSTANCE_WGSL.contains("selected"));
         assert!(INSTANCE_WGSL.contains("dimmed"));
+        assert!(INSTANCE_WGSL.contains("uni.time"));
+        assert!(INSTANCE_WGSL.contains("PULSE_PERIOD"));
+        assert!(INSTANCE_WGSL.contains("FLAG") || INSTANCE_WGSL.contains("selected"));
+    }
+
+    #[test]
+    fn y_cull_raster_drops_offscreen_rows() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 50, 0, 1));
+        idx.insert(LiveEvent {
+            tid: 2,
+            ..scope(0, 50, 0, 2)
+        });
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let full = idx.rasterize_pixel_ordered(0, 50, 8, &keys, None);
+        assert_eq!(full.lanes.len(), 2);
+        let y0 = layout[0].1;
+        let h0 = lane_height(layout[0].0);
+        let culled = idx.rasterize_pixel_layout(
+            0,
+            50,
+            8,
+            &keys,
+            Some(&layout),
+            Some(YCull::new(y0, y0 + h0 * 0.5)),
+            None,
+        );
+        assert_eq!(culled.lanes.len(), 1);
+        assert_eq!(culled.lanes[0], layout[0].0);
     }
 
     #[test]
@@ -889,10 +995,7 @@ mod tests {
             Some(&ids),
         );
         assert_eq!(insts[0].flags, FLAG_SELECTED);
-        assert_eq!(
-            insts[1].flags, FLAG_DIMMED,
-            "other names stay dimmed"
-        );
+        assert_eq!(insts[1].flags, FLAG_DIMMED, "other names stay dimmed");
         insts[1].name_id = 7;
         insts[1].start_ns = 40;
         apply_highlight_flags(

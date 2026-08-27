@@ -3,9 +3,61 @@
 
 use orbit_live_event::{chrome, kind, InternTable, LaneKey, LiveEvent};
 
-use crate::{Lane, TrackIndex};
+use crate::{par, Lane, TrackIndex};
 
 pub const INSTANCE_MIN_PX: f32 = 4.0;
+/// Extra stack pixels above/below the clip so scroll does not pop lanes.
+pub const Y_CULL_PAD: f32 = 48.0;
+const LOD_SAMPLE_LANES: usize = 8;
+
+/// Visible stack-Y window, already including pad.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct YCull {
+    pub y0: f32,
+    pub y1: f32,
+}
+
+impl YCull {
+    pub fn new(y0: f32, y1: f32) -> Self {
+        Self {
+            y0: y0.min(y1),
+            y1: y0.max(y1),
+        }
+    }
+
+    pub fn padded(scroll: f32, view_h: f32, pad: f32) -> Self {
+        Self::new(scroll - pad, scroll + view_h + pad)
+    }
+
+    pub fn hits(self, y: f32, h: f32) -> bool {
+        y + h >= self.y0 && y <= self.y1
+    }
+}
+
+/// Collect knobs. Default: early-out on, no Y-cull (full stack).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CollectOpts {
+    pub y_cull: Option<YCull>,
+    pub early_out: bool,
+}
+
+impl Default for CollectOpts {
+    fn default() -> Self {
+        Self {
+            y_cull: None,
+            early_out: true,
+        }
+    }
+}
+
+impl CollectOpts {
+    pub fn full_walk() -> Self {
+        Self {
+            y_cull: None,
+            early_out: false,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimelineLod {
@@ -220,12 +272,91 @@ pub fn drop_index_for_y(keys: &[LaneKey], moving: LaneKey, y: f32) -> usize {
 
 /// Sample a few lanes. If any overlapping event is ≥ `min_wide_px`, use
 /// instanced SDF quads. Does not walk all scopes.
+///
+/// Samples the densest lanes (by event count) plus an optional cursor
+/// hint. VALUE lanes are never sampled so f32 bits cannot force Instanced.
 pub fn choose_lod(
     index: &TrackIndex,
     t0: u64,
     t1: u64,
     width: usize,
     min_wide_px: f32,
+) -> TimelineLod {
+    choose_lod_hint(index, t0, t1, width, min_wide_px, None)
+}
+
+/// Same as [`choose_lod`], always including `hint` (cursor / hover lane).
+pub fn choose_lod_hint(
+    index: &TrackIndex,
+    t0: u64,
+    t1: u64,
+    width: usize,
+    min_wide_px: f32,
+    hint: Option<LaneKey>,
+) -> TimelineLod {
+    choose_lod_from_keys(
+        index,
+        t0,
+        t1,
+        width,
+        min_wide_px,
+        &sample_lod_lanes(index, hint),
+    )
+}
+
+/// Old first-8 BTreeMap-order sample. Kept so benches can A/B density.
+pub fn choose_lod_first8(
+    index: &TrackIndex,
+    t0: u64,
+    t1: u64,
+    width: usize,
+    min_wide_px: f32,
+) -> TimelineLod {
+    let mut keys = Vec::new();
+    for (key, _) in index.lanes() {
+        if key.kind == kind::VALUE {
+            continue;
+        }
+        keys.push(key);
+        if keys.len() >= LOD_SAMPLE_LANES {
+            break;
+        }
+    }
+    choose_lod_from_keys(index, t0, t1, width, min_wide_px, &keys)
+}
+
+/// Densest non-VALUE lanes (by `Lane::len`) plus `hint`. O(lanes), not O(scopes).
+pub fn sample_lod_lanes(index: &TrackIndex, hint: Option<LaneKey>) -> Vec<LaneKey> {
+    let mut scored: Vec<(usize, LaneKey)> = index
+        .lanes()
+        .filter(|(k, _)| k.kind != kind::VALUE)
+        .map(|(k, lane)| (lane.len(), k))
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut out = Vec::with_capacity(LOD_SAMPLE_LANES + 1);
+    if let Some(h) = hint {
+        if h.kind != kind::VALUE && index.lane(h).is_some() {
+            out.push(h);
+        }
+    }
+    for (_, k) in scored {
+        if out.len() >= LOD_SAMPLE_LANES {
+            break;
+        }
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
+fn choose_lod_from_keys(
+    index: &TrackIndex,
+    t0: u64,
+    t1: u64,
+    width: usize,
+    min_wide_px: f32,
+    keys: &[LaneKey],
 ) -> TimelineLod {
     if width == 0 || t1 <= t0 {
         return TimelineLod::PixelColumns;
@@ -234,15 +365,13 @@ pub fn choose_lod(
     if ns_per_px <= 0.0 {
         return TimelineLod::PixelColumns;
     }
-    let mut sampled = 0usize;
-    for (key, lane) in index.lanes() {
+    for key in keys {
         if key.kind == kind::VALUE {
             continue;
         }
-        if sampled >= 8 {
-            break;
-        }
-        sampled += 1;
+        let Some(lane) = index.lane(*key) else {
+            continue;
+        };
         if let Some(e) = lane.overlapping(t0, t1) {
             if (e.duration_ns as f64 / ns_per_px) >= min_wide_px as f64 {
                 return TimelineLod::Instanced;
@@ -256,7 +385,7 @@ pub fn choose_lod(
 mod value_lod_tests {
     use super::*;
     use crate::TrackIndex;
-    use orbit_live_event::LiveEvent;
+    use orbit_live_event::{LaneKey, LiveEvent};
 
     #[test]
     fn value_bits_do_not_force_instanced_lod() {
@@ -276,6 +405,116 @@ mod value_lod_tests {
         assert_eq!(
             choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX),
             TimelineLod::PixelColumns
+        );
+    }
+
+    fn scope(start: u64, dur: u64, tid: u32, name: u32) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        }
+    }
+
+    #[test]
+    fn density_sample_hits_busy_lane_past_first_eight() {
+        let mut idx = TrackIndex::default();
+        for tid in 1..=8u32 {
+            idx.insert(scope(0, 8, tid, tid));
+        }
+        for i in 0..24u32 {
+            idx.insert(scope(u64::from(i) * 5_000, 4_800, 99, 100 + i));
+        }
+        assert_eq!(
+            choose_lod_first8(&idx, 0, 100_000, 100, INSTANCE_MIN_PX),
+            TimelineLod::PixelColumns,
+            "BTreeMap first-8 misses tid 99"
+        );
+        assert_eq!(
+            choose_lod(&idx, 0, 100_000, 100, INSTANCE_MIN_PX),
+            TimelineLod::Instanced
+        );
+        let hint = idx
+            .lanes()
+            .find(|(k, _)| k.tid == 99)
+            .map(|(k, _)| k)
+            .unwrap();
+        assert_eq!(
+            choose_lod_hint(&idx, 0, 100_000, 100, INSTANCE_MIN_PX, Some(hint)),
+            TimelineLod::Instanced
+        );
+        let sampled = sample_lod_lanes(&idx, None);
+        assert!(sampled.iter().any(|k| k.tid == 99));
+        assert!(sampled.iter().all(|k| k.kind != kind::VALUE));
+    }
+
+    #[test]
+    fn y_cull_skips_offscreen_lanes() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 50, 1, 1));
+        idx.insert(scope(0, 50, 2, 2));
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        assert_eq!(layout.len(), 2);
+        let all = collect_instances_layout(&idx, 0, 50, 100.0, &layout, None);
+        assert_eq!(all.instances.len(), 2);
+        let y0 = layout[0].1;
+        let h0 = lane_height(layout[0].0);
+        let culled = collect_instances_layout_opts(
+            &idx,
+            0,
+            50,
+            100.0,
+            &layout,
+            None,
+            CollectOpts {
+                y_cull: Some(YCull::new(y0, y0 + h0)),
+                early_out: true,
+            },
+        );
+        assert_eq!(culled.instances.len(), 1);
+        assert_eq!(culled.instances[0].name_id, all.instances[0].name_id);
+    }
+
+    #[test]
+    fn early_out_emits_one_when_scope_fills_window() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 10_000, 1, 1));
+        for i in 0..64u64 {
+            idx.insert(scope(10_000 + i * 10, 8, 1, 10 + i as u32));
+        }
+        let wide = collect_instances_layout_opts(
+            &idx,
+            100,
+            400,
+            200.0,
+            &stacked_layout(&idx.lanes().map(|(k, _)| k).collect::<Vec<_>>(), 0.0),
+            None,
+            CollectOpts {
+                y_cull: None,
+                early_out: true,
+            },
+        );
+        assert_eq!(wide.instances.len(), 1);
+        assert!(wide.instances[0].w >= 199.0);
+        let later = collect_instances_layout_opts(
+            &idx,
+            10_000,
+            10_080,
+            200.0,
+            &stacked_layout(&idx.lanes().map(|(k, _)| k).collect::<Vec<_>>(), 0.0),
+            None,
+            CollectOpts::default(),
+        );
+        assert!(
+            later.instances.len() > 1,
+            "must still emit later scopes that start before t1"
         );
     }
 }
@@ -304,30 +543,61 @@ pub fn collect_instances_layout(
     layout: &[(LaneKey, f32)],
     intern: Option<&InternTable>,
 ) -> InstanceFrame {
+    collect_instances_layout_opts(index, t0, t1, width, layout, intern, CollectOpts::default())
+}
+
+/// [`collect_instances_layout`] with Y-cull / early-out knobs (benches, viewer).
+pub fn collect_instances_layout_opts(
+    index: &TrackIndex,
+    t0: u64,
+    t1: u64,
+    width: f32,
+    layout: &[(LaneKey, f32)],
+    intern: Option<&InternTable>,
+    opts: CollectOpts,
+) -> InstanceFrame {
     let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
     let height = layout
         .last()
         .map(|(k, y)| *y + lane_height(*k) + lane_gap(*k))
         .unwrap_or(0.0);
-    let mut instances = Vec::new();
     if width <= 0.0 || t1 <= t0 {
         return InstanceFrame {
             width,
             height,
             lanes: keys,
-            instances,
+            instances: Vec::new(),
         };
     }
     let span = (t1 - t0) as f64;
-    for &(key, y) in layout {
+    let parts: Vec<Vec<ScopeInstance>> = par::map_collect(layout, |&(key, y)| {
         if key.kind == kind::VALUE {
-            continue;
+            return Vec::new();
         }
         let h = lane_height(key);
-        if let Some(lane) = index.lane(key) {
-            push_lane_instances(lane, t0, t1, span, width, y, h, intern, &mut instances);
+        if let Some(cull) = opts.y_cull {
+            if !cull.hits(y, h + lane_gap(key)) {
+                return Vec::new();
+            }
         }
-    }
+        let mut row = Vec::new();
+        if let Some(lane) = index.lane(key) {
+            push_lane_instances(
+                lane,
+                t0,
+                t1,
+                span,
+                width,
+                y,
+                h,
+                intern,
+                opts.early_out,
+                &mut row,
+            );
+        }
+        row
+    });
+    let instances = parts.into_iter().flatten().collect();
     InstanceFrame {
         width,
         height,
@@ -415,6 +685,7 @@ fn push_lane_instances(
     y: f32,
     h: f32,
     intern: Option<&InternTable>,
+    early_out: bool,
     out: &mut Vec<ScopeInstance>,
 ) {
     let mut i = lane.first_ending_after(t0);
@@ -423,7 +694,21 @@ fn push_lane_instances(
         if e.start_ns >= t1 {
             break;
         }
-        out.push(instance_for_event(e, t0, t1, span, width, y, h, radius, intern));
+        let inst = instance_for_event(e, t0, t1, span, width, y, h, radius, intern);
+        let covers_rest = e.end_ns() >= t1 && inst.x + inst.w + 0.5 >= width;
+        out.push(inst);
+        if early_out && covers_rest {
+            // Non-overlapping: next.start >= e.end >= t1, so this is one
+            // binary search + one emit. Still peek: do not skip a later
+            // scope that starts before t1 and is not covered by e.end.
+            let next = lane.events().get(i + 1);
+            if next
+                .map(|n| n.start_ns >= t1 || n.start_ns >= e.end_ns())
+                .unwrap_or(true)
+            {
+                break;
+            }
+        }
         i += 1;
     }
 }

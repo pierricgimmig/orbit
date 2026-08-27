@@ -12,9 +12,7 @@ use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
 use orbit_live_event::argb_to_css;
-use orbit_live_event::dev::{
-    RelScopeBatch, SERVICE_NAME, SERVICE_PID, VIEWER_NAME, VIEWER_PID,
-};
+use orbit_live_event::dev::{RelScopeBatch, SERVICE_NAME, SERVICE_PID, VIEWER_NAME, VIEWER_PID};
 use orbit_live_render::{
     choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
 };
@@ -59,8 +57,10 @@ pub fn router(service: Arc<LiveService>) -> Router {
 
 async fn index() -> Response {
     asset_response("index.html").unwrap_or_else(|| {
-        Html("<!doctype html><title>Orbit Live</title><p>viewer-dist/index.html missing</p>")
-            .into_response()
+        apply_isolation(
+            Html("<!doctype html><title>Orbit Live</title><p>viewer-dist/index.html missing</p>")
+                .into_response(),
+        )
     })
 }
 
@@ -68,9 +68,31 @@ async fn static_asset(axum::extract::Path(path): axum::extract::Path<String>) ->
     asset_response(&path).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
+/// COOP/COEP so a future wasm-bindgen-rayon pool can use SharedArrayBuffer.
+/// CORP lets same-origin assets load under `require-corp`.
+const ISOLATION: [(&'static str, &'static str); 3] = [
+    ("cross-origin-opener-policy", "same-origin"),
+    ("cross-origin-embedder-policy", "require-corp"),
+    ("cross-origin-resource-policy", "same-origin"),
+];
+
+fn apply_isolation(mut resp: Response) -> Response {
+    for (k, v) in ISOLATION {
+        if let (Ok(name), Ok(val)) = (
+            header::HeaderName::from_bytes(k.as_bytes()),
+            header::HeaderValue::from_str(v),
+        ) {
+            resp.headers_mut().insert(name, val);
+        }
+    }
+    resp
+}
+
 fn asset_response(path: &str) -> Option<Response> {
     let (mime, data) = assets::get(path)?;
-    Some(([(header::CONTENT_TYPE, mime)], data).into_response())
+    Some(apply_isolation(
+        ([(header::CONTENT_TYPE, mime)], data).into_response(),
+    ))
 }
 
 async fn status(State(svc): State<Arc<LiveService>>) -> Json<StatusBody> {
@@ -375,14 +397,7 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
     let height = stack_height(&index).ceil() as u32;
     let intern = svc.intern.lock();
     let instances = if lod == TimelineLod::Instanced {
-        collect_instances(
-            &index,
-            t0,
-            t1,
-            width as f32,
-            0.0,
-            Some(&*intern),
-        )
+        collect_instances(&index, t0, t1, width as f32, 0.0, Some(&*intern))
             .instances
             .iter()
             .map(|i| InstanceJson {
@@ -470,3 +485,22 @@ async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
 }
 
 use tokio::sync::broadcast;
+
+#[cfg(test)]
+mod isolation_tests {
+    #[test]
+    fn coop_coep_ready_for_shared_array_buffer() {
+        assert_eq!(
+            super::ISOLATION[0],
+            ("cross-origin-opener-policy", "same-origin")
+        );
+        assert_eq!(
+            super::ISOLATION[1],
+            ("cross-origin-embedder-policy", "require-corp")
+        );
+        assert_eq!(
+            super::ISOLATION[2],
+            ("cross-origin-resource-policy", "same-origin")
+        );
+    }
+}

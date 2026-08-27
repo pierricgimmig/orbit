@@ -89,6 +89,9 @@ pub const NAME_SCALE_PPP: u32 = 30_021;
 pub const NAME_RASTERIZE: u32 = 30_022;
 pub const NAME_FPS: u32 = 30_023;
 pub const NAME_WASM_MEM: u32 = 30_024;
+pub const NAME_UPLOAD: u32 = 30_025;
+pub const NAME_YCULL: u32 = 30_026;
+pub const NAME_EARLY_OUT: u32 = 30_027;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +144,9 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_RASTERIZE, "Rasterize");
     intern.insert_id(NAME_FPS, "fps");
     intern.insert_id(NAME_WASM_MEM, "wasm_mem");
+    intern.insert_id(NAME_UPLOAD, "Upload");
+    intern.insert_id(NAME_YCULL, "YCull");
+    intern.insert_id(NAME_EARLY_OUT, "EarlyOut");
 }
 
 /// Inclusive span of a relative batch (`max(start_rel + duration)`).
@@ -204,11 +210,7 @@ pub fn align_self_cursor(cursor: u64, live_edge: u64) -> u64 {
 
 /// Sequential self-profile placement on the producer clock only.
 /// Empty when `live_edge == 0` (no demo/capture axis yet).
-pub fn place_self_batch(
-    cursor: &mut u64,
-    scopes: &[RelScope],
-    live_edge: u64,
-) -> Vec<LiveEvent> {
+pub fn place_self_batch(cursor: &mut u64, scopes: &[RelScope], live_edge: u64) -> Vec<LiveEvent> {
     let span = batch_span(scopes);
     if span == 0 || live_edge == 0 {
         return Vec::new();
@@ -427,6 +429,9 @@ mod tests {
         assert_eq!(intern.get(NAME_RASTERIZE), Some("Rasterize"));
         assert_eq!(intern.get(NAME_FPS), Some("fps"));
         assert_eq!(intern.get(NAME_WASM_MEM), Some("wasm_mem"));
+        assert_eq!(intern.get(NAME_UPLOAD), Some("Upload"));
+        assert_eq!(intern.get(NAME_YCULL), Some("YCull"));
+        assert_eq!(intern.get(NAME_EARLY_OUT), Some("EarlyOut"));
         assert_eq!(intern.get(TID_STATS), Some("stats"));
     }
 }

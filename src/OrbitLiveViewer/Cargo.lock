@@ -706,6 +706,7 @@ dependencies = [
  "clap",
  "criterion",
  "orbit-live-event",
+ "rayon",
 ]
 
 [[package]]

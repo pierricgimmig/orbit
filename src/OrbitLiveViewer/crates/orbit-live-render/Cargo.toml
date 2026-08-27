@@ -5,8 +5,15 @@ edition.workspace = true
 license.workspace = true
 description = "Pixel-column live-trace rasterizer (O(width * log n) per lane)"
 
+[features]
+default = []
+# Native rayon lane split. Bazel builds omit this so crate_universe does not
+# need a repin; cargo bench/test can pass `--features parallel`.
+parallel = ["dep:rayon"]
+
 [dependencies]
 orbit-live-event = { path = "../orbit-live-event" }
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 clap = { workspace = true }

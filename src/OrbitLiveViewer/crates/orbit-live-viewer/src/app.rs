@@ -7,18 +7,18 @@ use eframe::egui::{
 };
 use orbit_live_event::dev::{
     intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
-    NAME_CLIP_LABELS,
-    NAME_COLLECT_DRAG, NAME_COLLECT_INST, NAME_DRAIN_NET, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LOD,
-    NAME_NET, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_RASTERIZE, NAME_SCALE_PPP,
-    NAME_FPS, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_WASM_MEM,
+    NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_COLLECT_INST, NAME_DRAIN_NET, NAME_EARLY_OUT,
+    NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LOD, NAME_NET, NAME_PAINT_CALLBACK,
+    NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_RASTERIZE, NAME_SCALE_PPP, NAME_SHIFT_INST,
+    NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD, NAME_WASM_MEM, NAME_YCULL,
     SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
-    apply_highlight_flags, choose_lod, collect_instances_layout, instance_for_event, lane_height,
-    leaf_label, pick_column_event, pick_instance_at, ScopeInstance, ScopePick, TrackIndex,
-    FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
+    apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
+    lane_height, leaf_label, pick_column_event, pick_instance_at, CollectOpts, ScopeInstance,
+    ScopePick, TrackIndex, YCull, FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX, Y_CULL_PAD,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -31,9 +31,9 @@ use crate::net::{
 };
 use crate::theme;
 use crate::timeline::{
-    paint_callback, paint_overlay_callback, shift_instances_to_layout, snap_instances_to_layout,
-    split_drag_instances,
-    TimelineGpu, TimelinePayload, ViewUniforms,
+    paint_callback, paint_overlay_callback, pick_key, shift_instances_to_layout,
+    snap_instances_to_layout, split_drag_instances, upload_mode, GpuDirtyKey, TimelineGpu,
+    TimelinePayload, UploadMode, ViewUniforms,
 };
 use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
 
@@ -335,6 +335,7 @@ pub struct OrbitLiveApp {
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
+    last_dirty: Option<GpuDirtyKey>,
     last_lod: orbit_live_render::TimelineLod,
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
@@ -352,7 +353,7 @@ pub struct OrbitLiveApp {
     recording: bool,
     visible_count: u32,
     draw_label: String,
-    visible_cache: Option<(u64, u64, u64, u32)>,
+    visible_cache: Option<(u64, u64, u64, i32, u32)>,
     search: String,
     search_ids: HashSet<u32>,
     search_resolved: String,
@@ -361,6 +362,7 @@ pub struct OrbitLiveApp {
     pending_vscroll: Option<f32>,
     measure: Option<TimeMeasure>,
     measure_dragging: bool,
+    idle_skip_chrome: bool,
 }
 
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
@@ -419,6 +421,7 @@ impl OrbitLiveApp {
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
+            last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
@@ -444,6 +447,7 @@ impl OrbitLiveApp {
             pending_vscroll: None,
             measure: None,
             measure_dragging: false,
+            idle_skip_chrome: false,
         }
     }
 
@@ -476,6 +480,7 @@ impl OrbitLiveApp {
             self.recording || self.status.demo,
             self.status.capturing,
             self.tracks.dragging(),
+            self.selected.is_some(),
         )
     }
 
@@ -521,13 +526,18 @@ impl OrbitLiveApp {
         self.fullscreen = on;
     }
 
-    fn refresh_scope_stats(&mut self, t0: u64, t1: u64) {
+    fn refresh_scope_stats(&mut self, t0: u64, t1: u64, y_cull: Option<YCull>) {
         let gen = self.tracks.layout_gen();
+        let scroll_q = y_cull.map(|c| (c.y0 * 4.0) as i32).unwrap_or(0);
         let vis = match self.visible_cache {
-            Some((ct0, ct1, cgen, n)) if ct0 == t0 && ct1 == t1 && cgen == gen => n,
+            Some((ct0, ct1, cgen, cscroll, n))
+                if ct0 == t0 && ct1 == t1 && cgen == gen && cscroll == scroll_q =>
+            {
+                n
+            }
             _ => {
-                let n = count_visible_scopes(&self.index, self.tracks.layout(), t0, t1);
-                self.visible_cache = Some((t0, t1, gen, n));
+                let n = count_visible_scopes(&self.index, self.tracks.layout(), t0, t1, y_cull);
+                self.visible_cache = Some((t0, t1, gen, scroll_q, n));
                 n
             }
         };
@@ -666,7 +676,11 @@ impl OrbitLiveApp {
                 self.selected = None;
                 self.hover = None;
                 self.measure = None;
-                let origin = if start_ns > 0 { start_ns } else { DEMO_ORIGIN_NS };
+                let origin = if start_ns > 0 {
+                    start_ns
+                } else {
+                    DEMO_ORIGIN_NS
+                };
                 self.self_cursor_ns = origin;
                 self.live_edge_ns = origin;
             }
@@ -795,8 +809,7 @@ impl OrbitLiveApp {
                 if fullscreen_pill(ui, self.fullscreen).clicked() {
                     self.set_fullscreen(ui.ctx(), !self.fullscreen);
                 }
-                if shape_pill(ui, self.compact, "Track density", paint_density_icon).clicked()
-                {
+                if shape_pill(ui, self.compact, "Track density", paint_density_icon).clicked() {
                     self.compact = !self.compact;
                 }
                 if shape_pill(ui, self.advanced, "Inspector", paint_inspector_icon).clicked() {
@@ -958,9 +971,11 @@ impl OrbitLiveApp {
 
         ui.add_space(16.0);
         ui.label(
-            RichText::new("Ruler wheel zoom · Ctrl+wheel zoom · wheel pan · drag pan · space follow")
-                .size(10.0)
-                .color(theme::MUTED),
+            RichText::new(
+                "Ruler wheel zoom · Ctrl+wheel zoom · wheel pan · drag pan · space follow",
+            )
+            .size(10.0)
+            .color(theme::MUTED),
         );
     }
 
@@ -1095,6 +1110,7 @@ impl OrbitLiveApp {
                     } else {
                         HeaderPass::All
                     },
+                    !self.idle_skip_chrome || lifting,
                 );
             }
 
@@ -1103,9 +1119,20 @@ impl OrbitLiveApp {
             let width = body.width().max(1.0);
             let ppp = ui.ctx().pixels_per_point();
             self.view_width = (width * ppp).round().clamp(16.0, 4096.0) as u32;
+            let clip = ui.clip_rect();
+            let y_cull = YCull::padded(clip.min.y - rect.min.y, clip.height(), Y_CULL_PAD);
+            let _ycull = dev.scope(TID_RENDER, NAME_YCULL);
+            drop(_ycull);
             let lod = {
                 let _lod = dev.scope(TID_RENDER, NAME_LOD);
-                choose_lod(&self.index, t0, t1, width as usize, INSTANCE_MIN_PX)
+                choose_lod_hint(
+                    &self.index,
+                    t0,
+                    t1,
+                    width as usize,
+                    INSTANCE_MIN_PX,
+                    self.hover.map(|h| h.lane_key()),
+                )
             };
             self.lod_label = lod.as_str();
             self.last_lod = lod;
@@ -1125,24 +1152,27 @@ impl OrbitLiveApp {
             if empty {
                 paint_empty(ui, body);
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
-                self.refresh_scope_stats(t0, t1);
+                self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
             }
 
             if self.has_gpu {
                 let screen = ui.ctx().screen_rect();
                 let screen_px = [screen.width() * ppp, screen.height() * ppp];
-                let view_body = ViewUniforms::from_rect(body, ppp, screen_px);
-                let view_leaf = ViewUniforms::from_leaf_stack(
+                let now = ui.ctx().input(|i| i.time) as f32;
+                let mut view_body = ViewUniforms::from_rect(body, ppp, screen_px);
+                let mut view_leaf = ViewUniforms::from_leaf_stack(
                     body,
                     &self.tracks.rest_layout(),
                     self.tracks.scale,
                     ppp,
                     screen_px,
                 );
+                view_body.time = now;
+                view_leaf.time = now;
                 let (payload, overlay) = {
                     let _payload = dev.scope(TID_RENDER, NAME_PAYLOAD);
-                    self.timeline_payload(t0, t1, width, lod, ppp, dev)
+                    self.timeline_payload(t0, t1, width, lod, ppp, Some(y_cull), dev)
                 };
                 let view = match &payload {
                     TimelinePayload::Pixel { .. } => view_leaf,
@@ -1173,11 +1203,12 @@ impl OrbitLiveApp {
                 if lifting {
                     {
                         let _headers = dev.scope(TID_UI, NAME_PAINT_HEADERS);
-                        self.paint_headers(ui, head, body, hover_row, HeaderPass::Dragged);
+                        self.paint_headers(ui, head, body, hover_row, HeaderPass::Dragged, true);
                     }
                     if let Some(fg) = overlay {
                         let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
-                        ui.painter().add(paint_overlay_callback(body, fg, view_body));
+                        ui.painter()
+                            .add(paint_overlay_callback(body, fg, view_body));
                     }
                     if self.last_lod == orbit_live_render::TimelineLod::Instanced
                         && !self.skip_clip_labels
@@ -1194,7 +1225,7 @@ impl OrbitLiveApp {
                         );
                     }
                 }
-                self.refresh_scope_stats(t0, t1);
+                self.refresh_scope_stats(t0, t1, Some(y_cull));
                 paint_value_graphs(
                     ui,
                     body,
@@ -1204,6 +1235,7 @@ impl OrbitLiveApp {
                     &self.index,
                     &self.intern,
                     self.tracks.scale,
+                    Some(y_cull),
                 );
                 paint_playhead(ui, body, self.t0, self.t1, self.live_edge_ns as f64);
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
@@ -1232,6 +1264,7 @@ impl OrbitLiveApp {
         body: Rect,
         hover_row: Option<RowId>,
         pass: HeaderPass,
+        interactive: bool,
     ) {
         let dragged = self.tracks.dragging_thread();
         let rows: Vec<TrackRow> = self.tracks.rows().to_vec();
@@ -1296,13 +1329,19 @@ impl OrbitLiveApp {
                 let highlight = match row.id {
                     RowId::Thread(t) if hover_thread == Some(t) => true,
                     RowId::Lane(k)
-                        if hover_thread == Some(ThreadId { pid: k.pid, tid: k.tid }) =>
+                        if hover_thread
+                            == Some(ThreadId {
+                                pid: k.pid,
+                                tid: k.tid,
+                            }) =>
                     {
                         true
                     }
                     _ => hover_row == Some(row.id) && !matches!(row.id, RowId::Thread(_)),
                 };
-                if highlight && !dragging && !matches!(row.id, RowId::Lane(k) if k.kind == kind::VALUE)
+                if highlight
+                    && !dragging
+                    && !matches!(row.id, RowId::Lane(k) if k.kind == kind::VALUE)
                 {
                     let band_hl = if let RowId::Thread(t) = row.id {
                         self.tracks
@@ -1325,15 +1364,12 @@ impl OrbitLiveApp {
                     painter.rect_stroke(
                         band_hl,
                         0.0,
-                        Stroke::new(
-                            1.0,
-                            Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 70),
-                        ),
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 70)),
                         StrokeKind::Inside,
                     );
                 }
             }
-            self.paint_tree_row(ui, head, *row, r);
+            self.paint_tree_row(ui, head, *row, r, interactive);
         }
     }
 
@@ -1347,9 +1383,26 @@ impl OrbitLiveApp {
         }
     }
 
-    fn paint_tree_row(&mut self, ui: &mut Ui, head: Rect, row: TrackRow, r: Rect) {
+    fn paint_tree_row(
+        &mut self,
+        ui: &mut Ui,
+        head: Rect,
+        row: TrackRow,
+        r: Rect,
+        interactive: bool,
+    ) {
         match row.id {
             RowId::Machine(m) => {
+                if !interactive {
+                    ui.painter().text(
+                        Pos2::new(r.left() + 22.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        format!("MACHINE  {}", m.label().to_uppercase()),
+                        FontId::new(9.5, fonts::medium()),
+                        theme::MUTED,
+                    );
+                    return;
+                }
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32)) {
                     self.tracks.toggle(row.id);
@@ -1364,6 +1417,16 @@ impl OrbitLiveApp {
                 );
             }
             RowId::Process(pid) => {
+                if !interactive {
+                    ui.painter().text(
+                        Pos2::new(r.left() + 30.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        format!("process  {pid}"),
+                        FontId::new(11.0, fonts::medium()),
+                        theme::TEXT,
+                    );
+                    return;
+                }
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
                     self.tracks.toggle(row.id);
@@ -1409,11 +1472,29 @@ impl OrbitLiveApp {
                 }
             }
             RowId::Thread(th) => {
+                if !interactive {
+                    let tname = self
+                        .intern
+                        .get(th.tid)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{}", th.tid));
+                    ui.painter().text(
+                        Pos2::new(r.left() + 64.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        format!("thread  {}  {tname}", th.tid),
+                        FontId::new(11.0, FontFamily::Proportional),
+                        theme::TEXT,
+                    );
+                    return;
+                }
                 let open = !self.tracks.collapsed(row.id);
                 let dragging = self.tracks.is_dragging_thread(th);
                 let title = Rect::from_min_size(
                     r.min,
-                    Vec2::new(r.width(), (THREAD_H * self.tracks.scale.max(0.01)).min(r.height())),
+                    Vec2::new(
+                        r.width(),
+                        (THREAD_H * self.tracks.scale.max(0.01)).min(r.height()),
+                    ),
                 );
                 let handle = Rect::from_min_size(
                     Pos2::new(title.left() + 20.0, title.top()),
@@ -1488,6 +1569,17 @@ impl OrbitLiveApp {
                 hide_r.on_hover_text("Hide thread");
             }
             RowId::Lane(key) => {
+                if !interactive {
+                    let name = value_lane_name(&self.index, &self.intern, key);
+                    ui.painter().text(
+                        Pos2::new(r.left() + 40.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        name,
+                        FontId::new(10.5, FontFamily::Proportional),
+                        theme::MUTED,
+                    );
+                    return;
+                }
                 if key.kind == kind::VALUE {
                     let th = ThreadId {
                         pid: key.pid,
@@ -1497,15 +1589,14 @@ impl OrbitLiveApp {
                         Pos2::new(r.left() + 18.0, r.top()),
                         Pos2::new(r.right() - 8.0, r.bottom()),
                     );
-                    let resp =
-                        ui.interact(drag_r, ui.id().with(("vdrag", th.pid, th.tid)), Sense::drag());
+                    let resp = ui.interact(
+                        drag_r,
+                        ui.id().with(("vdrag", th.pid, th.tid)),
+                        Sense::drag(),
+                    );
                     if resp.drag_started() {
                         if let Some(p) = resp.interact_pointer_pos() {
-                            let ty = self
-                                .tracks
-                                .thread_band(th)
-                                .map(|(y, _)| y)
-                                .unwrap_or(row.y);
+                            let ty = self.tracks.thread_band(th).map(|(y, _)| y).unwrap_or(row.y);
                             self.tracks.begin_drag(th, ty, p.y - head.top());
                         }
                     }
@@ -1542,12 +1633,52 @@ impl OrbitLiveApp {
         width: f32,
         lod: orbit_live_render::TimelineLod,
         ppp: f32,
+        y_cull: Option<YCull>,
         dev: &DevFrame,
     ) -> (TimelinePayload, Option<TimelinePayload>) {
         let layout = self.tracks.layout().to_vec();
         let rest_layout = self.tracks.rest_layout();
         let drag_layout = self.tracks.drag_layout();
         let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
+        let next_key = GpuDirtyKey {
+            t0,
+            t1,
+            width_bits: width.to_bits(),
+            scroll_q: y_cull.map(|c| (c.y0 * 4.0) as i32).unwrap_or(0),
+            view_h_q: y_cull.map(|c| ((c.y1 - c.y0) * 4.0) as i32).unwrap_or(0),
+            layout_gen: self.tracks.layout_gen(),
+            lod: match lod {
+                orbit_live_render::TimelineLod::Instanced => 1,
+                orbit_live_render::TimelineLod::PixelColumns => 0,
+            },
+            events: self.index.event_count() as u64,
+            selected: pick_key(self.selected),
+            hover: pick_key(self.hover),
+            search: if self.search_active() {
+                self.search_ids.len() as u64 + 1
+            } else {
+                0
+            },
+        };
+        let mode = upload_mode(self.last_dirty.as_ref(), &next_key);
+        self.last_dirty = Some(next_key);
+        if mode == UploadMode::Skip && dragged.is_none() {
+            let _up = dev.scope(TID_RENDER, NAME_UPLOAD);
+            return (TimelinePayload::Keep, None);
+        }
+        if mode == UploadMode::Flags
+            && lod == orbit_live_render::TimelineLod::Instanced
+            && !self.last_instances.is_empty()
+            && dragged.is_none()
+        {
+            let _up = dev.scope(TID_RENDER, NAME_UPLOAD);
+            let mut instances = self.last_instances.clone();
+            let search = self.search_active().then_some(&self.search_ids);
+            apply_highlight_flags(&mut instances, self.selected, self.hover, search);
+            self.last_instances = instances.clone();
+            scale_instances_ppp(&mut instances, ppp);
+            return (TimelinePayload::Instanced { instances }, None);
+        }
         if self.index.event_count() > 0 {
             let mut overlay = Vec::new();
             if lod == orbit_live_render::TimelineLod::Instanced {
@@ -1563,13 +1694,18 @@ impl OrbitLiveApp {
                 };
                 if !shifted {
                     let _collect = dev.scope(TID_RENDER, NAME_COLLECT_INST);
-                    let mut frame = collect_instances_layout(
+                    let _eo = dev.scope(TID_RENDER, NAME_EARLY_OUT);
+                    let mut frame = collect_instances_layout_opts(
                         &self.index,
                         t0,
                         t1,
                         width,
                         &rest_layout,
                         Some(&self.intern),
+                        CollectOpts {
+                            y_cull,
+                            early_out: true,
+                        },
                     );
                     for inst in &mut frame.instances {
                         inst.h *= d;
@@ -1590,23 +1726,22 @@ impl OrbitLiveApp {
                 };
                 if dragged.is_some() && !drag_layout.is_empty() {
                     let _drag = dev.scope(TID_RENDER, NAME_COLLECT_DRAG);
-                    let mut frame = collect_instances_layout(
+                    let mut frame = collect_instances_layout_opts(
                         &self.index,
                         t0,
                         t1,
                         width,
                         &drag_layout,
                         Some(&self.intern),
+                        CollectOpts {
+                            y_cull,
+                            early_out: true,
+                        },
                     );
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
-                    apply_highlight_flags(
-                        &mut frame.instances,
-                        self.selected,
-                        self.hover,
-                        search,
-                    );
+                    apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search);
                     fg = frame.instances;
                 }
                 self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
@@ -1623,18 +1758,16 @@ impl OrbitLiveApp {
             self.last_instances.clear();
             self.last_instanced_window = None;
             if let Some(sel) = self.selected {
-                if let Some(mut inst) =
-                    overlay_instance(
-                        &self.index,
-                        &layout,
-                        t0,
-                        t1,
-                        width,
-                        sel,
-                        self.tracks.scale,
-                        Some(&self.intern),
-                    )
-                {
+                if let Some(mut inst) = overlay_instance(
+                    &self.index,
+                    &layout,
+                    t0,
+                    t1,
+                    width,
+                    sel,
+                    self.tracks.scale,
+                    Some(&self.intern),
+                ) {
                     inst.flags = FLAG_SELECTED;
                     overlay.push(inst);
                 }
@@ -1671,16 +1804,21 @@ impl OrbitLiveApp {
                     None,
                     Some(&self.intern),
                     self.tracks.scale,
+                    y_cull,
                 )
             };
             let lift = dragged.and_then(|(pid, tid)| {
-                let mut frame = collect_instances_layout(
+                let mut frame = collect_instances_layout_opts(
                     &self.index,
                     t0,
                     t1,
                     width,
                     &drag_layout,
                     Some(&self.intern),
+                    CollectOpts {
+                        y_cull,
+                        early_out: true,
+                    },
                 );
                 let d = self.tracks.scale;
                 frame.instances.retain(|i| i.pid == pid && i.tid == tid);
@@ -1699,6 +1837,7 @@ impl OrbitLiveApp {
         }
         self.last_instances.clear();
         self.last_instanced_window = None;
+        self.last_dirty = None;
         if let Some(tl) = &self.service_timeline {
             if tl.lod == "instanced" && !tl.instances.is_empty() {
                 let mut instances = instances_from_timeline(tl);
@@ -1747,7 +1886,11 @@ impl OrbitLiveApp {
             });
             if scroll.x != 0.0 {
                 // CaptureWindow::MouseWheelMovedHorizontally → Pan(±0.1).
-                let ratio = if scroll.x > 0.0 { PAN_RATIO } else { -PAN_RATIO };
+                let ratio = if scroll.x > 0.0 {
+                    PAN_RATIO
+                } else {
+                    -PAN_RATIO
+                };
                 let (t0, t1) = pan_time(self.t0, self.t1, ratio);
                 self.t0 = t0;
                 self.t1 = t1;
@@ -1760,7 +1903,8 @@ impl OrbitLiveApp {
             };
             if want_zoom {
                 if let Some(pos) = response.hover_pos() {
-                    let frac = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
+                    let frac =
+                        ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
                     let (t0, t1) = zoom_time(self.t0, self.t1, zoom_step, frac);
                     self.t0 = t0;
                     self.t1 = t1;
@@ -1795,7 +1939,11 @@ impl OrbitLiveApp {
             Pos2::new(track.left() + tx, track.top() + 2.0),
             Vec2::new(tw, (track.height() - 4.0).max(4.0)),
         );
-        let resp = ui.interact(track, ui.id().with("orbit_time_slider"), Sense::click_and_drag());
+        let resp = ui.interact(
+            track,
+            ui.id().with("orbit_time_slider"),
+            Sense::click_and_drag(),
+        );
         let hover = resp.hovered();
         ui.painter().rect_filled(track, 0.0, theme::INPUT);
         ui.painter().rect_filled(
@@ -1807,7 +1955,8 @@ impl OrbitLiveApp {
                 Color32::from_rgb(0x2A, 0x2E, 0x36)
             },
         );
-        ui.painter().line_segment([track.left_top(), track.right_top()], hairline());
+        ui.painter()
+            .line_segment([track.left_top(), track.right_top()], hairline());
         let pos = resp.interact_pointer_pos();
         if resp.drag_started() {
             self.follow = false;
@@ -2000,7 +2149,9 @@ impl OrbitLiveApp {
         }
         if self.measure_dragging && response.drag_stopped() {
             self.measure_dragging = false;
-            let ctrl = response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+            let ctrl = response
+                .ctx
+                .input(|i| i.modifiers.ctrl || i.modifiers.command);
             if let Some(m) = self.measure {
                 if m.start_ns == m.stop_ns {
                     self.measure = None;
@@ -2110,7 +2261,34 @@ impl eframe::App for OrbitLiveApp {
         let devf = DevFrame::begin(self.dev);
         {
             let _frame_scope = devf.scope(TID_UI, NAME_FRAME);
-            apply_orbit_visuals(ctx);
+            let interaction = ctx.input(|i| {
+                chrome_interaction(
+                    i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released(),
+                    !i.keys_down.is_empty(),
+                    i.events.iter().any(|e| {
+                        matches!(
+                            e,
+                            egui::Event::Text(_)
+                                | egui::Event::Key { .. }
+                                | egui::Event::MouseWheel { .. }
+                                | egui::Event::PointerButton { .. }
+                        )
+                    }),
+                )
+            });
+            let search_sel_changed = self.last_dirty.map_or(true, |d| {
+                d.selected != pick_key(self.selected)
+                    || d.hover != pick_key(self.hover)
+                    || (d.search == 0) != !self.search_active()
+            });
+            self.idle_skip_chrome = skip_idle_chrome(
+                self.wants_live_repaint() || self.needs_repaint || self.follow,
+                interaction,
+                search_sel_changed,
+            );
+            if !self.idle_skip_chrome {
+                apply_orbit_visuals(ctx);
+            }
             let dt_raw = ctx.input(|i| i.stable_dt);
             let dt = dt_raw.clamp(0.0, 0.05);
             self.note_fps(dt_raw);
@@ -2213,13 +2391,8 @@ impl eframe::App for OrbitLiveApp {
                 self.fps_ema.max(0.0),
             ));
             if let Some(mem) = wasm_mem_bytes() {
-                let mut ev = LiveEvent::from_value(
-                    sample_t,
-                    VIEWER_PID,
-                    TID_STATS,
-                    NAME_WASM_MEM,
-                    mem,
-                );
+                let mut ev =
+                    LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, NAME_WASM_MEM, mem);
                 ev.extra = 1;
                 self.index.insert(ev);
             }
@@ -2383,14 +2556,8 @@ fn paint_fullscreen_icon(painter: &egui::Painter, rect: Rect, compressed: bool, 
         ]
     };
     for (origin, dx, dy) in corners {
-        painter.line_segment(
-            [origin, origin + Vec2::new(dx * arm, 0.0)],
-            stroke,
-        );
-        painter.line_segment(
-            [origin, origin + Vec2::new(0.0, dy * arm)],
-            stroke,
-        );
+        painter.line_segment([origin, origin + Vec2::new(dx * arm, 0.0)], stroke);
+        painter.line_segment([origin, origin + Vec2::new(0.0, dy * arm)], stroke);
     }
 }
 
@@ -2431,7 +2598,10 @@ fn paint_density_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
     let w = 9.0;
     for dy in [-3.5_f32, 0.0, 3.5] {
         painter.line_segment(
-            [Pos2::new(c.x - w * 0.5, c.y + dy), Pos2::new(c.x + w * 0.5, c.y + dy)],
+            [
+                Pos2::new(c.x - w * 0.5, c.y + dy),
+                Pos2::new(c.x + w * 0.5, c.y + dy),
+            ],
             stroke,
         );
     }
@@ -2565,6 +2735,7 @@ fn paint_value_graphs(
     index: &TrackIndex,
     intern: &InternTable,
     scale: f32,
+    y_cull: Option<YCull>,
 ) {
     if t1 <= t0 {
         return;
@@ -2576,10 +2747,15 @@ fn paint_value_graphs(
         if key.kind != kind::VALUE {
             continue;
         }
+        let h = lane_height(key) * scale.max(0.01);
+        if let Some(cull) = y_cull {
+            if !cull.hits(y, h) {
+                continue;
+            }
+        }
         let Some(lane) = index.lane(key) else {
             continue;
         };
-        let h = lane_height(key) * scale.max(0.01);
         let mut samples: Vec<(f32, f32)> = Vec::new();
         let mut i = lane.first_ending_after(t0);
         while let Some(e) = lane.events().get(i) {
@@ -2587,7 +2763,8 @@ fn paint_value_graphs(
                 break;
             }
             if let Some(v) = e.value_f32() {
-                let x = ((e.start_ns.saturating_sub(t0) as f64 / span) * body.width() as f64) as f32;
+                let x =
+                    ((e.start_ns.saturating_sub(t0) as f64 / span) * body.width() as f64) as f32;
                 samples.push((x, v));
             }
             i += 1;
@@ -2597,20 +2774,13 @@ fn paint_value_graphs(
         }
         let (min_v, max_v) = value_extent(&samples);
         let bucketed = bucket_last_per_device_px(&samples, ppp);
-        let color = c32(theme::display_argb(
-            orbit_live_event::named_scope_color(
-                intern
-                    .get(
-                        lane.events()
-                            .last()
-                            .map(|e| e.name_id)
-                            .unwrap_or(key.tid),
-                    )
-                    .map(str::as_bytes)
-                    .unwrap_or(&key.tid.to_le_bytes()),
-                1,
-            ),
-        ));
+        let color = c32(theme::display_argb(orbit_live_event::named_scope_color(
+            intern
+                .get(lane.events().last().map(|e| e.name_id).unwrap_or(key.tid))
+                .map(str::as_bytes)
+                .unwrap_or(&key.tid.to_le_bytes()),
+            1,
+        )));
         let pad = 3.0;
         let inner_h = (h - pad * 2.0).max(1.0);
         let span_v = (max_v - min_v).max(1e-6);
@@ -2630,14 +2800,25 @@ fn paint_value_graphs(
     }
 }
 
-fn count_visible_scopes(index: &TrackIndex, layout: &[(LaneKey, f32)], t0: u64, t1: u64) -> u32 {
+fn count_visible_scopes(
+    index: &TrackIndex,
+    layout: &[(LaneKey, f32)],
+    t0: u64,
+    t1: u64,
+    y_cull: Option<YCull>,
+) -> u32 {
     if t1 <= t0 {
         return 0;
     }
     let mut n = 0u32;
-    for (key, _) in layout {
+    for (key, y) in layout {
         if key.kind != kind::API_SCOPE && key.kind != kind::API_TRACK {
             continue;
+        }
+        if let Some(cull) = y_cull {
+            if !cull.hits(*y, lane_height(*key)) {
+                continue;
+            }
         }
         let Some(lane) = index.lane(*key) else {
             continue;
@@ -2870,8 +3051,7 @@ fn show_scope_tooltip(ui: &Ui, intern: &InternTable, pick: ScopePick) {
         .get(pick.name_id)
         .map(str::to_string)
         .unwrap_or_else(|| format!("#{}", pick.name_id));
-    let dur = format_value_pick(intern, pick)
-        .unwrap_or_else(|| format_ns(pick.duration_ns as f64));
+    let dur = format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -3120,8 +3300,17 @@ fn elide_to_width(s: &str, max_w: f32, measure: &mut impl FnMut(&str) -> f32) ->
     }
 }
 
-fn live_repaint(demo: bool, capturing: bool, dragging: bool) -> bool {
-    demo || capturing || dragging
+fn live_repaint(demo: bool, capturing: bool, dragging: bool, selected: bool) -> bool {
+    demo || capturing || dragging || selected
+}
+
+fn chrome_interaction(pointer_down: bool, keys: bool, text_or_wheel: bool) -> bool {
+    pointer_down || keys || text_or_wheel
+}
+
+/// Skip rebuilding inspector/header widgets on the 100ms idle wake.
+fn skip_idle_chrome(live: bool, interaction: bool, search_sel_changed: bool) -> bool {
+    !live && !interaction && !search_sel_changed
 }
 
 fn timeslice_text(name: &str, elapsed: &str) -> String {
@@ -3212,8 +3401,7 @@ fn paint_clip_labels(
             Pos2::new(pos_x + 2.0, box_rect.bottom() - pad_y),
             galley.size(),
         );
-        ui.painter_at(clip)
-            .galley(pos.min, galley, Color32::WHITE);
+        ui.painter_at(clip).galley(pos.min, galley, Color32::WHITE);
     }
 }
 
@@ -3348,11 +3536,20 @@ mod tests {
     }
 
     #[test]
-    fn live_repaint_is_demo_capture_drag_only() {
-        assert!(!live_repaint(false, false, false));
-        assert!(live_repaint(true, false, false));
-        assert!(live_repaint(false, true, false));
-        assert!(live_repaint(false, false, true));
+    fn live_repaint_is_demo_capture_drag_or_selected() {
+        assert!(!live_repaint(false, false, false, false));
+        assert!(live_repaint(true, false, false, false));
+        assert!(live_repaint(false, true, false, false));
+        assert!(live_repaint(false, false, true, false));
+        assert!(live_repaint(false, false, false, true));
+    }
+
+    #[test]
+    fn skip_idle_chrome_on_timer_wake_only() {
+        assert!(skip_idle_chrome(false, false, false));
+        assert!(!skip_idle_chrome(true, false, false));
+        assert!(!skip_idle_chrome(false, true, false));
+        assert!(!skip_idle_chrome(false, false, true));
     }
 
     #[test]
@@ -3392,12 +3589,24 @@ mod tests {
             name_id: 0,
         });
         idx.insert(LiveEvent::from_value(120, 1, 1, 9, 0.5));
-        let key = idx.lanes().find(|(k, _)| k.kind == kind::API_SCOPE).unwrap().0;
+        let key = idx
+            .lanes()
+            .find(|(k, _)| k.kind == kind::API_SCOPE)
+            .unwrap()
+            .0;
         let vk = idx.lanes().find(|(k, _)| k.kind == kind::VALUE).unwrap().0;
         let layout = vec![(key, 0.0), (vk, 40.0)];
-        assert_eq!(count_visible_scopes(&idx, &layout, 90, 160), 1);
-        assert_eq!(count_visible_scopes(&idx, &layout, 90, 400), 2);
-        assert_eq!(count_visible_scopes(&idx, &[], 90, 400), 0);
+        assert_eq!(count_visible_scopes(&idx, &layout, 90, 160, None), 1);
+        assert_eq!(count_visible_scopes(&idx, &layout, 90, 400, None), 2);
+        assert_eq!(count_visible_scopes(&idx, &[], 90, 400, None), 0);
+        assert_eq!(
+            count_visible_scopes(&idx, &layout, 90, 400, Some(YCull::new(0.0, 20.0))),
+            2
+        );
+        assert_eq!(
+            count_visible_scopes(&idx, &layout, 90, 400, Some(YCull::new(100.0, 200.0))),
+            0
+        );
     }
 
     #[test]
