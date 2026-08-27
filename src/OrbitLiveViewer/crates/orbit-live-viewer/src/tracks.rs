@@ -557,6 +557,10 @@ impl TrackStrip {
         self.cached_total_h
     }
 
+    /// Y of the gap the dragged thread will drop into. Nothing paints it any
+    /// more -- the layout opening a hole is the drop affordance -- but the
+    /// layout invariant is still worth asserting.
+    #[allow(dead_code)]
     pub fn insert_y(&self) -> Option<f32> {
         self.drag.as_ref()?;
         self.cached_insert_y

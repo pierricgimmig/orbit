@@ -1168,7 +1168,6 @@ impl OrbitLiveApp {
             if empty {
                 paint_empty(ui, body);
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
-                self.paint_insert_line(ui, head, body);
                 self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
             }
@@ -1414,16 +1413,6 @@ impl OrbitLiveApp {
                 }
             }
             self.paint_tree_row(ui, head, *row, r, interactive);
-        }
-    }
-
-    fn paint_insert_line(&self, ui: &Ui, head: Rect, body: Rect) {
-        if let Some(iy) = self.tracks.insert_y() {
-            let y = head.top() + iy;
-            ui.painter().line_segment(
-                [Pos2::new(head.left() + 8.0, y), Pos2::new(body.right(), y)],
-                Stroke::new(1.25, theme::INSERT),
-            );
         }
     }
 
