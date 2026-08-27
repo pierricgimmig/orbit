@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
     align_self_cursor, batch_span, render_worker_label, render_worker_tid, stamp_batch_from,
+    SELF_AHEAD_SNAP_NS,
     RelScope, NAME_CHROME, NAME_COLLECT_LANE, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD,
     NAME_PRIMITIVE_LISTING, NAME_PUSH, NAME_RASTER, NAME_RASTER_LANE, NAME_TIMELINE_API,
     NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
@@ -128,6 +129,9 @@ pub struct LiveService {
     live_end_ns: AtomicU64,
     /// Next free ns on the self-profile axis. Only moves forward.
     self_cursor_ns: AtomicU64,
+    /// `live_edge` at the last self-scope placement, so a frozen producer clock
+    /// can be told apart from an axis that jumped backwards.
+    self_edge_ns: AtomicU64,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
     last_timeline_prof: Mutex<Option<Instant>>,
@@ -177,6 +181,7 @@ impl LiveService {
             self_gen: AtomicU64::new(0),
             live_end_ns: AtomicU64::new(0),
             self_cursor_ns: AtomicU64::new(0),
+            self_edge_ns: AtomicU64::new(0),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
             last_timeline_prof: Mutex::new(None),
@@ -250,12 +255,20 @@ impl LiveService {
     }
 
     /// Allocate `[cursor, cursor+span)` on the self-profile axis.
-    fn take_self_origin(&self, span: u64, live_edge: u64) -> u64 {
+    ///
+    /// `None` when the producer clock has stopped and the window ahead of the
+    /// live edge is full: snapping back there would restamp this batch over
+    /// scopes already in the ring. Mirrors `dev::place_self_batch`.
+    fn take_self_origin(&self, span: u64, live_edge: u64) -> Option<u64> {
         if span == 0 {
-            return self.self_cursor_ns.load(Ordering::Relaxed);
+            return Some(self.self_cursor_ns.load(Ordering::Relaxed));
         }
         let mut cursor = self.self_cursor_ns.load(Ordering::Relaxed);
         loop {
+            let edge_unchanged = self.self_edge_ns.load(Ordering::Relaxed) == live_edge;
+            if edge_unchanged && cursor > live_edge.saturating_add(SELF_AHEAD_SNAP_NS) {
+                return None;
+            }
             let origin = align_self_cursor(cursor, live_edge);
             let next = origin.saturating_add(span);
             match self.self_cursor_ns.compare_exchange_weak(
@@ -264,7 +277,10 @@ impl LiveService {
                 Ordering::Relaxed,
                 Ordering::Relaxed,
             ) {
-                Ok(_) => return origin,
+                Ok(_) => {
+                    self.self_edge_ns.store(live_edge, Ordering::Relaxed);
+                    return Some(origin);
+                }
                 Err(actual) => cursor = actual,
             }
         }
@@ -284,7 +300,9 @@ impl LiveService {
         if span == 0 || live_edge == 0 {
             return;
         }
-        let origin = self.take_self_origin(span, live_edge);
+        let Some(origin) = self.take_self_origin(span, live_edge) else {
+            return;
+        };
         let events = stamp_batch_from(scopes, origin);
         if events.is_empty() {
             return;

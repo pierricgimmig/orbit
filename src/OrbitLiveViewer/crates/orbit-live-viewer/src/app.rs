@@ -343,7 +343,7 @@ pub struct OrbitLiveApp {
     last_view: Option<ViewUniforms>,
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
-    self_cursor_ns: u64,
+    self_cursor: orbit_live_event::dev::SelfCursor,
     /// Demo/capture end only. Not ring newest_end (pid 2/3).
     live_edge_ns: u64,
     slider_grab: Option<f32>,
@@ -433,7 +433,7 @@ impl OrbitLiveApp {
             last_view: None,
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
-            self_cursor_ns: 0,
+            self_cursor: Default::default(),
             live_edge_ns: 0,
             slider_grab: None,
             fps_ema: 0.0,
@@ -498,7 +498,7 @@ impl OrbitLiveApp {
     fn start_record(&mut self) {
         self.error.clear();
         self.recording = true;
-        self.self_cursor_ns = DEMO_ORIGIN_NS;
+        self.self_cursor.reset_to(DEMO_ORIGIN_NS);
         self.live_edge_ns = DEMO_ORIGIN_NS;
         self.net.start_demo();
         if !self.dev_locked_off {
@@ -692,7 +692,7 @@ impl OrbitLiveApp {
                 } else {
                     DEMO_ORIGIN_NS
                 };
-                self.self_cursor_ns = origin;
+                self.self_cursor.reset_to(origin);
                 self.live_edge_ns = origin;
             }
             LiveFrame::Status {
@@ -1168,6 +1168,7 @@ impl OrbitLiveApp {
             if empty {
                 paint_empty(ui, body);
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
+                self.paint_insert_line(ui, head, body);
                 self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
             }
@@ -1276,7 +1277,6 @@ impl OrbitLiveApp {
                     self.light_canvas,
                 );
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
-                self.paint_insert_line(ui, head, body);
                 if let Some(h) = self.hover {
                     show_scope_tooltip(ui, &self.intern, h);
                 }
@@ -2439,7 +2439,7 @@ impl eframe::App for OrbitLiveApp {
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
             let live_edge = self.live_edge_ns;
-            let placed = place_self_batch(&mut self.self_cursor_ns, &scopes, live_edge);
+            let placed = place_self_batch(&mut self.self_cursor, &scopes, live_edge);
             let sample_t = placed
                 .first()
                 .map(|e| e.start_ns)

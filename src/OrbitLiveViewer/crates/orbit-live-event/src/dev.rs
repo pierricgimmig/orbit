@@ -337,14 +337,53 @@ pub fn align_self_cursor(cursor: u64, live_edge: u64) -> u64 {
 
 /// Sequential self-profile placement on the producer clock only.
 /// Empty when `live_edge == 0` (no demo/capture axis yet).
-pub fn place_self_batch(cursor: &mut u64, scopes: &[RelScope], live_edge: u64) -> Vec<LiveEvent> {
+/// Where the next self-profile batch goes, plus the producer edge it was
+/// placed against. The edge is remembered so a cursor sitting far ahead can be
+/// told apart from a cursor that simply marched there while the axis stood
+/// still -- the two need opposite handling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SelfCursor {
+    /// Start of the next batch on the capture axis.
+    pub next_ns: u64,
+    /// `live_edge` at the last placement. Zero before the first one.
+    pub edge_ns: u64,
+}
+
+impl SelfCursor {
+    /// Re-pin both halves to a fresh capture origin.
+    pub fn reset_to(&mut self, origin_ns: u64) {
+        self.next_ns = origin_ns;
+        self.edge_ns = 0;
+    }
+}
+
+pub fn place_self_batch(
+    cursor: &mut SelfCursor,
+    scopes: &[RelScope],
+    live_edge: u64,
+) -> Vec<LiveEvent> {
     let span = batch_span(scopes);
     if span == 0 || live_edge == 0 {
         return Vec::new();
     }
-    *cursor = align_self_cursor(*cursor, live_edge);
-    let events = stamp_batch_from(scopes, *cursor);
-    *cursor = cursor.saturating_add(span);
+    // The producer clock has stopped -- capture stopped, demo paused -- and the
+    // window ahead of the live edge is already full. `align_self_cursor` would
+    // snap back to `live_edge` and restamp this batch on top of scopes already
+    // in the index: a pile of overlapping self scopes just past the capture
+    // end, rewritten every frame, which reads as flicker. Drop the batch and
+    // wait for the axis to move.
+    //
+    // Only when the edge has NOT moved. A cursor left far ahead by an axis that
+    // jumped backwards still needs the snap-back rescue, or self-profiling
+    // would never resume.
+    if live_edge == cursor.edge_ns && cursor.next_ns > live_edge.saturating_add(SELF_AHEAD_SNAP_NS)
+    {
+        return Vec::new();
+    }
+    cursor.edge_ns = live_edge;
+    cursor.next_ns = align_self_cursor(cursor.next_ns, live_edge);
+    let events = stamp_batch_from(scopes, cursor.next_ns);
+    cursor.next_ns = cursor.next_ns.saturating_add(span);
     events
 }
 
@@ -422,7 +461,7 @@ mod tests {
             duration_ns: 800,
             depth: 0,
         };
-        let mut cursor = 0u64;
+        let mut cursor = SelfCursor::default();
         let first = place_self_batch(&mut cursor, &[a.clone()], 50_000);
         let second = place_self_batch(&mut cursor, &[b.clone()], 50_000);
         assert_eq!(first[0].start_ns, 50_000);
@@ -430,7 +469,7 @@ mod tests {
         assert_eq!(second[0].start_ns, 51_000);
         assert_eq!(second[0].end_ns(), 51_800);
         assert!(first[0].end_ns() <= second[0].start_ns);
-        assert_eq!(cursor, 51_800);
+        assert_eq!(cursor.next_ns, 51_800);
         let third = place_self_batch(&mut cursor, &[a], 40_000);
         assert_eq!(
             third[0].start_ns, 51_800,
@@ -451,7 +490,7 @@ mod tests {
         );
         assert_eq!(align_self_cursor(80_000_000, 0), 0);
         assert!(place_self_batch(
-            &mut 80_000_000u64,
+            &mut SelfCursor { next_ns: 80_000_000, edge_ns: 0 },
             &[RelScope {
                 pid: VIEWER_PID,
                 tid: TID_UI,
@@ -463,7 +502,7 @@ mod tests {
             0
         )
         .is_empty());
-        let mut cursor = 80_000_000u64;
+        let mut cursor = SelfCursor { next_ns: 80_000_000, edge_ns: 0 };
         let ev = place_self_batch(
             &mut cursor,
             &[RelScope {
@@ -477,7 +516,7 @@ mod tests {
             10_000_000,
         );
         assert_eq!(ev[0].start_ns, 10_000_000);
-        assert_eq!(cursor, 10_001_000);
+        assert_eq!(cursor.next_ns, 10_001_000);
     }
 
     fn frame_scope(dur: u64) -> RelScope {
@@ -499,7 +538,7 @@ mod tests {
         for _ in 0..n {
             demo_t += DEMO_TICK_NS;
         }
-        let mut cursor = DEMO_ORIGIN_NS;
+        let mut cursor = SelfCursor { next_ns: DEMO_ORIGIN_NS, edge_ns: 0 };
         let first = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
         let second = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
         let hi = demo_t.saturating_add(2 * DEMO_TICK_NS);
@@ -517,9 +556,9 @@ mod tests {
 
     #[test]
     fn demo_restart_resets_self_origin() {
-        let mut cursor = 80_000_000u64;
+        let mut cursor = SelfCursor { next_ns: 80_000_000, edge_ns: 0 };
         let _ = place_self_batch(&mut cursor, &[frame_scope(1_000)], 80_000_000);
-        cursor = DEMO_ORIGIN_NS;
+        cursor.reset_to(DEMO_ORIGIN_NS);
         let ev = place_self_batch(&mut cursor, &[frame_scope(1_000)], DEMO_ORIGIN_NS);
         assert_eq!(ev[0].start_ns, DEMO_ORIGIN_NS);
     }
@@ -583,5 +622,50 @@ mod tests {
         set_now_hook(|| 1);
         let after = now_ns();
         assert!(after >= before, "native now_ns must keep using Instant");
+    }
+}
+
+#[cfg(test)]
+mod frozen_edge_tests {
+    use super::*;
+
+    fn frame(dur: u64) -> RelScope {
+        RelScope {
+            pid: VIEWER_PID,
+            tid: TID_UI,
+            name_id: NAME_FRAME,
+            start_rel_ns: 0,
+            duration_ns: dur,
+            depth: 0,
+        }
+    }
+
+    /// Capture stopped: `live_edge` stops advancing but the viewer keeps
+    /// rendering, so batches keep arriving. They must not pile back on top of
+    /// each other once the ahead-of-edge window is full.
+    #[test]
+    fn frozen_live_edge_does_not_restamp_over_placed_scopes() {
+        let live_edge = 10_000_000u64;
+        let mut cursor = SelfCursor { next_ns: live_edge, edge_ns: 0 };
+        let batch = [frame(2_000_000)]; // 2 ms of self scopes per frame
+        let mut starts = Vec::new();
+        for _ in 0..40 {
+            for ev in place_self_batch(&mut cursor, &batch, live_edge) {
+                starts.push(ev.start_ns);
+            }
+        }
+        let mut sorted = starts.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            starts.len(),
+            "self scopes were stamped at a start_ns that was already used: \
+             the cursor wrapped back to live_edge and overwrote earlier batches"
+        );
+        assert!(
+            starts.windows(2).all(|w| w[1] > w[0]),
+            "start_ns must be monotonic while the producer clock is frozen"
+        );
     }
 }
