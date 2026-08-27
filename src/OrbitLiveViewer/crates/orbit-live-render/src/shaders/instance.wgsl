@@ -4,11 +4,17 @@
 // (https://madebyevan.com/shaders/fast-rounded-rectangle-shadows/).
 // Copied into this crate (public article / MIT-clean algorithm).
 
+// Must be a multiple of 16 bytes: WebGL2 and other downlevel adapters lack
+// DownlevelFlags::BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED. Three trailing scalars
+// (not a vec3, whose align-16 would push size to 48) land this at 32, matching
+// the 32 bytes pack_inst_uniforms() writes in timeline.rs.
 struct Uniforms {
   viewport: vec2<f32>,
   origin: vec2<f32>,
   time: f32,
-  _pad: f32,
+  _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
 };
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 
