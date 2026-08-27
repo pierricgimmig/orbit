@@ -1872,7 +1872,7 @@ impl OrbitLiveApp {
                     }
                 }
             }
-            let bg = {
+            let (bg, raster_spans) = {
                 // One scope, not three — see the note in the instanced arm.
                 let _raster = dev.scope(TID_RENDER, NAME_RASTERIZE);
                 TimelinePayload::from_index(
@@ -1891,6 +1891,10 @@ impl OrbitLiveApp {
                     y_cull,
                 )
             };
+            // Per-lane raster spans are the render-w* lanes in the self profile;
+            // without this the pixel-column LOD reports no worker activity at
+            // all, even with the pool running.
+            dev.absorb_worker_spans(&raster_spans);
             let lift = dragged.and_then(|(pid, tid)| {
                 let mut frame = collect_instances_layout_opts(
                     &self.index,

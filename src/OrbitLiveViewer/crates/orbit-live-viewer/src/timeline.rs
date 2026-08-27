@@ -133,6 +133,10 @@ pub enum TimelinePayload {
 }
 
 impl TimelinePayload {
+    /// Also returns the per-lane worker spans the collect/raster walk produced,
+    /// so the caller can hand them to `DevFrame::absorb_worker_spans`. Dropping
+    /// them here is why the pixel-column LOD showed no `render-w*` lanes.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_index(
         index: &TrackIndex,
         t0: u64,
@@ -147,7 +151,7 @@ impl TimelinePayload {
         intern: Option<&orbit_live_event::InternTable>,
         scale: f32,
         y_cull: Option<YCull>,
-    ) -> Self {
+    ) -> (Self, Vec<orbit_live_render::WorkerSpan>) {
         let width_pts = width_pts.max(1.0);
         let layout_owned;
         let layout = if layout.is_empty() {
@@ -179,9 +183,12 @@ impl TimelinePayload {
                     inst.h *= s;
                     inst.radius *= s;
                 }
-                Self::Instanced {
-                    instances: frame.instances,
-                }
+                (
+                    Self::Instanced {
+                        instances: frame.instances,
+                    },
+                    frame.worker_spans,
+                )
             }
             TimelineLod::PixelColumns => {
                 let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
@@ -201,6 +208,7 @@ impl TimelinePayload {
                 if let Some(ids) = search {
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
                 }
+                let raster_spans = std::mem::take(&mut raster.worker_spans);
                 let (origin, _) = raster.placed_extent(layout, scale);
                 let (mut rgba, height) = raster.to_rgba8_placed(layout, scale);
                 crate::theme::remap_rgba8(&mut rgba);
@@ -216,13 +224,16 @@ impl TimelinePayload {
                         inst
                     })
                     .collect();
-                Self::Pixel {
-                    rgba,
-                    width: width_px as u32,
-                    height: height.max(1),
-                    overlay,
-                    place: Some((origin, height.max(1) as f32)),
-                }
+                (
+                    Self::Pixel {
+                        rgba,
+                        width: width_px as u32,
+                        height: height.max(1),
+                        overlay,
+                        place: Some((origin, height.max(1) as f32)),
+                    },
+                    raster_spans,
+                )
             }
         }
     }
@@ -1037,7 +1048,7 @@ mod tests {
             _pad: 0,
             name_id: 1,
         });
-        let p = TimelinePayload::from_index(
+        let (p, _spans) = TimelinePayload::from_index(
             &idx,
             0,
             100,
@@ -1093,7 +1104,7 @@ mod tests {
         });
         let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
-        let p = TimelinePayload::from_index(
+        let (p, _spans) = TimelinePayload::from_index(
             &idx,
             0,
             1_000_000,
@@ -1308,7 +1319,7 @@ mod blit_align_tests {
             "fixture must contain the sched lane this regresses on"
         );
 
-        let p = TimelinePayload::from_index(
+        let (p, _spans) = TimelinePayload::from_index(
             &idx,
             0,
             50,
@@ -1402,4 +1413,59 @@ fn upload_clock_ns() -> u64 {
 #[cfg(not(target_arch = "wasm32"))]
 fn upload_clock_ns() -> u64 {
     orbit_live_event::dev::now_ns()
+}
+
+#[cfg(test)]
+mod worker_span_tests {
+    use super::*;
+    use orbit_live_event::{kind, LiveEvent};
+    use orbit_live_render::{stacked_layout, TrackIndex};
+
+    /// The pixel-column LOD used to compute per-lane raster spans and throw
+    /// them away, so the self profile showed no `render-w*` lanes however many
+    /// workers were running.
+    #[test]
+    fn pixel_lod_surfaces_per_lane_raster_spans() {
+        if !orbit_live_render::is_parallel() {
+            return; // single core: the walk never splits, so there is nothing to report
+        }
+        let mut idx = TrackIndex::default();
+        // Comfortably over par::PARALLEL_MIN so the walk actually splits.
+        for tid in 0..16u32 {
+            idx.insert(LiveEvent {
+                start_ns: 0,
+                duration_ns: 1_000,
+                tid,
+                pid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: tid + 1,
+            });
+        }
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let (p, spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            1_000,
+            256.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+        );
+        assert!(matches!(p, TimelinePayload::Pixel { .. }));
+        assert!(
+            !spans.is_empty(),
+            "raster worker spans must reach the caller, or the self profile \
+             reports no worker lanes for the pixel-column LOD"
+        );
+    }
 }
