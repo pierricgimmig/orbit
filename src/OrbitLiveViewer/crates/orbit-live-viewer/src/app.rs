@@ -1072,7 +1072,8 @@ impl OrbitLiveApp {
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false);
         self.handle_measure(&ruler_resp, ruler, false);
-        paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
+        // The ruler's measure overlay is painted *after* the lane area below,
+        // not here -- see the deferred call at the end of this function.
         ui.painter().line_segment(
             [time_rect.left_bottom(), time_rect.right_bottom()],
             hairline(),
@@ -1312,6 +1313,15 @@ impl OrbitLiveApp {
             self.lane_scroll = out.state.offset.y;
         }
         self.skip_clip_labels = false;
+
+        // Deferred on purpose. A right-drag inside the lane area updates
+        // `self.measure` from `body_resp`, which only exists inside the
+        // ScrollArea closure above. Painting the ruler's overlay at the top of
+        // this function -- before that update -- drew last frame's value, so
+        // the ruler's white line trailed the lane area's by one frame for the
+        // whole drag. Painting it here reads the same `self.measure` the lane
+        // overlay just used, whichever region the drag started in.
+        paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
     }
 
     fn paint_headers(
