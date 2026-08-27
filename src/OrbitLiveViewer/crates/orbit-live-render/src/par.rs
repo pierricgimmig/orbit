@@ -59,13 +59,15 @@ pub fn is_parallel() -> bool {
     all(target_arch = "wasm32", not(feature = "parallel")),
     allow(dead_code)
 )]
+/// One lane per thread, from a single counter.
+///
+/// Deliberately *not* `rayon::current_thread_index()`. The thread that calls
+/// `par_chunks` runs chunks itself but is not a pool thread, so it returned
+/// `None` there and fell through to this counter -- taking slot 0, the same tid
+/// rayon hands pool worker 0. Both then emitted spans into one lane while
+/// running concurrently, and a lane is required to hold non-overlapping
+/// intervals. That is the RasterLane scopes overlapping each other.
 fn worker_tid() -> u32 {
-    #[cfg(feature = "parallel")]
-    {
-        if let Some(i) = rayon::current_thread_index() {
-            return render_worker_tid(i as u32);
-        }
-    }
     thread_local! {
         static SLOT: u32 = {
             use std::sync::atomic::{AtomicU32, Ordering};
@@ -367,5 +369,70 @@ mod tests {
             assert!(is_parallel());
             set_wasm_pool_threads(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod worker_lane_tests {
+    use super::*;
+
+    /// Spans sharing a tid share a lane, and a lane must hold non-overlapping
+    /// intervals -- `Lane::first_ending_after` binary-searches on that. The
+    /// thread calling `par_chunks` runs chunks too, so if it is handed the same
+    /// tid as a pool worker the two overlap and the lane is corrupt.
+    #[test]
+    fn one_walk_never_puts_overlapping_spans_in_a_lane() {
+        let items: Vec<u32> = (0..4096).collect();
+        let (_out, spans) = map_collect_lanes(&items, |v| {
+            // Enough work that chunks genuinely run concurrently.
+            (0..2_000u64).fold(*v as u64, |a, b| a.wrapping_add(b))
+        });
+        for (i, a) in spans.iter().enumerate() {
+            for b in spans.iter().skip(i + 1) {
+                if a.tid != b.tid {
+                    continue;
+                }
+                assert!(
+                    a.t1_ns <= b.t0_ns || b.t1_ns <= a.t0_ns,
+                    "tid {} has overlapping spans [{}, {}] and [{}, {}]",
+                    a.tid,
+                    a.t0_ns,
+                    a.t1_ns,
+                    b.t0_ns,
+                    b.t1_ns
+                );
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "parallel"))]
+mod worker_tid_identity_tests {
+    use super::*;
+    use rayon::prelude::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::thread::ThreadId;
+
+    /// A worker tid names a lane, so it must map to exactly one thread. The
+    /// thread that calls a parallel iterator runs chunks itself but is not a
+    /// registered pool thread, so `rayon::current_thread_index()` returned
+    /// `None` for it and it fell through to the slot counter -- taking slot 0,
+    /// which rayon also gives pool worker 0. Two live threads, one lane,
+    /// overlapping spans.
+    #[test]
+    fn a_worker_tid_never_names_two_live_threads() {
+        let seen: Mutex<HashMap<u32, ThreadId>> = Mutex::new(HashMap::new());
+        let record = |seen: &Mutex<HashMap<u32, ThreadId>>| {
+            let tid = worker_tid();
+            let id = std::thread::current().id();
+            let mut m = seen.lock().expect("seen");
+            if let Some(prev) = m.insert(tid, id) {
+                assert_eq!(prev, id, "worker tid {tid} used by two threads");
+            }
+        };
+        // The calling thread's own slot, which is the half that used to collide.
+        record(&seen);
+        (0..512u32).into_par_iter().for_each(|_| record(&seen));
     }
 }
