@@ -67,16 +67,6 @@ pub fn is_parallel() -> bool {
 /// rayon hands pool worker 0. Both then emitted spans into one lane while
 /// running concurrently, and a lane is required to hold non-overlapping
 /// intervals. That is the RasterLane scopes overlapping each other.
-fn worker_tid() -> u32 {
-    thread_local! {
-        static SLOT: u32 = {
-            use std::sync::atomic::{AtomicU32, Ordering};
-            static NEXT: AtomicU32 = AtomicU32::new(0);
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        };
-    }
-    render_worker_tid(SLOT.with(|s| *s))
-}
 
 #[cfg_attr(
     all(target_arch = "wasm32", not(feature = "parallel")),
@@ -149,12 +139,13 @@ where
         use rayon::prelude::*;
         let pieces: Vec<(Vec<R>, Option<WorkerSpan>)> = items
             .par_chunks(chunk)
-            .map(|part| {
+            .enumerate()
+            .map(|(slot, part)| {
                 let t0 = now_ns();
                 let out: Vec<R> = part.iter().map(&f).collect();
                 let t1 = now_ns();
                 let span = span_name.map(|name_id| WorkerSpan {
-                    tid: worker_tid(),
+                    tid: render_worker_tid(slot as u32),
                     name_id,
                     t0_ns: t0,
                     t1_ns: t1,
@@ -185,13 +176,14 @@ where
 {
     std::thread::scope(|s| {
         let mut joins = Vec::new();
-        for part in items.chunks(chunk) {
-            joins.push(s.spawn(|| {
+        for (slot, part) in items.chunks(chunk).enumerate() {
+            let fr = &f;
+            joins.push(s.spawn(move || {
                 let t0 = now_ns();
-                let out: Vec<R> = part.iter().map(&f).collect();
+                let out: Vec<R> = part.iter().map(fr).collect();
                 let t1 = now_ns();
                 let span = span_name.map(|name_id| WorkerSpan {
-                    tid: worker_tid(),
+                    tid: render_worker_tid(slot as u32),
                     name_id,
                     t0_ns: t0,
                     t1_ns: t1,
@@ -273,14 +265,15 @@ where
         return dest
             .par_chunks_mut(chunk * width)
             .zip(items.par_chunks(chunk))
-            .map(|(rows, part)| {
+            .enumerate()
+            .map(|(slot, (rows, part))| {
                 let t0 = now_ns();
                 for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
                     f(item, row);
                 }
                 let t1 = now_ns();
                 span_name.map(|name_id| WorkerSpan {
-                    tid: worker_tid(),
+                    tid: render_worker_tid(slot as u32),
                     name_id,
                     t0_ns: t0,
                     t1_ns: t1,
@@ -314,15 +307,20 @@ where
 {
     std::thread::scope(|s| {
         let mut joins = Vec::new();
-        for (part, rows) in items.chunks(chunk).zip(dest.chunks_mut(chunk * width)) {
-            joins.push(s.spawn(|| {
+        for (slot, (part, rows)) in items
+            .chunks(chunk)
+            .zip(dest.chunks_mut(chunk * width))
+            .enumerate()
+        {
+            let fr = &f;
+            joins.push(s.spawn(move || {
                 let t0 = now_ns();
                 for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
-                    f(item, row);
+                    fr(item, row);
                 }
                 let t1 = now_ns();
                 span_name.map(|name_id| WorkerSpan {
-                    tid: worker_tid(),
+                    tid: render_worker_tid(slot as u32),
                     name_id,
                     t0_ns: t0,
                     t1_ns: t1,
@@ -403,36 +401,5 @@ mod worker_lane_tests {
                 );
             }
         }
-    }
-}
-
-#[cfg(all(test, feature = "parallel"))]
-mod worker_tid_identity_tests {
-    use super::*;
-    use rayon::prelude::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-    use std::thread::ThreadId;
-
-    /// A worker tid names a lane, so it must map to exactly one thread. The
-    /// thread that calls a parallel iterator runs chunks itself but is not a
-    /// registered pool thread, so `rayon::current_thread_index()` returned
-    /// `None` for it and it fell through to the slot counter -- taking slot 0,
-    /// which rayon also gives pool worker 0. Two live threads, one lane,
-    /// overlapping spans.
-    #[test]
-    fn a_worker_tid_never_names_two_live_threads() {
-        let seen: Mutex<HashMap<u32, ThreadId>> = Mutex::new(HashMap::new());
-        let record = |seen: &Mutex<HashMap<u32, ThreadId>>| {
-            let tid = worker_tid();
-            let id = std::thread::current().id();
-            let mut m = seen.lock().expect("seen");
-            if let Some(prev) = m.insert(tid, id) {
-                assert_eq!(prev, id, "worker tid {tid} used by two threads");
-            }
-        };
-        // The calling thread's own slot, which is the half that used to collide.
-        record(&seen);
-        (0..512u32).into_par_iter().for_each(|_| record(&seen));
     }
 }
