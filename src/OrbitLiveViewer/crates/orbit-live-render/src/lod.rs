@@ -373,6 +373,7 @@ fn choose_lod_from_keys(
     if ns_per_px <= 0.0 {
         return TimelineLod::PixelColumns;
     }
+    let mut saw_any = false;
     for key in keys {
         if key.kind == kind::VALUE {
             continue;
@@ -380,6 +381,26 @@ fn choose_lod_from_keys(
         let Some(lane) = index.lane(*key) else {
             continue;
         };
+        if let Some(e) = lane.overlapping(t0, t1) {
+            saw_any = true;
+            if (e.duration_ns as f64 / ns_per_px) >= min_wide_px as f64 {
+                return TimelineLod::Instanced;
+            }
+        }
+    }
+    if saw_any {
+        return TimelineLod::PixelColumns;
+    }
+    // Nothing sampled was in view at all. `sample_lod_lanes` ranks by lifetime
+    // event count, so a window holding only sparse lanes -- self-profile
+    // scopes, an idle thread -- samples none of them and would answer
+    // PixelColumns however far you zoom in. That drops clip labels exactly
+    // when the few visible scopes are finally wide enough to read them.
+    // The sample told us nothing, so look wider before concluding.
+    for (key, lane) in index.lanes() {
+        if key.kind == kind::VALUE {
+            continue;
+        }
         if let Some(e) = lane.overlapping(t0, t1) {
             if (e.duration_ns as f64 / ns_per_px) >= min_wide_px as f64 {
                 return TimelineLod::Instanced;
@@ -869,4 +890,72 @@ pub fn instance_for_event(
 
 pub fn empty_column_color() -> u32 {
     chrome::TRACK
+}
+
+#[cfg(test)]
+mod sparse_lod_tests {
+    use super::*;
+    use crate::TrackIndex;
+    use orbit_live_event::LiveEvent;
+
+    fn ev(tid: u32, start: u64, dur: u64, name: u32) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        }
+    }
+
+    /// A window holding only sparse lanes must still choose Instanced when the
+    /// scopes in it are wide. The LOD sample is ranked by lifetime event count,
+    /// so busy lanes elsewhere crowd the sparse ones out and the sample comes
+    /// back empty -- which used to mean "pixel columns", dropping clip labels
+    /// however far you zoomed in.
+    #[test]
+    fn zooming_into_only_sparse_lanes_still_picks_instanced() {
+        let mut idx = TrackIndex::default();
+        // Busy lanes, all far away from the window under test. More than
+        // LOD_SAMPLE_LANES of them so they own the whole sample.
+        for tid in 0..(LOD_SAMPLE_LANES as u32 + 4) {
+            for i in 0..64u64 {
+                idx.insert(ev(tid, i * 10, 5, tid + 1));
+            }
+        }
+        // One sparse lane with a single wide scope, alone in the window.
+        idx.insert(ev(9_000, 1_000_000, 10_000, 777));
+
+        let sampled = sample_lod_lanes(&idx, None);
+        assert!(
+            !sampled.iter().any(|k| k.tid == 9_000),
+            "fixture is only meaningful while the sparse lane misses the sample"
+        );
+
+        // 100 ns window over 100 px: the scope is far wider than INSTANCE_MIN_PX.
+        let lod = choose_lod(&idx, 1_000_000, 1_000_100, 100, INSTANCE_MIN_PX);
+        assert_eq!(
+            lod,
+            TimelineLod::Instanced,
+            "wide scope in view must render instanced so its label is drawn"
+        );
+    }
+
+    /// The wider search must not override a genuine pixel-columns verdict.
+    #[test]
+    fn dense_narrow_scopes_still_pick_pixel_columns() {
+        let mut idx = TrackIndex::default();
+        for tid in 0..4u32 {
+            for i in 0..256u64 {
+                idx.insert(ev(tid, i * 10, 5, tid + 1));
+            }
+        }
+        // 2560 ns over 8 px: every 5 ns scope is far under a pixel.
+        let lod = choose_lod(&idx, 0, 2_560, 8, INSTANCE_MIN_PX);
+        assert_eq!(lod, TimelineLod::PixelColumns);
+    }
 }
