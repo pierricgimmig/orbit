@@ -583,6 +583,7 @@ pub fn generate_nested_scopes(
 mod tests {
     use super::*;
     use orbit_live_event::named_scope_color;
+    #[cfg(not(debug_assertions))]
     use std::time::Instant;
 
     fn scope(start: u64, dur: u64, depth: u8, name: u32) -> LiveEvent {
