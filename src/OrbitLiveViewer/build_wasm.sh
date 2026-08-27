@@ -53,6 +53,32 @@ wasm-bindgen \
   --out-name orbit_live_viewer \
   "$VIEWER/target/wasm32-unknown-unknown/release/orbit_live_viewer.wasm"
 
+# wasm-bindgen overwrites the glue. CI requires the Orbit header on *.js.
+stamp_orbit_js_header() {
+  local f="$1"
+  if [[ ! -f "$f" ]]; then
+    return
+  fi
+  if grep -q 'Copyright (c) [0-9]\{4\} The Orbit Authors' "$f"; then
+    return
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  {
+    echo "// Copyright (c) 2026 The Orbit Authors. All rights reserved."
+    echo "// Use of this source code is governed by a BSD-style license that can be"
+    echo "// found in the LICENSE file."
+    echo ""
+    cat "$f"
+  } > "$tmp"
+  mv "$tmp" "$f"
+}
+
+stamp_orbit_js_header "$ROOT/viewer-dist/orbit_live_viewer.js"
+while IFS= read -r -d '' f; do
+  stamp_orbit_js_header "$f"
+done < <(find "$ROOT/viewer-dist/snippets" -name '*.js' -print0 2>/dev/null || true)
+
 echo "Wrote $ROOT/viewer-dist/orbit_live_viewer.js and .wasm"
 if [[ -d "$ROOT/viewer-dist/snippets" ]]; then
   echo "Worker snippets: $ROOT/viewer-dist/snippets"
