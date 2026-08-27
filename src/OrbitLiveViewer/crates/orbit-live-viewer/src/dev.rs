@@ -76,18 +76,38 @@ impl DevFrame {
         }
     }
 
+    /// A tid is a lane, and a lane must hold non-overlapping intervals --
+    /// `Lane::first_ending_after` binary-searches on that. Spans arrive from
+    /// other threads with their own clock readings, so this drops anything that
+    /// would break the invariant rather than writing a lane that cannot be
+    /// searched. A dropped worker scope is a missing bar; an overlapping one
+    /// corrupts every lookup in that lane.
     pub fn absorb_worker_spans(&self, spans: &[orbit_live_render::WorkerSpan]) {
         let Some(inner) = self.inner.as_ref() else {
             return;
         };
-        for s in spans {
-            let start_rel = s.t0_ns.saturating_sub(inner.origin_ns);
+        let mut ordered: Vec<&orbit_live_render::WorkerSpan> = spans
+            .iter()
+            // Before the frame even started: a clock that is not comparable
+            // with `origin_ns`. Saturating these to 0 is what stacked every
+            // pool worker's span on the same spot.
+            .filter(|s| s.t0_ns >= inner.origin_ns && s.t1_ns >= s.t0_ns)
+            .collect();
+        ordered.sort_by_key(|s| (s.tid, s.t0_ns));
+        let mut last_end: Option<(u32, u64)> = None;
+        for s in ordered {
+            if let Some((tid, end)) = last_end {
+                if tid == s.tid && s.t0_ns < end {
+                    continue;
+                }
+            }
             let dur = s.t1_ns.saturating_sub(s.t0_ns).max(1);
+            last_end = Some((s.tid, s.t0_ns.saturating_add(dur)));
             inner.scopes.borrow_mut().push(RelScope {
                 pid: VIEWER_PID,
                 tid: s.tid,
                 name_id: s.name_id,
-                start_rel_ns: start_rel,
+                start_rel_ns: s.t0_ns - inner.origin_ns,
                 duration_ns: dur,
                 depth: 0,
             });
@@ -240,5 +260,62 @@ mod tests {
     fn busy_spin() {
         let t0 = now_ns();
         while now_ns().saturating_sub(t0) < 2_000 {}
+    }
+}
+
+#[cfg(test)]
+mod absorb_guard_tests {
+    use super::*;
+    use orbit_live_render::WorkerSpan;
+
+    fn span(tid: u32, t0: u64, t1: u64) -> WorkerSpan {
+        WorkerSpan {
+            tid,
+            name_id: 30_032,
+            t0_ns: t0,
+            t1_ns: t1,
+        }
+    }
+
+    /// Two spans on one tid must never both land in the lane if they overlap.
+    #[test]
+    fn overlapping_spans_on_one_tid_are_dropped_not_stacked() {
+        let f = DevFrame::begin(true);
+        let origin = f.inner.as_ref().expect("enabled").origin_ns;
+        f.absorb_worker_spans(&[
+            span(10, origin + 1_000, origin + 5_000),
+            span(10, origin + 3_000, origin + 9_000), // overlaps the first
+            span(10, origin + 9_000, origin + 11_000), // clear of both
+        ]);
+        let out = f.finish();
+        assert_eq!(out.len(), 2, "the overlapping span must be dropped");
+        let mut ends: Vec<(u64, u64)> = out
+            .iter()
+            .map(|s| (s.start_rel_ns, s.start_rel_ns + s.duration_ns))
+            .collect();
+        ends.sort_unstable();
+        assert!(
+            ends.windows(2).all(|w| w[0].1 <= w[1].0),
+            "lane must stay non-overlapping: {ends:?}"
+        );
+    }
+
+    /// A worker clock that is not comparable with the frame origin used to
+    /// saturate to rel 0 and pile every span on one spot.
+    #[test]
+    fn spans_predating_the_frame_origin_are_dropped() {
+        let f = DevFrame::begin(true);
+        let origin = f.inner.as_ref().expect("enabled").origin_ns;
+        if origin < 10_000 {
+            return; // clock too young for this fixture to mean anything
+        }
+        f.absorb_worker_spans(&[
+            span(11, origin - 5_000, origin - 1_000),
+            span(11, origin - 4_000, origin - 2_000),
+        ]);
+        assert!(
+            f.finish().is_empty(),
+            "pre-origin spans must not be clamped onto rel 0"
+        );
     }
 }

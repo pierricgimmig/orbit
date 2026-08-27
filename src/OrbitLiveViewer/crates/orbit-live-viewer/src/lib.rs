@@ -157,7 +157,15 @@ impl LiveViewer {
     }
 }
 
-/// `globalThis.performance.now` — works on Window and DedicatedWorker.
+/// `globalThis.performance.timeOrigin + .now()` — works on Window and
+/// DedicatedWorker, and is comparable *between* them.
+///
+/// `performance.now()` alone is not. It is measured from each context's own
+/// `timeOrigin`, and a worker is created after the page, so a worker reading is
+/// systematically smaller than a main-thread reading taken at the same instant.
+/// `absorb_worker_spans` subtracts the main thread's frame origin and saturates
+/// at zero, so every pool worker's span collapsed onto rel 0 and stacked on top
+/// of the others in its lane. Adding `timeOrigin` makes both epoch-relative.
 #[cfg(target_arch = "wasm32")]
 fn wasm_now_ns() -> u64 {
     use wasm_bindgen::JsCast;
@@ -174,12 +182,19 @@ fn wasm_now_ns() -> u64 {
     let Ok(now_fn) = now_fn.dyn_into::<js_sys::Function>() else {
         return 0;
     };
-    now_fn
-        .call0(&perf)
+    let Some(now_ms) = now_fn.call0(&perf).ok().and_then(|v| v.as_f64()) else {
+        return 0;
+    };
+    let origin_ms = js_sys::Reflect::get(&perf, &JsValue::from_str("timeOrigin"))
         .ok()
         .and_then(|v| v.as_f64())
-        .map(|ms| (ms * 1_000_000.0) as u64)
-        .unwrap_or(0)
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(0.0);
+    // Converted separately on purpose. `origin_ms` is ~1.8e12, so folding it
+    // into one f64 multiply would round the sum to ~256 ns and throw away the
+    // sub-microsecond resolution of `now_ms`, which is the part that actually
+    // times a lane chunk.
+    ((origin_ms * 1_000_000.0) as u64).saturating_add((now_ms * 1_000_000.0) as u64)
 }
 
 #[cfg(target_arch = "wasm32")]
