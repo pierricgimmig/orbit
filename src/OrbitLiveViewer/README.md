@@ -83,8 +83,8 @@ cargo bench -p orbit-live-ring
 `rasterize_vs_scopes` / `rasterize_vs_pixels` print the numbers. Re-run the
 benches on the machine you care about; do not treat any write-up as a
 substitute. The unit test `pixel_prepare_is_not_linear_in_scopes` fails if
-the column walk regresses to O(n) (release builds; debug only checks that
-the pixel path beats naive at the same N).
+the column walk regresses to O(n) (release only; debug skips the wall-clock
+check because unoptimized codegen is not a complexity signal).
 
 Y-cull, instanced early-out, dirty GPU upload, density LOD, idle chrome,
 native lane parallelism (`render-wN` self-profile threads; viewer native
