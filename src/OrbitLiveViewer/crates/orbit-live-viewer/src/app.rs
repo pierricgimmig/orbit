@@ -349,6 +349,7 @@ pub struct OrbitLiveApp {
     fullscreen: bool,
     needs_repaint: bool,
     compact: bool,
+    light_canvas: bool,
     advanced: bool,
     dev: bool,
     dev_locked_off: bool,
@@ -436,6 +437,7 @@ impl OrbitLiveApp {
             fullscreen: false,
             needs_repaint: false,
             compact: false,
+            light_canvas: false,
             advanced: false,
             dev,
             dev_locked_off,
@@ -818,6 +820,12 @@ impl OrbitLiveApp {
                 if shape_pill(ui, self.compact, "Track density", paint_density_icon).clicked() {
                     self.compact = !self.compact;
                 }
+                if pill(ui, "Paper", self.light_canvas)
+                    .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
+                    .clicked()
+                {
+                    self.light_canvas = !self.light_canvas;
+                }
                 if shape_pill(ui, self.advanced, "Inspector", paint_inspector_icon).clicked() {
                     self.advanced = !self.advanced;
                 }
@@ -1085,8 +1093,9 @@ impl OrbitLiveApp {
             let body = Rect::from_min_max(Pos2::new(rect.min.x + HEADER_W, rect.min.y), rect.max);
 
             ui.painter().rect_filled(head, 0.0, theme::RAIL);
-            ui.painter().rect_filled(body, 0.0, theme::CANVAS);
-            paint_quiet_grid(ui, body, self.t0, self.t1);
+            ui.painter()
+                .rect_filled(body, 0.0, theme::timeline_canvas(self.light_canvas));
+            paint_quiet_grid(ui, body, self.t0, self.t1, self.light_canvas);
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
             if self.tracks.dragging() {
@@ -1241,7 +1250,14 @@ impl OrbitLiveApp {
                     self.tracks.scale,
                     Some(y_cull),
                 );
-                paint_playhead(ui, body, self.t0, self.t1, self.live_edge_ns as f64);
+                paint_playhead(
+                    ui,
+                    body,
+                    self.t0,
+                    self.t1,
+                    self.live_edge_ns as f64,
+                    self.light_canvas,
+                );
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
                 self.paint_insert_line(ui, head, body);
                 if let Some(h) = self.hover {
@@ -1297,7 +1313,7 @@ impl OrbitLiveApp {
                 let band = Rect::from_min_max(
                     Pos2::new(head.left(), r.top()),
                     Pos2::new(
-                        if matches!(row.id, RowId::Machine(_)) {
+                        if self.light_canvas || matches!(row.id, RowId::Machine(_)) {
                             r.right()
                         } else {
                             body.right()
@@ -1353,7 +1369,14 @@ impl OrbitLiveApp {
                             .map(|(y, h)| {
                                 Rect::from_min_size(
                                     Pos2::new(head.left(), head.top() + y),
-                                    Vec2::new(body.right() - head.left(), h.max(1.0)),
+                                    Vec2::new(
+                                        if self.light_canvas {
+                                            r.width()
+                                        } else {
+                                            body.right() - head.left()
+                                        },
+                                        h.max(1.0),
+                                    ),
                                 )
                             })
                             .unwrap_or(r)
@@ -2968,9 +2991,9 @@ fn paint_empty(ui: &Ui, rect: Rect) {
     );
 }
 
-fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
+fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64, light: bool) {
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, theme::CANVAS);
+    painter.rect_filled(rect, 0.0, theme::timeline_canvas(light));
     if t1 <= t0 {
         return;
     }
@@ -2982,7 +3005,7 @@ fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
         if x >= rect.left() && x <= rect.right() {
             painter.line_segment(
                 [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 10)),
+                Stroke::new(1.0, theme::quiet_grid_line(light)),
             );
         }
         let next = t + major;
@@ -2993,20 +3016,21 @@ fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
     }
 }
 
-fn paint_playhead(ui: &Ui, rect: Rect, t0: f64, t1: f64, play_t: f64) {
+fn paint_playhead(ui: &Ui, rect: Rect, t0: f64, t1: f64, play_t: f64, light: bool) {
     if t1 <= t0 || play_t < t0 || play_t > t1 {
         return;
     }
     let x = rect.left() + ((play_t - t0) / (t1 - t0)) as f32 * rect.width();
     let painter = ui.painter_at(rect);
+    let color = theme::playhead_color(light);
     painter.line_segment(
         [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-        Stroke::new(1.0, theme::PLAYHEAD),
+        Stroke::new(1.0, color),
     );
     painter.rect_filled(
         Rect::from_center_size(Pos2::new(x, rect.top() + 3.0), Vec2::new(7.0, 6.0)),
         1.0,
-        theme::PLAYHEAD,
+        color,
     );
 }
 

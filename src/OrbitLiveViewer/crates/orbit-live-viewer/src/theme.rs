@@ -5,6 +5,8 @@ use eframe::egui::Color32;
 use orbit_live_event::chrome;
 
 pub const CANVAS: Color32 = Color32::from_rgb(0x0B, 0x0C, 0x0E);
+/// Opt-in timeline paper so Wallace drop shadows read against a light field.
+pub const PAPER: Color32 = Color32::from_rgb(0xE4, 0xE6, 0xEA);
 pub const PANEL: Color32 = Color32::from_rgb(0x12, 0x14, 0x1A);
 pub const RAIL: Color32 = Color32::from_rgb(0x10, 0x12, 0x16);
 pub const TRACK: Color32 = Color32::from_rgb(0x16, 0x18, 0x1D);
@@ -18,6 +20,31 @@ pub const ACCENT: Color32 = Color32::from_rgb(0x7A, 0xA4, 0xC2);
 pub const HAIR: Color32 = Color32::from_rgba_premultiplied(18, 18, 18, 18);
 pub const INSERT: Color32 = Color32::from_rgb(0xD0, 0xD8, 0xE0);
 pub const PLAYHEAD: Color32 = Color32::from_rgb(0xE8, 0xEA, 0xEE);
+pub const PAPER_PLAYHEAD: Color32 = Color32::from_rgb(0x3A, 0x3E, 0x46);
+
+pub fn timeline_canvas(light: bool) -> Color32 {
+    if light {
+        PAPER
+    } else {
+        CANVAS
+    }
+}
+
+pub fn quiet_grid_line(light: bool) -> Color32 {
+    if light {
+        Color32::from_rgba_unmultiplied(20, 22, 26, 28)
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+    }
+}
+
+pub fn playhead_color(light: bool) -> Color32 {
+    if light {
+        PAPER_PLAYHEAD
+    } else {
+        PLAYHEAD
+    }
+}
 pub const RADIUS: f32 = 4.0;
 pub const TRACK_RADIUS: f32 = 2.0;
 
@@ -157,6 +184,16 @@ mod tests {
         assert_ne!(process_track_wash_role(1, WashRole::Process), a);
         assert_ne!(process_track_wash_role(1, WashRole::Leaf), a);
         assert_ne!(a, TRACK_ALT);
+    }
+
+    #[test]
+    fn paper_canvas_is_light_and_opt_in() {
+        assert_eq!(timeline_canvas(false), CANVAS);
+        assert_eq!(timeline_canvas(true), PAPER);
+        assert!(PAPER.r() > 0xC0 && PAPER.g() > 0xC0 && PAPER.b() > 0xC0);
+        assert_ne!(PAPER, CANVAS);
+        assert_ne!(playhead_color(true), playhead_color(false));
+        assert!(quiet_grid_line(true).a() > quiet_grid_line(false).a());
     }
 
     #[test]
