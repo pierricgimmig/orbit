@@ -72,6 +72,8 @@ rust_library(
     name = "orbit_live_render",
     srcs = glob(["crates/orbit-live-render/src/**/*.rs"]),
     aliases = aliases(),
+    # shaders.rs include_str!s these; they are not srcs.
+    compile_data = glob(["crates/orbit-live-render/src/**/*.wgsl"]),
     crate_root = "crates/orbit-live-render/src/lib.rs",
     edition = ORBIT_LIVE_EDITION,
     proc_macro_deps = all_crate_deps(
