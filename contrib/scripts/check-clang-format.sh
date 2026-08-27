@@ -24,9 +24,20 @@ cd $GITHUB_WORKSPACE
 # Use origin/main as reference branch, if not specified by Github
 REFERENCE="origin/${GITHUB_BASE_REF:-main}"
 MERGE_BASE="$(git merge-base $REFERENCE HEAD)" # Merge base is the commit on main this PR was branched from.
-FORMATTING_DIFF="$(git diff -U0 --no-color --relative --diff-filter=r $MERGE_BASE -- 'third_party/libunwindstack/**' 'src/**' | clang-format-diff-14 -p1)"
+# .clang-format only declares Cpp and Proto. clang-format-diff-14 errors on
+# JS/HTML/CSS (the checked-in eframe WASM pack under viewer-dist).
+FORMAT_PATHS=(
+  'third_party/libunwindstack/**'
+  'src/**'
+  ':(exclude)**/*.js'
+  ':(exclude)**/*.ts'
+  ':(exclude)**/*.html'
+  ':(exclude)**/*.css'
+  ':(exclude)**/*.wasm'
+)
+FORMATTING_DIFF="$(git diff -U0 --no-color --relative --diff-filter=r $MERGE_BASE -- "${FORMAT_PATHS[@]}" | clang-format-diff-14 -p1)"
 
-git diff -U0 --no-color --relative --diff-filter=r $MERGE_BASE -- 'third_party/libunwindstack/**' 'src/**' | clang-format-diff-14 -p1 -i
+git diff -U0 --no-color --relative --diff-filter=r $MERGE_BASE -- "${FORMAT_PATHS[@]}" | clang-format-diff-14 -p1 -i
 git diff --minimal -U0 --no-color>> "${GITHUB_WORKSPACE}/clang_format.diff"
 
 if [ -n "$FORMATTING_DIFF" ]; then

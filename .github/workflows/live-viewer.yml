@@ -50,3 +50,8 @@ jobs:
       - name: Compile benches
         working-directory: src/OrbitLiveViewer
         run: cargo bench --workspace --no-run
+      # Debug codegen makes the wall-clock complexity assert look linear; run it
+      # once with optimizations so CI still guards O(width log n).
+      - name: Test pixel rasterizer complexity (release)
+        working-directory: src/OrbitLiveViewer
+        run: cargo test -p orbit-live-render --release --lib pixel_prepare_is_not_linear_in_scopes -- --exact
