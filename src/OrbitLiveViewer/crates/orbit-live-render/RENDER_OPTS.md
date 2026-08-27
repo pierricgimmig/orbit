@@ -98,13 +98,17 @@ egui idle-chrome widget skip; on-screen FPS / `fps_sweep`.
    `ORBIT_WASM_NIGHTLY`. Plain `cargo build --target wasm32-unknown-unknown`
    (CI) stays sequential so it does not need a rebuilt std.
 
-   This agent ran native `cargo test` for the live-viewer crates and a
-   sequential wasm32 compile. It could not run `bazel build //:wasm` /
-   `bazel run //:live` (no Bazel in the environment) and could not
-   confirm SharedArrayBuffer + `render-wN` in a browser. If
-   `build_wasm.sh` fails here, the checked-in pack is left unchanged —
-   rebuild on a machine with rustup nightly + rust-src +
-   `wasm-bindgen-cli` 0.2.100.
+   Checked-in `viewer-dist/` was rebuilt here with that script (includes
+   `initThreadPool` / `markWasmPoolReady` and
+   `snippets/wasm-bindgen-rayon-*/src/workerHelpers.no-bundler.js`).
+   eframe's TypeMap needs `Send+Sync`; `TimelineGpuSlot` is an unsafe
+   wrapper so GPU objects stay on the UI thread while rayon workers only
+   run CPU collect/raster.
+
+   This agent ran native `cargo test` for the live-viewer crates, a
+   sequential wasm32 compile (CI path), and `build_wasm.sh`. It could
+   not run `bazel build //:wasm` / `bazel run //:live` (no Bazel) and
+   could not confirm SharedArrayBuffer + `render-wN` in a browser.
 8. **Shader animation.** `uni.time` + selected pulse (~1.2 s, small
    radius/sigma/brightness) on `FLAG_SELECTED` (`#0080FF`, lift, Wallace
    shadow). Idle + selected writes `u_time` every frame without rebuilding

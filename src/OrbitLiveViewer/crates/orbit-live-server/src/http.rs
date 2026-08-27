@@ -80,8 +80,9 @@ async fn static_asset(axum::extract::Path(path): axum::extract::Path<String>) ->
 }
 
 /// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.
-/// CORP lets same-origin assets (including worker snippets/) load under
-/// `require-corp`. Applied to every response, not only viewer-dist.
+/// CORP lets same-origin assets (HTML, js, wasm, and
+/// `snippets/wasm-bindgen-rayon-*/…/workerHelpers.no-bundler.js`) load
+/// under `require-corp`. Applied to every response, not only viewer-dist.
 const ISOLATION: [(&'static str, &'static str); 3] = [
     ("cross-origin-opener-policy", "same-origin"),
     ("cross-origin-embedder-policy", "require-corp"),

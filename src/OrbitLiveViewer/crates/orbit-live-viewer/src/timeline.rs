@@ -384,7 +384,7 @@ impl CallbackTrait for TimelineCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(gpu) = callback_resources.get_mut::<TimelineGpu>() {
+        if let Some(gpu) = callback_resources.get_mut::<TimelineGpuSlot>() {
             if self.layer == TimelineLayer::Base && !matches!(self.payload, TimelinePayload::Keep) {
                 gpu.clear_overlay();
             }
@@ -407,9 +407,32 @@ impl CallbackTrait for TimelineCallback {
         if sw > 0 && sh > 0 {
             render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
         }
-        if let Some(gpu) = callback_resources.get::<TimelineGpu>() {
+        if let Some(gpu) = callback_resources.get::<TimelineGpuSlot>() {
             gpu.draw(render_pass, self.layer);
         }
+    }
+}
+
+/// TypeMap slot for [`TimelineGpu`].
+///
+/// wgpu types are `!Send`/`!Sync` on wasm32+atomics, but egui-wgpu's
+/// `CallbackResources` requires `Send + Sync`. GPU objects stay on the UI
+/// thread; rayon workers only run CPU collect/raster.
+pub struct TimelineGpuSlot(pub TimelineGpu);
+
+unsafe impl Send for TimelineGpuSlot {}
+unsafe impl Sync for TimelineGpuSlot {}
+
+impl std::ops::Deref for TimelineGpuSlot {
+    type Target = TimelineGpu;
+    fn deref(&self) -> &TimelineGpu {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TimelineGpuSlot {
+    fn deref_mut(&mut self) -> &mut TimelineGpu {
+        &mut self.0
     }
 }
 

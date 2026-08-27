@@ -35,7 +35,7 @@ use crate::theme;
 use crate::timeline::{
     paint_callback, paint_overlay_callback, pick_key, quant_px, shift_instances_to_layout,
     snap_instances_to_layout, split_drag_instances, upload_mode, GpuDirtyKey, TimelineGpu,
-    TimelinePayload, UploadMode, ViewUniforms,
+    TimelineGpuSlot, TimelinePayload, UploadMode, ViewUniforms,
 };
 use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
 
@@ -394,7 +394,7 @@ impl OrbitLiveApp {
             let mut renderer = rs.renderer.write();
             renderer
                 .callback_resources
-                .insert(TimelineGpu::init(&rs.device, rs.target_format));
+                .insert(TimelineGpuSlot(TimelineGpu::init(&rs.device, rs.target_format)));
             has_gpu = true;
         }
         Self {
