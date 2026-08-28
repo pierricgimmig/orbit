@@ -10,7 +10,8 @@ use orbit_live_event::dev::{
     NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET,
     NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS,
     NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
-    NAME_SCALE_PPP, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD,
+    NAME_SCALE_PPP, NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS,
+    NAME_UPLOAD,
     NAME_POOL_THREADS, NAME_SPANS_DROPPED, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US,
     NAME_WASM_MEM, NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
@@ -1020,7 +1021,10 @@ impl OrbitLiveApp {
             .filter(|_| self.status.capturing && !self.status.demo);
         {
             let _tracks = dev.scope(TID_UI, NAME_TRACKS);
-            self.tracks.sync(&self.index, filter);
+            {
+                let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
+                self.tracks.sync(&self.index, filter);
+            }
             self.tracks.tick(dt, &self.index, filter);
         }
 
@@ -1294,7 +1298,7 @@ impl OrbitLiveApp {
                 );
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
                 if let Some(h) = self.hover {
-                    show_scope_tooltip(ui, &self.intern, h);
+                    show_scope_tooltip(ui, &self.intern, &self.processes, h);
                 }
             } else {
                 ui.painter().text(
@@ -1361,7 +1365,7 @@ impl OrbitLiveApp {
                 let band = Rect::from_min_max(
                     Pos2::new(head.left(), r.top()),
                     Pos2::new(
-                        if self.light_canvas || matches!(row.id, RowId::Machine(_)) {
+                        if self.light_canvas || matches!(row.id, RowId::Machine(_) | RowId::Scheduler) {
                             r.right()
                         } else {
                             body.right()
@@ -1379,7 +1383,7 @@ impl OrbitLiveApp {
                 } else {
                     painter.rect_filled(band, 0.0, wash);
                 }
-                if matches!(row.id, RowId::Process(_)) {
+                if matches!(row.id, RowId::Process(_) | RowId::Scheduler) {
                     painter.line_segment(
                         [band.left_top(), band.right_top()],
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
@@ -1388,7 +1392,7 @@ impl OrbitLiveApp {
                 painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
                 let hover_thread = match hover_row {
                     Some(RowId::Thread(t)) => Some(t),
-                    Some(RowId::Lane(k)) => Some(ThreadId {
+                    Some(RowId::Lane(k)) if !k.is_scheduler() => Some(ThreadId {
                         pid: k.pid,
                         tid: k.tid,
                     }),
@@ -1457,6 +1461,34 @@ impl OrbitLiveApp {
         interactive: bool,
     ) {
         match row.id {
+            RowId::Scheduler => {
+                let n = TrackStrip::scheduler_core_count_in(&self.index);
+                let label = format!("Scheduler ({n} cores)");
+                if !interactive {
+                    ui.painter().text(
+                        Pos2::new(r.left() + 22.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        label,
+                        FontId::new(11.0, fonts::medium()),
+                        theme::TEXT,
+                    );
+                    return;
+                }
+                let open = !self.tracks.collapsed(row.id);
+                if chevron(ui, r, 8.0, open, ("s", 0u32, 0u32)) {
+                    self.tracks.toggle(row.id);
+                    self.mark_layout_changed();
+                }
+                ui.painter().text(
+                    Pos2::new(r.left() + 22.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    label,
+                    FontId::new(11.0, fonts::medium()),
+                    theme::TEXT,
+                );
+                let hit = ui.interact(r, ui.id().with(("sched", 0u32, 0u32)), Sense::hover());
+                hit.on_hover_text("Shows scheduling information for CPU cores");
+            }
             RowId::Machine(m) => {
                 if !interactive {
                     ui.painter().text(
@@ -1634,6 +1666,16 @@ impl OrbitLiveApp {
                 hide_r.on_hover_text("Hide thread");
             }
             RowId::Lane(key) => {
+                if key.is_scheduler() {
+                    ui.painter().text(
+                        Pos2::new(r.left() + 22.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        leaf_label(key),
+                        FontId::new(10.5, FontFamily::Proportional),
+                        theme::MUTED,
+                    );
+                    return;
+                }
                 if !interactive {
                     let name = value_lane_name(&self.index, &self.intern, key);
                     ui.painter().text(
@@ -2615,7 +2657,7 @@ fn section(ui: &mut Ui, label: &str) {
 
 fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
     match id {
-        RowId::Machine(_) => theme::RAIL,
+        RowId::Scheduler | RowId::Machine(_) => theme::RAIL,
         RowId::Process(pid) => theme::process_track_wash_role(pid, theme::WashRole::Process),
         RowId::Thread(t) => {
             if dragging {
@@ -2626,6 +2668,7 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
                 theme::process_track_wash(t.pid)
             }
         }
+        RowId::Lane(key) if key.is_scheduler() => theme::TRACK,
         RowId::Lane(key) => theme::process_track_wash_role(key.pid, theme::WashRole::Leaf),
     }
 }
@@ -3225,12 +3268,7 @@ fn pick_value_at(
     best.map(|(_, e)| ScopePick::from_event(e))
 }
 
-fn show_scope_tooltip(ui: &Ui, intern: &InternTable, pick: ScopePick) {
-    let name = intern
-        .get(pick.name_id)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("#{}", pick.name_id));
-    let dur = format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
+fn show_scope_tooltip(ui: &Ui, intern: &InternTable, processes: &[ProcessJson], pick: ScopePick) {
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -3241,6 +3279,45 @@ fn show_scope_tooltip(ui: &Ui, intern: &InternTable, pick: ScopePick) {
     .gap(8.0)
     .show(|ui| {
         ui.set_min_width(148.0);
+        if pick.kind == kind::SCHEDULING_SLICE {
+            let tname = intern
+                .get(pick.tid)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{}", pick.tid));
+            let pname = processes
+                .iter()
+                .find(|p| p.pid == pick.pid)
+                .map(|p| p.name.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("process");
+            ui.label(
+                RichText::new("CPU Core activity")
+                    .family(fonts::medium())
+                    .size(12.0)
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(format!("Core: {}", pick.extra))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            ui.label(
+                RichText::new(format!("Process: {pname} [{}]", pick.pid))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            ui.label(
+                RichText::new(format!("Thread: {tname} [{}]", pick.tid))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            return;
+        }
+        let name = intern
+            .get(pick.name_id)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("#{}", pick.name_id));
+        let dur = format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
         ui.label(
             RichText::new(name)
                 .family(fonts::medium())

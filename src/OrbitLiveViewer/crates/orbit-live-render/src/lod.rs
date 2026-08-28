@@ -212,13 +212,7 @@ fn leaf_rank(kind_id: u8) -> u8 {
 pub fn leaf_label(key: LaneKey) -> String {
     match key.kind {
         kind::THREAD_STATE => "state".into(),
-        kind::SCHEDULING_SLICE => {
-            if key.extra > 0 {
-                format!("cpu  {}", key.extra)
-            } else {
-                "cpu".into()
-            }
-        }
+        kind::SCHEDULING_SLICE => format!("Core {}", key.extra),
         kind::FUNCTION_CALL => "calls".into(),
         kind::API_TRACK => "async".into(),
         kind::API_SCOPE if key.depth == 0 => "scopes".into(),

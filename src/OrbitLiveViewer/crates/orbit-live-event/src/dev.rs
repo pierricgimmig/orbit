@@ -123,6 +123,8 @@ pub const NAME_PLACE_EXTENT: u32 = 30_040;
 pub const NAME_POOL_THREADS: u32 = 30_041;
 pub const NAME_WORKER_SPANS: u32 = 30_042;
 pub const NAME_SPANS_DROPPED: u32 = 30_043;
+/// Collect + place the capture-global Scheduler core lanes.
+pub const NAME_SCHEDULER: u32 = 30_044;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +196,7 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_POOL_THREADS, "pool_threads");
     intern.insert_id(NAME_WORKER_SPANS, "worker_spans");
     intern.insert_id(NAME_SPANS_DROPPED, "spans_dropped");
+    intern.insert_id(NAME_SCHEDULER, "Scheduler");
     intern_render_worker_names(intern);
 }
 
@@ -635,6 +638,8 @@ mod tests {
         );
         assert_eq!(intern.get(NAME_N_PRIMS), Some("n_prims"));
         assert_eq!(intern.get(NAME_COLLECT_LANE), Some("CollectLane"));
+        assert_eq!(intern.get(NAME_SCHEDULER), Some("Scheduler"));
+        assert_eq!(intern.get(NAME_WORKER_SPANS), Some("worker_spans"));
         assert_eq!(intern.get(TID_STATS), Some("stats"));
         assert_eq!(intern.get(TID_RENDER_W0), Some("render-w0"));
         assert_eq!(

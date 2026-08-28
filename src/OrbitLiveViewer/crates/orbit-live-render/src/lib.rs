@@ -582,7 +582,7 @@ pub fn generate_nested_scopes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_live_event::named_scope_color;
+    use orbit_live_event::{named_scope_color, thread_scope_color};
     #[cfg(not(debug_assertions))]
     use std::time::Instant;
 
@@ -678,6 +678,41 @@ mod tests {
         idx.insert(scope(20, 10, 1, 3));
         assert_eq!(idx.lane_count(), 3);
         assert_eq!(idx.event_count(), 3);
+    }
+
+    #[test]
+    fn scheduling_slices_share_a_core_lane() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 10,
+            tid: 10,
+            pid: 1,
+            kind: kind::SCHEDULING_SLICE,
+            depth: 0,
+            extra: 2,
+            _pad: 0,
+            name_id: 10,
+        });
+        idx.insert(LiveEvent {
+            start_ns: 10,
+            duration_ns: 10,
+            tid: 20,
+            pid: 4,
+            kind: kind::SCHEDULING_SLICE,
+            depth: 0,
+            extra: 2,
+            _pad: 0,
+            name_id: 20,
+        });
+        assert_eq!(idx.lane_count(), 1);
+        let lane = idx.lane(LaneKey::scheduler(2)).unwrap();
+        assert_eq!(lane.len(), 2);
+        assert!(lane.ends_are_sorted());
+        assert_eq!(lane.events()[0].tid, 10);
+        assert_eq!(lane.events()[1].tid, 20);
+        assert_eq!(lane.events()[0].color_rgba(), thread_scope_color(10, 1));
+        assert_eq!(lane.events()[1].color_rgba(), thread_scope_color(20, 1));
     }
 
     #[test]

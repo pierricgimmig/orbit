@@ -8,6 +8,7 @@ use orbit_live_render::{lane_gap, lane_height, sort_thread_leaves, TrackIndex};
 
 pub const MACHINE_H: f32 = 16.0;
 pub const PROCESS_H: f32 = 18.0;
+pub const SCHEDULER_H: f32 = 18.0;
 pub const THREAD_H: f32 = 20.0;
 
 enum SkelItem {
@@ -23,6 +24,7 @@ pub struct ThreadId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RowId {
+    Scheduler,
     Machine(MachineId),
     Process(u32),
     Thread(ThreadId),
@@ -85,10 +87,13 @@ impl TrackStrip {
         let mut pids: Vec<u32> = Vec::new();
         let mut threads: Vec<ThreadId> = Vec::new();
         for (key, _) in index.lanes() {
+            if is_cpu_lane(key) {
+                continue;
+            }
             if let Some(pid) = filter_pid {
                 if key.pid != pid
                     && !is_self_pid(key.pid)
-                    && index.lanes().any(|(k, _)| k.pid == pid)
+                    && index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k))
                 {
                     continue;
                 }
@@ -189,7 +194,7 @@ impl TrackStrip {
     pub fn row_on_thread(row: RowId, t: ThreadId) -> bool {
         match row {
             RowId::Thread(th) => th == t,
-            RowId::Lane(k) => k.pid == t.pid && k.tid == t.tid,
+            RowId::Lane(k) => !is_cpu_lane(k) && k.pid == t.pid && k.tid == t.tid,
             _ => false,
         }
     }
@@ -232,7 +237,7 @@ impl TrackStrip {
     fn process_thread_list_y(&self, pid: u32) -> f32 {
         let s = self.scale.max(0.01);
         let want = MachineId::from_pid(pid);
-        let mut y = 0.0;
+        let mut y = self.scheduler_block_h();
         for m in self.machines_present() {
             y += MACHINE_H * s;
             if self.collapsed.contains(&RowId::Machine(m)) {
@@ -258,6 +263,25 @@ impl TrackStrip {
             }
         }
         y
+    }
+
+    fn scheduler_block_h(&self) -> f32 {
+        let s = self.scale.max(0.01);
+        if !self.y.contains_key(&RowId::Scheduler) {
+            return 0.0;
+        }
+        let mut h = SCHEDULER_H * s;
+        if self.collapsed.contains(&RowId::Scheduler) {
+            return h;
+        }
+        for (id, _) in self.y.iter() {
+            if let RowId::Lane(k) = *id {
+                if is_cpu_lane(k) {
+                    h += (lane_height(k) + lane_gap(k)) * s;
+                }
+            }
+        }
+        h
     }
 
     fn machines_present(&self) -> Vec<MachineId> {
@@ -445,11 +469,8 @@ impl TrackStrip {
             let height = self.height_of(id);
             bottom = bottom.max(y + height);
             if let RowId::Lane(k) = id {
-                if is_cpu_lane(k) {
-                    continue;
-                }
                 self.cached_layout.push((k, y));
-                if !is_rail_lane(k) {
+                if !is_rail_lane(k) && !is_cpu_lane(k) {
                     continue;
                 }
             }
@@ -474,6 +495,10 @@ impl TrackStrip {
     /// Leaf lanes only, y matching the rail (headers occupy space above them).
     pub fn layout(&self) -> &[(LaneKey, f32)] {
         &self.cached_layout
+    }
+
+    pub fn scheduler_core_count_in(index: &TrackIndex) -> usize {
+        scheduler_cores(index).len()
     }
 
     pub fn layout_gen(&self) -> u64 {
@@ -584,6 +609,7 @@ impl TrackStrip {
     fn height_of(&self, id: RowId) -> f32 {
         let s = self.scale.max(0.01);
         match id {
+            RowId::Scheduler => SCHEDULER_H * s,
             RowId::Machine(_) => MACHINE_H * s,
             RowId::Process(_) => PROCESS_H * s,
             RowId::Thread(t) => self.thread_scope_stack_h(t),
@@ -659,11 +685,20 @@ impl TrackStrip {
     ) -> Vec<(RowId, f32)> {
         let s = self.scale.max(0.01);
         let mut out = Vec::new();
+        let cores = scheduler_cores(index);
+        if !cores.is_empty() {
+            out.push((RowId::Scheduler, SCHEDULER_H * s));
+            if !self.collapsed.contains(&RowId::Scheduler) {
+                for k in cores {
+                    out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+                }
+            }
+        }
         if threads.is_empty() && self.process_order.is_empty() {
             return out;
         }
         let has_filter = filter_pid
-            .map(|pid| index.lanes().any(|(k, _)| k.pid == pid))
+            .map(|pid| index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)))
             .unwrap_or(false);
         for m in self.machines_present() {
             out.push((RowId::Machine(m), MACHINE_H * s));
@@ -677,7 +712,7 @@ impl TrackStrip {
                 if has_filter && filter_pid != Some(pid) && !is_self_pid(pid) {
                     continue;
                 }
-                if !index.lanes().any(|(k, _)| k.pid == pid) {
+                if !index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)) {
                     continue;
                 }
                 let keep_drag_proc = self
@@ -732,6 +767,17 @@ fn is_cpu_lane(k: LaneKey) -> bool {
 
 fn is_rail_lane(k: LaneKey) -> bool {
     k.kind == kind::VALUE
+}
+
+/// One paint lane per core, 0..N-1, matching native `num_cores_ = max+1`.
+fn scheduler_cores(index: &TrackIndex) -> Vec<LaneKey> {
+    let mut n = 0u16;
+    for (k, _) in index.lanes() {
+        if is_cpu_lane(k) {
+            n = n.max(u16::from(k.extra) + 1);
+        }
+    }
+    (0..n).map(|c| LaneKey::scheduler(c as u8)).collect()
 }
 
 fn process_rank(pid: u32) -> u8 {
@@ -1114,8 +1160,22 @@ mod tests {
         }
     }
 
+    fn sched(pid: u32, tid: u32, start: u64, dur: u64, core: u8) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid,
+            kind: kind::SCHEDULING_SLICE,
+            depth: 0,
+            extra: core,
+            _pad: 0,
+            name_id: tid,
+        }
+    }
+
     #[test]
-    fn layout_omits_cpu_and_rows_omit_state_scope_labels() {
+    fn layout_includes_scheduler_cores_not_as_thread_leaves() {
         let mut idx = TrackIndex::default();
         idx.insert(ev(kind::THREAD_STATE, 1, 100, 0, 0));
         idx.insert(ev(kind::SCHEDULING_SLICE, 1, 100, 0, 3));
@@ -1125,10 +1185,19 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        assert!(
-            strip.layout().iter().all(|(k, _)| k.kind != kind::SCHEDULING_SLICE),
-            "cpu lanes must not participate in layout"
+        let sched: Vec<_> = strip
+            .layout()
+            .iter()
+            .filter(|(k, _)| k.kind == kind::SCHEDULING_SLICE)
+            .copied()
+            .collect();
+        assert_eq!(
+            sched.len(),
+            4,
+            "core 3 ⇒ Scheduler (4 cores) with Core 0..3"
         );
+        assert!(sched.iter().all(|(k, _)| k.pid == 0 && k.tid == 0));
+        assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 4);
         assert!(strip.layout().iter().any(|(k, _)| k.kind == kind::API_SCOPE));
         assert!(strip.layout().iter().any(|(k, _)| k.kind == kind::THREAD_STATE));
         assert!(strip.layout().iter().any(|(k, _)| k.kind == kind::VALUE));
@@ -1140,14 +1209,107 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(row_kinds, vec![kind::VALUE]);
+        assert_eq!(
+            row_kinds,
+            vec![
+                kind::SCHEDULING_SLICE,
+                kind::SCHEDULING_SLICE,
+                kind::SCHEDULING_SLICE,
+                kind::SCHEDULING_SLICE,
+                kind::VALUE
+            ]
+        );
         assert!(!strip.rows().iter().any(|r| matches!(
             r.id,
-            RowId::Lane(k) if k.kind == kind::THREAD_STATE
-                || k.kind == kind::API_SCOPE
-                || k.kind == kind::SCHEDULING_SLICE
+            RowId::Lane(k) if k.kind == kind::THREAD_STATE || k.kind == kind::API_SCOPE
         )));
+        assert!(strip.rows().iter().any(|r| r.id == RowId::Scheduler));
+        assert!(strip.rows()[0].id == RowId::Scheduler);
         assert!(strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
+        let th = strip.thread_order[0];
+        assert_eq!(th, ThreadId { pid: 1, tid: 100 });
+        assert!(!strip.thread_order.iter().any(|t| t.pid == 0 && t.tid == 0));
+    }
+
+    #[test]
+    fn n_cores_yield_n_scheduler_lanes() {
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 10, 0, 10, 0));
+        idx.insert(sched(1, 11, 0, 10, 1));
+        idx.insert(sched(4, 20, 0, 10, 4));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let cores: Vec<u8> = strip
+            .layout()
+            .iter()
+            .filter(|(k, _)| k.kind == kind::SCHEDULING_SLICE)
+            .map(|(k, _)| k.extra)
+            .collect();
+        assert_eq!(cores, vec![0, 1, 2, 3, 4]);
+        assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 5);
+        assert_eq!(strip.rows()[0].id, RowId::Scheduler);
+    }
+
+    #[test]
+    fn two_threads_on_one_core_share_a_non_overlapping_lane() {
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 10, 0, 10, 2));
+        idx.insert(sched(4, 20, 10, 10, 2));
+        idx.insert(ev(kind::API_SCOPE, 1, 10, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 4, 20, 0, 0));
+        assert_eq!(
+            idx.lanes()
+                .filter(|(k, _)| k.kind == kind::SCHEDULING_SLICE)
+                .count(),
+            1,
+            "same core must rebucket into one lane"
+        );
+        let lane = idx.lane(LaneKey::scheduler(2)).expect("core 2");
+        assert_eq!(lane.len(), 2);
+        assert!(lane.ends_are_sorted());
+        assert!(
+            lane.events()[0].end_ns() <= lane.events()[1].start_ns,
+            "slices on one core must not overlap"
+        );
+        assert_eq!(lane.events()[0].tid, 10);
+        assert_eq!(lane.events()[1].tid, 20);
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let sched: Vec<_> = strip
+            .layout()
+            .iter()
+            .filter(|(k, _)| k.kind == kind::SCHEDULING_SLICE)
+            .collect();
+        assert_eq!(sched.len(), 3, "max core 2 ⇒ Core 0..2");
+        assert_eq!(
+            strip
+                .thread_order
+                .iter()
+                .filter(|t| t.tid == 10 || t.tid == 20)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn sync_does_not_invent_a_thread_from_scheduler_keys() {
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(9, 99, 0, 10, 0));
+        idx.insert(sched(9, 98, 10, 10, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert!(
+            strip.thread_order.is_empty(),
+            "scheduler sentinels must not become process/thread rows"
+        );
+        assert!(strip.process_order.is_empty());
+        assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 2);
+        assert_eq!(strip.rows()[0].id, RowId::Scheduler);
+        assert!(!strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
+        assert!(!strip.rows().iter().any(|r| matches!(r.id, RowId::Process(_))));
     }
 
     #[test]

@@ -116,16 +116,15 @@ impl LiveEvent {
     }
 
     pub fn lane_key(self) -> LaneKey {
+        if self.kind == kind::SCHEDULING_SLICE {
+            return LaneKey::scheduler(self.extra);
+        }
         LaneKey {
             pid: self.pid,
             tid: self.tid,
             kind: self.kind,
             depth: self.depth,
-            extra: if self.kind == kind::SCHEDULING_SLICE {
-                self.extra
-            } else {
-                0
-            },
+            extra: 0,
         }
     }
 
@@ -181,6 +180,22 @@ pub struct LaneKey {
 impl LaneKey {
     pub fn thread(self) -> (u32, u32) {
         (self.pid, self.tid)
+    }
+
+    /// Capture-global CPU-core lane. Sentinel pid/tid so cores do not spawn
+    /// fake process/thread rows; `extra` is the core id.
+    pub fn scheduler(core: u8) -> Self {
+        Self {
+            pid: 0,
+            tid: 0,
+            kind: kind::SCHEDULING_SLICE,
+            depth: 0,
+            extra: core,
+        }
+    }
+
+    pub fn is_scheduler(self) -> bool {
+        self.kind == kind::SCHEDULING_SLICE
     }
 }
 
@@ -591,6 +606,47 @@ mod tests {
         assert_ne!(a.lane_key(), b.lane_key());
         assert_eq!(a.lane_key().pid, 1);
         assert_eq!(b.lane_key().pid, 2);
+    }
+
+    #[test]
+    fn scheduling_lane_key_is_core_only() {
+        let a = LiveEvent {
+            tid: 100,
+            pid: 1,
+            kind: kind::SCHEDULING_SLICE,
+            extra: 3,
+            _pad: color_mode::AUTO_THREAD,
+            ..LiveEvent::default()
+        };
+        let b = LiveEvent {
+            tid: 200,
+            pid: 10,
+            kind: kind::SCHEDULING_SLICE,
+            extra: 3,
+            _pad: color_mode::AUTO_THREAD,
+            ..LiveEvent::default()
+        };
+        let c = LiveEvent {
+            tid: 100,
+            pid: 1,
+            kind: kind::SCHEDULING_SLICE,
+            extra: 4,
+            _pad: color_mode::AUTO_THREAD,
+            ..LiveEvent::default()
+        };
+        assert_eq!(a.lane_key(), b.lane_key());
+        assert_eq!(a.lane_key(), LaneKey::scheduler(3));
+        assert_ne!(a.lane_key(), c.lane_key());
+        assert_eq!(a.pid, 1);
+        assert_eq!(a.tid, 100);
+        assert_eq!(b.pid, 10);
+        assert_eq!(b.tid, 200);
+        assert_eq!(
+            a.color_rgba(),
+            thread_scope_color(100, 1),
+            "scheduler uses GetThreadColor, not even-depth darken"
+        );
+        assert_ne!(a.color_rgba(), thread_scope_color(200, 1));
     }
 
     #[test]

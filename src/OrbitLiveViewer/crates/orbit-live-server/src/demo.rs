@@ -2,7 +2,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use orbit_live_event::dev::{DEMO_ORIGIN_NS, DEMO_TICK_NS};
 use orbit_live_event::{color_mode, kind, thread_state, LiveEvent};
+
+/// Demo Scheduler cores. Threads hop across these; one occupant per core.
+pub const DEMO_CORES: u8 = 8;
+const SCHED_SLOTS: u32 = 4;
+const SCHED_SLOT_NS: u64 = DEMO_TICK_NS / SCHED_SLOTS as u64;
 
 use crate::LiveService;
 
@@ -164,6 +170,8 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
             for (i, tid) in [500u32, 501, 502].into_iter().enumerate() {
                 push_thread_tick(&mut events, t, REMOTE_RENDER_PID, tid, i as u32 + 4);
             }
+            let tick_i = t.saturating_sub(DEMO_ORIGIN_NS) / DEMO_TICK_NS;
+            push_scheduler_tick(&mut events, t, tick_i);
             let phase = (t as f64) / 200_000_000.0;
             events.push(LiveEvent::from_value(
                 t,
@@ -246,18 +254,6 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th:
         _pad: 0,
         name_id: 0,
     });
-    events.push(LiveEvent {
-        start_ns: t + 200_000,
-        duration_ns: 12_500_000,
-        tid,
-        pid,
-        kind: kind::SCHEDULING_SLICE,
-        depth: 0,
-        extra: (tid % 8) as u8,
-        _pad: color_mode::AUTO_THREAD,
-        name_id: tid,
-    });
-
     let outer_pad = if th == 0 {
         color_mode::MANUAL_API
     } else {
@@ -308,6 +304,62 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th:
             ));
         }
     }
+}
+
+fn demo_sched_threads() -> Vec<(u32, u32)> {
+    let mut out = Vec::with_capacity(33);
+    for th in 0..16u32 {
+        out.push((DEMO_PID, 100 + th));
+    }
+    for tid in [200u32, 201, 202, 203, 204, 205] {
+        out.push((RENDER_PID, tid));
+    }
+    for tid in [300u32, 301, 302, 303] {
+        out.push((AUDIO_PID, tid));
+    }
+    for tid in [400u32, 401, 402, 403] {
+        out.push((REMOTE_DEMO_PID, tid));
+    }
+    for tid in [500u32, 501, 502] {
+        out.push((REMOTE_RENDER_PID, tid));
+    }
+    out
+}
+
+/// One occupant per core per slot; occupants rotate so a core shows many
+/// thread colors after a few seconds. Slots tile the 20 ms tick.
+fn push_scheduler_tick(events: &mut Vec<LiveEvent>, t: u64, tick_i: u64) {
+    events.extend(scheduler_slices_for_tick(t, tick_i));
+}
+
+pub fn scheduler_slices_for_tick(t: u64, tick_i: u64) -> Vec<LiveEvent> {
+    let threads = demo_sched_threads();
+    let n = threads.len();
+    let mut out = Vec::with_capacity(DEMO_CORES as usize * SCHED_SLOTS as usize);
+    for slot in 0..SCHED_SLOTS {
+        let start = t + u64::from(slot) * SCHED_SLOT_NS;
+        for core in 0..DEMO_CORES {
+            let idx = ((tick_i as usize)
+                .saturating_mul(SCHED_SLOTS as usize)
+                .saturating_add(slot as usize)
+                .saturating_mul(DEMO_CORES as usize)
+                .saturating_add(core as usize))
+                % n;
+            let (pid, tid) = threads[idx];
+            out.push(LiveEvent {
+                start_ns: start,
+                duration_ns: SCHED_SLOT_NS,
+                tid,
+                pid,
+                kind: kind::SCHEDULING_SLICE,
+                depth: 0,
+                extra: core,
+                _pad: color_mode::AUTO_THREAD,
+                name_id: tid,
+            });
+        }
+    }
+    out
 }
 
 fn scope(
@@ -371,5 +423,46 @@ mod tests {
         // Must not collide with Async tid intern (10) or Main (100).
         assert_ne!(scope_name_id(0, 1, 0), 10);
         assert_ne!(scope_name_id(0, 10, 0), 100);
+    }
+
+    #[test]
+    fn scheduler_hops_threads_across_cores_without_overlap() {
+        let a = scheduler_slices_for_tick(DEMO_ORIGIN_NS, 0);
+        let b = scheduler_slices_for_tick(DEMO_ORIGIN_NS + DEMO_TICK_NS, 1);
+        assert_eq!(a.len(), DEMO_CORES as usize * SCHED_SLOTS as usize);
+        let cores: std::collections::HashSet<u8> = a.iter().map(|e| e.extra).collect();
+        assert_eq!(cores.len(), DEMO_CORES as usize);
+        for core in 0..DEMO_CORES {
+            let mut on_core: Vec<_> = a
+                .iter()
+                .chain(b.iter())
+                .filter(|e| e.extra == core)
+                .copied()
+                .collect();
+            on_core.sort_by_key(|e| e.start_ns);
+            assert!(
+                on_core.windows(2).all(|w| w[0].end_ns() <= w[1].start_ns),
+                "core {core} slices must not overlap"
+            );
+            let tids: std::collections::HashSet<u32> = on_core.iter().map(|e| e.tid).collect();
+            assert!(
+                tids.len() > 1,
+                "core {core} must hop between threads, got {tids:?}"
+            );
+        }
+        let core0_t0: std::collections::HashSet<u32> = a
+            .iter()
+            .filter(|e| e.extra == 0)
+            .map(|e| e.tid)
+            .collect();
+        let core0_t1: std::collections::HashSet<u32> = b
+            .iter()
+            .filter(|e| e.extra == 0)
+            .map(|e| e.tid)
+            .collect();
+        assert_ne!(
+            core0_t0, core0_t1,
+            "the same core must not stay pinned to one thread set"
+        );
     }
 }

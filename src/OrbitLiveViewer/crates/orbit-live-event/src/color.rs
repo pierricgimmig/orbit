@@ -176,6 +176,9 @@ pub fn event_color(
             let id = name_id.to_le_bytes();
             named_scope_color(name.unwrap_or(&id), depth)
         }
+        // Odd depth: full `GetThreadColor` (no even-row darken). Scheduler
+        // slices have depth 0 on the wire.
+        kind::SCHEDULING_SLICE => thread_scope_color(tid, 1),
         _ => thread_scope_color(tid, depth),
     }
 }
