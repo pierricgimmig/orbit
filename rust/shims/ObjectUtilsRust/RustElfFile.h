@@ -44,6 +44,11 @@ namespace orbit_object_utils_rust {
 // Not in RustElfFile.cpp for why that is reported rather than fatal.
 void GetDemanglingDivergence(uint64_t* differing, uint64_t* compared);
 
+// How many addresses llvm::symbolize placed only well enough to name a file,
+// with line 0, where the Rust backend reported no line info at all. See the
+// note in CheckLineInfoAgrees.
+[[nodiscard]] uint64_t GetLineInfoWithoutLineNumberCount();
+
 // The Rust CRC-32 used for .gnu_debuglink, chunked like the C++ is.
 [[nodiscard]] uint32_t Crc32Continue(uint32_t previous, const void* data, size_t len);
 

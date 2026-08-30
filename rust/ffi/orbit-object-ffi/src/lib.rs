@@ -13,8 +13,8 @@
 use std::ffi::{c_char, CStr, CString};
 
 use orbit_object::{
-    crc32_continue, load_symbols, load_unwind_ranges, no_ranges_error, parse_elf_metadata,
-    ElfMetadata, SymbolTable,
+    crc32_continue, line_info, load_symbols, load_unwind_ranges, no_ranges_error,
+    parse_elf_metadata, ElfMetadata, SymbolTable,
 };
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
@@ -412,6 +412,55 @@ pub unsafe extern "C" fn orbit_elf_symbols_free(handle: *mut OrbitElfSymbols) {
     if !handle.is_null() {
         // SAFETY: the caller promises an unfreed handle.
         drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
+// ---------------------------------------------------------------- line info
+
+/// Resolves `address` to a source location.
+///
+/// Returns the source file as a NUL-terminated string to release with
+/// [`orbit_elf_free_error`], writing the line to `line_out`. Returns null on
+/// failure, with a message in `error_out` to release the same way.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `line_out` and `error_out` must
+/// be null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_line_info(
+    data: *const u8,
+    len: usize,
+    address: u64,
+    line_out: *mut u32,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    let set_error = |message: &str| {
+        if !error_out.is_null() {
+            let owned = to_cstring(message).into_raw();
+            // SAFETY: the caller promises error_out is writable.
+            unsafe { *error_out = owned };
+        }
+    };
+
+    if data.is_null() {
+        set_error("orbit_elf_line_info called with a null pointer");
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    match line_info(bytes, address) {
+        Ok(info) => {
+            if !line_out.is_null() {
+                // SAFETY: the caller promises line_out is writable.
+                unsafe { *line_out = info.source_line };
+            }
+            to_cstring(&info.source_file).into_raw()
+        }
+        Err(message) => {
+            set_error(&message);
+            std::ptr::null_mut()
+        }
     }
 }
 

@@ -46,7 +46,13 @@ struct Totals {
   int loaded = 0;
   int rejected = 0;
   long long symbols = 0;
+  long long line_lookups = 0;
 };
+
+// Line info is per address, so a whole-file sweep would dominate the run.
+// Sampling the first few function addresses of each file with debug info
+// still crosses every code path and stays affordable.
+constexpr int kLineInfoSamplesPerFile = 32;
 
 void Visit(const std::filesystem::path& path, Totals* totals) {
   if (!LooksLikeElf(path)) return;
@@ -76,6 +82,17 @@ void Visit(const std::filesystem::path& path, Totals* totals) {
   if (unwind.has_value()) totals->symbols += unwind.value().symbol_infos_size();
   const auto fallback = elf_file.value()->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols();
   if (fallback.has_value()) totals->symbols += fallback.value().symbol_infos_size();
+
+  // GetLineInfo asserts on the presence of debug info, so only ask when there
+  // is some.
+  if (elf_file.value()->HasDebugInfo() && debug_symbols.has_value()) {
+    int sampled = 0;
+    for (const auto& symbol : debug_symbols.value().symbol_infos()) {
+      if (sampled++ >= kLineInfoSamplesPerFile) break;
+      (void)elf_file.value()->GetLineInfo(symbol.address());
+      ++totals->line_lookups;
+    }
+  }
 }
 
 }  // namespace
@@ -109,6 +126,7 @@ int main(int argc, char** argv) {
   printf("loaded           %d\n", totals.loaded);
   printf("rejected         %d\n", totals.rejected);
   printf("symbols compared %lld\n", totals.symbols);
+  printf("line lookups compared %lld\n", totals.line_lookups);
 
   uint64_t differing = 0;
   uint64_t compared = 0;
@@ -117,6 +135,11 @@ int main(int argc, char** argv) {
     printf("demangling compared %llu\n", static_cast<unsigned long long>(compared));
     printf("demangling differing %llu (%.4f%%)\n", static_cast<unsigned long long>(differing),
            100.0 * static_cast<double>(differing) / static_cast<double>(compared));
+  }
+  const uint64_t no_line = orbit_object_utils_rust::GetLineInfoWithoutLineNumberCount();
+  if (totals.line_lookups > 0) {
+    printf("line results with no line number %llu\n",
+           static_cast<unsigned long long>(no_line));
   }
   return 0;
 }

@@ -89,6 +89,15 @@ const char* orbit_elf_symbol_names(const OrbitElfSymbols* handle);
 size_t orbit_elf_symbol_names_len(const OrbitElfSymbols* handle);
 void orbit_elf_symbols_free(OrbitElfSymbols* handle);
 
+// -------------------------------------------------------------- line info
+
+// Resolves `address` to a source location. Returns the source file as a
+// NUL-terminated string to release with orbit_elf_free_error, writing the line
+// number to line_out. Returns NULL on failure, with a message in error_out to
+// release the same way.
+char* orbit_elf_line_info(const uint8_t* data, size_t len, uint64_t address, uint32_t* line_out,
+                          char** error_out);
+
 // Running .gnu_debuglink CRC-32, so a large file can be checksummed in chunks
 // exactly as CalculateDebuglinkChecksum does. Start with previous = 0.
 uint32_t orbit_elf_crc32_continue(uint32_t previous, const uint8_t* data, size_t len);

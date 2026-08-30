@@ -14,7 +14,7 @@
 //! information, matching the C++.
 
 use object::elf;
-use object::read::elf::{FileHeader, SectionHeader};
+use object::read::elf::FileHeader;
 use object::Endianness;
 
 use crate::symbols::{is_hotpatchable, load_hotpatchable_addresses, Symbol};
@@ -34,48 +34,22 @@ pub fn load_unwind_ranges(data: &[u8]) -> Result<Vec<Symbol>, String> {
 
 /// A section's bytes together with the address it is loaded at, which
 /// `.eh_frame`'s pc-relative pointer encodings need in order to resolve.
-struct SectionBytes<'a> {
-    data: &'a [u8],
+struct SectionBytes {
+    data: Vec<u8>,
     address: u64,
 }
 
-fn find_section<'a, Elf>(
+fn find_section<Elf>(
     header: &Elf,
     endian: Endianness,
-    data: &'a [u8],
+    data: &[u8],
     wanted: &[u8],
-) -> Option<SectionBytes<'a>>
+) -> Option<SectionBytes>
 where
     Elf: FileHeader<Endian = Endianness>,
 {
-    let sections = header.sections(endian, data).ok()?;
-    for section in sections.iter() {
-        // A section whose name or contents cannot be read is skipped, not
-        // treated as the end of the search. Bailing out here meant one
-        // unreadable section elsewhere in the file hid the .eh_frame that
-        // came after it -- which is exactly what the corpus caught.
-        let Ok(name) = sections.section_name(endian, section) else {
-            continue;
-        };
-        // LLVM strips a leading run of '.', '_' and 'z' before matching section
-        // names, so that ".eh_frame", "eh_frame" and the compressed ".zdebug_"
-        // forms all resolve. Do the same rather than matching one spelling.
-        let trimmed = name
-            .iter()
-            .position(|b| !matches!(b, b'.' | b'_' | b'z'))
-            .map_or(&name[..], |start| &name[start..]);
-        if trimmed != wanted {
-            continue;
-        }
-        let Ok(section_data) = section.data(endian, data) else {
-            continue;
-        };
-        return Some(SectionBytes {
-            data: section_data,
-            address: section.sh_addr(endian).into(),
-        });
-    }
-    None
+    crate::sections::section_bytes(header, endian, data, wanted)
+        .map(|(data, address)| SectionBytes { data, address })
 }
 
 fn load_typed<Elf>(data: &[u8]) -> Result<Vec<Symbol>, String>
@@ -101,24 +75,24 @@ where
     // is "found but yields nothing" -- a different error from "not found" --
     // and real binaries in /usr/lib contain exactly that.
     if let Some(section) = find_section::<Elf>(&header, endian, data, b"debug_frame") {
-        let mut frame = gimli::DebugFrame::new(section.data, gimli_endian);
+        let mut frame = gimli::DebugFrame::new(&section.data, gimli_endian);
         frame.set_address_size(if header.is_type_64() { 8 } else { 4 });
         let bases = gimli::BaseAddresses::default();
         let (found_entries, ranges) = collect_ranges(&frame, &bases);
-        if found_entries || section_counts_as_non_empty(section.data) {
+        if found_entries || section_counts_as_non_empty(&section.data) {
             return Ok(to_symbols(ranges, &hotpatchable));
         }
     }
 
     if let Some(section) = find_section::<Elf>(&header, endian, data, b"eh_frame") {
-        let mut frame = gimli::EhFrame::new(section.data, gimli_endian);
+        let mut frame = gimli::EhFrame::new(&section.data, gimli_endian);
         frame.set_address_size(if header.is_type_64() { 8 } else { 4 });
         // Giving gimli the section's load address is what makes DW_EH_PE_pcrel
         // pointers resolve to absolute addresses. The C++ has to patch this up
         // by hand because of an LLVM bug that predates its version pin.
         let bases = gimli::BaseAddresses::default().set_eh_frame(section.address);
         let (found_entries, ranges) = collect_ranges(&frame, &bases);
-        if found_entries || section_counts_as_non_empty(section.data) {
+        if found_entries || section_counts_as_non_empty(&section.data) {
             return Ok(to_symbols(ranges, &hotpatchable));
         }
     }

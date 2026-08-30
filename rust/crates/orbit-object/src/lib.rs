@@ -21,9 +21,12 @@ use object::read::elf::{Dyn, FileHeader, ProgramHeader, SectionHeader};
 use object::Endianness;
 
 mod debuglink;
+mod lineinfo;
+mod sections;
 mod symbols;
 mod unwind;
 pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
+pub use lineinfo::{line_info, no_line_info_error, LineInfo};
 pub use symbols::{load_symbols, Symbol, SymbolTable};
 pub use unwind::{load_unwind_ranges, no_ranges_error};
 
