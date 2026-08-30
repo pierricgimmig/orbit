@@ -56,8 +56,12 @@ const ZOOM_MIN_NS: f64 = 100.0;
 const ZOOM_MAX_NS: f64 = 60_000_000_000.0;
 /// `TimeGraph::Zoom` window = 1.1 × [min, max].
 const ZOOM_SCOPE_PAD: f64 = 1.1;
-/// `CaptureWindow::Pan` / arrow keys.
+/// `CaptureWindow::Pan` / arrow keys: one discrete step (wheel, not hold).
 const PAN_RATIO: f64 = 0.1;
+/// Typical OS key-repeat. Hold-to-pan used to apply `PAN_RATIO` at this rate.
+const KEY_REPEAT_HZ: f64 = 30.0;
+/// Cap so an idle wake does not dump a large window jump on key-down.
+const KEY_HOLD_DT_MAX: f32 = 1.0 / 60.0;
 /// `CaptureWindow` Up/Down and PageUp/PageDown.
 const VSCROLL_ARROW: f32 = 0.05;
 const VSCROLL_PAGE: f32 = 0.9;
@@ -145,8 +149,39 @@ fn time_zoom_step(scroll_y: f32, zoom_delta: f32) -> i32 {
 }
 
 /// Wheel / pinch / W-S this frame: do not let Follow slide the window.
+/// `key_w` / `key_s` are held-state (`key_down`), not OS-repeat `key_pressed`.
 fn is_time_zoom_gesture(scroll_y: f32, zoom_delta: f32, key_w: bool, key_s: bool) -> bool {
     key_w || key_s || time_zoom_step(scroll_y, zoom_delta) != 0
+}
+
+/// A/D (and arrows when they pan time) are held: Follow must not fight.
+fn any_time_pan_held(a: bool, d: bool, left: bool, right: bool, arrows_pan: bool) -> bool {
+    a || d || (arrows_pan && (left || right))
+}
+
+/// Net hold-to-pan direction: +1 earlier, −1 later, 0 none or cancel.
+fn held_time_pan_dir(a: bool, d: bool, left: bool, right: bool, arrows_pan: bool) -> f64 {
+    let mut dir = 0.0;
+    if a || (arrows_pan && left) {
+        dir += 1.0;
+    }
+    if d || (arrows_pan && right) {
+        dir -= 1.0;
+    }
+    dir
+}
+
+/// Window fraction to shift this frame while a pan key is held.
+///
+/// `PAN_RATIO` was applied once per OS key-repeat (~30 Hz). Scaling that
+/// rate by real frame `dt` keeps 60 Hz and 120 Hz at the same speed.
+fn pan_ratio_for_dt(dt: f32) -> f64 {
+    PAN_RATIO * KEY_REPEAT_HZ * f64::from(dt.clamp(0.0, KEY_HOLD_DT_MAX))
+}
+
+/// Vertical-scroll view-height fraction this frame while an arrow is held.
+fn vscroll_ratio_for_dt(dt: f32) -> f32 {
+    VSCROLL_ARROW * KEY_REPEAT_HZ as f32 * dt.clamp(0.0, KEY_HOLD_DT_MAX)
 }
 
 /// Capture time at a 0..1 position in the visible window `[t0, t1]`.
@@ -1575,7 +1610,7 @@ impl OrbitLiveApp {
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
                 self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true);
-                self.handle_keys(&body_resp.ctx, body, ruler, avail.y);
+                self.handle_keys(&body_resp.ctx, body, ruler, avail.y, dt);
                 self.handle_pick(&body_resp, body, t0, t1, width);
                 self.handle_measure(&body_resp, body, true);
             }
@@ -2575,7 +2610,7 @@ impl OrbitLiveApp {
         }
     }
 
-    fn handle_keys(&mut self, ctx: &Context, body: Rect, ruler: Rect, view_h: f32) {
+    fn handle_keys(&mut self, ctx: &Context, body: Rect, ruler: Rect, view_h: f32, dt: f32) {
         if ctx.wants_keyboard_input() {
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
                 if self.search_active() || !self.search.is_empty() {
@@ -2594,22 +2629,30 @@ impl OrbitLiveApp {
                 self.selected = None;
             }
         }
-        // CaptureWindow::KeyPressed A / D / Left / Right (no selection): Pan ±10%.
-        if ctx.input(|i| i.key_pressed(Key::A))
-            || (self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowLeft)))
-        {
-            let (t0, t1) = pan_time(self.t0, self.t1, PAN_RATIO);
-            self.t0 = t0;
-            self.t1 = t1;
+        let (a, d, left, right, up, down, w, s) = ctx.input(|i| {
+            (
+                i.key_down(Key::A),
+                i.key_down(Key::D),
+                i.key_down(Key::ArrowLeft),
+                i.key_down(Key::ArrowRight),
+                i.key_down(Key::ArrowUp),
+                i.key_down(Key::ArrowDown),
+                i.key_pressed(Key::W),
+                i.key_pressed(Key::S),
+            )
+        });
+        // Hold-to-pan from key-down state + dt, not OS key-repeat (~30 Hz).
+        // A/D always pan time; arrows do too only with no selection (Qt).
+        let arrows_pan = self.selected.is_none();
+        if any_time_pan_held(a, d, left, right, arrows_pan) {
             self.follow = false;
-        }
-        if ctx.input(|i| i.key_pressed(Key::D))
-            || (self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowRight)))
-        {
-            let (t0, t1) = pan_time(self.t0, self.t1, -PAN_RATIO);
-            self.t0 = t0;
-            self.t1 = t1;
-            self.follow = false;
+            self.needs_repaint = true;
+            let dir = held_time_pan_dir(a, d, left, right, arrows_pan);
+            if dir != 0.0 {
+                let (t0, t1) = pan_time(self.t0, self.t1, dir * pan_ratio_for_dt(dt));
+                self.t0 = t0;
+                self.t1 = t1;
+            }
         }
         if self.selected.is_some()
             && ctx.input(|i| i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight))
@@ -2621,18 +2664,25 @@ impl OrbitLiveApp {
             };
             self.nudge_selection(dir);
         }
-        // W / S → ZoomHorizontally around the pointer (TimeGraph::ZoomTime).
-        if ctx.input(|i| i.key_pressed(Key::W)) {
+        // W / S stay discrete ZoomTime steps (CaptureWindow::ZoomHorizontally).
+        if w {
             self.zoom_horizontally(ctx, body, ruler, 1);
         }
-        if ctx.input(|i| i.key_pressed(Key::S)) {
+        if s {
             self.zoom_horizontally(ctx, body, ruler, -1);
         }
-        if self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowUp)) {
-            self.nudge_vscroll(VSCROLL_ARROW, view_h);
-        }
-        if self.selected.is_none() && ctx.input(|i| i.key_pressed(Key::ArrowDown)) {
-            self.nudge_vscroll(-VSCROLL_ARROW, view_h);
+        if arrows_pan {
+            let mut vdir = 0.0;
+            if up {
+                vdir += 1.0;
+            }
+            if down {
+                vdir -= 1.0;
+            }
+            if vdir != 0.0 {
+                self.nudge_vscroll(vdir * vscroll_ratio_for_dt(dt), view_h);
+                self.needs_repaint = true;
+            }
         }
         if ctx.input(|i| i.key_pressed(Key::PageUp)) {
             self.nudge_vscroll(VSCROLL_PAGE, view_h);
@@ -2821,8 +2871,8 @@ impl OrbitLiveApp {
         ));
     }
 
-    fn tick_follow(&mut self, dt: f32, zooming: bool) {
-        if !self.follow || self.live_edge_ns == 0 || zooming {
+    fn tick_follow(&mut self, dt: f32, hold_window: bool) {
+        if !self.follow || self.live_edge_ns == 0 || hold_window {
             return;
         }
         let target_t1 = self.live_edge_ns as f64;
@@ -2879,15 +2929,24 @@ impl eframe::App for OrbitLiveApp {
                 }
                 {
                     let _follow = devf.scope(TID_UI, NAME_TICK_FOLLOW);
-                    let zooming = ctx.input(|i| {
-                        is_time_zoom_gesture(
-                            i.raw_scroll_delta.y,
-                            i.zoom_delta(),
-                            i.key_pressed(Key::W),
-                            i.key_pressed(Key::S),
-                        )
-                    });
-                    self.tick_follow(dt, zooming);
+                    let steal = ctx.wants_keyboard_input();
+                    let arrows_pan = self.selected.is_none();
+                    let hold_window = !steal
+                        && ctx.input(|i| {
+                            is_time_zoom_gesture(
+                                i.raw_scroll_delta.y,
+                                i.zoom_delta(),
+                                i.key_down(Key::W),
+                                i.key_down(Key::S),
+                            ) || any_time_pan_held(
+                                i.key_down(Key::A),
+                                i.key_down(Key::D),
+                                i.key_down(Key::ArrowLeft),
+                                i.key_down(Key::ArrowRight),
+                                arrows_pan,
+                            )
+                        });
+                    self.tick_follow(dt, hold_window);
                 }
                 let now = ctx.input(|i| i.time);
                 if now - self.last_status_request > 0.25 {
@@ -4297,6 +4356,54 @@ mod tests {
         let (t0, t1) = pan_time(1_000.0, 2_000.0, PAN_RATIO);
         assert!((t0 - 900.0).abs() < 1e-6);
         assert!((t1 - 1_900.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn held_pan_ratio_is_the_same_speed_at_60_and_120() {
+        let r60 = pan_ratio_for_dt(1.0 / 60.0);
+        let r120 = pan_ratio_for_dt(1.0 / 120.0);
+        assert!(
+            (r60 - 2.0 * r120).abs() < 1e-12,
+            "120 Hz must not be 2x: r60={r60} r120={r120}"
+        );
+        let one_sec = PAN_RATIO * KEY_REPEAT_HZ;
+        assert!((r60 * 60.0 - one_sec).abs() < 1e-9);
+        assert!((r120 * 120.0 - one_sec).abs() < 1e-9);
+        // Idle wake (100 ms) must not dump a larger step than one 60 Hz frame.
+        assert_eq!(pan_ratio_for_dt(0.1), r60);
+    }
+
+    #[test]
+    fn held_pan_covers_the_same_ground_in_one_60_or_two_120_frames() {
+        let start = (1_000.0, 2_000.0);
+        let (a0, a1) = pan_time(start.0, start.1, pan_ratio_for_dt(1.0 / 60.0));
+        let mid = pan_time(start.0, start.1, pan_ratio_for_dt(1.0 / 120.0));
+        let (b0, b1) = pan_time(mid.0, mid.1, pan_ratio_for_dt(1.0 / 120.0));
+        assert!((a0 - b0).abs() < 1e-9);
+        assert!((a1 - b1).abs() < 1e-9);
+        // Each 120 Hz step is smaller than the old 10% key-repeat jump.
+        assert!(a0 > 900.0);
+        assert!((a1 - a0 - 1_000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn held_time_pan_dir_cancels_opposites_and_ignores_arrows_with_selection() {
+        assert_eq!(held_time_pan_dir(true, false, false, false, true), 1.0);
+        assert_eq!(held_time_pan_dir(false, true, false, false, true), -1.0);
+        assert_eq!(held_time_pan_dir(true, true, false, false, true), 0.0);
+        assert_eq!(held_time_pan_dir(true, false, false, true, true), 0.0);
+        assert_eq!(held_time_pan_dir(false, false, true, false, true), 1.0);
+        assert_eq!(held_time_pan_dir(false, false, true, false, false), 0.0);
+        assert!(any_time_pan_held(true, true, false, false, true));
+        assert!(!any_time_pan_held(false, false, true, false, false));
+    }
+
+    #[test]
+    fn held_vscroll_ratio_is_the_same_speed_at_60_and_120() {
+        let r60 = vscroll_ratio_for_dt(1.0 / 60.0);
+        let r120 = vscroll_ratio_for_dt(1.0 / 120.0);
+        assert!((r60 - 2.0 * r120).abs() < 1e-6);
+        assert_eq!(vscroll_ratio_for_dt(0.1), r60);
     }
 
     #[test]
