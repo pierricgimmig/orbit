@@ -4,6 +4,8 @@
 # found in the LICENSE file.
 #
 # Build OrbitService and run it as root so it serves the live WASM viewer.
+# Root is required for real context-switch / thread-state tracks. Record
+# attaches to the process you pick in the Capture strip (not the demo).
 #
 #   ./wasm.sh                            # http://127.0.0.1:44766/
 #   ./wasm.sh --http-port 44768          # when 44766 is already taken
@@ -92,6 +94,7 @@ cat <<BANNER
   gRPC capture        127.0.0.1:${GRPC_PORT}
 
   Ctrl-C to stop. Root is what makes scheduling and thread-state tracks work.
+  Pick a process, wait for symbols, then Record. Demo is the dummy path.
 
 BANNER
 

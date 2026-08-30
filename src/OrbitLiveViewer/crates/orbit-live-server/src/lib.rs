@@ -55,57 +55,15 @@ pub fn env_dev_self() -> bool {
     matches!(std::env::var("ORBIT_LIVE_DEV").ok().as_deref(), Some("1"))
 }
 
-/// Optional hooks so OrbitService can list processes and start/stop a capture
-/// without the WASM client talking gRPC or parsing modules.
+/// Optional hooks so OrbitService can list processes, load symbols, and
+/// start/stop a capture without the WASM client talking gRPC or parsing ELF.
 pub struct ControlHooks {
     pub list_processes_json: Box<dyn Fn() -> Result<String, String> + Send + Sync>,
-    pub start_capture: Box<dyn Fn(u32, CaptureFlags) -> Result<(), String> + Send + Sync>,
+    pub start_capture: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
     pub stop_capture: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct CaptureFlags {
-    pub enable_api: bool,
-    pub context_switches: bool,
-    pub thread_states: bool,
-}
-
-impl Default for CaptureFlags {
-    fn default() -> Self {
-        Self {
-            enable_api: true,
-            context_switches: true,
-            thread_states: true,
-        }
-    }
-}
-
-pub const CAPTURE_FLAG_API: u32 = 1;
-pub const CAPTURE_FLAG_CONTEXT_SWITCHES: u32 = 2;
-pub const CAPTURE_FLAG_THREAD_STATES: u32 = 4;
-
-impl CaptureFlags {
-    pub fn from_bits(bits: u32) -> Self {
-        Self {
-            enable_api: bits & CAPTURE_FLAG_API != 0,
-            context_switches: bits & CAPTURE_FLAG_CONTEXT_SWITCHES != 0,
-            thread_states: bits & CAPTURE_FLAG_THREAD_STATES != 0,
-        }
-    }
-
-    pub fn to_bits(self) -> u32 {
-        let mut bits = 0;
-        if self.enable_api {
-            bits |= CAPTURE_FLAG_API;
-        }
-        if self.context_switches {
-            bits |= CAPTURE_FLAG_CONTEXT_SWITCHES;
-        }
-        if self.thread_states {
-            bits |= CAPTURE_FLAG_THREAD_STATES;
-        }
-        bits
-    }
+    pub load_symbols: Box<dyn Fn(u32) -> Result<(), String> + Send + Sync>,
+    pub symbols_status_json: Box<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
+    pub search_functions_json: Box<dyn Fn(u32, &str, u32) -> Result<String, String> + Send + Sync>,
 }
 
 pub struct LiveService {
@@ -345,6 +303,10 @@ impl LiveService {
 
     pub fn set_hooks(&self, hooks: ControlHooks) {
         *self.hooks.lock() = Some(hooks);
+    }
+
+    pub fn has_hooks(&self) -> bool {
+        self.hooks.lock().is_some()
     }
 
     pub fn ring(&self) -> SharedRing {

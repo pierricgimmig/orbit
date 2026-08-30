@@ -17,7 +17,7 @@ use orbit_live_render::{
     choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
 };
 
-use crate::{CaptureFlags, LiveService, ServerConfig};
+use crate::{LiveService, ServerConfig};
 
 mod assets {
     include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
@@ -42,6 +42,9 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/processes", get(processes))
         .route("/api/capture/start", post(capture_start))
         .route("/api/capture/stop", post(capture_stop))
+        .route("/api/symbols/load", post(symbols_load))
+        .route("/api/symbols/status", get(symbols_status))
+        .route("/api/functions/search", get(functions_search))
         .route("/api/demo/start", post(demo_start))
         .route("/api/demo/stop", post(demo_stop))
         .route("/api/self/start", post(self_start))
@@ -130,6 +133,8 @@ struct StatusBody {
     http_bind: String,
     machine: String,
     self_profile: bool,
+    /// OrbitService control hooks are registered (real capture, not rust-only).
+    hooks: bool,
 }
 
 impl StatusBody {
@@ -152,6 +157,7 @@ impl StatusBody {
             http_bind: cfg.bind.to_string(),
             machine: "local".into(),
             self_profile: svc.self_profile_enabled(),
+            hooks: svc.has_hooks(),
         }
     }
 }
@@ -194,35 +200,150 @@ fn merge_self_processes(svc: &LiveService, json: String) -> String {
     serde_json::to_string(&list).unwrap_or(json)
 }
 
-#[derive(Deserialize)]
-struct StartBody {
-    pid: u32,
-    enable_api: Option<bool>,
-    context_switches: Option<bool>,
-    thread_states: Option<bool>,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StartBody {
+    pub pid: u32,
+    #[serde(default = "default_true")]
+    pub enable_api: bool,
+    #[serde(default = "default_true")]
+    pub context_switches: bool,
+    #[serde(default = "default_true")]
+    pub thread_states: bool,
+    #[serde(default = "default_true")]
+    pub sampling: bool,
+    #[serde(default = "default_sps")]
+    pub samples_per_second: f64,
+    #[serde(default = "default_unwinding")]
+    pub unwinding: String,
+    #[serde(default = "default_dyn_instr")]
+    pub dynamic_instrumentation_method: String,
+    #[serde(default)]
+    pub instrumented_functions: Vec<InstrumentedFnRef>,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_sps() -> f64 {
+    1000.0
+}
+fn default_unwinding() -> String {
+    "dwarf".into()
+}
+fn default_dyn_instr() -> String {
+    "user_space".into()
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InstrumentedFnRef {
+    pub function_id: u64,
+}
+
+impl StartBody {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| format!(r#"{{"pid":{}}}"#, self.pid))
+    }
 }
 
 async fn capture_start(
     State(svc): State<Arc<LiveService>>,
     Json(body): Json<StartBody>,
 ) -> Response {
-    let flags = CaptureFlags {
-        enable_api: body.enable_api.unwrap_or(true),
-        context_switches: body.context_switches.unwrap_or(true),
-        thread_states: body.thread_states.unwrap_or(true),
-    };
+    if body.pid == 0 {
+        return (StatusCode::BAD_REQUEST, "pid is required").into_response();
+    }
+    let json = body.to_json();
     let hooks = svc.hooks.lock();
     match hooks.as_ref() {
-        Some(h) => match (h.start_capture)(body.pid, flags) {
+        Some(h) => match (h.start_capture)(&json) {
             Ok(()) => {
                 svc.mark_capture_started(body.pid, 0);
                 StatusCode::OK.into_response()
             }
             Err(e) => (StatusCode::CONFLICT, e).into_response(),
         },
+        None => {
+            drop(hooks);
+            // Rust-only / missing hooks: Record falls back to the demo producer.
+            match crate::demo::start(&svc, 50_000) {
+                Ok(()) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"demo": true, "reason": "no_hooks"})),
+                )
+                    .into_response(),
+                Err(e) => (StatusCode::CONFLICT, e).into_response(),
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct PidBody {
+    pid: u32,
+}
+
+async fn symbols_load(State(svc): State<Arc<LiveService>>, Json(body): Json<PidBody>) -> Response {
+    let hooks = svc.hooks.lock();
+    match hooks.as_ref() {
+        Some(h) => match (h.load_symbols)(body.pid) {
+            Ok(()) => StatusCode::OK.into_response(),
+            Err(e) => (StatusCode::CONFLICT, e).into_response(),
+        },
         None => (
-            StatusCode::NOT_IMPLEMENTED,
-            "OrbitService control hooks are not registered. Use Start demo, or run the C++ service.",
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"pid":0,"status":"idle","function_count":0,"module_count":0,"error":""}"#,
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SymbolsQuery {
+    pid: Option<u32>,
+}
+
+async fn symbols_status(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<SymbolsQuery>,
+) -> Response {
+    let pid = q.pid.unwrap_or(0);
+    let hooks = svc.hooks.lock();
+    match hooks.as_ref() {
+        Some(h) => match (h.symbols_status_json)(pid) {
+            Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        },
+        None => (
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"pid":0,"status":"idle","function_count":0,"module_count":0,"error":""}"#,
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    pid: Option<u32>,
+    q: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn functions_search(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<SearchQuery>,
+) -> Response {
+    let pid = q.pid.unwrap_or(0);
+    let query = q.q.unwrap_or_default();
+    let limit = q.limit.unwrap_or(24).min(64);
+    let hooks = svc.hooks.lock();
+    match hooks.as_ref() {
+        Some(h) => match (h.search_functions_json)(pid, &query, limit) {
+            Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        },
+        None => (
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"pid":0,"status":"idle","functions":[]}"#,
         )
             .into_response(),
     }

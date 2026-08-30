@@ -32,6 +32,9 @@ pub struct StatusJson {
     pub machine: String,
     #[serde(default)]
     pub self_profile: bool,
+    /// OrbitService registered control hooks (real capture).
+    #[serde(default)]
+    pub hooks: bool,
 }
 
 fn default_machine() -> String {
@@ -43,6 +46,58 @@ pub struct ProcessJson {
     pub pid: u32,
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub cpu: f32,
+    #[serde(default)]
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SymbolsStatusJson {
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub function_count: u64,
+    #[serde(default)]
+    pub module_count: u64,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct FunctionHit {
+    pub function_id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub module: String,
+    #[serde(default)]
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct FunctionSearchJson {
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub functions: Vec<FunctionHit>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CaptureStart {
+    pub pid: u32,
+    pub enable_api: bool,
+    pub context_switches: bool,
+    pub thread_states: bool,
+    pub sampling: bool,
+    pub samples_per_second: f64,
+    pub unwinding: String,
+    pub dynamic_instrumentation_method: String,
+    pub instrumented_function_ids: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -84,6 +139,8 @@ pub struct Inbox {
     pub frame: Option<ServiceFrame>,
     pub http_ok: bool,
     pub ws_ok: bool,
+    pub symbols: Option<SymbolsStatusJson>,
+    pub function_hits: Option<FunctionSearchJson>,
 }
 
 #[allow(dead_code)] // used from the wasm Net impl
@@ -94,6 +151,16 @@ pub fn parse_status_json(text: &str) -> Result<StatusJson, String> {
 #[allow(dead_code)] // used from the wasm Net impl
 pub fn parse_processes_json(text: &str) -> Result<Vec<ProcessJson>, String> {
     serde_json::from_str(text).map_err(|e| format!("/api/processes: {e}"))
+}
+
+#[allow(dead_code)]
+pub fn parse_symbols_status_json(text: &str) -> Result<SymbolsStatusJson, String> {
+    serde_json::from_str(text).map_err(|e| format!("/api/symbols/status: {e}"))
+}
+
+#[allow(dead_code)]
+pub fn parse_function_search_json(text: &str) -> Result<FunctionSearchJson, String> {
+    serde_json::from_str(text).map_err(|e| format!("/api/functions/search: {e}"))
 }
 
 #[allow(dead_code)] // used from the wasm Net impl
@@ -234,6 +301,8 @@ mod wasm_impl {
                 frame: inbox.frame.take(),
                 http_ok: inbox.http_ok,
                 ws_ok: inbox.ws_ok,
+                symbols: inbox.symbols.take(),
+                function_hits: inbox.function_hits.take(),
             }
         }
 
@@ -307,11 +376,60 @@ mod wasm_impl {
             });
         }
 
-        pub fn start_capture(&self, pid: u32) {
+        pub fn start_capture(&self, req: &CaptureStart) {
+            let fns: String = req
+                .instrumented_function_ids
+                .iter()
+                .map(|id| format!(r#"{{"function_id":{id}}}"#))
+                .collect::<Vec<_>>()
+                .join(",");
             let body = format!(
-                r#"{{"pid":{pid},"enable_api":true,"context_switches":true,"thread_states":true}}"#
+                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}]}}"#,
+                req.pid,
+                req.enable_api,
+                req.context_switches,
+                req.thread_states,
+                req.sampling,
+                req.samples_per_second,
+                json_escape(&req.unwinding),
+                json_escape(&req.dynamic_instrumentation_method),
             );
             self.send("POST", "/api/capture/start", body);
+        }
+
+        pub fn load_symbols(&self, pid: u32) {
+            self.send("POST", "/api/symbols/load", format!(r#"{{"pid":{pid}}}"#));
+        }
+
+        pub fn get_symbols_status(&self, pid: u32) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&format!("/api/symbols/status?pid={pid}"))
+                    .await
+                    .and_then(|t| parse_symbols_status_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(s) => g.symbols = Some(s),
+                    Err(e) => g.error = Some(e),
+                }
+            });
+        }
+
+        pub fn search_functions(&self, pid: u32, q: &str, limit: u32) {
+            let q = urlencoding_lite(q);
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&format!(
+                    "/api/functions/search?pid={pid}&q={q}&limit={limit}"
+                ))
+                .await
+                .and_then(|t| parse_function_search_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(s) => g.function_hits = Some(s),
+                    Err(e) => g.error = Some(e),
+                }
+            });
         }
 
         pub fn stop_capture(&self) {
@@ -570,6 +688,23 @@ mod wasm_impl {
         web_sys::console::error_1(&JsValue::from_str(msg));
     }
 
+    fn json_escape(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn urlencoding_lite(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.as_bytes() {
+            match *b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    out.push(*b as char);
+                }
+                _ => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
+    }
+
     fn js_err(v: JsValue) -> String {
         if let Some(s) = v.as_string() {
             return s;
@@ -601,8 +736,11 @@ mod native_impl {
         pub fn get_status(&self) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
-        pub fn start_capture(&self, _pid: u32) {}
+        pub fn start_capture(&self, _req: &CaptureStart) {}
         pub fn stop_capture(&self) {}
+        pub fn load_symbols(&self, _pid: u32) {}
+        pub fn get_symbols_status(&self, _pid: u32) {}
+        pub fn search_functions(&self, _pid: u32, _q: &str, _limit: u32) {}
         pub fn start_demo(&self) {}
         pub fn stop_demo(&self) {}
         pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}
@@ -665,5 +803,32 @@ mod tests {
     #[test]
     fn css_to_argb_accepts_rrggbb() {
         assert_eq!(css_to_argb("#64B5F6"), 0xFF64_B5F6);
+    }
+
+    #[test]
+    fn process_json_keeps_cpu_and_path() {
+        let list = parse_processes_json(
+            r#"[{"pid":9,"name":"app","cpu":1.5,"path":"/usr/bin/app"}]"#,
+        )
+        .unwrap();
+        assert_eq!(list[0].pid, 9);
+        assert_eq!(list[0].path, "/usr/bin/app");
+        assert!((list[0].cpu - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn symbols_and_search_json_are_paged() {
+        let st = parse_symbols_status_json(
+            r#"{"pid":3,"status":"ready","function_count":12,"module_count":2,"error":""}"#,
+        )
+        .unwrap();
+        assert_eq!(st.status, "ready");
+        assert_eq!(st.function_count, 12);
+        let hits = parse_function_search_json(
+            r#"{"pid":3,"status":"ready","functions":[{"function_id":1,"name":"foo::Bar","module":"/bin/app","size":16}]}"#,
+        )
+        .unwrap();
+        assert_eq!(hits.functions.len(), 1);
+        assert_eq!(hits.functions[0].name, "foo::Bar");
     }
 }

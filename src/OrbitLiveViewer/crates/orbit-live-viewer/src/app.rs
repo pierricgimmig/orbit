@@ -30,8 +30,8 @@ use std::sync::Arc;
 use crate::dev::DevFrame;
 use crate::fonts;
 use crate::net::{
-    instances_from_timeline, scale_frame_rgba, Net, ProcessJson, ServiceFrame, StatusJson,
-    TimelineJson,
+    instances_from_timeline, scale_frame_rgba, CaptureStart, FunctionHit, Net, ProcessJson,
+    ServiceFrame, StatusJson, SymbolsStatusJson, TimelineJson,
 };
 use crate::theme;
 use crate::timeline::{
@@ -387,6 +387,22 @@ pub struct OrbitLiveApp {
     idle_skip_chrome: bool,
     last_n_prims: u32,
     last_n_lanes_kept: u32,
+    capture_open: bool,
+    process_filter: String,
+    opt_api: bool,
+    opt_csw: bool,
+    opt_thread_states: bool,
+    opt_sampling: bool,
+    sample_period_ms: String,
+    unwind_dwarf: bool,
+    user_space_hooks: bool,
+    symbols: SymbolsStatusJson,
+    hook_query: String,
+    hook_hits: Vec<FunctionHit>,
+    selected_hooks: Vec<FunctionHit>,
+    last_hook_query: String,
+    last_symbol_poll: f64,
+    loaded_symbol_pid: Option<u32>,
 }
 
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
@@ -476,6 +492,22 @@ impl OrbitLiveApp {
             idle_skip_chrome: false,
             last_n_prims: 0,
             last_n_lanes_kept: 0,
+            capture_open: true,
+            process_filter: String::new(),
+            opt_api: true,
+            opt_csw: true,
+            opt_thread_states: true,
+            opt_sampling: true,
+            sample_period_ms: "1.0".into(),
+            unwind_dwarf: true,
+            user_space_hooks: true,
+            symbols: SymbolsStatusJson::default(),
+            hook_query: String::new(),
+            hook_hits: Vec::new(),
+            selected_hooks: Vec::new(),
+            last_hook_query: String::new(),
+            last_symbol_poll: -1.0,
+            loaded_symbol_pid: None,
         }
     }
 
@@ -514,6 +546,29 @@ impl OrbitLiveApp {
 
     fn start_record(&mut self) {
         self.error.clear();
+        if self.status.hooks {
+            let Some(pid) = self.selected_pid else {
+                self.error = "Select a process in the capture strip.".into();
+                return;
+            };
+            self.recording = true;
+            self.net.start_capture(&self.capture_start(pid));
+        } else {
+            self.recording = true;
+            self.self_cursor.reset_to(DEMO_ORIGIN_NS);
+            self.live_edge_ns = DEMO_ORIGIN_NS;
+            self.net.start_demo();
+        }
+        if !self.dev_locked_off {
+            intern_self_names(&mut self.intern);
+            self.dev = true;
+            self.net.start_self();
+        }
+        self.follow = true;
+    }
+
+    fn start_demo_path(&mut self) {
+        self.error.clear();
         self.recording = true;
         self.self_cursor.reset_to(DEMO_ORIGIN_NS);
         self.live_edge_ns = DEMO_ORIGIN_NS;
@@ -528,9 +583,50 @@ impl OrbitLiveApp {
 
     fn stop_record(&mut self) {
         self.recording = false;
+        self.net.stop_capture();
         self.net.stop_demo();
         self.dev = false;
         self.net.stop_self();
+    }
+
+    fn samples_per_second(&self) -> f64 {
+        let period = self
+            .sample_period_ms
+            .trim()
+            .parse::<f64>()
+            .unwrap_or(1.0)
+            .max(0.01);
+        1000.0 / period
+    }
+
+    fn capture_start(&self, pid: u32) -> CaptureStart {
+        CaptureStart {
+            pid,
+            enable_api: self.opt_api,
+            context_switches: self.opt_csw,
+            thread_states: self.opt_thread_states,
+            sampling: self.opt_sampling,
+            samples_per_second: if self.opt_sampling {
+                self.samples_per_second()
+            } else {
+                0.0
+            },
+            unwinding: if self.unwind_dwarf {
+                "dwarf".into()
+            } else {
+                "frame_pointers".into()
+            },
+            dynamic_instrumentation_method: if self.user_space_hooks {
+                "user_space".into()
+            } else {
+                "kernel_uprobes".into()
+            },
+            instrumented_function_ids: self
+                .selected_hooks
+                .iter()
+                .map(|f| f.function_id)
+                .collect(),
+        }
     }
 
     fn note_fps(&mut self, dt: f32) {
@@ -592,6 +688,8 @@ impl OrbitLiveApp {
                 self.processes.push(ProcessJson {
                     pid,
                     name: name.into(),
+                    cpu: 0.0,
+                    path: String::new(),
                 });
             }
         }
@@ -622,10 +720,19 @@ impl OrbitLiveApp {
             self.apply_status(s);
         }
         if let Some(p) = inbox.processes {
-            if self.selected_pid.is_none() {
-                self.selected_pid = p.first().map(|x| x.pid);
+            // Real capture: do not auto-pick a pid. Demo-only may keep a prior pick.
+            if self.selected_pid.is_none() && !self.status.hooks && !p.is_empty() {
+                if p.iter().any(|x| x.pid == 1) {
+                    self.selected_pid = Some(1);
+                }
             }
             self.processes = p;
+        }
+        if let Some(s) = inbox.symbols {
+            self.symbols = s;
+        }
+        if let Some(hits) = inbox.function_hits {
+            self.hook_hits = hits.functions;
         }
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
             for (pid, name) in [
@@ -637,6 +744,8 @@ impl OrbitLiveApp {
                     self.processes.push(ProcessJson {
                         pid,
                         name: name.into(),
+                        cpu: 0.0,
+                        path: String::new(),
                     });
                 }
             }
@@ -739,6 +848,7 @@ impl OrbitLiveApp {
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
                     self_profile: self.status.self_profile,
+                    hooks: self.status.hooks,
                 });
             }
             LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
@@ -781,19 +891,50 @@ impl OrbitLiveApp {
                     .color(theme::TEXT),
             );
             ui.add_space(12.0);
-            let recording = self.recording || self.status.demo;
+            let recording = self.recording || self.status.demo || self.status.capturing;
             if recording {
                 if pill(ui, "Stop", true)
-                    .on_hover_text("Stop demo and self-profile")
+                    .on_hover_text(if self.status.hooks && !self.status.demo {
+                        "Stop capture"
+                    } else {
+                        "Stop demo"
+                    })
                     .clicked()
                 {
                     self.stop_record();
                 }
-            } else if pill(ui, "Record", false)
-                .on_hover_text("Start demo and self-profile")
+            } else {
+                let record_ok = !self.status.hooks || self.selected_pid.is_some();
+                let resp = pill(ui, "Record", false).on_hover_text(if self.status.hooks {
+                    if self.selected_pid.is_some() {
+                        "Start a real OrbitService capture of the selected process"
+                    } else {
+                        "Select a process in the capture strip first"
+                    }
+                } else {
+                    "No OrbitService hooks — Record starts the demo producer"
+                });
+                if resp.clicked() && record_ok {
+                    self.start_record();
+                }
+            }
+            if !self.status.hooks || !self.status.capturing {
+                if pill(ui, "Demo", self.status.demo)
+                    .on_hover_text("Dummy scopes (no OrbitService attach)")
+                    .clicked()
+                {
+                    if self.status.demo || self.recording {
+                        self.stop_record();
+                    } else {
+                        self.start_demo_path();
+                    }
+                }
+            }
+            if pill(ui, "Capture", self.capture_open)
+                .on_hover_text("Process, sampling, and hooks")
                 .clicked()
             {
-                self.start_record();
+                self.capture_open = !self.capture_open;
             }
             if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
@@ -860,6 +1001,274 @@ impl OrbitLiveApp {
         });
     }
 
+    fn symbol_status_line(&self) -> String {
+        let st = if self.symbols.status.is_empty() {
+            "idle"
+        } else {
+            self.symbols.status.as_str()
+        };
+        if self.symbols.function_count > 0 {
+            format!(
+                "symbols {st}  {} fn  {} mod",
+                self.symbols.function_count, self.symbols.module_count
+            )
+        } else {
+            format!("symbols {st}")
+        }
+    }
+
+    fn paint_process_picker(&mut self, ui: &mut Ui, id: &str) {
+        let selected_text = match self.selected_pid {
+            Some(pid) => {
+                let p = self.processes.iter().find(|p| p.pid == pid);
+                match p {
+                    Some(p) => {
+                        if p.path.is_empty() {
+                            format!("{}  {}", p.pid, p.name)
+                        } else {
+                            format!("{}  {}  {:.0}%", p.pid, p.name, p.cpu)
+                        }
+                    }
+                    None => format!("{pid}"),
+                }
+            }
+            None => "Select a process".into(),
+        };
+        ComboBox::from_id_salt(id)
+            .width(ui.available_width().min(360.0))
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.process_filter)
+                        .id_salt(format!("{id}_filter"))
+                        .desired_width(ui.available_width())
+                        .hint_text("filter pid / name / path")
+                        .font(FontId::monospace(11.0))
+                        .background_color(theme::INPUT),
+                );
+                let q = self.process_filter.to_ascii_lowercase();
+                for p in &self.processes {
+                    if !q.is_empty() {
+                        let hay = format!("{} {} {}", p.pid, p.name, p.path).to_ascii_lowercase();
+                        if !hay.contains(&q) {
+                            continue;
+                        }
+                    }
+                    let label = if p.path.is_empty() {
+                        format!("{}  {}", p.pid, p.name)
+                    } else {
+                        format!("{}  {}  {:.1}%  {}", p.pid, p.name, p.cpu, p.path)
+                    };
+                    ui.selectable_value(&mut self.selected_pid, Some(p.pid), label);
+                }
+            });
+    }
+
+    fn capture_strip(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("PROCESS")
+                    .family(fonts::medium())
+                    .size(9.5)
+                    .extra_letter_spacing(1.2)
+                    .color(theme::MUTED),
+            );
+            self.paint_process_picker(ui, "orbit_processes_strip");
+            if icon_pill(ui, "↻", "Refresh process list").clicked() {
+                self.net.get_processes();
+            }
+            ui.label(
+                RichText::new(self.symbol_status_line())
+                    .font(FontId::monospace(10.5))
+                    .color(theme::MUTED),
+            );
+            if !self.status.hooks {
+                ui.label(
+                    RichText::new("Record starts Demo — no OrbitService hooks")
+                        .font(FontId::monospace(10.5))
+                        .color(Color32::from_rgb(0xFF, 0xC1, 0x07)),
+                );
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            if pill(ui, "CSW", self.opt_csw)
+                .on_hover_text("Context switches / Scheduler track")
+                .clicked()
+            {
+                self.opt_csw = !self.opt_csw;
+            }
+            if pill(ui, "States", self.opt_thread_states)
+                .on_hover_text("Thread state slices")
+                .clicked()
+            {
+                self.opt_thread_states = !self.opt_thread_states;
+            }
+            if pill(ui, "API", self.opt_api)
+                .on_hover_text("Manual orbit.h API scopes")
+                .clicked()
+            {
+                self.opt_api = !self.opt_api;
+            }
+            if pill(ui, "Sample", self.opt_sampling)
+                .on_hover_text("Callstack sampling")
+                .clicked()
+            {
+                self.opt_sampling = !self.opt_sampling;
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.sample_period_ms)
+                    .id_salt("orbit_sample_ms")
+                    .desired_width(40.0)
+                    .hint_text("ms")
+                    .font(FontId::monospace(11.0))
+                    .background_color(theme::INPUT),
+            );
+            ui.label(RichText::new("ms").font(FontId::monospace(10.5)).color(theme::MUTED));
+            if pill(ui, "DWARF", self.unwind_dwarf)
+                .on_hover_text("DWARF unwind (default)")
+                .clicked()
+            {
+                self.unwind_dwarf = true;
+            }
+            if pill(ui, "FP", !self.unwind_dwarf)
+                .on_hover_text("Frame-pointer unwind")
+                .clicked()
+            {
+                self.unwind_dwarf = false;
+            }
+            if pill(ui, "User-space", self.user_space_hooks)
+                .on_hover_text("Dynamic instrumentation: user-space (default)")
+                .clicked()
+            {
+                self.user_space_hooks = true;
+            }
+            if pill(ui, "Uprobes", !self.user_space_hooks)
+                .on_hover_text("Dynamic instrumentation: kernel uprobes")
+                .clicked()
+            {
+                self.user_space_hooks = false;
+            }
+            if self.opt_csw {
+                ui.label(
+                    RichText::new("CSW needs root (./wasm.sh)")
+                        .font(FontId::monospace(10.0))
+                        .color(theme::MUTED),
+                );
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("HOOK")
+                    .family(fonts::medium())
+                    .size(9.5)
+                    .extra_letter_spacing(1.2)
+                    .color(theme::MUTED),
+            );
+            let ready = self.symbols.status == "ready";
+            let resp = ui.add_enabled(
+                ready,
+                egui::TextEdit::singleline(&mut self.hook_query)
+                    .id_salt("orbit_hook_search")
+                    .desired_width(220.0)
+                    .hint_text(if ready {
+                        "function name"
+                    } else {
+                        "symbols not ready"
+                    })
+                    .font(FontId::monospace(11.0))
+                    .background_color(theme::INPUT),
+            );
+            if ready && resp.changed() {
+                self.last_hook_query.clear();
+            }
+            let selected = std::mem::take(&mut self.selected_hooks);
+            let mut drop = None;
+            for (i, hook) in selected.iter().enumerate() {
+                if pill(ui, &short_fn(&hook.name), true)
+                    .on_hover_text(&hook.name)
+                    .clicked()
+                {
+                    drop = Some(i);
+                }
+            }
+            let mut selected = selected;
+            if let Some(i) = drop {
+                selected.remove(i);
+            }
+            self.selected_hooks = selected;
+        });
+        if self.symbols.status == "ready" && !self.hook_hits.is_empty() && !self.hook_query.is_empty()
+        {
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(52.0);
+                let hits = self.hook_hits.clone();
+                for hit in hits {
+                    if self
+                        .selected_hooks
+                        .iter()
+                        .any(|h| h.function_id == hit.function_id)
+                    {
+                        continue;
+                    }
+                    if pill(ui, &short_fn(&hit.name), false)
+                        .on_hover_text(format!("{}\n{}", hit.name, hit.module))
+                        .clicked()
+                    {
+                        self.selected_hooks.push(hit);
+                    }
+                }
+            });
+        }
+        if !self.symbols.error.is_empty() && self.symbols.status == "error" {
+            ui.label(
+                RichText::new(&self.symbols.error)
+                    .size(11.0)
+                    .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
+            );
+        }
+    }
+
+    fn tick_capture_net(&mut self, now: f64) {
+        if let Some(pid) = self.selected_pid {
+            if self.status.hooks && self.loaded_symbol_pid != Some(pid) {
+                self.loaded_symbol_pid = Some(pid);
+                self.symbols = SymbolsStatusJson {
+                    pid,
+                    status: "loading".into(),
+                    ..Default::default()
+                };
+                self.hook_hits.clear();
+                self.hook_query.clear();
+                self.net.load_symbols(pid);
+            }
+            if self.status.hooks
+                && now - self.last_symbol_poll > 0.4
+                && (self.symbols.status == "loading" || self.symbols.status.is_empty())
+            {
+                self.last_symbol_poll = now;
+                self.net.get_symbols_status(pid);
+            }
+            let q = self.hook_query.trim().to_string();
+            if self.symbols.status == "ready"
+                && q != self.last_hook_query
+                && now - self.last_symbol_poll > 0.15
+            {
+                self.last_hook_query = q.clone();
+                self.last_symbol_poll = now;
+                if q.is_empty() {
+                    self.hook_hits.clear();
+                } else {
+                    self.net.search_functions(pid, &q, 16);
+                }
+            }
+        }
+    }
+
     fn chrome(&mut self, ui: &mut Ui) {
         ui.add_space(4.0);
         ui.label(
@@ -871,47 +1280,16 @@ impl OrbitLiveApp {
         );
 
         section(ui, "PROCESS");
-        let selected_text = match self.selected_pid {
-            Some(pid) => {
-                let name = self
-                    .processes
-                    .iter()
-                    .find(|p| p.pid == pid)
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("");
-                format!("{pid}  {name}")
-            }
-            None => "Select a process".into(),
-        };
-        ComboBox::from_id_salt("orbit_processes")
-            .width(ui.available_width())
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                for p in &self.processes {
-                    ui.selectable_value(
-                        &mut self.selected_pid,
-                        Some(p.pid),
-                        format!("{}  {}", p.pid, p.name),
-                    );
-                }
-            });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if pill(ui, "Capture", false).clicked() {
-                if let Some(pid) = self.selected_pid {
-                    self.error.clear();
-                    self.net.start_capture(pid);
-                } else {
-                    self.error = "Select a process, or start the demo.".into();
-                }
-            }
-            if icon_pill(ui, "↻", "Refresh process list").clicked() {
-                self.net.get_processes();
-            }
-            if icon_pill(ui, "■", "Stop capture").clicked() {
-                self.net.stop_capture();
-            }
-        });
+        self.paint_process_picker(ui, "orbit_processes_side");
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(self.symbol_status_line())
+                .font(FontId::monospace(11.0))
+                .color(theme::MUTED),
+        );
+        if icon_pill(ui, "↻", "Refresh process list").clicked() {
+            self.net.get_processes();
+        }
 
         section(ui, "RING / SPILL");
         ui.label(RichText::new("Ring bytes").size(11.0).color(muted()));
@@ -2481,9 +2859,10 @@ impl eframe::App for OrbitLiveApp {
                 if now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
-                    if self.processes.is_empty() || self.dev {
+                    if self.processes.is_empty() || self.dev || self.capture_open {
                         self.net.get_processes();
                     }
+                    self.tick_capture_net(now);
                 }
                 // Local WS index is the paint path. Hitting /api/timeline every
                 // frame rebuilt the server index and pegged a core after Stop.
@@ -2512,6 +2891,22 @@ impl eframe::App for OrbitLiveApp {
                             }),
                     )
                     .show(ctx, |ui| self.transport(ui));
+
+                if self.capture_open {
+                    egui::TopBottomPanel::top("orbit_capture_strip")
+                        .exact_height(if self.hook_hits.is_empty() || self.hook_query.is_empty() {
+                            86.0
+                        } else {
+                            118.0
+                        })
+                        .frame(
+                            Frame::new()
+                                .fill(theme::RAIL)
+                                .inner_margin(Margin::symmetric(4, 6))
+                                .stroke(Stroke::NONE),
+                        )
+                        .show(ctx, |ui| self.capture_strip(ui));
+                }
 
                 if self.advanced {
                     egui::SidePanel::left("orbit_chrome")
@@ -2641,6 +3036,18 @@ fn ui_hairline_sidebar(ctx: &Context) {
         [Pos2::new(x, screen.top()), Pos2::new(x, screen.bottom())],
         hairline(),
     );
+}
+
+fn short_fn(name: &str) -> String {
+    const MAX: usize = 28;
+    if name.len() <= MAX {
+        return name.to_string();
+    }
+    let mut end = MAX.saturating_sub(1);
+    while end > 0 && !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &name[..end])
 }
 
 fn section(ui: &mut Ui, label: &str) {
@@ -3157,7 +3564,7 @@ fn paint_empty(ui: &Ui, rect: Rect) {
     painter.text(
         rect.center() + Vec2::new(0.0, 12.0),
         Align2::CENTER_CENTER,
-        "Press Record in the transport.",
+        "Select a process, then Record.",
         FontId::new(12.0, FontFamily::Proportional),
         muted(),
     );

@@ -40,17 +40,20 @@ cargo run -p orbit-live-server --release --manifest-path src/OrbitLiveViewer/Car
 * The page can also change ring size / spill path at runtime (`PUT /api/config`);
   that recreates the ring.
 
-## Control surface (thin on purpose)
+## Control surface
 
-Working from the page:
+Working from the page (OrbitService / `./wasm.sh`):
 
-* Process list (Linux OrbitService)
-* Start / stop capture with API scopes, context switches, and thread states
-* Start / stop the in-process demo producer
+* Searchable process list (pid, name, cpu, path)
+* Capture strip: CSW, thread states, orbit.h API, sampling (default 1 ms /
+  DWARF), user-space vs kernel uprobes, function search (service-side page)
+* **Record** starts a real capture of the selected pid. Symbols load on the
+  service; the browser does not parse ELF/DWARF.
+* **Demo** is the dummy producer (also what Record does if hooks are missing)
 * Ring size and spill path
 
-Not in this UI: Hook picker, full capture-options dialog, symbols, sampling
-reports, GPU tracks, presets.
+Not in this UI: Qt Symbols tab, OrbitApp / CaptureData, sampling reports,
+GPU tracks, presets.
 
 ## Renderer
 

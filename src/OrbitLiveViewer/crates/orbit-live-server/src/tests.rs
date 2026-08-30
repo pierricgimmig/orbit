@@ -507,3 +507,66 @@ fn timeline_cache_skips_rebuild_when_view_and_data_gen_match() {
         "self-only pushes must not immediately rebuild the index"
     );
 }
+
+#[test]
+fn capture_start_json_includes_sampling_and_hooks() {
+    let body = crate::http::StartBody {
+        pid: 42,
+        enable_api: true,
+        context_switches: true,
+        thread_states: true,
+        sampling: true,
+        samples_per_second: 1000.0,
+        unwinding: "dwarf".into(),
+        dynamic_instrumentation_method: "user_space".into(),
+        instrumented_functions: vec![crate::http::InstrumentedFnRef { function_id: 7 }],
+    };
+    let json = body.to_json();
+    assert!(json.contains("\"pid\":42"));
+    assert!(json.contains("\"samples_per_second\":1000"));
+    assert!(json.contains("\"unwinding\":\"dwarf\""));
+    assert!(json.contains("\"function_id\":7"));
+    assert!(!json.contains("elf"));
+}
+
+#[test]
+fn status_reports_hooks_false_without_control_hooks() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    assert!(!svc.has_hooks());
+}
+
+#[test]
+fn sample_stack_ingest_paints_named_function_calls() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
+    let root = svc.intern_string("main");
+    let leaf = svc.intern_string("foo::Bar");
+    let evs = svc
+        .pairer
+        .lock()
+        .sample_stack(9, 11, 1_000, 1_000_000, &[root, leaf]);
+    svc.push_events(&evs);
+    let snap = svc.ring().snapshot().1;
+    assert_eq!(snap.len(), 2);
+    assert_eq!(snap[0].kind, kind::FUNCTION_CALL);
+    assert_eq!(snap[0].name_id, root);
+    assert_eq!(snap[0].depth, 0);
+    assert_eq!(snap[1].name_id, leaf);
+    assert_eq!(snap[1].depth, 1);
+    assert_eq!(snap[0].duration_ns, 1_000_000);
+}
+
+#[test]
+fn function_call_ingest_uses_interned_pretty_name() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
+    let name_id = svc.intern_string("HookMe");
+    let ev = svc
+        .pairer
+        .lock()
+        .function_call(1, 2, name_id, 40, 140, 0);
+    svc.push_event(ev);
+    let snap = svc.ring().snapshot().1;
+    assert_eq!(snap[0].name_id, name_id);
+    assert_eq!(svc.intern.lock().get(snap[0].name_id), Some("HookMe"));
+}

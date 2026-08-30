@@ -5,12 +5,10 @@ use std::net::SocketAddr;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::ptr;
+use std::slice;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use orbit_live_server::{
-    CaptureFlags, ControlHooks, LiveService, ServerConfig, CAPTURE_FLAG_API,
-    CAPTURE_FLAG_CONTEXT_SWITCHES, CAPTURE_FLAG_THREAD_STATES,
-};
+use orbit_live_server::{ControlHooks, LiveService, ServerConfig};
 
 struct FfiState {
     // Held so the multi-thread runtime (and HTTP server) stay alive.
@@ -39,11 +37,24 @@ pub struct OrbitLiveCallbacks {
         unsafe extern "C" fn(user_data: *mut c_void, out: *mut c_char, out_len: usize) -> c_int,
     >,
     pub start_capture:
-        Option<unsafe extern "C" fn(user_data: *mut c_void, pid: u32, flags: u32) -> c_int>,
+        Option<unsafe extern "C" fn(user_data: *mut c_void, json: *const c_char) -> c_int>,
     pub stop_capture: Option<unsafe extern "C" fn(user_data: *mut c_void) -> c_int>,
+    pub load_symbols: Option<unsafe extern "C" fn(user_data: *mut c_void, pid: u32) -> c_int>,
+    pub symbols_status_json: Option<
+        unsafe extern "C" fn(user_data: *mut c_void, pid: u32, out: *mut c_char, out_len: usize) -> c_int,
+    >,
+    pub search_functions_json: Option<
+        unsafe extern "C" fn(
+            user_data: *mut c_void,
+            pid: u32,
+            query: *const c_char,
+            limit: u32,
+            out: *mut c_char,
+            out_len: usize,
+        ) -> c_int,
+    >,
 }
 
-// user_data must remain valid for the life of the server. OrbitService owns it.
 unsafe impl Send for OrbitLiveCallbacks {}
 unsafe impl Sync for OrbitLiveCallbacks {}
 
@@ -52,6 +63,21 @@ fn cstr<'a>(p: *const c_char) -> Option<&'a str> {
         return None;
     }
     unsafe { CStr::from_ptr(p) }.to_str().ok()
+}
+
+fn call_json_out(
+    func: unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> c_int,
+    user_data: usize,
+    buf_len: usize,
+    what: &str,
+) -> Result<String, String> {
+    let mut buf = vec![0u8; buf_len];
+    let rc = unsafe { func(user_data as *mut c_void, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    if rc != 0 {
+        return Err(format!("{what} failed ({rc})"));
+    }
+    let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    Ok(s.to_string_lossy().into_owned())
 }
 
 /// Start the HTTP server on a background Tokio runtime. 0 on success.
@@ -114,30 +140,22 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
     let list = cb.list_processes_json;
     let start = cb.start_capture;
     let stop = cb.stop_capture;
+    let load = cb.load_symbols;
+    let status = cb.symbols_status_json;
+    let search = cb.search_functions_json;
     with_service(move |svc| {
         let hooks = ControlHooks {
             list_processes_json: Box::new(move || {
                 if let Some(func) = list {
-                    let mut buf = vec![0u8; 1 << 20];
-                    let rc = unsafe {
-                        func(
-                            user_data as *mut c_void,
-                            buf.as_mut_ptr() as *mut c_char,
-                            buf.len(),
-                        )
-                    };
-                    if rc != 0 {
-                        return Err(format!("list_processes failed ({rc})"));
-                    }
-                    let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char) };
-                    Ok(s.to_string_lossy().into_owned())
+                    call_json_out(func, user_data, 1 << 20, "list_processes")
                 } else {
                     Ok("[]".into())
                 }
             }),
-            start_capture: Box::new(move |pid, flags: CaptureFlags| {
+            start_capture: Box::new(move |json: &str| {
                 if let Some(func) = start {
-                    let rc = unsafe { func(user_data as *mut c_void, pid, flags.to_bits()) };
+                    let c = std::ffi::CString::new(json).map_err(|e| e.to_string())?;
+                    let rc = unsafe { func(user_data as *mut c_void, c.as_ptr()) };
                     if rc != 0 {
                         return Err(format!("start_capture failed ({rc})"));
                     }
@@ -152,6 +170,58 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
                     }
                 }
                 Ok(())
+            }),
+            load_symbols: Box::new(move |pid| {
+                if let Some(func) = load {
+                    let rc = unsafe { func(user_data as *mut c_void, pid) };
+                    if rc != 0 {
+                        return Err(format!("load_symbols failed ({rc})"));
+                    }
+                }
+                Ok(())
+            }),
+            symbols_status_json: Box::new(move |pid| {
+                if let Some(func) = status {
+                    let mut buf = vec![0u8; 4096];
+                    let rc = unsafe {
+                        func(
+                            user_data as *mut c_void,
+                            pid,
+                            buf.as_mut_ptr() as *mut c_char,
+                            buf.len(),
+                        )
+                    };
+                    if rc != 0 {
+                        return Err(format!("symbols_status failed ({rc})"));
+                    }
+                    let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char) };
+                    Ok(s.to_string_lossy().into_owned())
+                } else {
+                    Ok(r#"{"pid":0,"status":"idle","function_count":0,"module_count":0,"error":""}"#.into())
+                }
+            }),
+            search_functions_json: Box::new(move |pid, q, limit| {
+                if let Some(func) = search {
+                    let c = std::ffi::CString::new(q).map_err(|e| e.to_string())?;
+                    let mut buf = vec![0u8; 1 << 16];
+                    let rc = unsafe {
+                        func(
+                            user_data as *mut c_void,
+                            pid,
+                            c.as_ptr(),
+                            limit,
+                            buf.as_mut_ptr() as *mut c_char,
+                            buf.len(),
+                        )
+                    };
+                    if rc != 0 {
+                        return Err(format!("search_functions failed ({rc})"));
+                    }
+                    let s = unsafe { CStr::from_ptr(buf.as_ptr() as *const c_char) };
+                    Ok(s.to_string_lossy().into_owned())
+                } else {
+                    Ok(r#"{"pid":0,"status":"idle","functions":[]}"#.into())
+                }
             }),
         };
         svc.set_hooks(hooks);
@@ -196,21 +266,39 @@ pub extern "C" fn orbit_live_ingest_api_scope_stop(pid: u32, tid: u32, timestamp
 pub extern "C" fn orbit_live_ingest_function_call(
     pid: u32,
     tid: u32,
-    function_id: u64,
+    name_id: u32,
     duration_ns: u64,
     end_timestamp_ns: u64,
     depth: i32,
 ) {
     let _ = with_service(|svc| {
-        let ev = svc.pairer.lock().function_call(
-            pid,
-            tid,
-            function_id,
-            duration_ns,
-            end_timestamp_ns,
-            depth,
-        );
+        let ev = svc
+            .pairer
+            .lock()
+            .function_call(pid, tid, name_id, duration_ns, end_timestamp_ns, depth);
         svc.push_event(ev);
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn orbit_live_ingest_sample_stack(
+    pid: u32,
+    tid: u32,
+    timestamp_ns: u64,
+    duration_ns: u64,
+    name_ids: *const u32,
+    depth_count: u32,
+) {
+    if name_ids.is_null() || depth_count == 0 {
+        return;
+    }
+    let ids = unsafe { slice::from_raw_parts(name_ids, depth_count as usize) };
+    let _ = with_service(|svc| {
+        let evs = svc
+            .pairer
+            .lock()
+            .sample_stack(pid, tid, timestamp_ns, duration_ns, ids);
+        svc.push_events(&evs);
     });
 }
 
@@ -261,22 +349,6 @@ pub extern "C" fn orbit_live_mark_capture_finished() {
     let _ = with_service(|svc| svc.mark_capture_finished());
 }
 
-#[no_mangle]
-pub extern "C" fn orbit_live_capture_flag_api() -> u32 {
-    CAPTURE_FLAG_API
-}
-
-#[no_mangle]
-pub extern "C" fn orbit_live_capture_flag_context_switches() -> u32 {
-    CAPTURE_FLAG_CONTEXT_SWITCHES
-}
-
-#[no_mangle]
-pub extern "C" fn orbit_live_capture_flag_thread_states() -> u32 {
-    CAPTURE_FLAG_THREAD_STATES
-}
-
-// Silence unused import if we only use ptr in comments.
 #[allow(dead_code)]
 fn _ptr() -> *const c_void {
     ptr::null()

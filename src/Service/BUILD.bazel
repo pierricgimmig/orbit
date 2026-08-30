@@ -4,7 +4,7 @@
 
 load("//bazel:copts.bzl", "ORBIT_COPTS")
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -29,16 +29,27 @@ cc_library(
         "OrbitService.cpp",
     ] + select({
         "@platforms//os:windows": [],
-        "//conditions:default": ["LiveViewerBridge.cpp"],
+        "//conditions:default": [
+            "LiveCaptureStart.cpp",
+            "LiveCaptureSymbols.cpp",
+            "LiveViewerBridge.cpp",
+        ],
     }),
     hdrs = [
         "OrbitGrpcServer.h",
         "OrbitService.h",
     ] + select({
         "@platforms//os:windows": [],
-        "//conditions:default": ["LiveViewerBridge.h"],
+        "//conditions:default": [
+            "LiveCaptureStart.h",
+            "LiveCaptureSymbols.h",
+            "LiveViewerBridge.h",
+        ],
     }),
-    copts = ORBIT_COPTS,
+    copts = ORBIT_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-Isrc/ProcessService"],
+    }),
     includes = ["."],
     deps = [
         "//src/CrashService",
@@ -57,9 +68,26 @@ cc_library(
         # what un-#ifdefs the bridge in OrbitService.cpp.
         "//conditions:default": [
             "//src/ApiUtils",
+            "//src/ModuleUtils",
+            "//src/ObjectUtils",
             "//src/OrbitLiveViewer:orbit_live_ffi",
+            "//src/Symbols",
         ],
     }),
+)
+
+cc_test(
+    name = "OrbitServiceTests",
+    srcs = [
+        "LiveCaptureStartTest.cpp",
+        "LiveCaptureSymbolsTest.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":OrbitServiceLib",
+        "//src/Test:gtest_main",
+    ],
 )
 
 cc_binary(

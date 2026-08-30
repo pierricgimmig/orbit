@@ -27,9 +27,10 @@ Open `http://<host>:44766/`.
 
 | Control | What it does |
 |---|---|
-| **Refresh / Process** | `ProcessService` process list (C++ OrbitService only) |
-| **Start capture / Stop** | Thin attach: `enable_api` + context switches + thread states. No function-hook picker, no symbol UI, no sampling report. |
-| **Start demo / Stop demo** | In-process producer of API / sched / thread-state events (works without privileges) |
+| **Refresh / Process** | Searchable `ProcessService` list (pid, name, cpu, path). Record stays disabled until a pid is picked. |
+| **Record** | Against OrbitService: real capture of the selected pid (CSW, thread state, API, optional sampling + hooks). Rust-only / missing hooks: Record starts the **Demo** producer and the strip says so. |
+| **Demo** | In-process dummy scopes (no attach). Separate from Record when hooks are present. |
+| **Capture strip** | Sampling (default 1 ms / 1000 Hz, DWARF unwind), user-space vs kernel uprobes, function search (service-side, paged). Symbols load on the machine running OrbitService — the browser never parses ELF/DWARF. |
 | **Ring bytes** | Recreates the in-process ring (oldest live data is dropped) |
 | **Spill path** | Directory for serialize-on-overflow (`orbit-live-spill.bin`) |
 
@@ -181,8 +182,23 @@ Event layout matches `orbit_grpc_protos::ClientCaptureEvent` fields already
 used for API scopes, `FunctionCall`, `SchedulingSlice`, and `ThreadStateSlice`.
 It is not a new capture file format.
 
+## Real capture (OrbitService)
+
+`./wasm.sh` builds OrbitService and runs it as root so `sched_switch` / thread
+state work. Pick a process in the Capture strip; the service loads symbols
+(`SymbolHelper` + `FindSymbolsFilePath`). Function search is
+`GET /api/functions/search?q=&limit=` and never dumps the symbol table.
+
+`POST /api/capture/start` JSON: `pid`, `enable_api`, `context_switches`,
+`thread_states`, `sampling`, `samples_per_second`, `unwinding`
+(`dwarf` \| `frame_pointers`), `dynamic_instrumentation_method`
+(`user_space` \| `kernel_uprobes`), `instrumented_functions: [{function_id}]`.
+Callstack samples are resolved on the service and ingested as nested
+`FUNCTION_CALL` clips (duration `1/samples_per_second`). Instrumented
+`FunctionCall` events use interned pretty names, not raw function ids.
+
 ## Out of scope (this change)
 
-Full capture-options dialog, function Hook picker, symbol / DWARF loading in
-the browser, sampling reports, GPU/Vulkan tracks, presets, Qt UI / TracerImpl
-refactors.
+OrbitApp / CaptureData / the Qt client, ELF/DWARF in WASM/JS, sampling
+reports, GPU/Vulkan tracks, presets, a dual end-time index, or changing
+the 32-byte `LiveEvent` layout. VALUE stays off GPU LODs.

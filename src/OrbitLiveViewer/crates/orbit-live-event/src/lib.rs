@@ -345,12 +345,11 @@ impl ScopePairer {
         &self,
         pid: u32,
         tid: u32,
-        function_id: u64,
+        name_id: u32,
         duration_ns: u64,
         end_timestamp_ns: u64,
         depth: i32,
     ) -> LiveEvent {
-        let name_id = function_id as u32;
         LiveEvent {
             start_ns: end_timestamp_ns.saturating_sub(duration_ns),
             duration_ns,
@@ -362,6 +361,27 @@ impl ScopePairer {
             _pad: 0,
             name_id,
         }
+    }
+
+    /// One sampling stack as nested [`kind::FUNCTION_CALL`] clips.
+    /// `name_ids[0]` is the outermost frame (depth 0).
+    pub fn sample_stack(
+        &self,
+        pid: u32,
+        tid: u32,
+        timestamp_ns: u64,
+        duration_ns: u64,
+        name_ids: &[u32],
+    ) -> Vec<LiveEvent> {
+        let duration_ns = duration_ns.max(1);
+        let end_ns = timestamp_ns.saturating_add(duration_ns);
+        name_ids
+            .iter()
+            .enumerate()
+            .map(|(depth, &name_id)| {
+                self.function_call(pid, tid, name_id, duration_ns, end_ns, depth as i32)
+            })
+            .collect()
     }
 
     pub fn scheduling_slice(
@@ -698,6 +718,33 @@ mod tests {
         assert_eq!(ev.duration_ns, 40);
         assert_eq!(ev.kind, kind::FUNCTION_CALL);
         assert_eq!(ev.depth, 2);
+        assert_eq!(ev.name_id, 55);
+    }
+
+    #[test]
+    fn function_call_name_id_is_interned_not_raw_function_id() {
+        let mut intern = InternTable::default();
+        let name_id = intern.intern("foo::Bar");
+        let p = ScopePairer::default();
+        let ev = p.function_call(3, 9, name_id, 10, 50, 0);
+        assert_eq!(ev.name_id, name_id);
+        assert_eq!(intern.get(ev.name_id), Some("foo::Bar"));
+        assert_ne!(ev.name_id, 0x1000);
+    }
+
+    #[test]
+    fn sample_stack_nests_function_calls_from_root() {
+        let p = ScopePairer::default();
+        let evs = p.sample_stack(4, 7, 1_000, 1_000_000, &[10, 11, 12]);
+        assert_eq!(evs.len(), 3);
+        assert_eq!(evs[0].kind, kind::FUNCTION_CALL);
+        assert_eq!(evs[0].depth, 0);
+        assert_eq!(evs[0].name_id, 10);
+        assert_eq!(evs[2].depth, 2);
+        assert_eq!(evs[2].name_id, 12);
+        assert_eq!(evs[0].start_ns, 1_000);
+        assert_eq!(evs[0].duration_ns, 1_000_000);
+        assert_eq!(evs[0].end_ns(), evs[2].end_ns());
     }
 
     #[test]

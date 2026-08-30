@@ -6,9 +6,11 @@
 
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "ApiUtils/EncodedString.h"
 #include "GrpcProtos/capture.pb.h"
@@ -18,6 +20,7 @@
 #ifdef __linux
 #include <grpcpp/create_channel.h>
 #include <grpcpp/security/credentials.h>
+#include <unistd.h>
 #endif
 
 namespace orbit_service {
@@ -68,6 +71,14 @@ uint32_t InternName(const std::string& name) {
   return orbit_live_intern_or_insert(name.data(), static_cast<uint32_t>(name.size()));
 }
 
+bool WriteCString(const std::string& json, char* out, size_t out_len) {
+  if (out == nullptr || out_len == 0 || json.size() + 1 > out_len) {
+    return false;
+  }
+  std::memcpy(out, json.c_str(), json.size() + 1);
+  return true;
+}
+
 }  // namespace
 
 LiveViewerBridge::~LiveViewerBridge() { Stop(); }
@@ -98,6 +109,9 @@ ErrorMessageOr<void> LiveViewerBridge::Start(uint16_t http_port, uint64_t ring_b
   callbacks.list_processes_json = &LiveViewerBridge::ListProcessesJson;
   callbacks.start_capture = &LiveViewerBridge::StartCapture;
   callbacks.stop_capture = &LiveViewerBridge::StopCapture;
+  callbacks.load_symbols = &LiveViewerBridge::LoadSymbols;
+  callbacks.symbols_status_json = &LiveViewerBridge::SymbolsStatusJson;
+  callbacks.search_functions_json = &LiveViewerBridge::SearchFunctionsJson;
   if (orbit_live_server_set_callbacks(callbacks) != 0) {
     return ErrorMessage{"Failed to register live viewer control callbacks"};
   }
@@ -115,6 +129,10 @@ void LiveViewerBridge::Stop() {
 #ifdef __linux
   stopping_ = true;
   StopCaptureImpl();
+  symbol_load_generation_.fetch_add(1);
+  if (symbol_thread_.joinable()) {
+    symbol_thread_.join();
+  }
 #endif
   if (started_) {
     orbit_live_server_stop();
@@ -128,12 +146,26 @@ int LiveViewerBridge::ListProcessesJson(void* user_data, char* out, size_t out_l
   return static_cast<LiveViewerBridge*>(user_data)->ListProcessesJsonImpl(out, out_len);
 }
 
-int LiveViewerBridge::StartCapture(void* user_data, uint32_t pid, uint32_t flags) {
-  return static_cast<LiveViewerBridge*>(user_data)->StartCaptureImpl(pid, flags);
+int LiveViewerBridge::StartCapture(void* user_data, const char* json) {
+  return static_cast<LiveViewerBridge*>(user_data)->StartCaptureImpl(json);
 }
 
 int LiveViewerBridge::StopCapture(void* user_data) {
   return static_cast<LiveViewerBridge*>(user_data)->StopCaptureImpl();
+}
+
+int LiveViewerBridge::LoadSymbols(void* user_data, uint32_t pid) {
+  return static_cast<LiveViewerBridge*>(user_data)->LoadSymbolsImpl(pid);
+}
+
+int LiveViewerBridge::SymbolsStatusJson(void* user_data, uint32_t pid, char* out, size_t out_len) {
+  return static_cast<LiveViewerBridge*>(user_data)->SymbolsStatusJsonImpl(pid, out, out_len);
+}
+
+int LiveViewerBridge::SearchFunctionsJson(void* user_data, uint32_t pid, const char* query,
+                                          uint32_t limit, char* out, size_t out_len) {
+  return static_cast<LiveViewerBridge*>(user_data)->SearchFunctionsJsonImpl(pid, query, limit, out,
+                                                                            out_len);
 }
 
 int LiveViewerBridge::ListProcessesJsonImpl(char* out, size_t out_len) {
@@ -156,17 +188,43 @@ int LiveViewerBridge::ListProcessesJsonImpl(char* out, size_t out_len) {
                             JsonEscape(process.full_path()));
   }
   json += "]";
-  if (json.size() + 1 > out_len) {
+  if (!WriteCString(json, out, out_len)) {
     return -3;
   }
-  std::memcpy(out, json.c_str(), json.size() + 1);
   return 0;
 }
 
-int LiveViewerBridge::StartCaptureImpl(uint32_t pid, uint32_t flags) {
+int LiveViewerBridge::StartCaptureImpl(const char* json) {
+  if (json == nullptr) {
+    return -1;
+  }
   if (stream_ != nullptr) {
     return -1;
   }
+  const ErrorMessageOr<LiveCaptureStartRequest> parsed = ParseLiveCaptureStartJson(json);
+  if (parsed.has_error()) {
+    ORBIT_ERROR("Live capture start JSON: %s", parsed.error().message());
+    return -4;
+  }
+  const LiveCaptureStartRequest& request = parsed.value();
+
+  LiveCaptureSymbols snapshot;
+  {
+    std::lock_guard<std::mutex> lock(symbols_mutex_);
+    snapshot = symbols_;
+  }
+
+  orbit_grpc_protos::CaptureOptions options = ToCaptureOptions(request, snapshot);
+  sample_duration_ns_ = options.samples_per_second() > 0
+                            ? static_cast<uint64_t>(1'000'000'000.0 / options.samples_per_second())
+                            : 1'000'000;
+  if (sample_duration_ns_ == 0) {
+    sample_duration_ns_ = 1;
+  }
+  interned_callstacks_.clear();
+  function_name_ids_.clear();
+  InternInstrumentedNames(options);
+
   stopping_ = false;
   channel_ = grpc::CreateChannel(absl::StrFormat("127.0.0.1:%u", grpc_port_),
                                  grpc::InsecureChannelCredentials());
@@ -174,21 +232,18 @@ int LiveViewerBridge::StartCaptureImpl(uint32_t pid, uint32_t flags) {
   context_ = std::make_unique<grpc::ClientContext>();
   stream_ = stub_->Capture(context_.get());
 
-  orbit_grpc_protos::CaptureRequest request;
-  orbit_grpc_protos::CaptureOptions* options = request.mutable_capture_options();
-  options->set_pid(pid);
-  options->set_enable_api((flags & orbit_live_capture_flag_api()) != 0);
-  options->set_trace_context_switches((flags & orbit_live_capture_flag_context_switches()) != 0);
-  options->set_trace_thread_state((flags & orbit_live_capture_flag_thread_states()) != 0);
-  options->set_samples_per_second(0);
-  if (!stream_->Write(request)) {
+  orbit_grpc_protos::CaptureRequest capture_request;
+  *capture_request.mutable_capture_options() = std::move(options);
+  if (!stream_->Write(capture_request)) {
     stream_.reset();
     context_.reset();
     return -2;
   }
-  orbit_live_mark_capture_started(pid, 0);
+  orbit_live_mark_capture_started(request.pid, 0);
   reader_thread_ = std::thread([this] { ReadLoop(); });
-  ORBIT_LOG("Live viewer started capture of pid %u (flags=0x%x)", pid, flags);
+  ORBIT_LOG("Live viewer started capture of pid %u (sps=%.1f hooks=%d)", request.pid,
+            capture_request.capture_options().samples_per_second(),
+            capture_request.capture_options().instrumented_functions_size());
   return 0;
 }
 
@@ -198,7 +253,6 @@ int LiveViewerBridge::StopCaptureImpl() {
   }
   stopping_ = true;
   {
-    // WritesDone unblocks the service; ReadLoop then exits.
     stream_->WritesDone();
   }
   if (reader_thread_.joinable()) {
@@ -208,8 +262,88 @@ int LiveViewerBridge::StopCaptureImpl() {
   context_.reset();
   stub_.reset();
   channel_.reset();
+  interned_callstacks_.clear();
+  function_name_ids_.clear();
   orbit_live_mark_capture_finished();
   return 0;
+}
+
+int LiveViewerBridge::LoadSymbolsImpl(uint32_t pid) {
+  if (pid == 0) {
+    return -1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(symbols_mutex_);
+    if (symbols_.pid() == pid && (symbols_.status() == LiveSymbolStatus::kLoading ||
+                                  symbols_.status() == LiveSymbolStatus::kReady)) {
+      return 0;
+    }
+    symbols_.Reset();
+    symbols_.set_pid(pid);
+    symbols_.set_status(LiveSymbolStatus::kLoading);
+  }
+  const uint32_t generation = symbol_load_generation_.fetch_add(1) + 1;
+  if (symbol_thread_.joinable()) {
+    symbol_thread_.join();
+  }
+  symbol_thread_ = std::thread([this, pid, generation] {
+    LiveCaptureSymbols loaded;
+    const ErrorMessageOr<void> result = loaded.LoadPid(pid);
+    if (symbol_load_generation_.load() != generation) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(symbols_mutex_);
+    if (symbol_load_generation_.load() != generation) {
+      return;
+    }
+    symbols_ = std::move(loaded);
+    if (result.has_error() && symbols_.status() != LiveSymbolStatus::kError) {
+      symbols_.set_status(LiveSymbolStatus::kError);
+      symbols_.set_error(result.error().message());
+    }
+  });
+  return 0;
+}
+
+int LiveViewerBridge::SymbolsStatusJsonImpl(uint32_t pid, char* out, size_t out_len) {
+  std::lock_guard<std::mutex> lock(symbols_mutex_);
+  if (pid != 0 && symbols_.pid() != 0 && symbols_.pid() != pid) {
+    const std::string json =
+        absl::StrFormat(R"({"pid":%u,"status":"idle","function_count":0,"module_count":0,"error":""})",
+                        pid);
+    return WriteCString(json, out, out_len) ? 0 : -3;
+  }
+  return WriteCString(symbols_.StatusJson(), out, out_len) ? 0 : -3;
+}
+
+int LiveViewerBridge::SearchFunctionsJsonImpl(uint32_t pid, const char* query, uint32_t limit,
+                                              char* out, size_t out_len) {
+  std::lock_guard<std::mutex> lock(symbols_mutex_);
+  if (pid != 0 && symbols_.pid() != pid) {
+    const std::string json =
+        absl::StrFormat(R"({"pid":%u,"status":"idle","functions":[]})", pid);
+    return WriteCString(json, out, out_len) ? 0 : -3;
+  }
+  const uint32_t cap = limit == 0 ? 32 : std::min(limit, 64u);
+  const std::string q = query == nullptr ? "" : query;
+  return WriteCString(symbols_.SearchJson(q, cap), out, out_len) ? 0 : -3;
+}
+
+void LiveViewerBridge::InternInstrumentedNames(const orbit_grpc_protos::CaptureOptions& options) {
+  for (const orbit_grpc_protos::InstrumentedFunction& fn : options.instrumented_functions()) {
+    function_name_ids_[fn.function_id()] = InternName(fn.function_name());
+  }
+}
+
+uint32_t LiveViewerBridge::NameIdForFunctionId(uint64_t function_id) {
+  const auto it = function_name_ids_.find(function_id);
+  if (it != function_name_ids_.end()) {
+    return it->second;
+  }
+  const uint32_t name_id = InternName(absl::StrFormat("fn:%llu",
+                                                      static_cast<unsigned long long>(function_id)));
+  function_name_ids_[function_id] = name_id;
+  return name_id;
 }
 
 void LiveViewerBridge::ReadLoop() {
@@ -221,6 +355,33 @@ void LiveViewerBridge::ReadLoop() {
   }
   if (stream_ != nullptr) {
     stream_->Finish();
+  }
+}
+
+void LiveViewerBridge::IngestCallstackSample(const orbit_grpc_protos::CallstackSample& sample) {
+  const auto it = interned_callstacks_.find(sample.callstack_id());
+  if (it == interned_callstacks_.end()) {
+    return;
+  }
+  const orbit_grpc_protos::Callstack& callstack = it->second;
+  if (callstack.pcs_size() == 0) {
+    return;
+  }
+  const uint64_t duration_ns = sample_duration_ns_;
+  const uint64_t end_ns = sample.timestamp_ns() + duration_ns;
+  // pcs[0] is the leaf; paint root at depth 0 so the lane stacks like a flame.
+  const int n = std::min(callstack.pcs_size(), 32);
+  std::vector<std::string> names;
+  names.reserve(static_cast<size_t>(n));
+  {
+    std::lock_guard<std::mutex> lock(symbols_mutex_);
+    for (int i = 0; i < n; ++i) {
+      names.push_back(symbols_.ResolveName(callstack.pcs(n - 1 - i)));
+    }
+  }
+  for (int i = 0; i < n; ++i) {
+    orbit_live_ingest_function_call(sample.pid(), sample.tid(), InternName(names[static_cast<size_t>(i)]),
+                                    duration_ns, end_ns, i);
   }
 }
 
@@ -253,8 +414,16 @@ void LiveViewerBridge::IngestEvent(const orbit_grpc_protos::ClientCaptureEvent& 
     }
     case ClientCaptureEvent::kFunctionCall: {
       const auto& call = event.function_call();
-      orbit_live_ingest_function_call(call.pid(), call.tid(), call.function_id(),
+      orbit_live_ingest_function_call(call.pid(), call.tid(), NameIdForFunctionId(call.function_id()),
                                       call.duration_ns(), call.end_timestamp_ns(), call.depth());
+      break;
+    }
+    case ClientCaptureEvent::kInternedCallstack: {
+      interned_callstacks_[event.interned_callstack().key()] = event.interned_callstack().intern();
+      break;
+    }
+    case ClientCaptureEvent::kCallstackSample: {
+      IngestCallstackSample(event.callstack_sample());
       break;
     }
     case ClientCaptureEvent::kSchedulingSlice: {
@@ -272,6 +441,14 @@ void LiveViewerBridge::IngestEvent(const orbit_grpc_protos::ClientCaptureEvent& 
     }
     case ClientCaptureEvent::kCaptureStarted: {
       const auto& started = event.capture_started();
+      InternInstrumentedNames(started.capture_options());
+      if (started.capture_options().samples_per_second() > 0) {
+        sample_duration_ns_ =
+            static_cast<uint64_t>(1'000'000'000.0 / started.capture_options().samples_per_second());
+        if (sample_duration_ns_ == 0) {
+          sample_duration_ns_ = 1;
+        }
+      }
       orbit_live_mark_capture_started(started.process_id(), started.capture_start_timestamp_ns());
       break;
     }
