@@ -21,3 +21,6 @@ third_party/py-spy-ffi/target/
 /bazel-*
 src/OrbitLiveViewer/target/
 src/OrbitLiveViewer/crates/*/target/
+
+# Rust build output (rust/ and src/OrbitLiveViewer/ Cargo workspaces).
+target/

@@ -1,0 +1,5 @@
+# Local `cargo` use only. Bazel downloads its own toolchain through
+# rules_rust; this file exists so `cargo test` in rust/ matches it.
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]

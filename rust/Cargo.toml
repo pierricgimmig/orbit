@@ -1,0 +1,29 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Service-side Rust for Orbit. Separate from src/OrbitLiveViewer on purpose:
+# these crates parse binaries and kernel data and must not share a lockfile
+# with the viewer's eframe/wgpu/tokio tree.
+#
+# See docs/rust-port-plan.html for the staging, and docs/blog/ for the
+# running write-up of what each step cost.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/orbit-maps",
+    "ffi/orbit-maps-ffi",
+]
+
+[workspace.package]
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"

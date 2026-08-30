@@ -1,0 +1,74 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Service-side Rust for Orbit. See docs/rust-port-plan.html.
+#
+# No crate_universe repository is needed yet: orbit-maps has no dependencies
+# beyond std. That changes at Phase 2, when object/gimli/addr2line arrive.
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+])
+
+ORBIT_RUST_EDITION = "2021"
+
+# ------------------------------------------------------------- orbit-maps
+
+rust_library(
+    name = "orbit_maps",
+    srcs = glob(["crates/orbit-maps/src/**/*.rs"]),
+    crate_root = "crates/orbit-maps/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_maps_test",
+    size = "small",
+    crate = ":orbit_maps",
+    edition = ORBIT_RUST_EDITION,
+)
+
+# --------------------------------------------------------- orbit-maps-ffi
+
+rust_static_library(
+    name = "orbit_maps_ffi_rust",
+    srcs = glob(["ffi/orbit-maps-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-maps-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_maps"],
+)
+
+# The same sources as a rust_library, so the crate's own #[test]s can run.
+# rust_static_library produces no test-runnable target on its own.
+rust_library(
+    name = "orbit_maps_ffi_lib",
+    srcs = glob(["ffi/orbit-maps-ffi/src/**/*.rs"]),
+    crate_name = "orbit_maps_ffi",
+    crate_root = "ffi/orbit-maps-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_maps"],
+)
+
+rust_test(
+    name = "orbit_maps_ffi_test",
+    size = "small",
+    crate = ":orbit_maps_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_maps_ffi",
+    hdrs = ["ffi/orbit-maps-ffi/include/orbit_maps_ffi.h"],
+    includes = ["ffi/orbit-maps-ffi/include"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_maps_ffi_rust"],
+)
