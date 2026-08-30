@@ -66,6 +66,9 @@ first (legacy `[…]` array or `{ "traceEvents": […] }` plus
 * Same-origin `/?trace=/path.json` (no `..`, no absolute URLs)
 * Does **not** start Demo. Replaces the current session with processes/threads
   from metadata (`process_name`, `thread_name`, sort indices)
+* First paint **fits the real timed cluster** (ignores metadata ts=0). **Home**
+  or **double-click the ruler** recovers that fit. WASD hold-pan/zoom is
+  unchanged. The slider is the cluster, not 0 → last `ts`.
 * Progress: bytes in / decoded and events ingested
 * Stays in this viewer (no OrbitApp / CaptureData / Qt)
 

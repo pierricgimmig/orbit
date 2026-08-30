@@ -205,6 +205,10 @@ pub struct ChromeIngestor {
     next_object_tid: u32,
     flow_open: HashMap<u64, FlowEnd>,
     pending_samples: Vec<PendingSample>,
+    /// Min/max of B/E/X / async / counters / objects with a real `ts`.
+    /// Metadata and ts=0 instants do not set this.
+    content_min_ns: Option<u64>,
+    content_max_ns: Option<u64>,
 }
 
 impl Default for ChromeIngestor {
@@ -231,6 +235,8 @@ impl Default for ChromeIngestor {
             next_object_tid: TID_OBJECT_BASE,
             flow_open: HashMap::new(),
             pending_samples: Vec::new(),
+            content_min_ns: None,
+            content_max_ns: None,
         }
     }
 }
@@ -262,6 +268,8 @@ impl ChromeIngestor {
             return Vec::new();
         }
         let ch = ph.as_bytes()[0] as char;
+        let ts = ev.ts;
+        let dur = ev.dur;
         let out = match ch {
             'B' => self.on_begin(ev),
             'E' => self.on_end(ev),
@@ -287,8 +295,56 @@ impl ChromeIngestor {
                 Vec::new()
             }
         };
+        self.note_content_event(ch, ts, dur, &out);
         self.stats.events_out += out.len() as u64;
         out
+    }
+
+    /// Capture domain: real timed events only. `ph=M` and instants at ts=0
+    /// (Chrome often stamps `thread_name` at 0) do not define the window.
+    pub fn content_time_bounds(&self) -> Option<(u64, u64)> {
+        match (self.content_min_ns, self.content_max_ns) {
+            (Some(a), Some(b)) => Some((a, b.max(a.saturating_add(1)))),
+            _ => None,
+        }
+    }
+
+    fn expand_content(&mut self, start: u64, end: u64) {
+        let lo = start.min(end);
+        let hi = start.max(end);
+        self.content_min_ns = Some(self.content_min_ns.map_or(lo, |m| m.min(lo)));
+        self.content_max_ns = Some(self.content_max_ns.map_or(hi, |m| m.max(hi)));
+    }
+
+    fn note_content_event(
+        &mut self,
+        ch: char,
+        ts: Option<f64>,
+        dur: Option<f64>,
+        out: &[LiveEvent],
+    ) {
+        if ch == 'M' {
+            return;
+        }
+        let instant = matches!(ch, 'I' | 'i' | 'R' | 'c');
+        match ts {
+            None => return,
+            Some(t) if instant && t == 0.0 => return,
+            Some(_) => {}
+        }
+        if out.is_empty() {
+            if let Some(t) = ts {
+                let ns = self.unit.to_ns(t);
+                let end = dur
+                    .map(|d| ns.saturating_add(self.unit.to_ns(d)))
+                    .unwrap_or(ns);
+                self.expand_content(ns, end);
+            }
+            return;
+        }
+        for e in out {
+            self.expand_content(e.start_ns, e.end_ns());
+        }
     }
 
     /// Linux ftrace / Android atrace text from `systemTraceEvents`.
@@ -551,9 +607,9 @@ impl ChromeIngestor {
 
     fn async_key(&self, ev: &ChromeEvent) -> (u32, u64) {
         let pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
-        let id = self.event_id(ev).unwrap_or_else(|| {
-            hash32(ev.name.as_deref().unwrap_or("").as_bytes()) as u64
-        });
+        let id = self
+            .event_id(ev)
+            .unwrap_or_else(|| hash32(ev.name.as_deref().unwrap_or("").as_bytes()) as u64);
         (pid, id)
     }
 
@@ -563,11 +619,14 @@ impl ChromeIngestor {
         } else {
             name.to_string()
         };
-        let tid = *self.async_tids.entry((pid, key.clone())).or_insert_with(|| {
-            let t = self.next_async_tid;
-            self.next_async_tid = self.next_async_tid.wrapping_add(1);
-            t
-        });
+        let tid = *self
+            .async_tids
+            .entry((pid, key.clone()))
+            .or_insert_with(|| {
+                let t = self.next_async_tid;
+                self.next_async_tid = self.next_async_tid.wrapping_add(1);
+                t
+            });
         self.thread_names.entry((pid, tid)).or_insert(key);
         tid
     }
@@ -829,10 +888,7 @@ impl ChromeIngestor {
                 chain.push(self.intern.intern(&cid));
                 break;
             };
-            let name = frame
-                .name
-                .clone()
-                .unwrap_or_else(|| cid.clone());
+            let name = frame.name.clone().unwrap_or_else(|| cid.clone());
             let parent = frame.parent.as_ref().map(|p| p.as_str_cow().into_owned());
             chain.push(self.intern.intern(&name));
             cur = parent;
@@ -845,11 +901,14 @@ impl ChromeIngestor {
         self.stats.object += 1;
         let pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
         let name = ev.name.clone().unwrap_or_else(|| format!("object {ch}"));
-        let tid = *self.object_tids.entry((pid, name.clone())).or_insert_with(|| {
-            let t = self.next_object_tid;
-            self.next_object_tid = self.next_object_tid.wrapping_add(1);
-            t
-        });
+        let tid = *self
+            .object_tids
+            .entry((pid, name.clone()))
+            .or_insert_with(|| {
+                let t = self.next_object_tid;
+                self.next_object_tid = self.next_object_tid.wrapping_add(1);
+                t
+            });
         self.thread_names
             .entry((pid, tid))
             .or_insert_with(|| name.clone());
@@ -937,12 +996,19 @@ impl ChromeIngestor {
             }
         }
         out.extend(self.flush_samples());
+        for e in &out {
+            self.expand_content(e.start_ns, e.end_ns());
+        }
         self.stats.events_out += out.len() as u64;
         out
     }
 }
 
-fn find_open(stack: &[OpenDuration], want_id: Option<u64>, want_name: Option<&str>) -> Option<usize> {
+fn find_open(
+    stack: &[OpenDuration],
+    want_id: Option<u64>,
+    want_name: Option<&str>,
+) -> Option<usize> {
     if stack.is_empty() {
         return None;
     }

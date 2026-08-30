@@ -118,6 +118,7 @@ impl TraceLoad {
                     .iter()
                     .map(|e| e.end_ns())
                     .max()
+                    .or_else(|| self.ingestor.content_time_bounds().map(|(_, b)| b))
                     .unwrap_or(1);
                 out.extend(self.ingestor.finish(end.max(1)));
                 self.finished = true;
@@ -200,38 +201,32 @@ fn native_open_dialog() -> Option<TraceLoad> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn spawn_path_read(
-    name: String,
-    path: std::path::PathBuf,
-    size: Option<u64>,
-) -> TraceLoad {
+pub fn spawn_path_read(name: String, path: std::path::PathBuf, size: Option<u64>) -> TraceLoad {
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        match std::fs::File::open(&path) {
-            Ok(mut f) => {
-                use std::io::Read;
-                let mut buf = vec![0u8; 1 << 20];
-                loop {
-                    match f.read(&mut buf) {
-                        Ok(0) => {
-                            let _ = tx.send(ByteMsg::Eof);
-                            break;
-                        }
-                        Ok(n) => {
-                            if tx.send(ByteMsg::Chunk(buf[..n].to_vec())).is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx.send(ByteMsg::Error(e.to_string()));
+    std::thread::spawn(move || match std::fs::File::open(&path) {
+        Ok(mut f) => {
+            use std::io::Read;
+            let mut buf = vec![0u8; 1 << 20];
+            loop {
+                match f.read(&mut buf) {
+                    Ok(0) => {
+                        let _ = tx.send(ByteMsg::Eof);
+                        break;
+                    }
+                    Ok(n) => {
+                        if tx.send(ByteMsg::Chunk(buf[..n].to_vec())).is_err() {
                             break;
                         }
                     }
+                    Err(e) => {
+                        let _ = tx.send(ByteMsg::Error(e.to_string()));
+                        break;
+                    }
                 }
             }
-            Err(e) => {
-                let _ = tx.send(ByteMsg::Error(e.to_string()));
-            }
+        }
+        Err(e) => {
+            let _ = tx.send(ByteMsg::Error(e.to_string()));
         }
     });
     TraceLoad::new(name, size, rx)
@@ -285,7 +280,10 @@ fn spawn_wasm_file(file: web_sys::File, tx: mpsc::Sender<ByteMsg>) {
         use wasm_bindgen_futures::JsFuture;
         use web_sys::ReadableStreamDefaultReader;
         let stream = file.stream();
-        let Ok(reader) = stream.get_reader().dyn_into::<ReadableStreamDefaultReader>() else {
+        let Ok(reader) = stream
+            .get_reader()
+            .dyn_into::<ReadableStreamDefaultReader>()
+        else {
             let _ = tx.send(ByteMsg::Error("readable stream".into()));
             return;
         };
@@ -316,7 +314,8 @@ fn spawn_wasm_file(file: web_sys::File, tx: mpsc::Sender<ByteMsg>) {
                 break;
             }
             // Yield so the UI can pump + paint.
-            let _ = JsFuture::from(js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)).await;
+            let _ =
+                JsFuture::from(js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)).await;
         }
     });
 }
@@ -448,7 +447,8 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(c) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or(""), 16)
+            if let Ok(c) =
+                u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or(""), 16)
             {
                 out.push(c as char);
                 i += 3;

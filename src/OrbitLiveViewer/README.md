@@ -44,6 +44,11 @@ JSON. Same-origin `/?trace=/path.json` fetches that path. Loading **does not
 start Demo** — it replaces the session with a capture-like
 machine/process/thread tree from `pid`/`tid` metadata.
 
+The initial time window **fits the real timed-event cluster** (B/E/X, async,
+counters — not `ph=M` at ts=0). **Home** or **double-click the ruler** fits
+again. WASD hold-pan/zoom stays cursor-locked. The time slider spans that
+cluster, not hours of empty axis left of the first scope.
+
 | Chrome `ph` | Live viewer |
 |---|---|
 | `B`/`E`, `X` | `API_SCOPE` clips (paired by pid+tid, plus `id` when present) |
@@ -89,6 +94,13 @@ Not browser GPU fps.
 
 \* CPU `collect_instances` / LOD choose after insert — time-to-first-timeline-prepare, not a painted WASM frame.  
 † 60× `collect_instances` on a 1/8 window; prepare rate, not vsync.
+
+theverge first-paint window (this change, measured): content
+`122403254982000..122411498936000` ns (8.243954 s B/E cluster). Fit 1.1× →
+`t0=122402842784300` `t1=122411911133700` (9.068349 s). One mid zoom-in →
+`t0=122403254982000` `t1=122411498936000` (8.243954 s). Not `0..1.224e14`
+(34 h). GPU instances already origin-shift `(t-t0)` as f64; this was a
+timeline-domain bug (slider/pan floor 0 + 60 s zoom cap), not f32 absolute ns.
 
 theverge pid 66343 used to mint **1,866 threads** (1,847 object-id lanes + 14 async-id lanes + 4 real tids). Expanding that process cost **47.43 ms/frame** vs **5.63 ms** collapsed (`chrome_nav`, 60× sync+Y-cull collect). After grouping O/D and async by **name**: 11 threads (4 real + 3 object names + 3 async names + 1 counter), **0.76 ms/frame expanded** / **0.09 ms collapsed**.
 

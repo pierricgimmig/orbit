@@ -95,7 +95,10 @@ mod tests {
     #[test]
     fn fixture_pairs_and_names() {
         let (ing, evs) = collect(FIXTURE);
-        assert_eq!(ing.process_names.get(&1).map(String::as_str), Some("Renderer"));
+        assert_eq!(
+            ing.process_names.get(&1).map(String::as_str),
+            Some("Renderer")
+        );
         assert_eq!(
             ing.thread_names.get(&(1, 10)).map(String::as_str),
             Some("Main")
@@ -131,25 +134,31 @@ mod tests {
 
         let instants = evs
             .iter()
-            .filter(|e| matches!(names(e.name_id).as_str(), "tick" | "procMark" | "globMark" | "mark" | "clock"))
+            .filter(|e| {
+                matches!(
+                    names(e.name_id).as_str(),
+                    "tick" | "procMark" | "globMark" | "mark" | "clock"
+                )
+            })
             .count();
         assert_eq!(instants, 5);
         assert!(evs.iter().any(|e| e.tid == TID_PROCESS_MARKERS));
-        assert!(evs.iter().any(|e| e.pid == PID_GLOBAL && e.tid == TID_GLOBAL));
+        assert!(evs
+            .iter()
+            .any(|e| e.pid == PID_GLOBAL && e.tid == TID_GLOBAL));
 
         let counters: Vec<_> = evs.iter().filter(|e| e.kind == kind::VALUE).collect();
         assert_eq!(counters.len(), 2);
-        let labels: HashSet<_> = counters
-            .iter()
-            .map(|e| names(e.name_id))
-            .collect();
+        let labels: HashSet<_> = counters.iter().map(|e| names(e.name_id)).collect();
         assert!(labels.contains("ram:a"));
         assert!(labels.contains("ram:b"));
         assert_ne!(counters[0].tid, counters[1].tid);
         assert!(counters[0].tid >= TID_COUNTER_BASE);
 
         let asyncs: Vec<_> = evs.iter().filter(|e| e.kind == kind::API_TRACK).collect();
-        assert!(asyncs.iter().any(|e| names(e.name_id) == "gpu" && e.duration_ns > 1));
+        assert!(asyncs
+            .iter()
+            .any(|e| names(e.name_id) == "gpu" && e.duration_ns > 1));
         let gpu = asyncs
             .iter()
             .find(|e| names(e.name_id) == "gpu" && e.duration_ns > 1)
@@ -247,7 +256,9 @@ mod tests {
         }"##;
         let (ing, evs) = collect(systrace);
         assert_eq!(ing.stats.system_trace, 3);
-        assert!(evs.iter().any(|e| e.kind == kind::API_SCOPE && e.duration_ns == 10_000));
+        assert!(evs
+            .iter()
+            .any(|e| e.kind == kind::API_SCOPE && e.duration_ns == 10_000));
         assert!(evs.iter().any(|e| e.kind == kind::VALUE));
     }
 
@@ -265,14 +276,43 @@ mod tests {
         assert!(ing.stats.object >= 2_101);
         assert!(evs.len() >= 30_000);
         assert!(ing.process_names.len() >= 6);
-        let n66343 = ing
-            .thread_names
-            .keys()
-            .filter(|(p, _)| *p == 66343)
-            .count();
+        let n66343 = ing.thread_names.keys().filter(|(p, _)| *p == 66343).count();
         assert!(
             n66343 < 32,
             "pid 66343 must not explode into {n66343} threads (group O/D and async by name)"
+        );
+        let (a, b) = ing.content_time_bounds().expect("theverge content");
+        let span_s = (b - a) as f64 / 1e9;
+        assert!(
+            a > 100_000_000_000_000,
+            "metadata ts=0 must not set content min: {a}"
+        );
+        assert!(
+            (8.2..8.3).contains(&span_s),
+            "theverge B/E cluster must be ~8.24 s, got {span_s} s ({a}..{b})"
+        );
+    }
+
+    #[test]
+    fn content_bounds_ignore_metadata_and_zero_instants() {
+        let json = r#"[
+          {"name":"thread_name","ph":"M","ts":0,"pid":1,"tid":1,"args":{"name":"Main"}},
+          {"name":"process_name","ph":"M","ts":0,"pid":1,"args":{"name":"Browser"}},
+          {"name":"orphan","ph":"I","ts":0,"pid":1,"tid":1},
+          {"name":"work","ph":"B","ts":122403254982,"pid":1,"tid":1},
+          {"name":"work","ph":"E","ts":122411498936,"pid":1,"tid":1}
+        ]"#;
+        let (ing, evs) = collect(json);
+        let (a, b) = ing.content_time_bounds().expect("content");
+        assert_eq!(a, 122_403_254_982_000);
+        assert_eq!(b, 122_411_498_936_000);
+        assert!(
+            evs.iter().any(|e| e.start_ns == 0),
+            "instant at 0 is stored"
+        );
+        assert!(
+            evs.iter().any(|e| e.start_ns == 122_403_254_982_000),
+            "real B is stored"
         );
     }
 
@@ -347,8 +387,13 @@ mod tests {
         let (ing, evs) = collect(json);
         let tracks: Vec<_> = evs.iter().filter(|e| e.kind == kind::API_TRACK).collect();
         assert!(tracks.iter().any(|e| e.duration_ns == 10_000));
-        assert!(tracks.iter().any(|e| ing.intern.get(e.name_id) == Some("step")));
-        assert_eq!(tracks.iter().map(|e| e.tid).collect::<HashSet<_>>().len(), 1);
+        assert!(tracks
+            .iter()
+            .any(|e| ing.intern.get(e.name_id) == Some("step")));
+        assert_eq!(
+            tracks.iter().map(|e| e.tid).collect::<HashSet<_>>().len(),
+            1
+        );
     }
 
     #[test]

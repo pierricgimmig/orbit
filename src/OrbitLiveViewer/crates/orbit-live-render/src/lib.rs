@@ -250,20 +250,33 @@ impl TrackIndex {
     }
 
     pub fn time_bounds(&self) -> Option<(u64, u64)> {
-        let mut min_t = u64::MAX;
-        let mut max_t = 0u64;
+        // Min/max of real timed events. A zero-width mark at t=0 (Chrome
+        // metadata leftovers, missing-`ts` instants) must not stretch the
+        // capture to the origin when a later cluster exists.
+        let mut min_all = u64::MAX;
+        let mut max_all = 0u64;
+        let mut min_real = u64::MAX;
+        let mut max_real = 0u64;
+        let mut any_real = false;
         for lane in self.lanes.values() {
-            if let Some(first) = lane.events.first() {
-                min_t = min_t.min(first.start_ns);
-            }
-            if let Some(last) = lane.events.last() {
-                max_t = max_t.max(last.end_ns());
+            for e in &lane.events {
+                let start = e.start_ns;
+                let end = e.end_ns();
+                min_all = min_all.min(start);
+                max_all = max_all.max(end);
+                if start > 0 || e.duration_ns > 1 {
+                    any_real = true;
+                    min_real = min_real.min(start);
+                    max_real = max_real.max(end);
+                }
             }
         }
-        if min_t == u64::MAX {
+        if min_all == u64::MAX {
             None
+        } else if any_real {
+            Some((min_real, max_real.max(min_real + 1)))
         } else {
-            Some((min_t, max_t.max(min_t + 1)))
+            Some((min_all, max_all.max(min_all + 1)))
         }
     }
 
@@ -665,6 +678,27 @@ mod tests {
         lane.insert(scope(50, 10, 0, 3));
         let starts: Vec<u64> = lane.events().iter().map(|e| e.start_ns).collect();
         assert_eq!(starts, vec![0, 50, 100]);
+    }
+
+    #[test]
+    fn time_bounds_ignore_zero_width_origin_when_cluster_exists() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 1, 0, 1)); // instant / missing-ts leftover
+        idx.insert(scope(122_403_254_982_000, 1_000_000, 0, 2));
+        idx.insert(scope(122_411_498_000_000, 936_000, 0, 3));
+        let (a, b) = idx.time_bounds().expect("bounds");
+        assert_eq!(a, 122_403_254_982_000);
+        assert_eq!(b, 122_411_498_936_000);
+    }
+
+    #[test]
+    fn time_bounds_keep_real_work_at_t_zero() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 10_000, 0, 1));
+        idx.insert(scope(20_000, 5_000, 0, 2));
+        let (a, b) = idx.time_bounds().expect("bounds");
+        assert_eq!(a, 0);
+        assert_eq!(b, 25_000);
     }
 
     #[test]

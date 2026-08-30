@@ -1,10 +1,12 @@
 //! Orbit Fusion chrome as egui widgets. The timeline is one PaintCallback.
 
+use crate::chrome_load::{self, TraceLoad};
 use eframe::egui::{
     self, scroll_area::ScrollSource, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId,
     Frame, Galley, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2,
 };
+use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::dev::{
     intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
     NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT,
@@ -15,9 +17,7 @@ use orbit_live_event::dev::{
     NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
 };
-use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
-use crate::chrome_load::{self, TraceLoad};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
     apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
@@ -250,6 +250,20 @@ fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64)
 /// Same rebuild as `zoom_time`: `t_mouse` stays at `frac` so the pointer
 /// time does not walk. `t0` may go negative.
 fn zoom_time_by_scale(t0: f64, t1: f64, scale: f64, center_ratio: f64) -> (f64, f64) {
+    zoom_time_by_scale_limited(t0, t1, scale, center_ratio, ZOOM_MAX_NS)
+}
+
+/// Like [`zoom_time_by_scale`], but the zoom-out ceiling is the capture
+/// span when that is larger than the 60 s default (Chrome traces whose
+/// cluster is 8 s must not slam into 60 s of empty time; a 34 h *file*
+/// axis must still be zoomable out to the cluster).
+fn zoom_time_by_scale_limited(
+    t0: f64,
+    t1: f64,
+    scale: f64,
+    center_ratio: f64,
+    max_span: f64,
+) -> (f64, f64) {
     if !scale.is_finite() || (scale - 1.0).abs() < f64::EPSILON {
         return (t0, t1);
     }
@@ -259,9 +273,41 @@ fn zoom_time_by_scale(t0: f64, t1: f64, scale: f64, center_ratio: f64) -> (f64, 
         return (t0, t1);
     }
     let t_mouse = view_time_at(t0, t1, center_ratio);
-    let new_span = (span / scale).clamp(ZOOM_MIN_NS, ZOOM_MAX_NS);
+    let max_span = max_span.max(ZOOM_MIN_NS);
+    let new_span = (span / scale).clamp(ZOOM_MIN_NS, max_span);
     let new_t0 = t_mouse - center_ratio * new_span;
     (new_t0, new_t0 + new_span)
+}
+
+/// Fit the visible window to a content cluster (1.1×, same pad as Zoom).
+fn fit_content_window(min_ns: f64, max_ns: f64) -> (f64, f64) {
+    let lo = min_ns.min(max_ns);
+    let hi = min_ns.max(max_ns);
+    let span = (hi - lo).max(1.0);
+    let pad = span * (ZOOM_SCOPE_PAD - 1.0) / 2.0;
+    (lo - pad, hi + pad)
+}
+
+/// Zoom-out ceiling: never smaller than the capture.
+fn zoom_max_for_capture(content_span: f64) -> f64 {
+    ZOOM_MAX_NS.max(content_span.abs().max(1.0) * ZOOM_SCOPE_PAD)
+}
+
+/// Keep `[t0, t1]` overlapping `[cap0, cap1]` so A / the slider cannot
+/// walk into hours of empty time left of the cluster.
+fn clamp_window_overlap(t0: f64, t1: f64, cap0: f64, cap1: f64) -> (f64, f64) {
+    let span = (t1 - t0).max(1.0);
+    if !cap0.is_finite() || !cap1.is_finite() || cap1 <= cap0 {
+        return (t0, t0 + span);
+    }
+    let mut nt0 = t0;
+    if nt0 + span < cap0 {
+        nt0 = cap0 - span;
+    }
+    if nt0 > cap1 {
+        nt0 = cap1;
+    }
+    (nt0, nt0 + span)
 }
 
 /// `TimeGraph::Zoom(min, max)`: window = 1.1 × duration, scope centered.
@@ -498,6 +544,12 @@ pub struct OrbitLiveApp {
     /// Chrome-trace file session (not Demo, not the 64 MB ring).
     trace_load: Option<TraceLoad>,
     trace_name: Option<String>,
+    /// Real timed-event cluster (ignores metadata ts=0). Drives first paint,
+    /// the slider, pan clamp, and Home / ruler double-click fit.
+    content_t0: Option<f64>,
+    content_t1: Option<f64>,
+    /// User zoomed/panned during load — do not snap back to fit on EOF.
+    user_set_view: bool,
     trace_args: HashMap<ArgKey, u32>,
     trace_flows: Vec<FlowEdge>,
     thread_names: HashMap<(u32, u32), String>,
@@ -614,6 +666,9 @@ impl OrbitLiveApp {
             loaded_symbol_pid: None,
             trace_load: None,
             trace_name: None,
+            content_t0: None,
+            content_t1: None,
+            user_set_view: false,
             trace_args: HashMap::new(),
             trace_flows: Vec::new(),
             thread_names: HashMap::new(),
@@ -734,15 +789,93 @@ impl OrbitLiveApp {
     }
 
     fn file_trace_active(&self) -> bool {
-        self.trace_name.is_some()
-            && !self.recording
-            && !self.status.demo
-            && !self.status.capturing
+        self.trace_name.is_some() && !self.recording && !self.status.demo && !self.status.capturing
+    }
+
+    fn refresh_content_bounds(&mut self) {
+        if let Some(load) = self.trace_load.as_ref() {
+            if let Some((a, b)) = load.ingestor.content_time_bounds() {
+                self.content_t0 = Some(a as f64);
+                self.content_t1 = Some(b as f64);
+                return;
+            }
+        }
+        if self.trace_name.is_some() {
+            if let Some((a, b)) = self.index.time_bounds() {
+                self.content_t0 = Some(a as f64);
+                self.content_t1 = Some(b as f64);
+            }
+        }
+    }
+
+    fn content_span(&self) -> Option<(f64, f64)> {
+        match (self.content_t0, self.content_t1) {
+            (Some(a), Some(b)) if b > a => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn zoom_max_ns(&self) -> f64 {
+        match self.content_span() {
+            Some((a, b)) => zoom_max_for_capture(b - a),
+            None => ZOOM_MAX_NS,
+        }
+    }
+
+    fn capture_slider_span(&self) -> (f64, f64) {
+        if let Some((a, b)) = self.content_span() {
+            let oldest = a.max(0.0) as u64;
+            let edge = b.max(a + 1.0) as u64;
+            return slider_capture_span(oldest, edge, self.t0, self.t1);
+        }
+        slider_capture_span(
+            self.status.oldest_start_ns,
+            self.live_edge_ns,
+            self.t0,
+            self.t1,
+        )
+    }
+
+    fn fit_to_content(&mut self) {
+        if let Some((a, b)) = self.content_span() {
+            let (t0, t1) = fit_content_window(a, b);
+            self.t0 = t0;
+            self.t1 = t1;
+            self.follow = false;
+            return;
+        }
+        if let Some((a, b)) = self.index.time_bounds() {
+            let (t0, t1) = fit_content_window(a as f64, b as f64);
+            self.t0 = t0;
+            self.t1 = t1;
+            self.follow = false;
+        }
+    }
+
+    fn apply_zoom_window(&mut self, t0: f64, t1: f64) {
+        self.t0 = t0;
+        self.t1 = t1;
+        self.user_set_view = true;
+        self.follow = false;
+    }
+
+    fn apply_pan_window(&mut self, t0: f64, t1: f64) {
+        let (t0, t1) = match self.content_span() {
+            Some((c0, c1)) => clamp_window_overlap(t0, t1, c0, c1),
+            None => (t0.max(0.0), t0.max(0.0) + (t1 - t0).max(1.0)),
+        };
+        self.t0 = t0;
+        self.t1 = t1;
+        self.user_set_view = true;
+        self.follow = false;
     }
 
     fn clear_file_trace(&mut self) {
         self.trace_load = None;
         self.trace_name = None;
+        self.content_t0 = None;
+        self.content_t1 = None;
+        self.user_set_view = false;
         self.trace_args.clear();
         self.trace_flows.clear();
         self.thread_names.clear();
@@ -766,6 +899,9 @@ impl OrbitLiveApp {
         self.live_edge_ns = 0;
         self.t0 = 0.0;
         self.t1 = FOLLOW_NS;
+        self.content_t0 = None;
+        self.content_t1 = None;
+        self.user_set_view = false;
         self.error.clear();
         self.trace_load = Some(load);
         self.needs_repaint = true;
@@ -822,13 +958,19 @@ impl OrbitLiveApp {
             self.index.insert(ev);
         }
         self.merge_trace_metadata();
-        let first = self.trace_load.as_ref().map(|l| !l.first_paint).unwrap_or(false);
-        let done = self.trace_load.as_ref().map(|l| l.finished).unwrap_or(false);
-        if (n > 0 && first) || done {
-            if let Some((a, b)) = self.index.time_bounds() {
-                self.t0 = a as f64;
-                self.t1 = (b as f64).max(self.t0 + 1.0);
-            }
+        self.refresh_content_bounds();
+        let first = self
+            .trace_load
+            .as_ref()
+            .map(|l| !l.first_paint)
+            .unwrap_or(false);
+        let done = self
+            .trace_load
+            .as_ref()
+            .map(|l| l.finished)
+            .unwrap_or(false);
+        if ((n > 0 && first) || done) && !self.user_set_view {
+            self.fit_to_content();
             if let Some(l) = self.trace_load.as_mut() {
                 l.first_paint = true;
             }
@@ -879,11 +1021,7 @@ impl OrbitLiveApp {
         {
             if let Some(path) = &f.path {
                 let size = std::fs::metadata(path).ok().map(|m| m.len());
-                self.begin_trace_load(chrome_load::spawn_path_read(
-                    name,
-                    path.clone(),
-                    size,
-                ));
+                self.begin_trace_load(chrome_load::spawn_path_read(name, path.clone(), size));
                 return;
             }
         }
@@ -1738,7 +1876,7 @@ impl OrbitLiveApp {
         ui.add_space(16.0);
         ui.label(
             RichText::new(
-                "Ruler wheel zoom · Ctrl+wheel zoom · wheel pan · drag pan · space follow",
+                "Ruler wheel zoom · Ctrl+wheel zoom · WASD pan/zoom · Home / double-click ruler: fit · space follow",
             )
             .size(10.0)
             .color(theme::MUTED),
@@ -1809,6 +1947,11 @@ impl OrbitLiveApp {
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false);
         self.handle_measure(&ruler_resp, ruler, false);
+        if ruler_resp.double_clicked() {
+            self.fit_to_content();
+            self.needs_repaint = true;
+        }
+        ruler_resp.on_hover_text("Double-click or Home: fit to capture");
         // The ruler's measure overlay is painted *after* the lane area below,
         // not here -- see the deferred call at the end of this function.
         ui.painter().line_segment(
@@ -2055,13 +2198,7 @@ impl OrbitLiveApp {
                     self.tracks.scale,
                 );
                 if let Some(h) = self.hover {
-                    show_scope_tooltip(
-                        ui,
-                        &self.intern,
-                        &self.processes,
-                        &self.trace_args,
-                        h,
-                    );
+                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h);
                 }
             } else {
                 ui.painter().text(
@@ -2786,10 +2923,19 @@ impl OrbitLiveApp {
                 if let Some(pos) = response.hover_pos() {
                     let frac =
                         ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
-                    let (t0, t1) = zoom_time(self.t0, self.t1, zoom_step, frac);
-                    self.t0 = t0;
-                    self.t1 = t1;
-                    self.follow = false;
+                    let scale = if zoom_step > 0 {
+                        1.0 + ZOOM_TIME_RATIO
+                    } else {
+                        1.0 / (1.0 + ZOOM_TIME_RATIO)
+                    };
+                    let (t0, t1) = zoom_time_by_scale_limited(
+                        self.t0,
+                        self.t1,
+                        scale,
+                        frac,
+                        self.zoom_max_ns(),
+                    );
+                    self.apply_zoom_window(t0, t1);
                 }
                 consume_scroll(&ctx);
             } else if scroll.x != 0.0 {
@@ -2802,18 +2948,14 @@ impl OrbitLiveApp {
                     -PAN_RATIO
                 };
                 let (t0, t1) = pan_time(self.t0, self.t1, ratio);
-                self.t0 = t0;
-                self.t1 = t1;
-                self.follow = false;
+                self.apply_pan_window(t0, t1);
             }
         }
         if response.dragged_by(PointerButton::Primary) {
             let drag = response.drag_delta();
             let span = (self.t1 - self.t0).max(1.0);
             let dt = -(drag.x as f64) / rect.width().max(1.0) as f64 * span;
-            self.t0 = (self.t0 + dt).max(0.0);
-            self.t1 = self.t0 + span;
-            self.follow = false;
+            self.apply_pan_window(self.t0 + dt, self.t0 + dt + span);
             // A tablet has no wheel, and this drag never reaches the lane
             // ScrollArea's own drag-to-scroll because the timeline body claims
             // it first -- so one finger pans both axes. Touch only: a mouse
@@ -2830,12 +2972,7 @@ impl OrbitLiveApp {
         if !track.is_positive() {
             return;
         }
-        let (cap0, cap1) = slider_capture_span(
-            self.status.oldest_start_ns,
-            self.live_edge_ns,
-            self.t0,
-            self.t1,
-        );
+        let (cap0, cap1) = self.capture_slider_span();
         let w = track.width().max(1.0);
         let (tx, tw) = slider_thumb_x(self.t0, self.t1, cap0, cap1, w);
         let thumb = Rect::from_min_size(
@@ -2865,10 +3002,14 @@ impl OrbitLiveApp {
                     .map(|p| (p.x - track.left()) / w)
                     .map(|f| capture_anchor_ratio(f, cap0, cap1, self.t0, self.t1))
                     .unwrap_or(0.5);
-                let (t0, t1) = zoom_time(self.t0, self.t1, step, anchor);
-                self.t0 = t0;
-                self.t1 = t1;
-                self.follow = false;
+                let scale = if step > 0 {
+                    1.0 + ZOOM_TIME_RATIO
+                } else {
+                    1.0 / (1.0 + ZOOM_TIME_RATIO)
+                };
+                let (t0, t1) =
+                    zoom_time_by_scale_limited(self.t0, self.t1, scale, anchor, self.zoom_max_ns());
+                self.apply_zoom_window(t0, t1);
                 if pinch || scroll_y != 0.0 {
                     consume_scroll(&resp.ctx);
                 }
@@ -2895,8 +3036,7 @@ impl OrbitLiveApp {
                 } else {
                     let norm = ((p.x - track.left()) / w) as f64;
                     let (t0, t1) = slider_jump_to_norm(self.t0, self.t1, cap0, cap1, norm);
-                    self.t0 = t0;
-                    self.t1 = t1;
+                    self.apply_pan_window(t0, t1);
                     let (nx, _) = slider_thumb_x(self.t0, self.t1, cap0, cap1, w);
                     self.slider_grab = Some((p.x - (track.left() + nx)).clamp(0.0, tw));
                 }
@@ -2907,8 +3047,7 @@ impl OrbitLiveApp {
             if let (Some(p), Some(grab)) = (pos, self.slider_grab) {
                 let left_norm = ((p.x - grab - track.left()) / w) as f64;
                 let (t0, t1) = slider_pan_to_norm(self.t0, self.t1, cap0, cap1, left_norm);
-                self.t0 = t0;
-                self.t1 = t1;
+                self.apply_pan_window(t0, t1);
             }
         }
         if resp.drag_stopped() {
@@ -2920,8 +3059,7 @@ impl OrbitLiveApp {
                     self.follow = false;
                     let norm = ((p.x - track.left()) / w) as f64;
                     let (t0, t1) = slider_jump_to_norm(self.t0, self.t1, cap0, cap1, norm);
-                    self.t0 = t0;
-                    self.t1 = t1;
+                    self.apply_pan_window(t0, t1);
                 }
             }
         }
@@ -2938,6 +3076,10 @@ impl OrbitLiveApp {
         }
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
+        }
+        if ctx.input(|i| i.key_pressed(Key::Home)) {
+            self.fit_to_content();
+            self.needs_repaint = true;
         }
         if ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::O)) {
             #[cfg(target_arch = "wasm32")]
@@ -2975,8 +3117,7 @@ impl OrbitLiveApp {
             let dir = held_time_pan_dir(a, d, left, right, arrows_pan);
             if dir != 0.0 {
                 let (t0, t1) = pan_time(self.t0, self.t1, dir * pan_ratio_for_dt(dt));
-                self.t0 = t0;
-                self.t1 = t1;
+                self.apply_pan_window(t0, t1);
             }
         }
         if self.selected.is_some()
@@ -3029,10 +3170,9 @@ impl OrbitLiveApp {
         };
         let pos = pos.unwrap_or(rect.center());
         let frac = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
-        let (t0, t1) = zoom_time_by_scale(self.t0, self.t1, scale, frac);
-        self.t0 = t0;
-        self.t1 = t1;
-        self.follow = false;
+        let (t0, t1) =
+            zoom_time_by_scale_limited(self.t0, self.t1, scale, frac, self.zoom_max_ns());
+        self.apply_zoom_window(t0, t1);
     }
 
     fn nudge_vscroll(&mut self, ratio: f32, view_h: f32) {
@@ -3048,9 +3188,7 @@ impl OrbitLiveApp {
         let start = pick.start_ns as f64;
         let end = start + pick.duration_ns.max(1) as f64;
         let (t0, t1) = zoom_scope_window(start, end);
-        self.t0 = t0;
-        self.t1 = t1;
-        self.follow = false;
+        self.apply_zoom_window(t0, t1);
     }
 
     fn handle_pick(&mut self, response: &egui::Response, rect: Rect, t0: u64, t1: u64, width: f32) {
@@ -3983,7 +4121,11 @@ fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
     painter.text(
         rect.center() + Vec2::new(0.0, -10.0),
         Align2::CENTER_CENTER,
-        if dropping { "Drop Chrome trace" } else { "Idle" },
+        if dropping {
+            "Drop Chrome trace"
+        } else {
+            "Idle"
+        },
         FontId::new(15.0, fonts::medium()),
         theme::TEXT,
     );
@@ -4141,17 +4283,19 @@ fn paint_flow_arrows(
             continue;
         };
         let mid = (x0 + x1) * 0.5;
-        painter.add(Shape::CubicBezier(egui::epaint::CubicBezierShape::from_points_stroke(
-            [
-                Pos2::new(x0, y0),
-                Pos2::new(mid, y0),
-                Pos2::new(mid, y1),
-                Pos2::new(x1, y1),
-            ],
-            false,
-            Color32::TRANSPARENT,
-            stroke,
-        )));
+        painter.add(Shape::CubicBezier(
+            egui::epaint::CubicBezierShape::from_points_stroke(
+                [
+                    Pos2::new(x0, y0),
+                    Pos2::new(mid, y0),
+                    Pos2::new(mid, y1),
+                    Pos2::new(x1, y1),
+                ],
+                false,
+                Color32::TRANSPARENT,
+                stroke,
+            ),
+        ));
         painter.circle_filled(Pos2::new(x1, y1), 2.4, stroke.color);
     }
 }
@@ -4597,8 +4741,8 @@ fn format_ns(t: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_live_event::{chrome, kind, LiveEvent};
     use crate::tracks::TrackStrip;
+    use orbit_live_event::{chrome, kind, LiveEvent};
 
     #[test]
     fn orbit_palette_matches_fusion() {
@@ -5193,15 +5337,139 @@ mod tests {
         for e in evs {
             idx.insert(e);
         }
-        assert!(idx.lanes().any(|(k, _)| k.kind == kind::API_SCOPE && k.tid == 3));
+        assert!(idx
+            .lanes()
+            .any(|(k, _)| k.kind == kind::API_SCOPE && k.tid == 3));
         assert!(idx.lanes().any(|(k, _)| k.kind == kind::VALUE));
         assert!(idx.lanes().any(|(k, _)| k.kind == kind::API_TRACK));
-        assert_eq!(ing.process_names.get(&9).map(String::as_str), Some("Browser"));
+        assert_eq!(
+            ing.process_names.get(&9).map(String::as_str),
+            Some("Browser")
+        );
         let mut strip = TrackStrip::default();
         strip.process_sort = ing.process_sort.clone();
         strip.sync(&idx, None);
         assert!(strip.process_order.contains(&9));
         assert!(strip.thread_order.iter().any(|t| t.pid == 9 && t.tid == 3));
         assert!(std::mem::size_of::<LiveEvent>() == 32);
+    }
+
+    #[test]
+    fn fit_content_window_is_1_1x_and_does_not_snap_to_origin() {
+        let cluster0 = 122_403_254_982_000.0;
+        let cluster1 = 122_411_498_936_000.0;
+        let (t0, t1) = fit_content_window(cluster0, cluster1);
+        assert!(t0 < cluster0 && t1 > cluster1);
+        assert!(((t1 - t0) / (cluster1 - cluster0) - ZOOM_SCOPE_PAD).abs() < 1e-9);
+        assert!(t0 > 1e14, "first paint must not be 0..34 h");
+    }
+
+    #[test]
+    fn zoom_max_grows_when_capture_exceeds_60s() {
+        assert_eq!(zoom_max_for_capture(8.24e9), ZOOM_MAX_NS);
+        let span = 120e9;
+        assert!((zoom_max_for_capture(span) - span * ZOOM_SCOPE_PAD).abs() < 1.0);
+    }
+
+    #[test]
+    fn chrome_metadata_ts0_does_not_define_first_paint() {
+        let json = r#"[
+          {"name":"thread_name","ph":"M","ts":0,"pid":1,"tid":1,"args":{"name":"Main"}},
+          {"name":"tick","ph":"I","ts":0,"pid":1,"tid":1},
+          {"name":"work","ph":"B","ts":122403254982,"pid":1,"tid":1},
+          {"name":"work","ph":"E","ts":122411498936,"pid":1,"tid":1}
+        ]"#;
+        let (ing, evs) = orbit_live_chrome::ingest_collect(json.as_bytes()).unwrap();
+        let (ca, cb) = ing.content_time_bounds().expect("content");
+        assert_eq!(ca, 122_403_254_982_000);
+        assert_eq!(cb, 122_411_498_936_000);
+        let mut idx = TrackIndex::default();
+        for e in evs {
+            idx.insert(e);
+        }
+        let (ia, ib) = idx.time_bounds().expect("index bounds");
+        assert_eq!(ia, ca);
+        assert_eq!(ib, cb);
+        let (t0, t1) = fit_content_window(ia as f64, ib as f64);
+        assert!(t0 <= ia as f64 && t1 >= ib as f64);
+        assert!(t0 > 1e14);
+        let (z0, z1) = zoom_time_by_scale_limited(
+            t0,
+            t1,
+            1.0 + ZOOM_TIME_RATIO,
+            0.5,
+            zoom_max_for_capture((ib - ia) as f64),
+        );
+        assert_cursor_time_locked(t0, t1, z0, z1, 0.5);
+        assert!(z1 - z0 < t1 - t0);
+        let (h0, h1) = fit_content_window(ia as f64, ib as f64);
+        assert!(h0 <= ia as f64 && h1 >= ib as f64);
+        let (s0, s1) = slider_capture_span(ca, cb, t0, t1);
+        assert!(s0 > 1e14, "slider must not be 0..34 h: {s0}..{s1}");
+        assert!(s1 - s0 < 20e9);
+        let empty = clamp_window_overlap(0.0, 2e9, ca as f64, cb as f64);
+        assert!(
+            empty.1 > ca as f64 - 1.0,
+            "pan must not stay in empty time left of the cluster"
+        );
+    }
+
+    #[test]
+    fn theverge_first_paint_and_one_zoom_if_present() {
+        let path = "/tmp/chrome-traces/theverge_trace.json";
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let (ing, evs) = orbit_live_chrome::ingest_collect(&bytes).expect("theverge");
+        let (ca, cb) = ing.content_time_bounds().expect("content");
+        let mut idx = TrackIndex::default();
+        for e in evs {
+            idx.insert(e);
+        }
+        let (ia, ib) = idx.time_bounds().expect("index");
+        assert_eq!(ia, ca);
+        assert_eq!(ib, cb);
+        let span_s = (cb - ca) as f64 / 1e9;
+        assert!(
+            (8.2..8.3).contains(&span_s),
+            "theverge cluster {ca}..{cb} = {span_s} s"
+        );
+        let (t0, t1) = fit_content_window(ia as f64, ib as f64);
+        assert!(t0 <= ia as f64 && t1 >= ib as f64);
+        assert!(t0 > 1e14);
+        let (z0, z1) = zoom_time_by_scale_limited(
+            t0,
+            t1,
+            1.0 + ZOOM_TIME_RATIO,
+            0.5,
+            zoom_max_for_capture((ib - ia) as f64),
+        );
+        assert_cursor_time_locked(t0, t1, z0, z1, 0.5);
+        assert!(
+            z0 < ib as f64 && z1 > ia as f64,
+            "zoom-in keeps the cluster"
+        );
+        let (o0, o1) = zoom_time_by_scale_limited(
+            z0,
+            z1,
+            1.0 / (1.0 + ZOOM_TIME_RATIO),
+            0.5,
+            zoom_max_for_capture((ib - ia) as f64),
+        );
+        assert_cursor_time_locked(z0, z1, o0, o1, 0.5);
+        let (h0, h1) = fit_content_window(ia as f64, ib as f64);
+        assert!(h0 <= ia as f64 && h1 >= ib as f64);
+        eprintln!(
+            "theverge after load t0={t0} t1={t1} span_s={:.6} content={ca}..{cb}",
+            (t1 - t0) / 1e9
+        );
+        eprintln!(
+            "theverge after one zoom-in t0={z0} t1={z1} span_s={:.6}",
+            (z1 - z0) / 1e9
+        );
+        eprintln!(
+            "theverge after Home/fit t0={h0} t1={h1} span_s={:.6}",
+            (h1 - h0) / 1e9
+        );
     }
 }

@@ -10,7 +10,7 @@ use std::io::Read;
 use std::time::Instant;
 
 use orbit_live_chrome::{ChromeIngestor, ChromeStream};
-use orbit_live_render::{collect_instances, choose_lod, TrackIndex, INSTANCE_MIN_PX};
+use orbit_live_render::{choose_lod, collect_instances, TrackIndex, INSTANCE_MIN_PX};
 
 fn rss() -> Option<u64> {
     let s = std::fs::read_to_string("/proc/self/statm").ok()?;
@@ -64,7 +64,14 @@ fn main() {
     let width = 1280usize;
     let t2 = Instant::now();
     let lod = choose_lod(&idx, bounds.0, bounds.1, width, INSTANCE_MIN_PX);
-    let frame = collect_instances(&idx, bounds.0, bounds.1, width as f32, 0.0, Some(&ing.intern));
+    let frame = collect_instances(
+        &idx,
+        bounds.0,
+        bounds.1,
+        width as f32,
+        0.0,
+        Some(&ing.intern),
+    );
     let view_s = t2.elapsed();
     let mid0 = bounds.0 + (bounds.1 - bounds.0) / 4;
     let mid1 = mid0 + (bounds.1 - bounds.0) / 8;
@@ -76,6 +83,11 @@ fn main() {
     }
     let zoom_s = t3.elapsed();
     println!("file\t{path}");
+    println!("bounds_ns\t{}\t{}", bounds.0, bounds.1);
+    println!(
+        "bounds_span_s\t{:.6}",
+        (bounds.1.saturating_sub(bounds.0)) as f64 / 1e9
+    );
     println!("decoded_bytes\t{}", stream.bytes_decoded);
     println!("bytes_in\t{}", stream.bytes_in);
     println!("events\t{}", idx.event_count());
@@ -97,7 +109,10 @@ fn main() {
     println!("lod\t{}", lod.as_str());
     println!("prims\t{}", frame.instances.len());
     println!("zoom_collect_60_s\t{:.3}", zoom_s.as_secs_f64());
-    println!("zoom_collect_fps\t{:.1}", 60.0 / zoom_s.as_secs_f64().max(1e-6));
+    println!(
+        "zoom_collect_fps\t{:.1}",
+        60.0 / zoom_s.as_secs_f64().max(1e-6)
+    );
     println!("zoom_prims\t{n}");
     println!("peak_rss_bytes\t{}", rss().unwrap_or(0));
 }
