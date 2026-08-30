@@ -7,13 +7,12 @@ use eframe::egui::{
 };
 use orbit_live_event::dev::{
     intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
-    NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET,
-    NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS,
-    NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
-    NAME_SCALE_PPP, NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW, NAME_TRACKS,
-    NAME_UPLOAD,
-    NAME_POOL_THREADS, NAME_SPANS_DROPPED, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US,
-    NAME_WASM_MEM, NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
+    NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT,
+    NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS,
+    NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE, NAME_SCALE_PPP,
+    NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW,
+    NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM,
+    NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
@@ -51,6 +50,10 @@ const MEASURE_DIM: Color32 = Color32::from_black_alpha(128);
 const RADIUS: f32 = theme::RADIUS;
 /// `TimeGraph::ZoomTime` `kIncrementalZoomTimeRatio`.
 const ZOOM_TIME_RATIO: f64 = 0.1;
+/// `TimeGraph::kTimeGraphMinTimeWindowsUs` = 0.1 µs = 100 ns.
+const ZOOM_MIN_NS: f64 = 100.0;
+/// Hard cap so a zoom-out storm cannot grow the window without bound.
+const ZOOM_MAX_NS: f64 = 60_000_000_000.0;
 /// `TimeGraph::Zoom` window = 1.1 × [min, max].
 const ZOOM_SCOPE_PAD: f64 = 1.1;
 /// `CaptureWindow::Pan` / arrow keys.
@@ -141,7 +144,28 @@ fn time_zoom_step(scroll_y: f32, zoom_delta: f32) -> i32 {
     }
 }
 
-/// `TimeGraph::ZoomTime`: scale 1.1 or 1/1.1 around `center_ratio`.
+/// Wheel / pinch / W-S this frame: do not let Follow slide the window.
+fn is_time_zoom_gesture(scroll_y: f32, zoom_delta: f32, key_w: bool, key_s: bool) -> bool {
+    key_w || key_s || time_zoom_step(scroll_y, zoom_delta) != 0
+}
+
+/// Capture time at a 0..1 position in the visible window `[t0, t1]`.
+///
+/// This is the zoom invariant: after any number of scale-around-cursor steps
+/// the same `frac` must still map to the same time.
+fn view_time_at(t0: f64, t1: f64, frac: f64) -> f64 {
+    let frac = frac.clamp(0.0, 1.0);
+    // lerp(t0, t1, frac) — slightly stabler than `t0 + frac * (t1 - t0)` when
+    // `t0` and `t1` are large and the span is small.
+    t0.mul_add(1.0 - frac, t1 * frac)
+}
+
+/// `TimeGraph::ZoomTime`: scale 1.1 or 1/1.1 around the time at `center_ratio`.
+///
+/// The window is rebuilt from `(t_mouse, new_span, frac)` so the cursor time
+/// stays put. `t0` is allowed to go negative: clamping it to 0 (or recentering
+/// like native `SetMinMax`) expands only one side and walks the lock. Span
+/// clamps keep that same pivot.
 fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64) {
     if zoom_delta == 0 {
         return (t0, t1);
@@ -152,24 +176,14 @@ fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64)
         1.0 / (1.0 + ZOOM_TIME_RATIO)
     };
     let center_ratio = center_ratio.clamp(0.0, 1.0);
-    let span = (t1 - t0).max(1.0);
-    let ref_t = t0 + center_ratio * span;
-    let time_left = (ref_t - t0).max(0.0);
-    let time_right = (t1 - ref_t).max(0.0);
-    let mut new_t0 = ref_t - time_left / scale;
-    let mut new_t1 = ref_t + time_right / scale;
-    let duration = new_t1 - new_t0;
-    // TimeGraph::kTimeGraphMinTimeWindowsUs = 0.1 µs = 100 ns.
-    const MIN_NS: f64 = 100.0;
-    const MAX_NS: f64 = 60_000_000_000.0;
-    if duration < MIN_NS {
-        let diff = MIN_NS - duration;
-        new_t0 -= diff * center_ratio;
-        new_t1 += diff * (1.0 - center_ratio);
+    let span = t1 - t0;
+    if !span.is_finite() || span <= 0.0 {
+        return (t0, t1);
     }
-    new_t0 = new_t0.max(0.0);
-    let span = (new_t1 - new_t0).clamp(MIN_NS, MAX_NS);
-    (new_t0, new_t0 + span)
+    let t_mouse = view_time_at(t0, t1, center_ratio);
+    let new_span = (span / scale).clamp(ZOOM_MIN_NS, ZOOM_MAX_NS);
+    let new_t0 = t_mouse - center_ratio * new_span;
+    (new_t0, new_t0 + new_span)
 }
 
 /// `TimeGraph::Zoom(min, max)`: window = 1.1 × duration, scope centered.
@@ -427,7 +441,10 @@ impl OrbitLiveApp {
             let mut renderer = rs.renderer.write();
             renderer
                 .callback_resources
-                .insert(TimelineGpuSlot(TimelineGpu::init(&rs.device, rs.target_format)));
+                .insert(TimelineGpuSlot(TimelineGpu::init(
+                    &rs.device,
+                    rs.target_format,
+                )));
             has_gpu = true;
         }
         Self {
@@ -621,11 +638,7 @@ impl OrbitLiveApp {
             } else {
                 "kernel_uprobes".into()
             },
-            instrumented_function_ids: self
-                .selected_hooks
-                .iter()
-                .map(|f| f.function_id)
-                .collect(),
+            instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
         }
     }
 
@@ -1126,7 +1139,11 @@ impl OrbitLiveApp {
                     .font(FontId::monospace(11.0))
                     .background_color(theme::INPUT),
             );
-            ui.label(RichText::new("ms").font(FontId::monospace(10.5)).color(theme::MUTED));
+            ui.label(
+                RichText::new("ms")
+                    .font(FontId::monospace(10.5))
+                    .color(theme::MUTED),
+            );
             if pill(ui, "DWARF", self.unwind_dwarf)
                 .on_hover_text("DWARF unwind (default)")
                 .clicked()
@@ -1202,7 +1219,9 @@ impl OrbitLiveApp {
             }
             self.selected_hooks = selected;
         });
-        if self.symbols.status == "ready" && !self.hook_hits.is_empty() && !self.hook_query.is_empty()
+        if self.symbols.status == "ready"
+            && !self.hook_hits.is_empty()
+            && !self.hook_query.is_empty()
         {
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(52.0);
@@ -1743,7 +1762,9 @@ impl OrbitLiveApp {
                 let band = Rect::from_min_max(
                     Pos2::new(head.left(), r.top()),
                     Pos2::new(
-                        if self.light_canvas || matches!(row.id, RowId::Machine(_) | RowId::Scheduler) {
+                        if self.light_canvas
+                            || matches!(row.id, RowId::Machine(_) | RowId::Scheduler)
+                        {
                             r.right()
                         } else {
                             body.right()
@@ -2402,18 +2423,6 @@ impl OrbitLiveApp {
                     i.multi_touch().is_some(),
                 )
             });
-            if scroll.x != 0.0 {
-                // CaptureWindow::MouseWheelMovedHorizontally → Pan(±0.1).
-                let ratio = if scroll.x > 0.0 {
-                    PAN_RATIO
-                } else {
-                    -PAN_RATIO
-                };
-                let (t0, t1) = pan_time(self.t0, self.t1, ratio);
-                self.t0 = t0;
-                self.t1 = t1;
-                self.follow = false;
-            }
             let zoom_step = time_zoom_step(scroll.y, zoom);
             let want_zoom = match mode {
                 WheelMode::AlwaysZoom => zoom_step != 0,
@@ -2431,6 +2440,19 @@ impl OrbitLiveApp {
                     self.follow = false;
                 }
                 consume_scroll(&ctx);
+            } else if scroll.x != 0.0 {
+                // CaptureWindow::MouseWheelMovedHorizontally → Pan(±0.1).
+                // Not while zooming: a trackpad often emits a tiny X with the
+                // Ctrl+wheel Y, and that 10% pan walked the cursor lock.
+                let ratio = if scroll.x > 0.0 {
+                    PAN_RATIO
+                } else {
+                    -PAN_RATIO
+                };
+                let (t0, t1) = pan_time(self.t0, self.t1, ratio);
+                self.t0 = t0;
+                self.t1 = t1;
+                self.follow = false;
             }
         }
         if response.dragged_by(PointerButton::Primary) {
@@ -2477,9 +2499,13 @@ impl OrbitLiveApp {
         // The capture track is the only place to zoom from when the lanes are
         // scrolled away, and on a tablet a pinch is the only way to ask.
         if hover {
-            let (scroll_y, zoom, pinch) = ui
-                .ctx()
-                .input(|i| (i.raw_scroll_delta.y, i.zoom_delta(), i.multi_touch().is_some()));
+            let (scroll_y, zoom, pinch) = ui.ctx().input(|i| {
+                (
+                    i.raw_scroll_delta.y,
+                    i.zoom_delta(),
+                    i.multi_touch().is_some(),
+                )
+            });
             let step = time_zoom_step(scroll_y, zoom);
             if step != 0 {
                 let anchor = resp
@@ -2795,8 +2821,8 @@ impl OrbitLiveApp {
         ));
     }
 
-    fn tick_follow(&mut self, dt: f32) {
-        if !self.follow || self.live_edge_ns == 0 {
+    fn tick_follow(&mut self, dt: f32, zooming: bool) {
+        if !self.follow || self.live_edge_ns == 0 || zooming {
             return;
         }
         let target_t1 = self.live_edge_ns as f64;
@@ -2853,7 +2879,15 @@ impl eframe::App for OrbitLiveApp {
                 }
                 {
                     let _follow = devf.scope(TID_UI, NAME_TICK_FOLLOW);
-                    self.tick_follow(dt);
+                    let zooming = ctx.input(|i| {
+                        is_time_zoom_gesture(
+                            i.raw_scroll_delta.y,
+                            i.zoom_delta(),
+                            i.key_pressed(Key::W),
+                            i.key_pressed(Key::S),
+                        )
+                    });
+                    self.tick_follow(dt, zooming);
                 }
                 let now = ctx.input(|i| i.time);
                 if now - self.last_status_request > 0.25 {
@@ -3724,7 +3758,8 @@ fn show_scope_tooltip(ui: &Ui, intern: &InternTable, processes: &[ProcessJson], 
             .get(pick.name_id)
             .map(str::to_string)
             .unwrap_or_else(|| format!("#{}", pick.name_id));
-        let dur = format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
+        let dur =
+            format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
         ui.label(
             RichText::new(name)
                 .family(fonts::medium())
@@ -4122,6 +4157,17 @@ mod tests {
         assert!((major / minor - 5.0).abs() < 1e-6);
     }
 
+    fn assert_cursor_time_locked(t0: f64, t1: f64, n0: f64, n1: f64, frac: f64) {
+        let before = view_time_at(t0, t1, frac);
+        let after = view_time_at(n0, n1, frac);
+        let err = (before - after).abs();
+        let limit = 1e-3_f64.max(before.abs().max(after.abs()) * f64::EPSILON * 256.0);
+        assert!(
+            err <= limit,
+            "frac={frac}: cursor time {before} -> {after} (err={err}, limit={limit})"
+        );
+    }
+
     #[test]
     fn zoom_time_matches_timegraph_incremental_ratio() {
         let (t0, t1) = zoom_time(0.0, 2e9, 1, 0.5);
@@ -4139,6 +4185,102 @@ mod tests {
         let (t0, t1) = zoom_time(100.0, 100.0 + 2e9, 1, 0.0);
         assert!((t0 - 100.0).abs() < 1e-3);
         assert!(t1 < 100.0 + 2e9);
+    }
+
+    #[test]
+    fn zoom_time_keeps_cursor_time_across_in_out_and_extremes() {
+        // DAW / map zoom: t_mouse at frac is invariant. Repeat stability is
+        // the test — 50 in then 50 out (and mixed, and the min/max span
+        // clamps) must not walk the lock. Clamping t0 to 0 used to do that
+        // on the default 0..2s view.
+        let fracs = [0.0, 0.25, 0.5, 0.9];
+        let windows = [
+            (0.0, 2e9),
+            (100.0, 100.0 + 2e9),
+            (1.5e9, 1.5e9 + 50_000.0),
+            (-1e8, 1.9e9),
+        ];
+        for frac in fracs {
+            for (start0, start1) in windows {
+                let t_mouse = view_time_at(start0, start1, frac);
+                let mut t0 = start0;
+                let mut t1 = start1;
+                for _ in 0..50 {
+                    let (n0, n1) = zoom_time(t0, t1, 1, frac);
+                    assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                    t0 = n0;
+                    t1 = n1;
+                }
+                assert!(
+                    (view_time_at(t0, t1, frac) - t_mouse).abs()
+                        <= 1e-3_f64.max(t_mouse.abs() * f64::EPSILON * 256.0)
+                );
+                for _ in 0..50 {
+                    let (n0, n1) = zoom_time(t0, t1, -1, frac);
+                    assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                    t0 = n0;
+                    t1 = n1;
+                }
+                assert!(
+                    (view_time_at(t0, t1, frac) - t_mouse).abs()
+                        <= 1e-3_f64.max(t_mouse.abs() * f64::EPSILON * 256.0)
+                );
+
+                // Mixed in/out, including slamming into MIN/MAX span.
+                t0 = start0;
+                t1 = start1;
+                let pattern = [1, 1, 1, -1, 1, -1, -1, 1];
+                for _ in 0..32 {
+                    for &step in &pattern {
+                        let (n0, n1) = zoom_time(t0, t1, step, frac);
+                        assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                        t0 = n0;
+                        t1 = n1;
+                    }
+                }
+                for _ in 0..256 {
+                    let (n0, n1) = zoom_time(t0, t1, 1, frac);
+                    assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                    t0 = n0;
+                    t1 = n1;
+                }
+                assert!((t1 - t0 - ZOOM_MIN_NS).abs() < 1e-6);
+                assert!(
+                    (view_time_at(t0, t1, frac) - t_mouse).abs()
+                        <= 1e-3_f64.max(t_mouse.abs() * f64::EPSILON * 256.0)
+                );
+                for _ in 0..256 {
+                    let (n0, n1) = zoom_time(t0, t1, -1, frac);
+                    assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                    t0 = n0;
+                    t1 = n1;
+                }
+                assert!((t1 - t0 - ZOOM_MAX_NS).abs() < 1e-3);
+                assert!(
+                    (view_time_at(t0, t1, frac) - t_mouse).abs()
+                        <= 1e-3_f64.max(t_mouse.abs() * f64::EPSILON * 256.0)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zoom_out_from_t_zero_does_not_recenter() {
+        // Old code: new_t0.max(0) then (0, 0+span) — zoom-out from the
+        // default view grew only to the right and the cursor time walked.
+        let (t0, t1) = zoom_time(0.0, 2e9, -1, 0.5);
+        assert!(t0 < 0.0, "zoom-out around mid must extend before t=0");
+        assert_cursor_time_locked(0.0, 2e9, t0, t1, 0.5);
+        assert!(((t1 - t0) - 2e9 * 1.1).abs() < 1.0);
+    }
+
+    #[test]
+    fn time_zoom_gesture_sees_wheel_pinch_and_ws() {
+        assert!(is_time_zoom_gesture(20.0, 1.0, false, false));
+        assert!(is_time_zoom_gesture(0.0, 1.2, false, false));
+        assert!(is_time_zoom_gesture(0.0, 1.0, true, false));
+        assert!(is_time_zoom_gesture(0.0, 1.0, false, true));
+        assert!(!is_time_zoom_gesture(0.0, 1.0, false, false));
     }
 
     #[test]
