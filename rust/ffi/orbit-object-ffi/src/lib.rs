@@ -12,7 +12,10 @@
 
 use std::ffi::{c_char, CStr, CString};
 
-use orbit_object::{crc32_continue, load_symbols, parse_elf_metadata, ElfMetadata, SymbolTable};
+use orbit_object::{
+    crc32_continue, load_symbols, load_unwind_ranges, no_ranges_error, parse_elf_metadata,
+    ElfMetadata, SymbolTable,
+};
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
 pub struct OrbitElfMetadata {
@@ -284,8 +287,10 @@ pub struct OrbitElfSymbol {
     pub is_hotpatchable: u8,
 }
 
-/// `table` is 0 for `.symtab` (LoadDebugSymbols) and 1 for `.dynsym`
-/// (LoadSymbolsFromDynsym).
+/// `table` selects what to read:
+///   0  `.symtab`               (LoadDebugSymbols)
+///   1  `.dynsym`               (LoadSymbolsFromDynsym)
+///   2  `.debug_frame`/`.eh_frame` FDEs (LoadEhOrDebugFrameEntriesAsSymbols)
 ///
 /// # Safety
 /// `data` must point to `len` readable bytes, and `error_out` must be null or
@@ -309,18 +314,26 @@ pub unsafe extern "C" fn orbit_elf_load_symbols(
         set_error("orbit_elf_load_symbols called with a null pointer");
         return std::ptr::null_mut();
     }
-    let which = match table {
-        0 => SymbolTable::Debug,
-        1 => SymbolTable::Dynamic,
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    let result = match table {
+        0 => load_symbols(bytes, SymbolTable::Debug),
+        1 => load_symbols(bytes, SymbolTable::Dynamic),
+        2 => load_unwind_ranges(bytes).and_then(|ranges| {
+            // The C++ reports a distinct message when the sections parse but
+            // describe nothing.
+            if ranges.is_empty() {
+                Err(no_ranges_error())
+            } else {
+                Ok(ranges)
+            }
+        }),
         _ => {
             set_error("orbit_elf_load_symbols called with an unknown table");
             return std::ptr::null_mut();
         }
     };
-
-    // SAFETY: the caller promises len readable bytes at data.
-    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    let loaded = match load_symbols(bytes, which) {
+    let loaded = match result {
         Ok(loaded) => loaded,
         Err(message) => {
             set_error(&message);

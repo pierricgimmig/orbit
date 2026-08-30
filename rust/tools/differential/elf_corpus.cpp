@@ -50,6 +50,12 @@ struct Totals {
 
 void Visit(const std::filesystem::path& path, Totals* totals) {
   if (!LooksLikeElf(path)) return;
+  // ORBIT_OBJECT_BACKEND=both aborts on a disagreement, so the last path
+  // printed here is the file that caused it.
+  if (getenv("ORBIT_CORPUS_VERBOSE") != nullptr) {
+    fprintf(stderr, "visiting %s\n", path.c_str());
+    fflush(stderr);
+  }
   ++totals->files;
 
   ErrorMessageOr<std::unique_ptr<orbit_object_utils::ElfFile>> elf_file =
@@ -66,6 +72,10 @@ void Visit(const std::filesystem::path& path, Totals* totals) {
   if (debug_symbols.has_value()) totals->symbols += debug_symbols.value().symbol_infos_size();
   const auto dynsym = elf_file.value()->LoadSymbolsFromDynsym();
   if (dynsym.has_value()) totals->symbols += dynsym.value().symbol_infos_size();
+  const auto unwind = elf_file.value()->LoadEhOrDebugFrameEntriesAsSymbols();
+  if (unwind.has_value()) totals->symbols += unwind.value().symbol_infos_size();
+  const auto fallback = elf_file.value()->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols();
+  if (fallback.has_value()) totals->symbols += fallback.value().symbol_infos_size();
 }
 
 }  // namespace

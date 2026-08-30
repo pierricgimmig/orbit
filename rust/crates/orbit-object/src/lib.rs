@@ -22,8 +22,10 @@ use object::Endianness;
 
 mod debuglink;
 mod symbols;
+mod unwind;
 pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
 pub use symbols::{load_symbols, Symbol, SymbolTable};
+pub use unwind::{load_unwind_ranges, no_ranges_error};
 
 /// One `PT_LOAD` segment, mirroring `ModuleInfo::ObjectSegment`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

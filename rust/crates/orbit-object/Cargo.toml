@@ -11,6 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+gimli = { version = "0.31", default-features = false, features = ["read", "std"] }
 # Replaces llvm::object. default-features = false keeps the write half, the
 # archive/macho/pe readers we do not need, and their transitive deps out.
 object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }

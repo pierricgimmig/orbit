@@ -74,9 +74,12 @@ typedef struct {
   uint8_t is_hotpatchable;
 } OrbitElfSymbol;
 
-// table is 0 for .symtab (LoadDebugSymbols), 1 for .dynsym
-// (LoadSymbolsFromDynsym). NULL on failure, with a message in error_out to
-// release with orbit_elf_free_error.
+// table selects what to read:
+//   0  .symtab                       (LoadDebugSymbols)
+//   1  .dynsym                       (LoadSymbolsFromDynsym)
+//   2  .debug_frame / .eh_frame FDEs (LoadEhOrDebugFrameEntriesAsSymbols)
+// NULL on failure, with a message in error_out to release with
+// orbit_elf_free_error.
 OrbitElfSymbols* orbit_elf_load_symbols(const uint8_t* data, size_t len, uint32_t table,
                                         char** error_out);
 

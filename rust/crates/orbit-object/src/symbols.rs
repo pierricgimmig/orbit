@@ -159,7 +159,7 @@ where
 /// the padding, not at the function entry. Orbit requires a five-byte padding
 /// and a two-byte nop at the entry, so a symbol is hotpatchable when its
 /// address minus five is listed.
-fn is_hotpatchable(addresses: &std::collections::HashSet<u64>, symbol_address: u64) -> bool {
+pub(crate) fn is_hotpatchable(addresses: &std::collections::HashSet<u64>, symbol_address: u64) -> bool {
     const PADDING_SIZE: u64 = 5;
     addresses.contains(&symbol_address.wrapping_sub(PADDING_SIZE))
 }
@@ -169,7 +169,7 @@ fn is_hotpatchable(addresses: &std::collections::HashSet<u64>, symbol_address: u
 /// The section's `sh_entsize` is zero in real binaries even though the entries
 /// are 64-bit, so the C++ reads raw bytes and reinterprets. This does the same,
 /// minus the `memcpy` into an over-long vector.
-fn load_hotpatchable_addresses<Elf>(
+pub(crate) fn load_hotpatchable_addresses<Elf>(
     sections: &object::read::elf::SectionTable<'_, Elf>,
     endian: Endianness,
     data: &[u8],

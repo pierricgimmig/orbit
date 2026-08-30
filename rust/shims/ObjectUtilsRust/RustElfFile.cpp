@@ -6,6 +6,7 @@
 
 #include "Demangle.h"
 
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_format.h>
 
 #include <memory>
@@ -144,12 +145,39 @@ class RustElfFile : public ElfFile {
                            [this] { return cpp_->LoadSymbolsFromDynsym(); });
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
-  LoadEhOrDebugFrameEntriesAsSymbols() override {  // ORBIT_PORT_DELEGATED
-    return cpp_->LoadEhOrDebugFrameEntriesAsSymbols();
+  LoadEhOrDebugFrameEntriesAsSymbols() override {
+    return LoadSymbolTable(kUnwindRanges, "LoadEhOrDebugFrameEntriesAsSymbols",
+                           [this] { return cpp_->LoadEhOrDebugFrameEntriesAsSymbols(); });
   }
+
+  // Mirrors ElfFileImpl: dynamic linking symbols first, then unwind ranges for
+  // any address the dynsym did not already cover. Both halves now come from
+  // Rust, so this only has to reproduce the merge.
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
-  LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols() override {  // ORBIT_PORT_DELEGATED
-    return cpp_->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols();
+  LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols() override {
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> dynamic = LoadSymbolsFromDynsym();
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> unwind =
+        LoadEhOrDebugFrameEntriesAsSymbols();
+    if (dynamic.has_error() && unwind.has_error()) {
+      return ErrorMessage{absl::StrFormat("Unable to load fallback symbols: %s %s",
+                                          dynamic.error().message(), unwind.error().message())};
+    }
+
+    orbit_grpc_protos::ModuleSymbols combined;
+    absl::flat_hash_set<uint64_t> dynamic_addresses;
+    if (dynamic.has_value()) {
+      for (orbit_grpc_protos::SymbolInfo& symbol : *dynamic.value().mutable_symbol_infos()) {
+        dynamic_addresses.insert(symbol.address());
+        *combined.add_symbol_infos() = std::move(symbol);
+      }
+    }
+    if (unwind.has_value()) {
+      for (orbit_grpc_protos::SymbolInfo& symbol : *unwind.value().mutable_symbol_infos()) {
+        if (dynamic_addresses.contains(symbol.address())) continue;
+        *combined.add_symbol_infos() = std::move(symbol);
+      }
+    }
+    return combined;
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetLineInfo(
       uint64_t address) override {  // ORBIT_PORT_DELEGATED
@@ -167,6 +195,7 @@ class RustElfFile : public ElfFile {
  private:
   static constexpr uint32_t kSymtab = 0;
   static constexpr uint32_t kDynsym = 1;
+  static constexpr uint32_t kUnwindRanges = 2;
 
   // Reads one symbol table through the Rust FFI, comparing against the C++ in
   // `both` mode. The comparison is per symbol so a mismatch names the symbol
@@ -195,7 +224,11 @@ class RustElfFile : public ElfFile {
                                       static_cast<size_t>(symbols[i].name_len)};
         mangled.emplace_back(mangled_name);
         orbit_grpc_protos::SymbolInfo* info = module_symbols.add_symbol_infos();
-        info->set_demangled_name(Demangle(mangled_name));
+        // Unwind ranges carry a synthesised "[function@0x…]" name, not a
+        // mangled one; running it through a demangler would be a no-op but
+        // asking is pointless.
+        info->set_demangled_name(table == kUnwindRanges ? std::string{mangled_name}
+                                                        : Demangle(mangled_name));
         info->set_address(symbols[i].address);
         info->set_size(symbols[i].size);
         info->set_is_hotpatchable(symbols[i].is_hotpatchable != 0);
