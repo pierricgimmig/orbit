@@ -15,7 +15,9 @@ use orbit_live_event::dev::{
     NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
 };
+use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
+use crate::chrome_load::{self, TraceLoad};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{
     apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
@@ -493,6 +495,15 @@ pub struct OrbitLiveApp {
     last_hook_query: String,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
+    /// Chrome-trace file session (not Demo, not the 64 MB ring).
+    trace_load: Option<TraceLoad>,
+    trace_name: Option<String>,
+    trace_args: HashMap<ArgKey, u32>,
+    trace_flows: Vec<FlowEdge>,
+    thread_names: HashMap<(u32, u32), String>,
+    trace_processes: Vec<ProcessJson>,
+    #[cfg(target_arch = "wasm32")]
+    pending_file: chrome_load::PendingFile,
 }
 
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
@@ -601,6 +612,18 @@ impl OrbitLiveApp {
             last_hook_query: String::new(),
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
+            trace_load: None,
+            trace_name: None,
+            trace_args: HashMap::new(),
+            trace_flows: Vec::new(),
+            thread_names: HashMap::new(),
+            trace_processes: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            pending_file: {
+                let p = chrome_load::new_pending_file();
+                chrome_load::install_window_drop(p.clone());
+                p
+            },
         }
     }
 
@@ -630,7 +653,7 @@ impl OrbitLiveApp {
 
     fn wants_live_repaint(&self) -> bool {
         live_repaint(
-            self.recording || self.status.demo,
+            self.recording || self.status.demo || self.trace_load.is_some(),
             self.status.capturing,
             self.tracks.dragging(),
             self.selected.is_some(),
@@ -638,6 +661,7 @@ impl OrbitLiveApp {
     }
 
     fn start_record(&mut self) {
+        self.clear_file_trace();
         self.error.clear();
         if self.status.hooks {
             let Some(pid) = self.selected_pid else {
@@ -661,6 +685,7 @@ impl OrbitLiveApp {
     }
 
     fn start_demo_path(&mut self) {
+        self.clear_file_trace();
         self.error.clear();
         self.recording = true;
         self.self_cursor.reset_to(DEMO_ORIGIN_NS);
@@ -680,6 +705,190 @@ impl OrbitLiveApp {
         self.net.stop_demo();
         self.dev = false;
         self.net.stop_self();
+    }
+
+    fn process_display_name(&self, pid: u32) -> String {
+        self.processes
+            .iter()
+            .find(|p| p.pid == pid)
+            .map(|p| p.name.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                self.trace_processes
+                    .iter()
+                    .find(|p| p.pid == pid)
+                    .map(|p| p.name.as_str())
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or("process")
+            .to_string()
+    }
+
+    fn thread_display_name(&self, pid: u32, tid: u32) -> String {
+        self.thread_names
+            .get(&(pid, tid))
+            .cloned()
+            .or_else(|| self.intern.get(tid).map(str::to_string))
+            .unwrap_or_else(|| format!("{tid}"))
+    }
+
+    fn file_trace_active(&self) -> bool {
+        self.trace_name.is_some()
+            && !self.recording
+            && !self.status.demo
+            && !self.status.capturing
+    }
+
+    fn clear_file_trace(&mut self) {
+        self.trace_load = None;
+        self.trace_name = None;
+        self.trace_args.clear();
+        self.trace_flows.clear();
+        self.thread_names.clear();
+        self.trace_processes.clear();
+    }
+
+    fn begin_trace_load(&mut self, load: TraceLoad) {
+        self.stop_record();
+        self.index.clear();
+        self.intern = InternTable::default();
+        self.tracks = TrackStrip::default();
+        self.selected = None;
+        self.hover = None;
+        self.measure = None;
+        self.follow = false;
+        self.trace_args.clear();
+        self.trace_flows.clear();
+        self.thread_names.clear();
+        self.trace_processes.clear();
+        self.trace_name = Some(load.name.clone());
+        self.live_edge_ns = 0;
+        self.t0 = 0.0;
+        self.t1 = FOLLOW_NS;
+        self.error.clear();
+        self.trace_load = Some(load);
+        self.needs_repaint = true;
+    }
+
+    fn merge_trace_metadata(&mut self) {
+        let Some(load) = self.trace_load.as_ref() else {
+            return;
+        };
+        for (id, text) in load.ingestor.intern.iter() {
+            self.intern.insert_id(id, text);
+        }
+        for (pid, name) in &load.ingestor.process_names {
+            if !self.trace_processes.iter().any(|p| p.pid == *pid) {
+                self.trace_processes.push(ProcessJson {
+                    pid: *pid,
+                    name: name.clone(),
+                    cpu: 0.0,
+                    path: "chrome-trace".into(),
+                });
+            }
+        }
+        for ((pid, tid), name) in &load.ingestor.thread_names {
+            self.thread_names.insert((*pid, *tid), name.clone());
+        }
+        self.tracks.process_sort = load.ingestor.process_sort.clone();
+        self.tracks.thread_sort = load.ingestor.thread_sort.clone();
+    }
+
+    fn pump_trace_load(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let file = self.pending_file.lock().ok().and_then(|mut g| g.take());
+            if let Some(file) = file {
+                self.begin_trace_load(chrome_load::start_wasm_file(file));
+            }
+        }
+        let evs = {
+            let Some(load) = self.trace_load.as_mut() else {
+                return;
+            };
+            match load.pump() {
+                Ok(evs) => evs,
+                Err(e) => {
+                    self.error = e;
+                    self.trace_load = None;
+                    return;
+                }
+            }
+        };
+        let n = evs.len();
+        for ev in evs {
+            self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
+            self.index.insert(ev);
+        }
+        self.merge_trace_metadata();
+        let first = self.trace_load.as_ref().map(|l| !l.first_paint).unwrap_or(false);
+        let done = self.trace_load.as_ref().map(|l| l.finished).unwrap_or(false);
+        if (n > 0 && first) || done {
+            if let Some((a, b)) = self.index.time_bounds() {
+                self.t0 = a as f64;
+                self.t1 = (b as f64).max(self.t0 + 1.0);
+            }
+            if let Some(l) = self.trace_load.as_mut() {
+                l.first_paint = true;
+            }
+            self.needs_repaint = true;
+        } else if n > 0 {
+            self.needs_repaint = true;
+        }
+        if done {
+            if let Some(load) = self.trace_load.take() {
+                self.trace_args = load.ingestor.args;
+                self.trace_flows = load.ingestor.flows;
+                self.intern = load.ingestor.intern;
+                self.thread_names = load.ingestor.thread_names;
+                self.tracks.process_sort = load.ingestor.process_sort;
+                self.tracks.thread_sort = load.ingestor.thread_sort;
+                self.trace_processes = load
+                    .ingestor
+                    .process_names
+                    .into_iter()
+                    .map(|(pid, name)| ProcessJson {
+                        pid,
+                        name,
+                        cpu: 0.0,
+                        path: "chrome-trace".into(),
+                    })
+                    .collect();
+                self.trace_name = Some(load.name);
+            }
+        }
+    }
+
+    fn take_dropped_traces(&mut self, ctx: &Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        if dropped.is_empty() {
+            return;
+        }
+        let f = &dropped[0];
+        let name = if f.name.is_empty() {
+            "trace.json".into()
+        } else {
+            f.name.clone()
+        };
+        if !chrome_load::is_trace_name(&name) {
+            self.error = format!("Not a Chrome trace: {name}");
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = &f.path {
+                let size = std::fs::metadata(path).ok().map(|m| m.len());
+                self.begin_trace_load(chrome_load::spawn_path_read(
+                    name,
+                    path.clone(),
+                    size,
+                ));
+                return;
+            }
+        }
+        if let Some(bytes) = &f.bytes {
+            self.begin_trace_load(TraceLoad::from_bytes(name, bytes.to_vec()));
+        }
     }
 
     fn samples_per_second(&self) -> f64 {
@@ -782,6 +991,19 @@ impl OrbitLiveApp {
                 });
             }
         }
+        self.merge_trace_processes();
+    }
+
+    fn merge_trace_processes(&mut self) {
+        for p in &self.trace_processes {
+            if let Some(exist) = self.processes.iter_mut().find(|x| x.pid == p.pid) {
+                if exist.name.is_empty() || exist.name.starts_with("pid ") {
+                    exist.name = p.name.clone();
+                }
+            } else {
+                self.processes.push(p.clone());
+            }
+        }
     }
 
     fn apply_status(&mut self, s: StatusJson) {
@@ -816,6 +1038,7 @@ impl OrbitLiveApp {
                 }
             }
             self.processes = p;
+            self.merge_trace_processes();
         }
         if let Some(s) = inbox.symbols {
             self.symbols = s;
@@ -882,6 +1105,9 @@ impl OrbitLiveApp {
     fn apply_frame(&mut self, frame: LiveFrame) {
         match frame {
             LiveFrame::EventBatch { events } => {
+                if self.file_trace_active() {
+                    return;
+                }
                 for ev in events {
                     // Viewer scopes are inserted locally on the capture clock
                     // so a lagged WS (demo flood) cannot hide pid 2.
@@ -898,6 +1124,7 @@ impl OrbitLiveApp {
                 self.intern.insert_id(id, &text);
             }
             LiveFrame::CaptureStarted { start_ns, .. } => {
+                self.clear_file_trace();
                 self.index.clear();
                 self.selected = None;
                 self.hover = None;
@@ -1019,6 +1246,17 @@ impl OrbitLiveApp {
                     }
                 }
             }
+            if pill(ui, "Open", false)
+                .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+                .clicked()
+            {
+                #[cfg(target_arch = "wasm32")]
+                chrome_load::start_open_dialog(&self.pending_file);
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(load) = chrome_load::start_open_dialog() {
+                    self.begin_trace_load(load);
+                }
+            }
             if pill(ui, "Capture", self.capture_open)
                 .on_hover_text("Process, sampling, and hooks")
                 .clicked()
@@ -1031,6 +1269,22 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_search(ui);
             ui.add_space(8.0);
+            if let Some(load) = &self.trace_load {
+                ui.label(
+                    RichText::new(load.progress_line())
+                        .font(FontId::monospace(11.0))
+                        .color(theme::ACCENT),
+                );
+            } else if let Some(name) = &self.trace_name {
+                ui.label(
+                    RichText::new(format!(
+                        "trace {name}  {} ev",
+                        fmt_int(self.index.event_count() as u64)
+                    ))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::TEXT),
+                );
+            }
             ui.label(
                 RichText::new(format!("{} live", fmt_int(self.status.events_live)))
                     .font(FontId::monospace(11.5))
@@ -1415,7 +1669,11 @@ impl OrbitLiveApp {
         }
 
         section(ui, "STATUS");
-        let mode = if self.status.demo {
+        let mode = if self.trace_load.is_some() {
+            "LOADING TRACE"
+        } else if self.trace_name.is_some() {
+            "TRACE"
+        } else if self.status.demo {
             "DEMO"
         } else if self.status.capturing {
             "CAPTURING"
@@ -1656,11 +1914,27 @@ impl OrbitLiveApp {
                 self.handle_measure(&body_resp, body, true);
             }
 
+            let dropping = ui.input(|i| !i.raw.hovered_files.is_empty());
+            if dropping {
+                ui.painter().rect_filled(
+                    body,
+                    0.0,
+                    Color32::from_rgba_unmultiplied(0x64, 0xB5, 0xF6, 28),
+                );
+                ui.painter().text(
+                    body.center(),
+                    Align2::CENTER_CENTER,
+                    "Drop Chrome trace (.json / .json.gz)",
+                    FontId::new(15.0, fonts::medium()),
+                    theme::TEXT,
+                );
+            }
             let empty = self.index.event_count() == 0
                 && self.service_timeline.is_none()
-                && self.service_frame.is_none();
+                && self.service_frame.is_none()
+                && self.trace_load.is_none();
             if empty {
-                paint_empty(ui, body);
+                paint_empty(ui, body, dropping);
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
                 self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
@@ -1770,8 +2044,23 @@ impl OrbitLiveApp {
                     self.light_canvas,
                 );
                 paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
+                paint_flow_arrows(
+                    ui,
+                    body,
+                    self.t0,
+                    self.t1,
+                    self.tracks.layout(),
+                    &self.trace_flows,
+                    self.tracks.scale,
+                );
                 if let Some(h) = self.hover {
-                    show_scope_tooltip(ui, &self.intern, &self.processes, h);
+                    show_scope_tooltip(
+                        ui,
+                        &self.intern,
+                        &self.processes,
+                        &self.trace_args,
+                        h,
+                    );
                 }
             } else {
                 ui.painter().text(
@@ -2004,13 +2293,7 @@ impl OrbitLiveApp {
                     self.tracks.toggle(row.id);
                     self.mark_layout_changed();
                 }
-                let name = self
-                    .processes
-                    .iter()
-                    .find(|p| p.pid == pid)
-                    .map(|p| p.name.as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("process");
+                let name = self.process_display_name(pid);
                 ui.painter().text(
                     Pos2::new(r.left() + 30.0, r.center().y),
                     Align2::LEFT_CENTER,
@@ -2045,11 +2328,7 @@ impl OrbitLiveApp {
             }
             RowId::Thread(th) => {
                 if !interactive {
-                    let tname = self
-                        .intern
-                        .get(th.tid)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| format!("{}", th.tid));
+                    let tname = self.thread_display_name(th.pid, th.tid);
                     ui.painter().text(
                         Pos2::new(r.left() + 64.0, r.center().y),
                         Align2::LEFT_CENTER,
@@ -2109,11 +2388,7 @@ impl OrbitLiveApp {
                 );
                 ui.painter()
                     .rect_filled(chip_r, theme::TRACK_RADIUS, c32(chip));
-                let tname = self
-                    .intern
-                    .get(th.tid)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("{}", th.tid));
+                let tname = self.thread_display_name(th.pid, th.tid);
                 ui.painter().text(
                     Pos2::new(title.left() + 64.0, title.center().y),
                     Align2::LEFT_CENTER,
@@ -2663,6 +2938,14 @@ impl OrbitLiveApp {
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
         }
+        if ctx.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::O)) {
+            #[cfg(target_arch = "wasm32")]
+            chrome_load::start_open_dialog(&self.pending_file);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(load) = chrome_load::start_open_dialog() {
+                self.begin_trace_load(load);
+            }
+        }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
             if self.search_active() || !self.search.is_empty() {
                 self.search.clear();
@@ -2964,6 +3247,8 @@ impl eframe::App for OrbitLiveApp {
             let dt = dt_raw.clamp(0.0, 0.05);
             self.note_fps(dt_raw);
             self.sync_fullscreen(ctx);
+            self.take_dropped_traces(ctx);
+            self.pump_trace_load();
             {
                 let _net = devf.scope(TID_NET, NAME_NET);
                 {
@@ -3003,7 +3288,10 @@ impl eframe::App for OrbitLiveApp {
                 }
                 // Local WS index is the paint path. Hitting /api/timeline every
                 // frame rebuilt the server index and pegged a core after Stop.
-                if self.index.event_count() == 0 && now - self.last_view_request > 0.1 {
+                if self.index.event_count() == 0
+                    && self.trace_name.is_none()
+                    && now - self.last_view_request > 0.1
+                {
                     self.last_view_request = now;
                     let t0 = self.t0.max(0.0) as u64;
                     let t1 = (self.t1 as u64).max(t0 + 1);
@@ -3684,7 +3972,7 @@ fn paint_handle_dots(painter: &egui::Painter, r: Rect, active: bool) {
     }
 }
 
-fn paint_empty(ui: &Ui, rect: Rect) {
+fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(
         Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - 80.0), rect.max),
@@ -3694,14 +3982,14 @@ fn paint_empty(ui: &Ui, rect: Rect) {
     painter.text(
         rect.center() + Vec2::new(0.0, -10.0),
         Align2::CENTER_CENTER,
-        "Idle",
+        if dropping { "Drop Chrome trace" } else { "Idle" },
         FontId::new(15.0, fonts::medium()),
         theme::TEXT,
     );
     painter.text(
         rect.center() + Vec2::new(0.0, 12.0),
         Align2::CENTER_CENTER,
-        "Select a process, then Record.",
+        "Open or drop a Chrome .json / .json.gz  ·  or Record a process",
         FontId::new(12.0, FontFamily::Proportional),
         muted(),
     );
@@ -3812,7 +4100,68 @@ fn pick_value_at(
     best.map(|(_, e)| ScopePick::from_event(e))
 }
 
-fn show_scope_tooltip(ui: &Ui, intern: &InternTable, processes: &[ProcessJson], pick: ScopePick) {
+fn paint_flow_arrows(
+    ui: &Ui,
+    body: Rect,
+    t0: f64,
+    t1: f64,
+    layout: &[(LaneKey, f32)],
+    flows: &[FlowEdge],
+    scale: f32,
+) {
+    if flows.is_empty() || t1 <= t0 {
+        return;
+    }
+    let span = (t1 - t0).max(1.0);
+    let painter = ui.painter_at(body);
+    let stroke = Stroke::new(1.15, Color32::from_rgba_unmultiplied(0xFF, 0xC1, 0x07, 200));
+    for edge in flows {
+        let x0 = body.left() + ((edge.from.start_ns as f64 - t0) / span) as f32 * body.width();
+        let x1 = body.left() + ((edge.to.start_ns as f64 - t0) / span) as f32 * body.width();
+        if !x0.is_finite() || !x1.is_finite() {
+            continue;
+        }
+        if (x0 < body.left() && x1 < body.left()) || (x0 > body.right() && x1 > body.right()) {
+            continue;
+        }
+        let y_of = |pid: u32, tid: u32| -> Option<f32> {
+            layout.iter().find_map(|(k, y)| {
+                if k.pid == pid && k.tid == tid {
+                    Some(body.top() + *y + lane_height(*k) * scale.max(0.01) * 0.5)
+                } else {
+                    None
+                }
+            })
+        };
+        let Some(y0) = y_of(edge.from.pid, edge.from.tid) else {
+            continue;
+        };
+        let Some(y1) = y_of(edge.to.pid, edge.to.tid) else {
+            continue;
+        };
+        let mid = (x0 + x1) * 0.5;
+        painter.add(Shape::CubicBezier(egui::epaint::CubicBezierShape::from_points_stroke(
+            [
+                Pos2::new(x0, y0),
+                Pos2::new(mid, y0),
+                Pos2::new(mid, y1),
+                Pos2::new(x1, y1),
+            ],
+            false,
+            Color32::TRANSPARENT,
+            stroke,
+        )));
+        painter.circle_filled(Pos2::new(x1, y1), 2.4, stroke.color);
+    }
+}
+
+fn show_scope_tooltip(
+    ui: &Ui,
+    intern: &InternTable,
+    processes: &[ProcessJson],
+    args: &HashMap<ArgKey, u32>,
+    pick: ScopePick,
+) {
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -3874,6 +4223,22 @@ fn show_scope_tooltip(ui: &Ui, intern: &InternTable, processes: &[ProcessJson], 
                 .font(FontId::monospace(11.0))
                 .color(theme::MUTED),
         );
+        let key = ArgKey {
+            start_ns: pick.start_ns,
+            duration_ns: pick.duration_ns,
+            pid: pick.pid,
+            tid: pick.tid,
+            name_id: pick.name_id,
+        };
+        if let Some(id) = args.get(&key) {
+            if let Some(text) = intern.get(*id) {
+                ui.label(
+                    RichText::new(text)
+                        .font(FontId::monospace(10.5))
+                        .color(theme::MUTED),
+                );
+            }
+        }
     });
 }
 
@@ -4231,7 +4596,8 @@ fn format_ns(t: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_live_event::{chrome, LiveEvent};
+    use orbit_live_event::{chrome, kind, LiveEvent};
+    use crate::tracks::TrackStrip;
 
     #[test]
     fn orbit_palette_matches_fusion() {
@@ -4805,5 +5171,36 @@ mod tests {
         let (span0, span1) = slider_capture_span(0, 1_000, 100.0, 200.0);
         assert_eq!(span0, 0.0);
         assert_eq!(span1, 1_000.0);
+    }
+
+    #[test]
+    fn chrome_fixture_builds_process_thread_counter_async() {
+        let json = r#"{
+          "traceEvents": [
+            {"name":"process_name","ph":"M","pid":9,"args":{"name":"Browser"}},
+            {"name":"thread_name","ph":"M","pid":9,"tid":3,"args":{"name":"CrBrowserMain"}},
+            {"name":"work","ph":"B","ts":0,"pid":9,"tid":3},
+            {"name":"work","ph":"E","ts":10,"pid":9,"tid":3},
+            {"name":"done","ph":"X","ts":12,"dur":4,"pid":9,"tid":3},
+            {"name":"cpu","ph":"C","ts":5,"pid":9,"args":{"value":3.5}},
+            {"name":"job","ph":"S","ts":1,"pid":9,"tid":3,"id":1},
+            {"name":"job","ph":"F","ts":8,"pid":9,"tid":3,"id":1}
+          ]
+        }"#;
+        let (ing, evs) = orbit_live_chrome::ingest_collect(json.as_bytes()).unwrap();
+        let mut idx = TrackIndex::default();
+        for e in evs {
+            idx.insert(e);
+        }
+        assert!(idx.lanes().any(|(k, _)| k.kind == kind::API_SCOPE && k.tid == 3));
+        assert!(idx.lanes().any(|(k, _)| k.kind == kind::VALUE));
+        assert!(idx.lanes().any(|(k, _)| k.kind == kind::API_TRACK));
+        assert_eq!(ing.process_names.get(&9).map(String::as_str), Some("Browser"));
+        let mut strip = TrackStrip::default();
+        strip.process_sort = ing.process_sort.clone();
+        strip.sync(&idx, None);
+        assert!(strip.process_order.contains(&9));
+        assert!(strip.thread_order.iter().any(|t| t.pid == 9 && t.tid == 3));
+        assert!(std::mem::size_of::<LiveEvent>() == 32);
     }
 }

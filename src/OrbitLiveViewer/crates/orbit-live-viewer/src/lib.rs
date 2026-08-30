@@ -15,6 +15,8 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 #[cfg(feature = "egui")]
 mod app;
 #[cfg(feature = "egui")]
+mod chrome_load;
+#[cfg(feature = "egui")]
 mod dev;
 #[cfg(feature = "egui")]
 mod fonts;

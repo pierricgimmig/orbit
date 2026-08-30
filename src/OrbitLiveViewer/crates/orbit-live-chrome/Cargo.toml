@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Own workspace so the service-side Bazel graph does not grow flate2/serde_json.
+[workspace]
+
+[package]
+name = "orbit-live-chrome"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+description = "Streaming Chrome Trace Event Format ingest into 32-byte LiveEvents"
+
+[dependencies]
+flate2 = { version = "1.0", default-features = true }
+orbit-live-event = { path = "../orbit-live-event" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

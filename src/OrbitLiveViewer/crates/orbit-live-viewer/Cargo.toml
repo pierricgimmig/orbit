@@ -26,6 +26,7 @@ wasm-threads = ["orbit-live-render/parallel", "dep:wasm-bindgen-rayon"]
 
 [dependencies]
 orbit-live-event = { path = "../orbit-live-event" }
+orbit-live-chrome = { path = "../orbit-live-chrome" }
 orbit-live-protocol = { path = "../orbit-live-protocol" }
 orbit-live-render = { path = "../orbit-live-render" }
 wasm-bindgen = "=0.2.100"
@@ -46,14 +47,23 @@ egui-wgpu = { version = "0.32.3", optional = true }
 version = "0.3"
 features = [
     "BinaryType",
+    "Blob",
     "console",
+    "DataTransfer",
     "Document",
+    "DragEvent",
     "Element",
+    "Event",
+    "File",
+    "FileList",
     "Headers",
     "HtmlCanvasElement",
+    "HtmlInputElement",
     "Location",
     "MessageEvent",
     "Performance",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
     "RequestInit",
     "Response",
     "WebSocket",
@@ -62,6 +72,7 @@ features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 orbit-live-render = { path = "../orbit-live-render", features = ["parallel"] }
+rfd = "0.15"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 orbit-live-render = { path = "../orbit-live-render" }

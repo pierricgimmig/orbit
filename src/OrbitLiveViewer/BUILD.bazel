@@ -163,6 +163,7 @@ genrule(
             "build_wasm.sh",
             "rust-toolchain.toml",
             "crates/orbit-live-viewer/**",
+            "crates/orbit-live-chrome/**",
             "crates/orbit-live-event/**",
             "crates/orbit-live-protocol/**",
             "crates/orbit-live-render/**",

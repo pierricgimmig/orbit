@@ -33,7 +33,7 @@ VIEWER="$ROOT/crates/orbit-live-viewer"
 # +mutable-globals is required by older rustc; harmless on 1.87+.
 # --import-memory lets wasm-bindgen share one SAB across workers.
 export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+atomics,+bulk-memory,+mutable-globals \
-  -C link-arg=--shared-memory -C link-arg=--max-memory=1073741824 \
+  -C link-arg=--shared-memory -C link-arg=--max-memory=2147483648 \
   -C link-arg=--import-memory \
   -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
   -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base"

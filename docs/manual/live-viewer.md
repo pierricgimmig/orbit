@@ -55,6 +55,33 @@ Working from the page (OrbitService / `./wasm.sh`):
 Not in this UI: Qt Symbols tab, OrbitApp / CaptureData, sampling reports,
 GPU tracks, presets.
 
+## Open a Chrome trace
+
+The live viewer reads **Chrome Trace Event Format** JSON without converting
+first (legacy `[…]` array or `{ "traceEvents": […] }` plus
+`displayTimeUnit` / `stackFrames` / `samples`).
+
+* **Open** in the transport bar, or **drop** a file on the canvas / window
+* `.json`, `.json.gz`, `.gz`; `.zip` with one JSON if the local header has sizes
+* Does **not** start Demo. Replaces the current session with processes/threads
+  from metadata (`process_name`, `thread_name`, sort indices)
+* Progress: bytes in / decoded and events ingested
+* Stays in this viewer (no OrbitApp / CaptureData / Qt)
+
+Mapped: duration `B`/`E`/`X`, instants `I`/`i`, counters `C`, async `S`/`T`/`F`
+and nested `n`/`o`/`d` (own lanes by id), flows `s`/`t`/`f` as markers + arrows,
+metadata `M`, samples `P`+`stackFrames`, marks `R`, clock sync `c`, objects
+`N`/`O`/`D`. Memory dumps `v` are a marker only — the dump payload is dropped.
+
+Default time unit is microseconds. `displayTimeUnit: "ns"` treats `ts` as ns.
+`LiveEvent` stays 32 bytes; args are interned for hover. File loads use
+`TrackIndex`, not the 64 MB ring. wasm32 heap cap is 2 GiB.
+
+Measured numbers (native, this VM, 2026-08-30) live in
+`src/OrbitLiveViewer/README.md` (theverge 52 MB public JSON, catapult
+`huge_trace.json`, a 1.2M-event generated stream). They are wall-clock
+ingest + CPU timeline prepare, not guessed.
+
 ## Renderer
 
 Zoomed out: **per-lane pixel-column walk** (binary search per column).

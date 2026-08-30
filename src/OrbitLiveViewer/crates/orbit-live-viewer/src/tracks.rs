@@ -52,6 +52,9 @@ pub struct TrackStrip {
     filter_pid: Option<u32>,
     cached_insert_y: Option<f32>,
     layout_gen: u64,
+    /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
+    pub process_sort: HashMap<u32, i32>,
+    pub thread_sort: HashMap<(u32, u32), i32>,
 }
 
 struct Drag {
@@ -77,6 +80,8 @@ impl Default for TrackStrip {
             filter_pid: None,
             cached_insert_y: None,
             layout_gen: 0,
+            process_sort: HashMap::new(),
+            thread_sort: HashMap::new(),
         }
     }
 }
@@ -110,12 +115,21 @@ impl TrackStrip {
             }
         }
         pids.sort_unstable();
-        pids.sort_by_key(|p| (MachineId::from_pid(*p).sort_key(), process_rank(*p), *p));
+        pids.sort_by_key(|p| {
+            (
+                MachineId::from_pid(*p).sort_key(),
+                process_rank(*p),
+                self.process_sort.get(p).copied().unwrap_or(0),
+                *p,
+            )
+        });
         threads.sort_by_key(|t| {
             (
                 MachineId::from_pid(t.pid).sort_key(),
                 process_rank(t.pid),
+                self.process_sort.get(&t.pid).copied().unwrap_or(0),
                 t.pid,
+                self.thread_sort.get(&(t.pid, t.tid)).copied().unwrap_or(0),
                 t.tid,
             )
         });
@@ -128,8 +142,14 @@ impl TrackStrip {
                 self.process_order.push(p);
             }
         }
-        self.process_order
-            .sort_by_key(|p| (MachineId::from_pid(*p).sort_key(), process_rank(*p), *p));
+        self.process_order.sort_by_key(|p| {
+            (
+                MachineId::from_pid(*p).sort_key(),
+                process_rank(*p),
+                self.process_sort.get(p).copied().unwrap_or(0),
+                *p,
+            )
+        });
         self.thread_order.retain(|t| threads.contains(t));
         for t in threads {
             if !self.thread_order.contains(&t) {
