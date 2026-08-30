@@ -4752,6 +4752,7 @@ mod tests {
     use super::*;
     use crate::tracks::TrackStrip;
     use orbit_live_event::{chrome, kind, LiveEvent};
+    use orbit_live_render::collect_instances;
 
     #[test]
     fn orbit_palette_matches_fusion() {
@@ -5479,6 +5480,82 @@ mod tests {
         eprintln!(
             "theverge after Home/fit t0={h0} t1={h1} span_s={:.6}",
             (h1 - h0) / 1e9
+        );
+
+        let one_ns = idx
+            .lanes()
+            .flat_map(|(_, lane)| lane.events().iter())
+            .filter(|e| e.kind == kind::API_SCOPE && e.duration_ns == 1)
+            .count();
+        let mut shared_lanes = 0u32;
+        for (_, lane) in idx.lanes() {
+            let mut ones = 0u32;
+            let mut longer = 0u32;
+            for e in lane.events() {
+                if e.kind != kind::API_SCOPE {
+                    continue;
+                }
+                if e.duration_ns == 1 {
+                    ones += 1;
+                } else {
+                    longer += 1;
+                }
+            }
+            if ones > 0 && longer > 0 {
+                shared_lanes += 1;
+            }
+        }
+        let width = 1280.0f32;
+        let frame = collect_instances(&idx, t0 as u64, t1 as u64, width, 0.0, None);
+        let mut one_ns_w_max = 0.0f32;
+        let mut one_ns_inst = 0u32;
+        let mut one_ns_w_gt1 = 0u32;
+        for inst in &frame.instances {
+            if inst.kind == kind::API_SCOPE && inst.duration_ns == 1 {
+                one_ns_inst += 1;
+                one_ns_w_max = one_ns_w_max.max(inst.w);
+                if inst.w > 1.0 + 0.01 {
+                    one_ns_w_gt1 += 1;
+                }
+            }
+        }
+        let ns_per_px = (t1 - t0) / width as f64;
+        eprintln!(
+            "theverge fit window {t0}..{t1} width={width} ns/px={ns_per_px:.0} \
+             API_SCOPE duration_ns==1 events={one_ns} instances={one_ns_inst} \
+             max instance.w={one_ns_w_max} w>1px={one_ns_w_gt1} \
+             shared 1ns+longer lanes={shared_lanes}"
+        );
+        assert!(one_ns > 0);
+        assert!(shared_lanes > 0);
+        assert_eq!(
+            one_ns_w_gt1, 0,
+            "1 ns instances must stay 1 px ticks at the default fit, max w={one_ns_w_max}"
+        );
+
+        let mut stolen = 0u32;
+        for inst in &frame.instances {
+            if inst.duration_ns <= 1 {
+                continue;
+            }
+            let cx = inst.x + inst.w * 0.5;
+            let cy = inst.y + inst.h * 0.5;
+            let Some(i) = pick_instance_at(&frame.instances, cx, cy) else {
+                continue;
+            };
+            let hit = &frame.instances[i];
+            if hit.duration_ns == 1
+                && hit.pid == inst.pid
+                && hit.tid == inst.tid
+                && hit.kind == inst.kind
+                && hit.depth == inst.depth
+            {
+                stolen += 1;
+            }
+        }
+        assert_eq!(
+            stolen, 0,
+            "a 1 ns tick must not win pick at the center of a longer same-lane scope"
         );
     }
 }

@@ -291,6 +291,42 @@ mod tests {
             (8.2..8.3).contains(&span_s),
             "theverge B/E cluster must be ~8.24 s, got {span_s} s ({a}..{b})"
         );
+        let one_ns_scopes = evs
+            .iter()
+            .filter(|e| e.kind == kind::API_SCOPE && e.duration_ns == 1)
+            .count();
+        let mut lane_mix = std::collections::HashMap::<(u32, u32, u8, u8), (u32, u32)>::new();
+        for e in &evs {
+            if e.kind != kind::API_SCOPE {
+                continue;
+            }
+            let slot = lane_mix
+                .entry((e.pid, e.tid, e.kind, e.depth))
+                .or_insert((0, 0));
+            if e.duration_ns == 1 {
+                slot.0 += 1;
+            } else {
+                slot.1 += 1;
+            }
+        }
+        let shared = lane_mix
+            .values()
+            .filter(|(ones, longer)| *ones > 0 && *longer > 0)
+            .count();
+        eprintln!(
+            "theverge API_SCOPE duration_ns==1: {one_ns_scopes} of {}, \
+             lanes sharing 1 ns + longer: {shared} / {}",
+            evs.iter().filter(|e| e.kind == kind::API_SCOPE).count(),
+            lane_mix.len()
+        );
+        assert!(
+            one_ns_scopes > 0,
+            "theverge fixture is expected to emit 1 ns API_SCOPE instants"
+        );
+        assert!(
+            shared > 0,
+            "theverge 1 ns scopes must share lanes with longer B/E/X work"
+        );
     }
 
     #[test]

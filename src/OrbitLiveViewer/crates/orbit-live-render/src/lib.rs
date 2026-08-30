@@ -32,6 +32,11 @@ use std::collections::BTreeMap;
 
 use orbit_live_event::{chrome, kind, InternTable, LaneKey, LiveEvent};
 
+/// Visible `[start, end)` span. VALUE stores f32 bits in `duration_ns`.
+fn event_span_ns(e: &LiveEvent) -> u64 {
+    e.end_ns().saturating_sub(e.start_ns).max(1)
+}
+
 mod lod;
 mod par;
 mod shaders;
@@ -47,10 +52,26 @@ pub use lod::{
 pub use par::{is_parallel, parallelism, set_wasm_pool_threads, WorkerSpan};
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
-/// One horizontal lane of non-overlapping intervals, sorted by `start_ns`.
-#[derive(Clone, Debug, Default)]
+/// One horizontal lane of intervals, sorted by `start_ns`.
+///
+/// Orbit live scopes are non-overlapping per lane, so `end_ns` is also
+/// non-decreasing and [`Self::first_ending_after`] is a binary search.
+/// Chrome ingest also places 1 ns instants / marks on the same tid as B/E/X
+/// slices; those break the end order. The cache below tracks that so the
+/// column walk can fall back to a duration-aware linear pass.
+#[derive(Clone, Debug)]
 pub struct Lane {
     events: Vec<LiveEvent>,
+    ends_sorted: bool,
+}
+
+impl Default for Lane {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            ends_sorted: true,
+        }
+    }
 }
 
 impl Lane {
@@ -67,19 +88,28 @@ impl Lane {
     }
 
     pub fn insert(&mut self, event: LiveEvent) {
-        if self
+        let i = if self
             .events
             .last()
             .map(|e| e.start_ns <= event.start_ns)
             .unwrap_or(true)
         {
+            let i = self.events.len();
             self.events.push(event);
-            return;
+            i
+        } else {
+            let i = self
+                .events
+                .partition_point(|e| e.start_ns <= event.start_ns);
+            self.events.insert(i, event);
+            i
+        };
+        if self.ends_sorted {
+            let end = self.events[i].end_ns();
+            let prev_ok = i == 0 || self.events[i - 1].end_ns() <= end;
+            let next_ok = i + 1 >= self.events.len() || end <= self.events[i + 1].end_ns();
+            self.ends_sorted = prev_ok && next_ok;
         }
-        let i = self
-            .events
-            .partition_point(|e| e.start_ns <= event.start_ns);
-        self.events.insert(i, event);
     }
 
     pub fn extend<I: IntoIterator<Item = LiveEvent>>(&mut self, events: I) {
@@ -88,20 +118,22 @@ impl Lane {
         }
     }
 
-    /// First event with `end_ns > t` (binary search). O(log n).
+    /// First event with `end_ns > t`.
     ///
-    /// Lanes are **non-overlapping** and kept sorted by `start_ns`. Then
-    /// `end_ns` is also non-decreasing: `e[i].end <= e[i+1].start <= e[i+1].end`
-    /// (duration > 0). `partition_point` on `end_ns() <= t` is therefore a
-    /// real binary search, not a linear probe. Do not add a second end-sorted
-    /// index unless that invariant is dropped — append-mostly live insert
-    /// stays O(1).
+    /// Non-overlapping start-sorted lanes have non-decreasing `end_ns`
+    /// (`e[i].end <= e[i+1].start <= e[i+1].end`), so this is `partition_point`
+    /// on `end_ns() <= t`. Chrome 1 ns instants on the same lane break that
+    /// order; then this is a linear scan so a long parent that still covers
+    /// `t` is not skipped.
     pub fn first_ending_after(&self, t: u64) -> usize {
-        debug_assert!(
-            self.ends_are_sorted(),
-            "first_ending_after assumes non-overlapping start-sorted ends"
-        );
-        self.events.partition_point(|e| e.end_ns() <= t)
+        if self.ends_sorted {
+            self.events.partition_point(|e| e.end_ns() <= t)
+        } else {
+            self.events
+                .iter()
+                .position(|e| e.end_ns() > t)
+                .unwrap_or(self.events.len())
+        }
     }
 
     /// `end_ns` non-decreasing. True for non-overlapping start-sorted lanes.
@@ -116,17 +148,29 @@ impl Lane {
         self.last_overlapping(col0, col1)
     }
 
-    /// Latest event that overlaps `[col0, col1)` (last-write-wins).
-    /// Two binary searches — still O(log n). Earlier first-wins hid later
-    /// members of the same column so they appeared to pop in on zoom.
+    /// Event that owns `[col0, col1)`.
+    ///
+    /// Longest true `[start, end)` wins so a 1 ns instant cannot steal a
+    /// pixel (or pick) from a longer same-lane scope that occupies the
+    /// column. Equal duration keeps last-in-start-order (the previous
+    /// last-write-wins tie-break).
     pub fn last_overlapping(&self, col0: u64, col1: u64) -> Option<&LiveEvent> {
         let i = self.first_ending_after(col0);
         let j = self.events.partition_point(|e| e.start_ns < col1);
-        if i < j {
-            Some(&self.events[j - 1])
-        } else {
-            None
+        let mut best: Option<usize> = None;
+        let mut best_dur = 0u64;
+        for k in i..j {
+            let e = &self.events[k];
+            if e.end_ns() <= col0 {
+                continue;
+            }
+            let d = event_span_ns(e);
+            if best.is_none() || d >= best_dur {
+                best = Some(k);
+                best_dur = d;
+            }
         }
+        best.map(|k| &self.events[k])
     }
 
     /// Production path: walk events when there are fewer of them than pixels,
@@ -141,7 +185,9 @@ impl Lane {
         out: &mut [u32],
         intern: Option<&InternTable>,
     ) {
-        if self.events.len() <= width {
+        // Mixed 1 ns + long scopes break the end index; the column walk
+        // would be O(width × n). One duration-aware pass stays linear.
+        if !self.ends_sorted || self.events.len() <= width {
             self.rasterize_naive(t0, t1, width, out, intern);
         } else {
             self.rasterize_pixel_columns(t0, t1, width, out, intern);
@@ -194,7 +240,8 @@ impl Lane {
             return;
         }
         let span = (t1 - t0) as f64;
-        for e in &self.events {
+        let mut owner = vec![None; width];
+        for (ei, e) in self.events.iter().enumerate() {
             if e.end_ns() <= t0 || e.start_ns >= t1 {
                 continue;
             }
@@ -202,8 +249,16 @@ impl Lane {
             let x1 = (((e.end_ns().min(t1) - t0) as f64 / span) * width as f64).ceil() as usize;
             let x1 = x1.max(x0 + 1).min(width);
             let color = e.color_for(intern);
-            for pix in &mut out[x0.min(width)..x1] {
-                *pix = color;
+            let new_d = event_span_ns(e);
+            for x in x0.min(width)..x1 {
+                let overwrite = match owner[x] {
+                    None => true,
+                    Some(prev) => new_d >= event_span_ns(&self.events[prev]),
+                };
+                if overwrite {
+                    owner[x] = Some(ei);
+                    out[x] = color;
+                }
             }
         }
     }
@@ -637,9 +692,35 @@ mod tests {
         assert!(
             !lane.ends_are_sorted(),
             "overlapping insert (end 100 then 15) must fail this test — \
-             that is why first_ending_after stays a single partition_point \
-             and we do not add a dual index"
+             first_ending_after then walks linearly so the long parent \
+             is not skipped"
         );
+    }
+
+    #[test]
+    fn first_ending_after_includes_long_scope_when_instant_breaks_end_order() {
+        let mut lane = Lane::default();
+        lane.insert(scope(0, 1000, 0, 1));
+        lane.insert(scope(100, 1, 0, 2));
+        assert!(!lane.ends_are_sorted());
+        assert_eq!(lane.first_ending_after(200), 0);
+        assert_eq!(lane.last_overlapping(200, 201).unwrap().name_id, 1);
+        assert_eq!(
+            lane.last_overlapping(100, 101).unwrap().name_id,
+            1,
+            "1 ns instant must not own a pixel that a longer scope occupies"
+        );
+    }
+
+    #[test]
+    fn last_overlapping_keeps_isolated_instant_in_a_gap() {
+        let mut lane = Lane::default();
+        lane.insert(scope(0, 50, 0, 1));
+        lane.insert(scope(60, 1, 0, 2));
+        lane.insert(scope(100, 50, 0, 3));
+        assert_eq!(lane.last_overlapping(60, 61).unwrap().name_id, 2);
+        assert_eq!(lane.last_overlapping(0, 10).unwrap().name_id, 1);
+        assert_eq!(lane.last_overlapping(120, 130).unwrap().name_id, 3);
     }
 
     #[test]
@@ -668,6 +749,24 @@ mod tests {
         lane.rasterize_naive(0, 6400, width, &mut naive, None);
         assert_eq!(pixel, naive);
         assert!(pixel.iter().any(|&p| p != chrome::TRACK));
+    }
+
+    #[test]
+    fn pixel_and_naive_agree_when_instant_overlaps_longer_scope() {
+        let mut lane = Lane::default();
+        lane.insert(scope(0, 1000, 0, 1));
+        lane.insert(scope(100, 1, 0, 2));
+        let width = 64usize;
+        let mut pixel = vec![0u32; width];
+        let mut naive = vec![0u32; width];
+        lane.rasterize_pixel_columns(0, 1000, width, &mut pixel, None);
+        lane.rasterize_naive(0, 1000, width, &mut naive, None);
+        assert_eq!(pixel, naive);
+        let long = scope(0, 1000, 0, 1).color_rgba();
+        assert!(
+            pixel.iter().all(|&p| p == long),
+            "1 ns instant must not overwrite the longer scope's pixels"
+        );
     }
 
     #[test]

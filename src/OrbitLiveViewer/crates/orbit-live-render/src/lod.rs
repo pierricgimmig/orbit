@@ -726,7 +726,8 @@ pub fn collect_instances_layout_opts(
         row
     });
     let lanes_kept = parts.iter().filter(|p| !p.is_empty()).count() as u32;
-    let instances = parts.into_iter().flatten().collect();
+    let mut instances: Vec<ScopeInstance> = parts.into_iter().flatten().collect();
+    sort_instances_longer_on_top(&mut instances);
     InstanceFrame {
         width,
         height,
@@ -760,15 +761,32 @@ pub fn value_lanes_in_view(
         .collect()
 }
 
-/// Topmost instance whose rect contains `(x, y)` in the same space as `x/y/w/h`.
+/// Instance whose rect contains `(x, y)` in the same space as `x/y/w/h`.
+///
+/// Longest true `duration_ns` wins so a 1 px tick cannot steal the hit-test
+/// from a longer same-lane scope under that pixel. Equal duration keeps
+/// last-in-list (painter's top among siblings).
 pub fn pick_instance_at(instances: &[ScopeInstance], x: f32, y: f32) -> Option<usize> {
-    instances.iter().enumerate().rev().find_map(|(i, inst)| {
-        if x >= inst.x && x <= inst.x + inst.w && y >= inst.y && y <= inst.y + inst.h {
-            Some(i)
-        } else {
-            None
+    let mut best: Option<usize> = None;
+    for (i, inst) in instances.iter().enumerate() {
+        if x < inst.x || x > inst.x + inst.w || y < inst.y || y > inst.y + inst.h {
+            continue;
         }
-    })
+        match best {
+            None => best = Some(i),
+            Some(j) => {
+                if inst.duration_ns >= instances[j].duration_ns {
+                    best = Some(i);
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Painter's algorithm: shorter first so longer scopes cover 1 px ticks.
+fn sort_instances_longer_on_top(instances: &mut [ScopeInstance]) {
+    instances.sort_by(|a, b| a.duration_ns.cmp(&b.duration_ns));
 }
 
 /// Pixel-column pick: lane under `y`, then the overlapping event at `x`.
@@ -847,6 +865,10 @@ fn push_lane_instances(
     while let Some(e) = lane.events().get(i) {
         if e.start_ns >= t1 {
             break;
+        }
+        if e.end_ns() <= t0 {
+            i += 1;
+            continue;
         }
         let inst = instance_for_event(e, t0, t1, span, width, y, h, radius, intern);
         let covers_rest = e.end_ns() >= t1 && inst.x + inst.w + 0.5 >= width;
@@ -996,5 +1018,100 @@ mod sparse_lod_tests {
         // 2560 ns over 8 px: every 5 ns scope is far under a pixel.
         let lod = choose_lod(&idx, 0, 2_560, 8, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
+    }
+
+    /// Default theverge-style fit (~9 s / 1280 px) turns 1 ns into a 1 px
+    /// bar several milliseconds wide. That tick must not paint over or win
+    /// the pick against a longer same-lane scope, and duration stays 1 ns.
+    #[test]
+    fn one_ns_event_does_not_cover_or_steal_longer_same_lane_scope() {
+        let t0 = 1_000_000u64;
+        let long_dur = 10_000_000u64;
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(1, t0, long_dur, 1));
+        idx.insert(ev(1, t0 + 2_000_000, 1, 2));
+        idx.insert(ev(1, t0 + 20_000_000, 1, 3));
+
+        let win_t0 = t0;
+        let win_t1 = t0 + 9_000_000_000;
+        let width = 1280.0f32;
+        let ns_per_px = (win_t1 - win_t0) as f64 / width as f64;
+        assert!(
+            ns_per_px > 1_000_000.0,
+            "fixture is only meaningful while 1 px is milliseconds, got {ns_per_px} ns/px"
+        );
+
+        let frame = collect_instances(&idx, win_t0, win_t1, width, 0.0, None);
+        let inst_1ns = frame
+            .instances
+            .iter()
+            .find(|i| i.duration_ns == 1 && i.name_id == 2)
+            .expect("1 ns event stays 1 ns in the instance");
+        let inst_long = frame
+            .instances
+            .iter()
+            .find(|i| i.duration_ns == long_dur)
+            .expect("long scope");
+        let inst_gap = frame
+            .instances
+            .iter()
+            .find(|i| i.duration_ns == 1 && i.name_id == 3)
+            .expect("isolated 1 ns in the gap");
+
+        assert_eq!(inst_1ns.duration_ns, 1);
+        assert!(
+            inst_1ns.w <= 1.0 + f32::EPSILON,
+            "1 ns must stay a 1 px tick, not a merged bar: w={}",
+            inst_1ns.w
+        );
+        assert!(
+            inst_long.w > inst_1ns.w,
+            "long scope must be wider than the 1 ns tick"
+        );
+
+        let long_i = frame
+            .instances
+            .iter()
+            .position(|i| i.duration_ns == long_dur)
+            .unwrap();
+        let ns_i = frame
+            .instances
+            .iter()
+            .position(|i| i.duration_ns == 1 && i.name_id == 2)
+            .unwrap();
+        assert!(
+            long_i > ns_i,
+            "longer scope must draw after the 1 ns tick (z-order)"
+        );
+
+        let cx = inst_long.x + inst_long.w * 0.5;
+        let cy = inst_long.y + inst_long.h * 0.5;
+        let picked = pick_instance_at(&frame.instances, cx, cy).unwrap();
+        assert_eq!(frame.instances[picked].duration_ns, long_dur);
+        assert_eq!(frame.instances[picked].name_id, 1);
+
+        let ix = inst_1ns.x + inst_1ns.w * 0.5;
+        let iy = inst_1ns.y + inst_1ns.h * 0.5;
+        let picked_tick = pick_instance_at(&frame.instances, ix, iy).unwrap();
+        assert_eq!(
+            frame.instances[picked_tick].duration_ns, long_dur,
+            "1 px tick overlapping the long scope must not steal the pick"
+        );
+
+        let gx = inst_gap.x + inst_gap.w * 0.5;
+        let gy = inst_gap.y + inst_gap.h * 0.5;
+        let picked_gap = pick_instance_at(&frame.instances, gx, gy).unwrap();
+        assert_eq!(
+            frame.instances[picked_gap].name_id, 3,
+            "isolated 1 ns tick in a gap stays pickable"
+        );
+
+        let lane = idx.lanes().next().unwrap().1;
+        let col0 = t0 + 2_000_000;
+        assert_eq!(
+            lane.last_overlapping(col0, col0 + 1).unwrap().name_id,
+            1,
+            "pixel-column pick must also prefer the longer scope"
+        );
     }
 }
