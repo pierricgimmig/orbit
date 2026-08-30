@@ -15,7 +15,7 @@ futures-util = "0.3"
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal", "fs", "io-util"] }
 tower-http = { version = "0.5.2", features = ["cors"] }
 
 [[bin]]

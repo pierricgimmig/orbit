@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -53,6 +54,10 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
+        .route(
+            crate::theverge::THEVERGE_HTTP_PATH,
+            get(theverge_trace).head(theverge_trace),
+        )
         .route("/*path", get(static_asset))
         .layer(CorsLayer::permissive())
         // Outermost: HTML, js, wasm, worker snippets, and API all get
@@ -80,6 +85,54 @@ async fn index() -> Response {
 
 async fn static_asset(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
     asset_response(&path).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+/// Same-origin Chrome demo. First miss downloads+caches the catapult
+/// fixture; later hits stream the cache. Not `include_bytes` — 54 MB stays
+/// off the WASM pack and git. Isolation headers come from the outer layer.
+async fn theverge_trace(method: Method) -> Response {
+    let path = match crate::theverge::ensure_theverge_file() {
+        Ok(p) => p,
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, e).into_response();
+        }
+    };
+    let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if method == Method::HEAD {
+        let mut resp = StatusCode::OK.into_response();
+        resp.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(crate::theverge::THEVERGE_CONTENT_TYPE),
+        );
+        if let Ok(v) = HeaderValue::from_str(&len.to_string()) {
+            resp.headers_mut().insert(header::CONTENT_LENGTH, v);
+        }
+        return resp;
+    }
+    let Ok(file) = tokio::fs::File::open(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let stream = futures_util::stream::unfold(file, |mut f| async move {
+        let mut buf = vec![0u8; 1 << 16];
+        match tokio::io::AsyncReadExt::read(&mut f, &mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok::<_, std::io::Error>(Bytes::from(buf)), f))
+            }
+            Err(e) => Some((Err(e), f)),
+        }
+    });
+    let mut resp = Response::new(Body::from_stream(stream));
+    *resp.status_mut() = StatusCode::OK;
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(crate::theverge::THEVERGE_CONTENT_TYPE),
+    );
+    if let Ok(v) = HeaderValue::from_str(&len.to_string()) {
+        resp.headers_mut().insert(header::CONTENT_LENGTH, v);
+    }
+    resp
 }
 
 /// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.
@@ -657,10 +710,7 @@ mod isolation_tests {
     fn apply_isolation_sets_all_three_on_any_response() {
         let resp = apply_isolation(StatusCode::OK.into_response());
         let h = resp.headers();
-        assert_eq!(
-            h.get("cross-origin-opener-policy").unwrap(),
-            "same-origin"
-        );
+        assert_eq!(h.get("cross-origin-opener-policy").unwrap(), "same-origin");
         assert_eq!(
             h.get("cross-origin-embedder-policy").unwrap(),
             "require-corp"
@@ -671,21 +721,78 @@ mod isolation_tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn theverge_head_is_200_json_with_isolation_when_cached() {
+        let path = "/tmp/chrome-traces/theverge_trace.json";
+        if !std::path::Path::new(path).is_file() {
+            return;
+        }
+        let prev = std::env::var_os("ORBIT_LIVE_THEVERGE_PATH");
+        std::env::set_var("ORBIT_LIVE_THEVERGE_PATH", path);
+        let svc = crate::LiveService::new(crate::ServerConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            ring_buffer_bytes: 1024 * 32,
+            spill_path: None,
+            dev_self_profile: false,
+        })
+        .unwrap();
+        let app = super::router(svc);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let url = format!("http://{addr}{}", crate::theverge::THEVERGE_HTTP_PATH);
+        let mut out = None;
+        for _ in 0..20 {
+            let attempt = std::process::Command::new("curl")
+                .args(["-sI", "--max-time", "5", &url])
+                .output()
+                .expect("curl -I");
+            if attempt.status.success() && !attempt.stdout.is_empty() {
+                out = Some(attempt);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let out = out.expect("curl -I never reached the listener");
+        match prev {
+            Some(v) => std::env::set_var("ORBIT_LIVE_THEVERGE_PATH", v),
+            None => std::env::remove_var("ORBIT_LIVE_THEVERGE_PATH"),
+        }
+        let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(
+            out.status.success(),
+            "curl -I failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains("200"),
+            "expected 200 from {url}, got:\n{text}"
+        );
+        assert!(text.contains("content-type: application/json"));
+        assert!(text.contains("cross-origin-opener-policy: same-origin"));
+        assert!(text.contains("cross-origin-embedder-policy: require-corp"));
+        assert!(text.contains("cross-origin-resource-policy: same-origin"));
+        assert!(text.contains(&format!(
+            "content-length: {}",
+            crate::theverge::THEVERGE_BYTES
+        )));
+    }
+
     #[test]
     fn apply_isolation_covers_worker_snippet_404s() {
         // Missing snippet URL must still carry isolation so a Worker
         // fetch is not a COEP violation on the error response.
         let resp = apply_isolation(StatusCode::NOT_FOUND.into_response());
         assert_eq!(
-            resp.headers()
-                .get("cross-origin-embedder-policy")
-                .unwrap(),
+            resp.headers().get("cross-origin-embedder-policy").unwrap(),
             "require-corp"
         );
         assert_eq!(
-            resp.headers()
-                .get("cross-origin-resource-policy")
-                .unwrap(),
+            resp.headers().get("cross-origin-resource-policy").unwrap(),
             "same-origin"
         );
     }

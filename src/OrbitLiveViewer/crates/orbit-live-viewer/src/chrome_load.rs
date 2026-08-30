@@ -14,6 +14,13 @@ use orbit_live_chrome::{ChromeIngestor, ChromeStream};
 use orbit_live_event::LiveEvent;
 
 const PUMP_BUDGET: usize = 48_000;
+/// Same-origin Chrome demo (server caches catapult theverge_trace.json).
+pub const THEVERGE_SAME_ORIGIN: &str = "/traces/theverge_trace.json";
+pub const THEVERGE_FILE_NAME: &str = "theverge_trace.json";
+pub const THEVERGE_LABEL: &str = "theverge";
+#[cfg(not(target_arch = "wasm32"))]
+const THEVERGE_UPSTREAM: &str = "https://raw.githubusercontent.com/catapult-project/catapult/main/tracing/test_data/theverge_trace.json";
+const THEVERGE_BYTES: u64 = 54_370_856;
 /// Cap compressed/raw bytes drained per frame so a multi-GB gzip is inflated
 /// into the scanner incrementally instead of all at once.
 const INPUT_BUDGET: usize = 2 << 20;
@@ -172,6 +179,20 @@ pub fn new_pending_file() -> PendingFile {
     std::sync::Arc::new(std::sync::Mutex::new(None))
 }
 
+/// Load the hosted catapult theverge fixture (same ingest as Open/drop).
+/// WASM fetches the same-origin URL as a ReadableStream. Native uses
+/// `ORBIT_LIVE_THEVERGE_PATH`, the temp cache, or downloads that cache.
+pub fn start_theverge() -> TraceLoad {
+    #[cfg(target_arch = "wasm32")]
+    {
+        start_wasm_same_origin_url(THEVERGE_SAME_ORIGIN, THEVERGE_FILE_NAME)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        start_native_theverge()
+    }
+}
+
 /// Open a file picker. WASM streams the File; native reads the path in a thread.
 pub fn start_open_dialog(
     #[cfg(target_arch = "wasm32")] pending: &PendingFile,
@@ -185,6 +206,62 @@ pub fn start_open_dialog(
     {
         native_open_dialog()
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_native_theverge() -> TraceLoad {
+    match ensure_theverge_local() {
+        Ok(path) => {
+            let size = std::fs::metadata(&path).ok().map(|m| m.len());
+            spawn_path_read(THEVERGE_FILE_NAME.into(), path, size)
+        }
+        Err(e) => {
+            let (tx, rx) = mpsc::channel();
+            let _ = tx.send(ByteMsg::Error(e));
+            TraceLoad::new(THEVERGE_FILE_NAME.into(), None, rx)
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ensure_theverge_local() -> Result<std::path::PathBuf, String> {
+    if let Some(p) = std::env::var_os("ORBIT_LIVE_THEVERGE_PATH") {
+        if !p.is_empty() {
+            let path = std::path::PathBuf::from(p);
+            if path.is_file() {
+                return Ok(path);
+            }
+            return Err(format!(
+                "ORBIT_LIVE_THEVERGE_PATH is not a file: {}",
+                path.display()
+            ));
+        }
+    }
+    let cache = std::env::temp_dir()
+        .join("orbit-live-traces")
+        .join(THEVERGE_FILE_NAME);
+    if cache.is_file() {
+        let len = cache.metadata().map(|m| m.len()).unwrap_or(0);
+        if len == THEVERGE_BYTES || len > 1_000_000 {
+            return Ok(cache);
+        }
+    }
+    if let Some(parent) = cache.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = cache.with_extension("json.part");
+    let status = std::process::Command::new("curl")
+        .args(["-fsSL", "--retry", "3", "-o"])
+        .arg(&tmp)
+        .arg(THEVERGE_UPSTREAM)
+        .status()
+        .map_err(|e| format!("curl: {e}"))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("download theverge failed ({status})"));
+    }
+    std::fs::rename(&tmp, &cache).map_err(|e| e.to_string())?;
+    Ok(cache)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -269,15 +346,47 @@ fn wasm_open_dialog(pending: &PendingFile) {
 }
 
 #[cfg(target_arch = "wasm32")]
+async fn pump_readable_stream(
+    reader: web_sys::ReadableStreamDefaultReader,
+    tx: mpsc::Sender<ByteMsg>,
+) {
+    use js_sys::Uint8Array;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    loop {
+        let Ok(result) = JsFuture::from(reader.read()).await else {
+            let _ = tx.send(ByteMsg::Error("read chunk".into()));
+            break;
+        };
+        let Ok(obj) = result.dyn_into::<js_sys::Object>() else {
+            break;
+        };
+        let done = js_sys::Reflect::get(&obj, &wasm_bindgen::JsValue::from_str("done"))
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if done {
+            let _ = tx.send(ByteMsg::Eof);
+            break;
+        }
+        let Ok(value) = js_sys::Reflect::get(&obj, &wasm_bindgen::JsValue::from_str("value"))
+        else {
+            break;
+        };
+        let arr = Uint8Array::new(&value);
+        let mut buf = vec![0u8; arr.length() as usize];
+        arr.copy_to(&mut buf);
+        if tx.send(ByteMsg::Chunk(buf)).is_err() {
+            break;
+        }
+        let _ = JsFuture::from(js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)).await;
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 fn spawn_wasm_file(file: web_sys::File, tx: mpsc::Sender<ByteMsg>) {
-    let name = file.name();
-    let size = file.size() as u64;
-    let _ = name;
-    let _ = size;
     wasm_bindgen_futures::spawn_local(async move {
-        use js_sys::Uint8Array;
         use wasm_bindgen::JsCast;
-        use wasm_bindgen_futures::JsFuture;
         use web_sys::ReadableStreamDefaultReader;
         let stream = file.stream();
         let Ok(reader) = stream
@@ -287,37 +396,49 @@ fn spawn_wasm_file(file: web_sys::File, tx: mpsc::Sender<ByteMsg>) {
             let _ = tx.send(ByteMsg::Error("readable stream".into()));
             return;
         };
-        loop {
-            let Ok(result) = JsFuture::from(reader.read()).await else {
-                let _ = tx.send(ByteMsg::Error("read chunk".into()));
-                break;
-            };
-            let Ok(obj) = result.dyn_into::<js_sys::Object>() else {
-                break;
-            };
-            let done = js_sys::Reflect::get(&obj, &wasm_bindgen::JsValue::from_str("done"))
-                .ok()
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            if done {
-                let _ = tx.send(ByteMsg::Eof);
-                break;
-            }
-            let Ok(value) = js_sys::Reflect::get(&obj, &wasm_bindgen::JsValue::from_str("value"))
-            else {
-                break;
-            };
-            let arr = Uint8Array::new(&value);
-            let mut buf = vec![0u8; arr.length() as usize];
-            arr.copy_to(&mut buf);
-            if tx.send(ByteMsg::Chunk(buf)).is_err() {
-                break;
-            }
-            // Yield so the UI can pump + paint.
-            let _ =
-                JsFuture::from(js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)).await;
-        }
+        pump_readable_stream(reader, tx).await;
     });
+}
+
+/// Fetch a same-origin URL as a ReadableStream (no 54 MB slurp / blob()).
+#[cfg(target_arch = "wasm32")]
+fn start_wasm_same_origin_url(url: &str, name: &str) -> TraceLoad {
+    let (tx, rx) = mpsc::channel();
+    let url = url.to_string();
+    wasm_bindgen_futures::spawn_local(async move {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        use web_sys::ReadableStreamDefaultReader;
+        let Some(window) = web_sys::window() else {
+            let _ = tx.send(ByteMsg::Error("window".into()));
+            return;
+        };
+        let fetch = match JsFuture::from(window.fetch_with_str(&url)).await {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = tx.send(ByteMsg::Error(format!("fetch {url}")));
+                return;
+            }
+        };
+        let Ok(resp) = fetch.dyn_into::<web_sys::Response>() else {
+            let _ = tx.send(ByteMsg::Error("response".into()));
+            return;
+        };
+        if !resp.ok() {
+            let _ = tx.send(ByteMsg::Error(format!("{url} HTTP {}", resp.status())));
+            return;
+        }
+        let Some(body) = resp.body() else {
+            let _ = tx.send(ByteMsg::Error("empty body".into()));
+            return;
+        };
+        let Ok(reader) = body.get_reader().dyn_into::<ReadableStreamDefaultReader>() else {
+            let _ = tx.send(ByteMsg::Error("readable stream".into()));
+            return;
+        };
+        pump_readable_stream(reader, tx).await;
+    });
+    TraceLoad::new(name.to_string(), Some(THEVERGE_BYTES), rx)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -479,5 +600,17 @@ mod tests {
         assert!(same_origin_trace_path("?trace=//evil/x.json").is_none());
         assert!(same_origin_trace_path("?trace=/traces/../secret.json").is_none());
         assert!(same_origin_trace_path("?trace=/tmp/x.txt").is_none());
+        assert_eq!(
+            same_origin_trace_path(&format!("?trace={THEVERGE_SAME_ORIGIN}")),
+            Some(THEVERGE_SAME_ORIGIN.into())
+        );
+    }
+
+    #[test]
+    fn theverge_button_is_not_the_demo_producer() {
+        assert_eq!(THEVERGE_LABEL, "theverge");
+        assert_ne!(THEVERGE_LABEL, "Demo");
+        assert_eq!(THEVERGE_SAME_ORIGIN, "/traces/theverge_trace.json");
+        assert_eq!(THEVERGE_FILE_NAME, "theverge_trace.json");
     }
 }

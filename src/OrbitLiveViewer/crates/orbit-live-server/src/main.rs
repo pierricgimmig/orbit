@@ -78,7 +78,10 @@ fn print_help() {
          \n\
          Open http://127.0.0.1:<port>/ and click Demo, or ?dev=1 / Dev in the\n\
          transport bar to profile the viewer. ORBIT_LIVE_DEV=1 is the same as\n\
-         --dev-self-profile. OrbitService can also register control hooks."
+         --dev-self-profile. OrbitService can also register control hooks.\n\
+         GET /traces/theverge_trace.json serves the catapult Chrome demo\n\
+         (cached; ORBIT_LIVE_THEVERGE_PATH overrides). The viewer theverge\n\
+         pill loads that URL — it does not start the Demo producer."
     );
 }
 

@@ -1396,6 +1396,15 @@ impl OrbitLiveApp {
                     self.begin_trace_load(load);
                 }
             }
+            let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
+            if pill(ui, chrome_load::THEVERGE_LABEL, theverge_on)
+                .on_hover_text(
+                    "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
+                )
+                .clicked()
+            {
+                self.begin_trace_load(chrome_load::start_theverge());
+            }
             if pill(ui, "Capture", self.capture_open)
                 .on_hover_text("Process, sampling, and hooks")
                 .clicked()
@@ -4132,7 +4141,7 @@ fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
     painter.text(
         rect.center() + Vec2::new(0.0, 12.0),
         Align2::CENTER_CENTER,
-        "Open or drop a Chrome .json / .json.gz  ·  or Record a process",
+        "Open, theverge, or drop a Chrome .json  ·  or Record a process",
         FontId::new(12.0, FontFamily::Proportional),
         muted(),
     );
