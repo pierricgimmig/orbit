@@ -27,7 +27,7 @@ mod theme;
 #[cfg(feature = "egui")]
 mod timeline;
 #[cfg(feature = "egui")]
-mod tracks;
+pub mod tracks;
 
 #[cfg(feature = "egui")]
 pub use app::OrbitLiveApp;

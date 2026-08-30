@@ -70,10 +70,11 @@ first (legacy `[…]` array or `{ "traceEvents": […] }` plus
 * Stays in this viewer (no OrbitApp / CaptureData / Qt)
 
 Mapped: duration `B`/`E`/`X`, instants `I`/`i`, counters `C`, async `S`/`T`/`F`
-and nested `n`/`o`/`d` / `b`/`e` (own lanes by id), flows `s`/`t`/`f` as markers + arrows,
+and nested `n`/`o`/`d` / `b`/`e` (lanes by **name**, ids still pair), flows `s`/`t`/`f` as markers + arrows,
 `systemTraceEvents` (event array or `tracing_mark_write` text),
 metadata `M`, samples `P`+`stackFrames`, marks `R`, clock sync `c`, objects
-`N`/`O`/`D`. Memory dumps `v` are a marker only — the dump payload is dropped.
+`N`/`O`/`D` (one lane per **name**, not per object id). Memory dumps `v` are a
+marker only — the dump payload is dropped.
 
 Default time unit is microseconds. `displayTimeUnit: "ns"` treats `ts` as ns.
 `LiveEvent` stays 32 bytes; args are interned for hover (512-char strings,

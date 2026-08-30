@@ -19,7 +19,7 @@ mod stream;
 
 pub use ingest::{
     ArgKey, ChromeIngestor, FlowEdge, FlowEnd, IngestStats, TimeUnit, PID_GLOBAL, TID_ASYNC_BASE,
-    TID_COUNTER_BASE, TID_GLOBAL, TID_PROCESS_MARKERS,
+    TID_COUNTER_BASE, TID_GLOBAL, TID_OBJECT_BASE, TID_PROCESS_MARKERS,
 };
 pub use stream::{ingest_bytes, ingest_collect, ChromeStream};
 
@@ -265,6 +265,76 @@ mod tests {
         assert!(ing.stats.object >= 2_101);
         assert!(evs.len() >= 30_000);
         assert!(ing.process_names.len() >= 6);
+        let n66343 = ing
+            .thread_names
+            .keys()
+            .filter(|(p, _)| *p == 66343)
+            .count();
+        assert!(
+            n66343 < 32,
+            "pid 66343 must not explode into {n66343} threads (group O/D and async by name)"
+        );
+    }
+
+    #[test]
+    fn many_object_and_async_ids_share_name_lanes() {
+        let mut json = String::from("[");
+        json.push_str(r#"{"name":"process_name","ph":"M","pid":7,"args":{"name":"Renderer"}},"#);
+        json.push_str(r#"{"name":"thread_name","ph":"M","pid":7,"tid":1,"args":{"name":"Main"}},"#);
+        for i in 0..400 {
+            if i > 0 {
+                json.push(',');
+            }
+            use std::fmt::Write;
+            write!(
+                json,
+                r#"{{"name":"cc::Tile","ph":"O","ts":{i},"pid":7,"id":"{i}"}},"#,
+            )
+            .unwrap();
+            write!(
+                json,
+                r#"{{"name":"cc::Tile","ph":"D","ts":{},"pid":7,"id":"{i}"}},"#,
+                i + 1
+            )
+            .unwrap();
+            write!(
+                json,
+                r#"{{"name":"PendingTree","ph":"S","ts":{i},"pid":7,"tid":1,"id":{i}}},"#,
+            )
+            .unwrap();
+            write!(
+                json,
+                r#"{{"name":"PendingTree","ph":"F","ts":{},"pid":7,"tid":1,"id":{i}}}"#,
+                i + 5
+            )
+            .unwrap();
+        }
+        json.push(']');
+        let (ing, evs) = collect(&json);
+        let tids: HashSet<u32> = ing
+            .thread_names
+            .keys()
+            .filter(|(p, _)| *p == 7)
+            .map(|(_, t)| *t)
+            .collect();
+        assert!(
+            tids.len() < 8,
+            "400 object ids + 400 async ids must share name lanes, got {} tids: {tids:?}",
+            tids.len()
+        );
+        let objects: Vec<_> = evs
+            .iter()
+            .filter(|e| ing.intern.get(e.name_id) == Some("cc::Tile"))
+            .collect();
+        assert_eq!(objects.len(), 800);
+        let obj_tids: HashSet<_> = objects.iter().map(|e| e.tid).collect();
+        assert_eq!(obj_tids.len(), 1);
+        let asyncs: Vec<_> = evs.iter().filter(|e| e.kind == kind::API_TRACK).collect();
+        assert!(!asyncs.is_empty());
+        let async_tids: HashSet<_> = asyncs.iter().map(|e| e.tid).collect();
+        assert_eq!(async_tids.len(), 1);
+        assert_ne!(*obj_tids.iter().next().unwrap(), 1);
+        assert_ne!(*async_tids.iter().next().unwrap(), 1);
     }
 
     #[test]

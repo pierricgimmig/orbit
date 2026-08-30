@@ -49,12 +49,12 @@ machine/process/thread tree from `pid`/`tid` metadata.
 | `B`/`E`, `X` | `API_SCOPE` clips (paired by pid+tid, plus `id` when present) |
 | `I`/`i` (`g`/`p`/`t`) | zero-duration markers (global / process / thread) |
 | `C` | `VALUE` tracks (one series per counter name or `args` field) |
-| `S`/`T`/`F`, `n`/`o`/`d`, `b`/`e` | `API_TRACK` on a lane keyed by async **id**, not tid |
+| `S`/`T`/`F`, `n`/`o`/`d`, `b`/`e` | `API_TRACK` on a lane keyed by async **name** (ids still pair) |
 | `s`/`t`/`f` (+ `bind_id`) | instant markers + flow arrows (not stored on the 32-byte event) |
 | `M` | process/thread names and sort indices |
 | `P` + `stackFrames` | nested `FUNCTION_CALL` sample clips |
 | `R`, `c` | instants |
-| `N`/`O`/`D` | snapshot/instant on an object lane |
+| `N`/`O`/`D` | snapshot/instant on one lane **per object name** (not per id) |
 | `v` (memory dump) | single marker; dump payload is **not** interned |
 
 Timestamps are microseconds by default (`×1000` → ns). If `displayTimeUnit` is
@@ -82,13 +82,15 @@ Not browser GPU fps.
 
 | Trace | URL | Comp. | Uncomp. | Events out | Ingest | First view* | Zoom collect† |
 |---|---|---|---|---|---|---|---|
-| theverge (Chrome-native coverage) | [catapult `theverge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/main/tracing/test_data/theverge_trace.json) | 54,370,856 B | 54,370,856 B | 30,834 (58,103 in; B/E 54,224; C 344; S/T/F 785; O/D 2,101; 6 proc / 1989 threads) | 0.271 s / 19 MB RSS | 3 ms | 4292 fps |
+| theverge (Chrome-native coverage) | [catapult `theverge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/main/tracing/test_data/theverge_trace.json) | 54,370,856 B | 54,370,856 B | 30,834 (58,103 in; B/E 54,224; C 344; S/T/F 785; O/D 2,101; 6 proc / **25 threads**) | 0.271 s / 19 MB RSS | 3 ms | 4292 fps |
 | huge_trace | [catapult `huge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/master/tracing/test_data/huge_trace.json) | 13.2 MB | 13.2 MB | 53,223 | 0.076 s | 4 ms | 5802 fps |
 | Lighthouse progressive-app | [lighthouse fixture](https://raw.githubusercontent.com/GoogleChrome/lighthouse/main/core/test/fixtures/traces/progressive-app.json) | 2.9 MB | 2.9 MB | 10,562 | 0.029 s | 1 ms | 7849 fps |
 | wan22 rank4 (load-time hammer) | [HuggingFace `trace_rank4.json.gz`](https://huggingface.co/datasets/Akshat/wan2.2-rocm-profiles/resolve/main/wan22_profile_u4_r2/torch_profile/20260602-182319_stage_0_rep_0_diffusion_1780424599/trace_rank4.json.gz) (CC-BY-4.0) | 266,439,928 B | 3,311,005,743 B | 12,253,693 (X 12,119,297; flow 134,394; M 72; 18 proc / 32 threads) | **1806.9 s** / **6.22 GB RSS** | 1.346 s | 3.3 fps (2.83M prims in the 1/8 window) |
 
 \* CPU `collect_instances` / LOD choose after insert — time-to-first-timeline-prepare, not a painted WASM frame.  
 † 60× `collect_instances` on a 1/8 window; prepare rate, not vsync.
+
+theverge pid 66343 used to mint **1,866 threads** (1,847 object-id lanes + 14 async-id lanes + 4 real tids). Expanding that process cost **47.43 ms/frame** vs **5.63 ms** collapsed (`chrome_nav`, 60× sync+Y-cull collect). After grouping O/D and async by **name**: 11 threads (4 real + 3 object names + 3 async names + 1 counter), **0.76 ms/frame expanded** / **0.09 ms collapsed**.
 
 wan22 was streamed (gzip never materialized as a 3.08 GiB buffer; peak RSS
 is events + unique interned args — 12.1M intern ids, mostly per-event

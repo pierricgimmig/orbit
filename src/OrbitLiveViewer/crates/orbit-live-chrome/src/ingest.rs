@@ -15,6 +15,7 @@ use crate::id::{hash32, FlexId, Id2};
 pub const TID_GLOBAL: u32 = 0x7FFF_FFFE;
 pub const TID_PROCESS_MARKERS: u32 = 0x7FFF_FFFD;
 pub const TID_COUNTER_BASE: u32 = 0x4000_0000;
+pub const TID_OBJECT_BASE: u32 = 0x6000_0000;
 pub const TID_ASYNC_BASE: u32 = 0x8000_0000;
 pub const PID_GLOBAL: u32 = 0;
 
@@ -167,6 +168,7 @@ struct OpenDuration {
 struct OpenAsync {
     start_ns: u64,
     name_id: u32,
+    tid: u32,
     depth: u8,
     args_id: Option<u32>,
 }
@@ -193,9 +195,11 @@ pub struct ChromeIngestor {
     pub stats: IngestStats,
     duration_stacks: HashMap<(u32, u32), Vec<OpenDuration>>,
     async_open: HashMap<(u32, u64), Vec<OpenAsync>>,
-    async_tids: HashMap<(u32, u64), u32>,
+    /// Lane key is `(pid, name)` — chrome://tracing does not mint a row per id.
+    async_tids: HashMap<(u32, String), u32>,
+    async_lane_open: HashMap<u32, u8>,
     counter_tids: HashMap<(u32, String), u32>,
-    object_tids: HashMap<(u32, u64), u32>,
+    object_tids: HashMap<(u32, String), u32>,
     next_async_tid: u32,
     next_counter_tid: u32,
     next_object_tid: u32,
@@ -219,11 +223,12 @@ impl Default for ChromeIngestor {
             duration_stacks: HashMap::new(),
             async_open: HashMap::new(),
             async_tids: HashMap::new(),
+            async_lane_open: HashMap::new(),
             counter_tids: HashMap::new(),
             object_tids: HashMap::new(),
             next_async_tid: TID_ASYNC_BASE,
             next_counter_tid: TID_COUNTER_BASE,
-            next_object_tid: 0x6000_0000,
+            next_object_tid: TID_OBJECT_BASE,
             flow_open: HashMap::new(),
             pending_samples: Vec::new(),
         }
@@ -552,19 +557,18 @@ impl ChromeIngestor {
         (pid, id)
     }
 
-    fn async_tid(&mut self, pid: u32, id: u64, name: &str) -> u32 {
-        let tid = *self.async_tids.entry((pid, id)).or_insert_with(|| {
+    fn async_tid(&mut self, pid: u32, name: &str) -> u32 {
+        let key = if name.is_empty() {
+            "async".to_string()
+        } else {
+            name.to_string()
+        };
+        let tid = *self.async_tids.entry((pid, key.clone())).or_insert_with(|| {
             let t = self.next_async_tid;
             self.next_async_tid = self.next_async_tid.wrapping_add(1);
             t
         });
-        self.thread_names.entry((pid, tid)).or_insert_with(|| {
-            if name.is_empty() {
-                format!("async {id:#x}")
-            } else {
-                name.to_string()
-            }
-        });
+        self.thread_names.entry((pid, tid)).or_insert(key);
         tid
     }
 
@@ -574,14 +578,16 @@ impl ChromeIngestor {
         let start_ns = self.ts_ns(ev.ts);
         let name = ev.name.clone().unwrap_or_default();
         let name_id = self.intern.intern(&name);
-        let tid = self.async_tid(pid, id, &name);
+        let tid = self.async_tid(pid, &name);
         self.note_thread(pid, tid);
         let args_id = self.intern_args(&ev);
         let stack = self.async_open.entry((pid, id)).or_default();
-        let depth = stack.len().min(255) as u8;
+        let depth = *self.async_lane_open.get(&tid).unwrap_or(&0);
+        *self.async_lane_open.entry(tid).or_insert(0) = depth.saturating_add(1);
         stack.push(OpenAsync {
             start_ns,
             name_id,
+            tid,
             depth,
             args_id,
         });
@@ -594,12 +600,13 @@ impl ChromeIngestor {
         let start_ns = self.ts_ns(ev.ts);
         let name = ev.name.clone().unwrap_or_default();
         let name_id = self.intern.intern(&name);
-        let tid = self.async_tid(pid, id, &name);
-        let depth = self
+        let tid = self
             .async_open
             .get(&(pid, id))
-            .map(|s| s.len().min(255) as u8)
-            .unwrap_or(0);
+            .and_then(|s| s.last())
+            .map(|o| o.tid)
+            .unwrap_or_else(|| self.async_tid(pid, &name));
+        let depth = *self.async_lane_open.get(&tid).unwrap_or(&0);
         let args_id = self.intern_args(&ev);
         self.note_thread(pid, tid);
         let out = self.scope_event(start_ns, 1, pid, tid, name_id, depth, kind::API_TRACK);
@@ -612,9 +619,12 @@ impl ChromeIngestor {
         let (pid, id) = self.async_key(&ev);
         let end_ns = self.ts_ns(ev.ts);
         let name = ev.name.clone().unwrap_or_default();
-        let tid = self.async_tid(pid, id, &name);
+        let tid = self.async_tid(pid, &name);
         let stack = self.async_open.entry((pid, id)).or_default();
         let open = stack.pop();
+        if let Some(n) = self.async_lane_open.get_mut(&tid) {
+            *n = n.saturating_sub(1);
+        }
         let Some(open) = open else {
             self.stats.unmatched_end += 1;
             let name_id = self.intern.intern(&name);
@@ -834,13 +844,12 @@ impl ChromeIngestor {
     fn on_object(&mut self, ev: ChromeEvent, ch: char) -> Vec<LiveEvent> {
         self.stats.object += 1;
         let pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
-        let id = self.event_id(&ev).unwrap_or(0);
-        let tid = *self.object_tids.entry((pid, id)).or_insert_with(|| {
+        let name = ev.name.clone().unwrap_or_else(|| format!("object {ch}"));
+        let tid = *self.object_tids.entry((pid, name.clone())).or_insert_with(|| {
             let t = self.next_object_tid;
             self.next_object_tid = self.next_object_tid.wrapping_add(1);
             t
         });
-        let name = ev.name.clone().unwrap_or_else(|| format!("object {ch}"));
         self.thread_names
             .entry((pid, tid))
             .or_insert_with(|| name.clone());
@@ -911,9 +920,9 @@ impl ChromeIngestor {
             }
         }
         let asyncs = std::mem::take(&mut self.async_open);
-        for ((pid, id), stack) in asyncs {
-            let tid = *self.async_tids.get(&(pid, id)).unwrap_or(&TID_ASYNC_BASE);
+        for ((pid, _), stack) in asyncs {
             for open in stack {
+                let tid = open.tid;
                 let ev = self.scope_event(
                     open.start_ns,
                     end_ns.saturating_sub(open.start_ns).max(1),
