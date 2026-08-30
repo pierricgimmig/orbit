@@ -3,14 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Orbit Live" />
   <title>Orbit Live Viewer</title>
   <style>
+    :root {
+      --sat: env(safe-area-inset-top, 0px);
+      --sar: env(safe-area-inset-right, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --sal: env(safe-area-inset-left, 0px);
+    }
     html, body {
-      margin: 0; height: 100%; background: #0B0C0E; overflow: hidden;
-      overscroll-behavior: none; touch-action: none;
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      height: 100svh;
+      height: 100dvh;
+      min-height: 100%;
+      min-height: -webkit-fill-available;
+      background: #0B0C0E;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
     }
     canvas {
-      width: 100%; height: 100%; display: block; outline: none;
+      position: fixed;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      display: block; outline: none;
       /* Without this iOS Safari keeps pan and pinch for itself and never
          delivers a usable touchmove stream, so egui sees no gesture at all:
          no pinch-zoom, no drag. */
@@ -35,6 +57,31 @@
   </div>
   <script type="module">
     const canvas = document.getElementById("the_canvas_id");
+
+    // Fill the visual viewport (Safari URL / toolbars) so "fullscreen"
+    // still uses the on-screen height when the element API is missing.
+    let lastFit = "";
+    function fitVisualViewport() {
+      const vv = window.visualViewport;
+      const w = vv ? vv.width : window.innerWidth;
+      const h = vv ? vv.height : window.innerHeight;
+      const x = vv ? vv.offsetLeft : 0;
+      const y = vv ? vv.offsetTop : 0;
+      const key = `${w}x${h}@${x},${y}`;
+      if (key === lastFit) return;
+      lastFit = key;
+      canvas.style.left = `${x}px`;
+      canvas.style.top = `${y}px`;
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+    }
+    fitVisualViewport();
+    window.addEventListener("resize", fitVisualViewport);
+    window.addEventListener("orientationchange", fitVisualViewport);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", fitVisualViewport);
+      window.visualViewport.addEventListener("scroll", fitVisualViewport);
+    }
 
     // iOS Safari fires these non-standard events for pinch and double-tap and
     // zooms the *page* unless they are cancelled. touch-action alone does not

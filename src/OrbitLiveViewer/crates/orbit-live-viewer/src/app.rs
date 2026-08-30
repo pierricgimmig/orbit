@@ -44,7 +44,11 @@ use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
 const SIDE: f32 = 228.0;
-const HEADER_W: f32 = 196.0;
+const HEADER_W_WIDE: f32 = 196.0;
+/// iPhone (~390) and iPad portrait (~768–834). A laptop at 1280 stays wide.
+const NARROW_MAX_PX: f32 = 840.0;
+const HEADER_W_NARROW_MIN: f32 = 76.0;
+const HEADER_W_NARROW_MAX: f32 = 112.0;
 const TIME_SLIDER_H: f32 = 13.0;
 const TIME_SLIDER_MIN_THUMB: f32 = 8.0;
 /// `CaptureWindow` overlay: Color(0,0,0,128).
@@ -504,6 +508,14 @@ pub struct OrbitLiveApp {
     slider_grab: Option<f32>,
     fps_ema: f32,
     fullscreen: bool,
+    /// CSS Fullscreen API did not stick (typical iPhone). Hide chrome anyway.
+    immersive: bool,
+    pending_fs: u8,
+    header_w: f32,
+    side_w: f32,
+    was_narrow: bool,
+    compact_user: bool,
+    capture_user: bool,
     needs_repaint: bool,
     compact: bool,
     light_canvas: bool,
@@ -627,6 +639,13 @@ impl OrbitLiveApp {
             slider_grab: None,
             fps_ema: 0.0,
             fullscreen: false,
+            immersive: false,
+            pending_fs: 0,
+            header_w: HEADER_W_WIDE,
+            side_w: SIDE,
+            was_narrow: false,
+            compact_user: false,
+            capture_user: false,
             needs_repaint: false,
             compact: false,
             light_canvas: false,
@@ -1078,13 +1097,71 @@ impl OrbitLiveApp {
         }
     }
 
+    fn apply_layout(&mut self, width: f32) {
+        self.header_w = header_w_for(width);
+        self.side_w = if is_narrow_width(width) {
+            (width * 0.62).clamp(150.0, 220.0)
+        } else {
+            SIDE
+        };
+        let narrow = is_narrow_width(width);
+        if narrow == self.was_narrow {
+            return;
+        }
+        if narrow {
+            if !self.capture_user {
+                self.capture_open = false;
+            }
+            if !self.compact_user {
+                self.compact = true;
+            }
+        } else if !self.compact_user {
+            self.compact = false;
+        }
+        self.was_narrow = narrow;
+    }
+
+    fn chrome_collapsed(&self) -> bool {
+        chrome_collapsed(self.immersive, self.fullscreen, self.was_narrow)
+    }
+
     fn sync_fullscreen(&mut self, ctx: &Context) {
-        self.fullscreen = page_is_fullscreen(ctx);
+        let os = page_is_fullscreen(ctx);
+        if os {
+            self.fullscreen = true;
+            self.immersive = false;
+            self.pending_fs = 0;
+            return;
+        }
+        if self.pending_fs > 0 {
+            self.pending_fs -= 1;
+            if self.pending_fs == 0 {
+                self.immersive = true;
+                self.fullscreen = true;
+            }
+            return;
+        }
+        self.fullscreen = self.immersive;
     }
 
     fn set_fullscreen(&mut self, ctx: &Context, on: bool) {
-        set_page_fullscreen(ctx, on);
-        self.fullscreen = on;
+        if on {
+            let api = fullscreen_api_enabled();
+            set_page_fullscreen(ctx, true);
+            if api {
+                self.pending_fs = 8;
+                self.immersive = false;
+            } else {
+                self.immersive = true;
+                self.pending_fs = 0;
+            }
+            self.fullscreen = true;
+        } else {
+            set_page_fullscreen(ctx, false);
+            self.immersive = false;
+            self.pending_fs = 0;
+            self.fullscreen = false;
+        }
     }
 
     fn refresh_scope_stats(&mut self, t0: u64, t1: u64, y_cull: Option<YCull>) {
@@ -1335,7 +1412,211 @@ impl OrbitLiveApp {
         }
     }
 
+    fn transport_record(&mut self, ui: &mut Ui) {
+        let recording = self.recording || self.status.demo || self.status.capturing;
+        if recording {
+            if pill(ui, "Stop", true)
+                .on_hover_text(if self.status.hooks && !self.status.demo {
+                    "Stop capture"
+                } else {
+                    "Stop demo"
+                })
+                .clicked()
+            {
+                self.stop_record();
+            }
+        } else {
+            let record_ok = !self.status.hooks || self.selected_pid.is_some();
+            let resp = pill(ui, "Rec", false).on_hover_text(if self.status.hooks {
+                if self.selected_pid.is_some() {
+                    "Start a real OrbitService capture of the selected process"
+                } else {
+                    "Select a process in the capture strip first"
+                }
+            } else {
+                "No OrbitService hooks — Record starts the demo producer"
+            });
+            if resp.clicked() && record_ok {
+                self.start_record();
+            }
+        }
+    }
+
+    fn transport_open(&mut self, ui: &mut Ui) {
+        if pill(ui, "Open", false)
+            .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+            .clicked()
+        {
+            #[cfg(target_arch = "wasm32")]
+            chrome_load::start_open_dialog(&self.pending_file);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(load) = chrome_load::start_open_dialog() {
+                self.begin_trace_load(load);
+            }
+        }
+    }
+
+    fn transport_overflow_items(&mut self, ui: &mut Ui) {
+        ui.set_min_width(220.0);
+        if !self.status.hooks || !self.status.capturing {
+            if ui
+                .selectable_label(self.status.demo, "Demo")
+                .on_hover_text("Dummy scopes (no OrbitService attach)")
+                .clicked()
+            {
+                if self.status.demo || self.recording {
+                    self.stop_record();
+                } else {
+                    self.start_demo_path();
+                }
+                ui.close();
+            }
+        }
+        if ui
+            .button("Open…")
+            .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+            .clicked()
+        {
+            #[cfg(target_arch = "wasm32")]
+            chrome_load::start_open_dialog(&self.pending_file);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(load) = chrome_load::start_open_dialog() {
+                self.begin_trace_load(load);
+            }
+            ui.close();
+        }
+        let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
+        if ui
+            .selectable_label(theverge_on, chrome_load::THEVERGE_LABEL)
+            .on_hover_text(
+                "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
+            )
+            .clicked()
+        {
+            self.begin_trace_load(chrome_load::start_theverge());
+            ui.close();
+        }
+        if ui
+            .selectable_label(self.capture_open, "Capture")
+            .on_hover_text("Process, sampling, and hooks")
+            .clicked()
+        {
+            self.capture_open = !self.capture_open;
+            self.capture_user = true;
+            ui.close();
+        }
+        if ui.selectable_label(self.follow, "Follow").clicked() {
+            self.follow = !self.follow;
+        }
+        ui.separator();
+        self.paint_search(ui);
+        ui.separator();
+        if ui
+            .selectable_label(self.light_canvas, "Paper")
+            .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
+            .clicked()
+        {
+            self.light_canvas = !self.light_canvas;
+        }
+        if ui.selectable_label(self.advanced, "Inspector").clicked() {
+            self.advanced = !self.advanced;
+            ui.close();
+        }
+        if ui
+            .selectable_label(self.compact, "Compact tracks")
+            .on_hover_text("Track density")
+            .clicked()
+        {
+            self.compact = !self.compact;
+            self.compact_user = true;
+        }
+        ui.separator();
+        self.paint_verbose_stats(ui);
+    }
+
+    fn paint_verbose_stats(&self, ui: &mut Ui) {
+        if let Some(load) = &self.trace_load {
+            ui.label(
+                RichText::new(load.progress_line())
+                    .font(FontId::monospace(11.0))
+                    .color(theme::ACCENT),
+            );
+        } else if let Some(name) = &self.trace_name {
+            ui.label(
+                RichText::new(format!(
+                    "trace {name}  {} ev",
+                    fmt_int(self.index.event_count() as u64)
+                ))
+                .font(FontId::monospace(11.0))
+                .color(theme::TEXT),
+            );
+        }
+        ui.label(
+            RichText::new(format!("{} live", fmt_int(self.status.events_live)))
+                .font(FontId::monospace(11.0))
+                .color(theme::TEXT),
+        );
+        if self.visible_count > 0 || !self.draw_label.is_empty() {
+            ui.label(
+                RichText::new(format!(
+                    "{} vis   {}",
+                    fmt_int(self.visible_count as u64),
+                    self.draw_label
+                ))
+                .font(FontId::monospace(11.0))
+                .color(theme::MUTED),
+            );
+        }
+        if !self.lod_label.is_empty() {
+            ui.label(
+                RichText::new(self.lod_label)
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+        }
+        let link = format!(
+            "{}  {}",
+            if self.http_ok { "http" } else { "http…" },
+            if self.ws_ok { "ws" } else { "ws…" }
+        );
+        ui.label(
+            RichText::new(link)
+                .font(FontId::monospace(11.0))
+                .color(theme::MUTED),
+        );
+    }
+
+    fn transport_more(&mut self, ui: &mut Ui) {
+        let more = pill(ui, "⋮", false).on_hover_text("More");
+        egui::Popup::menu(&more).show(|ui| self.transport_overflow_items(ui));
+    }
+
+    fn transport_narrow_bar(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            self.transport_record(ui);
+            self.transport_more(ui);
+            if let Some(load) = &self.trace_load {
+                ui.label(
+                    RichText::new(load.progress_line())
+                        .font(FontId::monospace(10.5))
+                        .color(theme::ACCENT),
+                );
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(6.0);
+                if fullscreen_pill(ui, self.fullscreen || self.immersive).clicked() {
+                    self.set_fullscreen(ui.ctx(), !(self.fullscreen || self.immersive));
+                }
+            });
+        });
+    }
+
     fn transport(&mut self, ui: &mut Ui) {
+        if self.chrome_collapsed() || self.was_narrow {
+            self.transport_narrow_bar(ui);
+            return;
+        }
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(
@@ -1346,31 +1627,33 @@ impl OrbitLiveApp {
                     .color(theme::TEXT),
             );
             ui.add_space(12.0);
-            let recording = self.recording || self.status.demo || self.status.capturing;
-            if recording {
-                if pill(ui, "Stop", true)
-                    .on_hover_text(if self.status.hooks && !self.status.demo {
-                        "Stop capture"
-                    } else {
-                        "Stop demo"
-                    })
-                    .clicked()
-                {
-                    self.stop_record();
-                }
-            } else {
-                let record_ok = !self.status.hooks || self.selected_pid.is_some();
-                let resp = pill(ui, "Record", false).on_hover_text(if self.status.hooks {
-                    if self.selected_pid.is_some() {
-                        "Start a real OrbitService capture of the selected process"
-                    } else {
-                        "Select a process in the capture strip first"
+            {
+                let recording = self.recording || self.status.demo || self.status.capturing;
+                if recording {
+                    if pill(ui, "Stop", true)
+                        .on_hover_text(if self.status.hooks && !self.status.demo {
+                            "Stop capture"
+                        } else {
+                            "Stop demo"
+                        })
+                        .clicked()
+                    {
+                        self.stop_record();
                     }
                 } else {
-                    "No OrbitService hooks — Record starts the demo producer"
-                });
-                if resp.clicked() && record_ok {
-                    self.start_record();
+                    let record_ok = !self.status.hooks || self.selected_pid.is_some();
+                    let resp = pill(ui, "Record", false).on_hover_text(if self.status.hooks {
+                        if self.selected_pid.is_some() {
+                            "Start a real OrbitService capture of the selected process"
+                        } else {
+                            "Select a process in the capture strip first"
+                        }
+                    } else {
+                        "No OrbitService hooks — Record starts the demo producer"
+                    });
+                    if resp.clicked() && record_ok {
+                        self.start_record();
+                    }
                 }
             }
             if !self.status.hooks || !self.status.capturing {
@@ -1385,17 +1668,7 @@ impl OrbitLiveApp {
                     }
                 }
             }
-            if pill(ui, "Open", false)
-                .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
-                .clicked()
-            {
-                #[cfg(target_arch = "wasm32")]
-                chrome_load::start_open_dialog(&self.pending_file);
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(load) = chrome_load::start_open_dialog() {
-                    self.begin_trace_load(load);
-                }
-            }
+            self.transport_open(ui);
             let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
             if pill(ui, chrome_load::THEVERGE_LABEL, theverge_on)
                 .on_hover_text(
@@ -1410,6 +1683,7 @@ impl OrbitLiveApp {
                 .clicked()
             {
                 self.capture_open = !self.capture_open;
+                self.capture_user = true;
             }
             if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
@@ -1417,53 +1691,7 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_search(ui);
             ui.add_space(8.0);
-            if let Some(load) = &self.trace_load {
-                ui.label(
-                    RichText::new(load.progress_line())
-                        .font(FontId::monospace(11.0))
-                        .color(theme::ACCENT),
-                );
-            } else if let Some(name) = &self.trace_name {
-                ui.label(
-                    RichText::new(format!(
-                        "trace {name}  {} ev",
-                        fmt_int(self.index.event_count() as u64)
-                    ))
-                    .font(FontId::monospace(11.0))
-                    .color(theme::TEXT),
-                );
-            }
-            ui.label(
-                RichText::new(format!("{} live", fmt_int(self.status.events_live)))
-                    .font(FontId::monospace(11.5))
-                    .color(theme::TEXT),
-            );
-            if self.visible_count > 0 || !self.draw_label.is_empty() {
-                ui.label(
-                    RichText::new(format!(
-                        "{} vis   {}",
-                        fmt_int(self.visible_count as u64),
-                        self.draw_label
-                    ))
-                    .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
-                );
-            }
-            ui.label(
-                RichText::new(self.lod_label)
-                    .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
-            );
-            let link = format!(
-                "{}  {}",
-                if self.http_ok { "http" } else { "http…" },
-                if self.ws_ok { "ws" } else { "ws…" }
-            );
-            ui.label(
-                RichText::new(link)
-                    .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
-            );
+            self.paint_verbose_stats(ui);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
                 if fullscreen_pill(ui, self.fullscreen).clicked() {
@@ -1471,6 +1699,7 @@ impl OrbitLiveApp {
                 }
                 if shape_pill(ui, self.compact, "Track density", paint_density_icon).clicked() {
                     self.compact = !self.compact;
+                    self.compact_user = true;
                 }
                 if pill(ui, "Paper", self.light_canvas)
                     .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
@@ -1480,13 +1709,6 @@ impl OrbitLiveApp {
                 }
                 if shape_pill(ui, self.advanced, "Inspector", paint_inspector_icon).clicked() {
                     self.advanced = !self.advanced;
-                }
-                if self.fps_ema > 0.0 {
-                    ui.label(
-                        RichText::new(format!("{:.0} fps", self.fps_ema))
-                            .font(FontId::monospace(11.0))
-                            .color(theme::MUTED),
-                    );
                 }
             });
         });
@@ -1910,8 +2132,9 @@ impl OrbitLiveApp {
         let timebar_h = 26.0;
         let (time_rect, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), timebar_h), Sense::hover());
-        let header_cut = time_rect.with_max_x(time_rect.left() + HEADER_W);
-        let ruler = time_rect.with_min_x(time_rect.left() + HEADER_W);
+        let header_w = self.header_w;
+        let header_cut = time_rect.with_max_x(time_rect.left() + header_w);
+        let ruler = time_rect.with_min_x(time_rect.left() + header_w);
         ui.painter().rect_filled(header_cut, 0.0, theme::RAIL);
         ui.painter().text(
             header_cut.left_center() + Vec2::new(12.0, 0.0),
@@ -1920,7 +2143,7 @@ impl OrbitLiveApp {
             FontId::new(9.5, fonts::medium()),
             theme::MUTED,
         );
-        if self.dev || self.status.self_profile {
+        if (self.dev || self.status.self_profile) && header_w >= 140.0 {
             ui.painter().text(
                 header_cut.left_center() + Vec2::new(62.0, 0.0),
                 Align2::LEFT_CENTER,
@@ -1976,7 +2199,7 @@ impl OrbitLiveApp {
             .show_inside(ui, |ui| {
                 let bar = ui.max_rect();
                 ui.painter().rect_filled(bar, 0.0, theme::RAIL);
-                let track = bar.with_min_x(bar.left() + HEADER_W);
+                let track = bar.with_min_x(bar.left() + header_w);
                 self.handle_time_slider(ui, track);
             });
 
@@ -1997,8 +2220,8 @@ impl OrbitLiveApp {
         let out = scroll.show(ui, |ui| {
             let (rect, _) =
                 ui.allocate_exact_size(Vec2::new(avail.x.max(1.0), height), Sense::hover());
-            let head = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + HEADER_W, rect.max.y));
-            let body = Rect::from_min_max(Pos2::new(rect.min.x + HEADER_W, rect.min.y), rect.max);
+            let head = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + header_w, rect.max.y));
+            let body = Rect::from_min_max(Pos2::new(rect.min.x + header_w, rect.min.y), rect.max);
 
             ui.painter().rect_filled(head, 0.0, theme::RAIL);
             ui.painter()
@@ -2236,6 +2459,11 @@ impl OrbitLiveApp {
         // whole drag. Painting it here reads the same `self.measure` the lane
         // overlay just used, whichever region the drag started in.
         paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
+        let fps_area = Rect::from_min_max(
+            Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
+            ui.max_rect().max,
+        );
+        paint_fps_chip(ui, fps_area, self.fps_ema);
     }
 
     fn paint_headers(
@@ -2371,6 +2599,7 @@ impl OrbitLiveApp {
         r: Rect,
         interactive: bool,
     ) {
+        let tight = self.header_w < 140.0;
         match row.id {
             RowId::Scheduler => {
                 let n = TrackStrip::scheduler_core_count_in(&self.index);
@@ -2441,15 +2670,20 @@ impl OrbitLiveApp {
                     self.mark_layout_changed();
                 }
                 let name = self.process_display_name(pid);
+                let proc_label = if tight {
+                    format!("{pid}  {name}")
+                } else {
+                    format!("process  {pid}  {name}")
+                };
                 ui.painter().text(
-                    Pos2::new(r.left() + 30.0, r.center().y),
+                    Pos2::new(r.left() + if tight { 22.0 } else { 30.0 }, r.center().y),
                     Align2::LEFT_CENTER,
-                    format!("process  {pid}  {name}"),
+                    proc_label,
                     FontId::new(11.0, fonts::medium()),
                     theme::TEXT,
                 );
                 let hidden_n = self.tracks.hidden_in_process(pid);
-                if hidden_n > 0 {
+                if hidden_n > 0 && !tight {
                     let chip = Rect::from_center_size(
                         Pos2::new(r.right() - 36.0, r.center().y),
                         Vec2::new(64.0, 16.0),
@@ -2476,10 +2710,19 @@ impl OrbitLiveApp {
             RowId::Thread(th) => {
                 if !interactive {
                     let tname = self.thread_display_name(th.pid, th.tid);
+                    let label = if tight {
+                        if tname.is_empty() {
+                            format!("{}", th.tid)
+                        } else {
+                            tname
+                        }
+                    } else {
+                        format!("thread  {}  {tname}", th.tid)
+                    };
                     ui.painter().text(
-                        Pos2::new(r.left() + 64.0, r.center().y),
+                        Pos2::new(r.left() + if tight { 36.0 } else { 64.0 }, r.center().y),
                         Align2::LEFT_CENTER,
-                        format!("thread  {}  {tname}", th.tid),
+                        label,
                         FontId::new(11.0, FontFamily::Proportional),
                         theme::TEXT,
                     );
@@ -2494,13 +2737,18 @@ impl OrbitLiveApp {
                         (THREAD_H * self.tracks.scale.max(0.01)).min(r.height()),
                     ),
                 );
-                let handle = Rect::from_min_size(
-                    Pos2::new(title.left() + 20.0, title.top()),
-                    Vec2::new(14.0, title.height()),
-                );
-                paint_handle_dots(ui.painter(), handle, dragging);
+                let chevron_x = if tight { 14.0 } else { 36.0 };
+                let chip_x = if tight { 28.0 } else { 54.0 };
+                let text_x = if tight { 38.0 } else { 64.0 };
+                if !tight {
+                    let handle = Rect::from_min_size(
+                        Pos2::new(title.left() + 20.0, title.top()),
+                        Vec2::new(14.0, title.height()),
+                    );
+                    paint_handle_dots(ui.painter(), handle, dragging);
+                }
                 let chevron_hit = Rect::from_center_size(
-                    Pos2::new(title.left() + 36.0, title.center().y),
+                    Pos2::new(title.left() + chevron_x, title.center().y),
                     Vec2::splat(14.0),
                 );
                 let hide = Rect::from_center_size(
@@ -2523,23 +2771,32 @@ impl OrbitLiveApp {
                 if resp.drag_stopped() {
                     self.tracks.end_drag();
                 }
-                if chevron(ui, title, 36.0, open, ("t", th.pid, th.tid)) {
+                if chevron(ui, title, chevron_x, open, ("t", th.pid, th.tid)) {
                     self.tracks.toggle(row.id);
                     self.mark_layout_changed();
                 }
                 let chip =
                     theme::display_argb(THREAD_PALETTE[(th.tid as usize) % THREAD_PALETTE.len()]);
                 let chip_r = Rect::from_center_size(
-                    Pos2::new(title.left() + 54.0, title.center().y),
+                    Pos2::new(title.left() + chip_x, title.center().y),
                     Vec2::splat(6.0),
                 );
                 ui.painter()
                     .rect_filled(chip_r, theme::TRACK_RADIUS, c32(chip));
                 let tname = self.thread_display_name(th.pid, th.tid);
+                let thread_label = if tight {
+                    if tname.is_empty() {
+                        format!("{}", th.tid)
+                    } else {
+                        tname
+                    }
+                } else {
+                    format!("thread  {}  {tname}", th.tid)
+                };
                 ui.painter().text(
-                    Pos2::new(title.left() + 64.0, title.center().y),
+                    Pos2::new(title.left() + text_x, title.center().y),
                     Align2::LEFT_CENTER,
-                    format!("thread  {}  {tname}", th.tid),
+                    thread_label,
                     FontId::new(11.0, FontFamily::Proportional),
                     theme::TEXT,
                 );
@@ -3394,6 +3651,7 @@ impl eframe::App for OrbitLiveApp {
             let dt_raw = ctx.input(|i| i.stable_dt);
             let dt = dt_raw.clamp(0.0, 0.05);
             self.note_fps(dt_raw);
+            self.apply_layout(ctx.screen_rect().width());
             self.sync_fullscreen(ctx);
             self.take_dropped_traces(ctx);
             self.pump_trace_load();
@@ -3447,14 +3705,25 @@ impl eframe::App for OrbitLiveApp {
                 }
             }
 
+            let sat = safe_area_insets();
             {
                 let _chrome = devf.scope(TID_UI, NAME_CHROME);
+                let bar_h = if self.chrome_collapsed() || self.was_narrow {
+                    32.0
+                } else {
+                    36.0
+                };
                 egui::TopBottomPanel::top("orbit_transport")
-                    .exact_height(36.0)
+                    .exact_height(bar_h + sat[0])
                     .frame(
                         Frame::new()
                             .fill(theme::PANEL)
-                            .inner_margin(Margin::symmetric(4, 4))
+                            .inner_margin(Margin {
+                                left: 4 + sat_i8(sat[3]),
+                                right: 4 + sat_i8(sat[1]),
+                                top: 4 + sat_i8(sat[0]),
+                                bottom: 4,
+                            })
                             .stroke(Stroke::NONE)
                             .shadow(egui::Shadow {
                                 offset: [0, 2],
@@ -3465,7 +3734,7 @@ impl eframe::App for OrbitLiveApp {
                     )
                     .show(ctx, |ui| self.transport(ui));
 
-                if self.capture_open {
+                if self.capture_open && !self.chrome_collapsed() {
                     egui::TopBottomPanel::top("orbit_capture_strip")
                         .exact_height(if self.hook_hits.is_empty() || self.hook_query.is_empty() {
                             86.0
@@ -3483,7 +3752,7 @@ impl eframe::App for OrbitLiveApp {
 
                 if self.advanced {
                     egui::SidePanel::left("orbit_chrome")
-                        .exact_width(SIDE)
+                        .exact_width(self.side_w)
                         .resizable(false)
                         .frame(
                             Frame::new()
@@ -3496,8 +3765,16 @@ impl eframe::App for OrbitLiveApp {
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| self.chrome(ui));
                         });
-                    ui_hairline_sidebar(ctx);
+                    ui_hairline_sidebar(ctx, self.side_w);
                 }
+            }
+
+            if sat[2] > 0.5 {
+                egui::TopBottomPanel::bottom("orbit_safe_bottom")
+                    .exact_height(sat[2])
+                    .show_separator_line(false)
+                    .frame(Frame::new().fill(theme::RAIL).inner_margin(0))
+                    .show(ctx, |_| {});
             }
 
             egui::CentralPanel::default()
@@ -3598,9 +3875,9 @@ impl eframe::App for OrbitLiveApp {
     }
 }
 
-fn ui_hairline_sidebar(ctx: &Context) {
+fn ui_hairline_sidebar(ctx: &Context, side_w: f32) {
     let screen = ctx.screen_rect();
-    let x = SIDE;
+    let x = side_w;
     ctx.layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         egui::Id::new("orbit_side_rule"),
@@ -3678,14 +3955,129 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     )
 }
 
+fn is_narrow_width(width: f32) -> bool {
+    width < NARROW_MAX_PX
+}
+
+fn header_w_for(width: f32) -> f32 {
+    if is_narrow_width(width) {
+        (width * 0.24).clamp(HEADER_W_NARROW_MIN, HEADER_W_NARROW_MAX)
+    } else {
+        HEADER_W_WIDE
+    }
+}
+
+fn chrome_collapsed(immersive: bool, fullscreen: bool, narrow: bool) -> bool {
+    immersive || (fullscreen && narrow)
+}
+
+fn sat_i8(v: f32) -> i8 {
+    v.round().clamp(0.0, 120.0) as i8
+}
+
+fn parse_css_px(s: &str) -> f32 {
+    s.trim()
+        .trim_end_matches("px")
+        .trim()
+        .parse::<f32>()
+        .unwrap_or(0.0)
+        .max(0.0)
+}
+
+/// `[top, right, bottom, left]` from `env(safe-area-inset-*)`.
+fn safe_area_insets() -> [f32; 4] {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let Some(window) = web_sys::window() else {
+            return [0.0; 4];
+        };
+        let Some(el) = window.document().and_then(|d| d.document_element()) else {
+            return [0.0; 4];
+        };
+        let Ok(Some(style)) = window.get_computed_style(&el) else {
+            return [0.0; 4];
+        };
+        let px = |name: &str| {
+            style
+                .get_property_value(name)
+                .ok()
+                .map(|s| parse_css_px(&s))
+                .unwrap_or(0.0)
+        };
+        [px("--sat"), px("--sar"), px("--sab"), px("--sal")]
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        [0.0; 4]
+    }
+}
+
+fn fullscreen_api_enabled() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        wasm_fullscreen_flag("fullscreenEnabled") || wasm_fullscreen_flag("webkitFullscreenEnabled")
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_fullscreen_flag(name: &str) -> bool {
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return false;
+    };
+    let v = wasm_bindgen::JsValue::from(doc);
+    js_sys::Reflect::get(&v, &wasm_bindgen::JsValue::from_str(name))
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_call(target: &wasm_bindgen::JsValue, name: &str) -> bool {
+    use wasm_bindgen::JsCast;
+    let Ok(f) = js_sys::Reflect::get(target, &wasm_bindgen::JsValue::from_str(name)) else {
+        return false;
+    };
+    let Ok(f) = f.dyn_into::<js_sys::Function>() else {
+        return false;
+    };
+    f.call0(target).is_ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn request_any_fullscreen(el: &web_sys::Element) -> bool {
+    let v = wasm_bindgen::JsValue::from(el.clone());
+    wasm_call(&v, "requestFullscreen")
+        || wasm_call(&v, "webkitRequestFullscreen")
+        || wasm_call(&v, "webkitRequestFullScreen")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn exit_any_fullscreen(doc: &web_sys::Document) {
+    let v = wasm_bindgen::JsValue::from(doc.clone());
+    if !wasm_call(&v, "exitFullscreen") {
+        let _ = wasm_call(&v, "webkitExitFullscreen");
+    }
+}
+
 fn page_is_fullscreen(ctx: &Context) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = ctx;
-        web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.fullscreen_element())
-            .is_some()
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+            return false;
+        };
+        if doc.fullscreen_element().is_some() {
+            return true;
+        }
+        let v = wasm_bindgen::JsValue::from(doc);
+        js_sys::Reflect::get(&v, &wasm_bindgen::JsValue::from_str("webkitFullscreenElement"))
+            .ok()
+            .map(|el| !el.is_null() && !el.is_undefined())
+            .unwrap_or(false)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -3701,18 +4093,49 @@ fn set_page_fullscreen(ctx: &Context, on: bool) {
             return;
         };
         if on {
-            // Click lands on the eframe canvas; request on that element first
-            // (documentElement is the fallback the page contract asked for).
-            let el = doc
-                .get_element_by_id("the_canvas_id")
-                .or_else(|| doc.document_element());
-            if let Some(el) = el {
-                let _ = el.request_fullscreen();
+            let mut tried = false;
+            if let Some(el) = doc.document_element() {
+                tried = request_any_fullscreen(&el);
+            }
+            if !tried {
+                if let Some(body) = doc.body() {
+                    let el: web_sys::Element = body.into();
+                    tried = request_any_fullscreen(&el);
+                }
+            }
+            if !tried {
+                if let Some(el) = doc.get_element_by_id("the_canvas_id") {
+                    let _ = request_any_fullscreen(&el);
+                }
             }
         } else {
-            doc.exit_fullscreen();
+            exit_any_fullscreen(&doc);
         }
     }
+}
+
+fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32) {
+    if fps <= 0.0 || !area.is_finite() || area.width() < 24.0 {
+        return;
+    }
+    let label = format!("{:.0} fps", fps);
+    let font = FontId::monospace(11.0);
+    let galley = ui.fonts(|f| f.layout_no_wrap(label, font, theme::TEXT));
+    let pad = Vec2::new(6.0, 3.0);
+    let size = galley.size() + pad * 2.0;
+    let rect = Rect::from_min_size(
+        Pos2::new(area.right() - size.x - 8.0, area.top() + 6.0),
+        size,
+    );
+    if !area.intersects(rect) {
+        return;
+    }
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("orbit_fps_chip"),
+    ));
+    painter.rect_filled(rect, 3.0, Color32::from_black_alpha(140));
+    painter.galley(rect.min + pad, galley, theme::TEXT);
 }
 
 fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
@@ -4753,6 +5176,37 @@ mod tests {
     use crate::tracks::TrackStrip;
     use orbit_live_event::{chrome, kind, LiveEvent};
     use orbit_live_render::collect_instances;
+
+    #[test]
+    fn narrow_phone_width_shrinks_track_column() {
+        assert!(is_narrow_width(390.0));
+        assert!(is_narrow_width(834.0));
+        assert!(!is_narrow_width(1280.0));
+        let phone = header_w_for(390.0);
+        assert!(
+            (HEADER_W_NARROW_MIN..HEADER_W_NARROW_MAX + 0.01).contains(&phone),
+            "phone header_w={phone}"
+        );
+        assert!(phone < 1280.0 * 0.4);
+        assert_eq!(header_w_for(1280.0), HEADER_W_WIDE);
+        assert!(header_w_for(390.0) < header_w_for(1280.0) * 0.6);
+    }
+
+    #[test]
+    fn chrome_collapse_is_immersive_or_narrow_fullscreen() {
+        assert!(!chrome_collapsed(false, false, false));
+        assert!(!chrome_collapsed(false, true, false), "desktop FS keeps toolbar");
+        assert!(chrome_collapsed(false, true, true));
+        assert!(chrome_collapsed(true, false, true));
+        assert!(chrome_collapsed(true, false, false));
+    }
+
+    #[test]
+    fn parse_css_px_reads_safe_area() {
+        assert!((parse_css_px("47px") - 47.0).abs() < 1e-6);
+        assert_eq!(parse_css_px("0px"), 0.0);
+        assert_eq!(parse_css_px(""), 0.0);
+    }
 
     #[test]
     fn orbit_palette_matches_fusion() {
