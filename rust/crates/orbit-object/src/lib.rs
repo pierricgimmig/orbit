@@ -21,12 +21,16 @@ use object::read::elf::{Dyn, FileHeader, ProgramHeader, SectionHeader};
 use object::Endianness;
 
 mod coff;
+mod coff_symbols;
 mod debuglink;
 mod lineinfo;
 mod sections;
 mod symbols;
 mod unwind;
 pub use coff::{is_pe, no_pdb_debug_info_error, parse_coff_metadata, CoffMetadata, PdbDebugInfo};
+pub use coff_symbols::{
+    exception_table_symbols, export_table_symbols, has_export_table, unwind_ranges, UnwindRange,
+};
 pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
 pub use lineinfo::{line_info, no_line_info_error, LineInfo};
 pub use symbols::{load_symbols, Symbol, SymbolTable};

@@ -4,18 +4,21 @@
 
 #include "RustCoffFile.h"
 
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_format.h>
 
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "Compare.h"
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/symbol.pb.h"
+#include "ObjectUtils/SymbolsFile.h"
 #include "ObjectUtils/WindowsBuildIdUtils.h"
 #include "OrbitBase/Logging.h"
 #include "orbit_object_ffi.h"
@@ -28,6 +31,11 @@ using orbit_grpc_protos::ModuleInfo;
 using orbit_object_utils::CoffFile;
 using orbit_object_utils::PdbDebugInfo;
 
+struct OrbitElfSymbolsDeleter {
+  void operator()(OrbitElfSymbols* handle) const { orbit_elf_symbols_free(handle); }
+};
+using OrbitElfSymbolsPtr = std::unique_ptr<OrbitElfSymbols, OrbitElfSymbolsDeleter>;
+
 struct OrbitCoffMetadataDeleter {
   void operator()(OrbitCoffMetadata* handle) const { orbit_coff_free(handle); }
 };
@@ -38,10 +46,12 @@ using OrbitCoffMetadataPtr = std::unique_ptr<OrbitCoffMetadata, OrbitCoffMetadat
 class RustCoffFile : public CoffFile {
  public:
   RustCoffFile(std::filesystem::path file_path, OrbitCoffMetadataPtr metadata,
-               std::unique_ptr<CoffFile> cpp_delegate, bool compare)
+               std::unique_ptr<CoffFile> cpp_delegate, std::vector<uint8_t> bytes, bool compare)
       : file_path_{std::move(file_path)},
         metadata_{std::move(metadata)},
-        cpp_{std::move(cpp_delegate)} {
+        cpp_{std::move(cpp_delegate)},
+        bytes_{std::move(bytes)},
+        compare_{compare} {
     orbit_coff_facts(metadata_.get(), &facts_);
 
     const size_t count = orbit_coff_section_count(metadata_.get());
@@ -119,23 +129,158 @@ class RustCoffFile : public CoffFile {
   [[nodiscard]] bool HasDebugSymbols() const override {
     return cpp_->HasDebugSymbols();  // ORBIT_PORT_DELEGATED
   }
+  [[nodiscard]] bool HasExportTable() const override {
+    const bool rust = orbit_coff_has_export_table(bytes_.data(), bytes_.size()) != 0;
+    if (compare_) CheckAgree("CoffFile::HasExportTable", rust, cpp_->HasExportTable());
+    return rust;
+  }
+
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
   LoadSymbolsFromExportTable() override {
-    return cpp_->LoadSymbolsFromExportTable();  // ORBIT_PORT_DELEGATED
+    return LoadTable(kExportTable, "CoffFile::LoadSymbolsFromExportTable",
+                     [this] { return cpp_->LoadSymbolsFromExportTable(); });
   }
-  [[nodiscard]] bool HasExportTable() const override {
-    return cpp_->HasExportTable();  // ORBIT_PORT_DELEGATED
-  }
+
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
   LoadExceptionTableEntriesAsSymbols() override {
-    return cpp_->LoadExceptionTableEntriesAsSymbols();  // ORBIT_PORT_DELEGATED
+    return LoadTable(kExceptionTable, "CoffFile::LoadExceptionTableEntriesAsSymbols",
+                     [this] { return cpp_->LoadExceptionTableEntriesAsSymbols(); });
   }
+
+  // Mirrors CoffFileImpl: export-table symbols first, then unwind ranges for
+  // addresses the Export Table did not already cover, then size deduction.
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
   LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols() override {
-    return cpp_->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols();  // ORBIT_PORT_DELEGATED
+    static constexpr std::string_view kErrorPrefix = "Unable to load fallback symbols: ";
+
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> exports = LoadTableRaw(kExportTable);
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> unwind = LoadTableRaw(kExceptionTable);
+
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> rust_result = ErrorMessage{""};
+    if (exports.has_error() && unwind.has_error()) {
+      rust_result = ErrorMessage{absl::StrFormat("%s1) %s 2) %s", kErrorPrefix,
+                                                 exports.error().message(),
+                                                 unwind.error().message())};
+    } else {
+      std::vector<orbit_grpc_protos::SymbolInfo> combined;
+      absl::flat_hash_set<uint64_t> export_addresses;
+      if (exports.has_value()) {
+        for (orbit_grpc_protos::SymbolInfo& symbol : *exports.value().mutable_symbol_infos()) {
+          export_addresses.insert(symbol.address());
+          // The Export Table has no sizes. Leaf functions have no
+          // RUNTIME_FUNCTION either, so they arrived as zero; restore the
+          // placeholder so the deduction below can fill them in.
+          if (symbol.size() == 0) {
+            symbol.set_size(orbit_object_utils::SymbolsFile::kUnknownSymbolSize);
+          }
+          combined.emplace_back(std::move(symbol));
+        }
+      }
+      if (unwind.has_value()) {
+        for (orbit_grpc_protos::SymbolInfo& symbol : *unwind.value().mutable_symbol_infos()) {
+          if (export_addresses.contains(symbol.address())) continue;
+          combined.emplace_back(std::move(symbol));
+        }
+      }
+      // Stays C++: a pure post-processing pass over the protobuf with no LLVM
+      // dependency, shared with the COFF symbol-table path that still
+      // delegates.
+      orbit_object_utils::SymbolsFile::DeduceDebugSymbolMissingSizesAsDistanceFromNextSymbol(
+          &combined);
+
+      orbit_grpc_protos::ModuleSymbols module_symbols;
+      for (orbit_grpc_protos::SymbolInfo& symbol : combined) {
+        *module_symbols.add_symbol_infos() = std::move(symbol);
+      }
+      rust_result = std::move(module_symbols);
+    }
+
+    if (compare_) {
+      CheckSymbolsAgree("CoffFile::LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols", rust_result,
+                        cpp_->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols());
+    }
+    return rust_result;
   }
 
  private:
+  static constexpr uint32_t kExportTable = 0;
+  static constexpr uint32_t kExceptionTable = 1;
+
+  // Reads one PE symbol set through the Rust FFI, without comparing.
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadTableRaw(
+      uint32_t table) const {
+    char* error = nullptr;
+    OrbitElfSymbolsPtr loaded{
+        orbit_coff_load_symbols(bytes_.data(), bytes_.size(), table, &error)};
+    if (loaded == nullptr) {
+      ErrorMessage message{error != nullptr ? error : "Unknown error loading PE symbols"};
+      orbit_elf_free_error(error);
+      return message;
+    }
+
+    orbit_grpc_protos::ModuleSymbols module_symbols;
+    const size_t count = orbit_elf_symbol_count(loaded.get());
+    const OrbitElfSymbol* symbols = orbit_elf_symbol_array(loaded.get());
+    const char* names = orbit_elf_symbol_names(loaded.get());
+    for (size_t i = 0; i < count; ++i) {
+      orbit_grpc_protos::SymbolInfo* info = module_symbols.add_symbol_infos();
+      // PE export names are not Itanium-mangled, and unwind-range names are
+      // synthesised, so neither goes through a demangler -- which is what the
+      // C++ does too.
+      info->set_demangled_name(std::string{names + symbols[i].name_offset,
+                                           static_cast<size_t>(symbols[i].name_len)});
+      info->set_address(symbols[i].address);
+      info->set_size(symbols[i].size);
+      info->set_is_hotpatchable(symbols[i].is_hotpatchable != 0);
+    }
+    return module_symbols;
+  }
+
+  template <typename CppLoader>
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadTable(
+      uint32_t table, const char* method, CppLoader cpp_loader) {
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> rust_result = LoadTableRaw(table);
+    if (compare_) CheckSymbolsAgree(method, rust_result, cpp_loader());
+    return rust_result;
+  }
+
+  static void CheckSymbolsAgree(
+      const char* method, const ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>& rust,
+      const ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>& cpp) {
+    if (rust.has_value() != cpp.has_value()) {
+      ORBIT_FATAL("CoffFile backends disagree in %s on success:\n  cpp:  %s\n  rust: %s", method,
+                  cpp.has_value() ? "ok" : cpp.error().message(),
+                  rust.has_value() ? "ok" : rust.error().message());
+    }
+    if (rust.has_error()) {
+      CheckAgree(method, rust.error().message(), cpp.error().message());
+      return;
+    }
+
+    const auto& rust_symbols = rust.value().symbol_infos();
+    const auto& cpp_symbols = cpp.value().symbol_infos();
+    if (rust_symbols.size() != cpp_symbols.size()) {
+      ORBIT_FATAL("CoffFile backends disagree in %s on symbol count: cpp=%d rust=%d", method,
+                  cpp_symbols.size(), rust_symbols.size());
+    }
+    for (int i = 0; i < rust_symbols.size(); ++i) {
+      if (rust_symbols[i].address() == cpp_symbols[i].address() &&
+          rust_symbols[i].size() == cpp_symbols[i].size() &&
+          rust_symbols[i].is_hotpatchable() == cpp_symbols[i].is_hotpatchable() &&
+          rust_symbols[i].demangled_name() == cpp_symbols[i].demangled_name()) {
+        continue;
+      }
+      ORBIT_FATAL(
+          "CoffFile backends disagree in %s at symbol %d:\n"
+          "  cpp:  addr=%#x size=%u hot=%d \"%s\"\n"
+          "  rust: addr=%#x size=%u hot=%d \"%s\"",
+          method, i, cpp_symbols[i].address(), cpp_symbols[i].size(),
+          static_cast<int>(cpp_symbols[i].is_hotpatchable()), cpp_symbols[i].demangled_name(),
+          rust_symbols[i].address(), rust_symbols[i].size(),
+          static_cast<int>(rust_symbols[i].is_hotpatchable()), rust_symbols[i].demangled_name());
+    }
+  }
+
   void CheckAgainstCpp() const {
     CheckAgree("CoffFile::GetLoadBias", GetLoadBias(), cpp_->GetLoadBias());
     CheckAgree("CoffFile::GetName", GetName(), cpp_->GetName());
@@ -177,6 +322,9 @@ class RustCoffFile : public CoffFile {
   OrbitCoffMetadataPtr metadata_;
   std::unique_ptr<CoffFile> cpp_;
 
+  std::vector<uint8_t> bytes_;
+  bool compare_;
+
   OrbitCoffFacts facts_{};
   std::vector<ModuleInfo::ObjectSegment> sections_;
 };
@@ -197,8 +345,10 @@ ErrorMessageOr<std::unique_ptr<CoffFile>> CreateRustCoffFile(
     return ErrorMessage{std::move(message)};
   }
 
+  const auto* first = static_cast<const uint8_t*>(data);
   return std::unique_ptr<CoffFile>{
-      new RustCoffFile{file_path, std::move(metadata), std::move(cpp_delegate), compare}};
+      new RustCoffFile{file_path, std::move(metadata), std::move(cpp_delegate),
+                       std::vector<uint8_t>{first, first + len}, compare}};
 }
 
 bool RustCoffParses(const std::filesystem::path& file_path, const void* data, size_t len,

@@ -78,6 +78,11 @@ void VisitPe(const std::filesystem::path& path, Totals* totals) {
   if (debug_symbols.has_value()) totals->symbols += debug_symbols.value().symbol_infos_size();
   const auto exports = coff_file.value()->LoadSymbolsFromExportTable();
   if (exports.has_value()) totals->symbols += exports.value().symbol_infos_size();
+  const auto exceptions = coff_file.value()->LoadExceptionTableEntriesAsSymbols();
+  if (exceptions.has_value()) totals->symbols += exceptions.value().symbol_infos_size();
+  const auto fallback = coff_file.value()->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols();
+  if (fallback.has_value()) totals->symbols += fallback.value().symbol_infos_size();
+  (void)coff_file.value()->HasExportTable();
 }
 
 void Visit(const std::filesystem::path& path, Totals* totals) {

@@ -112,6 +112,15 @@ size_t orbit_coff_section_count(const OrbitCoffMetadata* handle);
 const OrbitObjectSegment* orbit_coff_sections(const OrbitCoffMetadata* handle);
 void orbit_coff_free(OrbitCoffMetadata* handle);
 
+// Reads a PE symbol set, using the same result type as the ELF loaders below.
+// table is 0 for the Export Table, 1 for the Exception Table. Release with
+// orbit_elf_symbols_free.
+OrbitElfSymbols* orbit_coff_load_symbols(const uint8_t* data, size_t len, uint32_t table,
+                                         char** error_out);
+
+// Whether the image has an Export Table data directory.
+uint8_t orbit_coff_has_export_table(const uint8_t* data, size_t len);
+
 // -------------------------------------------------------------- line info
 
 // Resolves `address` to a source location. Returns the source file as a

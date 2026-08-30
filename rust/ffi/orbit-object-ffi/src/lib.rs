@@ -13,8 +13,9 @@
 use std::ffi::{c_char, CStr, CString};
 
 use orbit_object::{
-    crc32_continue, line_info, load_symbols, load_unwind_ranges, no_ranges_error,
-    parse_coff_metadata, parse_elf_metadata, CoffMetadata, ElfMetadata, SymbolTable,
+    crc32_continue, exception_table_symbols, export_table_symbols, has_export_table, line_info,
+    load_symbols, load_unwind_ranges, no_ranges_error, parse_coff_metadata, parse_elf_metadata,
+    CoffMetadata, ElfMetadata, Symbol, SymbolTable,
 };
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
@@ -341,6 +342,11 @@ pub unsafe extern "C" fn orbit_elf_load_symbols(
         }
     };
 
+    Box::into_raw(Box::new(pack_symbols(loaded)))
+}
+
+/// Flattens symbols into the POD array plus name blob the C++ walks once.
+fn pack_symbols(loaded: Vec<Symbol>) -> OrbitElfSymbols {
     let mut names = Vec::with_capacity(loaded.iter().map(|s| s.mangled_name.len()).sum());
     let mut symbols = Vec::with_capacity(loaded.len());
     for symbol in loaded {
@@ -354,8 +360,69 @@ pub unsafe extern "C" fn orbit_elf_load_symbols(
             is_hotpatchable: u8::from(symbol.is_hotpatchable),
         });
     }
+    OrbitElfSymbols { symbols, names }
+}
 
-    Box::into_raw(Box::new(OrbitElfSymbols { symbols, names }))
+/// Reads a PE symbol set, using the same result type as the ELF loaders.
+///
+/// `table` is 0 for the Export Table and 1 for the Exception Table.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, and `error_out` must be null or
+/// writable. The result must be released with [`orbit_elf_symbols_free`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_load_symbols(
+    data: *const u8,
+    len: usize,
+    table: u32,
+    error_out: *mut *mut c_char,
+) -> *mut OrbitElfSymbols {
+    let set_error = |message: &str| {
+        if !error_out.is_null() {
+            let owned = to_cstring(message).into_raw();
+            // SAFETY: the caller promises error_out is writable.
+            unsafe { *error_out = owned };
+        }
+    };
+
+    if data.is_null() {
+        set_error("orbit_coff_load_symbols called with a null pointer");
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    let result = match table {
+        0 => export_table_symbols(bytes),
+        1 => exception_table_symbols(bytes),
+        _ => {
+            set_error("orbit_coff_load_symbols called with an unknown table");
+            return std::ptr::null_mut();
+        }
+    };
+
+    match result {
+        Ok(loaded) => Box::into_raw(Box::new(pack_symbols(loaded))),
+        Err(message) => {
+            set_error(&message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Whether the image has an Export Table data directory.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, or be null when `len` is zero.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_has_export_table(data: *const u8, len: usize) -> u8 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    // SAFETY: the caller promises len readable bytes at data.
+    u8::from(has_export_table(unsafe {
+        std::slice::from_raw_parts(data, len)
+    }))
 }
 
 /// # Safety
