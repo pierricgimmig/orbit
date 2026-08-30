@@ -91,10 +91,9 @@ void LiveCaptureSymbols::AddModule(const orbit_grpc_protos::ModuleInfo& module,
     rec.function_indices.push_back(functions_.size());
     functions_.push_back(std::move(fn));
   }
-  std::sort(rec.function_indices.begin(), rec.function_indices.end(),
-            [this](size_t a, size_t b) {
-              return functions_[a].virtual_address < functions_[b].virtual_address;
-            });
+  std::sort(rec.function_indices.begin(), rec.function_indices.end(), [this](size_t a, size_t b) {
+    return functions_[a].virtual_address < functions_[b].virtual_address;
+  });
   modules_.push_back(std::move(rec));
 }
 
@@ -224,8 +223,7 @@ ErrorMessageOr<void> LiveCaptureSymbols::LoadPid(uint32_t pid) {
         orbit_process_service::FindSymbolsFilePath(request);
 
     orbit_object_utils::ObjectFileInfo object_file_info{module.load_bias()};
-    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> symbols =
-        ErrorMessage{"no symbols path"};
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> symbols = ErrorMessage{"no symbols path"};
     if (find.has_value() && !orbit_base::IsNotFound(find.value())) {
       symbols = orbit_symbols::SymbolHelper::LoadSymbolsFromFile(orbit_base::GetFound(find.value()),
                                                                  object_file_info);
@@ -285,8 +283,8 @@ std::string JsonEscape(std::string_view input) {
 
 std::string LiveCaptureSymbols::SearchJson(std::string_view query, size_t limit) const {
   const auto matches = Search(query, limit);
-  std::string json = absl::StrFormat(
-      R"({"pid":%u,"status":"%s","functions":[)", pid_, LiveSymbolStatusName(status_));
+  std::string json = absl::StrFormat(R"({"pid":%u,"status":"%s","functions":[)", pid_,
+                                     LiveSymbolStatusName(status_));
   bool first = true;
   for (const LiveFunctionMatch& match : matches) {
     if (!first) {

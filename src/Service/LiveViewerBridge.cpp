@@ -257,9 +257,7 @@ int LiveViewerBridge::StopCaptureImpl() {
   if (context_ != nullptr) {
     context_->TryCancel();
   }
-  {
-    stream_->WritesDone();
-  }
+  { stream_->WritesDone(); }
   if (reader_thread_.joinable()) {
     reader_thread_.join();
   }
@@ -313,9 +311,8 @@ int LiveViewerBridge::LoadSymbolsImpl(uint32_t pid) {
 int LiveViewerBridge::SymbolsStatusJsonImpl(uint32_t pid, char* out, size_t out_len) {
   std::lock_guard<std::mutex> lock(symbols_mutex_);
   if (pid != 0 && symbols_.pid() != 0 && symbols_.pid() != pid) {
-    const std::string json =
-        absl::StrFormat(R"({"pid":%u,"status":"idle","function_count":0,"module_count":0,"error":""})",
-                        pid);
+    const std::string json = absl::StrFormat(
+        R"({"pid":%u,"status":"idle","function_count":0,"module_count":0,"error":""})", pid);
     return WriteCString(json, out, out_len) ? 0 : -3;
   }
   return WriteCString(symbols_.StatusJson(), out, out_len) ? 0 : -3;
@@ -325,8 +322,7 @@ int LiveViewerBridge::SearchFunctionsJsonImpl(uint32_t pid, const char* query, u
                                               char* out, size_t out_len) {
   std::lock_guard<std::mutex> lock(symbols_mutex_);
   if (pid != 0 && symbols_.pid() != pid) {
-    const std::string json =
-        absl::StrFormat(R"({"pid":%u,"status":"idle","functions":[]})", pid);
+    const std::string json = absl::StrFormat(R"({"pid":%u,"status":"idle","functions":[]})", pid);
     return WriteCString(json, out, out_len) ? 0 : -3;
   }
   const uint32_t cap = limit == 0 ? 32 : std::min(limit, 64u);
@@ -345,8 +341,8 @@ uint32_t LiveViewerBridge::NameIdForFunctionId(uint64_t function_id) {
   if (it != function_name_ids_.end()) {
     return it->second;
   }
-  const uint32_t name_id = InternName(absl::StrFormat("fn:%llu",
-                                                      static_cast<unsigned long long>(function_id)));
+  const uint32_t name_id =
+      InternName(absl::StrFormat("fn:%llu", static_cast<unsigned long long>(function_id)));
   function_name_ids_[function_id] = name_id;
   return name_id;
 }
@@ -385,8 +381,9 @@ void LiveViewerBridge::IngestCallstackSample(const orbit_grpc_protos::CallstackS
     }
   }
   for (int i = 0; i < n; ++i) {
-    orbit_live_ingest_function_call(sample.pid(), sample.tid(), InternName(names[static_cast<size_t>(i)]),
-                                    duration_ns, end_ns, i);
+    orbit_live_ingest_function_call(sample.pid(), sample.tid(),
+                                    InternName(names[static_cast<size_t>(i)]), duration_ns, end_ns,
+                                    i);
   }
 }
 
@@ -419,8 +416,9 @@ void LiveViewerBridge::IngestEvent(const orbit_grpc_protos::ClientCaptureEvent& 
     }
     case ClientCaptureEvent::kFunctionCall: {
       const auto& call = event.function_call();
-      orbit_live_ingest_function_call(call.pid(), call.tid(), NameIdForFunctionId(call.function_id()),
-                                      call.duration_ns(), call.end_timestamp_ns(), call.depth());
+      orbit_live_ingest_function_call(call.pid(), call.tid(),
+                                      NameIdForFunctionId(call.function_id()), call.duration_ns(),
+                                      call.end_timestamp_ns(), call.depth());
       break;
     }
     case ClientCaptureEvent::kInternedCallstack: {

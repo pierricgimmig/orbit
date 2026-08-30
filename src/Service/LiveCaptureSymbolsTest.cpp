@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "LiveCaptureSymbols.h"
-
 #include <gtest/gtest.h>
 
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/symbol.pb.h"
+#include "LiveCaptureSymbols.h"
 
 namespace orbit_service {
 namespace {
