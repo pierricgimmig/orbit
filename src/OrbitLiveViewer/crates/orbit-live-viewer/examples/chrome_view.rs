@@ -3,10 +3,13 @@
 // found in the LICENSE file.
 
 //! Native view-prepare timing for a Chrome trace (TrackIndex + LOD collect).
+//! Streams the file the same way the viewer does — gzip is inflated into the
+//! parser, not loaded as one decompressed blob.
 
+use std::io::Read;
 use std::time::Instant;
 
-use orbit_live_chrome::ingest_collect;
+use orbit_live_chrome::{ChromeIngestor, ChromeStream};
 use orbit_live_render::{collect_instances, choose_lod, TrackIndex, INSTANCE_MIN_PX};
 
 fn rss() -> Option<u64> {
@@ -17,16 +20,46 @@ fn rss() -> Option<u64> {
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: chrome_view <trace>");
-    let bytes = std::fs::read(&path).expect("read");
+    let mut f = std::fs::File::open(&path).expect("open");
     let t0 = Instant::now();
-    let (ing, evs) = ingest_collect(&bytes).expect("ingest");
-    let ingest_s = t0.elapsed();
+    let mut stream = ChromeStream::default();
+    let mut ing = ChromeIngestor::default();
     let mut idx = TrackIndex::default();
-    let t1 = Instant::now();
-    for e in evs {
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).expect("read");
+        if n == 0 {
+            break;
+        }
+        stream.push(&buf[..n]);
+        loop {
+            let batch = stream.pump(&mut ing, 64 * 1024);
+            if batch.is_empty() {
+                break;
+            }
+            for e in batch {
+                idx.insert(e);
+            }
+        }
+    }
+    stream.finish_input();
+    loop {
+        let batch = stream.pump(&mut ing, 64 * 1024);
+        if batch.is_empty() {
+            break;
+        }
+        for e in batch {
+            idx.insert(e);
+        }
+    }
+    for e in ing.finish(1) {
         idx.insert(e);
     }
-    let insert_s = t1.elapsed();
+    if let Some(e) = stream.error() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+    let ingest_s = t0.elapsed();
     let bounds = idx.time_bounds().unwrap_or((0, 1));
     let width = 1280usize;
     let t2 = Instant::now();
@@ -43,10 +76,23 @@ fn main() {
     }
     let zoom_s = t3.elapsed();
     println!("file\t{path}");
+    println!("decoded_bytes\t{}", stream.bytes_decoded);
+    println!("bytes_in\t{}", stream.bytes_in);
     println!("events\t{}", idx.event_count());
     println!("lanes\t{}", idx.lane_count());
+    println!("events_in\t{}", ing.stats.events_in);
+    println!("complete\t{}", ing.stats.complete);
+    println!("duration\t{}", ing.stats.duration);
+    println!("counter\t{}", ing.stats.counter);
+    println!("async\t{}", ing.stats.async_ev);
+    println!("flow\t{}", ing.stats.flow);
+    println!("instant\t{}", ing.stats.instant);
+    println!("metadata\t{}", ing.stats.metadata);
+    println!("processes\t{}", ing.process_names.len());
+    println!("threads\t{}", ing.thread_names.len());
+    println!("flows\t{}", ing.flows.len());
+    println!("interned\t{}", ing.intern.len());
     println!("ingest_s\t{:.3}", ingest_s.as_secs_f64());
-    println!("insert_s\t{:.3}", insert_s.as_secs_f64());
     println!("first_view_s\t{:.3}", view_s.as_secs_f64());
     println!("lod\t{}", lod.as_str());
     println!("prims\t{}", frame.instances.len());

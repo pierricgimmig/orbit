@@ -29,10 +29,11 @@ use orbit_live_event::LIVE_EVENT_SIZE;
 /// The live ring is not used; events go into the viewer's `TrackIndex`.
 pub const TRACE_HEAP_HINT: &str = "\
 Loaded traces use the viewer TrackIndex (32 bytes per event + interned \
-names/args), not the 64 MB capture ring. gzip/zip decode into the parser. \
-wasm32 heap is capped at 2 GiB (`--max-memory`); a 1–2 GB uncompressed JSON \
-fits when streamed (JSON is not retained). A single enormous memory-dump \
-object still transits the scan window and is then dropped.";
+names/args), not the 64 MB capture ring. gzip is inflated as chunks arrive \
+(not buffered then decoded). wasm32 heap is capped at 2 GiB (`--max-memory`); \
+a 1–2 GB uncompressed JSON fits when streamed (JSON is not retained). A \
+single enormous memory-dump object still transits the scan window and is \
+then dropped.";
 
 pub fn live_event_size() -> usize {
     LIVE_EVENT_SIZE
@@ -250,6 +251,45 @@ mod tests {
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].pid, 3);
         assert_eq!(evs[0].duration_ns, 2_000);
+    }
+
+    #[test]
+    fn gzip_emits_events_before_eof() {
+        // Inflate-as-we-go: events must appear after a prefix of the gzip,
+        // before finish_input(), so a multi-GB .json.gz cannot require the
+        // whole file in RAM first.
+        const N: usize = 8_000;
+        let mut json = String::from("[");
+        for i in 0..N {
+            if i > 0 {
+                json.push(',');
+            }
+            use std::fmt::Write;
+            write!(
+                json,
+                r#"{{"name":"X","ph":"X","ts":{i},"dur":10,"pid":1,"tid":1}}"#
+            )
+            .unwrap();
+        }
+        json.push(']');
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        enc.write_all(json.as_bytes()).unwrap();
+        let gz = enc.finish().unwrap();
+        let mut stream = ChromeStream::default();
+        let mut ing = ChromeIngestor::default();
+        let mut evs = 0usize;
+        let mid = gz.len() / 2;
+        stream.push(&gz[..mid.max(64)]);
+        evs += stream.pump(&mut ing, 64 * 1024).len();
+        assert!(
+            evs > 0,
+            "streaming gzip must emit events before the last compressed byte (got {evs})"
+        );
+        stream.push(&gz[mid.max(64)..]);
+        stream.finish_input();
+        evs += stream.pump(&mut ing, 64 * 1024).len();
+        evs += ing.finish(1).len();
+        assert_eq!(evs, N);
     }
 
     #[test]

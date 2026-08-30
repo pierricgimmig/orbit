@@ -622,6 +622,7 @@ impl OrbitLiveApp {
             pending_file: {
                 let p = chrome_load::new_pending_file();
                 chrome_load::install_window_drop(p.clone());
+                chrome_load::install_query_trace(p.clone());
                 p
             },
         }

@@ -14,6 +14,9 @@ use orbit_live_chrome::{ChromeIngestor, ChromeStream};
 use orbit_live_event::LiveEvent;
 
 const PUMP_BUDGET: usize = 48_000;
+/// Cap compressed/raw bytes drained per frame so a multi-GB gzip is inflated
+/// into the scanner incrementally instead of all at once.
+const INPUT_BUDGET: usize = 2 << 20;
 
 pub enum ByteMsg {
     Chunk(Vec<u8>),
@@ -81,9 +84,16 @@ impl TraceLoad {
         if self.finished {
             return Ok(Vec::new());
         }
+        let mut took = 0usize;
         loop {
             match self.rx.try_recv() {
-                Ok(ByteMsg::Chunk(b)) => self.stream.push(&b),
+                Ok(ByteMsg::Chunk(b)) => {
+                    took += b.len();
+                    self.stream.push(&b);
+                    if took >= INPUT_BUDGET {
+                        break;
+                    }
+                }
                 Ok(ByteMsg::Eof) => {
                     self.eof = true;
                     self.stream.finish_input();
@@ -357,4 +367,117 @@ pub fn install_window_drop(pending: std::sync::Arc<std::sync::Mutex<Option<web_s
     }) as Box<dyn FnMut(_)>);
     let _ = document.add_event_listener_with_callback("drop", drop.as_ref().unchecked_ref());
     drop.forget();
+}
+
+/// Same-origin `?trace=/path.json` so a drop/Open session can be linked.
+/// Rejects absolute URLs and `..` — fetch stays on this origin.
+#[cfg(target_arch = "wasm32")]
+pub fn install_query_trace(pending: PendingFile) {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(search) = window.location().search() else {
+        return;
+    };
+    let Some(path) = same_origin_trace_path(&search) else {
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let fetch = match JsFuture::from(window.fetch_with_str(&path)).await {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let Ok(resp) = fetch.dyn_into::<web_sys::Response>() else {
+            return;
+        };
+        if !resp.ok() {
+            return;
+        }
+        let Ok(blob_p) = resp.blob() else {
+            return;
+        };
+        let Ok(blob_v) = JsFuture::from(blob_p).await else {
+            return;
+        };
+        let Ok(blob) = blob_v.dyn_into::<web_sys::Blob>() else {
+            return;
+        };
+        let name = path.rsplit('/').next().unwrap_or("trace.json");
+        let parts = js_sys::Array::new();
+        parts.push(&blob);
+        let Ok(file) = web_sys::File::new_with_blob_sequence(&parts, name) else {
+            return;
+        };
+        if let Ok(mut g) = pending.lock() {
+            *g = Some(file);
+        }
+    });
+}
+
+fn same_origin_trace_path(search: &str) -> Option<String> {
+    let q = search.strip_prefix('?').unwrap_or(search);
+    for part in q.split('&') {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        if k != "trace" {
+            continue;
+        }
+        let decoded = percent_decode(v);
+        if !decoded.starts_with('/') || decoded.starts_with("//") {
+            return None;
+        }
+        if decoded.contains("://") || decoded.split('/').any(|s| s == "..") {
+            return None;
+        }
+        if is_trace_name(&decoded) {
+            return Some(decoded);
+        }
+    }
+    None
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(c) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                out.push(c as char);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if b[i] == b'+' { ' ' } else { b[i] as char });
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_trace_is_same_origin_only() {
+        assert_eq!(
+            same_origin_trace_path("?trace=/traces/a.json"),
+            Some("/traces/a.json".into())
+        );
+        assert_eq!(
+            same_origin_trace_path("?trace=%2Ftraces%2Ffoo.json.gz"),
+            Some("/traces/foo.json.gz".into())
+        );
+        assert!(same_origin_trace_path("?trace=https://evil/x.json").is_none());
+        assert!(same_origin_trace_path("?trace=//evil/x.json").is_none());
+        assert!(same_origin_trace_path("?trace=/traces/../secret.json").is_none());
+        assert!(same_origin_trace_path("?trace=/tmp/x.txt").is_none());
+    }
 }

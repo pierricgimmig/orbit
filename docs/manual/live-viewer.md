@@ -63,6 +63,7 @@ first (legacy `[…]` array or `{ "traceEvents": […] }` plus
 
 * **Open** in the transport bar, or **drop** a file on the canvas / window
 * `.json`, `.json.gz`, `.gz`; `.zip` with one JSON if the local header has sizes
+* Same-origin `/?trace=/path.json` (no `..`, no absolute URLs)
 * Does **not** start Demo. Replaces the current session with processes/threads
   from metadata (`process_name`, `thread_name`, sort indices)
 * Progress: bytes in / decoded and events ingested
@@ -74,13 +75,15 @@ metadata `M`, samples `P`+`stackFrames`, marks `R`, clock sync `c`, objects
 `N`/`O`/`D`. Memory dumps `v` are a marker only — the dump payload is dropped.
 
 Default time unit is microseconds. `displayTimeUnit: "ns"` treats `ts` as ns.
-`LiveEvent` stays 32 bytes; args are interned for hover. File loads use
-`TrackIndex`, not the 64 MB ring. wasm32 heap cap is 2 GiB.
+`LiveEvent` stays 32 bytes; args are interned for hover (512-char strings,
+100k-entry cap). File loads use `TrackIndex`, not the 64 MB ring. gzip is
+inflated as chunks arrive. wasm32 heap cap is 2 GiB.
 
 Measured numbers (native, this VM, 2026-08-30) live in
-`src/OrbitLiveViewer/README.md` (theverge 52 MB public JSON, catapult
-`huge_trace.json`, a 1.2M-event generated stream). They are wall-clock
-ingest + CPU timeline prepare, not guessed.
+`src/OrbitLiveViewer/README.md`. They are wall-clock ingest + CPU timeline
+prepare from actually downloaded files: catapult `theverge_trace.json`
+(54.4 MB, 0.266 s), and HuggingFace wan22 `trace_rank4.json.gz`
+(266,439,928 B → 3.31 GB, 12.25M events, 1806.9 s / 6.22 GB RSS).
 
 ## Renderer
 

@@ -40,8 +40,9 @@ Open `http://<host>:44766/`.
 
 Drag a Chrome Trace Event Format file onto the canvas, or click **Open**
 (Ctrl/Cmd+O). Accepted: `.json`, `.json.gz`, `.gz`, and a `.zip` that holds one
-JSON. Loading **does not start Demo** — it replaces the session with a
-capture-like machine/process/thread tree from `pid`/`tid` metadata.
+JSON. Same-origin `/?trace=/path.json` fetches that path. Loading **does not
+start Demo** — it replaces the session with a capture-like
+machine/process/thread tree from `pid`/`tid` metadata.
 
 | Chrome `ph` | Live viewer |
 |---|---|
@@ -62,26 +63,36 @@ hover string keyed by intern id.
 
 The 64 MB capture ring is not used. Events go into the viewer's `TrackIndex`
 (32 bytes each + interned strings). wasm32 heap is capped at **2 GiB**
-(`build_wasm.sh --max-memory`). A 1–2 GB uncompressed JSON is stream-parsed
-(the file is not kept as `serde_json::Value`). One enormous object (a heap
-dump, a layout-tree snapshot) still transits the scan window.
+(`build_wasm.sh --max-memory`). gzip is inflated as chunks arrive (not
+buffered then decoded). A 1–2 GB uncompressed JSON is stream-parsed
+(the file is not kept as `serde_json::Value`). Hover-args intern is capped
+(512 chars, 100k entries) so unique-per-event dumps cannot explode RAM.
+One enormous object (a heap dump, a layout-tree snapshot) still transits
+the scan window.
+
+Optional same-origin deep link: `/?trace=/traces/foo.json`.
 
 ### Measured ingest + view (this VM, 2026-08-30)
 
-Native `chrome_ingest` / `chrome_view` (release). Not browser GPU fps.
+Native `chrome_view` / `chrome_ingest` (release). These are wall-clock
+numbers from actually downloading and running the files, not estimates.
+Not browser GPU fps.
 
 | Trace | URL | Comp. | Uncomp. | Events out | Ingest | First view* | Zoom collect† |
 |---|---|---|---|---|---|---|---|
-| theverge (realistic large) | [catapult `theverge_trace.json`](https://chromium.googlesource.com/catapult/+/HEAD/tracing/test_data/theverge_trace.json) | 52 MB | 52 MB | 30,834 (6 proc, 1989 threads, counters+async) | 0.32 s / 72 MB RSS | 3 ms | ~4300 fps |
-| huge_trace | [catapult `huge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/master/tracing/test_data/huge_trace.json) | 13 MB | 13 MB | 53,223 | 0.07 s / 11 MB RSS | 3 ms | ~6300 fps |
-| thread_time + flows | [catapult `thread_time_visualisation.json.gz`](https://chromium.googlesource.com/catapult/+/HEAD/tracing/test_data/thread_time_visualisation.json.gz) | 750 KB | 8.3 MB | 44,311 (138 flows) | 0.06 s / 24 MB RSS | 3 ms | ~1450 fps |
-| Lighthouse progressive-app | [lighthouse fixture](https://raw.githubusercontent.com/GoogleChrome/lighthouse/main/core/test/fixtures/traces/progressive-app.json) | 2.9 MB | 2.9 MB | 10,562 | 0.02 s | 1 ms | ~6800 fps |
-| generated 1.2M `X` events | (generated; not a public capture) | — | 71 MB | 1,200,000 | 0.54 s / 11 MB RSS | 42 ms | ~480 fps |
+| theverge (Chrome-native coverage) | [catapult `theverge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/main/tracing/test_data/theverge_trace.json) | 54.4 MB | 54.4 MB | 30,834 (58,103 in; B/E 54,224; C 344; async 785; 6 proc / 1989 threads) | 0.266 s | 3 ms | 4214 fps |
+| huge_trace | [catapult `huge_trace.json`](https://raw.githubusercontent.com/catapult-project/catapult/master/tracing/test_data/huge_trace.json) | 13.2 MB | 13.2 MB | 53,223 | 0.076 s | 4 ms | 5802 fps |
+| Lighthouse progressive-app | [lighthouse fixture](https://raw.githubusercontent.com/GoogleChrome/lighthouse/main/core/test/fixtures/traces/progressive-app.json) | 2.9 MB | 2.9 MB | 10,562 | 0.029 s | 1 ms | 7849 fps |
+| wan22 rank4 (load-time hammer) | [HuggingFace `trace_rank4.json.gz`](https://huggingface.co/datasets/Akshat/wan2.2-rocm-profiles/resolve/main/wan22_profile_u4_r2/torch_profile/20260602-182319_stage_0_rep_0_diffusion_1780424599/trace_rank4.json.gz) (CC-BY-4.0) | 266,439,928 B | 3,311,005,743 B | 12,253,693 (X 12,119,297; flow 134,394; M 72; 18 proc / 32 threads) | **1806.9 s** / **6.22 GB RSS** | 1.346 s | 3.3 fps (2.83M prims in the 1/8 window) |
 
 \* CPU `collect_instances` / LOD choose after insert — time-to-first-timeline-prepare, not a painted WASM frame.  
 † 60× `collect_instances` on a 1/8 window; prepare rate, not vsync.
 
-`layout_trees.json.gz` (5.0 MB gz → 87 MB JSON, [catapult](https://chromium.googlesource.com/catapult/+/HEAD/tracing/test_data/layout_trees.json.gz)) is the largest public file we downloaded; it is snapshot-heavy (719 events, 1.1 s walk, ~180 MB RSS) — useful as a “huge args” case, not as an event-dense capture. Perfetto `.pftrace` proto files were skipped.
+wan22 was streamed (gzip never materialized as a 3.08 GiB buffer; peak RSS
+is events + unique interned args — 12.1M intern ids, mostly per-event
+PyTorch args, measured **before** the 100k-entry args cap). wasm32 2 GiB
+cannot hold that intern table; the cap keeps clips and names and drops
+later hover strings. Perfetto `.pftrace` proto files were skipped.
 
 ## Look (Orbit palette, not a barcode)
 

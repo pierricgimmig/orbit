@@ -316,6 +316,9 @@ impl ChromeIngestor {
     }
 
     fn intern_args(&mut self, ev: &ChromeEvent) -> Option<u32> {
+        if self.args.len() >= MAX_ARG_ENTRIES {
+            return None;
+        }
         let args = ev.args.as_ref()?;
         if args.is_null() {
             return None;
@@ -334,7 +337,9 @@ impl ChromeIngestor {
 
     fn remember_args(&mut self, ev: LiveEvent, args_id: Option<u32>) {
         if let Some(id) = args_id {
-            self.args.insert(ArgKey::from_event(ev), id);
+            if self.args.len() < MAX_ARG_ENTRIES {
+                self.args.insert(ArgKey::from_event(ev), id);
+            }
         }
     }
 
@@ -960,6 +965,17 @@ fn arg_i32(args: Option<&Value>, key: &str) -> Option<i32> {
     }
 }
 
+/// Cap hover JSON so unique-per-event PyTorch args cannot explode intern RAM.
+const MAX_ARG_CHARS: usize = 512;
+/// Per-session hover map + intern budget. Beyond this, later events still
+/// become clips; they just have no args tooltip.
+const MAX_ARG_ENTRIES: usize = 100_000;
+
 fn compact_args(v: &Value) -> String {
-    serde_json::to_string(v).unwrap_or_default()
+    let mut text = serde_json::to_string(v).unwrap_or_default();
+    if text.len() > MAX_ARG_CHARS {
+        text.truncate(MAX_ARG_CHARS);
+        text.push('…');
+    }
+    text
 }

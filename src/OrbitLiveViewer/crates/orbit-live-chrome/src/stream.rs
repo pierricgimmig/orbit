@@ -5,12 +5,13 @@
 //! Stream-parse Chrome Trace Event Format JSON (array or `{traceEvents:[…]}`).
 //!
 //! Bytes are pushed as they arrive. Complete events are deserialized one at a
-//! time — never a `Vec<Value>` of the whole file. gzip is decoded into the
-//! same scanner; zip is accepted when it holds a single deflated/stored JSON.
+//! time — never a `Vec<Value>` of the whole file. gzip is **write-decoded as
+//! chunks arrive** (not buffered then inflated); zip is accepted when it holds
+//! a single deflated/stored JSON.
 
-use std::io::{Cursor, Read, Write};
+use std::io::Write;
 
-use flate2::read::MultiGzDecoder;
+use flate2::write::MultiGzDecoder;
 use crate::ingest::{ChromeEvent, ChromeIngestor, StackFrame};
 use crate::json::{parse_json_string, skip_ws, value_end};
 use crate::id::FlexId;
@@ -41,9 +42,10 @@ enum PendingKey {
 
 enum Decode {
     Identity,
-    /// Compressed gzip bytes. Decoded on `finish_input` with MultiGzDecoder
-    /// (concatenated members, as in several catapult fixtures).
-    Gzip(Vec<u8>),
+    /// Streaming gzip (concatenated members). Inflated JSON is appended to
+    /// `raw` on each `push` so a multi-GB `.json.gz` never sits decompressed
+    /// in one buffer.
+    Gzip(Box<MultiGzDecoder<Vec<u8>>>),
     ZipPending,
     ZipDeflate {
         dec: Box<flate2::write::DeflateDecoder<Vec<u8>>>,
@@ -115,7 +117,8 @@ impl ChromeStream {
                     let magic = self.magic_buf.clone();
                     if magic.len() >= 2 && magic[0] == 0x1f && magic[1] == 0x8b {
                         let held = std::mem::take(&mut self.magic_buf);
-                        self.decode = Decode::Gzip(held);
+                        self.decode = Decode::Gzip(Box::new(MultiGzDecoder::new(Vec::new())));
+                        self.push_gzip(&held);
                         return;
                     }
                     if magic.len() >= 4 && magic.starts_with(b"PK\x03\x04") {
@@ -140,26 +143,42 @@ impl ChromeStream {
     }
 
     fn push_gzip(&mut self, chunk: &[u8]) {
-        if let Decode::Gzip(buf) = &mut self.decode {
-            buf.extend_from_slice(chunk);
+        let Decode::Gzip(dec) = &mut self.decode else {
+            return;
+        };
+        if let Err(e) = dec.write_all(chunk) {
+            self.error = Some(format!("gzip: {e}"));
+            return;
+        }
+        self.drain_gzip();
+    }
+
+    fn drain_gzip(&mut self) {
+        let Decode::Gzip(dec) = &mut self.decode else {
+            return;
+        };
+        let out = dec.get_mut();
+        if !out.is_empty() {
+            self.bytes_decoded += out.len() as u64;
+            self.raw.extend_from_slice(out);
+            out.clear();
         }
     }
 
     fn finish_gzip(&mut self) {
-        let Decode::Gzip(buf) = &mut self.decode else {
+        if !matches!(self.decode, Decode::Gzip(_)) {
             return;
-        };
-        let compressed = std::mem::take(buf);
-        let mut dec = MultiGzDecoder::new(Cursor::new(compressed));
-        let mut out = Vec::new();
-        match dec.read_to_end(&mut out) {
-            Ok(_) => {
-                self.bytes_decoded += out.len() as u64;
-                self.raw.extend_from_slice(&out);
-                self.decode = Decode::Identity;
-            }
-            Err(e) => self.error = Some(format!("gzip: {e}")),
         }
+        let result = match &mut self.decode {
+            Decode::Gzip(dec) => dec.try_finish(),
+            _ => return,
+        };
+        if let Err(e) = result {
+            self.error = Some(format!("gzip: {e}"));
+            return;
+        }
+        self.drain_gzip();
+        self.decode = Decode::Identity;
     }
 
     fn push_decoded(&mut self, chunk: &[u8]) {
@@ -595,10 +614,18 @@ fn deserialize_dump_marker(bytes: &[u8]) -> Result<ChromeEvent, serde_json::Erro
     })
 }
 
+const HELPER_CHUNK: usize = 1 << 20;
+
+fn feed(stream: &mut ChromeStream, bytes: &[u8]) {
+    for chunk in bytes.chunks(HELPER_CHUNK) {
+        stream.push(chunk);
+    }
+}
+
 /// One-shot helper for tests and native tools.
 pub fn ingest_bytes(bytes: &[u8]) -> Result<ChromeIngestor, String> {
     let mut stream = ChromeStream::default();
-    stream.push(bytes);
+    feed(&mut stream, bytes);
     stream.finish_input();
     let mut ing = ChromeIngestor::default();
     loop {
@@ -621,12 +648,26 @@ pub fn ingest_bytes(bytes: &[u8]) -> Result<ChromeIngestor, String> {
 }
 
 /// Ingest and collect emitted [`LiveEvent`]s (including finish()).
+/// Input is fed in 1 MiB chunks so a gzip is inflated into the scanner
+/// incrementally instead of as one decompressed blob.
 pub fn ingest_collect(bytes: &[u8]) -> Result<(ChromeIngestor, Vec<orbit_live_event::LiveEvent>), String> {
     let mut stream = ChromeStream::default();
-    stream.push(bytes);
-    stream.finish_input();
     let mut ing = ChromeIngestor::default();
     let mut events = Vec::new();
+    for chunk in bytes.chunks(HELPER_CHUNK) {
+        stream.push(chunk);
+        loop {
+            let batch = stream.pump(&mut ing, 64 * 1024);
+            if batch.is_empty() {
+                if let Some(e) = stream.error() {
+                    return Err(e.to_string());
+                }
+                break;
+            }
+            events.extend(batch);
+        }
+    }
+    stream.finish_input();
     loop {
         let batch = stream.pump(&mut ing, 64 * 1024);
         if batch.is_empty() {
