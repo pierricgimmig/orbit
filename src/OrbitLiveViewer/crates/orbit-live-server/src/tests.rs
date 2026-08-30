@@ -536,6 +536,23 @@ fn status_reports_hooks_false_without_control_hooks() {
 }
 
 #[test]
+fn capture_stop_without_hooks_stops_demo() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let svc = LiveService::new(small_cfg()).unwrap();
+        crate::demo::start(&svc, 50_000).unwrap();
+        assert!(svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        crate::demo::stop(&svc);
+        svc.mark_capture_finished();
+        assert!(!svc.demo.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!svc.capturing.load(std::sync::atomic::Ordering::Relaxed));
+    });
+}
+
+#[test]
 fn sample_stack_ingest_paints_named_function_calls() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.disable_self_profile();

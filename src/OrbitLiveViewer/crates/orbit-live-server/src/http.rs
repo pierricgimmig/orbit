@@ -359,7 +359,12 @@ async fn capture_stop(State(svc): State<Arc<LiveService>>) -> Response {
             }
             Err(e) => (StatusCode::CONFLICT, e).into_response(),
         },
-        None => StatusCode::OK.into_response(),
+        None => {
+            drop(hooks);
+            crate::demo::stop(&svc);
+            svc.mark_capture_finished();
+            StatusCode::OK.into_response()
+        }
     }
 }
 
