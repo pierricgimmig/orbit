@@ -13,9 +13,10 @@
 use std::ffi::{c_char, CStr, CString};
 
 use orbit_object::{
-    crc32_continue, exception_table_symbols, export_table_symbols, has_export_table, line_info,
-    load_symbols, load_unwind_ranges, no_ranges_error, parse_coff_metadata, parse_elf_metadata,
-    CoffMetadata, ElfMetadata, Symbol, SymbolTable,
+    coff_has_debug_symbols, coff_symbol_table_symbols, crc32_continue, exception_table_symbols,
+    export_table_symbols, has_export_table, line_info, load_symbols, load_unwind_ranges,
+    no_ranges_error, parse_coff_metadata, parse_elf_metadata, subprograms, CoffMetadata,
+    ElfMetadata, Symbol, SymbolTable,
 };
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
@@ -395,6 +396,20 @@ pub unsafe extern "C" fn orbit_coff_load_symbols(
     let result = match table {
         0 => export_table_symbols(bytes),
         1 => exception_table_symbols(bytes),
+        2 => coff_symbol_table_symbols(bytes),
+        // Subprogram DIEs, carrying their address range in the size field so
+        // the shim can apply Orbit's merge rules.
+        3 => subprograms(bytes).map(|found| {
+            found
+                .into_iter()
+                .map(|s| Symbol {
+                    mangled_name: s.name,
+                    address: s.low_pc,
+                    size: s.high_pc.saturating_sub(s.low_pc),
+                    is_hotpatchable: false,
+                })
+                .collect()
+        }),
         _ => {
             set_error("orbit_coff_load_symbols called with an unknown table");
             return std::ptr::null_mut();
@@ -408,6 +423,21 @@ pub unsafe extern "C" fn orbit_coff_load_symbols(
             std::ptr::null_mut()
         }
     }
+}
+
+/// `CoffFileImpl::HasDebugSymbols`.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, or be null when `len` is zero.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_has_debug_symbols(data: *const u8, len: usize) -> u8 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    // SAFETY: the caller promises len readable bytes at data.
+    u8::from(coff_has_debug_symbols(unsafe {
+        std::slice::from_raw_parts(data, len)
+    }))
 }
 
 /// Whether the image has an Export Table data directory.

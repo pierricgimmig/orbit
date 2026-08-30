@@ -35,6 +35,7 @@ cc_library(
         "//src/GrpcProtos",
         "//src/ObjectUtils:ObjectUtilsHeaders",
         "//src/OrbitBase",
+        "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/container:flat_hash_set",
         "@abseil-cpp//absl/strings:str_format",
     ],

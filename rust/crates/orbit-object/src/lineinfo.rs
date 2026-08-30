@@ -38,70 +38,6 @@ pub fn line_info(data: &[u8], address: u64) -> Result<LineInfo, String> {
     }
 }
 
-/// Every DWARF section gimli may ask for, decompressed once up front.
-///
-/// gimli borrows from what it is given, so the decompressed buffers have to
-/// outlive the `Dwarf` built over them; loading them into a table first is the
-/// simplest way to arrange that.
-struct DwarfSections {
-    sections: std::collections::HashMap<&'static str, Vec<u8>>,
-    empty: Vec<u8>,
-}
-
-impl DwarfSections {
-    fn load<Elf>(header: &Elf, endian: Endianness, data: &[u8]) -> Self
-    where
-        Elf: FileHeader<Endian = Endianness>,
-    {
-        // gimli has no iterator over SectionId, so the set it can ask for is
-        // listed here. A section not listed simply reads as empty, which is
-        // what an absent one does anyway.
-        const IDS: &[gimli::SectionId] = &[
-            gimli::SectionId::DebugAbbrev,
-            gimli::SectionId::DebugAddr,
-            gimli::SectionId::DebugAranges,
-            gimli::SectionId::DebugCuIndex,
-            gimli::SectionId::DebugFrame,
-            gimli::SectionId::DebugInfo,
-            gimli::SectionId::DebugLine,
-            gimli::SectionId::DebugLineStr,
-            gimli::SectionId::DebugLoc,
-            gimli::SectionId::DebugLocLists,
-            gimli::SectionId::DebugMacinfo,
-            gimli::SectionId::DebugMacro,
-            gimli::SectionId::DebugPubNames,
-            gimli::SectionId::DebugPubTypes,
-            gimli::SectionId::DebugRanges,
-            gimli::SectionId::DebugRngLists,
-            gimli::SectionId::DebugStr,
-            gimli::SectionId::DebugStrOffsets,
-            gimli::SectionId::DebugTuIndex,
-            gimli::SectionId::DebugTypes,
-            gimli::SectionId::EhFrame,
-            gimli::SectionId::EhFrameHdr,
-        ];
-        let mut sections = std::collections::HashMap::new();
-        for &id in IDS {
-            // gimli names sections with the leading dot; section_bytes matches
-            // on the trimmed form.
-            let wanted = id.name().trim_start_matches(['.', '_', 'z']);
-            if let Some((bytes, _address)) =
-                crate::sections::section_bytes(header, endian, data, wanted.as_bytes())
-            {
-                sections.insert(id.name(), bytes);
-            }
-        }
-        Self {
-            sections,
-            empty: Vec::new(),
-        }
-    }
-
-    fn get(&self, id: gimli::SectionId) -> &[u8] {
-        self.sections.get(id.name()).unwrap_or(&self.empty)
-    }
-}
-
 fn line_info_typed<Elf>(data: &[u8], address: u64) -> Result<LineInfo, String>
 where
     Elf: FileHeader<Endian = Endianness>,
@@ -109,7 +45,7 @@ where
     let header = Elf::parse(data).map_err(|_| no_line_info_error(address))?;
     let endian = header.endian().map_err(|_| no_line_info_error(address))?;
 
-    let loaded = DwarfSections::load(header, endian, data);
+    let loaded = crate::sections::DwarfSections::load(header, endian, data);
     let load = |id| -> Result<gimli::EndianSlice<gimli::RunTimeEndian>, ()> {
         Ok(gimli::EndianSlice::new(
             loaded.get(id),

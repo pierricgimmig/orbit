@@ -16,6 +16,34 @@
 use object::read::elf::{CompressionHeader, FileHeader, SectionHeader};
 use object::{elf, CompressedFileRange, CompressionFormat, Endianness};
 
+/// Every DWARF section gimli may ask `Dwarf::load` for. gimli exposes no
+/// iterator over `SectionId`, and a section not listed simply reads as empty --
+/// which is what an absent one does anyway.
+const DWARF_SECTION_IDS: &[gimli::SectionId] = &[
+    gimli::SectionId::DebugAbbrev,
+    gimli::SectionId::DebugAddr,
+    gimli::SectionId::DebugAranges,
+    gimli::SectionId::DebugCuIndex,
+    gimli::SectionId::DebugFrame,
+    gimli::SectionId::DebugInfo,
+    gimli::SectionId::DebugLine,
+    gimli::SectionId::DebugLineStr,
+    gimli::SectionId::DebugLoc,
+    gimli::SectionId::DebugLocLists,
+    gimli::SectionId::DebugMacinfo,
+    gimli::SectionId::DebugMacro,
+    gimli::SectionId::DebugPubNames,
+    gimli::SectionId::DebugPubTypes,
+    gimli::SectionId::DebugRanges,
+    gimli::SectionId::DebugRngLists,
+    gimli::SectionId::DebugStr,
+    gimli::SectionId::DebugStrOffsets,
+    gimli::SectionId::DebugTuIndex,
+    gimli::SectionId::DebugTypes,
+    gimli::SectionId::EhFrame,
+    gimli::SectionId::EhFrameHdr,
+];
+
 /// Returns the contents of the section whose name, after stripping any leading
 /// run of `.`, `_` and `z`, equals `wanted`, decompressed if necessary.
 ///
@@ -86,3 +114,75 @@ where
         Err(_) => Vec::new(),
     }
 }
+
+/// Every DWARF section gimli may ask for, decompressed once up front.
+///
+/// gimli borrows from what it is given, so the decompressed buffers have to
+/// outlive the `Dwarf` built over them; loading them into a table first is the
+/// simplest way to arrange that.
+pub(crate) struct DwarfSections {
+    sections: std::collections::HashMap<&'static str, Vec<u8>>,
+    empty: Vec<u8>,
+}
+
+impl DwarfSections {
+    pub(crate) fn load<Elf>(header: &Elf, endian: Endianness, data: &[u8]) -> Self
+    where
+        Elf: FileHeader<Endian = Endianness>,
+    {
+        let mut sections = std::collections::HashMap::new();
+        for &id in DWARF_SECTION_IDS {
+            // gimli names sections with the leading dot; section_bytes matches
+            // on the trimmed form.
+            let wanted = id.name().trim_start_matches(['.', '_', 'z']);
+            if let Some((bytes, _address)) =
+                section_bytes(header, endian, data, wanted.as_bytes())
+            {
+                sections.insert(id.name(), bytes);
+            }
+        }
+        Self {
+            sections,
+            empty: Vec::new(),
+        }
+    }
+
+    /// The same table for a PE image, whose DWARF sections carry the same
+    /// names but are reached through the section table rather than ELF
+    /// headers. Uses object's high-level section API so that names longer than
+    /// the eight-byte field -- which is every `.debug_*` name -- resolve
+    /// through the string table.
+    pub(crate) fn load_from_pe<Nt>(file: &object::read::pe::PeFile<'_, Nt>, _data: &[u8]) -> Self
+    where
+        Nt: object::read::pe::ImageNtHeaders,
+    {
+        use object::read::{Object, ObjectSection};
+
+        let mut sections = std::collections::HashMap::new();
+        for &id in DWARF_SECTION_IDS {
+            let wanted = id.name().trim_start_matches(['.', '_', 'z']);
+            for section in file.sections() {
+                let Ok(name) = section.name() else {
+                    continue;
+                };
+                let trimmed = name.trim_start_matches(['.', '_', 'z']);
+                if trimmed != wanted {
+                    continue;
+                }
+                if let Ok(bytes) = section.data() {
+                    sections.insert(id.name(), bytes.to_vec());
+                }
+                break;
+            }
+        }
+        Self {
+            sections,
+            empty: Vec::new(),
+        }
+    }
+
+    pub(crate) fn get(&self, id: gimli::SectionId) -> &[u8] {
+        self.sections.get(id.name()).unwrap_or(&self.empty)
+    }
+}
+

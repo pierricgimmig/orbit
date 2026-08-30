@@ -4,10 +4,14 @@
 
 #include "RustCoffFile.h"
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
 #include <array>
+#include <iterator>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -16,6 +20,7 @@
 #include <vector>
 
 #include "Compare.h"
+#include "Demangle.h"
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/symbol.pb.h"
 #include "ObjectUtils/SymbolsFile.h"
@@ -123,11 +128,55 @@ class RustCoffFile : public CoffFile {
   // exception table. Each carries an ORBIT_PORT_DELEGATED marker so
   // scripts/port_metrics.sh can count them.
 
-  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() override {
-    return cpp_->LoadDebugSymbols();  // ORBIT_PORT_DELEGATED
-  }
   [[nodiscard]] bool HasDebugSymbols() const override {
-    return cpp_->HasDebugSymbols();  // ORBIT_PORT_DELEGATED
+    const bool rust = orbit_coff_has_debug_symbols(bytes_.data(), bytes_.size()) != 0;
+    if (compare_) CheckAgree("CoffFile::HasDebugSymbols", rust, cpp_->HasDebugSymbols());
+    return rust;
+  }
+
+  // Mirrors CoffFileImpl: the COFF symbol table first, then sizes from the
+  // unwind info, then any subprogram DIE the symbol table missed, then the
+  // remaining sizes as the distance to the next symbol.
+  //
+  // Only the *reading* is Rust. The merge rules below are Orbit's own and have
+  // no LLVM in them, so they stay here rather than being reimplemented twice.
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() override {
+    std::vector<orbit_grpc_protos::SymbolInfo> symbols;
+    {
+      ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> from_table = LoadTableRaw(kCoffSymbolTable);
+      if (from_table.has_value()) {
+        for (orbit_grpc_protos::SymbolInfo& symbol :
+             *from_table.value().mutable_symbol_infos()) {
+          // The COFF symbol table carries no sizes.
+          symbol.set_size(orbit_object_utils::SymbolsFile::kUnknownSymbolSize);
+          symbol.set_demangled_name(Demangle(symbol.demangled_name()));
+          symbols.emplace_back(std::move(symbol));
+        }
+      }
+    }
+
+    DeduceSizesFromUnwindInfo(&symbols);
+    AddSubprogramsNotInSymbolTable(&symbols);
+    orbit_object_utils::SymbolsFile::DeduceDebugSymbolMissingSizesAsDistanceFromNextSymbol(
+        &symbols);
+
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> rust_result = ErrorMessage{""};
+    if (symbols.empty()) {
+      rust_result = ErrorMessage{
+          "Unable to load symbols from PE/COFF file: not even a single function symbol was "
+          "found."};
+    } else {
+      orbit_grpc_protos::ModuleSymbols module_symbols;
+      for (orbit_grpc_protos::SymbolInfo& symbol : symbols) {
+        *module_symbols.add_symbol_infos() = std::move(symbol);
+      }
+      rust_result = std::move(module_symbols);
+    }
+
+    if (compare_) {
+      CheckSymbolsAgree("CoffFile::LoadDebugSymbols", rust_result, cpp_->LoadDebugSymbols());
+    }
+    return rust_result;
   }
   [[nodiscard]] bool HasExportTable() const override {
     const bool rust = orbit_coff_has_export_table(bytes_.data(), bytes_.size()) != 0;
@@ -205,6 +254,78 @@ class RustCoffFile : public CoffFile {
  private:
   static constexpr uint32_t kExportTable = 0;
   static constexpr uint32_t kExceptionTable = 1;
+  static constexpr uint32_t kCoffSymbolTable = 2;
+  static constexpr uint32_t kDwarfSubprograms = 3;
+
+  // CoffFile.cpp's DeduceDebugSymbolMissingSizesFromUnwindInfo, which is
+  // file-local there.
+  void DeduceSizesFromUnwindInfo(std::vector<orbit_grpc_protos::SymbolInfo>* symbols) const {
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> unwind = LoadTableRaw(kExceptionTable);
+    if (unwind.has_error()) return;
+
+    absl::flat_hash_map<uint64_t, uint64_t> start_to_size;
+    for (const orbit_grpc_protos::SymbolInfo& range : unwind.value().symbol_infos()) {
+      start_to_size.emplace(range.address(), range.size());
+    }
+    for (orbit_grpc_protos::SymbolInfo& symbol : *symbols) {
+      auto it = start_to_size.find(symbol.address());
+      if (it != start_to_size.end()) symbol.set_size(it->second);
+    }
+  }
+
+  // CoffFileImpl::AddNewDebugSymbolsFromDwarf. The precedence rules are
+  // Orbit's, so they are reproduced rather than ported.
+  void AddSubprogramsNotInSymbolTable(
+      std::vector<orbit_grpc_protos::SymbolInfo>* symbols) const {
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> dies = LoadTableRaw(kDwarfSubprograms);
+    if (dies.has_error()) return;
+
+    std::sort(symbols->begin(), symbols->end(),
+              &orbit_object_utils::SymbolsFile::SymbolInfoLessByAddress);
+
+    std::vector<orbit_grpc_protos::SymbolInfo> new_symbols;
+    for (const orbit_grpc_protos::SymbolInfo& die : dies.value().symbol_infos()) {
+      const uint64_t low_pc = die.address();
+      const uint64_t high_pc = low_pc + die.size();
+
+      auto it = std::lower_bound(symbols->begin(), symbols->end(), low_pc,
+                                 [](const orbit_grpc_protos::SymbolInfo& lhs, uint64_t rhs) {
+                                   return lhs.address() < rhs;
+                                 });
+
+      if (it != symbols->end() && low_pc == it->address()) {
+        // Already in the COFF symbol table. Fill in a size only if it is
+        // still unknown.
+        if (it->size() == orbit_object_utils::SymbolsFile::kUnknownSymbolSize) {
+          it->set_size(high_pc - low_pc);
+        }
+        continue;
+      }
+
+      if (it != symbols->end() && it->address() < high_pc) {
+        // A COFF symbol already lives in this range; the symbol table wins.
+        continue;
+      }
+
+      if (it != symbols->begin()) {
+        auto previous = std::prev(it);
+        if (previous->size() != orbit_object_utils::SymbolsFile::kUnknownSymbolSize &&
+            low_pc < previous->address() + previous->size()) {
+          // Inside a range the symbol table already covers.
+          continue;
+        }
+      }
+
+      orbit_grpc_protos::SymbolInfo& added = new_symbols.emplace_back();
+      added.set_demangled_name(Demangle(die.demangled_name()));
+      added.set_address(low_pc);
+      added.set_size(high_pc - low_pc);
+      added.set_is_hotpatchable(false);
+    }
+
+    symbols->insert(symbols->end(), std::make_move_iterator(new_symbols.begin()),
+                    std::make_move_iterator(new_symbols.end()));
+  }
 
   // Reads one PE symbol set through the Rust FFI, without comparing.
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadTableRaw(
@@ -260,8 +381,34 @@ class RustCoffFile : public CoffFile {
     const auto& rust_symbols = rust.value().symbol_infos();
     const auto& cpp_symbols = cpp.value().symbol_infos();
     if (rust_symbols.size() != cpp_symbols.size()) {
-      ORBIT_FATAL("CoffFile backends disagree in %s on symbol count: cpp=%d rust=%d", method,
-                  cpp_symbols.size(), rust_symbols.size());
+      // Name the symbols one side has and the other does not, rather than just
+      // the counts: with tens of thousands of symbols the count alone says
+      // nothing about which rule diverged.
+      absl::flat_hash_set<uint64_t> rust_addresses;
+      for (const auto& symbol : rust_symbols) rust_addresses.insert(symbol.address());
+      absl::flat_hash_set<uint64_t> cpp_addresses;
+      for (const auto& symbol : cpp_symbols) cpp_addresses.insert(symbol.address());
+
+      std::string only_in_cpp;
+      for (const auto& symbol : cpp_symbols) {
+        if (rust_addresses.contains(symbol.address())) continue;
+        absl::StrAppend(&only_in_cpp,
+                        absl::StrFormat("\n    %#x size=%u \"%s\"", symbol.address(),
+                                        symbol.size(), symbol.demangled_name()));
+      }
+      std::string only_in_rust;
+      for (const auto& symbol : rust_symbols) {
+        if (cpp_addresses.contains(symbol.address())) continue;
+        absl::StrAppend(&only_in_rust,
+                        absl::StrFormat("\n    %#x size=%u \"%s\"", symbol.address(),
+                                        symbol.size(), symbol.demangled_name()));
+      }
+
+      ORBIT_FATAL(
+          "CoffFile backends disagree in %s on symbol count: cpp=%d rust=%d\n"
+          "  only in cpp: %s\n  only in rust: %s",
+          method, cpp_symbols.size(), rust_symbols.size(),
+          only_in_cpp.empty() ? "-" : only_in_cpp, only_in_rust.empty() ? "-" : only_in_rust);
     }
     for (int i = 0; i < rust_symbols.size(); ++i) {
       if (rust_symbols[i].address() == cpp_symbols[i].address() &&

@@ -113,13 +113,17 @@ const OrbitObjectSegment* orbit_coff_sections(const OrbitCoffMetadata* handle);
 void orbit_coff_free(OrbitCoffMetadata* handle);
 
 // Reads a PE symbol set, using the same result type as the ELF loaders below.
-// table is 0 for the Export Table, 1 for the Exception Table. Release with
-// orbit_elf_symbols_free.
+// table is 0 for the Export Table, 1 for the Exception Table, 2 for the COFF
+// symbol table, 3 for DWARF subprogram DIEs (whose size field carries
+// high_pc - low_pc). Release with orbit_elf_symbols_free.
 OrbitElfSymbols* orbit_coff_load_symbols(const uint8_t* data, size_t len, uint32_t table,
                                          char** error_out);
 
 // Whether the image has an Export Table data directory.
 uint8_t orbit_coff_has_export_table(const uint8_t* data, size_t len);
+
+// CoffFileImpl::HasDebugSymbols.
+uint8_t orbit_coff_has_debug_symbols(const uint8_t* data, size_t len);
 
 // -------------------------------------------------------------- line info
 

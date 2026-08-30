@@ -438,3 +438,182 @@ mod tests {
         }
     }
 }
+
+// ------------------------------------------------------ COFF symbol table
+
+/// `IMAGE_SYM_DTYPE_FUNCTION`.
+const IMAGE_SYM_DTYPE_FUNCTION: u16 = 2;
+/// The complex type occupies bits 4 and 5 of the symbol's type field.
+const SCT_COMPLEX_TYPE_SHIFT: u16 = 4;
+
+/// `CoffFileImpl::LoadDebugSymbolsFromCoffSymbolTable`.
+///
+/// Names come back mangled: the shim demangles, for the same reason the ELF
+/// path does.
+///
+/// Sizes are left at zero. The COFF symbol table carries none, and the C++
+/// sets its unknown-size placeholder and deduces sizes afterwards -- which is
+/// protobuf post-processing that stays in C++.
+pub fn coff_symbol_table_symbols(data: &[u8]) -> Result<Vec<Symbol>, String> {
+    match object::FileKind::parse(data) {
+        Ok(object::FileKind::Pe64) => {
+            let file = PeFile64::parse(data).map_err(|e| e.to_string())?;
+            Ok(symbol_table_typed(&file))
+        }
+        Ok(object::FileKind::Pe32) => {
+            let file = PeFile32::parse(data).map_err(|e| e.to_string())?;
+            Ok(symbol_table_typed(&file))
+        }
+        _ => Err("not a PE image.".to_owned()),
+    }
+}
+
+fn symbol_table_typed<Nt>(file: &PeFile<'_, Nt>) -> Vec<Symbol>
+where
+    Nt: ImageNtHeaders,
+{
+    use object::read::coff::ImageSymbol as _;
+    use object::read::{Object, ObjectSymbol};
+
+    let endian = LittleEndian;
+    let image_base = file.nt_headers().optional_header().image_base();
+    let sections = file.section_table();
+
+    let mut symbols = Vec::new();
+    for symbol in file.symbols() {
+        let coff_symbol = symbol.coff_symbol();
+
+        // llvm::object::COFFObjectFile::getSymbolType reports ST_Function on
+        // the complex type alone -- it does *not* require the symbol to be
+        // external, despite COFFSymbolRef::isFunctionDefinition doing so.
+        // Requiring external here drops static functions such as
+        // register_frame_ctor, which the differential corpus caught.
+        //
+        // A section number of zero means undefined, which CreateSymbolInfo
+        // rejects via SF_Undefined and which has no section to resolve an
+        // address against anyway.
+        let section_number = coff_symbol.section_number();
+        if !is_function_type(coff_symbol.typ()) || section_number <= 0 {
+            continue;
+        }
+
+        // The symbol's value is an offset within its section, so the section's
+        // virtual address is needed to get an RVA.
+        let Ok(section) = sections.section(object::read::SectionIndex(section_number as usize))
+        else {
+            continue;
+        };
+        let Ok(name) = symbol.name_bytes() else {
+            continue;
+        };
+
+        // The C++ computes load bias + the section's virtual address + the
+        // symbol's value, where the value is an offset within the section.
+        // object's ObjectSymbol::address already resolves the section, so
+        // using it here would add the section twice.
+        let address = image_base
+            .wrapping_add(u64::from(section.virtual_address.get(endian)))
+            .wrapping_add(u64::from(coff_symbol.value()));
+
+        symbols.push(Symbol {
+            mangled_name: String::from_utf8_lossy(name).into_owned(),
+            address,
+            size: 0,
+            is_hotpatchable: false,
+        });
+    }
+    symbols
+}
+
+#[cfg(test)]
+mod symbol_table_tests {
+    use super::*;
+
+    fn testdata(name: &str) -> Vec<u8> {
+        let dir = std::env::var("ORBIT_TESTDATA").unwrap_or_else(|_| {
+            format!(
+                "{}/../../../src/ObjectUtils/testdata",
+                env!("CARGO_MANIFEST_DIR")
+            )
+        });
+        std::fs::read(format!("{dir}/{name}")).expect("testdata should be readable")
+    }
+
+    #[test]
+    fn reads_function_definitions_from_the_coff_symbol_table() {
+        let symbols =
+            coff_symbol_table_symbols(&testdata("libtest.dll")).expect("should read symbols");
+        assert!(!symbols.is_empty());
+        // PrintHelloWorld is at image base + 0x13a0 per the export-table test.
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.address == 0x62640000 + 0x13a0 && s.mangled_name == "PrintHelloWorld"),
+            "{:?}",
+            &symbols[..symbols.len().min(8)]
+        );
+        // Every symbol should be in the image, not at a bare section offset.
+        assert!(symbols.iter().all(|s| s.address > 0x62640000));
+    }
+
+    #[test]
+    fn a_file_without_a_symbol_table_yields_nothing() {
+        // dllmain.dll has PointerToSymbolTable = 0.
+        assert!(coff_symbol_table_symbols(&testdata("dllmain.dll"))
+            .expect("should parse")
+            .is_empty());
+    }
+
+    #[test]
+    fn garbage_does_not_panic() {
+        assert!(coff_symbol_table_symbols(b"MZ").is_err());
+        let good = testdata("libtest.dll");
+        let mut len = 1;
+        while len < good.len() {
+            let _ = coff_symbol_table_symbols(&good[..len]);
+            len *= 2;
+        }
+    }
+}
+
+/// `CoffFileImpl::HasDebugSymbols`.
+///
+/// True when the COFF symbol table holds anything that is not a function
+/// definition, or when the DWARF holds a subprogram with a real address.
+///
+/// The first half looks odd -- "has debug symbols" being decided by the
+/// presence of *non*-function symbols -- but it is what the C++ does:
+/// `llvm::object::SymbolRef::Type` is `ST_Function` only for function
+/// definitions, so anything else answers the question.
+pub fn coff_has_debug_symbols(data: &[u8]) -> bool {
+    let has_non_function = match object::FileKind::parse(data) {
+        Ok(object::FileKind::Pe64) => PeFile64::parse(data)
+            .map(|f| has_non_function_symbol(&f))
+            .unwrap_or(false),
+        Ok(object::FileKind::Pe32) => PeFile32::parse(data)
+            .map(|f| has_non_function_symbol(&f))
+            .unwrap_or(false),
+        _ => false,
+    };
+    if has_non_function {
+        return true;
+    }
+    crate::dwarf::subprograms(data).is_ok_and(|found| !found.is_empty())
+}
+
+/// `llvm::object::COFFObjectFile::getSymbolType() == ST_Function`, which turns
+/// on the complex type alone.
+fn is_function_type(typ: u16) -> bool {
+    ((typ >> SCT_COMPLEX_TYPE_SHIFT) & 0x3) == IMAGE_SYM_DTYPE_FUNCTION
+}
+
+fn has_non_function_symbol<Nt>(file: &PeFile<'_, Nt>) -> bool
+where
+    Nt: ImageNtHeaders,
+{
+    use object::read::coff::ImageSymbol as _;
+    use object::read::Object;
+
+    file.symbols()
+        .any(|symbol| !is_function_type(symbol.coff_symbol().typ()))
+}
