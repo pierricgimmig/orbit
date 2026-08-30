@@ -4,6 +4,7 @@
 
 #include "RustElfFile.h"
 
+#include "Compare.h"
 #include "Demangle.h"
 
 #include <absl/container/flat_hash_set.h>
@@ -60,14 +61,6 @@ struct OrbitElfSymbolsDeleter {
   void operator()(OrbitElfSymbols* handle) const { orbit_elf_symbols_free(handle); }
 };
 using OrbitElfSymbolsPtr = std::unique_ptr<OrbitElfSymbols, OrbitElfSymbolsDeleter>;
-
-// Aborts with both values printed. Used only in ORBIT_OBJECT_BACKEND=both.
-template <typename T>
-void CheckAgree(const char* method, const T& rust, const T& cpp) {
-  if (rust == cpp) return;
-  ORBIT_FATAL("ElfFile backends disagree in %s:\n  cpp:  %s\n  rust: %s", method,
-              orbit_base::to_string(cpp), orbit_base::to_string(rust));
-}
 
 // An ElfFile backed by //rust:orbit_object for the ported methods, forwarding
 // the rest to a C++ ElfFile it owns.

@@ -28,11 +28,14 @@ cc_library(
         "include/ObjectUtils/SymbolsFile.h",
         "include/ObjectUtils/WindowsBuildIdUtils.h",
     ],
+    srcs = ["WindowsBuildIdUtils.cpp"],
     copts = ORBIT_COPTS,
     includes = ["include"],
     deps = [
         "//src/GrpcProtos",
         "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
     ],
 )
 
@@ -46,7 +49,6 @@ cc_library(
         "PdbFile.cpp",
         "PdbFileLlvm.cpp",
         "SymbolsFile.cpp",
-        "WindowsBuildIdUtils.cpp",
     ] + select({
         "@platforms//os:windows": [
             "PdbFileDia.cpp",

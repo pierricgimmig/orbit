@@ -4,6 +4,7 @@
 
 #include "ObjectUtils/CoffFile.h"
 
+#include "ElfFileBackend.h"
 #include "ObjectFileLlvm.h"
 
 #include <absl/container/flat_hash_map.h>
@@ -845,7 +846,7 @@ std::string CoffFileImpl::GetBuildId() const {
 
 }  // namespace
 
-ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::path& file_path) {
+ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFileCpp(const std::filesystem::path& file_path) {
   llvm::Expected<llvm::object::OwningBinary<llvm::object::ObjectFile>> object_file_or_error =
       llvm::object::ObjectFile::createObjectFile(file_path.string());
 

@@ -18,10 +18,13 @@ cc_library(
     name = "ObjectUtilsRust",
     srcs = [
         "Demangle.cpp",
+        "RustCoffFile.cpp",
         "RustElfFile.cpp",
     ],
     hdrs = [
+        "Compare.h",
         "Demangle.h",
+        "RustCoffFile.h",
         "RustElfFile.h",
     ],
     copts = ORBIT_COPTS,

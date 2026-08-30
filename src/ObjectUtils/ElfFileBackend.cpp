@@ -29,6 +29,7 @@
 #include "OrbitBase/Result.h"
 
 #ifdef __linux
+#include "RustCoffFile.h"
 #include "RustElfFile.h"
 #endif
 
@@ -87,6 +88,33 @@ namespace {
 
 #endif  // __linux
 
+#ifdef __linux
+
+// Same shape as CreateRustBacked, for PE images.
+[[nodiscard]] ErrorMessageOr<std::unique_ptr<CoffFile>> CreateRustBackedCoff(
+    const std::filesystem::path& file_path, const void* data, size_t len,
+    ErrorMessageOr<std::unique_ptr<CoffFile>> cpp_result, bool compare) {
+  if (compare) {
+    std::string rust_error;
+    const bool rust_ok = orbit_object_utils_rust::RustCoffParses(file_path, data, len, &rust_error);
+    if (rust_ok != cpp_result.has_value()) {
+      ORBIT_FATAL(
+          "CoffFile backends disagree on whether \"%s\" loads: cpp=%s rust=%s\n"
+          "  cpp error:  %s\n  rust error: %s",
+          file_path.string(), cpp_result.has_value() ? "ok" : "error", rust_ok ? "ok" : "error",
+          cpp_result.has_value() ? "-" : cpp_result.error().message(),
+          rust_ok ? "-" : rust_error);
+    }
+  }
+
+  if (cpp_result.has_error()) return cpp_result.error();
+
+  return orbit_object_utils_rust::CreateRustCoffFile(file_path, std::move(cpp_result.value()),
+                                                     data, len, compare);
+}
+
+#endif  // __linux
+
 }  // namespace
 
 ObjectBackend SelectedObjectBackend() {
@@ -113,6 +141,25 @@ ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(const std::filesystem::pa
                           CreateElfFileCpp(file_path), backend == ObjectBackend::kBoth);
 #else
   return CreateElfFileCpp(file_path);
+#endif
+}
+
+ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::path& file_path) {
+  const ObjectBackend backend = SelectedObjectBackend();
+  if (backend == ObjectBackend::kCpp) {
+    return CreateCoffFileCpp(file_path);
+  }
+
+#ifdef __linux
+  ErrorMessageOr<std::string> content = orbit_base::ReadFileToString(file_path);
+  if (content.has_error()) {
+    return CreateCoffFileCpp(file_path);
+  }
+
+  return CreateRustBackedCoff(file_path, content.value().data(), content.value().size(),
+                              CreateCoffFileCpp(file_path), backend == ObjectBackend::kBoth);
+#else
+  return CreateCoffFileCpp(file_path);
 #endif
 }
 

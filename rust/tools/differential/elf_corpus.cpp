@@ -25,26 +25,37 @@
 #include <string>
 #include <vector>
 
+#include "ObjectUtils/CoffFile.h"
 #include "ObjectUtils/ElfFile.h"
 #include "RustElfFile.h"
 #include "OrbitBase/Result.h"
 
 namespace {
 
-[[nodiscard]] bool LooksLikeElf(const std::filesystem::path& path) {
+enum class Kind { kNeither, kElf, kPe };
+
+[[nodiscard]] Kind ClassifyByMagic(const std::filesystem::path& path) {
   FILE* file = fopen(path.c_str(), "rb");
-  if (file == nullptr) return false;
+  if (file == nullptr) return Kind::kNeither;
   char magic[4] = {};
   const size_t read = fread(magic, 1, sizeof(magic), file);
   fclose(file);
-  return read == sizeof(magic) && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' &&
-         magic[3] == 'F';
+  if (read < 2) return Kind::kNeither;
+  if (read == sizeof(magic) && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' &&
+      magic[3] == 'F') {
+    return Kind::kElf;
+  }
+  // PE images start with the DOS stub's "MZ".
+  if (magic[0] == 'M' && magic[1] == 'Z') return Kind::kPe;
+  return Kind::kNeither;
 }
 
 struct Totals {
   int files = 0;
   int loaded = 0;
   int rejected = 0;
+  int pe_files = 0;
+  int pe_loaded = 0;
   long long symbols = 0;
   long long line_lookups = 0;
 };
@@ -54,13 +65,34 @@ struct Totals {
 // still crosses every code path and stays affordable.
 constexpr int kLineInfoSamplesPerFile = 32;
 
+void VisitPe(const std::filesystem::path& path, Totals* totals) {
+  ++totals->pe_files;
+  ErrorMessageOr<std::unique_ptr<orbit_object_utils::CoffFile>> coff_file =
+      orbit_object_utils::CreateCoffFile(path);
+  if (coff_file.has_error()) return;
+  ++totals->pe_loaded;
+
+  // The metadata is compared at construction; these are the loaders that are
+  // not, and they still delegate, so they only exercise the C++ path today.
+  const auto debug_symbols = coff_file.value()->LoadDebugSymbols();
+  if (debug_symbols.has_value()) totals->symbols += debug_symbols.value().symbol_infos_size();
+  const auto exports = coff_file.value()->LoadSymbolsFromExportTable();
+  if (exports.has_value()) totals->symbols += exports.value().symbol_infos_size();
+}
+
 void Visit(const std::filesystem::path& path, Totals* totals) {
-  if (!LooksLikeElf(path)) return;
+  const Kind kind = ClassifyByMagic(path);
+  if (kind == Kind::kNeither) return;
   // ORBIT_OBJECT_BACKEND=both aborts on a disagreement, so the last path
   // printed here is the file that caused it.
   if (getenv("ORBIT_CORPUS_VERBOSE") != nullptr) {
     fprintf(stderr, "visiting %s\n", path.c_str());
     fflush(stderr);
+  }
+
+  if (kind == Kind::kPe) {
+    VisitPe(path, totals);
+    return;
   }
   ++totals->files;
 
@@ -123,6 +155,8 @@ int main(int argc, char** argv) {
   }
 
   printf("elf files seen   %d\n", totals.files);
+  printf("pe files seen    %d\n", totals.pe_files);
+  printf("pe loaded        %d\n", totals.pe_loaded);
   printf("loaded           %d\n", totals.loaded);
   printf("rejected         %d\n", totals.rejected);
   printf("symbols compared %lld\n", totals.symbols);

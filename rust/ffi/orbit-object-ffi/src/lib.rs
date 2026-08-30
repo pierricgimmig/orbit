@@ -14,7 +14,7 @@ use std::ffi::{c_char, CStr, CString};
 
 use orbit_object::{
     crc32_continue, line_info, load_symbols, load_unwind_ranges, no_ranges_error,
-    parse_elf_metadata, ElfMetadata, SymbolTable,
+    parse_coff_metadata, parse_elf_metadata, CoffMetadata, ElfMetadata, SymbolTable,
 };
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
@@ -411,6 +411,173 @@ pub unsafe extern "C" fn orbit_elf_symbol_names_len(handle: *const OrbitElfSymbo
 pub unsafe extern "C" fn orbit_elf_symbols_free(handle: *mut OrbitElfSymbols) {
     if !handle.is_null() {
         // SAFETY: the caller promises an unfreed handle.
+        drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
+// --------------------------------------------------------------- PE / COFF
+
+/// Opaque owner of a PE parse result, freed with [`orbit_coff_free`].
+pub struct OrbitCoffMetadata {
+    metadata: CoffMetadata,
+    sections: Vec<OrbitObjectSegment>,
+    pdb_file_path: CString,
+}
+
+/// The scalar facts of a PE image.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OrbitCoffFacts {
+    pub is_64_bit: u8,
+    pub has_pdb_debug_info: u8,
+    pub pdb_age: u32,
+    pub image_base: u64,
+    pub base_of_code: u64,
+    pub size_of_image: u64,
+    /// The CodeView GUID, valid only when `has_pdb_debug_info` is non-zero.
+    pub pdb_guid: [u8; 16],
+}
+
+/// Parses `len` bytes at `data` as a PE image.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, `file_path` must be a valid
+/// NUL-terminated string, and `error_out` must be null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_parse(
+    data: *const u8,
+    len: usize,
+    file_path: *const c_char,
+    error_out: *mut *mut c_char,
+) -> *mut OrbitCoffMetadata {
+    let set_error = |message: &str| {
+        if !error_out.is_null() {
+            let owned = to_cstring(message).into_raw();
+            // SAFETY: the caller promises error_out is writable.
+            unsafe { *error_out = owned };
+        }
+    };
+
+    if data.is_null() || file_path.is_null() {
+        set_error("orbit_coff_parse called with a null pointer");
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: the caller promises len readable bytes and a valid C string.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    let path = match unsafe { CStr::from_ptr(file_path) }.to_str() {
+        Ok(path) => path,
+        Err(_) => {
+            set_error("orbit_coff_parse called with a non-UTF-8 path");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let metadata = match parse_coff_metadata(bytes, path) {
+        Ok(metadata) => metadata,
+        Err(message) => {
+            set_error(&message);
+            return std::ptr::null_mut();
+        }
+    };
+
+    let sections = metadata
+        .sections
+        .iter()
+        .map(|s| OrbitObjectSegment {
+            offset_in_file: s.offset_in_file,
+            size_in_file: s.size_in_file,
+            address: s.address,
+            size_in_memory: s.size_in_memory,
+        })
+        .collect();
+    let pdb_file_path = to_cstring(
+        metadata
+            .pdb_debug_info
+            .as_ref()
+            .map_or("", |info| info.pdb_file_path.as_str()),
+    );
+
+    Box::into_raw(Box::new(OrbitCoffMetadata {
+        metadata,
+        sections,
+        pdb_file_path,
+    }))
+}
+
+/// Copies the scalar facts into `out`.
+///
+/// # Safety
+/// `handle` must be null or a live handle, and `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_facts(
+    handle: *const OrbitCoffMetadata,
+    out: *mut OrbitCoffFacts,
+) {
+    if out.is_null() {
+        return;
+    }
+    // SAFETY: the caller promises a live handle or null, and a writable out.
+    let facts = match unsafe { handle.as_ref() } {
+        Some(h) => {
+            let m = &h.metadata;
+            OrbitCoffFacts {
+                is_64_bit: u8::from(m.is_64_bit),
+                has_pdb_debug_info: u8::from(m.pdb_debug_info.is_some()),
+                pdb_age: m.pdb_debug_info.as_ref().map_or(0, |info| info.age),
+                image_base: m.image_base,
+                base_of_code: m.base_of_code,
+                size_of_image: m.size_of_image,
+                pdb_guid: m.pdb_debug_info.as_ref().map_or([0u8; 16], |info| info.guid),
+            }
+        }
+        None => OrbitCoffFacts::default(),
+    };
+    unsafe { *out = facts };
+}
+
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_coff_parse`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_pdb_file_path(
+    handle: *const OrbitCoffMetadata,
+) -> *const c_char {
+    // SAFETY: the caller promises a live handle or null.
+    match unsafe { handle.as_ref() } {
+        Some(h) => h.pdb_file_path.as_ptr(),
+        None => c"".as_ptr(),
+    }
+}
+
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_coff_parse`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_section_count(handle: *const OrbitCoffMetadata) -> usize {
+    // SAFETY: the caller promises a live handle or null.
+    unsafe { handle.as_ref() }.map_or(0, |h| h.sections.len())
+}
+
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_coff_parse`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_sections(
+    handle: *const OrbitCoffMetadata,
+) -> *const OrbitObjectSegment {
+    // SAFETY: the caller promises a live handle or null.
+    match unsafe { handle.as_ref() } {
+        Some(h) => h.sections.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Releases a handle. Safe to call with null.
+///
+/// # Safety
+/// `handle` must be null, or a handle that has not already been freed.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_coff_free(handle: *mut OrbitCoffMetadata) {
+    if !handle.is_null() {
+        // SAFETY: the caller promises an unfreed handle from orbit_coff_parse.
         drop(unsafe { Box::from_raw(handle) });
     }
 }

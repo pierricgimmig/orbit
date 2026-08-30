@@ -89,6 +89,29 @@ const char* orbit_elf_symbol_names(const OrbitElfSymbols* handle);
 size_t orbit_elf_symbol_names_len(const OrbitElfSymbols* handle);
 void orbit_elf_symbols_free(OrbitElfSymbols* handle);
 
+// -------------------------------------------------------------- PE / COFF
+
+// Opaque owner of a PE parse result. Free with orbit_coff_free.
+typedef struct OrbitCoffMetadata OrbitCoffMetadata;
+
+typedef struct {
+  uint8_t is_64_bit;
+  uint8_t has_pdb_debug_info;
+  uint32_t pdb_age;
+  uint64_t image_base;
+  uint64_t base_of_code;
+  uint64_t size_of_image;
+  uint8_t pdb_guid[16];  // valid only when has_pdb_debug_info is non-zero
+} OrbitCoffFacts;
+
+OrbitCoffMetadata* orbit_coff_parse(const uint8_t* data, size_t len, const char* file_path,
+                                    char** error_out);
+void orbit_coff_facts(const OrbitCoffMetadata* handle, OrbitCoffFacts* out);
+const char* orbit_coff_pdb_file_path(const OrbitCoffMetadata* handle);
+size_t orbit_coff_section_count(const OrbitCoffMetadata* handle);
+const OrbitObjectSegment* orbit_coff_sections(const OrbitCoffMetadata* handle);
+void orbit_coff_free(OrbitCoffMetadata* handle);
+
 // -------------------------------------------------------------- line info
 
 // Resolves `address` to a source location. Returns the source file as a

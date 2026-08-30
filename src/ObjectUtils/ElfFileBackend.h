@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <memory>
 
+#include "ObjectUtils/CoffFile.h"
 #include "ObjectUtils/ElfFile.h"
 #include "OrbitBase/Result.h"
 
@@ -22,6 +23,9 @@ namespace orbit_object_utils {
     const std::filesystem::path& file_path);
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBufferCpp(
     const std::filesystem::path& file_path, const void* buf, size_t len);
+
+[[nodiscard]] ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFileCpp(
+    const std::filesystem::path& file_path);
 
 enum class ObjectBackend { kCpp, kRust, kBoth };
 
