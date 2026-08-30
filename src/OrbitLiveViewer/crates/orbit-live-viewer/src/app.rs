@@ -4367,8 +4367,9 @@ mod tests {
             "120 Hz must not be 2x: r60={r60} r120={r120}"
         );
         let one_sec = PAN_RATIO * KEY_REPEAT_HZ;
-        assert!((r60 * 60.0 - one_sec).abs() < 1e-9);
-        assert!((r120 * 120.0 - one_sec).abs() < 1e-9);
+        // 1/60 as f32 is not binary-exact; the rate still matches 3 windows/s.
+        assert!((r60 * 60.0 - one_sec).abs() < 1e-6);
+        assert!((r120 * 120.0 - one_sec).abs() < 1e-6);
         // Idle wake (100 ms) must not dump a larger step than one 60 Hz frame.
         assert_eq!(pan_ratio_for_dt(0.1), r60);
     }
