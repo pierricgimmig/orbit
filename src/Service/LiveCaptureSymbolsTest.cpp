@@ -32,7 +32,7 @@ orbit_grpc_protos::ModuleSymbols MakeSymbols() {
   foo->set_address(0x401000);
   foo->set_size(0x40);
   auto* tick = symbols.add_symbol_infos();
-  tick->set_demangled_name("Tick");
+  tick->set_demangled_name("foo::Tick");
   tick->set_address(0x402000);
   tick->set_size(0x20);
   auto* empty = symbols.add_symbol_infos();
@@ -50,17 +50,18 @@ TEST(LiveCaptureSymbols, SearchIsPagedAndCaseInsensitive) {
   const auto none = store.Search("", 10);
   EXPECT_TRUE(none.empty());
 
-  const auto all = store.Search("t", 10);
+  const auto all = store.Search("foo", 10);
   ASSERT_EQ(all.size(), 2u);
   EXPECT_EQ(all[0].pretty_name, "foo::Bar");
-  EXPECT_EQ(all[1].pretty_name, "Tick");
+  EXPECT_EQ(all[1].pretty_name, "foo::Tick");
 
-  const auto page = store.Search("t", 1);
+  const auto page = store.Search("foo", 1);
   ASSERT_EQ(page.size(), 1u);
   EXPECT_EQ(page[0].pretty_name, "foo::Bar");
 
   const auto tick = store.Search("TICK", 8);
   ASSERT_EQ(tick.size(), 1u);
+  EXPECT_EQ(tick[0].pretty_name, "foo::Tick");
   EXPECT_EQ(tick[0].function_id, 2u);
   EXPECT_EQ(tick[0].module_name, "/usr/bin/app");
 }
