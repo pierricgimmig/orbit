@@ -1,0 +1,34 @@
+Stage 2g feasibility: can the pdb crate replace llvm::pdb?
+
+Measured against src/ObjectUtils/testdata/dllmain.pdb, the file
+PdbFileTest asserts on.
+
+What the pdb crate reproduces exactly:
+  guid    afd69a4f-7f39-4e50-88fc-34477bd0bae3
+  age     1
+  procedure symbols            5459
+  PrintHelloWorldInternal      section 1, offset 0xdea0, len 43 (0x2b)
+                               -> 0x18000eea0 with load bias 0x180000000
+                               PdbFileTest expects exactly that address and size.
+
+What it does not reproduce:
+  name    "PrintHelloWorldInternal"    (pdb crate)
+          "PrintHelloWorldInternal()"  (llvm, and what PdbFileTest asserts)
+
+The trailing "()" is not decoration. PdbFileLlvm builds the name as
+llvm::demangle(ProcSym::Name) plus
+LazyRandomTypeCollection::getTypeName(ArgumentList) -- LLVM's CodeView
+type-name renderer, applied to the function's argument list from the TPI
+stream. For a no-argument function that renders "()"; for anything else
+it recursively renders the parameter types.
+
+Conclusion: reaching parity means reimplementing LLVM's CodeView
+type-name formatting. That is a bounded, nameable project, but it is a
+project -- and it is the same class of problem that stopped line info in
+stage 2d, except that here the strings are asserted exactly by the test
+suite and are used for function matching.
+
+Stage 2g is therefore not attempted, and llvm::DebugInfoPDB and
+llvm::DebugInfoCodeView stay. Since PdbFileLlvm is reachable on Linux --
+CreateSymbolsFile tries CreatePdbFile unconditionally, for Wine and
+Proton modules -- stage 2h cannot delete //bazel/deps:llvm either.

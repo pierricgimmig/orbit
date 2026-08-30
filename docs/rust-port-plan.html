@@ -703,7 +703,7 @@
     <dt>Record</dt>
     <dd>Every phase is written up in <a href="blog/index.html"><code>docs/blog/</code></a> as it happens, with every number traceable to a committed snapshot. Numbers that get worse are reported too.</dd>
     <dt>Prize</dt>
-    <dd><code>//bazel/deps:llvm</code> has exactly <strong>one</strong> dependent in the whole tree. Finishing Phase 2 deletes LLVM, its two build patches, and its version pin.</dd>
+    <dd><code>//bazel/deps:llvm</code> has exactly <strong>one</strong> dependent in the whole tree, so finishing Phase 2 would delete LLVM, its two build patches, and its version pin. <strong>As of stage 2f that is blocked</strong>, and the reason is measured rather than guessed: see 2d and 2g below. ELF and PE/COFF are done; PDB is not, and PDB is reachable on Linux.</dd>
   </div>
 
   <!-- ==================================================== mechanism -->
@@ -1015,10 +1015,10 @@
           <td>LoadEhOrDebugFrameEntriesAsSymbolsFrom{EhFrame,DebugFrame}, LoadDynamicLinkingSymbolsAndUnwindRanges… (both), LoadPatchableFunctionEntry… (both)</td>
         </tr>
         <tr>
-          <td class="v">2d</td>
-          <td>DWARF line tables and declaration locations</td>
+          <td class="v hold-t">2d</td>
+          <td>DWARF line tables and declaration locations &mdash; <strong>attempted, held back</strong></td>
           <td class="v">gimli · addr2line</td>
-          <td>LineInfo, LineInfoOnlyDebug, LineInfoNoDebugInfo, LineInfoInlining, GetDeclarationLocationOfFunction (+Libc), GetLocationOfFunctionLibc, GetLocationOfFunctionNoSubroutine</td>
+          <td>Passes every one of these, and still delegates: the differential corpus found that <code>llvm::symbolize</code> and <code>addr2line</code> spell source paths differently (<code>sigaction.c</code> versus <code>../sysdeps/unix/sysv/linux/x86_64/sigaction.c</code>). A path is consumed by machinery, not read by a person, so "close enough" is not the porter's call. See <a href="blog/03-the-stage-that-didnt-ship.html">post 03</a>.</td>
         </tr>
         <tr>
           <td class="v">2e</td>
@@ -1034,13 +1034,13 @@
         </tr>
         <tr>
           <td class="v hold-t">2g</td>
-          <td>PDB reading — replaces <code>PdbFileLlvm.cpp</code> (476 lines)</td>
+          <td>PDB reading &mdash; <strong>measured, not attempted</strong></td>
           <td class="v hold-t">pdb</td>
-          <td><code>PdbFile</code> typed tests, SymbolsFile "cannot be read as a PDB file"</td>
+          <td>The <code>pdb</code> crate reads <code>dllmain.pdb</code> exactly &mdash; GUID, age, 5,459 procedures, and <code>PrintHelloWorldInternal</code> at the address and size <code>PdbFileTest</code> asserts. What it cannot produce is the name: <code>PdbFileLlvm</code> appends LLVM's CodeView type-name rendering of the argument list, so the expected string is <code>PrintHelloWorldInternal()</code>. Parity means reimplementing that renderer. <a href="blog/metrics/phase-2g-pdb-feasibility.txt">Measurement</a>.</td>
         </tr>
         <tr>
           <td class="v bump">2h</td>
-          <td>Flip the default to <code>rust</code>; fix <code>CaptureEventProcessor</code>'s demangle include; drop <code>//bazel/deps:llvm</code> and both patches</td>
+          <td>Flip the default to <code>rust</code>; fix <code>CaptureEventProcessor</code>'s demangle include; drop <code>//bazel/deps:llvm</code> and both patches. <strong>Blocked by 2g</strong>: <code>PdbFileLlvm</code> is reachable on Linux, so <code>DebugInfoPDB</code> and <code>DebugInfoCodeView</code> stay until the CodeView type-name renderer exists.</td>
           <td class="v">—</td>
           <td>full <code>bazel test //...</code>, plus a cold-build timing before and after</td>
         </tr>
