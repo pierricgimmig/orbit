@@ -214,6 +214,60 @@ mod tests {
     }
 
     #[test]
+    fn nestable_async_b_e() {
+        let json = r#"[
+          {"name":"job","ph":"b","ts":0,"pid":1,"tid":1,"id":"x"},
+          {"name":"job","ph":"e","ts":40,"pid":1,"tid":1,"id":"x"}
+        ]"#;
+        let (ing, evs) = collect(json);
+        let tracks: Vec<_> = evs.iter().filter(|e| e.kind == kind::API_TRACK).collect();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].duration_ns, 40_000);
+        assert!(tracks[0].tid >= TID_ASYNC_BASE);
+        assert_ne!(tracks[0].tid, 1);
+        assert_eq!(ing.stats.async_ev, 2);
+    }
+
+    #[test]
+    fn system_trace_events_array_and_systrace_string() {
+        let json = r#"{
+          "traceEvents":[{"name":"X","ph":"X","ts":1,"dur":1,"pid":1,"tid":1}],
+          "systemTraceEvents":[
+            {"name":"sys","ph":"X","ts":2,"dur":3,"pid":9,"tid":9}
+          ]
+        }"#;
+        let (_ing, evs) = collect(json);
+        assert_eq!(evs.len(), 2);
+        let names: HashSet<_> = evs.iter().map(|e| e.pid).collect();
+        assert!(names.contains(&1) && names.contains(&9));
+
+        let systrace = r##"{
+          "traceEvents":[],
+          "systemTraceEvents":"# tracer: nop\n          chrome-42  [000] ....  1.500000: tracing_mark_write: B|42|Pump\n          chrome-42  [000] ....  1.500010: tracing_mark_write: E|42\n          chrome-42  [000] ....  1.500020: tracing_mark_write: C|42|cpu|7\n"
+        }"##;
+        let (ing, evs) = collect(systrace);
+        assert_eq!(ing.stats.system_trace, 3);
+        assert!(evs.iter().any(|e| e.kind == kind::API_SCOPE && e.duration_ns == 10_000));
+        assert!(evs.iter().any(|e| e.kind == kind::VALUE));
+    }
+
+    #[test]
+    fn theverge_public_fixture_if_present() {
+        let path = "/tmp/chrome-traces/theverge_trace.json";
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let (ing, evs) = ingest_collect(&bytes).expect("theverge");
+        assert_eq!(ing.stats.events_in, 58_103);
+        assert_eq!(ing.stats.duration, 54_224);
+        assert_eq!(ing.stats.counter, 344);
+        assert_eq!(ing.stats.async_ev, 785);
+        assert!(ing.stats.object >= 2_101);
+        assert!(evs.len() >= 30_000);
+        assert!(ing.process_names.len() >= 6);
+    }
+
+    #[test]
     fn nested_async_n_o_d() {
         let json = r#"[
           {"name":"job","ph":"n","ts":0,"pid":2,"id":1},

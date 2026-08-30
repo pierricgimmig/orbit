@@ -37,6 +37,7 @@ enum PendingKey {
     DisplayTimeUnit,
     StackFrames,
     Samples,
+    SystemTraceEvents,
     Other,
 }
 
@@ -437,6 +438,7 @@ impl ChromeStream {
                 self.pos = end;
                 self.pending = match key.as_str() {
                     "traceEvents" => PendingKey::TraceEvents,
+                    "systemTraceEvents" => PendingKey::SystemTraceEvents,
                     "displayTimeUnit" => PendingKey::DisplayTimeUnit,
                     "stackFrames" => PendingKey::StackFrames,
                     "samples" => PendingKey::Samples,
@@ -455,7 +457,7 @@ impl ChromeStream {
     fn step_object_colon(
         &mut self,
         ing: &mut ChromeIngestor,
-        _out: &mut Vec<orbit_live_event::LiveEvent>,
+        out: &mut Vec<orbit_live_event::LiveEvent>,
     ) -> Step {
         self.pos = skip_ws(&self.raw, self.pos);
         if self.pos >= self.raw.len() {
@@ -469,10 +471,21 @@ impl ChromeStream {
             }
         }
         match self.pending {
-            PendingKey::TraceEvents | PendingKey::Samples => {
+            PendingKey::TraceEvents | PendingKey::Samples | PendingKey::SystemTraceEvents => {
                 if self.raw[self.pos] == b'[' {
                     self.pos += 1;
                     self.phase = Phase::ArrayEvents;
+                    return Step::Event;
+                }
+                if self.pending == PendingKey::SystemTraceEvents && self.raw[self.pos] == b'"' {
+                    let Some(end) = value_end(&self.raw, self.pos) else {
+                        return Step::NeedBytes;
+                    };
+                    if let Some(s) = parse_json_string(&self.raw[self.pos..end]) {
+                        out.extend(ing.ingest_systrace_text(&s));
+                    }
+                    self.pos = end;
+                    self.phase = Phase::AfterValue;
                     return Step::Event;
                 }
                 self.skip_value()

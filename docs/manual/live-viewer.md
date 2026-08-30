@@ -70,7 +70,8 @@ first (legacy `[…]` array or `{ "traceEvents": […] }` plus
 * Stays in this viewer (no OrbitApp / CaptureData / Qt)
 
 Mapped: duration `B`/`E`/`X`, instants `I`/`i`, counters `C`, async `S`/`T`/`F`
-and nested `n`/`o`/`d` (own lanes by id), flows `s`/`t`/`f` as markers + arrows,
+and nested `n`/`o`/`d` / `b`/`e` (own lanes by id), flows `s`/`t`/`f` as markers + arrows,
+`systemTraceEvents` (event array or `tracing_mark_write` text),
 metadata `M`, samples `P`+`stackFrames`, marks `R`, clock sync `c`, objects
 `N`/`O`/`D`. Memory dumps `v` are a marker only — the dump payload is dropped.
 
@@ -82,8 +83,9 @@ inflated as chunks arrive. wasm32 heap cap is 2 GiB.
 Measured numbers (native, this VM, 2026-08-30) live in
 `src/OrbitLiveViewer/README.md`. They are wall-clock ingest + CPU timeline
 prepare from actually downloaded files: catapult `theverge_trace.json`
-(54.4 MB, 0.266 s), and HuggingFace wan22 `trace_rank4.json.gz`
-(266,439,928 B → 3.31 GB, 12.25M events, 1806.9 s / 6.22 GB RSS).
+(54,370,856 B, 58,103 events, 0.271 s / 19 MB RSS), and HuggingFace wan22
+`trace_rank4.json.gz` (266,439,928 B → 3.31 GB, 12.25M events, 1806.9 s /
+6.22 GB RSS).
 
 ## Renderer
 

@@ -69,6 +69,7 @@ pub struct IngestStats {
     pub mark: u64,
     pub object: u64,
     pub memory_dump: u64,
+    pub system_trace: u64,
     pub skipped_other: u64,
     pub unmatched_end: u64,
 }
@@ -262,9 +263,10 @@ impl ChromeIngestor {
             'X' => self.on_complete(ev),
             'I' | 'i' => self.on_instant(ev, false),
             'C' => self.on_counter(ev),
-            'S' | 'n' => self.on_async_begin(ev),
+            // Legacy async S/T/F, nestable n/o/d, and nestable b/e (catapult).
+            'S' | 'n' | 'b' => self.on_async_begin(ev),
             'T' | 'o' => self.on_async_instant(ev),
-            'F' | 'd' => self.on_async_end(ev),
+            'F' | 'd' | 'e' => self.on_async_end(ev),
             's' | 't' | 'f' => self.on_flow(ev, ch),
             'M' => {
                 self.on_metadata(&ev);
@@ -282,6 +284,47 @@ impl ChromeIngestor {
         };
         self.stats.events_out += out.len() as u64;
         out
+    }
+
+    /// Linux ftrace / Android atrace text from `systemTraceEvents`.
+    /// Understands `tracing_mark_write: B|pid|name` (and E/C/S/T/F).
+    pub fn ingest_systrace_text(&mut self, text: &str) -> Vec<LiveEvent> {
+        let mut out = Vec::new();
+        for line in text.lines() {
+            out.extend(self.ingest_systrace_line(line));
+        }
+        out
+    }
+
+    fn ingest_systrace_line(&mut self, line: &str) -> Vec<LiveEvent> {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return Vec::new();
+        }
+        let (ts_us, mark) = if let Some(rest) = line.split_once("tracing_mark_write:") {
+            let prefix = rest.0;
+            let ts = prefix
+                .split_whitespace()
+                .rev()
+                .find_map(|t| t.strip_suffix(':').or(Some(t)))
+                .and_then(|t| t.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                * 1_000_000.0;
+            (ts, rest.1.trim())
+        } else if matches!(
+            line.as_bytes().first(),
+            Some(b'B' | b'E' | b'C' | b'S' | b'T' | b'F')
+        ) && line.contains('|')
+        {
+            (0.0, line)
+        } else {
+            return Vec::new();
+        };
+        let Some(ev) = systrace_mark_event(mark, ts_us) else {
+            return Vec::new();
+        };
+        self.stats.system_trace += 1;
+        self.ingest(ev)
     }
 
     fn ts_ns(&self, ts: Option<f64>) -> u64 {
@@ -970,6 +1013,49 @@ const MAX_ARG_CHARS: usize = 512;
 /// Per-session hover map + intern budget. Beyond this, later events still
 /// become clips; they just have no args tooltip.
 const MAX_ARG_ENTRIES: usize = 100_000;
+
+fn systrace_mark_event(mark: &str, ts_us: f64) -> Option<ChromeEvent> {
+    let mut parts = mark.split('|');
+    let ph = parts.next()?.trim();
+    if ph.len() != 1 {
+        return None;
+    }
+    let pid = parts.next()?.trim().parse::<u64>().ok()?;
+    let name = parts.next().map(|s| s.trim().to_string());
+    let extra = parts.next().map(|s| s.trim().to_string());
+    let ch = ph.as_bytes()[0] as char;
+    let (id, args) = match ch {
+        'C' => (
+            None,
+            extra.map(|v| {
+                let mut m = serde_json::Map::new();
+                m.insert("value".into(), Value::String(v));
+                Value::Object(m)
+            }),
+        ),
+        'S' | 'T' | 'F' => (extra, None),
+        _ => (None, None),
+    };
+    Some(ChromeEvent {
+        name,
+        cat: Some("systemTraceEvents".into()),
+        ph: Some(ph.to_string()),
+        ts: Some(ts_us),
+        dur: None,
+        pid: Some(FlexId::Num(pid)),
+        tid: Some(FlexId::Num(pid)),
+        id: id.map(FlexId::Str),
+        id2: None,
+        args,
+        s: None,
+        bind_id: None,
+        flow_in: None,
+        flow_out: None,
+        sf: None,
+        stack: None,
+        tts: None,
+    })
+}
 
 fn compact_args(v: &Value) -> String {
     let mut text = serde_json::to_string(v).unwrap_or_default();
