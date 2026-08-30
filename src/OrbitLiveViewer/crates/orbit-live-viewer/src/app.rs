@@ -184,6 +184,36 @@ fn vscroll_ratio_for_dt(dt: f32) -> f32 {
     VSCROLL_ARROW * KEY_REPEAT_HZ as f32 * dt.clamp(0.0, KEY_HOLD_DT_MAX)
 }
 
+/// Net hold-to-zoom direction: +1 in (W), −1 out (S), 0 none or cancel.
+fn held_time_zoom_dir(w: bool, s: bool) -> f64 {
+    let mut dir = 0.0;
+    if w {
+        dir += 1.0;
+    }
+    if s {
+        dir -= 1.0;
+    }
+    dir
+}
+
+/// Multiplicative `ZoomTime` scale for one held frame.
+///
+/// One OS-repeat step is 1.1× (`ZOOM_TIME_RATIO`). Raising that to
+/// `KEY_REPEAT_HZ * dt` keeps 60 Hz and 120 Hz at the same speed.
+/// `dir` > 0 zooms in (span shrinks), < 0 zooms out.
+fn zoom_scale_for_dt(dt: f32, dir: f64) -> f64 {
+    if dir == 0.0 {
+        return 1.0;
+    }
+    let steps = KEY_REPEAT_HZ * f64::from(dt.clamp(0.0, KEY_HOLD_DT_MAX));
+    let base = 1.0 + ZOOM_TIME_RATIO;
+    if dir > 0.0 {
+        base.powf(steps)
+    } else {
+        base.powf(-steps)
+    }
+}
+
 /// Capture time at a 0..1 position in the visible window `[t0, t1]`.
 ///
 /// This is the zoom invariant: after any number of scale-around-cursor steps
@@ -210,6 +240,17 @@ fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64)
     } else {
         1.0 / (1.0 + ZOOM_TIME_RATIO)
     };
+    zoom_time_by_scale(t0, t1, scale, center_ratio)
+}
+
+/// Scale the window around the time at `center_ratio`. `scale` > 1 zooms in.
+///
+/// Same rebuild as `zoom_time`: `t_mouse` stays at `frac` so the pointer
+/// time does not walk. `t0` may go negative.
+fn zoom_time_by_scale(t0: f64, t1: f64, scale: f64, center_ratio: f64) -> (f64, f64) {
+    if !scale.is_finite() || (scale - 1.0).abs() < f64::EPSILON {
+        return (t0, t1);
+    }
     let center_ratio = center_ratio.clamp(0.0, 1.0);
     let span = t1 - t0;
     if !span.is_finite() || span <= 0.0 {
@@ -2637,8 +2678,8 @@ impl OrbitLiveApp {
                 i.key_down(Key::ArrowRight),
                 i.key_down(Key::ArrowUp),
                 i.key_down(Key::ArrowDown),
-                i.key_pressed(Key::W),
-                i.key_pressed(Key::S),
+                i.key_down(Key::W),
+                i.key_down(Key::S),
             )
         });
         // Hold-to-pan from key-down state + dt, not OS key-repeat (~30 Hz).
@@ -2664,12 +2705,15 @@ impl OrbitLiveApp {
             };
             self.nudge_selection(dir);
         }
-        // W / S stay discrete ZoomTime steps (CaptureWindow::ZoomHorizontally).
-        if w {
-            self.zoom_horizontally(ctx, body, ruler, 1);
-        }
-        if s {
-            self.zoom_horizontally(ctx, body, ruler, -1);
+        // W / S: hold-to-zoom from key-down + dt, cursor-locked (ZoomTime).
+        // +/- are not on this path (native Ctrl++ is vertical zoom).
+        if w || s {
+            self.follow = false;
+            self.needs_repaint = true;
+            let dir = held_time_zoom_dir(w, s);
+            if dir != 0.0 {
+                self.zoom_horizontally_by_scale(ctx, body, ruler, zoom_scale_for_dt(dt, dir));
+            }
         }
         if arrows_pan {
             let mut vdir = 0.0;
@@ -2692,7 +2736,7 @@ impl OrbitLiveApp {
         }
     }
 
-    fn zoom_horizontally(&mut self, ctx: &Context, body: Rect, ruler: Rect, delta: i32) {
+    fn zoom_horizontally_by_scale(&mut self, ctx: &Context, body: Rect, ruler: Rect, scale: f64) {
         let pos = ctx.pointer_latest_pos();
         let rect = if pos.map(|p| ruler.contains(p)).unwrap_or(false) {
             ruler
@@ -2701,7 +2745,7 @@ impl OrbitLiveApp {
         };
         let pos = pos.unwrap_or(rect.center());
         let frac = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64;
-        let (t0, t1) = zoom_time(self.t0, self.t1, delta, frac);
+        let (t0, t1) = zoom_time_by_scale(self.t0, self.t1, scale, frac);
         self.t0 = t0;
         self.t1 = t1;
         self.follow = false;
@@ -4405,6 +4449,68 @@ mod tests {
         let r120 = vscroll_ratio_for_dt(1.0 / 120.0);
         assert!((r60 - 2.0 * r120).abs() < 1e-6);
         assert_eq!(vscroll_ratio_for_dt(0.1), r60);
+    }
+
+    #[test]
+    fn held_zoom_scale_is_the_same_speed_at_60_and_120() {
+        let s60 = zoom_scale_for_dt(1.0 / 60.0, 1.0);
+        let s120 = zoom_scale_for_dt(1.0 / 120.0, 1.0);
+        assert!(
+            (s60 - s120 * s120).abs() < 1e-12,
+            "120 Hz must not be 2x: s60={s60} s120={s120}"
+        );
+        assert_eq!(zoom_scale_for_dt(0.1, 1.0), s60);
+        assert_eq!(zoom_scale_for_dt(1.0 / 60.0, 0.0), 1.0);
+        assert_eq!(held_time_zoom_dir(true, false), 1.0);
+        assert_eq!(held_time_zoom_dir(false, true), -1.0);
+        assert_eq!(held_time_zoom_dir(true, true), 0.0);
+    }
+
+    #[test]
+    fn held_zoom_covers_the_same_ground_in_one_60_or_two_120_frames() {
+        let frac = 0.25;
+        let start = (0.0, 2e9);
+        let (a0, a1) =
+            zoom_time_by_scale(start.0, start.1, zoom_scale_for_dt(1.0 / 60.0, 1.0), frac);
+        let mid = zoom_time_by_scale(start.0, start.1, zoom_scale_for_dt(1.0 / 120.0, 1.0), frac);
+        let (b0, b1) = zoom_time_by_scale(mid.0, mid.1, zoom_scale_for_dt(1.0 / 120.0, 1.0), frac);
+        assert!((a0 - b0).abs() < 1e-6);
+        assert!((a1 - b1).abs() < 1e-6);
+        assert_cursor_time_locked(start.0, start.1, a0, a1, frac);
+        // Fractional hold step is smaller than one discrete 1.1× ZoomTime.
+        assert!((start.1 - start.0) / (a1 - a0) < 1.1);
+    }
+
+    #[test]
+    fn held_zoom_keeps_cursor_time_across_120_hz_frames() {
+        let fracs = [0.0, 0.25, 0.5, 0.9];
+        for frac in fracs {
+            let mut t0 = 0.0;
+            let mut t1 = 2e9;
+            let t_mouse = view_time_at(t0, t1, frac);
+            for _ in 0..120 {
+                let (n0, n1) =
+                    zoom_time_by_scale(t0, t1, zoom_scale_for_dt(1.0 / 120.0, 1.0), frac);
+                assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                t0 = n0;
+                t1 = n1;
+            }
+            assert!(
+                (view_time_at(t0, t1, frac) - t_mouse).abs()
+                    <= 1e-3_f64.max(t_mouse.abs() * f64::EPSILON * 256.0)
+            );
+            for _ in 0..120 {
+                let (n0, n1) =
+                    zoom_time_by_scale(t0, t1, zoom_scale_for_dt(1.0 / 120.0, -1.0), frac);
+                assert_cursor_time_locked(t0, t1, n0, n1, frac);
+                t0 = n0;
+                t1 = n1;
+            }
+            assert!(
+                (view_time_at(t0, t1, frac) - t_mouse).abs()
+                    <= 1e-3_f64.max(t_mouse.abs() * f64::EPSILON * 256.0)
+            );
+        }
     }
 
     #[test]
