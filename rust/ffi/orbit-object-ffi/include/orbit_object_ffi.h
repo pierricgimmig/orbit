@@ -59,6 +59,33 @@ const OrbitObjectSegment* orbit_elf_segments(const OrbitElfMetadata* handle);
 void orbit_elf_free(OrbitElfMetadata* handle);
 void orbit_elf_free_error(char* message);
 
+// ---------------------------------------------------------------- symbols
+
+// Opaque owner of a symbol table. Free with orbit_elf_symbols_free.
+typedef struct OrbitElfSymbols OrbitElfSymbols;
+
+// One entry of ModuleSymbols::symbol_infos. name_offset/name_len index into
+// the blob from orbit_elf_symbol_names; names are NOT NUL-terminated.
+typedef struct {
+  uint64_t address;
+  uint64_t size;
+  uint64_t name_offset;
+  uint64_t name_len;
+  uint8_t is_hotpatchable;
+} OrbitElfSymbol;
+
+// table is 0 for .symtab (LoadDebugSymbols), 1 for .dynsym
+// (LoadSymbolsFromDynsym). NULL on failure, with a message in error_out to
+// release with orbit_elf_free_error.
+OrbitElfSymbols* orbit_elf_load_symbols(const uint8_t* data, size_t len, uint32_t table,
+                                        char** error_out);
+
+size_t orbit_elf_symbol_count(const OrbitElfSymbols* handle);
+const OrbitElfSymbol* orbit_elf_symbol_array(const OrbitElfSymbols* handle);
+const char* orbit_elf_symbol_names(const OrbitElfSymbols* handle);
+size_t orbit_elf_symbol_names_len(const OrbitElfSymbols* handle);
+void orbit_elf_symbols_free(OrbitElfSymbols* handle);
+
 // Running .gnu_debuglink CRC-32, so a large file can be checksummed in chunks
 // exactly as CalculateDebuglinkChecksum does. Start with previous = 0.
 uint32_t orbit_elf_crc32_continue(uint32_t previous, const uint8_t* data, size_t len);

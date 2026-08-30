@@ -16,8 +16,14 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "ObjectUtilsRust",
-    srcs = ["RustElfFile.cpp"],
-    hdrs = ["RustElfFile.h"],
+    srcs = [
+        "Demangle.cpp",
+        "RustElfFile.cpp",
+    ],
+    hdrs = [
+        "Demangle.h",
+        "RustElfFile.h",
+    ],
     copts = ORBIT_COPTS,
     includes = ["."],
     target_compatible_with = ["@platforms//os:linux"],

@@ -4,12 +4,17 @@
 
 #include "RustElfFile.h"
 
+#include "Demangle.h"
+
 #include <absl/strings/str_format.h>
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <atomic>
+#include <cstdint>
 #include <vector>
 
 #include "GrpcProtos/module.pb.h"
@@ -30,6 +35,21 @@ struct OrbitElfMetadataDeleter {
 };
 using OrbitElfMetadataPtr = std::unique_ptr<OrbitElfMetadata, OrbitElfMetadataDeleter>;
 
+std::atomic<uint64_t>& DemanglingDiffering() {
+  static std::atomic<uint64_t> count{0};
+  return count;
+}
+
+std::atomic<uint64_t>& DemanglingCompared() {
+  static std::atomic<uint64_t> count{0};
+  return count;
+}
+
+struct OrbitElfSymbolsDeleter {
+  void operator()(OrbitElfSymbols* handle) const { orbit_elf_symbols_free(handle); }
+};
+using OrbitElfSymbolsPtr = std::unique_ptr<OrbitElfSymbols, OrbitElfSymbolsDeleter>;
+
 // Aborts with both values printed. Used only in ORBIT_OBJECT_BACKEND=both.
 template <typename T>
 void CheckAgree(const char* method, const T& rust, const T& cpp) {
@@ -43,10 +63,11 @@ void CheckAgree(const char* method, const T& rust, const T& cpp) {
 class RustElfFile : public ElfFile {
  public:
   RustElfFile(std::filesystem::path file_path, OrbitElfMetadataPtr metadata,
-              std::unique_ptr<ElfFile> cpp_delegate, bool compare)
+              std::unique_ptr<ElfFile> cpp_delegate, std::vector<uint8_t> bytes, bool compare)
       : file_path_{std::move(file_path)},
         metadata_{std::move(metadata)},
         cpp_{std::move(cpp_delegate)},
+        bytes_{std::move(bytes)},
         compare_{compare} {
     orbit_elf_facts(metadata_.get(), &facts_);
     build_id_ = orbit_elf_build_id(metadata_.get());
@@ -108,36 +129,154 @@ class RustElfFile : public ElfFile {
   // ------------------------------------------- still delegating to the C++
   //
   // Each of these moves in a later stage; see docs/rust-port-plan.html.
-  // Stage 2b: the two symbol-table loaders. 2c: unwind ranges. 2d: line info.
+  // Stage 2c: unwind ranges. 2d: line info.
+  //
+  // Each carries an ORBIT_PORT_DELEGATED marker so scripts/port_metrics.sh can
+  // count them without guessing. The count only ever goes down; at zero,
+  // src/ObjectUtils/ElfFile.cpp can be deleted.
 
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadDebugSymbols() override {
-    return cpp_->LoadDebugSymbols();
+    return LoadSymbolTable(kSymtab, "LoadDebugSymbols",
+                           [this] { return cpp_->LoadDebugSymbols(); });
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadSymbolsFromDynsym() override {
-    return cpp_->LoadSymbolsFromDynsym();
+    return LoadSymbolTable(kDynsym, "LoadSymbolsFromDynsym",
+                           [this] { return cpp_->LoadSymbolsFromDynsym(); });
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
-  LoadEhOrDebugFrameEntriesAsSymbols() override {
+  LoadEhOrDebugFrameEntriesAsSymbols() override {  // ORBIT_PORT_DELEGATED
     return cpp_->LoadEhOrDebugFrameEntriesAsSymbols();
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>
-  LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols() override {
+  LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols() override {  // ORBIT_PORT_DELEGATED
     return cpp_->LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols();
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetLineInfo(
-      uint64_t address) override {
+      uint64_t address) override {  // ORBIT_PORT_DELEGATED
     return cpp_->GetLineInfo(address);
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetDeclarationLocationOfFunction(
-      uint64_t address) override {
+      uint64_t address) override {  // ORBIT_PORT_DELEGATED
     return cpp_->GetDeclarationLocationOfFunction(address);
   }
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetLocationOfFunction(
-      uint64_t address) override {
+      uint64_t address) override {  // ORBIT_PORT_DELEGATED
     return cpp_->GetLocationOfFunction(address);
   }
 
  private:
+  static constexpr uint32_t kSymtab = 0;
+  static constexpr uint32_t kDynsym = 1;
+
+  // Reads one symbol table through the Rust FFI, comparing against the C++ in
+  // `both` mode. The comparison is per symbol so a mismatch names the symbol
+  // rather than just the count -- which matters most for demangling, where
+  // cpp_demangle and llvm::itaniumDemangle could format differently.
+  template <typename CppLoader>
+  [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> LoadSymbolTable(
+      uint32_t table, const char* method, CppLoader cpp_loader) {
+    char* error = nullptr;
+    OrbitElfSymbolsPtr loaded{
+        orbit_elf_load_symbols(bytes_.data(), bytes_.size(), table, &error)};
+
+    ErrorMessageOr<orbit_grpc_protos::ModuleSymbols> rust_result = ErrorMessage{""};
+    std::vector<std::string> mangled;
+    if (loaded == nullptr) {
+      rust_result = ErrorMessage{error != nullptr ? error : "Unknown error loading symbols"};
+      orbit_elf_free_error(error);
+    } else {
+      orbit_grpc_protos::ModuleSymbols module_symbols;
+      const size_t count = orbit_elf_symbol_count(loaded.get());
+      const OrbitElfSymbol* symbols = orbit_elf_symbol_array(loaded.get());
+      const char* names = orbit_elf_symbol_names(loaded.get());
+      mangled.reserve(count);
+      for (size_t i = 0; i < count; ++i) {
+        std::string_view mangled_name{names + symbols[i].name_offset,
+                                      static_cast<size_t>(symbols[i].name_len)};
+        mangled.emplace_back(mangled_name);
+        orbit_grpc_protos::SymbolInfo* info = module_symbols.add_symbol_infos();
+        info->set_demangled_name(Demangle(mangled_name));
+        info->set_address(symbols[i].address);
+        info->set_size(symbols[i].size);
+        info->set_is_hotpatchable(symbols[i].is_hotpatchable != 0);
+      }
+      rust_result = std::move(module_symbols);
+    }
+
+    if (compare_) {
+      CheckSymbolsAgree(method, rust_result, cpp_loader(), mangled);
+    }
+    return rust_result;
+  }
+
+
+  static void CheckSymbolsAgree(
+      const char* method, const ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>& rust,
+      const ErrorMessageOr<orbit_grpc_protos::ModuleSymbols>& cpp,
+      const std::vector<std::string>& mangled) {
+    if (rust.has_value() != cpp.has_value()) {
+      ORBIT_FATAL("ElfFile backends disagree in %s on success: cpp=%s rust=%s", method,
+                  cpp.has_value() ? "ok" : cpp.error().message(),
+                  rust.has_value() ? "ok" : rust.error().message());
+    }
+    if (rust.has_error()) {
+      CheckAgree(method, rust.error().message(), cpp.error().message());
+      return;
+    }
+
+    const auto& rust_symbols = rust.value().symbol_infos();
+    const auto& cpp_symbols = cpp.value().symbol_infos();
+    if (rust_symbols.size() != cpp_symbols.size()) {
+      ORBIT_FATAL("ElfFile backends disagree in %s on symbol count: cpp=%d rust=%d", method,
+                  cpp_symbols.size(), rust_symbols.size());
+    }
+    DemanglingCompared().fetch_add(rust_symbols.size());
+    for (int i = 0; i < rust_symbols.size(); ++i) {
+      if (rust_symbols[i].address() == cpp_symbols[i].address() &&
+          rust_symbols[i].size() == cpp_symbols[i].size() &&
+          rust_symbols[i].is_hotpatchable() == cpp_symbols[i].is_hotpatchable() &&
+          rust_symbols[i].demangled_name() == cpp_symbols[i].demangled_name()) {
+        continue;
+      }
+
+      // The one tolerated difference. Everything structural -- address, size,
+      // hotpatchability, which symbols are present and in what order -- is
+      // compared strictly and a mismatch is fatal. The demangled name is not:
+      // it is a *rendering* of the mangled name, and llvm::itaniumDemangle and
+      // abi::__cxa_demangle render several constructs differently:
+      //
+      //   lambdas       llvm `'lambda'()`      libstdc++ `{lambda()#1}`
+      //   return types  llvm prints them       libstdc++ sometimes omits them
+      //   failures      llvm gives up on some symbols libstdc++ demangles
+      //
+      // Matching one from the other is not achievable by normalisation, and
+      // demanding bug-compatibility with LLVM's renderer would mean
+      // reproducing its limitations on purpose. So the port commits to
+      // producing *a* demangling of every symbol, not to reproducing LLVM's
+      // exact text, and the divergence is counted and reported instead.
+      if (rust_symbols[i].address() == cpp_symbols[i].address() &&
+          rust_symbols[i].size() == cpp_symbols[i].size() &&
+          rust_symbols[i].is_hotpatchable() == cpp_symbols[i].is_hotpatchable()) {
+        DemanglingDiffering().fetch_add(1);
+        ORBIT_LOG_ONCE(
+            "Demangled renderings differ between llvm::demangle and abi::__cxa_demangle. "
+            "First case, mangled \"%s\":\n  llvm:      %s\n  libstdc++: %s",
+            static_cast<size_t>(i) < mangled.size() ? mangled[i] : std::string{"?"},
+            cpp_symbols[i].demangled_name(), rust_symbols[i].demangled_name());
+        continue;
+      }
+      ORBIT_FATAL(
+          "ElfFile backends disagree in %s at symbol %d:\n"
+          "  cpp:  addr=%#x size=%u hot=%d \"%s\"\n"
+          "  rust: addr=%#x size=%u hot=%d \"%s\"",
+          method, i, cpp_symbols[i].address(), cpp_symbols[i].size(),
+          static_cast<int>(cpp_symbols[i].is_hotpatchable()), cpp_symbols[i].demangled_name(),
+          rust_symbols[i].address(), rust_symbols[i].size(),
+          static_cast<int>(rust_symbols[i].is_hotpatchable()),
+          rust_symbols[i].demangled_name());
+    }
+  }
+
   // Every ported method, checked against the C++ once at construction. Doing
   // it here rather than per call keeps the accessors trivial while still
   // covering every value the suite can observe.
@@ -183,6 +322,7 @@ class RustElfFile : public ElfFile {
   std::filesystem::path file_path_;
   OrbitElfMetadataPtr metadata_;
   std::unique_ptr<ElfFile> cpp_;
+  std::vector<uint8_t> bytes_;
   bool compare_;
 
   OrbitElfFacts facts_{};
@@ -208,8 +348,15 @@ ErrorMessageOr<std::unique_ptr<ElfFile>> CreateRustElfFile(
     return ErrorMessage{std::move(message)};
   }
 
-  return std::unique_ptr<ElfFile>{new RustElfFile{file_path, std::move(metadata),
-                                                  std::move(cpp_delegate), compare}};
+  const auto* first = static_cast<const uint8_t*>(data);
+  return std::unique_ptr<ElfFile>{
+      new RustElfFile{file_path, std::move(metadata), std::move(cpp_delegate),
+                      std::vector<uint8_t>{first, first + len}, compare}};
+}
+
+void GetDemanglingDivergence(uint64_t* differing, uint64_t* compared) {
+  if (differing != nullptr) *differing = DemanglingDiffering().load();
+  if (compared != nullptr) *compared = DemanglingCompared().load();
 }
 
 bool RustElfParses(const std::filesystem::path& file_path, const void* data, size_t len,

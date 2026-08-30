@@ -102,8 +102,8 @@ cat <<JSON
 
   "strangler": {
     "comment": "Methods in the Rust shims still forwarding to C++. Only ever goes down; zero means the C++ implementation can be deleted.",
-    "rust_elf_file_delegating_methods": $(grep -c 'return cpp_->' rust/shims/ObjectUtilsRust/RustElfFile.cpp 2>/dev/null || echo 0),
-    "rust_elf_file_ported_methods": $(grep -c 'override { return \(facts_\|build_id_\|soname_\|segments_\|gnu_debuglink_\|file_path_\|true\|false\)' rust/shims/ObjectUtilsRust/RustElfFile.cpp 2>/dev/null || echo 0)
+    "rust_elf_file_delegating_methods": $(grep -c 'override {  // ORBIT_PORT_DELEGATED' rust/shims/ObjectUtilsRust/RustElfFile.cpp 2>/dev/null || echo 0),
+    "rust_elf_file_total_overrides": $(grep -c ' override' rust/shims/ObjectUtilsRust/RustElfFile.cpp 2>/dev/null || echo 0)
   },
 
   "tests": {

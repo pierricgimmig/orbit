@@ -12,7 +12,7 @@
 
 use std::ffi::{c_char, CStr, CString};
 
-use orbit_object::{crc32_continue, parse_elf_metadata, ElfMetadata};
+use orbit_object::{crc32_continue, load_symbols, parse_elf_metadata, ElfMetadata, SymbolTable};
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
 pub struct OrbitElfMetadata {
@@ -262,6 +262,144 @@ pub unsafe extern "C" fn orbit_elf_crc32_continue(
     }
     // SAFETY: the caller promises len readable bytes at data.
     crc32_continue(previous, unsafe { std::slice::from_raw_parts(data, len) })
+}
+
+// ------------------------------------------------------------------ symbols
+
+/// Opaque owner of a symbol table, freed with [`orbit_elf_symbols_free`].
+pub struct OrbitElfSymbols {
+    symbols: Vec<OrbitElfSymbol>,
+    names: Vec<u8>,
+}
+
+/// One entry of `ModuleSymbols::symbol_infos`. `name_offset`/`name_len` index
+/// into the blob from [`orbit_elf_symbol_names`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct OrbitElfSymbol {
+    pub address: u64,
+    pub size: u64,
+    pub name_offset: u64,
+    pub name_len: u64,
+    pub is_hotpatchable: u8,
+}
+
+/// `table` is 0 for `.symtab` (LoadDebugSymbols) and 1 for `.dynsym`
+/// (LoadSymbolsFromDynsym).
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, and `error_out` must be null or
+/// writable. The result must be released with [`orbit_elf_symbols_free`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_load_symbols(
+    data: *const u8,
+    len: usize,
+    table: u32,
+    error_out: *mut *mut c_char,
+) -> *mut OrbitElfSymbols {
+    let set_error = |message: &str| {
+        if !error_out.is_null() {
+            let owned = to_cstring(message).into_raw();
+            // SAFETY: the caller promises error_out is writable.
+            unsafe { *error_out = owned };
+        }
+    };
+
+    if data.is_null() {
+        set_error("orbit_elf_load_symbols called with a null pointer");
+        return std::ptr::null_mut();
+    }
+    let which = match table {
+        0 => SymbolTable::Debug,
+        1 => SymbolTable::Dynamic,
+        _ => {
+            set_error("orbit_elf_load_symbols called with an unknown table");
+            return std::ptr::null_mut();
+        }
+    };
+
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    let loaded = match load_symbols(bytes, which) {
+        Ok(loaded) => loaded,
+        Err(message) => {
+            set_error(&message);
+            return std::ptr::null_mut();
+        }
+    };
+
+    let mut names = Vec::with_capacity(loaded.iter().map(|s| s.mangled_name.len()).sum());
+    let mut symbols = Vec::with_capacity(loaded.len());
+    for symbol in loaded {
+        let name_offset = names.len() as u64;
+        names.extend_from_slice(symbol.mangled_name.as_bytes());
+        symbols.push(OrbitElfSymbol {
+            address: symbol.address,
+            size: symbol.size,
+            name_offset,
+            name_len: symbol.mangled_name.len() as u64,
+            is_hotpatchable: u8::from(symbol.is_hotpatchable),
+        });
+    }
+
+    Box::into_raw(Box::new(OrbitElfSymbols { symbols, names }))
+}
+
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_elf_load_symbols`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_symbol_count(handle: *const OrbitElfSymbols) -> usize {
+    // SAFETY: the caller promises a live handle or null.
+    unsafe { handle.as_ref() }.map_or(0, |h| h.symbols.len())
+}
+
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_elf_load_symbols`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_symbol_array(
+    handle: *const OrbitElfSymbols,
+) -> *const OrbitElfSymbol {
+    // SAFETY: the caller promises a live handle or null.
+    match unsafe { handle.as_ref() } {
+        Some(h) => h.symbols.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// The name blob. Not NUL-separated: each symbol's name is `name_len` bytes at
+/// `name_offset`.
+///
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_elf_load_symbols`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_symbol_names(
+    handle: *const OrbitElfSymbols,
+) -> *const c_char {
+    // SAFETY: the caller promises a live handle or null.
+    match unsafe { handle.as_ref() } {
+        Some(h) => h.names.as_ptr().cast::<c_char>(),
+        None => std::ptr::null(),
+    }
+}
+
+/// # Safety
+/// `handle` must be null or a live handle from [`orbit_elf_load_symbols`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_symbol_names_len(handle: *const OrbitElfSymbols) -> usize {
+    // SAFETY: the caller promises a live handle or null.
+    unsafe { handle.as_ref() }.map_or(0, |h| h.names.len())
+}
+
+/// Releases a handle. Safe to call with null.
+///
+/// # Safety
+/// `handle` must be null, or a handle that has not already been freed.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_symbols_free(handle: *mut OrbitElfSymbols) {
+    if !handle.is_null() {
+        // SAFETY: the caller promises an unfreed handle.
+        drop(unsafe { Box::from_raw(handle) });
+    }
 }
 
 #[cfg(test)]

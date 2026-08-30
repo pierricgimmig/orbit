@@ -6,6 +6,7 @@
 #define ORBIT_RUST_SHIMS_OBJECT_UTILS_RUST_ELF_FILE_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include <filesystem>
 #include <memory>
@@ -36,6 +37,12 @@ namespace orbit_object_utils_rust {
 // file loads, not only on the values they produce for one that does.
 [[nodiscard]] bool RustElfParses(const std::filesystem::path& file_path, const void* data,
                                  size_t len, std::string* error_out);
+
+// How many symbols ORBIT_OBJECT_BACKEND=both has seen whose address, size and
+// hotpatchability matched but whose demangled *rendering* differed, and how
+// many it compared in total. See the note on DemanglingDiffersButStructureDoes
+// Not in RustElfFile.cpp for why that is reported rather than fatal.
+void GetDemanglingDivergence(uint64_t* differing, uint64_t* compared);
 
 // The Rust CRC-32 used for .gnu_debuglink, chunked like the C++ is.
 [[nodiscard]] uint32_t Crc32Continue(uint32_t previous, const void* data, size_t len);

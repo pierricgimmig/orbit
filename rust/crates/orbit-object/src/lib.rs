@@ -21,7 +21,9 @@ use object::read::elf::{Dyn, FileHeader, ProgramHeader, SectionHeader};
 use object::Endianness;
 
 mod debuglink;
+mod symbols;
 pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
+pub use symbols::{load_symbols, Symbol, SymbolTable};
 
 /// One `PT_LOAD` segment, mirroring `ModuleInfo::ObjectSegment`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
