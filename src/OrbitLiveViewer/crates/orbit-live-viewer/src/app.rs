@@ -1097,14 +1097,17 @@ impl OrbitLiveApp {
         }
     }
 
-    fn apply_layout(&mut self, width: f32) {
-        self.header_w = header_w_for(width);
-        self.side_w = if is_narrow_width(width) {
-            (width * 0.62).clamp(150.0, 220.0)
+    fn apply_layout(&mut self, ctx: &Context) {
+        let points_w = ctx.screen_rect().width().max(1.0);
+        let css_w = css_viewport_width(ctx).max(1.0);
+        let scale = points_w / css_w;
+        self.header_w = header_w_for(css_w) * scale;
+        self.side_w = if is_narrow_width(css_w) {
+            (css_w * 0.62).clamp(150.0, 220.0) * scale
         } else {
             SIDE
         };
-        let narrow = is_narrow_width(width);
+        let narrow = is_narrow_width(css_w);
         if narrow == self.was_narrow {
             return;
         }
@@ -1587,7 +1590,7 @@ impl OrbitLiveApp {
     }
 
     fn transport_more(&mut self, ui: &mut Ui) {
-        let more = pill(ui, "⋮", false).on_hover_text("More");
+        let more = pill(ui, "More", false).on_hover_text("More");
         egui::Popup::menu(&more).show(|ui| self.transport_overflow_items(ui));
     }
 
@@ -3651,7 +3654,7 @@ impl eframe::App for OrbitLiveApp {
             let dt_raw = ctx.input(|i| i.stable_dt);
             let dt = dt_raw.clamp(0.0, 0.05);
             self.note_fps(dt_raw);
-            self.apply_layout(ctx.screen_rect().width());
+            self.apply_layout(ctx);
             self.sync_fullscreen(ctx);
             self.take_dropped_traces(ctx);
             self.pump_trace_load();
@@ -3953,6 +3956,31 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         .min_size(Vec2::new(0.0, 22.0))
         .corner_radius(4),
     )
+}
+
+/// CSS px (visual viewport). egui `screen_rect` is points and follows
+/// `pixels_per_point`, so a 390 CSS-px iPhone at 3× DPR looks like 1170
+/// and would keep the 196 px desktop track column.
+fn css_viewport_width(ctx: &Context) -> f32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(w) = web_sys::window()
+            .and_then(|win| win.visual_viewport())
+            .map(|vv| vv.width() as f32)
+            .filter(|w| w.is_finite() && *w > 1.0)
+        {
+            return w;
+        }
+        if let Some(w) = web_sys::window()
+            .and_then(|win| win.inner_width().ok())
+            .and_then(|v| v.as_f64())
+            .map(|w| w as f32)
+            .filter(|w| w.is_finite() && *w > 1.0)
+        {
+            return w;
+        }
+    }
+    ctx.screen_rect().width()
 }
 
 fn is_narrow_width(width: f32) -> bool {
@@ -5176,6 +5204,22 @@ mod tests {
     use crate::tracks::TrackStrip;
     use orbit_live_event::{chrome, kind, LiveEvent};
     use orbit_live_render::collect_instances;
+
+    #[test]
+    fn iphone_dpr3_points_still_use_css_narrow_column() {
+        assert!(is_narrow_width(390.0));
+        let points_w = 390.0 * 3.0;
+        let header_pts = header_w_for(390.0) * (points_w / 390.0);
+        assert!(
+            header_pts / points_w < 0.32,
+            "track column must stay ~24% of a 390 CSS-px phone, got {}",
+            header_pts / points_w
+        );
+        assert!(
+            !is_narrow_width(points_w),
+            "1170 points must not be treated as CSS width"
+        );
+    }
 
     #[test]
     fn narrow_phone_width_shrinks_track_column() {
