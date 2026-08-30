@@ -252,6 +252,11 @@ int LiveViewerBridge::StopCaptureImpl() {
     return 0;
   }
   stopping_ = true;
+  // Unblock Capture::Read so we do not join the ingest thread from an HTTP
+  // worker while it is still waiting on the gRPC stream.
+  if (context_ != nullptr) {
+    context_->TryCancel();
+  }
   {
     stream_->WritesDone();
   }

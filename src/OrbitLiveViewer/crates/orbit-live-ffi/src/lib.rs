@@ -145,14 +145,14 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
     let search = cb.search_functions_json;
     with_service(move |svc| {
         let hooks = ControlHooks {
-            list_processes_json: Box::new(move || {
+            list_processes_json: std::sync::Arc::new(move || {
                 if let Some(func) = list {
                     call_json_out(func, user_data, 1 << 20, "list_processes")
                 } else {
                     Ok("[]".into())
                 }
             }),
-            start_capture: Box::new(move |json: &str| {
+            start_capture: std::sync::Arc::new(move |json: &str| {
                 if let Some(func) = start {
                     let c = std::ffi::CString::new(json).map_err(|e| e.to_string())?;
                     let rc = unsafe { func(user_data as *mut c_void, c.as_ptr()) };
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
                 }
                 Ok(())
             }),
-            stop_capture: Box::new(move || {
+            stop_capture: std::sync::Arc::new(move || {
                 if let Some(func) = stop {
                     let rc = unsafe { func(user_data as *mut c_void) };
                     if rc != 0 {
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
                 }
                 Ok(())
             }),
-            load_symbols: Box::new(move |pid| {
+            load_symbols: std::sync::Arc::new(move |pid| {
                 if let Some(func) = load {
                     let rc = unsafe { func(user_data as *mut c_void, pid) };
                     if rc != 0 {
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
                 }
                 Ok(())
             }),
-            symbols_status_json: Box::new(move |pid| {
+            symbols_status_json: std::sync::Arc::new(move |pid| {
                 if let Some(func) = status {
                     let mut buf = vec![0u8; 4096];
                     let rc = unsafe {
@@ -200,7 +200,7 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
                     Ok(r#"{"pid":0,"status":"idle","function_count":0,"module_count":0,"error":""}"#.into())
                 }
             }),
-            search_functions_json: Box::new(move |pid, q, limit| {
+            search_functions_json: std::sync::Arc::new(move |pid, q, limit| {
                 if let Some(func) = search {
                     let c = std::ffi::CString::new(q).map_err(|e| e.to_string())?;
                     let mut buf = vec![0u8; 1 << 16];

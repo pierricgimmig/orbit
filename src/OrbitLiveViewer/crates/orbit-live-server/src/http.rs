@@ -162,9 +162,12 @@ impl StatusBody {
     }
 }
 
+fn hooks_clone(svc: &LiveService) -> Option<crate::ControlHooks> {
+    svc.hooks.lock().clone()
+}
+
 async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
-    let hooks = svc.hooks.lock();
-    let raw = match hooks.as_ref() {
+    let raw = match hooks_clone(&svc) {
         Some(h) => match (h.list_processes_json)() {
             Ok(json) => json,
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -177,7 +180,6 @@ async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
             }
         }
     };
-    drop(hooks);
     let json = merge_self_processes(&svc, raw);
     ([(header::CONTENT_TYPE, "application/json")], json).into_response()
 }
@@ -253,17 +255,19 @@ async fn capture_start(
         return (StatusCode::BAD_REQUEST, "pid is required").into_response();
     }
     let json = body.to_json();
-    let hooks = svc.hooks.lock();
-    match hooks.as_ref() {
-        Some(h) => match (h.start_capture)(&json) {
-            Ok(()) => {
-                svc.mark_capture_started(body.pid, 0);
-                StatusCode::OK.into_response()
+    match hooks_clone(&svc) {
+        Some(h) => {
+            let result = tokio::task::spawn_blocking(move || (h.start_capture)(&json)).await;
+            match result {
+                Ok(Ok(())) => {
+                    svc.mark_capture_started(body.pid, 0);
+                    StatusCode::OK.into_response()
+                }
+                Ok(Err(e)) => (StatusCode::CONFLICT, e).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
             }
-            Err(e) => (StatusCode::CONFLICT, e).into_response(),
-        },
+        }
         None => {
-            drop(hooks);
             // Rust-only / missing hooks: Record falls back to the demo producer.
             match crate::demo::start(&svc, 50_000) {
                 Ok(()) => (
@@ -283,8 +287,7 @@ struct PidBody {
 }
 
 async fn symbols_load(State(svc): State<Arc<LiveService>>, Json(body): Json<PidBody>) -> Response {
-    let hooks = svc.hooks.lock();
-    match hooks.as_ref() {
+    match hooks_clone(&svc) {
         Some(h) => match (h.load_symbols)(body.pid) {
             Ok(()) => StatusCode::OK.into_response(),
             Err(e) => (StatusCode::CONFLICT, e).into_response(),
@@ -307,8 +310,7 @@ async fn symbols_status(
     Query(q): Query<SymbolsQuery>,
 ) -> Response {
     let pid = q.pid.unwrap_or(0);
-    let hooks = svc.hooks.lock();
-    match hooks.as_ref() {
+    match hooks_clone(&svc) {
         Some(h) => match (h.symbols_status_json)(pid) {
             Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -335,8 +337,7 @@ async fn functions_search(
     let pid = q.pid.unwrap_or(0);
     let query = q.q.unwrap_or_default();
     let limit = q.limit.unwrap_or(24).min(64);
-    let hooks = svc.hooks.lock();
-    match hooks.as_ref() {
+    match hooks_clone(&svc) {
         Some(h) => match (h.search_functions_json)(pid, &query, limit) {
             Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -350,17 +351,19 @@ async fn functions_search(
 }
 
 async fn capture_stop(State(svc): State<Arc<LiveService>>) -> Response {
-    let hooks = svc.hooks.lock();
-    match hooks.as_ref() {
-        Some(h) => match (h.stop_capture)() {
-            Ok(()) => {
-                svc.mark_capture_finished();
-                StatusCode::OK.into_response()
+    match hooks_clone(&svc) {
+        Some(h) => {
+            let result = tokio::task::spawn_blocking(move || (h.stop_capture)()).await;
+            match result {
+                Ok(Ok(())) => {
+                    svc.mark_capture_finished();
+                    StatusCode::OK.into_response()
+                }
+                Ok(Err(e)) => (StatusCode::CONFLICT, e).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
             }
-            Err(e) => (StatusCode::CONFLICT, e).into_response(),
-        },
+        }
         None => {
-            drop(hooks);
             crate::demo::stop(&svc);
             svc.mark_capture_finished();
             StatusCode::OK.into_response()

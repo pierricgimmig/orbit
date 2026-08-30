@@ -57,13 +57,15 @@ pub fn env_dev_self() -> bool {
 
 /// Optional hooks so OrbitService can list processes, load symbols, and
 /// start/stop a capture without the WASM client talking gRPC or parsing ELF.
+#[derive(Clone)]
 pub struct ControlHooks {
-    pub list_processes_json: Box<dyn Fn() -> Result<String, String> + Send + Sync>,
-    pub start_capture: Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
-    pub stop_capture: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
-    pub load_symbols: Box<dyn Fn(u32) -> Result<(), String> + Send + Sync>,
-    pub symbols_status_json: Box<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
-    pub search_functions_json: Box<dyn Fn(u32, &str, u32) -> Result<String, String> + Send + Sync>,
+    pub list_processes_json: std::sync::Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
+    pub start_capture: std::sync::Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+    pub stop_capture: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    pub load_symbols: std::sync::Arc<dyn Fn(u32) -> Result<(), String> + Send + Sync>,
+    pub symbols_status_json: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
+    pub search_functions_json:
+        std::sync::Arc<dyn Fn(u32, &str, u32) -> Result<String, String> + Send + Sync>,
 }
 
 pub struct LiveService {
