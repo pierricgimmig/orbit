@@ -139,6 +139,20 @@ crate.from_cargo(
 )
 use_repo(crate, "crates")
 
+# --- Rust (service-side port) --------------------------------------------
+
+# The crates under //rust that are replacing parts of the C++ backend. Kept in
+# their own workspace and their own crate_universe repository so that a symbol
+# parser's dependency resolution is not coupled to the viewer's eframe/wgpu
+# tree. See docs/rust-port-plan.html.
+orbit_crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+orbit_crate.from_cargo(
+    name = "orbit_crates",
+    cargo_lockfile = "//rust:Cargo.lock",
+    manifests = ["//rust:Cargo.toml"],
+)
+use_repo(orbit_crate, "orbit_crates")
+
 # --- Rust (live viewer) --------------------------------------------------
 
 # OrbitService embeds the live HTTP/WebSocket viewer through the C ABI in

@@ -17,6 +17,7 @@
 
 #include "Introspection/Introspection.h"
 #include "ObjectUtils/CoffFile.h"
+#include "ObjectFileLlvm.h"
 #include "ObjectUtils/ElfFile.h"
 #include "OrbitBase/Result.h"
 
@@ -41,7 +42,7 @@ ErrorMessageOr<std::unique_ptr<ObjectFile>> CreateObjectFile(
   llvm::object::OwningBinary<llvm::object::ObjectFile>& file = object_file_or_error.get();
 
   if (file.getBinary()->isELF()) {
-    auto elf_file_or_error = CreateElfFile(file_path, std::move(file));
+    auto elf_file_or_error = CreateElfFileFromOwningBinary(file_path, std::move(file));
     if (elf_file_or_error.has_error()) {
       return ErrorMessage(absl::StrFormat("Unable to load object file as ELF file: %s",
                                           elf_file_or_error.error().message()));
@@ -49,7 +50,7 @@ ErrorMessageOr<std::unique_ptr<ObjectFile>> CreateObjectFile(
     return std::move(elf_file_or_error.value());
   }
   if (file.getBinary()->isCOFF()) {
-    auto coff_file_or_error = CreateCoffFile(file_path, std::move(file));
+    auto coff_file_or_error = CreateCoffFileFromOwningBinary(file_path, std::move(file));
     if (coff_file_or_error.has_error()) {
       return ErrorMessage(absl::StrFormat("Unable to load object file as COFF file: %s",
                                           coff_file_or_error.error().message()));

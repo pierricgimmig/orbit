@@ -17,8 +17,6 @@
 #include "GrpcProtos/symbol.pb.h"
 #include "ObjectFile.h"
 #include "OrbitBase/Result.h"
-#include "llvm/Object/Binary.h"
-#include "llvm/Object/ObjectFile.h"
 
 namespace orbit_object_utils {
 
@@ -66,9 +64,8 @@ class ElfFile : public ObjectFile {
 
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(
     const std::filesystem::path& file_path);
-[[nodiscard]] ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(
-    const std::filesystem::path& file_path,
-    llvm::object::OwningBinary<llvm::object::ObjectFile>&& file);
+// The overload taking an llvm::object::OwningBinary lives in the internal
+// header ObjectFileLlvm.h, so that this one does not name an LLVM type.
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBuffer(
     const std::filesystem::path& file_path, const void* buf, size_t len);
 

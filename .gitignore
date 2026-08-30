@@ -24,3 +24,6 @@ src/OrbitLiveViewer/crates/*/target/
 
 # Rust build output (rust/ and src/OrbitLiveViewer/ Cargo workspaces).
 target/
+
+# py-spy is a submodule in upstream; do not track it as a gitlink here.
+third_party/py-spy/

@@ -5,9 +5,6 @@
 #ifndef OBJECT_UTILS_COFF_FILE_H_
 #define OBJECT_UTILS_COFF_FILE_H_
 
-#include <llvm/Object/Binary.h>
-#include <llvm/Object/ObjectFile.h>
-
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -43,9 +40,8 @@ class CoffFile : public ObjectFile {
 
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(
     const std::filesystem::path& file_path);
-[[nodiscard]] ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(
-    const std::filesystem::path& file_path,
-    llvm::object::OwningBinary<llvm::object::ObjectFile>&& file);
+// The overload taking an llvm::object::OwningBinary lives in the internal
+// header ObjectFileLlvm.h, so that this one does not name an LLVM type.
 
 }  // namespace orbit_object_utils
 

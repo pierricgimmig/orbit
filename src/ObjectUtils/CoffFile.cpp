@@ -4,6 +4,8 @@
 
 #include "ObjectUtils/CoffFile.h"
 
+#include "ObjectFileLlvm.h"
+
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/hash/hash.h>
@@ -854,10 +856,10 @@ ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::
 
   llvm::object::OwningBinary<llvm::object::ObjectFile>& file = object_file_or_error.get();
 
-  return CreateCoffFile(file_path, std::move(file));
+  return CreateCoffFileFromOwningBinary(file_path, std::move(file));
 }
 
-ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(
+ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFileFromOwningBinary(
     const std::filesystem::path& file_path,
     llvm::object::OwningBinary<llvm::object::ObjectFile>&& file) {
   ORBIT_SCOPE_FUNCTION;

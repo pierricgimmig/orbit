@@ -1,0 +1,31 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# The C++ half of the Rust ElfFile: implements Orbit's ElfFile interface over
+# the C ABI in //rust:orbit_object_ffi, forwarding the methods that have not
+# been ported yet to a C++ ElfFile it owns.
+#
+# Depends on ObjectUtilsHeaders rather than ObjectUtils, so that ObjectUtils
+# can depend on it without a cycle.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ObjectUtilsRust",
+    srcs = ["RustElfFile.cpp"],
+    hdrs = ["RustElfFile.h"],
+    copts = ORBIT_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_object_ffi",
+        "//src/GrpcProtos",
+        "//src/ObjectUtils:ObjectUtilsHeaders",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:str_format",
+    ],
+)

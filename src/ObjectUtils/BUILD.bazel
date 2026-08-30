@@ -3,15 +3,45 @@
 # found in the LICENSE file.
 
 load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("//bazel:dual_backend.bzl", "orbit_dual_backend_test")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# Shared with //rust:orbit_object_test so both implementations are tested
+# against exactly the same bytes.
+filegroup(
+    name = "testdata",
+    srcs = glob(["testdata/**"]),
+)
+
+# Headers only, so //rust/shims/ObjectUtilsRust can implement ElfFile without
+# depending on the LLVM implementation of it. This is what keeps
+# ObjectUtils -> ObjectUtilsRust from being a cycle.
+cc_library(
+    name = "ObjectUtilsHeaders",
+    hdrs = [
+        "include/ObjectUtils/CoffFile.h",
+        "include/ObjectUtils/ElfFile.h",
+        "include/ObjectUtils/ObjectFile.h",
+        "include/ObjectUtils/PdbFile.h",
+        "include/ObjectUtils/SymbolsFile.h",
+        "include/ObjectUtils/WindowsBuildIdUtils.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+    ],
+)
 
 cc_library(
     name = "ObjectUtils",
     srcs = [
         "CoffFile.cpp",
         "ElfFile.cpp",
+        "ElfFileBackend.cpp",
         "ObjectFile.cpp",
         "PdbFile.cpp",
         "PdbFileLlvm.cpp",
@@ -25,6 +55,8 @@ cc_library(
         "//conditions:default": [],
     }),
     hdrs = [
+        "ElfFileBackend.h",
+        "ObjectFileLlvm.h",
         "PdbFileLlvm.h",
         "include/ObjectUtils/CoffFile.h",
         "include/ObjectUtils/ElfFile.h",
@@ -42,6 +74,7 @@ cc_library(
     copts = ORBIT_COPTS,
     includes = ["include"],
     deps = [
+        ":ObjectUtilsHeaders",
         "//bazel/deps:llvm",
         "//src/GrpcProtos",
         "//src/Introspection",
@@ -59,12 +92,15 @@ cc_library(
         "@platforms//os:windows": [
             "@dia_sdk//:dia_sdk",
         ],
-        "//conditions:default": [],
+        "//conditions:default": ["//rust/shims/ObjectUtilsRust"],
     }),
 )
 
-cc_test(
+# The whole suite runs against both backends. ElfFileTest is the bulk of it,
+# but ObjectFileTest and SymbolsFileTest construct ELF files too.
+orbit_dual_backend_test(
     name = "ObjectUtilsTests",
+    backend_env_var = "ORBIT_OBJECT_BACKEND",
     srcs = [
         "CoffFileTest.cpp",
         "ElfFileTest.cpp",

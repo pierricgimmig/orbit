@@ -8,6 +8,19 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 package(default_visibility = ["//visibility:public"])
 
 cc_binary(
+    name = "elf_metadata_bench",
+    srcs = ["elf_metadata_bench.cpp"],
+    copts = ORBIT_COPTS,
+    data = ["//src/ObjectUtils:testdata"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_object_ffi",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_binary(
     name = "parse_maps_bench",
     srcs = ["parse_maps_bench.cpp"],
     copts = ORBIT_COPTS,

@@ -4,6 +4,9 @@
 
 #include "ObjectUtils/ElfFile.h"
 
+#include "ElfFileBackend.h"
+#include "ObjectFileLlvm.h"
+
 #include <absl/base/casts.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/hash/hash.h>
@@ -836,7 +839,7 @@ ElfFileImpl<ElfT>::GetObjectSegments() const {
 }
 }  // namespace
 
-ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBuffer(
+ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBufferCpp(
     const std::filesystem::path& file_path, const void* buf, size_t len) {
   std::unique_ptr<llvm::MemoryBuffer> buffer = llvm::MemoryBuffer::getMemBuffer(
       llvm::StringRef(static_cast<const char*>(buf), len), llvm::StringRef("buffer name"), false);
@@ -848,11 +851,12 @@ ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBuffer(
                                         llvm::toString(object_file_or_error.takeError())));
   }
 
-  return CreateElfFile(file_path, llvm::object::OwningBinary<llvm::object::ObjectFile>(
-                                      std::move(object_file_or_error.get()), std::move(buffer)));
+  return CreateElfFileFromOwningBinary(
+      file_path, llvm::object::OwningBinary<llvm::object::ObjectFile>(
+                     std::move(object_file_or_error.get()), std::move(buffer)));
 }
 
-ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(const std::filesystem::path& file_path) {
+ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileCpp(const std::filesystem::path& file_path) {
   ORBIT_SCOPE_FUNCTION;
   llvm::Expected<llvm::object::OwningBinary<llvm::object::ObjectFile>> object_file_or_error =
       llvm::object::ObjectFile::createObjectFile(file_path.string());
@@ -864,10 +868,10 @@ ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(const std::filesystem::pa
 
   llvm::object::OwningBinary<llvm::object::ObjectFile>& file = object_file_or_error.get();
 
-  return CreateElfFile(file_path, std::move(file));
+  return CreateElfFileFromOwningBinary(file_path, std::move(file));
 }
 
-ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(
+ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromOwningBinary(
     const std::filesystem::path& file_path,
     llvm::object::OwningBinary<llvm::object::ObjectFile>&& file) {
   llvm::object::ObjectFile* object_file = file.getBinary();
