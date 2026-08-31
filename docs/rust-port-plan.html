@@ -1115,6 +1115,11 @@
 
   <p>Ordering rationale: the collector goes first because it is the only phase that pays a debt already on the books (the toll), and because its wire format is a prerequisite for Phase&nbsp;7. The unwinder goes second because it unblocks the two welded classes and because a shipping precedent exists &mdash; <a href="https://github.com/mstange/samply">samply</a> is an all-Rust Linux profiler built on framehop, so Phase&nbsp;5 is engineering, not research. Phases 6 and 7 have no ordering constraint between them. Phase&nbsp;8 is last by construction: the C++ tests are the parity oracle, and translating them earlier would destroy the guarantee they exist to provide.</p>
 
+  <div class="note">
+    <span class="note-label">Progress, 2026-08-31</span>
+    <p>4a and 4b are done and committed; 4c has its first two milestones done (the ring buffer with its cross-watcher differential, and the event loop composing the ported crates FFI-free). The sched-tracepoint pipeline and the 4d whole-capture differential are root-gated on the development machine and wait for a <code>sudo</code> run. See <a href="blog/08-moving-the-boundary.html">post 08</a>.</p>
+  </div>
+
   <h3>Phase 4 milestones, each with its own differential</h3>
 
   <ol>
