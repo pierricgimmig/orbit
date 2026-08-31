@@ -109,6 +109,7 @@ cc_test(
         "LostAndDiscardedEventVisitorTest.cpp",
         "MockTracerListener.h",
         "PerfEventProcessorTest.cpp",
+        "PerfEventRecordsLayoutParityTest.cpp",
         "SwitchesStatesNamesVisitorTest.cpp",
         "UprobeEventsTest.cpp",
         "UprobesReturnAddressManagerTest.cpp",
@@ -122,6 +123,7 @@ cc_test(
     data = glob(["testdata/**"]),
     env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/LinuxTracing/testdata"},
     deps = [
+        "//rust:orbit_perf_records_ffi",
         "//src/LinuxTracing",
         "//src/Test:gtest_main",
         "@googletest//:gtest",

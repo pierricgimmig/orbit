@@ -64,6 +64,11 @@ tools/     the corpus smoke test and A/B benchmarks
 LLVM libraries with five crates: `object`, `gimli`, `pdb`, `msvc-demangler`
 and `flate2` (for `SHF_COMPRESSED` debug sections).
 
+`crates/orbit-perf-records` is the wire layer of the Phase 4 collector: the
+packed perf ring-buffer record layouts, zero dependencies, verified against
+the C++ structs field by field by
+`src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp`.
+
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
 ones, the input unchanged otherwise.

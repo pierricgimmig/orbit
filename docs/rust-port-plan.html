@@ -686,6 +686,7 @@
       <li><a href="#phase1">Phase 1 — the 73-line pilot</a></li>
       <li><a href="#phase2">Phase 2 — ObjectUtils, and deleting LLVM</a></li>
       <li><a href="#phase3">Phase 3 — the pure-logic half of LinuxTracing</a></li>
+      <li><a href="#endgame">The endgame — phases 4 to 8, to full Rust</a></li>
       <li><a href="#goals">How each goal gets measured</a></li>
       <li><a href="#blog">The log, and what counts as proof</a></li>
       <li><a href="#risks">What can go wrong</a></li>
@@ -1087,6 +1088,41 @@
   <p><strong>The shape that works:</strong> the Rust side never sees a <code>PerfEvent</code>. It owns only the ordering keys — <code>(timestamp, stream_id, u64 handle)</code> — and the C++ side keeps the events in a slab, passing indices. <code>PerfEventQueue</code> becomes a Rust data structure over three integers per element, which is what it actually is; the payload never moves. Same for the state managers, which key on <code>(tid, timestamp, state)</code>.</p>
 
   <p>This phase is also where gate 4 earns its keep, because it is the one place where a Rust port could plausibly be <em>slower</em> — an FFI call per event is not free, and the batching has to be designed rather than discovered.</p>
+
+  <!-- ==================================================== endgame -->
+
+  <h2 id="endgame">The endgame — phases 4 to 8, to full Rust</h2>
+
+  <div class="note">
+    <span class="note-label">Direction set 2026-08-31</span>
+    <p>The goal is now explicit: <strong>no C++ in the service.</strong> The batching question answered itself along the way &mdash; buffering events across the FFI boundary to amortize the toll is a miniature of the wire-format boundary, so rather than build the miniature and throw it away, the plan goes straight to the real one. The per-event toll accepted in <a href="blog/07-overruled.html">post 07</a> is deleted by Phase 4 as a side effect, not patched.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>What moves</th><th>What it deletes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>4 &mdash; the collector</strong></td><td><code>PerfEventRecords</code>, <code>PerfEventReaders</code>, <code>PerfEventRingBuffer</code>, <code>PerfEventOpen</code>, the <code>TracerImpl</code> event loop and its visitors: Rust owns the ring buffers and calls the five Phase&nbsp;3 crates natively</td><td>Every per-event FFI crossing, and with it the accepted toll</td></tr>
+        <tr><td><strong>5 &mdash; the unwinder</strong></td><td><code>framehop</code> + the <code>gimli</code>/<code>object</code> crates already in tree replace libunwindstack; <code>LeafFunctionCallManager</code>, <code>UprobesReturnAddressManager</code>, <code>UprobesUnwindingVisitor</code> follow</td><td>libunwindstack &mdash; the largest third-party C++ dependency since LLVM, and the weld that kept two classes C++</td></tr>
+        <tr><td><strong>6 &mdash; instrumentation</strong></td><td><code>UserSpaceInstrumentation</code>: ptrace, tracee allocation, trampoline injection via the <code>nix</code> crate</td><td>The last kernel-interface C++</td></tr>
+        <tr><td><strong>7 &mdash; the service shell</strong></td><td><code>LinuxCaptureService</code>, <code>ProducerEventProcessor</code>, the small services, transport moves from gRPC/protobuf to the pod-style wire format, <code>main()</code></td><td>gRPC and protobuf from the service side</td></tr>
+        <tr><td><strong>8 &mdash; deletion</strong></td><td>Residual C++ test coverage is translated into the Rust suites, which until this point were forbidden to replace the C++ oracles</td><td>The C++ twins, the facades, the entire <code>rust/ffi</code> layer, the retired tests</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Ordering rationale: the collector goes first because it is the only phase that pays a debt already on the books (the toll), and because its wire format is a prerequisite for Phase&nbsp;7. The unwinder goes second because it unblocks the two welded classes and because a shipping precedent exists &mdash; <a href="https://github.com/mstange/samply">samply</a> is an all-Rust Linux profiler built on framehop, so Phase&nbsp;5 is engineering, not research. Phases 6 and 7 have no ordering constraint between them. Phase&nbsp;8 is last by construction: the C++ tests are the parity oracle, and translating them earlier would destroy the guarantee they exist to provide.</p>
+
+  <h3>Phase 4 milestones, each with its own differential</h3>
+
+  <ol>
+    <li><strong>4a &mdash; record layouts.</strong> The packed ring-buffer record structs in a <code>orbit-perf-records</code> crate, with a cross-language layout parity test: a C++ test compares <code>sizeof</code>/<code>offsetof</code> of every struct in <code>PerfEventRecords.h</code> against the sizes the Rust crate exports. Layout <em>is</em> the spec for a wire parser; this is the cheapest differential in the whole plan.</li>
+    <li><strong>4b &mdash; the reader.</strong> Ring-buffer byte streams parsed by both sides: identical raw bytes in, identical parsed records out.</li>
+    <li><strong>4c &mdash; the loop.</strong> <code>perf_event_open</code>, the mmap ring buffers, and the <code>TracerImpl</code> event loop in Rust, calling the Phase&nbsp;3 crates natively.</li>
+    <li><strong>4d &mdash; whole-capture differential.</strong> C++ tracer and Rust tracer run against the same workload; event streams compared modulo the noise a real kernel injects. This is gate&nbsp;2 scaled up from symbols to captures.</li>
+  </ol>
 
   <!-- ==================================================== goals -->
 

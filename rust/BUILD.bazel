@@ -180,6 +180,53 @@ cc_library(
     deps = [":orbit_thread_states_ffi_rust"],
 )
 
+# ---------------------------------------------------- orbit-perf-records
+
+rust_library(
+    name = "orbit_perf_records",
+    srcs = glob(["crates/orbit-perf-records/src/**/*.rs"]),
+    crate_root = "crates/orbit-perf-records/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_perf_records_test",
+    size = "small",
+    crate = ":orbit_perf_records",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_perf_records_ffi_rust",
+    srcs = glob(["ffi/orbit-perf-records-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-perf-records-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_records"],
+)
+
+rust_library(
+    name = "orbit_perf_records_ffi_lib",
+    srcs = glob(["ffi/orbit-perf-records-ffi/src/**/*.rs"]),
+    crate_name = "orbit_perf_records_ffi",
+    crate_root = "ffi/orbit-perf-records-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_records"],
+)
+
+rust_test(
+    name = "orbit_perf_records_ffi_test",
+    size = "small",
+    crate = ":orbit_perf_records_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_perf_records_ffi",
+    hdrs = ["ffi/orbit-perf-records-ffi/include/orbit_perf_records_ffi.h"],
+    includes = ["ffi/orbit-perf-records-ffi/include"],
+    deps = [":orbit_perf_records_ffi_rust"],
+)
+
 # ---------------------------------------------------- orbit-tracing-state
 
 rust_library(

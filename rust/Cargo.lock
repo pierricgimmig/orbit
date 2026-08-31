@@ -191,6 +191,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-perf-records"
+version = "0.1.0"
+
+[[package]]
+name = "orbit-perf-records-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-perf-records",
+]
+
+[[package]]
 name = "orbit-thread-states"
 version = "0.1.0"
 
