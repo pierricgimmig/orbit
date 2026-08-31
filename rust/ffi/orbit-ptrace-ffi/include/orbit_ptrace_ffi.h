@@ -15,6 +15,13 @@ extern "C" {
 bool orbit_get_executable_region(int32_t pid, uint64_t exclude_address, uint64_t* start_out,
                                  uint64_t* end_out);
 
+
+// Runs the full MemoryInTracee lifecycle (mmap/write/read/mprotect/munmap)
+// in pid and reports what happened. Returns true iff every step behaved as
+// expected. For the behavioral differential.
+bool orbit_tracee_memory_lifecycle(int32_t pid, uint64_t size, uint64_t* address_out,
+                                   bool* readback_ok_out, bool* gone_after_free_out);
+
 }  // extern "C"
 
 #endif  // ORBIT_PTRACE_FFI_H_

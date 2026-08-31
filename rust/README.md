@@ -88,9 +88,11 @@ the shared backend switch, engines reached through callbacks.
 
 `crates/orbit-ptrace` is the ptrace substrate of user-space instrumentation:
 attach/detach a process, read and write a tracee's memory, find an
-executable region. Verified by a live attach/write/read-back round trip and
-a region-scan differential; it returns idiomatic io::Errors rather than
-reproducing OrbitBase's error strings.
+executable region, back up and restore its registers, inject syscalls, and
+allocate/protect/free memory inside it (MemoryInTracee). Verified by live
+round trips and a behavioral differential against the C++ MemoryInTracee; it
+returns idiomatic io::Errors rather than reproducing OrbitBase's error
+strings.
 
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed

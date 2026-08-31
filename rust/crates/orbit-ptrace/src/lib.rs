@@ -15,10 +15,17 @@
 //! against the C++ for the parts (memory reads, the region scan) that do
 //! not need an exclusive tracer.
 
-pub mod memory;
 pub mod attach;
+pub mod memory;
+mod sys;
+pub mod memory_in_tracee;
+pub mod registers;
+pub mod syscall;
 
 pub use attach::{attach_and_stop_process, detach_and_continue_process};
+pub use memory_in_tracee::{MemoryInTracee, MemoryState};
+pub use registers::RegisterState;
+pub use syscall::syscall_in_tracee;
 pub use memory::{
     get_existing_executable_memory_region, read_tracees_memory, write_tracees_memory, AddressRange,
 };
