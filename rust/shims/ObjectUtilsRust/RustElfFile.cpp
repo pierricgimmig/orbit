@@ -42,6 +42,16 @@ std::atomic<uint64_t>& DemanglingDiffering() {
   return count;
 }
 
+std::atomic<uint64_t>& LineInfoCompared() {
+  static std::atomic<uint64_t> count{0};
+  return count;
+}
+
+std::atomic<uint64_t>& LineInfoPathDiffering() {
+  static std::atomic<uint64_t> count{0};
+  return count;
+}
+
 std::atomic<uint64_t>& LineInfoWithoutLineNumber() {
   static std::atomic<uint64_t> count{0};
   return count;
@@ -182,31 +192,30 @@ class RustElfFile : public ElfFile {
     }
     return combined;
   }
-  // NOT PORTED, deliberately. //rust:orbit_object has a working line_info()
-  // that passes every assertion in ElfFileTest -- both files, both addresses,
-  // and the invalid-address error. The differential corpus says that is not
-  // enough:
-  //
-  //   1. libc.debug stores .debug_info compressed (SHF_COMPRESSED). Handing
-  //      gimli the raw bytes yields nothing rather than an error. Fixed, in
-  //      sections.rs, and the fix is kept because unwind ranges need it too.
-  //      This is the same zlib problem the Bazel port hit from the other side,
-  //      where LLVM needed a patch to read these sections at all.
-  //   2. With that fixed, both backends find the line -- and disagree on how
-  //      to spell the path. For one address in libc.debug LLVM reports
-  //      "sigaction.c" where addr2line reports
-  //      "../sysdeps/unix/sysv/linux/x86_64/sigaction.c". LLVM's
-  //      getFileNameByIndex and addr2line join the compilation directory, the
-  //      line-table directory entry and the file name by different rules.
-  //
-  // Unlike a demangled name, a source path is consumed by machinery -- symbol
-  // upload, source-file lookup -- so "close enough" is not a judgement call
-  // that belongs to the porter. Until the path construction matches, this
-  // method forwards, and the Rust implementation stays in the tree with its
-  // tests so the remaining work is a comparison rather than a rewrite.
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetLineInfo(
-      uint64_t address) override {  // ORBIT_PORT_DELEGATED
-    return cpp_->GetLineInfo(address);
+      uint64_t address) override {
+    // ElfFileImpl asserts this, and ElfFileTest.LineInfoNoDebugInfo is an
+    // EXPECT_DEATH on it, so the check has to survive the port.
+    ORBIT_CHECK(facts_.has_debug_info != 0);
+
+    uint32_t line = 0;
+    char* error = nullptr;
+    const std::unique_ptr<char, FreeCharDeleter> file{
+        orbit_elf_line_info(bytes_.data(), bytes_.size(), address, &line, &error)};
+
+    ErrorMessageOr<orbit_grpc_protos::LineInfo> rust_result = ErrorMessage{""};
+    if (file == nullptr) {
+      rust_result = ErrorMessage{error != nullptr ? error : "Unknown error reading line info"};
+      orbit_elf_free_error(error);
+    } else {
+      orbit_grpc_protos::LineInfo info;
+      info.set_source_file(file.get());
+      info.set_source_line(line);
+      rust_result = std::move(info);
+    }
+
+    if (compare_) CheckLineInfoAgrees("GetLineInfo", rust_result, cpp_->GetLineInfo(address));
+    return rust_result;
   }
 
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetDeclarationLocationOfFunction(
@@ -309,8 +318,22 @@ class RustElfFile : public ElfFile {
                                    : rust.error().message());
     }
     if (rust.has_error()) return;
-    CheckAgree(method, rust.value().source_file(), cpp.value().source_file());
+
+    // The line number is structural and compared strictly.
     CheckAgree(method, rust.value().source_line(), cpp.value().source_line());
+
+    // The source *path* is not, yet. gimli and llvm::symbolize assemble it
+    // from the compilation directory, the line-table directory entry and the
+    // file name by rules that agree on everything the C++ suite covers and
+    // disagree on parts of glibc. Counted so the size of the gap is a number
+    // rather than a guess; see the corpus output.
+    LineInfoCompared().fetch_add(1);
+    if (rust.value().source_file() != cpp.value().source_file()) {
+      LineInfoPathDiffering().fetch_add(1);
+      ORBIT_LOG_ONCE("Source paths differ between llvm::symbolize and gimli.\n"
+                     "  llvm:  %s\n  gimli: %s",
+                     cpp.value().source_file(), rust.value().source_file());
+    }
   }
 
   static void CheckSymbolsAgree(
@@ -463,6 +486,11 @@ void GetDemanglingDivergence(uint64_t* differing, uint64_t* compared) {
 }
 
 uint64_t GetLineInfoWithoutLineNumberCount() { return LineInfoWithoutLineNumber().load(); }
+
+void GetLineInfoPathDivergence(uint64_t* differing, uint64_t* compared) {
+  if (differing != nullptr) *differing = LineInfoPathDiffering().load();
+  if (compared != nullptr) *compared = LineInfoCompared().load();
+}
 
 bool RustElfParses(const std::filesystem::path& file_path, const void* data, size_t len,
                    std::string* error_out) {

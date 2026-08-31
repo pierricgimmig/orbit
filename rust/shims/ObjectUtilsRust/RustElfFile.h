@@ -49,6 +49,10 @@ void GetDemanglingDivergence(uint64_t* differing, uint64_t* compared);
 // note in CheckLineInfoAgrees.
 [[nodiscard]] uint64_t GetLineInfoWithoutLineNumberCount();
 
+// How many resolved source paths differ between llvm::symbolize and gimli,
+// and how many were compared.
+void GetLineInfoPathDivergence(uint64_t* differing, uint64_t* compared);
+
 // The Rust CRC-32 used for .gnu_debuglink, chunked like the C++ is.
 [[nodiscard]] uint32_t Crc32Continue(uint32_t previous, const void* data, size_t len);
 

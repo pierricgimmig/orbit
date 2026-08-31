@@ -216,6 +216,16 @@ int main(int argc, char** argv) {
     printf("line results with no line number %llu\n",
            static_cast<unsigned long long>(no_line));
   }
+  uint64_t path_differing = 0;
+  uint64_t path_compared = 0;
+  orbit_object_utils_rust::GetLineInfoPathDivergence(&path_differing, &path_compared);
+  if (path_compared > 0) {
+    printf("line paths compared %llu\n", static_cast<unsigned long long>(path_compared));
+    printf("line paths differing %llu (%.4f%%)\n",
+           static_cast<unsigned long long>(path_differing),
+           100.0 * static_cast<double>(path_differing) / static_cast<double>(path_compared));
+  }
+
   uint64_t pdb_gave_up = 0;
   uint64_t pdb_compared = 0;
   orbit_object_utils_rust::GetPdbDemanglingDivergence(&pdb_gave_up, &pdb_compared);
