@@ -43,6 +43,16 @@ int32_t orbit_trampoline_relocate(const uint8_t* bytes, uint64_t len, uint64_t o
 int64_t orbit_trampoline_emit(uint32_t stage, bool avx, uint64_t arg0, uint64_t arg1, uint8_t* out,
                               uint64_t capacity);
 
+
+// Builds a whole trampoline. Returns 0 on success (fills out_code/out_len/
+// out_address_after_prologue); else 1 harmful jump, 2 cannot-disassemble,
+// 3 relocate error, 4 out of range, 5 buffer too small.
+int32_t orbit_trampoline_build(const uint8_t* function, uint64_t function_len,
+                               uint64_t function_address, uint64_t trampoline_address,
+                               uint64_t entry_payload_address, uint64_t return_trampoline_address,
+                               bool avx, uint8_t* out_code, uint64_t out_capacity, uint64_t* out_len,
+                               uint64_t* out_address_after_prologue);
+
 }  // extern "C"
 
 #endif  // ORBIT_TRAMPOLINE_FFI_H_

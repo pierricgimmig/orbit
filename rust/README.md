@@ -98,9 +98,10 @@ strings.
 and free-slot search (placement), the instruction relocation that rewrites
 RIP-relative operands and relative branches when moving a prologue
 (relocate, on iced-x86), and the fixed register-save/payload-call/restore
-code sequences (codegen). The relocation is byte-for-byte identical with the
-C++ across 888,154 real instructions; the code sequences are byte-identical
-on a live differential.
+code sequences (codegen), and the whole-trampoline assembly (builder). The
+relocation is byte-for-byte identical with the C++ across 888,154 real
+instructions; whole trampolines are byte-identical across 93,696 real
+function starts.
 
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed

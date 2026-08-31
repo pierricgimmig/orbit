@@ -73,6 +73,10 @@ namespace orbit_user_space_instrumentation {
     uint64_t entry_payload_address, uint64_t return_trampoline_address);
 [[nodiscard]] std::vector<uint8_t> EmitJumpBackCodeForDifferential(int32_t offset);
 [[nodiscard]] std::vector<uint8_t> EmitExitTrampolineForDifferential(uint64_t exit_payload_address);
+[[nodiscard]] ErrorMessageOr<std::vector<uint8_t>> BuildTrampolineForDifferential(
+    uint64_t function_address, const std::vector<uint8_t>& function, uint64_t trampoline_address,
+    uint64_t entry_payload_address, uint64_t return_trampoline_address,
+    uint64_t* address_after_prologue_out);
 
 // Merely serves as a return value for the function below.
 struct RelocatedInstruction {

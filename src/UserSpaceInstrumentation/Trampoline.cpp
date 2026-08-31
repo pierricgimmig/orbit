@@ -884,6 +884,42 @@ std::vector<uint8_t> EmitJumpBackCodeForDifferential(int32_t offset) {
   code.AppendBytes({0xe9}).AppendImmediate32(offset);
   return code.GetResultAsVector();
 }
+// Builds a whole trampoline's bytes (the steps of CreateTrampoline minus the
+// tracee write) for the trampoline-builder differential. Returns the bytes
+// and, via out param, the address after the relocated prologue.
+ErrorMessageOr<std::vector<uint8_t>> BuildTrampolineForDifferential(
+    uint64_t function_address, const std::vector<uint8_t>& function, uint64_t trampoline_address,
+    uint64_t entry_payload_address, uint64_t return_trampoline_address,
+    uint64_t* address_after_prologue_out) {
+  csh capstone_handle = 0;
+  if (cs_open(CS_ARCH_X86, CS_MODE_64, &capstone_handle) != CS_ERR_OK) {
+    return ErrorMessage("cs_open failed");
+  }
+  cs_option(capstone_handle, CS_OPT_DETAIL, CS_OPT_ON);
+  orbit_base::unique_resource close_handle{&capstone_handle,
+                                           [](csh* handle) { cs_close(handle); }};
+
+  if (CheckForRelativeJumpIntoFirstFiveBytes(function_address, function, capstone_handle)) {
+    return ErrorMessage("harmful jump into prologue");
+  }
+  MachineCode trampoline;
+  AppendBackupCode(trampoline);
+  AppendCallToEntryPayload(entry_payload_address, return_trampoline_address, trampoline);
+  AppendRestoreCode(trampoline);
+  absl::flat_hash_map<uint64_t, uint64_t> relocation_map;
+  auto address_after_prologue = AppendRelocatedPrologueCode(
+      function_address, function, trampoline_address, capstone_handle, relocation_map, trampoline);
+  if (address_after_prologue.has_error()) {
+    return address_after_prologue.error();
+  }
+  auto jump_back = AppendJumpBackCode(address_after_prologue.value(), trampoline_address, trampoline);
+  if (jump_back.has_error()) {
+    return jump_back.error();
+  }
+  *address_after_prologue_out = address_after_prologue.value();
+  return trampoline.GetResultAsVector();
+}
+
 std::vector<uint8_t> EmitExitTrampolineForDifferential(uint64_t exit_payload_address) {
   MachineCode code;
   AppendCallToExitPayloadAndJumpToReturnAddress(exit_payload_address, code);

@@ -8,6 +8,7 @@
 //! reach of the function being hooked. The instruction relocation -- the
 //! disassembler-dependent half -- is a later milestone.
 
+pub mod builder;
 pub mod codegen;
 pub mod placement;
 pub mod relocate;

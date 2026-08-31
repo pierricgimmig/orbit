@@ -153,3 +153,51 @@ pub unsafe extern "C" fn orbit_trampoline_emit(
     std::ptr::copy_nonoverlapping(code.as_ptr(), out, code.len());
     code.len() as i64
 }
+
+// ---------------------------------------------------- trampoline builder
+
+use orbit_trampoline::builder::{build_trampoline, TrampolineError};
+
+/// Builds a whole trampoline's bytes. Returns 0 on success (fills out_code up
+/// to out_capacity, *out_len, *out_address_after_prologue); else 1 harmful
+/// jump, 2 cannot-disassemble, 3 relocate error, 4 out of range, 5 buffer
+/// too small.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn orbit_trampoline_build(
+    function: *const u8,
+    function_len: u64,
+    function_address: u64,
+    trampoline_address: u64,
+    entry_payload_address: u64,
+    return_trampoline_address: u64,
+    avx: bool,
+    out_code: *mut u8,
+    out_capacity: u64,
+    out_len: *mut u64,
+    out_address_after_prologue: *mut u64,
+) -> i32 {
+    let bytes = std::slice::from_raw_parts(function, function_len as usize);
+    match build_trampoline(
+        bytes,
+        function_address,
+        trampoline_address,
+        entry_payload_address,
+        return_trampoline_address,
+        avx,
+    ) {
+        Ok(built) => {
+            if built.code.len() as u64 > out_capacity {
+                return 5;
+            }
+            std::ptr::copy_nonoverlapping(built.code.as_ptr(), out_code, built.code.len());
+            *out_len = built.code.len() as u64;
+            *out_address_after_prologue = built.address_after_prologue;
+            0
+        }
+        Err(TrampolineError::HarmfulJumpIntoPrologue) => 1,
+        Err(TrampolineError::CannotDisassemblePrologue) => 2,
+        Err(TrampolineError::Relocate(_)) => 3,
+        Err(TrampolineError::OutOfRange) => 4,
+    }
+}
