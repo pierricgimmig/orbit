@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("//bazel:dual_backend.bzl", "orbit_dual_backend_test")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -81,6 +82,7 @@ cc_library(
         "//src/OrbitBase",
         "//src/TestUtils",
         "//third_party/libunwindstack",
+        "//rust:orbit_perf_merge_ffi",
         "//third_party/py-spy-ffi",
         "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/container:flat_hash_set",
@@ -104,7 +106,6 @@ cc_test(
         "LostAndDiscardedEventVisitorTest.cpp",
         "MockTracerListener.h",
         "PerfEventProcessorTest.cpp",
-        "PerfEventQueueTest.cpp",
         "SwitchesStatesNamesVisitorTest.cpp",
         "ThreadStateManagerTest.cpp",
         "UprobeAddressMapTest.cpp",
@@ -122,6 +123,26 @@ cc_test(
     env = {"ORBIT_OVERRIDE_TESTDATA_PATH": "src/LinuxTracing/testdata"},
     deps = [
         "//src/LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
+
+# PerfEventQueue has a C++ and a Rust implementation; the same assertions run
+# against both, and "both" mode runs them side by side and aborts on any
+# disagreement. Split from LinuxTracingTests so the backend can be varied
+# without tripling that whole suite.
+orbit_dual_backend_test(
+    name = "PerfEventQueueTests",
+    size = "small",
+    srcs = ["PerfEventQueueTest.cpp"],
+    backend_env_var = "ORBIT_PERF_MERGE_BACKEND",
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":LinuxTracing",
         "//src/Test:gtest_main",
         "@googletest//:gtest",
     ],

@@ -14,8 +14,10 @@ resolver = "2"
 members = [
     "crates/orbit-maps",
     "crates/orbit-object",
+    "crates/orbit-perf-merge",
     "ffi/orbit-maps-ffi",
     "ffi/orbit-object-ffi",
+    "ffi/orbit-perf-merge-ffi",
 ]
 
 [workspace.package]

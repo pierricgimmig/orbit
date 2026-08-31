@@ -20,6 +20,18 @@ cc_binary(
 )
 
 cc_binary(
+    name = "perf_merge_bench",
+    srcs = ["perf_merge_bench.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//src/LinuxTracing",
+    ],
+)
+
+cc_binary(
     name = "parse_maps_bench",
     srcs = ["parse_maps_bench.cpp"],
     copts = ORBIT_COPTS,

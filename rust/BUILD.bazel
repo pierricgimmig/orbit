@@ -86,6 +86,53 @@ rust_test(
     edition = ORBIT_RUST_EDITION,
 )
 
+# ------------------------------------------------------- orbit-perf-merge
+
+rust_library(
+    name = "orbit_perf_merge",
+    srcs = glob(["crates/orbit-perf-merge/src/**/*.rs"]),
+    crate_root = "crates/orbit-perf-merge/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_perf_merge_test",
+    size = "small",
+    crate = ":orbit_perf_merge",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_perf_merge_ffi_rust",
+    srcs = glob(["ffi/orbit-perf-merge-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-perf-merge-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_merge"],
+)
+
+rust_library(
+    name = "orbit_perf_merge_ffi_lib",
+    srcs = glob(["ffi/orbit-perf-merge-ffi/src/**/*.rs"]),
+    crate_name = "orbit_perf_merge_ffi",
+    crate_root = "ffi/orbit-perf-merge-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_merge"],
+)
+
+rust_test(
+    name = "orbit_perf_merge_ffi_test",
+    size = "small",
+    crate = ":orbit_perf_merge_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_perf_merge_ffi",
+    hdrs = ["ffi/orbit-perf-merge-ffi/include/orbit_perf_merge_ffi.h"],
+    includes = ["ffi/orbit-perf-merge-ffi/include"],
+    deps = [":orbit_perf_merge_ffi_rust"],
+)
+
 # ----------------------------------------------------- orbit-object-ffi
 
 rust_static_library(
