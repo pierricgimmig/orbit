@@ -4,8 +4,8 @@
 
 // Runtime selection between the C++ and Rust implementations of ElfFile.
 //
-// ORBIT_OBJECT_BACKEND=cpp   (default, and what an unset variable means)
-//                      rust
+// ORBIT_OBJECT_BACKEND=rust  (default, and what an unset variable means)
+//                      cpp   the LLVM implementation, kept for one release
 //                      both  construct both and ORBIT_CHECK that every ported
 //                            method agrees
 //
@@ -41,16 +41,19 @@ namespace {
 [[nodiscard]] ObjectBackend ReadBackendFromEnvironment() {
 #ifdef __linux
   const char* value = getenv("ORBIT_OBJECT_BACKEND");
-  if (value == nullptr) return ObjectBackend::kCpp;
+  if (value == nullptr) return ObjectBackend::kRust;
 
   const std::string_view backend{value};
-  if (backend == "rust") return ObjectBackend::kRust;
+  if (backend == "cpp") return ObjectBackend::kCpp;
   if (backend == "both") return ObjectBackend::kBoth;
-  if (backend != "cpp" && !backend.empty()) {
-    ORBIT_ERROR("Unrecognised ORBIT_OBJECT_BACKEND=\"%s\"; using \"cpp\"", backend);
+  if (backend != "rust" && !backend.empty()) {
+    ORBIT_ERROR("Unrecognised ORBIT_OBJECT_BACKEND=\"%s\"; using \"rust\"", backend);
   }
-#endif
+  return ObjectBackend::kRust;
+#else
+  // The Rust shims are Linux-only; Windows keeps the C++ path.
   return ObjectBackend::kCpp;
+#endif
 }
 
 #ifdef __linux

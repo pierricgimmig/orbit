@@ -4,8 +4,8 @@
 
 // Runtime selection between the C++ and Rust implementations of ParseMaps.
 //
-// ORBIT_MAPS_BACKEND=cpp   (default, and what an unset variable means)
-//                    rust
+// ORBIT_MAPS_BACKEND=rust  (default, and what an unset variable means)
+//                    cpp   the Abseil implementation, kept for one release
 //                    both  run both and ORBIT_CHECK that they agree
 //
 // `both` returns the C++ result, so it can only abort -- it can never change
@@ -32,15 +32,15 @@ namespace {
 
 [[nodiscard]] MapsBackend ReadBackendFromEnvironment() {
   const char* value = getenv("ORBIT_MAPS_BACKEND");
-  if (value == nullptr) return MapsBackend::kCpp;
+  if (value == nullptr) return MapsBackend::kRust;
 
   const std::string_view backend{value};
-  if (backend == "rust") return MapsBackend::kRust;
+  if (backend == "cpp") return MapsBackend::kCpp;
   if (backend == "both") return MapsBackend::kBoth;
-  if (backend != "cpp" && !backend.empty()) {
-    ORBIT_ERROR("Unrecognised ORBIT_MAPS_BACKEND=\"%s\"; using \"cpp\"", backend);
+  if (backend != "rust" && !backend.empty()) {
+    ORBIT_ERROR("Unrecognised ORBIT_MAPS_BACKEND=\"%s\"; using \"rust\"", backend);
   }
-  return MapsBackend::kCpp;
+  return MapsBackend::kRust;
 }
 
 [[nodiscard]] std::string Describe(const LinuxMemoryMapping& mapping) {

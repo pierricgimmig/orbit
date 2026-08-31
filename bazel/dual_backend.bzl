@@ -8,8 +8,8 @@ The port keeps both implementations in the tree and selects between them with
 an environment variable. This macro emits three cc_test targets from a single
 set of attributes, so a suite cannot drift between backends:
 
-    <name>       the suite as it has always run, backend "cpp"
-    <name>Rust   the same assertions, with Rust doing the work
+    <name>       the default backend, which is now Rust
+    <name>Cpp    the same assertions against the C++ implementation
     <name>Both   runs both implementations and aborts if they disagree
 
 Only `env` differs between them. Everything else -- srcs, deps, data, copts,
@@ -22,8 +22,8 @@ load("@rules_cc//cc:defs.bzl", "cc_test")
 
 # suffix -> value of the backend environment variable.
 _BACKENDS = [
-    ("", "cpp"),
-    ("Rust", "rust"),
+    ("", "rust"),
+    ("Cpp", "cpp"),
     ("Both", "both"),
 ]
 
