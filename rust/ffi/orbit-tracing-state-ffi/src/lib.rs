@@ -390,3 +390,69 @@ mod tests {
         }
     }
 }
+
+// ------------------------------------------------- return address manager
+
+use orbit_tracing_state::return_addresses::ReturnAddressManager;
+
+/// The facade's frame predicate: the maps lookup and trampoline check stay
+/// on the C++ side and come in as a function pointer plus context.
+pub type OrbitFramePredicate = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, ip: u64) -> bool;
+
+#[no_mangle]
+pub extern "C" fn orbit_return_addresses_new() -> *mut ReturnAddressManager {
+    Box::into_raw(Box::new(ReturnAddressManager::new()))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn orbit_return_addresses_free(manager: *mut ReturnAddressManager) {
+    if !manager.is_null() {
+        drop(Box::from_raw(manager));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn orbit_return_addresses_entry(
+    manager: *mut ReturnAddressManager,
+    tid: i32,
+    stack_pointer: u64,
+    return_address: u64,
+) {
+    (*manager).process_function_entry(tid, stack_pointer, return_address);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn orbit_return_addresses_exit(manager: *mut ReturnAddressManager, tid: i32) {
+    (*manager).process_function_exit(tid);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn orbit_return_addresses_patch_sample(
+    manager: *mut ReturnAddressManager,
+    tid: i32,
+    stack_pointer: u64,
+    stack_data: *mut u8,
+    stack_size: u64,
+) {
+    // An empty stack legitimately arrives as (null, 0) -- an empty
+    // std::vector's data() is null.
+    let stack = if stack_data.is_null() || stack_size == 0 {
+        &mut []
+    } else {
+        std::slice::from_raw_parts_mut(stack_data, stack_size as usize)
+    };
+    (*manager).patch_sample(tid, stack_pointer, stack);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn orbit_return_addresses_patch_callchain(
+    manager: *mut ReturnAddressManager,
+    tid: i32,
+    callchain: *mut u64,
+    callchain_size: u64,
+    is_patchable: OrbitFramePredicate,
+    ctx: *mut std::ffi::c_void,
+) -> bool {
+    let chain = std::slice::from_raw_parts_mut(callchain, callchain_size as usize);
+    (*manager).patch_callchain(tid, chain, |ip| is_patchable(ctx, ip))
+}

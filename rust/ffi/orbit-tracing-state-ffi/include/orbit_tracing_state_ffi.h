@@ -94,6 +94,27 @@ size_t orbit_uprobe_map_function_count(const OrbitUprobeAddressMap* map);
 size_t orbit_uprobe_map_resolved_count(const OrbitUprobeAddressMap* map);
 void orbit_uprobe_map_clear(OrbitUprobeAddressMap* map);
 
+
+// ------------------------------------------------- return address manager
+
+struct OrbitReturnAddressManager;
+
+// The maps lookup and trampoline check stay on the C++ side; they come in
+// as a predicate over instruction pointers.
+typedef bool (*OrbitFramePredicate)(void* ctx, uint64_t ip);
+
+OrbitReturnAddressManager* orbit_return_addresses_new();
+void orbit_return_addresses_free(OrbitReturnAddressManager* manager);
+void orbit_return_addresses_entry(OrbitReturnAddressManager* manager, int32_t tid,
+                                  uint64_t stack_pointer, uint64_t return_address);
+void orbit_return_addresses_exit(OrbitReturnAddressManager* manager, int32_t tid);
+void orbit_return_addresses_patch_sample(OrbitReturnAddressManager* manager, int32_t tid,
+                                         uint64_t stack_pointer, uint8_t* stack_data,
+                                         uint64_t stack_size);
+bool orbit_return_addresses_patch_callchain(OrbitReturnAddressManager* manager, int32_t tid,
+                                            uint64_t* callchain, uint64_t callchain_size,
+                                            OrbitFramePredicate is_patchable, void* ctx);
+
 #ifdef __cplusplus
 }
 #endif

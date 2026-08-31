@@ -112,7 +112,6 @@ cc_test(
         "PerfEventRecordsLayoutParityTest.cpp",
         "SwitchesStatesNamesVisitorTest.cpp",
         "UprobeEventsTest.cpp",
-        "UprobesReturnAddressManagerTest.cpp",
         "UprobesUnwindingVisitorCallchainTest.cpp",
         "UprobesUnwindingVisitorDwarfUnwindingTest.cpp",
         "UprobesUnwindingVisitorDynamicInstrumentationTest.cpp",
@@ -168,6 +167,19 @@ orbit_dual_backend_test(
 
 # The three tracing-state classes share one backend variable, so one macro
 # invocation per suite covers rust (the default), cpp and both.
+
+orbit_dual_backend_test(
+    name = "UprobesReturnAddressManagerTests",
+    size = "small",
+    srcs = ["UprobesReturnAddressManagerTest.cpp"],
+    backend_env_var = "ORBIT_TRACING_STATE_BACKEND",
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
 
 orbit_dual_backend_test(
     name = "ContextSwitchManagerTests",

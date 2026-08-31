@@ -41,6 +41,10 @@ impl Hasher for FxHasher {
 
 pub type FxBuildHasher = BuildHasherDefault<FxHasher>;
 
+/// A tid-keyed map on the capture hot path: FxHash, not SipHash.
+pub type TidMap<V> = std::collections::HashMap<i32, V, FxBuildHasher>;
+
 pub mod context_switches;
+pub mod return_addresses;
 pub mod function_calls;
 pub mod uprobe_addresses;
