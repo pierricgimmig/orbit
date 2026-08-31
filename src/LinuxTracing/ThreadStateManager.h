@@ -10,8 +10,11 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <memory>
 #include <optional>
 #include <vector>
+
+#include "orbit_thread_states_ffi.h"
 
 #include "GrpcProtos/capture.pb.h"
 #include "absl/container/flat_hash_map.h"
@@ -45,7 +48,7 @@ namespace orbit_linux_tracing {
 //                             (OR sched:sched_waking)                      with prev_state!='R'
 //                                                                   (ALSO sched:sched_process_exit)
 
-class ThreadStateManager {
+class ThreadStateManagerCpp {
  public:
   void OnInitialState(uint64_t timestamp_ns, pid_t tid,
                       orbit_grpc_protos::ThreadStateSlice::ThreadState state);
@@ -99,6 +102,51 @@ class ThreadStateManager {
   };
 
   absl::flat_hash_map<pid_t, OpenState> tid_open_states_;
+};
+
+// The manager SwitchesStatesNamesVisitor uses. Dispatches on
+// ORBIT_THREAD_STATES_BACKEND:
+//
+//   cpp   (default, and what an unset variable means) ThreadStateManagerCpp
+//   rust  the state machine in //rust:orbit_thread_states
+//   both  run both and ORBIT_FATAL if any transition's result differs
+//
+// Same strangler shape as PerfEventQueue; see docs/rust-port-plan.html.
+class ThreadStateManager {
+ public:
+  ThreadStateManager();
+
+  void OnInitialState(uint64_t timestamp_ns, pid_t tid,
+                      orbit_grpc_protos::ThreadStateSlice::ThreadState state);
+  void OnNewTask(uint64_t timestamp_ns, pid_t tid, pid_t was_created_by_tid,
+                 pid_t was_created_by_pid);
+  [[nodiscard]] std::optional<orbit_grpc_protos::ThreadStateSlice> OnSchedWakeup(
+      uint64_t timestamp_ns, pid_t tid, pid_t was_unblocked_by_tid, pid_t was_unblocked_by_pid,
+      bool has_wakeup_callstack = false);
+  [[nodiscard]] std::optional<orbit_grpc_protos::ThreadStateSlice> OnSchedSwitchIn(
+      uint64_t timestamp_ns, pid_t tid);
+  [[nodiscard]] std::optional<orbit_grpc_protos::ThreadStateSlice> OnSchedSwitchOut(
+      uint64_t timestamp_ns, pid_t tid, orbit_grpc_protos::ThreadStateSlice::ThreadState new_state,
+      bool has_switch_out_callstack = false);
+  [[nodiscard]] std::vector<orbit_grpc_protos::ThreadStateSlice> OnCaptureFinished(
+      uint64_t timestamp_ns);
+
+ private:
+  enum class Backend { kCpp, kRust, kBoth };
+  [[nodiscard]] static Backend SelectedBackend();
+
+  // Logs the ORBIT_ERROR line the C++ produced for this warning, then converts
+  // the outcome. In both mode, checks the C++ result matches first.
+  [[nodiscard]] std::optional<orbit_grpc_protos::ThreadStateSlice> FinishTransition(
+      const char* tracepoint_name, pid_t tid, const OrbitThreadStateOutcome& outcome,
+      std::optional<orbit_grpc_protos::ThreadStateSlice> cpp_result);
+
+  Backend backend_;
+  ThreadStateManagerCpp cpp_;
+  struct ManagerDeleter {
+    void operator()(OrbitThreadStateManager* manager) const { orbit_thread_states_free(manager); }
+  };
+  std::unique_ptr<OrbitThreadStateManager, ManagerDeleter> rust_;
 };
 
 }  // namespace orbit_linux_tracing

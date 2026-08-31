@@ -191,6 +191,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-thread-states"
+version = "0.1.0"
+
+[[package]]
+name = "orbit-thread-states-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-thread-states",
+]
+
+[[package]]
 name = "pdb"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

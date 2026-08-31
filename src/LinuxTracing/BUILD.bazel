@@ -83,6 +83,7 @@ cc_library(
         "//src/TestUtils",
         "//third_party/libunwindstack",
         "//rust:orbit_perf_merge_ffi",
+        "//rust:orbit_thread_states_ffi",
         "//third_party/py-spy-ffi",
         "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/container:flat_hash_set",
@@ -107,7 +108,6 @@ cc_test(
         "MockTracerListener.h",
         "PerfEventProcessorTest.cpp",
         "SwitchesStatesNamesVisitorTest.cpp",
-        "ThreadStateManagerTest.cpp",
         "UprobeAddressMapTest.cpp",
         "UprobeEventsTest.cpp",
         "UprobesFunctionCallManagerTest.cpp",
@@ -137,6 +137,22 @@ orbit_dual_backend_test(
     size = "small",
     srcs = ["PerfEventQueueTest.cpp"],
     backend_env_var = "ORBIT_PERF_MERGE_BACKEND",
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
+
+orbit_dual_backend_test(
+    name = "ThreadStateManagerTests",
+    size = "small",
+    srcs = ["ThreadStateManagerTest.cpp"],
+    backend_env_var = "ORBIT_THREAD_STATES_BACKEND",
     copts = ORBIT_COPTS + [
         "-Isrc/LinuxTracing",
     ],

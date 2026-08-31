@@ -1,0 +1,25 @@
+A/B benchmark: ThreadStateManager backends, and the Phase 3 verdict.
+
+Workload: 64 threads cycling wakeup -> switch-in -> switch-out, 1.5M
+transitions, three runs per backend, one binary. This is the pure-integer
+FFI shape -- no slab, no handles -- measured after perf_merge_bench
+showed the slab-and-handle shape losing.
+
+  cpp   11.8 / 12.3 / 12.8 ns per transition
+  rust  30.3 / 30.6 / 33.3 ns per transition   (~2.4x slower)
+
+Checksums identical in every run: the state machines are equivalent.
+
+Taken together with perf_merge_bench (63 vs 78 ns, ~20%), the pattern is
+clear and it generalises: the smaller the per-event function, the larger
+the relative FFI toll, because the C++ baseline is a handful of inlined
+nanoseconds and an opaque cross-language call cannot inline. The five
+remaining Phase 3 classes are all smaller per call than these two.
+
+Phase 3 as per-class porting therefore fails gate 4, and the honest
+completion of the phase is this measurement. Both ported classes stay in
+tree, validated, behind default-off switches. What could change the
+verdict: cross-language LTO (clang linker-plugin LTO would let these
+calls inline), or moving the language boundary to the wire format --
+a Rust collector speaking the protocol, rather than Rust islands inside
+a C++ pipeline. See docs/rust-service-port.html.

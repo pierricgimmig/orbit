@@ -133,6 +133,53 @@ cc_library(
     deps = [":orbit_perf_merge_ffi_rust"],
 )
 
+# ---------------------------------------------------- orbit-thread-states
+
+rust_library(
+    name = "orbit_thread_states",
+    srcs = glob(["crates/orbit-thread-states/src/**/*.rs"]),
+    crate_root = "crates/orbit-thread-states/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_thread_states_test",
+    size = "small",
+    crate = ":orbit_thread_states",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_thread_states_ffi_rust",
+    srcs = glob(["ffi/orbit-thread-states-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-thread-states-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_thread_states"],
+)
+
+rust_library(
+    name = "orbit_thread_states_ffi_lib",
+    srcs = glob(["ffi/orbit-thread-states-ffi/src/**/*.rs"]),
+    crate_name = "orbit_thread_states_ffi",
+    crate_root = "ffi/orbit-thread-states-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_thread_states"],
+)
+
+rust_test(
+    name = "orbit_thread_states_ffi_test",
+    size = "small",
+    crate = ":orbit_thread_states_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_thread_states_ffi",
+    hdrs = ["ffi/orbit-thread-states-ffi/include/orbit_thread_states_ffi.h"],
+    includes = ["ffi/orbit-thread-states-ffi/include"],
+    deps = [":orbit_thread_states_ffi_rust"],
+)
+
 # ----------------------------------------------------- orbit-object-ffi
 
 rust_static_library(
