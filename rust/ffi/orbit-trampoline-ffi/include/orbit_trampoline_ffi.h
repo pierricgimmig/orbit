@@ -35,6 +35,14 @@ int32_t orbit_trampoline_relocate(const uint8_t* bytes, uint64_t len, uint64_t o
                                   uint64_t new_address, uint8_t* out_code, uint64_t out_capacity,
                                   uint64_t* out_len, uint64_t* out_position);
 
+
+// Emits a Rust code-generation stage into out. stage: 0 backup, 1 restore,
+// 2 call-to-entry-payload (arg0 entry addr, arg1 return-trampoline addr),
+// 3 jump-back (arg0 offset), 4 exit-trampoline (arg0 exit addr). Returns the
+// length, or -1 on overflow.
+int64_t orbit_trampoline_emit(uint32_t stage, bool avx, uint64_t arg0, uint64_t arg1, uint8_t* out,
+                              uint64_t capacity);
+
 }  // extern "C"
 
 #endif  // ORBIT_TRAMPOLINE_FFI_H_

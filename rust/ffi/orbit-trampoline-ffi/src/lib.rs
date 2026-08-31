@@ -121,3 +121,35 @@ pub unsafe extern "C" fn orbit_trampoline_relocate(
         Err(RelocateError::DecodeFailed) => 4,
     }
 }
+
+// ------------------------------------------------------ code generation
+
+use orbit_trampoline::codegen;
+
+/// Writes one of the Rust code-generation stages into `out` (capacity
+/// `capacity`) and returns its length, or -1 on overflow. `stage`: 0 backup,
+/// 1 restore, 2 call-to-entry-payload, 3 jump-back, 4 exit-trampoline. The
+/// address/offset args are used per stage; `avx` selects the vector width.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_trampoline_emit(
+    stage: u32,
+    avx: bool,
+    arg0: u64,
+    arg1: u64,
+    out: *mut u8,
+    capacity: u64,
+) -> i64 {
+    let code = match stage {
+        0 => codegen::backup_code(avx),
+        1 => codegen::restore_code(avx),
+        2 => codegen::call_to_entry_payload(arg0, arg1),
+        3 => codegen::jump_back_code(arg0 as i32),
+        4 => codegen::call_to_exit_payload_and_jump_to_return_address(arg0, avx),
+        _ => return -1,
+    };
+    if code.len() as u64 > capacity {
+        return -1;
+    }
+    std::ptr::copy_nonoverlapping(code.as_ptr(), out, code.len());
+    code.len() as i64
+}

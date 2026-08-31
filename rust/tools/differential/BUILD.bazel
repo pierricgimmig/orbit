@@ -104,3 +104,14 @@ cc_binary(
         "@capstone//:capstone",
     ],
 )
+
+cc_binary(
+    name = "trampoline_codegen_differential",
+    srcs = ["trampoline_codegen_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_trampoline_ffi",
+        "//src/UserSpaceInstrumentation",
+    ],
+)

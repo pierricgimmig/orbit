@@ -857,6 +857,39 @@ void AppendCallToExitPayloadAndJumpToReturnAddress(uint64_t exit_payload_functio
 
 }  // namespace
 
+// Thin wrappers exposing the fixed code emitters for the cross-language
+// code-generation differential. Same translation unit as the anonymous-
+// namespace emitters, so no visibility change to those is needed.
+std::vector<uint8_t> EmitBackupCodeForDifferential() {
+  MachineCode code;
+  AppendBackupCode(code);
+  return code.GetResultAsVector();
+}
+std::vector<uint8_t> EmitRestoreCodeForDifferential() {
+  MachineCode code;
+  AppendRestoreCode(code);
+  return code.GetResultAsVector();
+}
+std::vector<uint8_t> EmitCallToEntryPayloadForDifferential(uint64_t entry_payload_address,
+                                                           uint64_t return_trampoline_address) {
+  MachineCode code;
+  AppendBackupCode(code);
+  size_t backup_size = code.GetResultAsVector().size();
+  AppendCallToEntryPayload(entry_payload_address, return_trampoline_address, code);
+  std::vector<uint8_t> full = code.GetResultAsVector();
+  return std::vector<uint8_t>(full.begin() + backup_size, full.end());
+}
+std::vector<uint8_t> EmitJumpBackCodeForDifferential(int32_t offset) {
+  MachineCode code;
+  code.AppendBytes({0xe9}).AppendImmediate32(offset);
+  return code.GetResultAsVector();
+}
+std::vector<uint8_t> EmitExitTrampolineForDifferential(uint64_t exit_payload_address) {
+  MachineCode code;
+  AppendCallToExitPayloadAndJumpToReturnAddress(exit_payload_address, code);
+  return code.GetResultAsVector();
+}
+
 bool DoAddressRangesOverlap(const AddressRange& a, const AddressRange& b) {
   return !(b.end <= a.start || b.start >= a.end);
 }
