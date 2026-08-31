@@ -46,3 +46,16 @@ cc_binary(
         "@abseil-cpp//absl/strings:strings",
     ],
 )
+
+cc_binary(
+    name = "stack_unwind_differential",
+    srcs = ["stack_unwind_differential.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_unwind_ffi",
+        "//src/LinuxTracing",
+    ],
+)

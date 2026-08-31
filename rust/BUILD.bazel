@@ -292,6 +292,45 @@ cc_library(
     deps = [":orbit_perf_ring_ffi_rust"],
 )
 
+# ---------------------------------------------------------- orbit-unwind
+
+rust_library(
+    name = "orbit_unwind",
+    srcs = glob(["crates/orbit-unwind/src/**/*.rs"]),
+    crate_root = "crates/orbit-unwind/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_maps"] + all_crate_deps(package_name = "rust/crates/orbit-unwind"),
+)
+
+rust_test(
+    name = "orbit_unwind_test",
+    size = "small",
+    crate = ":orbit_unwind",
+    edition = ORBIT_RUST_EDITION,
+    deps = [
+        ":orbit_perf_records",
+        ":orbit_perf_ring",
+    ] + all_crate_deps(
+        package_name = "rust/crates/orbit-unwind",
+        normal_dev = True,
+    ),
+)
+
+rust_static_library(
+    name = "orbit_unwind_ffi_rust",
+    srcs = glob(["ffi/orbit-unwind-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-unwind-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_unwind"],
+)
+
+cc_library(
+    name = "orbit_unwind_ffi",
+    hdrs = ["ffi/orbit-unwind-ffi/include/orbit_unwind_ffi.h"],
+    includes = ["ffi/orbit-unwind-ffi/include"],
+    deps = [":orbit_unwind_ffi_rust"],
+)
+
 # ---------------------------------------------------- orbit-tracing-state
 
 rust_library(

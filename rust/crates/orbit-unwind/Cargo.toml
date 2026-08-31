@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-unwind"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+framehop = "0.13"
+object = { version = "0.36", default-features = false, features = ["read", "std", "compression"] }
+orbit-maps = { path = "../orbit-maps" }
+
+[dev-dependencies]
+libc = "0.2"
+orbit-perf-records = { path = "../orbit-perf-records" }
+orbit-perf-ring = { path = "../orbit-perf-ring" }

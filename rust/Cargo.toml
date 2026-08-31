@@ -20,6 +20,7 @@ members = [
     "crates/orbit-perf-ring",
     "crates/orbit-thread-states",
     "crates/orbit-tracing-state",
+    "crates/orbit-unwind",
     "ffi/orbit-maps-ffi",
     "ffi/orbit-object-ffi",
     "ffi/orbit-perf-merge-ffi",
@@ -27,6 +28,7 @@ members = [
     "ffi/orbit-perf-ring-ffi",
     "ffi/orbit-thread-states-ffi",
     "ffi/orbit-tracing-state-ffi",
+    "ffi/orbit-unwind-ffi",
 ]
 
 [workspace.package]

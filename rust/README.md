@@ -78,6 +78,11 @@ path by `rust/tools/differential/perf_ring_differential.cpp`.
 delayed ordered processing, composing the ported crates natively -- the
 first FFI-free path from kernel bytes to ordered records.
 
+`crates/orbit-unwind` replaces libunwindstack with framehop + object for
+offline DWARF unwinding, adopting libunwindstack's adjusted-pc convention;
+`rust/tools/differential/stack_unwind_differential.cpp` holds the frames
+identical against the C++ on live samples.
+
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
 ones, the input unchanged otherwise.
