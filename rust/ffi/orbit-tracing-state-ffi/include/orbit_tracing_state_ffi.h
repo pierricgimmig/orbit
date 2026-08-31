@@ -115,6 +115,34 @@ bool orbit_return_addresses_patch_callchain(OrbitReturnAddressManager* manager, 
                                             uint64_t* callchain, uint64_t callchain_size,
                                             OrbitFramePredicate is_patchable, void* ctx);
 
+
+// --------------------------------------------------- leaf function calls
+
+struct OrbitLeafStep {
+  bool success;
+  bool frames_empty;
+  uint64_t pc;
+  uint64_t sp;
+  uint64_t frame_pointer;
+};
+
+// -1 = no debug info, 0 = false, 1 = true.
+typedef int32_t (*OrbitLeafHasFramePointer)(void* ctx, uint64_t ip);
+typedef void (*OrbitLeafUnwindOneStep)(void* ctx, uint64_t slice_size, OrbitLeafStep* out);
+typedef bool (*OrbitLeafIsExecutable)(void* ctx, uint64_t pc);
+
+// Returns 0 = kComplete, 1 = kFramePointerUnwindingError,
+// 2 = kStackTopDwarfUnwindingError, 3 = kStackTopForDwarfUnwindingTooSmall.
+// out_ips needs capacity callchain_size + 1; *patched says whether it was
+// filled (with callchain_size + 1 entries) for the caller to apply.
+int32_t orbit_leaf_patch_caller(uint64_t ip, uint64_t sp, uint64_t frame_pointer,
+                                uint16_t stack_dump_size, const uint64_t* callchain,
+                                uint64_t callchain_size,
+                                OrbitLeafHasFramePointer has_frame_pointer_set,
+                                OrbitLeafUnwindOneStep unwind_one_step,
+                                OrbitLeafIsExecutable is_executable, void* ctx, uint64_t* out_ips,
+                                bool* patched);
+
 #ifdef __cplusplus
 }
 #endif

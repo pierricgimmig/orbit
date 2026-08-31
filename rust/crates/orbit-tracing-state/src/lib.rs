@@ -47,4 +47,5 @@ pub type TidMap<V> = std::collections::HashMap<i32, V, FxBuildHasher>;
 pub mod context_switches;
 pub mod return_addresses;
 pub mod function_calls;
+pub mod leaf_functions;
 pub mod uprobe_addresses;

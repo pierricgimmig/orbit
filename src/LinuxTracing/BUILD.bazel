@@ -101,7 +101,6 @@ cc_test(
     name = "LinuxTracingTests",
     srcs = [
         "GpuTracepointVisitorTest.cpp",
-        "LeafFunctionCallManagerTest.cpp",
         "LibunwindstackMapsTest.cpp",
         "LibunwindstackMultipleOfflineAndProcessMemoryTest.cpp",
         "LibunwindstackUnwinderTest.cpp",
@@ -167,6 +166,19 @@ orbit_dual_backend_test(
 
 # The three tracing-state classes share one backend variable, so one macro
 # invocation per suite covers rust (the default), cpp and both.
+
+orbit_dual_backend_test(
+    name = "LeafFunctionCallManagerTests",
+    size = "small",
+    srcs = ["LeafFunctionCallManagerTest.cpp"],
+    backend_env_var = "ORBIT_TRACING_STATE_BACKEND",
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
 
 orbit_dual_backend_test(
     name = "UprobesReturnAddressManagerTests",

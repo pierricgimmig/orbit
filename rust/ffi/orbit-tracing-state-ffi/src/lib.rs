@@ -456,3 +456,87 @@ pub unsafe extern "C" fn orbit_return_addresses_patch_callchain(
     let chain = std::slice::from_raw_parts_mut(callchain, callchain_size as usize);
     (*manager).patch_callchain(tid, chain, |ip| is_patchable(ctx, ip))
 }
+
+// --------------------------------------------------- leaf function calls
+
+use orbit_tracing_state::leaf_functions::{
+    patch_caller_of_leaf_function, LeafPatchResult, LeafRegs, LeafStepOutcome,
+};
+
+/// One unwinding step's report, filled by the callback.
+#[repr(C)]
+pub struct OrbitLeafStep {
+    pub success: bool,
+    pub frames_empty: bool,
+    pub pc: u64,
+    pub sp: u64,
+    pub frame_pointer: u64,
+}
+
+/// -1 = no debug info (nullopt), 0 = false, 1 = true.
+pub type OrbitLeafHasFramePointer = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, ip: u64) -> i32;
+pub type OrbitLeafUnwindOneStep =
+    unsafe extern "C" fn(ctx: *mut std::ffi::c_void, slice_size: u64, out: *mut OrbitLeafStep);
+pub type OrbitLeafIsExecutable = unsafe extern "C" fn(ctx: *mut std::ffi::c_void, pc: u64) -> bool;
+
+/// Runs the leaf-patching decision tree. Returns the CallstackType-like
+/// code (0 complete, 1 frame-pointer error, 2 dwarf error, 3 too small).
+/// When the callchain needs patching, writes callchain_size + 1 ips into
+/// out_ips (which must have that capacity) and sets *patched to true; the
+/// caller applies them.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_leaf_patch_caller(
+    ip: u64,
+    sp: u64,
+    frame_pointer: u64,
+    stack_dump_size: u16,
+    callchain: *const u64,
+    callchain_size: u64,
+    has_frame_pointer_set: OrbitLeafHasFramePointer,
+    unwind_one_step: OrbitLeafUnwindOneStep,
+    is_executable: OrbitLeafIsExecutable,
+    ctx: *mut std::ffi::c_void,
+    out_ips: *mut u64,
+    patched: *mut bool,
+) -> i32 {
+    let chain = std::slice::from_raw_parts(callchain, callchain_size as usize);
+    let (result, new_ips) = patch_caller_of_leaf_function(
+        LeafRegs { ip, sp, frame_pointer },
+        stack_dump_size,
+        chain,
+        |ip| match has_frame_pointer_set(ctx, ip) {
+            -1 => None,
+            0 => Some(false),
+            _ => Some(true),
+        },
+        |slice_size| {
+            let mut step = OrbitLeafStep {
+                success: false,
+                frames_empty: false,
+                pc: 0,
+                sp: 0,
+                frame_pointer: 0,
+            };
+            unwind_one_step(ctx, slice_size, &mut step);
+            LeafStepOutcome {
+                success: step.success,
+                frames_empty: step.frames_empty,
+                new_pc: step.pc,
+                new_sp: step.sp,
+                new_frame_pointer: step.frame_pointer,
+            }
+        },
+        |pc| is_executable(ctx, pc),
+    );
+    *patched = false;
+    if let Some(ips) = new_ips {
+        std::ptr::copy_nonoverlapping(ips.as_ptr(), out_ips, ips.len());
+        *patched = true;
+    }
+    match result {
+        LeafPatchResult::Complete => 0,
+        LeafPatchResult::FramePointerUnwindingError => 1,
+        LeafPatchResult::StackTopDwarfUnwindingError => 2,
+        LeafPatchResult::StackTopForDwarfUnwindingTooSmall => 3,
+    }
+}
