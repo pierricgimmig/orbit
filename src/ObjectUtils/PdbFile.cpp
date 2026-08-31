@@ -8,12 +8,15 @@
 #include "PdbFileDia.h"
 #endif
 
+#include "ElfFileBackend.h"
 #include "PdbFileLlvm.h"
 
 namespace orbit_object_utils {
 
-ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFile(const std::filesystem::path& file_path,
-                                                       const ObjectFileInfo& object_file_info) {
+// The public CreatePdbFile lives in ElfFileBackend.cpp so it can dispatch;
+// this is the C++ implementation it selects.
+ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFileCpp(
+    const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info) {
 #if _WIN32
   // To workaround a limitation in LLVM's pdb parsing code, we use the DIA SDK directly on Windows.
   return PdbFileDia::CreatePdbFile(file_path, object_file_info);

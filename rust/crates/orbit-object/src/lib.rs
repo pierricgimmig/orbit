@@ -24,6 +24,9 @@ mod coff;
 mod coff_symbols;
 mod debuglink;
 mod dwarf;
+mod msvc;
+mod pdb_file;
+mod pdb_typename;
 mod lineinfo;
 mod sections;
 mod symbols;
@@ -35,6 +38,8 @@ pub use coff_symbols::{
 };
 pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
 pub use dwarf::{subprograms, Subprogram};
+pub use msvc::demangle_msvc;
+pub use pdb_file::{has_dbi_stream, load_pdb_symbols, pdb_info, PdbInfo, UNKNOWN_SYMBOL_SIZE};
 pub use lineinfo::{line_info, no_line_info_error, LineInfo};
 pub use symbols::{load_symbols, Symbol, SymbolTable};
 pub use unwind::{load_unwind_ranges, no_ranges_error};

@@ -15,8 +15,8 @@ use std::ffi::{c_char, CStr, CString};
 use orbit_object::{
     coff_has_debug_symbols, coff_symbol_table_symbols, crc32_continue, exception_table_symbols,
     export_table_symbols, has_export_table, line_info, load_symbols, load_unwind_ranges,
-    no_ranges_error, parse_coff_metadata, parse_elf_metadata, subprograms, CoffMetadata,
-    ElfMetadata, Symbol, SymbolTable,
+    demangle_msvc, has_dbi_stream, load_pdb_symbols, no_ranges_error, parse_coff_metadata, parse_elf_metadata,
+    pdb_info, subprograms, CoffMetadata, ElfMetadata, Symbol, SymbolTable,
 };
 
 /// Opaque owner of a parse result, freed with [`orbit_elf_free`].
@@ -676,6 +676,131 @@ pub unsafe extern "C" fn orbit_coff_free(handle: *mut OrbitCoffMetadata) {
     if !handle.is_null() {
         // SAFETY: the caller promises an unfreed handle from orbit_coff_parse.
         drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
+// --------------------------------------------------------------------- PDB
+
+/// The GUID and age that match a PDB to its image.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OrbitPdbInfo {
+    pub guid: [u8; 16],
+    pub age: u32,
+}
+
+/// Reads a PDB's GUID and age. Returns 0 on failure, 1 on success.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_pdb_info(
+    data: *const u8,
+    len: usize,
+    out: *mut OrbitPdbInfo,
+    error_out: *mut *mut c_char,
+) -> u8 {
+    if data.is_null() || out.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    match pdb_info(bytes) {
+        Ok(info) => {
+            // SAFETY: the caller promises out is writable.
+            unsafe {
+                *out = OrbitPdbInfo {
+                    guid: info.guid,
+                    age: info.age,
+                }
+            };
+            1
+        }
+        Err(message) => {
+            if !error_out.is_null() {
+                let owned = to_cstring(&message).into_raw();
+                // SAFETY: the caller promises error_out is writable.
+                unsafe { *error_out = owned };
+            }
+            0
+        }
+    }
+}
+
+/// Demangles an MSVC name, the `?`-prefixed arm of `llvm::demangle`.
+///
+/// Returns null when the name is not MSVC-mangled or cannot be demangled, in
+/// which case the caller keeps the name as it is -- which is what
+/// `llvm::demangle` does. A non-null result must be released with
+/// [`orbit_elf_free_error`].
+///
+/// # Safety
+/// `name` must be a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_demangle_msvc(name: *const c_char) -> *mut c_char {
+    if name.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the caller promises a valid C string.
+    let Ok(name) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+        return std::ptr::null_mut();
+    };
+    match demangle_msvc(name) {
+        Some(demangled) => to_cstring(&demangled).into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Whether the PDB has the DBI stream `CreatePdbFile` requires.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, or be null when `len` is zero.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_pdb_has_dbi_stream(data: *const u8, len: usize) -> u8 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    // SAFETY: the caller promises len readable bytes at data.
+    u8::from(has_dbi_stream(unsafe {
+        std::slice::from_raw_parts(data, len)
+    }))
+}
+
+/// Reads a PDB's function symbols, using the same result type as the ELF and
+/// PE loaders. Sizes that are still unknown come back as `u64::MAX`, which is
+/// `SymbolsFile::kUnknownSymbolSize`.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes, and `error_out` must be null or
+/// writable. The result must be released with [`orbit_elf_symbols_free`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_pdb_load_symbols(
+    data: *const u8,
+    len: usize,
+    image_base: u64,
+    error_out: *mut *mut c_char,
+) -> *mut OrbitElfSymbols {
+    if data.is_null() {
+        if !error_out.is_null() {
+            let owned = to_cstring("orbit_pdb_load_symbols called with a null pointer").into_raw();
+            // SAFETY: the caller promises error_out is writable.
+            unsafe { *error_out = owned };
+        }
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    match load_pdb_symbols(bytes, image_base) {
+        Ok(loaded) => Box::into_raw(Box::new(pack_symbols(loaded))),
+        Err(message) => {
+            if !error_out.is_null() {
+                let owned = to_cstring(&message).into_raw();
+                // SAFETY: the caller promises error_out is writable.
+                unsafe { *error_out = owned };
+            }
+            std::ptr::null_mut()
+        }
     }
 }
 

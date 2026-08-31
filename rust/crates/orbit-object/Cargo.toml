@@ -13,6 +13,8 @@ rust-version.workspace = true
 [dependencies]
 addr2line = { version = "0.24", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std"] }
+msvc-demangler = "0.11"
 # Replaces llvm::object. default-features = false keeps the write half, the
 # archive/macho/pe readers we do not need, and their transitive deps out.
 object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std", "compression", "pe"] }
+pdb = "0.8"

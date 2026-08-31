@@ -125,6 +125,32 @@ uint8_t orbit_coff_has_export_table(const uint8_t* data, size_t len);
 // CoffFileImpl::HasDebugSymbols.
 uint8_t orbit_coff_has_debug_symbols(const uint8_t* data, size_t len);
 
+// --------------------------------------------------------------------- PDB
+
+typedef struct {
+  uint8_t guid[16];
+  uint32_t age;
+} OrbitPdbInfo;
+
+// Reads a PDB's GUID and age. Returns 1 on success, 0 on failure with a
+// message in error_out to release with orbit_elf_free_error.
+uint8_t orbit_pdb_info(const uint8_t* data, size_t len, OrbitPdbInfo* out, char** error_out);
+
+// Demangles an MSVC name, the '?'-prefixed arm of llvm::demangle. Returns NULL
+// when the name is not MSVC-mangled or cannot be demangled, in which case the
+// caller keeps the name as it is. Release a non-NULL result with
+// orbit_elf_free_error.
+char* orbit_demangle_msvc(const char* name);
+
+// Whether the PDB has the DBI stream CreatePdbFile requires.
+uint8_t orbit_pdb_has_dbi_stream(const uint8_t* data, size_t len);
+
+// Reads a PDB's function symbols. Sizes still unknown come back as UINT64_MAX,
+// which is SymbolsFile::kUnknownSymbolSize. Release with
+// orbit_elf_symbols_free.
+OrbitElfSymbols* orbit_pdb_load_symbols(const uint8_t* data, size_t len, uint64_t image_base,
+                                        char** error_out);
+
 // -------------------------------------------------------------- line info
 
 // Resolves `address` to a source location. Returns the source file as a

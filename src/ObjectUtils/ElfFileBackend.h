@@ -12,6 +12,8 @@
 
 #include "ObjectUtils/CoffFile.h"
 #include "ObjectUtils/ElfFile.h"
+#include "ObjectUtils/PdbFile.h"
+#include "ObjectUtils/SymbolsFile.h"
 #include "OrbitBase/Result.h"
 
 namespace orbit_object_utils {
@@ -26,6 +28,9 @@ namespace orbit_object_utils {
 
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFileCpp(
     const std::filesystem::path& file_path);
+
+[[nodiscard]] ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFileCpp(
+    const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info);
 
 enum class ObjectBackend { kCpp, kRust, kBoth };
 

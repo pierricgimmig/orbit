@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <filesystem>
 #include <memory>
@@ -26,24 +27,33 @@
 #include <vector>
 
 #include "ObjectUtils/CoffFile.h"
+#include "ObjectUtils/PdbFile.h"
 #include "ObjectUtils/ElfFile.h"
 #include "RustElfFile.h"
+#include "RustPdbFile.h"
 #include "OrbitBase/Result.h"
 
 namespace {
 
-enum class Kind { kNeither, kElf, kPe };
+enum class Kind { kNeither, kElf, kPe, kPdb };
+
+// PdbFileLlvmTest binds its typed test to PdbFileLlvm directly, so it never
+// reaches the dispatching CreatePdbFile and never exercises the Rust backend.
+// Rather than edit a test file, the corpus covers PDBs here.
+constexpr char kPdbMagic[] = "Microsoft C/C++ MSF 7.00";
 
 [[nodiscard]] Kind ClassifyByMagic(const std::filesystem::path& path) {
   FILE* file = fopen(path.c_str(), "rb");
   if (file == nullptr) return Kind::kNeither;
-  char magic[4] = {};
-  const size_t read = fread(magic, 1, sizeof(magic), file);
+  char magic[sizeof(kPdbMagic)] = {};
+  const size_t read = fread(magic, 1, sizeof(magic) - 1, file);
   fclose(file);
   if (read < 2) return Kind::kNeither;
-  if (read == sizeof(magic) && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' &&
-      magic[3] == 'F') {
+  if (read >= 4 && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F') {
     return Kind::kElf;
+  }
+  if (read == sizeof(magic) - 1 && memcmp(magic, kPdbMagic, sizeof(kPdbMagic) - 1) == 0) {
+    return Kind::kPdb;
   }
   // PE images start with the DOS stub's "MZ".
   if (magic[0] == 'M' && magic[1] == 'Z') return Kind::kPe;
@@ -56,6 +66,8 @@ struct Totals {
   int rejected = 0;
   int pe_files = 0;
   int pe_loaded = 0;
+  int pdb_files = 0;
+  int pdb_loaded = 0;
   long long symbols = 0;
   long long line_lookups = 0;
 };
@@ -64,6 +76,23 @@ struct Totals {
 // Sampling the first few function addresses of each file with debug info
 // still crosses every code path and stays affordable.
 constexpr int kLineInfoSamplesPerFile = 32;
+
+void VisitPdb(const std::filesystem::path& path, Totals* totals) {
+  ++totals->pdb_files;
+  // The load bias is arbitrary for a comparison -- both backends get the same
+  // one -- so this uses the value PdbFileTest uses for dllmain.pdb.
+  constexpr uint64_t kLoadBias = 0x180000000;
+  ErrorMessageOr<std::unique_ptr<orbit_object_utils::PdbFile>> pdb_file =
+      orbit_object_utils::CreatePdbFile(path, orbit_object_utils::ObjectFileInfo{kLoadBias});
+  if (pdb_file.has_error()) return;
+  ++totals->pdb_loaded;
+
+  (void)pdb_file.value()->GetGuid();
+  (void)pdb_file.value()->GetAge();
+  (void)pdb_file.value()->GetBuildId();
+  const auto symbols = pdb_file.value()->LoadDebugSymbols();
+  if (symbols.has_value()) totals->symbols += symbols.value().symbol_infos_size();
+}
 
 void VisitPe(const std::filesystem::path& path, Totals* totals) {
   ++totals->pe_files;
@@ -97,6 +126,11 @@ void Visit(const std::filesystem::path& path, Totals* totals) {
 
   if (kind == Kind::kPe) {
     VisitPe(path, totals);
+    return;
+  }
+
+  if (kind == Kind::kPdb) {
+    VisitPdb(path, totals);
     return;
   }
   ++totals->files;
@@ -162,6 +196,8 @@ int main(int argc, char** argv) {
   printf("elf files seen   %d\n", totals.files);
   printf("pe files seen    %d\n", totals.pe_files);
   printf("pe loaded        %d\n", totals.pe_loaded);
+  printf("pdb files seen   %d\n", totals.pdb_files);
+  printf("pdb loaded       %d\n", totals.pdb_loaded);
   printf("loaded           %d\n", totals.loaded);
   printf("rejected         %d\n", totals.rejected);
   printf("symbols compared %lld\n", totals.symbols);
@@ -179,6 +215,15 @@ int main(int argc, char** argv) {
   if (totals.line_lookups > 0) {
     printf("line results with no line number %llu\n",
            static_cast<unsigned long long>(no_line));
+  }
+  uint64_t pdb_gave_up = 0;
+  uint64_t pdb_compared = 0;
+  orbit_object_utils_rust::GetPdbDemanglingDivergence(&pdb_gave_up, &pdb_compared);
+  if (pdb_compared > 0) {
+    printf("pdb symbols compared %llu\n", static_cast<unsigned long long>(pdb_compared));
+    printf("pdb names msvc-demangler rejected %llu (%.4f%%)\n",
+           static_cast<unsigned long long>(pdb_gave_up),
+           100.0 * static_cast<double>(pdb_gave_up) / static_cast<double>(pdb_compared));
   }
   return 0;
 }

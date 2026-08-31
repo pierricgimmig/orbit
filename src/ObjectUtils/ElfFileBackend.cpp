@@ -31,6 +31,7 @@
 #ifdef __linux
 #include "RustCoffFile.h"
 #include "RustElfFile.h"
+#include "RustPdbFile.h"
 #endif
 
 namespace orbit_object_utils {
@@ -113,6 +114,38 @@ namespace {
                                                      data, len, compare);
 }
 
+// Same shape again, for PDBs. Unlike ElfFile and CoffFile the Rust PdbFile has
+// no delegate -- every method is ported -- so the C++ one is built only to
+// compare against.
+[[nodiscard]] ErrorMessageOr<std::unique_ptr<PdbFile>> CreateRustBackedPdb(
+    const std::filesystem::path& file_path, const void* data, size_t len,
+    const ObjectFileInfo& object_file_info, bool compare) {
+  ErrorMessageOr<std::unique_ptr<PdbFile>> cpp_result = ErrorMessage{""};
+  if (compare) {
+    cpp_result = CreatePdbFileCpp(file_path, object_file_info);
+    std::string rust_error;
+    const bool rust_ok = orbit_object_utils_rust::RustPdbParses(data, len, &rust_error);
+    if (rust_ok != cpp_result.has_value()) {
+      ORBIT_FATAL(
+          "PdbFile backends disagree on whether \"%s\" loads: cpp=%s rust=%s\n"
+          "  cpp error:  %s\n  rust error: %s",
+          file_path.string(), cpp_result.has_value() ? "ok" : "error", rust_ok ? "ok" : "error",
+          cpp_result.has_value() ? "-" : cpp_result.error().message(),
+          rust_ok ? "-" : rust_error);
+    }
+    if (cpp_result.has_error()) return cpp_result.error();
+  } else {
+    std::string rust_error;
+    if (!orbit_object_utils_rust::RustPdbParses(data, len, &rust_error)) {
+      return ErrorMessage{std::move(rust_error)};
+    }
+  }
+
+  return orbit_object_utils_rust::CreateRustPdbFile(
+      file_path, compare ? std::move(cpp_result.value()) : nullptr, data, len,
+      object_file_info.load_bias, compare);
+}
+
 #endif  // __linux
 
 }  // namespace
@@ -160,6 +193,26 @@ ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::
                               CreateCoffFileCpp(file_path), backend == ObjectBackend::kBoth);
 #else
   return CreateCoffFileCpp(file_path);
+#endif
+}
+
+ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFile(const std::filesystem::path& file_path,
+                                                       const ObjectFileInfo& object_file_info) {
+  const ObjectBackend backend = SelectedObjectBackend();
+  if (backend == ObjectBackend::kCpp) {
+    return CreatePdbFileCpp(file_path, object_file_info);
+  }
+
+#ifdef __linux
+  ErrorMessageOr<std::string> content = orbit_base::ReadFileToString(file_path);
+  if (content.has_error()) {
+    return CreatePdbFileCpp(file_path, object_file_info);
+  }
+
+  return CreateRustBackedPdb(file_path, content.value().data(), content.value().size(),
+                             object_file_info, backend == ObjectBackend::kBoth);
+#else
+  return CreatePdbFileCpp(file_path, object_file_info);
 #endif
 }
 
