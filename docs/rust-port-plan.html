@@ -1118,6 +1118,7 @@
   <div class="note">
     <span class="note-label">Progress, 2026-08-31</span>
     <p>4a and 4b are done and committed; 4c has its first two milestones done (the ring buffer with its cross-watcher differential, and the event loop composing the ported crates FFI-free). The sched-tracepoint pipeline and the 4d whole-capture differential are root-gated on the development machine and wait for a <code>sudo</code> run. See <a href="blog/08-moving-the-boundary.html">post 08</a>.</p>
+    <p><strong>Phase 5 is done through 5c.</strong> <code>orbit-unwind</code> (framehop + object) holds frames identical with libunwindstack on 12,000 live samples, and both formerly-welded classes — <code>UprobesReturnAddressManager</code> and <code>LeafFunctionCallManager</code> — now run their logic on Rust by default behind the shared switch, engines reached through callbacks. libunwindstack stays linked until Phase 8, by design. See <a href="blog/09-the-weld-comes-apart.html">post 09</a>.</p>
   </div>
 
   <h3>Phase 4 milestones, each with its own differential</h3>

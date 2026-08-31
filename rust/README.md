@@ -81,7 +81,10 @@ first FFI-free path from kernel bytes to ordered records.
 `crates/orbit-unwind` replaces libunwindstack with framehop + object for
 offline DWARF unwinding, adopting libunwindstack's adjusted-pc convention;
 `rust/tools/differential/stack_unwind_differential.cpp` holds the frames
-identical against the C++ on live samples.
+identical against the C++ on live samples. The two formerly
+libunwindstack-welded classes (`UprobesReturnAddressManager`,
+`LeafFunctionCallManager`) run their logic in `orbit-tracing-state` behind
+the shared backend switch, engines reached through callbacks.
 
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
