@@ -6,7 +6,7 @@
 //! copied stack slice.
 
 use crate::modules::load_module;
-use framehop::{FrameAddress, UnwindIterator, Unwinder};
+use framehop::{UnwindIterator, Unwinder};
 use orbit_maps::{parse_maps, MemoryMapping, PROT_EXEC};
 use std::collections::HashMap;
 

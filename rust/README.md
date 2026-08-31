@@ -103,6 +103,11 @@ relocation is byte-for-byte identical with the C++ across 888,154 real
 instructions; whole trampolines are byte-identical across 93,696 real
 function starts.
 
+`crates/orbit-service` is the all-Rust capture service entry point: sample a
+process, unwind with orbit-unwind, intern callstacks, write a pod stream. It
+builds as a **fully static musl binary** (`./build-service-musl.sh`) -- 756 KB,
+`ldd` reports "statically linked", zero runtime dependencies.
+
 `crates/orbit-wire` is the pod capture wire format: a one-byte tag plus
 fixed little-endian fields per event, zero dependencies, ~4.8x faster to
 parse than protobuf (at ~1.7x the bytes -- a deliberate CPU-for-bandwidth

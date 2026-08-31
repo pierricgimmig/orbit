@@ -297,6 +297,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-service"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "orbit-perf-records",
+ "orbit-perf-ring",
+ "orbit-unwind",
+ "orbit-wire",
+]
+
+[[package]]
 name = "orbit-thread-states"
 version = "0.1.0"
 

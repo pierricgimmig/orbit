@@ -10,7 +10,7 @@
 
 load("@orbit_crates//:defs.bzl", "all_crate_deps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -363,6 +363,29 @@ cc_library(
     hdrs = ["ffi/orbit-ptrace-ffi/include/orbit_ptrace_ffi.h"],
     includes = ["ffi/orbit-ptrace-ffi/include"],
     deps = [":orbit_ptrace_ffi_rust"],
+)
+
+# ------------------------------------------------------------ orbit-service
+
+rust_binary(
+    name = "orbit_service",
+    srcs = glob(["crates/orbit-service/src/**/*.rs"]),
+    crate_root = "crates/orbit-service/src/main.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_perf_records",
+        ":orbit_perf_ring",
+        ":orbit_unwind",
+        ":orbit_wire",
+    ] + all_crate_deps(package_name = "rust/crates/orbit-service"),
+)
+
+rust_test(
+    name = "orbit_service_test",
+    size = "small",
+    crate = ":orbit_service",
+    edition = ORBIT_RUST_EDITION,
 )
 
 # ------------------------------------------------------------ orbit-wire

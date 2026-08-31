@@ -18,6 +18,7 @@ members = [
     "crates/orbit-perf-merge",
     "crates/orbit-perf-records",
     "crates/orbit-perf-ring",
+    "crates/orbit-service",
     "crates/orbit-ptrace",
     "crates/orbit-thread-states",
     "crates/orbit-tracing-state",
@@ -48,3 +49,4 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
+strip = true
