@@ -33,28 +33,24 @@ namespace orbit_object_utils {
 
 ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(const std::filesystem::path& file_path) {
   OUTCOME_TRY(std::string content, orbit_base::ReadFileToString(file_path));
-  return orbit_object_utils_rust::CreateRustElfFile(file_path, nullptr, content.data(),
-                                                    content.size(), /*compare=*/false);
+  return orbit_object_utils_rust::CreateRustElfFile(file_path, content.data(), content.size());
 }
 
 ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBuffer(
     const std::filesystem::path& file_path, const void* buf, size_t len) {
-  return orbit_object_utils_rust::CreateRustElfFile(file_path, nullptr, buf, len,
-                                                    /*compare=*/false);
+  return orbit_object_utils_rust::CreateRustElfFile(file_path, buf, len);
 }
 
 ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::path& file_path) {
   OUTCOME_TRY(std::string content, orbit_base::ReadFileToString(file_path));
-  return orbit_object_utils_rust::CreateRustCoffFile(file_path, nullptr, content.data(),
-                                                     content.size(), /*compare=*/false);
+  return orbit_object_utils_rust::CreateRustCoffFile(file_path, content.data(), content.size());
 }
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFileRust(
     const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info) {
   OUTCOME_TRY(std::string content, orbit_base::ReadFileToString(file_path));
-  return orbit_object_utils_rust::CreateRustPdbFile(file_path, nullptr, content.data(),
-                                                    content.size(), object_file_info.load_bias,
-                                                    /*compare=*/false);
+  return orbit_object_utils_rust::CreateRustPdbFile(file_path, content.data(), content.size(),
+                                                    object_file_info.load_bias);
 }
 
 ErrorMessageOr<uint32_t> ElfFile::CalculateDebuglinkChecksum(

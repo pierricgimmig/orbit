@@ -1,41 +1,48 @@
 # Orbit's service-side Rust
 
 Rust implementations of parts of Orbit's capture backend, ported one module at
-a time. **The C++ is still here and still the default.** Nothing in this
-directory changes Orbit's behaviour unless an environment variable asks it to.
+a time. As of Phase 2, **`ObjectUtils` runs entirely on Rust**: ELF, PE/COFF
+and PDB are read by the crates here, and LLVM is no longer a dependency of the
+tree at all.
 
 - Plan: [`docs/rust-port-plan.html`](../docs/rust-port-plan.html)
 - Log:  [`docs/blog/`](../docs/blog/index.html)
 - Why:  [`docs/rust-service-port.html`](../docs/rust-service-port.html)
 
-## Selecting a backend
+## Backends
 
-Each ported module reads one environment variable. Unset means the C++ path,
-exactly as before the port started.
+`ObjectUtils` has one implementation now; `ORBIT_OBJECT_BACKEND` is gone with
+the C++ it selected. `ParseMaps` still keeps its small C++ twin:
 
-| Variable             | Values                | Selects                                         |
-| -------------------- | --------------------- | ----------------------------------------------- |
-| `ORBIT_MAPS_BACKEND` | `cpp` `rust` `both`   | `orbit_module_utils::ParseMaps`                  |
+| Variable             | Values              | Default | Selects                        |
+| -------------------- | ------------------- | ------- | ------------------------------ |
+| `ORBIT_MAPS_BACKEND` | `rust` `cpp` `both` | `rust`  | `orbit_module_utils::ParseMaps` |
 
 `both` runs the two implementations on every call and aborts with both values
-printed if they disagree. It roughly doubles the work and exists for tests.
+printed if they disagree.
+
+To compare `ObjectUtils` against LLVM again, check out `c7c4e6566` — the last
+commit where both implementations and the three-backend switch exist. That
+switch is how nearly every bug in the port was found; see the log.
 
 ## Testing
 
-`orbit_dual_backend_test` in `bazel/dual_backend.bzl` emits three `cc_test`
-targets from one set of attributes, so a suite cannot drift between backends:
-
 ```
-bazel test //src/ModuleUtils:all //rust:all
-#   :ReadLinuxMapsTests       backend cpp
-#   :ReadLinuxMapsTestsRust   backend rust
-#   :ReadLinuxMapsTestsBoth   backend both -- the one that proves equivalence
+bazel test //rust:all //src/ObjectUtils:all //src/ModuleUtils:all
 ```
 
-The C++ test files are never edited. They are the specification.
+The C++ test files are never edited. They are the specification: every Rust
+unit test that mirrors one names it in a comment.
 
-To confirm the comparing mode is really comparing, break the Rust on purpose
-and check that `Tests` still passes while `TestsRust` and `TestsBoth` fail.
+`rust/tools/differential:elf_corpus` reads every ELF, PE and PDB under the
+directories you give it, through every `ObjectUtils` method. During the port
+it compared two implementations; now it is a smoke test whose counts must not
+move without explanation:
+
+```
+bazel run -c opt //rust/tools/differential:elf_corpus -- \
+    src/ObjectUtils/testdata /usr/lib/x86_64-linux-gnu
+```
 
 ## Layout
 
@@ -43,11 +50,16 @@ and check that `Tests` still passes while `TestsRust` and `TestsBoth` fail.
 crates/    pure Rust, no FFI, unit-tested on its own
 ffi/       #[no_mangle] extern "C" layers + hand-written headers
 shims/     C++ implementing Orbit's existing interfaces over those headers
-tools/     A/B benchmarks and differential harnesses
+tools/     the corpus smoke test and A/B benchmarks
 ```
 
-`crates/orbit-maps` has **no dependencies**. The four Abseil targets the C++ it
-replaces needs are `strings`, `str_format`, `numbers` and `ascii`.
+`crates/orbit-maps` has no dependencies. `crates/orbit-object` replaces six
+LLVM libraries with five crates: `object`, `gimli`, `pdb`, `msvc-demangler`
+and `flate2` (for `SHF_COMPRESSED` debug sections).
+
+`shims/Demangle` is Orbit's replacement for `llvm::demangle`:
+`abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
+ones, the input unchanged otherwise.
 
 ## Building
 
@@ -62,10 +74,6 @@ For local iteration, `cargo` lives in `~/.cargo/bin` and may not be on `PATH`:
 ```
 PATH="$HOME/.cargo/bin:$PATH" cargo test --manifest-path rust/Cargo.toml
 ```
-
-There is deliberately no `crate_universe` repository for this workspace yet;
-none of these crates has an external dependency. That changes at Phase 2, when
-`object`, `gimli` and `addr2line` arrive.
 
 ## Relationship to `src/OrbitLiveViewer`
 

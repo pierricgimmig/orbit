@@ -354,8 +354,7 @@ class RustCoffFile : public CoffFile {
 }  // namespace
 
 ErrorMessageOr<std::unique_ptr<CoffFile>> CreateRustCoffFile(
-    const std::filesystem::path& file_path, std::unique_ptr<CoffFile> /*cpp_delegate*/,
-    const void* data, size_t len, bool /*compare*/) {
+    const std::filesystem::path& file_path, const void* data, size_t len) {
   const std::string file_path_str = file_path.string();
 
   char* error = nullptr;

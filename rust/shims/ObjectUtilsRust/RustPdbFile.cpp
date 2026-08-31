@@ -101,8 +101,7 @@ class RustPdbFile : public PdbFile {
 }  // namespace
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> CreateRustPdbFile(
-    const std::filesystem::path& file_path, std::unique_ptr<PdbFile> /*cpp_delegate*/,
-    const void* data, size_t len, uint64_t load_bias, bool /*compare*/) {
+    const std::filesystem::path& file_path, const void* data, size_t len, uint64_t load_bias) {
   const auto* first = static_cast<const uint8_t*>(data);
 
   OrbitPdbInfo info{};

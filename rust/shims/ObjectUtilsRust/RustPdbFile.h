@@ -16,15 +16,10 @@
 
 namespace orbit_object_utils_rust {
 
-// A PdbFile over //rust:orbit_object.
-//
-// `cpp_delegate` and `compare` are vestiges of the three-backend switch and
-// are ignored; they remain only so the factory signatures did not have to
-// change in the same commit that deleted LLVM. See ObjectFileBackend.cpp.
+// A PdbFile over //rust:orbit_object. Rust never opens the file; the caller
+// reads it and hands over the bytes, which keeps I/O on the C++ side.
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<orbit_object_utils::PdbFile>> CreateRustPdbFile(
-    const std::filesystem::path& file_path,
-    std::unique_ptr<orbit_object_utils::PdbFile> cpp_delegate, const void* data, size_t len,
-    uint64_t load_bias, bool compare);
+    const std::filesystem::path& file_path, const void* data, size_t len, uint64_t load_bias);
 
 }  // namespace orbit_object_utils_rust
 

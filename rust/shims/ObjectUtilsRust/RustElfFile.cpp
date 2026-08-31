@@ -243,8 +243,7 @@ class RustElfFile : public ElfFile {
 }  // namespace
 
 ErrorMessageOr<std::unique_ptr<ElfFile>> CreateRustElfFile(
-    const std::filesystem::path& file_path, std::unique_ptr<ElfFile> /*cpp_delegate*/,
-    const void* data, size_t len, bool /*compare*/) {
+    const std::filesystem::path& file_path, const void* data, size_t len) {
   const std::string file_path_str = file_path.string();
 
   char* error = nullptr;
