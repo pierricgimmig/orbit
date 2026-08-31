@@ -16,6 +16,8 @@
 
 #![deny(unsafe_code)]
 
+pub mod reader;
+
 /// Little-endian decoding of one field out of a byte slice. The slice handed
 /// to `from_le_slice` is exactly `SIZE` bytes.
 pub trait FromLe: Sized + Copy {

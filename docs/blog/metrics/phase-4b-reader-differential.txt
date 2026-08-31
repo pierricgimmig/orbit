@@ -1,0 +1,46 @@
+Phase 4b -- the reader, byte-level differential (2026-08-31)
+============================================================
+
+What: whole-record parsing including the dynamic tails, ported to
+orbit-perf-records::reader. parse_record_sample is the twin of the C++
+ConsumeRecordSample flag walk, quirks preserved:
+  - the stack copy takes only dyn_size of the stack_size bytes;
+  - dyn_size is read only when stack data is copied, while the cursor still
+    advances past it either way;
+  - callchain ips advance the cursor even when not copied;
+  - mmap: "//anon" becomes "", page_offset zeroed for anonymous/bracketed
+    maps when it equals the address, executable from !MISC_MMAP_DATA.
+One deliberate difference: the Rust parser returns None on a truncated
+record where the C++ trusts the kernel and reads unchecked.
+
+How it is verified
+------------------
+rust/tools/differential/perf_reader_differential.cpp opens real
+perf_event_open buffers using Orbit's OWN open functions (mmap_task,
+stack_sample, callchain_sample -- so the attrs cannot diverge from the
+consumers), runs a child workload (mmaps, a fork, CPU burn), and for every
+record the kernel produces: copies the raw bytes, parses with the C++
+consumers from the ring buffer, parses the same bytes with Rust, compares
+canonical text renderings field by field (stacks compared as FNV-1a64).
+
+Results (perf_event_paranoid = -1, x86_64, 12 runs)
+---------------------------------------------------
+stack_samples      3101   0 mismatches
+callchain_samples  3101   0 mismatches
+mmaps               384   0 mismatches
+fixed (fork/exit/
+  lost/throttle)    644   0 mismatches
+verdict: IDENTICAL in all 12 runs
+
+Sabotage check: capping the Rust stack copy at 15 bytes made the run
+DIVERGENT; reverting restored IDENTICAL.
+
+Hurdle worth recording: the first run compared zero records with a green
+verdict -- Orbit opens perf events disabled (attr.disabled = 1) and
+TracerImpl enables them explicitly, which the tool now also does. A
+differential that can pass on an empty corpus is a footgun; the record
+counts are printed for exactly that reason.
+
+Not covered at user privileges: tracepoint and uprobe records need root.
+Their parsing shares parse_record_sample with the sample records exercised
+here; the kernel-fed differential for them can run with sudo later.

@@ -40,6 +40,15 @@ int64_t orbit_perf_records_struct_size(uint32_t kind);
 int64_t orbit_perf_records_field_count(uint32_t kind);
 int64_t orbit_perf_records_field_offset(uint32_t kind, uint32_t index);
 
+// Canonical text renderings of parsed records, for the byte-level reader
+// differential. `bytes` is one whole record, `len == header.size`. The
+// returned string must be freed with orbit_perf_records_string_free.
+char* orbit_perf_records_dump_stack_sample(const uint8_t* bytes, uint64_t len);
+char* orbit_perf_records_dump_callchain_sample(const uint8_t* bytes, uint64_t len);
+char* orbit_perf_records_dump_mmap(const uint8_t* bytes, uint64_t len);
+char* orbit_perf_records_dump_fixed(const uint8_t* bytes, uint64_t len);
+void orbit_perf_records_string_free(char* rendered);
+
 }  // extern "C"
 
 #endif  // ORBIT_PERF_RECORDS_FFI_H_
