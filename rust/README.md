@@ -103,6 +103,12 @@ relocation is byte-for-byte identical with the C++ across 888,154 real
 instructions; whole trampolines are byte-identical across 93,696 real
 function starts.
 
+`crates/orbit-wire` is the pod capture wire format: a one-byte tag plus
+fixed little-endian fields per event, zero dependencies, ~4.8x faster to
+parse than protobuf (at ~1.7x the bytes -- a deliberate CPU-for-bandwidth
+trade on the hot path). Round-trip tested and size/speed-differentialed
+against protobuf.
+
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
 ones, the input unchanged otherwise.

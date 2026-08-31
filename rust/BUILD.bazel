@@ -363,6 +363,37 @@ cc_library(
     deps = [":orbit_ptrace_ffi_rust"],
 )
 
+# ------------------------------------------------------------ orbit-wire
+
+rust_library(
+    name = "orbit_wire",
+    srcs = glob(["crates/orbit-wire/src/**/*.rs"]),
+    crate_root = "crates/orbit-wire/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_wire_test",
+    size = "small",
+    crate = ":orbit_wire",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_wire_ffi_rust",
+    srcs = glob(["ffi/orbit-wire-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-wire-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_wire"],
+)
+
+cc_library(
+    name = "orbit_wire_ffi",
+    hdrs = ["ffi/orbit-wire-ffi/include/orbit_wire_ffi.h"],
+    includes = ["ffi/orbit-wire-ffi/include"],
+    deps = [":orbit_wire_ffi_rust"],
+)
+
 # ---------------------------------------------------------- orbit-unwind
 
 rust_library(

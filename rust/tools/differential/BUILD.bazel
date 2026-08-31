@@ -127,3 +127,14 @@ cc_binary(
         "@capstone//:capstone",
     ],
 )
+
+cc_binary(
+    name = "wire_size_differential",
+    srcs = ["wire_size_differential.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//rust:orbit_wire_ffi",
+        "//src/GrpcProtos",
+        "@protobuf",
+    ],
+)

@@ -352,6 +352,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-wire"
+version = "0.1.0"
+
+[[package]]
+name = "orbit-wire-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-wire",
+]
+
+[[package]]
 name = "pdb"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
