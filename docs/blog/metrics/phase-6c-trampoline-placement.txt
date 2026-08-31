@@ -1,0 +1,36 @@
+Phase 6c -- trampoline placement (2026-08-31)
+=============================================
+
+What: the address-space half of Trampoline.cpp, ported to
+rust/crates/orbit-trampoline: the taken-range map of a process
+(GetUnavailableAddressRanges) and the search for a free slot of a given size
+within a 32-bit relative jump (+/-2GB) of the code being hooked
+(FindAddressRangeForTrampoline), plus the range-overlap helpers and
+AddressDifferenceAsInt32. Pure logic + a /proc/<pid>/maps parse (reusing
+orbit-maps); no disassembler yet -- the instruction relocation is the next
+milestone.
+
+How it is verified
+------------------
+trampoline_placement_differential.cpp, two parts:
+1. get_unavailable_address_ranges: a sleeping child's maps scanned by the
+   C++ and the Rust, compared range for range (the guard-plus-join logic
+   included -- the [0,mmap_min_addr) guard joins the first mapping when they
+   touch, exactly as the C++ does).
+2. find_address_range_for_trampoline: a battery of synthetic
+   (unavailable_ranges, code_range, size) inputs -- fully deterministic, no
+   /proc -- fed to both implementations, chosen range (or failure) compared
+   exactly. Plus AddressDifferenceAsInt32 over boundary values.
+IDENTICAL across all runs. Sabotage: mis-computing the below-code placement
+address (start + size instead of start - size) breaks the differential.
+
+Note on a masked sabotage worth recording: flipping the page rounding from
+round-down to round-up did NOT diverge, because real (and test) map
+addresses are page-aligned and sizes are page multiples, so start - size is
+already aligned and both roundings agree. The rounding is defensive for an
+input that cannot occur; the differential correctly shows it makes no
+observable difference.
+
+Remaining for Phase 6: RelocateInstruction and the trampoline builder in
+Trampoline.cpp -- the disassembler-dependent core (the C++ uses capstone).
+This is the single hardest piece of the whole port.

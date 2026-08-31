@@ -302,6 +302,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-trampoline"
+version = "0.1.0"
+dependencies = [
+ "orbit-maps",
+ "orbit-ptrace",
+]
+
+[[package]]
+name = "orbit-trampoline-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-trampoline",
+]
+
+[[package]]
 name = "orbit-unwind"
 version = "0.1.0"
 dependencies = [

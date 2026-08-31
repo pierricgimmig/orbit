@@ -21,6 +21,7 @@ members = [
     "crates/orbit-ptrace",
     "crates/orbit-thread-states",
     "crates/orbit-tracing-state",
+    "crates/orbit-trampoline",
     "crates/orbit-unwind",
     "ffi/orbit-maps-ffi",
     "ffi/orbit-object-ffi",
@@ -30,6 +31,7 @@ members = [
     "ffi/orbit-ptrace-ffi",
     "ffi/orbit-thread-states-ffi",
     "ffi/orbit-tracing-state-ffi",
+    "ffi/orbit-trampoline-ffi",
     "ffi/orbit-unwind-ffi",
 ]
 

@@ -292,6 +292,43 @@ cc_library(
     deps = [":orbit_perf_ring_ffi_rust"],
 )
 
+# ------------------------------------------------------ orbit-trampoline
+
+rust_library(
+    name = "orbit_trampoline",
+    srcs = glob(["crates/orbit-trampoline/src/**/*.rs"]),
+    crate_root = "crates/orbit-trampoline/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_maps",
+        ":orbit_ptrace",
+    ],
+)
+
+rust_test(
+    name = "orbit_trampoline_test",
+    size = "small",
+    crate = ":orbit_trampoline",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_trampoline_ffi_rust",
+    srcs = glob(["ffi/orbit-trampoline-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-trampoline-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_trampoline"],
+)
+
+cc_library(
+    name = "orbit_trampoline_ffi",
+    hdrs = ["ffi/orbit-trampoline-ffi/include/orbit_trampoline_ffi.h"],
+    includes = ["ffi/orbit-trampoline-ffi/include"],
+    deps = [":orbit_trampoline_ffi_rust"],
+)
+
 # --------------------------------------------------------- orbit-ptrace
 
 rust_library(
