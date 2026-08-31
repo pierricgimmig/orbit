@@ -41,6 +41,7 @@ use crate::timeline::{
     TimelineGpuSlot, TimelinePayload, UploadMode, ViewUniforms,
 };
 use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
+use crate::vscroll::{clamp_offset, max_offset, VScrollInertia};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
 const SIDE: f32 = 228.0;
@@ -123,8 +124,16 @@ fn capture_anchor_ratio(x_frac: f32, cap0: f64, cap1: f64, t0: f64, t1: f64) -> 
 
 /// Lane-scroll offset after a touch pan of `drag_y`. Content follows the
 /// finger: dragging down reveals what is above, so the offset decreases.
-fn touch_vscroll_target(current: f32, drag_y: f32) -> f32 {
-    (current - drag_y).max(0.0)
+#[cfg(test)]
+fn touch_vscroll_target(current: f32, drag_y: f32, max: f32) -> f32 {
+    crate::vscroll::drag_offset(current, drag_y, max)
+}
+
+fn consume_scroll_y(ctx: &Context) {
+    ctx.input_mut(|i| {
+        i.raw_scroll_delta.y = 0.0;
+        i.smooth_scroll_delta.y = 0.0;
+    });
 }
 
 fn consume_scroll(ctx: &Context) {
@@ -532,6 +541,8 @@ pub struct OrbitLiveApp {
     search_intern_len: usize,
     lane_scroll: f32,
     pending_vscroll: Option<f32>,
+    vscroll: VScrollInertia,
+    vscroll_max: f32,
     measure: Option<TimeMeasure>,
     measure_dragging: bool,
     idle_skip_chrome: bool,
@@ -662,6 +673,8 @@ impl OrbitLiveApp {
             search_intern_len: 0,
             lane_scroll: 0.0,
             pending_vscroll: None,
+            vscroll: VScrollInertia::default(),
+            vscroll_max: 0.0,
             measure: None,
             measure_dragging: false,
             idle_skip_chrome: false,
@@ -732,7 +745,7 @@ impl OrbitLiveApp {
             self.status.capturing,
             self.tracks.dragging(),
             self.selected.is_some(),
-        )
+        ) || self.vscroll.is_coasting()
     }
 
     fn start_record(&mut self) {
@@ -2180,7 +2193,7 @@ impl OrbitLiveApp {
         }
         paint_timebar(ui, ruler, self.t0, self.t1);
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
-        self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false);
+        self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false, dt);
         self.handle_measure(&ruler_resp, ruler, false);
         if ruler_resp.double_clicked() {
             self.fit_to_content();
@@ -2208,11 +2221,14 @@ impl OrbitLiveApp {
 
         let avail = ui.available_size();
         let height = self.tracks.total_height().max(avail.y).max(72.0);
-        let ctrl_zoom = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        self.vscroll_max = max_offset(height, avail.y);
+        self.lane_scroll = clamp_offset(self.lane_scroll, self.vscroll_max);
+        let lanes_rect = ui.available_rect_before_wrap();
+        self.handle_vscroll_gestures(ui.ctx(), lanes_rect, ruler, dt);
+        // We own wheel Y (inertia). Leave drag so the header column can still
+        // scroll; the body claims primary drag for time + touch Y.
         let mut scroll_source = ScrollSource::ALL;
-        if ctrl_zoom {
-            scroll_source.mouse_wheel = false;
-        }
+        scroll_source.mouse_wheel = false;
         let mut scroll = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .id_salt("orbit_lanes")
@@ -2287,7 +2303,7 @@ impl OrbitLiveApp {
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
-                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true);
+                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true, dt);
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y, dt);
                 self.handle_pick(&body_resp, body, t0, t1, width);
                 self.handle_measure(&body_resp, body, true);
@@ -3170,6 +3186,7 @@ impl OrbitLiveApp {
         rect: Rect,
         mode: WheelMode,
         touch_vpan: bool,
+        frame_dt: f32,
     ) {
         let ctx = response.ctx.clone();
         if response.hovered() {
@@ -3220,6 +3237,13 @@ impl OrbitLiveApp {
                 self.apply_pan_window(t0, t1);
             }
         }
+        if response.drag_started_by(PointerButton::Primary) {
+            // Click or a new drag grabs the list immediately (kills a coast).
+            self.vscroll.cancel();
+            if touch_vpan && ctx.input(|i| i.any_touches()) {
+                self.vscroll.begin_drag();
+            }
+        }
         if response.dragged_by(PointerButton::Primary) {
             let drag = response.drag_delta();
             let span = (self.t1 - self.t0).max(1.0);
@@ -3228,11 +3252,83 @@ impl OrbitLiveApp {
             // A tablet has no wheel, and this drag never reaches the lane
             // ScrollArea's own drag-to-scroll because the timeline body claims
             // it first -- so one finger pans both axes. Touch only: a mouse
-            // drag keeps panning time alone.
-            if touch_vpan && drag.y != 0.0 && ctx.input(|i| i.any_touches()) {
-                let next = touch_vscroll_target(self.lane_scroll, drag.y);
+            // drag keeps panning time alone. Pinch is zoom, not a Y flick.
+            let pinch = ctx.input(|i| i.multi_touch().is_some());
+            if touch_vpan && !pinch && ctx.input(|i| i.any_touches()) {
+                if !self.vscroll.is_dragging() {
+                    self.vscroll.begin_drag();
+                }
+                if drag.y != 0.0 {
+                    let next =
+                        self.vscroll
+                            .drag(self.lane_scroll, drag.y, frame_dt, self.vscroll_max);
+                    self.lane_scroll = next;
+                    self.pending_vscroll = Some(next);
+                }
+            }
+        }
+        if touch_vpan && self.vscroll.is_dragging() && response.drag_stopped() {
+            self.vscroll.end_drag();
+            if self.vscroll.is_coasting() {
+                self.needs_repaint = true;
+            }
+        }
+    }
+
+    /// Wheel Y + leftover flick coast. Time zoom / time pan stay in
+    /// `handle_time_nav`; this only moves the track list.
+    fn handle_vscroll_gestures(&mut self, ctx: &Context, lanes: Rect, ruler: Rect, dt: f32) {
+        let (pressed, press_pos, scroll, zoom, ctrl_like, pinch, steal_keys) = ctx.input(|i| {
+            (
+                i.pointer.any_pressed(),
+                i.pointer.press_origin().or(i.pointer.interact_pos()),
+                i.raw_scroll_delta,
+                i.zoom_delta(),
+                i.modifiers.ctrl || i.modifiers.command,
+                i.multi_touch().is_some(),
+                i.key_down(Key::W)
+                    || i.key_down(Key::A)
+                    || i.key_down(Key::S)
+                    || i.key_down(Key::D)
+                    || i.key_down(Key::ArrowUp)
+                    || i.key_down(Key::ArrowDown)
+                    || i.key_down(Key::ArrowLeft)
+                    || i.key_down(Key::ArrowRight)
+                    || i.key_pressed(Key::PageUp)
+                    || i.key_pressed(Key::PageDown),
+            )
+        });
+        if steal_keys {
+            self.vscroll.cancel();
+        }
+        if pressed {
+            if let Some(p) = press_pos {
+                if lanes.contains(p) || ruler.contains(p) {
+                    self.vscroll.cancel();
+                }
+            }
+        }
+        let hover = ctx.pointer_hover_pos();
+        let over_lanes = hover.map(|p| lanes.contains(p)).unwrap_or(false);
+        let over_ruler = hover.map(|p| ruler.contains(p)).unwrap_or(false);
+        let zoom_step = time_zoom_step(scroll.y, zoom);
+        let want_zoom = (over_ruler && zoom_step != 0)
+            || (over_lanes && (ctrl_like || pinch) && zoom_step != 0);
+        if over_lanes && !want_zoom && scroll.y != 0.0 {
+            let next = self
+                .vscroll
+                .wheel(self.lane_scroll, scroll.y, dt, self.vscroll_max);
+            self.lane_scroll = next;
+            self.pending_vscroll = Some(next);
+            consume_scroll_y(ctx);
+            self.needs_repaint = true;
+        } else {
+            self.vscroll.end_wheel_burst();
+            if self.vscroll.is_coasting() && !self.vscroll.is_dragging() {
+                let next = self.vscroll.tick(self.lane_scroll, dt, self.vscroll_max);
                 self.lane_scroll = next;
                 self.pending_vscroll = Some(next);
+                self.needs_repaint = true;
             }
         }
     }
@@ -3445,7 +3541,8 @@ impl OrbitLiveApp {
     }
 
     fn nudge_vscroll(&mut self, ratio: f32, view_h: f32) {
-        let next = (self.lane_scroll - ratio * view_h.max(1.0)).max(0.0);
+        self.vscroll.cancel();
+        let next = clamp_offset(self.lane_scroll - ratio * view_h.max(1.0), self.vscroll_max);
         self.pending_vscroll = Some(next);
         self.lane_scroll = next;
     }
@@ -4102,10 +4199,13 @@ fn page_is_fullscreen(ctx: &Context) -> bool {
             return true;
         }
         let v = wasm_bindgen::JsValue::from(doc);
-        js_sys::Reflect::get(&v, &wasm_bindgen::JsValue::from_str("webkitFullscreenElement"))
-            .ok()
-            .map(|el| !el.is_null() && !el.is_undefined())
-            .unwrap_or(false)
+        js_sys::Reflect::get(
+            &v,
+            &wasm_bindgen::JsValue::from_str("webkitFullscreenElement"),
+        )
+        .ok()
+        .map(|el| !el.is_null() && !el.is_undefined())
+        .unwrap_or(false)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -5239,7 +5339,10 @@ mod tests {
     #[test]
     fn chrome_collapse_is_immersive_or_narrow_fullscreen() {
         assert!(!chrome_collapsed(false, false, false));
-        assert!(!chrome_collapsed(false, true, false), "desktop FS keeps toolbar");
+        assert!(
+            !chrome_collapsed(false, true, false),
+            "desktop FS keeps toolbar"
+        );
         assert!(chrome_collapsed(false, true, true));
         assert!(chrome_collapsed(true, false, true));
         assert!(chrome_collapsed(true, false, false));
@@ -5546,11 +5649,12 @@ mod tests {
     #[test]
     fn touch_vscroll_follows_the_finger_and_clamps_at_top() {
         // Finger down -> see earlier lanes -> smaller offset.
-        assert_eq!(touch_vscroll_target(100.0, 30.0), 70.0);
+        assert_eq!(touch_vscroll_target(100.0, 30.0, 1000.0), 70.0);
         // Finger up -> scroll further down the stack.
-        assert_eq!(touch_vscroll_target(100.0, -30.0), 130.0);
-        // Never past the top.
-        assert_eq!(touch_vscroll_target(10.0, 40.0), 0.0);
+        assert_eq!(touch_vscroll_target(100.0, -30.0, 1000.0), 130.0);
+        // Never past the top or the last track.
+        assert_eq!(touch_vscroll_target(10.0, 40.0, 1000.0), 0.0);
+        assert_eq!(touch_vscroll_target(990.0, -40.0, 1000.0), 1000.0);
     }
 
     #[test]

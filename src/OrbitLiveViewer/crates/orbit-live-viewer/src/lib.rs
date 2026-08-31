@@ -28,6 +28,8 @@ mod theme;
 mod timeline;
 #[cfg(feature = "egui")]
 pub mod tracks;
+#[cfg(feature = "egui")]
+mod vscroll;
 
 #[cfg(feature = "egui")]
 pub use app::OrbitLiveApp;
