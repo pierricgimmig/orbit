@@ -1057,6 +1057,11 @@
 
   <h2 id="phase3">Phase 3 — the pure-logic half of LinuxTracing</h2>
 
+  <div class="note hold">
+    <span class="note-label">Outcome: stopped by gate 4, as this section predicted</span>
+    <p>Two classes were ported and validated &mdash; <code>PerfEventQueue</code> (slab-and-handles FFI) and <code>ThreadStateManager</code> (pure integers) &mdash; and both measured slower: ~20% on a 63&nbsp;ns baseline and ~2.4&times; on a 13&nbsp;ns one, with identical checksums throughout. The toll of an opaque cross-language call is fixed per event, so the smaller the function, the larger the relative loss, and the five remaining classes are all smaller. Defaults stay C++; the Rust stays in tree behind <code>ORBIT_PERF_MERGE_BACKEND</code> and <code>ORBIT_THREAD_STATES_BACKEND</code>; the rest of the phase is deliberately not ported. What could reopen it: cross-language LTO, or moving the boundary to the wire format. See <a href="blog/06-the-gate-says-no.html">post 06</a> and <a href="blog/metrics/phase-3-verdict.txt">the verdict</a>.</p>
+  </div>
+
   <p>Seven classes in <code>src/LinuxTracing</code> do no I/O, open no file descriptors, and touch no kernel interface. They are algorithms with unusually good test coverage — <strong>1,355 lines of implementation against 3,053 lines of test</strong>, a ratio of better than two to one.</p>
 
   <div class="table-wrap wide">
