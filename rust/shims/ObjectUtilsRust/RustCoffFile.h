@@ -9,25 +9,21 @@
 
 #include <filesystem>
 #include <memory>
-#include <string>
 
 #include "ObjectUtils/CoffFile.h"
 #include "OrbitBase/Result.h"
 
 namespace orbit_object_utils_rust {
 
-// Builds a CoffFile whose metadata comes from //rust:orbit_object and whose
-// symbol loaders delegate to `cpp_delegate`. Same strangler shape as
-// CreateRustElfFile; see RustElfFile.h.
+// A CoffFile over //rust:orbit_object.
+//
+// `cpp_delegate` and `compare` are vestiges of the three-backend switch and
+// are ignored; they remain only so the factory signatures did not have to
+// change in the same commit that deleted LLVM. See ObjectFileBackend.cpp.
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<orbit_object_utils::CoffFile>> CreateRustCoffFile(
     const std::filesystem::path& file_path,
     std::unique_ptr<orbit_object_utils::CoffFile> cpp_delegate, const void* data, size_t len,
     bool compare);
-
-// Whether the Rust parser accepts this buffer as a PE image, and its message
-// if not. Used by ORBIT_OBJECT_BACKEND=both.
-[[nodiscard]] bool RustCoffParses(const std::filesystem::path& file_path, const void* data,
-                                  size_t len, std::string* error_out);
 
 }  // namespace orbit_object_utils_rust
 

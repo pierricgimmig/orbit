@@ -1,6 +1,6 @@
 {
-  "generated_utc": "2026-08-31T04:37:53Z",
-  "commit": "767cd7ffc",
+  "generated_utc": "2026-08-31T04:47:14Z",
+  "commit": "819f3e917",
   "branch": "rust-port-object-utils",
   "bazel_queried": true,
 
@@ -22,9 +22,9 @@
 
   "reimplemented_std": {
     "comment": "C++ constructs Rust's std or a mainstream crate provides directly",
-    "error_message_or_uses": 1341,
-    "orbit_check_uses": 1224,
-    "std_optional_uses": 753,
+    "error_message_or_uses": 1326,
+    "orbit_check_uses": 1223,
+    "std_optional_uses": 752,
     "absl_mutex_uses": 357,
     "guarded_by_annotations": 74,
     "orbit_base_std_equivalent_headers_loc": 2963
@@ -49,9 +49,9 @@
     "llvm_dependents": 0,
     "llvm_include_sites": 0,
     "bazel_patches": 1,
-    "deps_object_utils": 7174,
-    "deps_module_utils": 7193,
-    "deps_orbit_service": 21238,
+    "deps_object_utils": 7173,
+    "deps_module_utils": 7192,
+    "deps_orbit_service": 21237,
     "ext_repos_object_utils": 99,
     "ext_repos_orbit_service": 353
   }

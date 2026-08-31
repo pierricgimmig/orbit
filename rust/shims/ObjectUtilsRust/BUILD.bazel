@@ -22,7 +22,6 @@ cc_library(
         "RustElfFile.cpp",
     ],
     hdrs = [
-        "Compare.h",
         "RustCoffFile.h",
         "RustPdbFile.h",
         "RustElfFile.h",

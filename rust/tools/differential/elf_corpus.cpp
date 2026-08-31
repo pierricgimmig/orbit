@@ -2,19 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Gate 2 of docs/rust-port-plan.html: run both ElfFile backends over every ELF
-// file it can find and compare them.
+// Reads every ELF, PE and PDB file it can find, through every ObjectUtils
+// method, and reports what it managed to read.
 //
-// No diffing script is needed, because ORBIT_OBJECT_BACKEND=both does the
-// comparison in-process and aborts on the first disagreement, naming the
-// method and the symbol. This tool only supplies the corpus.
+// This was gate 2 of docs/rust-port-plan.html: with ORBIT_OBJECT_BACKEND=both
+// it ran the C++ and Rust implementations side by side and aborted on the
+// first disagreement, naming the method and the symbol. That is how nearly
+// every bug in the port was found -- ten of them, none reachable from the
+// curated testdata.
 //
-//   ORBIT_OBJECT_BACKEND=both bazel-bin/rust/tools/differential/elf_corpus
+// The C++ implementation is gone, so there is nothing left to compare against
+// and what remains is a corpus smoke test: nothing may crash, and the counts
+// should not move without explanation. To compare against LLVM again, check
+// out c7c4e6566, where the three-backend switch still exists.
+//
+//   bazel-bin/rust/tools/differential/elf_corpus
 //       src/ObjectUtils/testdata bazel-bin /usr/lib/x86_64-linux-gnu
-//
-// The curated testdata is a dozen small binaries chosen to exercise specific
-// code paths. A real libQt5Core.so exercises combinations nobody wrote a test
-// for, which is the point.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -29,8 +32,6 @@
 #include "ObjectUtils/CoffFile.h"
 #include "ObjectUtils/PdbFile.h"
 #include "ObjectUtils/ElfFile.h"
-#include "RustElfFile.h"
-#include "RustPdbFile.h"
 #include "OrbitBase/Result.h"
 
 namespace {
@@ -117,8 +118,7 @@ void VisitPe(const std::filesystem::path& path, Totals* totals) {
 void Visit(const std::filesystem::path& path, Totals* totals) {
   const Kind kind = ClassifyByMagic(path);
   if (kind == Kind::kNeither) return;
-  // ORBIT_OBJECT_BACKEND=both aborts on a disagreement, so the last path
-  // printed here is the file that caused it.
+  // The last path printed is the file being read when anything goes wrong.
   if (getenv("ORBIT_CORPUS_VERBOSE") != nullptr) {
     fprintf(stderr, "visiting %s\n", path.c_str());
     fflush(stderr);
@@ -176,9 +176,6 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  const char* backend = getenv("ORBIT_OBJECT_BACKEND");
-  printf("backend: %s\n", backend == nullptr ? "cpp (default)" : backend);
-
   Totals totals;
   for (int i = 1; i < argc; ++i) {
     const std::filesystem::path root{argv[i]};
@@ -202,40 +199,8 @@ int main(int argc, char** argv) {
   printf("pdb loaded       %d\n", totals.pdb_loaded);
   printf("loaded           %d\n", totals.loaded);
   printf("rejected         %d\n", totals.rejected);
-  printf("symbols compared %lld\n", totals.symbols);
-  printf("line lookups compared %lld\n", totals.line_lookups);
+  printf("symbols read     %lld\n", totals.symbols);
+  printf("line lookups     %lld\n", totals.line_lookups);
 
-  uint64_t differing = 0;
-  uint64_t compared = 0;
-  orbit_object_utils_rust::GetDemanglingDivergence(&differing, &compared);
-  if (compared > 0) {
-    printf("demangling compared %llu\n", static_cast<unsigned long long>(compared));
-    printf("demangling differing %llu (%.4f%%)\n", static_cast<unsigned long long>(differing),
-           100.0 * static_cast<double>(differing) / static_cast<double>(compared));
-  }
-  const uint64_t no_line = orbit_object_utils_rust::GetLineInfoWithoutLineNumberCount();
-  if (totals.line_lookups > 0) {
-    printf("line results with no line number %llu\n",
-           static_cast<unsigned long long>(no_line));
-  }
-  uint64_t path_differing = 0;
-  uint64_t path_compared = 0;
-  orbit_object_utils_rust::GetLineInfoPathDivergence(&path_differing, &path_compared);
-  if (path_compared > 0) {
-    printf("line paths compared %llu\n", static_cast<unsigned long long>(path_compared));
-    printf("line paths differing %llu (%.4f%%)\n",
-           static_cast<unsigned long long>(path_differing),
-           100.0 * static_cast<double>(path_differing) / static_cast<double>(path_compared));
-  }
-
-  uint64_t pdb_gave_up = 0;
-  uint64_t pdb_compared = 0;
-  orbit_object_utils_rust::GetPdbDemanglingDivergence(&pdb_gave_up, &pdb_compared);
-  if (pdb_compared > 0) {
-    printf("pdb symbols compared %llu\n", static_cast<unsigned long long>(pdb_compared));
-    printf("pdb names msvc-demangler rejected %llu (%.4f%%)\n",
-           static_cast<unsigned long long>(pdb_gave_up),
-           100.0 * static_cast<double>(pdb_gave_up) / static_cast<double>(pdb_compared));
-  }
   return 0;
 }
