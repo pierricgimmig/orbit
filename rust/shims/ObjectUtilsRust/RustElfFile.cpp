@@ -219,12 +219,40 @@ class RustElfFile : public ElfFile {
   }
 
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetDeclarationLocationOfFunction(
-      uint64_t address) override {  // ORBIT_PORT_DELEGATED
-    return cpp_->GetDeclarationLocationOfFunction(address);
+      uint64_t address) override {
+    uint32_t line = 0;
+    char* error = nullptr;
+    const std::unique_ptr<char, FreeCharDeleter> file{orbit_elf_declaration_location(
+        bytes_.data(), bytes_.size(), address, &line, &error)};
+
+    ErrorMessageOr<orbit_grpc_protos::LineInfo> rust_result = ErrorMessage{""};
+    if (file == nullptr) {
+      rust_result =
+          ErrorMessage{error != nullptr ? error : "Unknown error reading declaration location"};
+      orbit_elf_free_error(error);
+    } else {
+      orbit_grpc_protos::LineInfo info;
+      info.set_source_file(file.get());
+      info.set_source_line(line);
+      rust_result = std::move(info);
+    }
+
+    if (compare_) {
+      CheckLineInfoAgrees("GetDeclarationLocationOfFunction", rust_result,
+                          cpp_->GetDeclarationLocationOfFunction(address));
+    }
+    return rust_result;
   }
+
+  // ElfFileImpl: the declaration location when there is one, otherwise the
+  // location of the first instruction. Not ideal -- it points into the body
+  // rather than at the header -- but better than showing nothing.
   [[nodiscard]] ErrorMessageOr<orbit_grpc_protos::LineInfo> GetLocationOfFunction(
-      uint64_t address) override {  // ORBIT_PORT_DELEGATED
-    return cpp_->GetLocationOfFunction(address);
+      uint64_t address) override {
+    ErrorMessageOr<orbit_grpc_protos::LineInfo> declaration =
+        GetDeclarationLocationOfFunction(address);
+    if (declaration.has_value()) return declaration;
+    return GetLineInfo(address);
   }
 
  private:

@@ -161,6 +161,8 @@ void Visit(const std::filesystem::path& path, Totals* totals) {
     for (const auto& symbol : debug_symbols.value().symbol_infos()) {
       if (sampled++ >= kLineInfoSamplesPerFile) break;
       (void)elf_file.value()->GetLineInfo(symbol.address());
+      (void)elf_file.value()->GetDeclarationLocationOfFunction(symbol.address());
+      (void)elf_file.value()->GetLocationOfFunction(symbol.address());
       ++totals->line_lookups;
     }
   }

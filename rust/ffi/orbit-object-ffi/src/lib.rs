@@ -13,7 +13,8 @@
 use std::ffi::{c_char, CStr, CString};
 
 use orbit_object::{
-    coff_has_debug_symbols, coff_symbol_table_symbols, crc32_continue, exception_table_symbols,
+    coff_has_debug_symbols, coff_symbol_table_symbols, crc32_continue, declaration_location,
+    exception_table_symbols,
     export_table_symbols, has_export_table, line_info, load_symbols, load_unwind_ranges,
     demangle_msvc, has_dbi_stream, load_pdb_symbols, no_ranges_error, parse_coff_metadata, parse_elf_metadata,
     pdb_info, subprograms, CoffMetadata, ElfMetadata, Symbol, SymbolTable,
@@ -839,6 +840,50 @@ pub unsafe extern "C" fn orbit_elf_line_info(
     // SAFETY: the caller promises len readable bytes at data.
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     match line_info(bytes, address) {
+        Ok(info) => {
+            if !line_out.is_null() {
+                // SAFETY: the caller promises line_out is writable.
+                unsafe { *line_out = info.source_line };
+            }
+            to_cstring(&info.source_file).into_raw()
+        }
+        Err(message) => {
+            set_error(&message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// `ElfFileImpl::GetDeclarationLocationOfFunction`, with the same result shape
+/// as [`orbit_elf_line_info`].
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `line_out` and `error_out` must
+/// be null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_elf_declaration_location(
+    data: *const u8,
+    len: usize,
+    address: u64,
+    line_out: *mut u32,
+    error_out: *mut *mut c_char,
+) -> *mut c_char {
+    let set_error = |message: &str| {
+        if !error_out.is_null() {
+            let owned = to_cstring(message).into_raw();
+            // SAFETY: the caller promises error_out is writable.
+            unsafe { *error_out = owned };
+        }
+    };
+
+    if data.is_null() {
+        set_error("orbit_elf_declaration_location called with a null pointer");
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: the caller promises len readable bytes at data.
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    match declaration_location(bytes, address) {
         Ok(info) => {
             if !line_out.is_null() {
                 // SAFETY: the caller promises line_out is writable.

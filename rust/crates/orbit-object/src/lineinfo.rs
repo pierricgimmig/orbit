@@ -291,6 +291,180 @@ fn file_name_by_index(
     Some(path)
 }
 
+/// The errors `ElfFileImpl::GetDeclarationLocationOfFunction` returns, matched
+/// by `ElfFileTest` on their exact text.
+pub mod declaration_errors {
+    pub const INVALID_ADDRESS: &str = "Invalid address";
+    pub const NO_SUBROUTINE: &str = "Address not associated with any subroutine";
+    pub const NO_SOURCE_FILE: &str = "Could not find source file location";
+    pub const NO_LINE_TABLE: &str = "Line Table was missing in debug information";
+    pub const NO_PATH: &str = "Source declaration file path not found in debug information.";
+}
+
+/// `ElfFileImpl::GetDeclarationLocationOfFunction`: where a function is
+/// *declared*, from `DW_AT_decl_file` and `DW_AT_decl_line` on its subprogram
+/// DIE, rather than where its first instruction is.
+pub fn declaration_location(data: &[u8], address: u64) -> Result<LineInfo, String> {
+    match object::FileKind::parse(data) {
+        Ok(object::FileKind::Elf32) => {
+            declaration_location_typed::<elf::FileHeader32<Endianness>>(data, address)
+        }
+        Ok(object::FileKind::Elf64) => {
+            declaration_location_typed::<elf::FileHeader64<Endianness>>(data, address)
+        }
+        _ => Err(declaration_errors::INVALID_ADDRESS.to_owned()),
+    }
+}
+
+fn declaration_location_typed<Elf>(data: &[u8], address: u64) -> Result<LineInfo, String>
+where
+    Elf: FileHeader<Endian = Endianness>,
+{
+    let header = Elf::parse(data).map_err(|_| declaration_errors::INVALID_ADDRESS.to_owned())?;
+    let endian = header
+        .endian()
+        .map_err(|_| declaration_errors::INVALID_ADDRESS.to_owned())?;
+    let loaded = crate::sections::DwarfSections::load(header, endian, data);
+    let dwarf = gimli::Dwarf::load(
+        |id| -> Result<gimli::EndianSlice<gimli::RunTimeEndian>, ()> {
+            Ok(gimli::EndianSlice::new(
+                loaded.get(id),
+                gimli::RunTimeEndian::Little,
+            ))
+        },
+    )
+    .map_err(|_: ()| declaration_errors::INVALID_ADDRESS.to_owned())?;
+
+    let mut units = dwarf.units();
+    let mut found_unit = false;
+    while let Ok(Some(unit_header)) = units.next() {
+        let Ok(unit) = dwarf.unit(unit_header) else {
+            continue;
+        };
+        if !unit_covers(&dwarf, &unit, address) {
+            continue;
+        }
+        found_unit = true;
+
+        let Some((decl_file, decl_line)) = subprogram_declaration(&dwarf, &unit, address) else {
+            continue;
+        };
+        let Some(decl_file) = decl_file else {
+            return Err(declaration_errors::NO_SOURCE_FILE.to_owned());
+        };
+
+        let Some(program) = unit.line_program.clone() else {
+            return Err(declaration_errors::NO_LINE_TABLE.to_owned());
+        };
+        let comp_dir = unit
+            .comp_dir
+            .as_ref()
+            .map(|dir| dir.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let Some(source_file) =
+            file_name_by_index(&dwarf, &unit, program.header(), decl_file, &comp_dir)
+        else {
+            return Err(declaration_errors::NO_PATH.to_owned());
+        };
+
+        return Ok(LineInfo {
+            source_file,
+            source_line: decl_line.unwrap_or(0) as u32,
+        });
+    }
+
+    if found_unit {
+        Err(declaration_errors::NO_SUBROUTINE.to_owned())
+    } else {
+        Err(declaration_errors::INVALID_ADDRESS.to_owned())
+    }
+}
+
+/// `DW_AT_decl_file` and `DW_AT_decl_line` of the subprogram covering
+/// `address`, following `DW_AT_specification` and `DW_AT_abstract_origin` as
+/// `DWARFDie::findRecursively` does.
+fn subprogram_declaration(
+    dwarf: &gimli::Dwarf<gimli::EndianSlice<'_, gimli::RunTimeEndian>>,
+    unit: &gimli::Unit<gimli::EndianSlice<'_, gimli::RunTimeEndian>>,
+    address: u64,
+) -> Option<(Option<u64>, Option<u64>)> {
+    // DWARFUnit::getSubroutineForAddress resolves to the *innermost* DIE
+    // covering the address, and its map is built from inlined subroutines as
+    // well as subprograms. So for an address inside an inlined call the answer
+    // is where the inlined *callee* is declared, not the caller -- which is
+    // the opposite of what GetLineInfo wants, and the corpus caught the
+    // difference as a declaration line of 67 where LLVM said 410.
+    let mut entries = unit.entries();
+    let mut depth: isize = 0;
+    let mut best: Option<(isize, gimli::UnitOffset)> = None;
+
+    while let Ok(Some((delta, entry))) = entries.next_dfs() {
+        depth += delta;
+        if !matches!(
+            entry.tag(),
+            gimli::DW_TAG_subprogram | gimli::DW_TAG_inlined_subroutine
+        ) {
+            continue;
+        }
+        let Ok(mut ranges) = dwarf.die_ranges(unit, entry) else {
+            continue;
+        };
+        let mut covers = false;
+        while let Ok(Some(range)) = ranges.next() {
+            if address >= range.begin && address < range.end {
+                covers = true;
+                break;
+            }
+        }
+        if !covers {
+            continue;
+        }
+        if best.is_none_or(|(best_depth, _)| depth > best_depth) {
+            best = Some((depth, entry.offset()));
+        }
+    }
+
+    let (_, offset) = best?;
+    Some((
+        find_recursively(unit, offset, gimli::DW_AT_decl_file),
+        find_recursively(unit, offset, gimli::DW_AT_decl_line),
+    ))
+}
+
+/// `DWARFDie::findRecursively`: the attribute on this DIE, else on the DIE its
+/// `DW_AT_specification` or `DW_AT_abstract_origin` points at.
+fn find_recursively(
+    unit: &gimli::Unit<gimli::EndianSlice<'_, gimli::RunTimeEndian>>,
+    start: gimli::UnitOffset,
+    attribute: gimli::DwAt,
+) -> Option<u64> {
+    const MAX_HOPS: usize = 8;
+    let mut offset = start;
+    for _ in 0..MAX_HOPS {
+        let Ok(entry) = unit.entry(offset) else {
+            return None;
+        };
+        if let Ok(Some(value)) = entry.attr_value(attribute) {
+            let resolved = match value {
+                gimli::AttributeValue::FileIndex(index) => Some(index),
+                other => other.udata_value(),
+            };
+            if resolved.is_some() {
+                return resolved;
+            }
+        }
+        let mut next = None;
+        for reference in [gimli::DW_AT_specification, gimli::DW_AT_abstract_origin] {
+            if let Ok(Some(gimli::AttributeValue::UnitRef(target))) = entry.attr_value(reference) {
+                next = Some(target);
+                break;
+            }
+        }
+        offset = next?;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +522,37 @@ mod tests {
             info.source_file.ends_with("LineInfoTestBinary.cpp"),
             "{}",
             info.source_file
+        );
+    }
+
+    /// TEST(ElfFile, GetDeclarationLocationOfFunction)
+    #[test]
+    fn declaration_location_matches_the_cpp_test() {
+        let data = testdata("line_info_test_binary");
+        let info = declaration_location(&data, 0x401140).expect("main should have a declaration");
+        assert_eq!(info.source_line, 12);
+        assert!(
+            info.source_file.ends_with("LineInfoTestBinary.cpp"),
+            "{}",
+            info.source_file
+        );
+    }
+
+    /// TEST(ElfFile, GetLocationOfFunctionNoSubroutine): the address is not in
+    /// any subprogram, so the declaration lookup fails with that exact message
+    /// and the caller falls back to the line table.
+    #[test]
+    fn an_address_in_no_subroutine_reports_so() {
+        let data = testdata("libc.debug");
+        let error = declaration_location(&data, 0x10a0e0).unwrap_err();
+        assert_eq!(error, declaration_errors::NO_SUBROUTINE, "{error}");
+
+        let fallback = line_info(&data, 0x10a0e0).expect("the line table should still place it");
+        assert_eq!(fallback.source_line, 90);
+        assert!(
+            fallback.source_file.ends_with("auth_none.c"),
+            "{}",
+            fallback.source_file
         );
     }
 
