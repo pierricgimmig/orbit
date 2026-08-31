@@ -703,7 +703,7 @@
     <dt>Record</dt>
     <dd>Every phase is written up in <a href="blog/index.html"><code>docs/blog/</code></a> as it happens, with every number traceable to a committed snapshot. Numbers that get worse are reported too.</dd>
     <dt>Prize</dt>
-    <dd><code>//bazel/deps:llvm</code> has exactly <strong>one</strong> dependent in the whole tree, so finishing Phase 2 would delete LLVM, its two build patches, and its version pin. <strong>As of stage 2f that is blocked</strong>, and the reason is measured rather than guessed: see 2d and 2g below. ELF and PE/COFF are done; PDB is not, and PDB is reachable on Linux.</dd>
+    <dd><strong>Taken.</strong> <code>//bazel/deps:llvm</code> is gone &mdash; zero dependents, both patches deleted, the version pin that existed only because the registry had nothing newer removed. Phase 2 is complete: ELF, PE/COFF and PDB all read by Rust, verified against 16.3 million symbols with zero structural disagreements. What it cost is three rendering differences totalling well under a percent, and the loss of the comparison mode itself. See <a href="blog/05-llvm-is-gone.html">post 05</a>.</dd>
   </div>
 
   <!-- ==================================================== mechanism -->
@@ -1015,10 +1015,10 @@
           <td>LoadEhOrDebugFrameEntriesAsSymbolsFrom{EhFrame,DebugFrame}, LoadDynamicLinkingSymbolsAndUnwindRanges… (both), LoadPatchableFunctionEntry… (both)</td>
         </tr>
         <tr>
-          <td class="v hold-t">2d</td>
-          <td>DWARF line tables and declaration locations &mdash; <strong>attempted, held back</strong></td>
+          <td class="v bump">2d</td>
+          <td>DWARF line tables and declaration locations &mdash; <strong>done</strong></td>
           <td class="v">gimli · addr2line</td>
-          <td>Passes every one of these, and still delegates: the differential corpus found that <code>llvm::symbolize</code> and <code>addr2line</code> spell source paths differently (<code>sigaction.c</code> versus <code>../sysdeps/unix/sysv/linux/x86_64/sigaction.c</code>). A path is consumed by machinery, not read by a person, so "close enough" is not the porter's call. See <a href="blog/03-the-stage-that-didnt-ship.html">post 03</a>.</td>
+          <td>Reworked onto <code>gimli</code> directly, dropping <code>addr2line</code>, which let LLVM's own rules be applied: <code>getFileNameByIndex</code> for paths, and the inlining rule where <code>GetLineInfo</code> reports the outermost frame's call site while <code>GetDeclarationLocationOfFunction</code> reports the innermost DIE. All 1,235 line numbers match; 2 source paths render differently. See <a href="blog/05-llvm-is-gone.html">post 05</a>.</td>
         </tr>
         <tr>
           <td class="v">2e</td>
@@ -1033,14 +1033,14 @@
           <td>all 17 <code>CoffFile</code> cases</td>
         </tr>
         <tr>
-          <td class="v hold-t">2g</td>
-          <td>PDB reading &mdash; <strong>measured, not attempted</strong></td>
-          <td class="v hold-t">pdb</td>
-          <td>The <code>pdb</code> crate reads <code>dllmain.pdb</code> exactly &mdash; GUID, age, 5,459 procedures, and <code>PrintHelloWorldInternal</code> at the address and size <code>PdbFileTest</code> asserts. What it cannot produce is the name: <code>PdbFileLlvm</code> appends LLVM's CodeView type-name rendering of the argument list, so the expected string is <code>PrintHelloWorldInternal()</code>. Parity means reimplementing that renderer. <a href="blog/metrics/phase-2g-pdb-feasibility.txt">Measurement</a>.</td>
+          <td class="v bump">2g</td>
+          <td>PDB reading &mdash; <strong>done</strong></td>
+          <td class="v">pdb · msvc-demangler</td>
+          <td>The CodeView type-name renderer was reimplemented after all &mdash; <code>TypeNameComputer</code> plus <code>TypeIndex::simpleTypeName</code>, about two hundred lines. <code>PdbFileTest</code> turns out to specify it, one construct per symbol, and all of them pass. 12,420 PDB symbols compared; one <code>vtordisp</code> thunk name differs.</td>
         </tr>
         <tr>
           <td class="v bump">2h</td>
-          <td>Flip the default to <code>rust</code>; fix <code>CaptureEventProcessor</code>'s demangle include; drop <code>//bazel/deps:llvm</code> and both patches. <strong>Blocked by 2g</strong>: <code>PdbFileLlvm</code> is reachable on Linux, so <code>DebugInfoPDB</code> and <code>DebugInfoCodeView</code> stay until the CodeView type-name renderer exists.</td>
+          <td><strong>Done.</strong> <code>//bazel/deps:llvm</code> has zero dependents, both LLVM patches are deleted, and the cold build of <code>ObjectUtils</code> fell 34% (158.7s to 104.6s, critical path 68.3s to 48.3s). <code>ObjectUtils</code> lost 2,191 implementation lines. <a href="blog/metrics/phase-2h-cold-build.txt">Timing</a>.</td>
           <td class="v">—</td>
           <td>full <code>bazel test //...</code>, plus a cold-build timing before and after</td>
         </tr>
