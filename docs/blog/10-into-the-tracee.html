@@ -624,9 +624,9 @@
     <p class="byline">Phase 6, milestones a&ndash;d &middot; <a href="metrics/phase-6d-relocate-instruction.txt">the relocation corpus</a></p>
 
     <div class="stats">
-      <div class="stat"><b>888,154</b><span>Instructions, byte-identical</span></div>
-      <div class="stat"><b>0</b><span>Relocation mismatches</span></div>
-      <div class="stat"><b>4</b><span>Milestones (a&ndash;d)</span></div>
+      <div class="stat"><b>888k</b><span>Instructions, byte-identical</span></div>
+      <div class="stat"><b>93,696</b><span>Trampolines, byte-identical</span></div>
+      <div class="stat"><b>6</b><span>Milestones (a&ndash;f)</span></div>
       <div class="stat"><b>2</b><span>Crates (ptrace, trampoline)</span></div>
       <div class="stat"><b>0f 05</b><span>The two bytes we inject</span></div>
       <div class="stat"><b>1</b><span>New dep (iced-x86)</span></div>
@@ -675,9 +675,15 @@
 
   <p>Nearly a million real instructions, zero divergences. Inverting the conditional-jump condition with the wrong bit diverged 44,026 of them — the harness bites. This is the largest corpus in the port after the ELF symbol differential, and unlike synthetic tests it is whatever the compiler actually emitted.</p>
 
+  <h2 id="builder">6e &amp; 6f — assembling the trampoline</h2>
+
+  <p>The last two milestones compose the pieces into the buffer that actually gets written into the target. <strong>6e</strong> ports the fixed code sequences — the register backup (nine general-purpose registers, then all sixteen vector registers, the width chosen by AVX support, over a 32-byte-aligned stack), the payload call, the restore, and the whole return trampoline around the exit payload. These are constant byte streams, locked two ways: golden-byte unit tests transcribed from the C++ source, and a live differential comparing every stage against the C++ emitters — byte-identical.</p>
+
+  <p><strong>6f</strong> assembles them. <code>build_trampoline</code> lays down the backup/call/restore blocks, relocates the function's prologue instruction by instruction (6d) until five bytes have moved — keeping a map so a forward jump into a later prologue instruction is repointed at its moved copy — and writes the jump back. Its differential disassembles the binary's own <code>.text</code> and builds a whole trampoline both ways at every real function start: <strong>93,696 whole trampolines byte-for-byte identical</strong>, 11,025 correctly rejected (harmful jumps, undisassemblable prologues), zero mismatches. The mechanism is done and verified against real code end to end of the byte production.</p>
+
   <h2 id="left">What Phase 6 has left</h2>
 
-  <p>The substrate is ported and the hardest file is closed. What remains is the trampoline <em>builder</em> — <code>CreateTrampoline</code>'s backup/payload-call/restore code emission, the prologue-moving loop, and the jumps that wire it together — and <code>InstrumentProcess</code> above it. That code is mostly fixed byte emission standing on the live plumbing already ported in 6a and 6b, and it wants end-to-end verification against a real payload library (the <code>InstrumentProcessTest</code> level) rather than a unit differential. That is the seam where Phase 6 finishes and the assembled instrumentation runs on its own.</p>
+  <p>Every algorithmic and code-generation part of instrumentation is now ported and byte-verified: the ptrace substrate, syscall injection, placement, the 888k-instruction relocator, the code sequences, and the whole-trampoline builder. What remains is <code>InstrumentProcess</code> — the live installation that allocates the trampolines in the tracee, writes them, overwrites the function prologues with jumps, and keeps the instrumented-function registry. That glue is driven by the service's instrumentation request, so it belongs with the service port, and its verification is end-to-end — instrument a real function and watch the payload run. That is the seam where Phase 6 hands off to Phase 7.</p>
 
 </article>
 
