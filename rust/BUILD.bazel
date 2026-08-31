@@ -65,7 +65,6 @@ rust_static_library(
     srcs = glob(["ffi/orbit-maps-ffi/src/**/*.rs"]),
     crate_root = "ffi/orbit-maps-ffi/src/lib.rs",
     edition = ORBIT_RUST_EDITION,
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [":orbit_maps"],
 )
 
@@ -77,7 +76,6 @@ rust_library(
     crate_name = "orbit_maps_ffi",
     crate_root = "ffi/orbit-maps-ffi/src/lib.rs",
     edition = ORBIT_RUST_EDITION,
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [":orbit_maps"],
 )
 
@@ -95,7 +93,6 @@ rust_static_library(
     srcs = glob(["ffi/orbit-object-ffi/src/**/*.rs"]),
     crate_root = "ffi/orbit-object-ffi/src/lib.rs",
     edition = ORBIT_RUST_EDITION,
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [":orbit_object"],
 )
 
@@ -105,7 +102,6 @@ rust_library(
     crate_name = "orbit_object_ffi",
     crate_root = "ffi/orbit-object-ffi/src/lib.rs",
     edition = ORBIT_RUST_EDITION,
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [":orbit_object"],
 )
 
@@ -122,7 +118,6 @@ cc_library(
     name = "orbit_object_ffi",
     hdrs = ["ffi/orbit-object-ffi/include/orbit_object_ffi.h"],
     includes = ["ffi/orbit-object-ffi/include"],
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [":orbit_object_ffi_rust"],
 )
 
@@ -130,6 +125,5 @@ cc_library(
     name = "orbit_maps_ffi",
     hdrs = ["ffi/orbit-maps-ffi/include/orbit_maps_ffi.h"],
     includes = ["ffi/orbit-maps-ffi/include"],
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [":orbit_maps_ffi_rust"],
 )

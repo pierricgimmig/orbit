@@ -12,7 +12,6 @@ cc_binary(
     srcs = ["elf_metadata_bench.cpp"],
     copts = ORBIT_COPTS,
     data = ["//src/ObjectUtils:testdata"],
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//rust:orbit_object_ffi",
         "//src/ObjectUtils",
@@ -24,7 +23,6 @@ cc_binary(
     name = "parse_maps_bench",
     srcs = ["parse_maps_bench.cpp"],
     copts = ORBIT_COPTS,
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//src/ModuleUtils",
         "//src/OrbitBase",

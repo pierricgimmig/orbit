@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 load("//bazel:copts.bzl", "ORBIT_COPTS")
-load("//bazel:dual_backend.bzl", "orbit_dual_backend_test")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -28,7 +27,10 @@ cc_library(
         "include/ObjectUtils/SymbolsFile.h",
         "include/ObjectUtils/WindowsBuildIdUtils.h",
     ],
-    srcs = ["WindowsBuildIdUtils.cpp"],
+    srcs = [
+        "SymbolsFileHelpers.cpp",
+        "WindowsBuildIdUtils.cpp",
+    ],
     copts = ORBIT_COPTS,
     includes = ["include"],
     deps = [
@@ -42,12 +44,9 @@ cc_library(
 cc_library(
     name = "ObjectUtils",
     srcs = [
-        "CoffFile.cpp",
-        "ElfFile.cpp",
-        "ElfFileBackend.cpp",
         "ObjectFile.cpp",
+        "ObjectFileBackend.cpp",
         "PdbFile.cpp",
-        "PdbFileLlvm.cpp",
         "SymbolsFile.cpp",
     ] + select({
         "@platforms//os:windows": [
@@ -57,9 +56,7 @@ cc_library(
         "//conditions:default": [],
     }),
     hdrs = [
-        "ElfFileBackend.h",
-        "ObjectFileLlvm.h",
-        "PdbFileLlvm.h",
+        "ObjectFileBackend.h",
         "include/ObjectUtils/CoffFile.h",
         "include/ObjectUtils/ElfFile.h",
         "include/ObjectUtils/ObjectFile.h",
@@ -77,7 +74,10 @@ cc_library(
     includes = ["include"],
     deps = [
         ":ObjectUtilsHeaders",
-        "//bazel/deps:llvm",
+        # The shims are cross-platform now, so this is not in the select below:
+        # Windows reads ELF too, for profiling Linux targets from a Windows UI.
+        "//rust/shims/Demangle",
+        "//rust/shims/ObjectUtilsRust",
         "//src/GrpcProtos",
         "//src/Introspection",
         "//src/OrbitBase",
@@ -94,20 +94,16 @@ cc_library(
         "@platforms//os:windows": [
             "@dia_sdk//:dia_sdk",
         ],
-        "//conditions:default": ["//rust/shims/ObjectUtilsRust"],
+        "//conditions:default": [],
     }),
 )
 
-# The whole suite runs against both backends. ElfFileTest is the bulk of it,
-# but ObjectFileTest and SymbolsFileTest construct ELF files too.
-orbit_dual_backend_test(
+cc_test(
     name = "ObjectUtilsTests",
-    backend_env_var = "ORBIT_OBJECT_BACKEND",
     srcs = [
         "CoffFileTest.cpp",
         "ElfFileTest.cpp",
         "ObjectFileTest.cpp",
-        "PdbFileLlvmTest.cpp",
         "PdbFileTest.h",
         "SymbolsFileTest.cpp",
         "WindowsBuildIdUtilsTest.cpp",

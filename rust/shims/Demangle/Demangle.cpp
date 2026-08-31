@@ -4,7 +4,9 @@
 
 #include "Demangle.h"
 
+#ifndef _WIN32
 #include <cxxabi.h>
+#endif
 
 #include "orbit_object_ffi.h"
 #include <stdlib.h>
@@ -17,9 +19,11 @@ namespace orbit_demangle {
 
 namespace {
 
+#ifndef _WIN32
 struct FreeDeleter {
   void operator()(char* p) const { free(p); }  // NOLINT: __cxa_demangle uses malloc.
 };
+#endif
 
 // The Rust demangler allocates on its own heap, so it frees on its own too.
 struct OrbitFreeDeleter {
@@ -63,6 +67,11 @@ std::string Demangle(std::string_view mangled_name) {
     return name;
   }
 
+#ifdef _WIN32
+  // MSVC has no __cxa_demangle. Itanium names do not occur in PE images or
+  // PDBs, so the MSVC arm above is the whole of what Windows needs.
+  return std::string{mangled_name};
+#else
   // Itanium next, and the input unchanged when nothing applies. LLVM accepts
   // up to four leading underscores before _Z.
   const size_t underscore_z = mangled_name.find("_Z");
@@ -80,6 +89,7 @@ std::string Demangle(std::string_view mangled_name) {
     return std::string{mangled_name};
   }
   return NormalizeAngleBrackets(std::string{demangled.get()});
+#endif
 }
 
 }  // namespace orbit_demangle

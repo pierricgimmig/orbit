@@ -54,27 +54,6 @@ single_version_override(
     version = "1.83.0",
 )
 
-# LLVMObject/LLVMSymbolize/LLVMDebugInfo*, used to read ELF, PE/COFF and PDB
-# symbols. Only the handful of libraries Orbit names actually get compiled.
-bazel_dep(name = "llvm-project", version = "17.0.4.bcr.1")
-
-# Two changes are needed, and one of them is to llvm-project's own
-# MODULE.bazel, so this has to be archive_override rather than
-# single_version_override: the registry's MODULE.bazel is what resolution sees,
-# and only an archive override reads it from the (patched) archive. The archive
-# is the one the registry points at, byte for byte.
-archive_override(
-    module_name = "llvm-project",
-    integrity = "sha256-gtqfNq+WA7BvU75HjcNGGblXf9knddbynazNP9DMLMw=",
-    patch_strip = 1,
-    patches = [
-        "//bazel/patches:llvm_smallvector_cstdint.patch",
-        "//bazel/patches:llvm_enable_zlib.patch",
-    ],
-    strip_prefix = "llvm-project-17.0.4.bcr.1.bzl",
-    urls = ["https://github.com/bazel-contrib/llvm-project-redist/releases/download/llvmorg-17.0.4.bcr.1/llvm-project-17.0.4.bcr.1.bzl.tar.zst"],
-)
-
 # --- Dependencies without a Bazel module ---------------------------------
 
 # Qt 5, unpacked from pinned Ubuntu packages. Prebuilt so that a first build

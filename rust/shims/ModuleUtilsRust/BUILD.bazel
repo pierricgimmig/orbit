@@ -18,7 +18,6 @@ cc_library(
     hdrs = ["ParseMapsRust.h"],
     copts = ORBIT_COPTS,
     includes = ["."],
-    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//rust:orbit_maps_ffi",
         "//src/ModuleUtils:ModuleUtilsHeaders",

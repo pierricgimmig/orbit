@@ -64,8 +64,6 @@ class ElfFile : public ObjectFile {
 
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFile(
     const std::filesystem::path& file_path);
-// The overload taking an llvm::object::OwningBinary lives in the internal
-// header ObjectFileLlvm.h, so that this one does not name an LLVM type.
 [[nodiscard]] ErrorMessageOr<std::unique_ptr<ElfFile>> CreateElfFileFromBuffer(
     const std::filesystem::path& file_path, const void* buf, size_t len);
 

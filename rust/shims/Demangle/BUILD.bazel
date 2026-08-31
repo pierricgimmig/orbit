@@ -20,6 +20,5 @@ cc_library(
     hdrs = ["Demangle.h"],
     copts = ORBIT_COPTS,
     includes = ["."],
-    target_compatible_with = ["@platforms//os:linux"],
     deps = ["//rust:orbit_object_ffi"],
 )
