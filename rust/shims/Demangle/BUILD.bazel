@@ -1,0 +1,25 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Orbit's replacement for llvm::demangle: libstdc++'s abi::__cxa_demangle for
+# Itanium names, //rust:orbit_object's msvc-demangler for MSVC ones, and the
+# input unchanged when neither applies.
+#
+# Its own target because both ObjectUtilsRust and CaptureClient need it, and
+# neither should depend on the other.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "Demangle",
+    srcs = ["Demangle.cpp"],
+    hdrs = ["Demangle.h"],
+    copts = ORBIT_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["//rust:orbit_object_ffi"],
+)

@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ORBIT_RUST_SHIMS_OBJECT_UTILS_DEMANGLE_H_
-#define ORBIT_RUST_SHIMS_OBJECT_UTILS_DEMANGLE_H_
+#ifndef ORBIT_RUST_SHIMS_DEMANGLE_H_
+#define ORBIT_RUST_SHIMS_DEMANGLE_H_
 
 #include <string>
 #include <string_view>
 
-namespace orbit_object_utils_rust {
+namespace orbit_demangle {
 
-// llvm::demangle, reimplemented over libstdc++'s abi::__cxa_demangle.
+// llvm::demangle, reimplemented over libstdc++'s abi::__cxa_demangle for
+// Itanium names and //rust:orbit_object's msvc-demangler for MSVC ones --
+// which is the same dispatch llvm::demangle does.
+//
+// This is the whole of Orbit's dependency on llvm::Demangle, replaced.
 //
 // This is the one place in the port where the work moved back to C++, and it
 // was not for lack of trying: cpp_demangle 0.4 and 0.5 both drop a parameter
@@ -27,6 +31,6 @@ namespace orbit_object_utils_rust {
 // right shift; llvm::itaniumDemangle emits the modern form. Exposed for tests.
 [[nodiscard]] std::string NormalizeAngleBrackets(std::string text);
 
-}  // namespace orbit_object_utils_rust
+}  // namespace orbit_demangle
 
-#endif  // ORBIT_RUST_SHIMS_OBJECT_UTILS_DEMANGLE_H_
+#endif  // ORBIT_RUST_SHIMS_DEMANGLE_H_

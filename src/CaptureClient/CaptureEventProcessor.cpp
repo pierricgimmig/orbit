@@ -4,12 +4,13 @@
 
 #include "CaptureClient/CaptureEventProcessor.h"
 
+#include "Demangle.h"
+
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/hash/hash.h>
 #include <absl/meta/type_traits.h>
 #include <google/protobuf/stubs/port.h>
-#include <llvm/Demangle/Demangle.h>
 
 #include <algorithm>
 #include <string>
@@ -591,7 +592,7 @@ void CaptureEventProcessorForListener::ProcessAddressInfo(const AddressInfo& add
 
   LinuxAddressInfo linux_address_info{address_info.absolute_address(),
                                       address_info.offset_in_function(), module_name,
-                                      llvm::demangle(function_name)};
+                                      orbit_demangle::Demangle(function_name)};
   capture_listener_->OnAddressInfo(linux_address_info);
 }
 

@@ -149,7 +149,7 @@ class RustCoffFile : public CoffFile {
              *from_table.value().mutable_symbol_infos()) {
           // The COFF symbol table carries no sizes.
           symbol.set_size(orbit_object_utils::SymbolsFile::kUnknownSymbolSize);
-          symbol.set_demangled_name(Demangle(symbol.demangled_name()));
+          symbol.set_demangled_name(orbit_demangle::Demangle(symbol.demangled_name()));
           symbols.emplace_back(std::move(symbol));
         }
       }
@@ -317,7 +317,7 @@ class RustCoffFile : public CoffFile {
       }
 
       orbit_grpc_protos::SymbolInfo& added = new_symbols.emplace_back();
-      added.set_demangled_name(Demangle(die.demangled_name()));
+      added.set_demangled_name(orbit_demangle::Demangle(die.demangled_name()));
       added.set_address(low_pc);
       added.set_size(high_pc - low_pc);
       added.set_is_hotpatchable(false);

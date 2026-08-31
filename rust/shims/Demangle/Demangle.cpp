@@ -13,7 +13,7 @@
 #include <string>
 #include <string_view>
 
-namespace orbit_object_utils_rust {
+namespace orbit_demangle {
 
 namespace {
 
@@ -82,4 +82,4 @@ std::string Demangle(std::string_view mangled_name) {
   return NormalizeAngleBrackets(std::string{demangled.get()});
 }
 
-}  // namespace orbit_object_utils_rust
+}  // namespace orbit_demangle

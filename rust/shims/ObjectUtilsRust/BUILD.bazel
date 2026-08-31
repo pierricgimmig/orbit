@@ -17,14 +17,12 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "ObjectUtilsRust",
     srcs = [
-        "Demangle.cpp",
         "RustCoffFile.cpp",
         "RustPdbFile.cpp",
         "RustElfFile.cpp",
     ],
     hdrs = [
         "Compare.h",
-        "Demangle.h",
         "RustCoffFile.h",
         "RustPdbFile.h",
         "RustElfFile.h",
@@ -33,6 +31,7 @@ cc_library(
     includes = ["."],
     target_compatible_with = ["@platforms//os:linux"],
     deps = [
+        "//rust/shims/Demangle",
         "//rust:orbit_object_ffi",
         "//src/GrpcProtos",
         "//src/ObjectUtils:ObjectUtilsHeaders",

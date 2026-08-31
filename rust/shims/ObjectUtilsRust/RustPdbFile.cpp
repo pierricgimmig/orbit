@@ -98,7 +98,7 @@ class RustPdbFile : public PdbFile {
       symbols.reserve(count);
       for (size_t i = 0; i < count; ++i) {
         orbit_grpc_protos::SymbolInfo& symbol = symbols.emplace_back();
-        symbol.set_demangled_name(Demangle(
+        symbol.set_demangled_name(orbit_demangle::Demangle(
             std::string_view{names + raw[i].name_offset, static_cast<size_t>(raw[i].name_len)}));
         symbol.set_address(raw[i].address);
         symbol.set_size(raw[i].size);

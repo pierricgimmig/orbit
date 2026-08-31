@@ -291,7 +291,7 @@ class RustElfFile : public ElfFile {
         // mangled one; running it through a demangler would be a no-op but
         // asking is pointless.
         info->set_demangled_name(table == kUnwindRanges ? std::string{mangled_name}
-                                                        : Demangle(mangled_name));
+                                                        : orbit_demangle::Demangle(mangled_name));
         info->set_address(symbols[i].address);
         info->set_size(symbols[i].size);
         info->set_is_hotpatchable(symbols[i].is_hotpatchable != 0);

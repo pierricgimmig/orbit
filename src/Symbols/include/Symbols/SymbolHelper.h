@@ -6,8 +6,6 @@
 #define SYMBOLS_SYMBOL_HELPER_H_
 
 #include <absl/types/span.h>
-#include <llvm/Object/Binary.h>
-#include <llvm/Object/ObjectFile.h>
 #include <stdint.h>
 
 #include <filesystem>
