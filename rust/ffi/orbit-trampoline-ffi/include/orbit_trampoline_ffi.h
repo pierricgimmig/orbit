@@ -26,6 +26,15 @@ int32_t orbit_trampoline_find_range(const OrbitRange* unavailable, uint64_t coun
 // a - b as int32 into *out; returns true on success.
 bool orbit_trampoline_address_difference(uint64_t a, uint64_t b, int32_t* out);
 
+
+// Relocates one instruction from old_address to new_address. Returns 0 on
+// success (fills out_code/out_len/out_position; out_position is u64 max when
+// there is no embedded absolute address); else 1 call, 2 loop, 3 rip-out-of-
+// range, 4 decode-failed, 5 buffer-too-small.
+int32_t orbit_trampoline_relocate(const uint8_t* bytes, uint64_t len, uint64_t old_address,
+                                  uint64_t new_address, uint8_t* out_code, uint64_t out_capacity,
+                                  uint64_t* out_len, uint64_t* out_position);
+
 }  // extern "C"
 
 #endif  // ORBIT_TRAMPOLINE_FFI_H_

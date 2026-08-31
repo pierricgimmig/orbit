@@ -92,3 +92,15 @@ cc_binary(
         "//src/UserSpaceInstrumentation",
     ],
 )
+
+cc_binary(
+    name = "relocate_instruction_differential",
+    srcs = ["relocate_instruction_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_trampoline_ffi",
+        "//src/UserSpaceInstrumentation",
+        "@capstone//:capstone",
+    ],
+)

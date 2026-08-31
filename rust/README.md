@@ -94,10 +94,11 @@ round trips and a behavioral differential against the C++ MemoryInTracee; it
 returns idiomatic io::Errors rather than reproducing OrbitBase's error
 strings.
 
-`crates/orbit-trampoline` is the address-space half of the trampoline
-machinery: the taken-range map of a process and the search for a free slot
-within a 32-bit jump of the hooked code. Byte-identical with the C++ on a
-synthetic-input differential.
+`crates/orbit-trampoline` is the trampoline machinery: the taken-range map
+and free-slot search (placement), and the instruction relocation that
+rewrites RIP-relative operands and relative branches when moving a prologue
+(relocate, on iced-x86). The relocation is byte-for-byte identical with the
+C++ RelocateInstruction across 888,154 real instructions.
 
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed

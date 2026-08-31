@@ -303,7 +303,7 @@ rust_library(
     deps = [
         ":orbit_maps",
         ":orbit_ptrace",
-    ],
+    ] + all_crate_deps(package_name = "rust/crates/orbit-trampoline"),
 )
 
 rust_test(

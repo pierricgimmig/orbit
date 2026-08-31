@@ -9,7 +9,9 @@
 //! disassembler-dependent half -- is a later milestone.
 
 pub mod placement;
+pub mod relocate;
 
+pub use relocate::{relocate_instruction, RelocateError, RelocatedInstruction};
 pub use placement::{
     address_difference_as_i32, find_address_range_for_trampoline, get_unavailable_address_ranges,
     AddressRange, PlacementError,

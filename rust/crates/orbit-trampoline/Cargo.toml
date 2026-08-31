@@ -11,5 +11,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info"] }
 orbit-maps = { path = "../orbit-maps" }
 orbit-ptrace = { path = "../orbit-ptrace" }
