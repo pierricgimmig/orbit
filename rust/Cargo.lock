@@ -202,6 +202,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-tracing-state"
+version = "0.1.0"
+
+[[package]]
+name = "orbit-tracing-state-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-tracing-state",
+]
+
+[[package]]
 name = "pdb"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

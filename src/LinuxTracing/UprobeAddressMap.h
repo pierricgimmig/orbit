@@ -9,12 +9,15 @@
 #include <absl/types/span.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "GrpcProtos/Constants.h"
 #include "ModuleUtils/ReadLinuxMaps.h"
+#include "TracingStateBackend.h"
+#include "orbit_tracing_state_ffi.h"
 
 namespace orbit_linux_tracing {
 
@@ -33,7 +36,7 @@ namespace orbit_linux_tracing {
 // A module can be mapped after the capture starts, or mapped more than once. Callers are expected
 // to call ResolveWithMaps() again when GetFunctionId() misses; every absolute address ever resolved
 // is retained, so a module unmapped mid-capture does not orphan samples still in flight.
-class UprobeAddressMap {
+class UprobeAddressMapCpp {
  public:
   void AddFunction(std::string_view file_path, uint64_t file_offset, uint64_t function_id);
 
@@ -59,6 +62,29 @@ class UprobeAddressMap {
 
   std::vector<FunctionLocation> functions_;
   absl::flat_hash_map<uint64_t, uint64_t> address_to_function_id_;
+};
+
+// The map TracerImpl and the unwinding visitor use. Dispatches on
+// ORBIT_TRACING_STATE_BACKEND; see TracingStateBackend.h.
+class UprobeAddressMap {
+ public:
+  UprobeAddressMap();
+
+  void AddFunction(std::string_view file_path, uint64_t file_offset, uint64_t function_id);
+  size_t ResolveWithMaps(absl::Span<const orbit_module_utils::LinuxMemoryMapping> maps);
+  [[nodiscard]] uint64_t GetFunctionId(uint64_t absolute_address) const;
+  [[nodiscard]] bool empty() const;
+  [[nodiscard]] size_t function_count() const;
+  [[nodiscard]] size_t resolved_address_count() const;
+  void Clear();
+
+ private:
+  TracingStateBackend backend_;
+  UprobeAddressMapCpp cpp_;
+  struct MapDeleter {
+    void operator()(OrbitUprobeAddressMap* map) const { orbit_uprobe_map_free(map); }
+  };
+  std::unique_ptr<OrbitUprobeAddressMap, MapDeleter> rust_;
 };
 
 }  // namespace orbit_linux_tracing

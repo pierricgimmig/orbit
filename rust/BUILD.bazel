@@ -180,6 +180,53 @@ cc_library(
     deps = [":orbit_thread_states_ffi_rust"],
 )
 
+# ---------------------------------------------------- orbit-tracing-state
+
+rust_library(
+    name = "orbit_tracing_state",
+    srcs = glob(["crates/orbit-tracing-state/src/**/*.rs"]),
+    crate_root = "crates/orbit-tracing-state/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_tracing_state_test",
+    size = "small",
+    crate = ":orbit_tracing_state",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_tracing_state_ffi_rust",
+    srcs = glob(["ffi/orbit-tracing-state-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-tracing-state-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_tracing_state"],
+)
+
+rust_library(
+    name = "orbit_tracing_state_ffi_lib",
+    srcs = glob(["ffi/orbit-tracing-state-ffi/src/**/*.rs"]),
+    crate_name = "orbit_tracing_state_ffi",
+    crate_root = "ffi/orbit-tracing-state-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_tracing_state"],
+)
+
+rust_test(
+    name = "orbit_tracing_state_ffi_test",
+    size = "small",
+    crate = ":orbit_tracing_state_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_tracing_state_ffi",
+    hdrs = ["ffi/orbit-tracing-state-ffi/include/orbit_tracing_state_ffi.h"],
+    includes = ["ffi/orbit-tracing-state-ffi/include"],
+    deps = [":orbit_tracing_state_ffi_rust"],
+)
+
 # ----------------------------------------------------- orbit-object-ffi
 
 rust_static_library(

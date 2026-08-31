@@ -16,10 +16,12 @@ members = [
     "crates/orbit-object",
     "crates/orbit-perf-merge",
     "crates/orbit-thread-states",
+    "crates/orbit-tracing-state",
     "ffi/orbit-maps-ffi",
     "ffi/orbit-object-ffi",
     "ffi/orbit-perf-merge-ffi",
     "ffi/orbit-thread-states-ffi",
+    "ffi/orbit-tracing-state-ffi",
 ]
 
 [workspace.package]

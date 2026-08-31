@@ -166,14 +166,14 @@ static_assert(kOrbitPerfMergeStreamThreadId == 2);
 PerfEventQueue::Backend PerfEventQueue::SelectedBackend() {
   static const Backend backend = [] {
     const char* value = getenv("ORBIT_PERF_MERGE_BACKEND");
-    if (value == nullptr) return Backend::kCpp;
+    if (value == nullptr) return Backend::kRust;
     const std::string_view choice{value};
-    if (choice == "rust") return Backend::kRust;
+    if (choice == "cpp") return Backend::kCpp;
     if (choice == "both") return Backend::kBoth;
-    if (choice != "cpp" && !choice.empty()) {
-      ORBIT_ERROR("Unrecognised ORBIT_PERF_MERGE_BACKEND=\"%s\"; using \"cpp\"", choice);
+    if (choice != "rust" && !choice.empty()) {
+      ORBIT_ERROR("Unrecognised ORBIT_PERF_MERGE_BACKEND=\"%s\"; using \"rust\"", choice);
     }
-    return Backend::kCpp;
+    return Backend::kRust;
   }();
   return backend;
 }

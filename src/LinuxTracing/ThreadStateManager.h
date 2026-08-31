@@ -107,8 +107,11 @@ class ThreadStateManagerCpp {
 // The manager SwitchesStatesNamesVisitor uses. Dispatches on
 // ORBIT_THREAD_STATES_BACKEND:
 //
-//   cpp   (default, and what an unset variable means) ThreadStateManagerCpp
-//   rust  the state machine in //rust:orbit_thread_states
+//   rust  (default, and what an unset variable means) the state machine in
+//         //rust:orbit_thread_states. The default is rust by decision, with a
+//         measured ~18ns-per-transition cost accepted for now; see
+//         docs/blog/metrics/phase-3-verdict.txt and post 07.
+//   cpp   ThreadStateManagerCpp
 //   both  run both and ORBIT_FATAL if any transition's result differs
 //
 // Same strangler shape as PerfEventQueue; see docs/rust-port-plan.html.

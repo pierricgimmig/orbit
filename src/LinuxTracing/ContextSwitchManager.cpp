@@ -13,14 +13,14 @@ namespace orbit_linux_tracing {
 
 using orbit_grpc_protos::SchedulingSlice;
 
-void ContextSwitchManager::ProcessContextSwitchIn(std::optional<pid_t> pid, pid_t tid,
+void ContextSwitchManagerCpp::ProcessContextSwitchIn(std::optional<pid_t> pid, pid_t tid,
                                                   uint16_t core, uint64_t timestamp_ns) {
   // In case of lost out switches, a previous OpenSwitchIn for this core can be already present.
   // Simply overwrite it.
   open_switches_by_core_.emplace(core, OpenSwitchIn{pid, tid, timestamp_ns});
 }
 
-std::optional<SchedulingSlice> ContextSwitchManager::ProcessContextSwitchOut(
+std::optional<SchedulingSlice> ContextSwitchManagerCpp::ProcessContextSwitchOut(
     pid_t pid, pid_t tid, uint16_t core, uint64_t timestamp_ns) {
   auto open_switch_it = open_switches_by_core_.find(core);
   // This can happen at the beginning or in case of lost in switches.
@@ -63,6 +63,73 @@ std::optional<SchedulingSlice> ContextSwitchManager::ProcessContextSwitchOut(
   scheduling_slice.set_duration_ns(timestamp_ns - open_timestamp_ns);
   scheduling_slice.set_out_timestamp_ns(timestamp_ns);
   return scheduling_slice;
+}
+
+}  // namespace orbit_linux_tracing
+
+// ------------------------------------------------------------------ facade
+
+namespace orbit_linux_tracing {
+
+ContextSwitchManager::ContextSwitchManager() : backend_{SelectedTracingStateBackend()} {
+  if (backend_ != TracingStateBackend::kCpp) {
+    rust_.reset(orbit_context_switches_new());
+  }
+}
+
+void ContextSwitchManager::ProcessContextSwitchIn(std::optional<pid_t> pid, pid_t tid,
+                                                  uint16_t core, uint64_t timestamp_ns) {
+  if (backend_ != TracingStateBackend::kRust) {
+    cpp_.ProcessContextSwitchIn(pid, tid, core, timestamp_ns);
+  }
+  if (backend_ != TracingStateBackend::kCpp) {
+    orbit_context_switches_in(rust_.get(), pid.has_value() ? 1 : 0, pid.value_or(0), tid, core,
+                              timestamp_ns);
+  }
+}
+
+std::optional<SchedulingSlice> ContextSwitchManager::ProcessContextSwitchOut(
+    pid_t pid, pid_t tid, uint16_t core, uint64_t timestamp_ns) {
+  if (backend_ == TracingStateBackend::kCpp) {
+    return cpp_.ProcessContextSwitchOut(pid, tid, core, timestamp_ns);
+  }
+
+  std::optional<SchedulingSlice> cpp_result;
+  if (backend_ == TracingStateBackend::kBoth) {
+    cpp_result = cpp_.ProcessContextSwitchOut(pid, tid, core, timestamp_ns);
+  }
+
+  OrbitSchedulingSlice ffi_slice{};
+  const uint8_t status =
+      orbit_context_switches_out(rust_.get(), pid, tid, core, timestamp_ns, &ffi_slice);
+  // The timestamp-regression the C++'s `ORBIT_CHECK(timestamp_ns >=
+  // open_timestamp_ns)` died on. The death message repeats that expression
+  // verbatim because ContextSwitchManagerTest's EXPECT_DEATH greps for it.
+  if (status == kOrbitSwitchOutDied) {
+    ORBIT_FATAL("Check failed: timestamp_ns >= open_timestamp_ns (from the Rust backend)");
+  }
+
+  std::optional<SchedulingSlice> result;
+  if (status == kOrbitSwitchOutSlice) {
+    SchedulingSlice slice;
+    slice.set_pid(ffi_slice.pid);
+    slice.set_tid(ffi_slice.tid);
+    slice.set_core(ffi_slice.core);
+    slice.set_duration_ns(ffi_slice.duration_ns);
+    slice.set_out_timestamp_ns(ffi_slice.out_timestamp_ns);
+    result = std::move(slice);
+  }
+
+  if (backend_ == TracingStateBackend::kBoth) {
+    if (result.has_value() != cpp_result.has_value() ||
+        (result.has_value() &&
+         result->SerializeAsString() != cpp_result->SerializeAsString())) {
+      ORBIT_FATAL("ContextSwitchManager backends disagree:\n  cpp:  %s\n  rust: %s",
+                  cpp_result.has_value() ? cpp_result->ShortDebugString() : "(none)",
+                  result.has_value() ? result->ShortDebugString() : "(none)");
+    }
+  }
+  return result;
 }
 
 }  // namespace orbit_linux_tracing

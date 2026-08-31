@@ -14,9 +14,16 @@ tree at all.
 `ObjectUtils` has one implementation now; `ORBIT_OBJECT_BACKEND` is gone with
 the C++ it selected. `ParseMaps` still keeps its small C++ twin:
 
-| Variable             | Values              | Default | Selects                        |
-| -------------------- | ------------------- | ------- | ------------------------------ |
-| `ORBIT_MAPS_BACKEND` | `rust` `cpp` `both` | `rust`  | `orbit_module_utils::ParseMaps` |
+| Variable                      | Values              | Default | Selects                                    |
+| ----------------------------- | ------------------- | ------- | ------------------------------------------ |
+| `ORBIT_MAPS_BACKEND`          | `rust` `cpp` `both` | `rust`  | `orbit_module_utils::ParseMaps`             |
+| `ORBIT_PERF_MERGE_BACKEND`    | `rust` `cpp` `both` | `rust`  | `PerfEventQueue`'s ordering                 |
+| `ORBIT_THREAD_STATES_BACKEND` | `rust` `cpp` `both` | `rust`  | `ThreadStateManager`                        |
+| `ORBIT_TRACING_STATE_BACKEND` | `rust` `cpp` `both` | `rust`  | `ContextSwitchManager`, `UprobesFunctionCallManager`, `UprobeAddressMap` |
+
+The LinuxTracing defaults are rust by decision, with a measured per-event FFI
+toll accepted for now -- see `docs/blog/metrics/phase-3-reopened.txt` for the
+numbers and the path to removing it.
 
 `both` runs the two implementations on every call and aborts with both values
 printed if they disagree.

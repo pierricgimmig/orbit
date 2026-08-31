@@ -20,6 +20,19 @@ cc_binary(
 )
 
 cc_binary(
+    name = "context_switches_bench",
+    srcs = ["context_switches_bench.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/LinuxTracing",
+    ],
+)
+
+cc_binary(
     name = "thread_states_bench",
     srcs = ["thread_states_bench.cpp"],
     copts = ORBIT_COPTS + [

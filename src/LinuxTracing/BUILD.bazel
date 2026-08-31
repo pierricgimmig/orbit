@@ -12,6 +12,7 @@ cc_library(
     name = "LinuxTracing",
     srcs = [
         "ContextSwitchManager.cpp",
+        "TracingStateBackend.cpp",
         "GpuTracepointVisitor.cpp",
         "LeafFunctionCallManager.cpp",
         "LibunwindstackMaps.cpp",
@@ -38,6 +39,7 @@ cc_library(
     ],
     hdrs = [
         "ContextSwitchManager.h",
+        "TracingStateBackend.h",
         "GpuTracepointVisitor.h",
         "KernelTracepoints.h",
         "LeafFunctionCallManager.h",
@@ -84,6 +86,7 @@ cc_library(
         "//third_party/libunwindstack",
         "//rust:orbit_perf_merge_ffi",
         "//rust:orbit_thread_states_ffi",
+        "//rust:orbit_tracing_state_ffi",
         "//third_party/py-spy-ffi",
         "@abseil-cpp//absl/container:flat_hash_map",
         "@abseil-cpp//absl/container:flat_hash_set",
@@ -97,7 +100,6 @@ cc_library(
 cc_test(
     name = "LinuxTracingTests",
     srcs = [
-        "ContextSwitchManagerTest.cpp",
         "GpuTracepointVisitorTest.cpp",
         "LeafFunctionCallManagerTest.cpp",
         "LibunwindstackMapsTest.cpp",
@@ -108,9 +110,7 @@ cc_test(
         "MockTracerListener.h",
         "PerfEventProcessorTest.cpp",
         "SwitchesStatesNamesVisitorTest.cpp",
-        "UprobeAddressMapTest.cpp",
         "UprobeEventsTest.cpp",
-        "UprobesFunctionCallManagerTest.cpp",
         "UprobesReturnAddressManagerTest.cpp",
         "UprobesUnwindingVisitorCallchainTest.cpp",
         "UprobesUnwindingVisitorDwarfUnwindingTest.cpp",
@@ -153,6 +153,57 @@ orbit_dual_backend_test(
     size = "small",
     srcs = ["ThreadStateManagerTest.cpp"],
     backend_env_var = "ORBIT_THREAD_STATES_BACKEND",
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
+
+# The three tracing-state classes share one backend variable, so one macro
+# invocation per suite covers rust (the default), cpp and both.
+
+orbit_dual_backend_test(
+    name = "ContextSwitchManagerTests",
+    size = "small",
+    srcs = ["ContextSwitchManagerTest.cpp"],
+    backend_env_var = "ORBIT_TRACING_STATE_BACKEND",
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
+
+orbit_dual_backend_test(
+    name = "UprobesFunctionCallManagerTests",
+    size = "small",
+    srcs = ["UprobesFunctionCallManagerTest.cpp"],
+    backend_env_var = "ORBIT_TRACING_STATE_BACKEND",
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":LinuxTracing",
+        "//src/Test:gtest_main",
+        "@googletest//:gtest",
+    ],
+)
+
+orbit_dual_backend_test(
+    name = "UprobeAddressMapTests",
+    size = "small",
+    srcs = ["UprobeAddressMapTest.cpp"],
+    backend_env_var = "ORBIT_TRACING_STATE_BACKEND",
     copts = ORBIT_COPTS + [
         "-Isrc/LinuxTracing",
     ],

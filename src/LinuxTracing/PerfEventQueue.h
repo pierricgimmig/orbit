@@ -78,9 +78,12 @@ class PerfEventQueueCpp {
 // The queue TracerImpl and PerfEventProcessor use. Dispatches on
 // ORBIT_PERF_MERGE_BACKEND:
 //
-//   cpp   (default, and what an unset variable means) PerfEventQueueCpp above
-//   rust  the ordering lives in //rust:orbit_perf_merge; the events stay here,
-//         in a slab the Rust side indexes by handle
+//   rust  (default, and what an unset variable means) the ordering lives in
+//         //rust:orbit_perf_merge; the events stay here, in a slab the Rust
+//         side indexes by handle. The default is rust by decision, with a
+//         measured ~20% per-event cost accepted for now; see
+//         docs/blog/metrics/phase-3-verdict.txt and post 07.
+//   cpp   PerfEventQueueCpp above
 //   both  run both and ORBIT_FATAL if they ever disagree on a timestamp. The
 //         C++ twin only orders, so it gets a cheap dummy event per push rather
 //         than a copy of the real one.
