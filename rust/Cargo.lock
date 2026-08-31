@@ -109,6 +109,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libc"
+version = "0.2.174"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +205,22 @@ name = "orbit-perf-records-ffi"
 version = "0.1.0"
 dependencies = [
  "orbit-perf-records",
+]
+
+[[package]]
+name = "orbit-perf-ring"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "orbit-perf-records",
+]
+
+[[package]]
+name = "orbit-perf-ring-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-perf-records-ffi",
+ "orbit-perf-ring",
 ]
 
 [[package]]

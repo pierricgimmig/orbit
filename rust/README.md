@@ -69,6 +69,11 @@ packed perf ring-buffer record layouts, zero dependencies, verified against
 the C++ structs field by field by
 `src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp`.
 
+`crates/orbit-perf-ring` owns the kernel interface: `perf_event_open`, the
+attr construction, and the mmap ring-buffer protocol, with unsafe confined
+to its `sys` module and one dependency (`libc`). Verified against the C++
+path by `rust/tools/differential/perf_ring_differential.cpp`.
+
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
 ones, the input unchanged otherwise.

@@ -227,6 +227,49 @@ cc_library(
     deps = [":orbit_perf_records_ffi_rust"],
 )
 
+# ------------------------------------------------------ orbit-perf-ring
+
+rust_library(
+    name = "orbit_perf_ring",
+    srcs = glob(["crates/orbit-perf-ring/src/**/*.rs"]),
+    crate_root = "crates/orbit-perf-ring/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_perf_records"] + all_crate_deps(package_name = "rust/crates/orbit-perf-ring"),
+)
+
+rust_test(
+    name = "orbit_perf_ring_test",
+    size = "small",
+    crate = ":orbit_perf_ring",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_perf_ring_ffi_rust",
+    srcs = glob(["ffi/orbit-perf-ring-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-perf-ring-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_perf_records_ffi_lib",
+        ":orbit_perf_ring",
+    ],
+)
+
+cc_library(
+    name = "orbit_perf_ring_ffi",
+    hdrs = [
+        "ffi/orbit-perf-records-ffi/include/orbit_perf_records_ffi.h",
+        "ffi/orbit-perf-ring-ffi/include/orbit_perf_ring_ffi.h",
+    ],
+    includes = [
+        "ffi/orbit-perf-records-ffi/include",
+        "ffi/orbit-perf-ring-ffi/include",
+    ],
+    deps = [":orbit_perf_ring_ffi_rust"],
+)
+
 # ---------------------------------------------------- orbit-tracing-state
 
 rust_library(
