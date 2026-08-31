@@ -175,6 +175,7 @@ impl TrackStrip {
         if !self.collapsed.insert(id) {
             self.collapsed.remove(&id);
         }
+        self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 
     pub fn collapsed(&self, id: RowId) -> bool {
@@ -189,10 +190,12 @@ impl TrackStrip {
         if !self.hidden.insert(t) {
             self.hidden.remove(&t);
         }
+        self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 
     pub fn show_all_threads(&mut self) {
         self.hidden.clear();
+        self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 
     fn is_shown(&self, t: ThreadId) -> bool {
@@ -358,6 +361,7 @@ impl TrackStrip {
 
     pub fn show_process_threads(&mut self, pid: u32) {
         self.hidden.retain(|t| t.pid != pid);
+        self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 
     /// Hit test: machine/process/value rows, or the full thread block.

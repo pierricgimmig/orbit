@@ -312,20 +312,26 @@ fn zoom_max_for_capture(content_span: f64) -> f64 {
     ZOOM_MAX_NS.max(content_span.abs().max(1.0) * ZOOM_SCOPE_PAD)
 }
 
-/// Keep `[t0, t1]` overlapping `[cap0, cap1]` so A / the slider cannot
-/// walk into hours of empty time left of the cluster.
-fn clamp_window_overlap(t0: f64, t1: f64, cap0: f64, cap1: f64) -> (f64, f64) {
+/// Keep `[t0, t1]` inside a capture `[cap0, cap1]` of real timed events.
+///
+/// Zoomed in (`span` < capture): both edges stay inside the cluster, so
+/// drag / WASD / the slider cannot reveal empty time before the first
+/// event or after the last. Zoomed out (`span` ≥ capture, including the
+/// 1.1× Home pad): pin so the cluster stays on screen — leftover pad can
+/// sit on one side, but the window cannot walk off into empty time.
+fn clamp_window_contain(t0: f64, t1: f64, cap0: f64, cap1: f64) -> (f64, f64) {
     let span = (t1 - t0).max(1.0);
     if !cap0.is_finite() || !cap1.is_finite() || cap1 <= cap0 {
         return (t0, t0 + span);
     }
-    let mut nt0 = t0;
-    if nt0 + span < cap0 {
-        nt0 = cap0 - span;
-    }
-    if nt0 > cap1 {
-        nt0 = cap1;
-    }
+    let content = cap1 - cap0;
+    let nt0 = if span >= content {
+        let min_t0 = cap1 - span;
+        let max_t0 = cap0;
+        t0.clamp(min_t0.min(max_t0), min_t0.max(max_t0))
+    } else {
+        t0.clamp(cap0, cap1 - span)
+    };
     (nt0, nt0 + span)
 }
 
@@ -745,6 +751,16 @@ impl OrbitLiveApp {
         self.needs_repaint = true;
     }
 
+    /// Recompute packed Ys in the same frame as a collapse / hide click so
+    /// the draw path does not paint last frame's lanes for one more tick.
+    fn relayout_tracks(&mut self) {
+        let filter = self
+            .selected_pid
+            .filter(|_| self.status.capturing && !self.status.demo);
+        self.tracks.tick(0.0, &self.index, filter);
+        self.mark_layout_changed();
+    }
+
     fn wants_live_repaint(&self) -> bool {
         live_repaint(
             self.recording || self.status.demo || self.trace_load.is_some(),
@@ -838,8 +854,8 @@ impl OrbitLiveApp {
                 return;
             }
         }
-        if self.trace_name.is_some() {
-            if let Some((a, b)) = self.index.time_bounds() {
+        if let Some((a, b)) = self.index.time_bounds() {
+            if b > a {
                 self.content_t0 = Some(a as f64);
                 self.content_t1 = Some(b as f64);
             }
@@ -862,9 +878,9 @@ impl OrbitLiveApp {
 
     fn capture_slider_span(&self) -> (f64, f64) {
         if let Some((a, b)) = self.content_span() {
-            let oldest = a.max(0.0) as u64;
-            let edge = b.max(a + 1.0) as u64;
-            return slider_capture_span(oldest, edge, self.t0, self.t1);
+            // File / capture cluster only. Do not widen the track to the
+            // current view — that let the thumb walk into empty time.
+            return (a, b);
         }
         slider_capture_span(
             self.status.oldest_start_ns,
@@ -891,6 +907,10 @@ impl OrbitLiveApp {
     }
 
     fn apply_zoom_window(&mut self, t0: f64, t1: f64) {
+        let (t0, t1) = match self.content_span() {
+            Some((c0, c1)) => clamp_window_contain(t0, t1, c0, c1),
+            None => (t0, t1),
+        };
         self.t0 = t0;
         self.t1 = t1;
         self.user_set_view = true;
@@ -899,7 +919,7 @@ impl OrbitLiveApp {
 
     fn apply_pan_window(&mut self, t0: f64, t1: f64) {
         let (t0, t1) = match self.content_span() {
-            Some((c0, c1)) => clamp_window_overlap(t0, t1, c0, c1),
+            Some((c0, c1)) => clamp_window_contain(t0, t1, c0, c1),
             None => (t0.max(0.0), t0.max(0.0) + (t1 - t0).max(1.0)),
         };
         self.t0 = t0;
@@ -1357,6 +1377,7 @@ impl OrbitLiveApp {
                     }
                     self.index.insert(ev);
                 }
+                self.refresh_content_bounds();
             }
             LiveFrame::InternedString { id, text } => {
                 self.intern.insert_id(id, &text);
@@ -2193,7 +2214,7 @@ impl OrbitLiveApp {
             );
             if hit.clicked() {
                 self.tracks.show_all_threads();
-                self.mark_layout_changed();
+                self.relayout_tracks();
             }
             hit.on_hover_text("Show all threads");
         }
@@ -2642,7 +2663,7 @@ impl OrbitLiveApp {
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 8.0, open, ("s", 0u32, 0u32)) {
                     self.tracks.toggle(row.id);
-                    self.mark_layout_changed();
+                    self.relayout_tracks();
                 }
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
@@ -2668,7 +2689,7 @@ impl OrbitLiveApp {
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32)) {
                     self.tracks.toggle(row.id);
-                    self.mark_layout_changed();
+                    self.relayout_tracks();
                 }
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
@@ -2692,7 +2713,7 @@ impl OrbitLiveApp {
                 let open = !self.tracks.collapsed(row.id);
                 if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
                     self.tracks.toggle(row.id);
-                    self.mark_layout_changed();
+                    self.relayout_tracks();
                 }
                 let name = self.process_display_name(pid);
                 let proc_label = if tight {
@@ -2727,7 +2748,7 @@ impl OrbitLiveApp {
                     );
                     if hit.clicked() {
                         self.tracks.show_process_threads(pid);
-                        self.mark_layout_changed();
+                        self.relayout_tracks();
                     }
                     hit.on_hover_text("Show hidden threads");
                 }
@@ -2798,7 +2819,7 @@ impl OrbitLiveApp {
                 }
                 if chevron(ui, title, chevron_x, open, ("t", th.pid, th.tid)) {
                     self.tracks.toggle(row.id);
-                    self.mark_layout_changed();
+                    self.relayout_tracks();
                 }
                 let chip =
                     theme::display_argb(THREAD_PALETTE[(th.tid as usize) % THREAD_PALETTE.len()]);
@@ -2840,7 +2861,7 @@ impl OrbitLiveApp {
                 );
                 if hide_r.clicked() {
                     self.tracks.toggle_hidden(th);
-                    self.mark_layout_changed();
+                    self.relayout_tracks();
                 }
                 hide_r.on_hover_text("Hide thread");
             }
@@ -3626,10 +3647,8 @@ impl OrbitLiveApp {
                 } else if ctrl {
                     let a = m.start_ns.min(m.stop_ns) as f64;
                     let b = m.start_ns.max(m.stop_ns) as f64;
-                    self.t0 = a;
-                    self.t1 = b.max(a + 1.0);
+                    self.apply_zoom_window(a, b.max(a + 1.0));
                     self.measure = None;
-                    self.follow = false;
                 }
             }
         }
@@ -3721,6 +3740,11 @@ impl OrbitLiveApp {
         let k = 1.0 - (-dt / 0.10).exp();
         self.t0 += (target_t0 - self.t0) * k as f64;
         self.t1 += (target_t1 - self.t1) * k as f64;
+        if let Some((c0, c1)) = self.content_span() {
+            let (t0, t1) = clamp_window_contain(self.t0, self.t1, c0, c1);
+            self.t0 = t0;
+            self.t1 = t1;
+        }
     }
 }
 
@@ -6035,11 +6059,52 @@ mod tests {
         let (s0, s1) = slider_capture_span(ca, cb, t0, t1);
         assert!(s0 > 1e14, "slider must not be 0..34 h: {s0}..{s1}");
         assert!(s1 - s0 < 20e9);
-        let empty = clamp_window_overlap(0.0, 2e9, ca as f64, cb as f64);
+        let empty = clamp_window_contain(0.0, 2e9, ca as f64, cb as f64);
         assert!(
-            empty.1 > ca as f64 - 1.0,
+            empty.0 >= ca as f64 - 1.0,
             "pan must not stay in empty time left of the cluster"
         );
+        assert!(empty.1 <= cb as f64 + 1.0);
+    }
+
+    #[test]
+    fn clamp_window_contain_keeps_zoomed_in_inside_capture() {
+        let (t0, t1) = clamp_window_contain(0.0, 50.0, 1_000.0, 2_000.0);
+        assert!((t0 - 1_000.0).abs() < 1e-9);
+        assert!((t1 - 1_050.0).abs() < 1e-9);
+        let (r0, r1) = clamp_window_contain(3_000.0, 3_080.0, 1_000.0, 2_000.0);
+        assert!((r0 - 1_920.0).abs() < 1e-9);
+        assert!((r1 - 2_000.0).abs() < 1e-9);
+        let (ok0, ok1) = clamp_window_contain(1_200.0, 1_400.0, 1_000.0, 2_000.0);
+        assert!((ok0 - 1_200.0).abs() < 1e-9);
+        assert!((ok1 - 1_400.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn clamp_window_contain_pins_when_span_exceeds_capture() {
+        let (t0, t1) = clamp_window_contain(500.0, 1_800.0, 1_000.0, 2_000.0);
+        assert!((t1 - t0 - 1_300.0).abs() < 1e-9);
+        assert!(t0 <= 1_000.0 && t1 >= 2_000.0);
+        assert!(t0 >= 2_000.0 - 1_300.0 - 1e-9);
+        assert!(t0 <= 1_000.0 + 1e-9);
+        let (left0, left1) = clamp_window_contain(-10_000.0, -8_700.0, 1_000.0, 2_000.0);
+        assert!((left1 - left0 - 1_300.0).abs() < 1e-9);
+        assert!((left0 - (2_000.0 - 1_300.0)).abs() < 1e-9);
+        assert!((left1 - 2_000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zoom_near_capture_edge_pins_instead_of_revealing_empty() {
+        let cap0 = 1_000.0;
+        let cap1 = 2_000.0;
+        let (z0, z1) = zoom_time_by_scale_limited(1_000.0, 1_100.0, 1.0 / 1.1, 0.0, 10_000.0);
+        let (c0, c1) = clamp_window_contain(z0, z1, cap0, cap1);
+        assert!(c0 >= cap0 - 1e-9, "left edge must pin, not go before first");
+        assert!((c1 - c0 - (z1 - z0)).abs() < 1e-6);
+        let (z0, z1) = zoom_time_by_scale_limited(1_900.0, 2_000.0, 1.0 / 1.1, 1.0, 10_000.0);
+        let (c0, c1) = clamp_window_contain(z0, z1, cap0, cap1);
+        assert!(c1 <= cap1 + 1e-9, "right edge must pin, not go after last");
+        assert!((c1 - c0 - (z1 - z0)).abs() < 1e-6);
     }
 
     #[test]

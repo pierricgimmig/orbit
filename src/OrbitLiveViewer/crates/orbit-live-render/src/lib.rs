@@ -375,11 +375,17 @@ impl TrackIndex {
         let ymap: Option<std::collections::BTreeMap<LaneKey, f32>> =
             ys.map(|l| l.iter().copied().collect());
         let keys: Vec<LaneKey> = if order.is_empty() {
-            self.lanes
-                .keys()
-                .copied()
-                .filter(|k| k.kind != kind::VALUE)
-                .collect()
+            match ys {
+                // Legacy / index-only: no layout means every non-VALUE lane.
+                None => self
+                    .lanes
+                    .keys()
+                    .copied()
+                    .filter(|k| k.kind != kind::VALUE)
+                    .collect(),
+                // Explicit empty layout (collapsed-all): paint nothing.
+                Some(_) => Vec::new(),
+            }
         } else {
             order
                 .iter()
@@ -502,6 +508,9 @@ impl RasterizedFrame {
     /// sorted top-down. Falls back to a self-stacked layout when none of the
     /// raster's lanes appear in `layout`.
     fn placed_ys(&self, layout: &[(LaneKey, f32)], s: f32) -> Vec<(LaneKey, f32)> {
+        if layout.is_empty() {
+            return Vec::new();
+        }
         let ys: BTreeMap<LaneKey, f32> = layout.iter().copied().collect();
         let mut placed: Vec<(LaneKey, f32)> = self
             .lanes
@@ -1006,6 +1015,11 @@ mod tests {
         );
         assert_eq!(culled.lanes.len(), 1);
         assert_eq!(culled.lanes[0], layout[0].0);
+        let none = idx.rasterize_pixel_layout(0, 50, 8, &[], Some(&[]), None, None);
+        assert!(
+            none.lanes.is_empty(),
+            "explicit empty layout must not fall back to every index lane"
+        );
     }
 
     #[test]

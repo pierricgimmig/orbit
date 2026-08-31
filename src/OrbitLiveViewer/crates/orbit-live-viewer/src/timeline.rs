@@ -15,8 +15,8 @@ use orbit_live_event::dev::{
 };
 use orbit_live_event::{chrome, LaneKey};
 use orbit_live_render::{
-    collect_instances_layout_opts, stacked_layout, CollectOpts,
-    ScopeInstance, ScopePick, TimelineLod, TrackIndex, YCull, BLIT_RECT_WGSL, INSTANCE_WGSL,
+    collect_instances_layout_opts, CollectOpts, ScopeInstance, ScopePick, TimelineLod, TrackIndex,
+    YCull, BLIT_RECT_WGSL, INSTANCE_WGSL,
 };
 use std::collections::HashMap;
 
@@ -113,7 +113,6 @@ impl ViewUniforms {
             time: 0.0,
         }
     }
-
 }
 
 #[derive(Clone)]
@@ -158,14 +157,11 @@ impl TimelinePayload {
         dev: &crate::dev::DevFrame,
     ) -> (Self, Vec<orbit_live_render::WorkerSpan>) {
         let width_pts = width_pts.max(1.0);
-        let layout_owned;
-        let layout = if layout.is_empty() {
-            let keys: Vec<LaneKey> = index.lanes().map(|(k, _)| k).collect();
-            layout_owned = stacked_layout(&keys, 0.0);
-            layout_owned.as_slice()
-        } else {
-            layout
-        };
+        // An empty layout is a deliberate collapse / hide-all, not "no
+        // strip yet". Rebuilding from the index re-painted hidden threads.
+        if layout.is_empty() {
+            return (Self::Empty, Vec::new());
+        }
         let s = pixels_per_point.max(0.01);
         match lod {
             TimelineLod::Instanced => {
@@ -982,7 +978,9 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
 mod tests {
     use super::*;
     use orbit_live_event::{kind, named_scope_color, LiveEvent};
-    use orbit_live_render::{choose_lod, TrackIndex, INSTANCE_MIN_PX};
+    use orbit_live_render::{
+        choose_lod, collect_instances_layout, stacked_layout, TrackIndex, INSTANCE_MIN_PX,
+    };
 
     #[test]
     fn pack_instances_is_48_bytes_each() {
@@ -1071,6 +1069,8 @@ mod tests {
             _pad: 0,
             name_id: 1,
         });
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
         let (p, _spans) = TimelinePayload::from_index(
             &idx,
             0,
@@ -1078,7 +1078,7 @@ mod tests {
             8.0,
             TimelineLod::PixelColumns,
             1.0,
-            &[],
+            &layout,
             &[],
             None,
             None,
@@ -1128,6 +1128,8 @@ mod tests {
         });
         let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
         assert_eq!(lod, TimelineLod::PixelColumns);
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
         let (p, _spans) = TimelinePayload::from_index(
             &idx,
             0,
@@ -1135,7 +1137,7 @@ mod tests {
             200.0,
             lod,
             1.0,
-            &[],
+            &layout,
             &[],
             None,
             None,
@@ -1251,6 +1253,152 @@ mod tests {
         assert!((insts.iter().find(|i| i.tid == 3).unwrap().y - 80.0).abs() < 1e-4);
     }
 
+    #[test]
+    fn collapsed_thread_omitted_from_layout_and_draw() {
+        fn ev(tid: u32, name: u32) -> LiveEvent {
+            LiveEvent {
+                start_ns: 0,
+                duration_ns: 100,
+                tid,
+                pid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: name,
+            }
+        }
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(1, 1));
+        idx.insert(ev(2, 2));
+        let mut strip = crate::tracks::TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.layout().len(), 2);
+        let open = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
+        assert_eq!(open.instances.len(), 2);
+        let hide = strip
+            .thread_order
+            .iter()
+            .copied()
+            .find(|t| t.tid == 2)
+            .unwrap();
+        strip.toggle(crate::tracks::RowId::Thread(hide));
+        strip.tick(1.0, &idx, None);
+        assert!(
+            strip.layout().iter().all(|(k, _)| k.tid != 2),
+            "collapsed thread lanes must leave the packed layout"
+        );
+        assert!(strip
+            .rows()
+            .iter()
+            .any(|r| matches!(r.id, crate::tracks::RowId::Thread(t) if t.tid == 2)));
+        let hidden = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
+        assert!(hidden.instances.iter().all(|i| i.tid != 2));
+        assert_eq!(hidden.instances.len(), 1);
+        let (pixel, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            32.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            strip.layout(),
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        let TimelinePayload::Pixel { height, .. } = pixel else {
+            panic!("expected pixel payload for the remaining thread");
+        };
+        assert!(height > 0, "remaining thread must still raster");
+        strip.toggle(crate::tracks::RowId::Process(1));
+        strip.tick(1.0, &idx, None);
+        assert!(
+            strip.layout().is_empty(),
+            "process collapse hides every leaf"
+        );
+        let (gone, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            32.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            strip.layout(),
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(
+            matches!(gone, TimelinePayload::Empty),
+            "empty rest layout must not rebuild index lanes and re-paint hidden scopes"
+        );
+        strip.toggle(crate::tracks::RowId::Process(1));
+        strip.toggle(crate::tracks::RowId::Thread(hide));
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.layout().len(), 2);
+        let restored = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
+        assert_eq!(restored.instances.len(), 2);
+    }
+
+    #[test]
+    fn empty_layout_from_index_does_not_paint_index_lanes() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 100,
+            tid: 1,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 1,
+        });
+        let (p, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            8.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(matches!(p, TimelinePayload::Empty));
+        let (inst, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            8.0,
+            TimelineLod::Instanced,
+            1.0,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(matches!(inst, TimelinePayload::Empty));
+    }
 
     #[test]
     fn upload_mode_skips_idle_and_flags_hover() {
