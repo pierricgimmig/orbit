@@ -15,3 +15,5 @@ libc = "0.2"
 orbit-perf-merge = { path = "../orbit-perf-merge" }
 orbit-perf-records = { path = "../orbit-perf-records" }
 orbit-perf-ring = { path = "../orbit-perf-ring" }
+orbit-tracing-state = { path = "../orbit-tracing-state" }
+orbit-wire = { path = "../orbit-wire" }

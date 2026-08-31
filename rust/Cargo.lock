@@ -211,6 +211,8 @@ dependencies = [
  "orbit-perf-merge",
  "orbit-perf-records",
  "orbit-perf-ring",
+ "orbit-tracing-state",
+ "orbit-wire",
 ]
 
 [[package]]

@@ -15,7 +15,9 @@
 #![deny(unsafe_code)]
 
 pub mod processor;
+pub mod scheduling;
 pub mod run;
 
 pub use processor::{OrderedProcessor, ProcessorStats};
+pub use scheduling::SchedulingPipeline;
 pub use run::{EventLoop, LoopStats, RecordHandler};
