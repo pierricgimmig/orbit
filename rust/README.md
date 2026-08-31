@@ -86,6 +86,12 @@ libunwindstack-welded classes (`UprobesReturnAddressManager`,
 `LeafFunctionCallManager`) run their logic in `orbit-tracing-state` behind
 the shared backend switch, engines reached through callbacks.
 
+`crates/orbit-ptrace` is the ptrace substrate of user-space instrumentation:
+attach/detach a process, read and write a tracee's memory, find an
+executable region. Verified by a live attach/write/read-back round trip and
+a region-scan differential; it returns idiomatic io::Errors rather than
+reproducing OrbitBase's error strings.
+
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
 ones, the input unchanged otherwise.

@@ -292,6 +292,40 @@ cc_library(
     deps = [":orbit_perf_ring_ffi_rust"],
 )
 
+# --------------------------------------------------------- orbit-ptrace
+
+rust_library(
+    name = "orbit_ptrace",
+    srcs = glob(["crates/orbit-ptrace/src/**/*.rs"]),
+    crate_root = "crates/orbit-ptrace/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_maps"] + all_crate_deps(package_name = "rust/crates/orbit-ptrace"),
+)
+
+rust_test(
+    name = "orbit_ptrace_test",
+    size = "small",
+    crate = ":orbit_ptrace",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_ptrace_ffi_rust",
+    srcs = glob(["ffi/orbit-ptrace-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-ptrace-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_ptrace"],
+)
+
+cc_library(
+    name = "orbit_ptrace_ffi",
+    hdrs = ["ffi/orbit-ptrace-ffi/include/orbit_ptrace_ffi.h"],
+    includes = ["ffi/orbit-ptrace-ffi/include"],
+    deps = [":orbit_ptrace_ffi_rust"],
+)
+
 # ---------------------------------------------------------- orbit-unwind
 
 rust_library(

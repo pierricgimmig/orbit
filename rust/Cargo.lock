@@ -265,6 +265,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-ptrace"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "orbit-maps",
+]
+
+[[package]]
+name = "orbit-ptrace-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbit-ptrace",
+]
+
+[[package]]
 name = "orbit-thread-states"
 version = "0.1.0"
 

@@ -1,0 +1,48 @@
+Phase 6a -- the ptrace substrate (2026-08-31)
+=============================================
+
+What: the foundation of user-space instrumentation, ported to
+rust/crates/orbit-ptrace: stop a process by attaching ptrace to all its
+threads, read and write a stopped tracee's memory through /proc/<pid>/mem,
+and find an executable region to borrow. Twin of Attach.cpp and
+AccessTraceesMemory.cpp. One dependency: libc (plus orbit-maps for the
+region scan, reused from Phase 1).
+
+A deliberate departure from the earlier dual-backend ports: this crate does
+NOT reproduce the C++'s exact ErrorMessage strings. Those strings belong to
+OrbitBase, and the blog's thesis is against re-implementing error types
+across the boundary. So instead of wiring into the C++ test (whose
+EXPECT_THATs grep for "Unable to open file" etc.), this port is verified on
+its own terms.
+
+How it is verified
+------------------
+1. A live round trip (Rust unit test): fork a child that mmaps a page,
+   passes its address back through a pipe, and spins on the first byte.
+   The Rust side attaches, reads the byte (0xAA), writes 0x42, reads it
+   back, scans for an executable region, and detaches -- and the child,
+   resumed, sees 0x42 and exits with that code. This exercises attach +
+   write + read + region-scan + detach against a real tracee, with the
+   tracee confirming the write landed.
+2. A region-scan differential (executable_region_differential.cpp): fork a
+   sleeping child (stable maps, no ptrace needed), and compare the region
+   the C++ GetExistingExecutableMemoryRegion picks against the Rust scan,
+   for exclude=0 and for addresses inside the C++-chosen region. IDENTICAL
+   in 5/5 runs. Sabotage: dropping the [vsyscall]/[uprobes] skip made Rust
+   pick [vsyscall] (the highest address of all) -> DIVERGENT.
+
+Design notes worth recording
+----------------------------
+- /proc/<pid>/mem does whole-or-nothing reads within a mapping and fails
+  with EIO across an unmapped page; read_exact surfaces exactly that, so no
+  short-read handling is needed (matching the C++'s reliance on it).
+- attach loops until the thread set is stable, catching threads spawned
+  mid-attach, and converges `halted` onto the live set so a thread that
+  appears and vanishes cannot wedge the loop.
+
+Remaining for Phase 6, in rising order of difficulty: AllocateInTracee
+(mmap/munmap in the tracee via injected syscalls), RegisterState
+(GETREGSET/SETREGSET), and the big one -- Trampoline.cpp, 1288 lines of
+x86-64 instruction relocation. That last is the hardest single file in the
+whole port and will want capstone (the disassembler the C++ already uses)
+or an equivalent Rust crate; it is where Phase 6 will slow down.

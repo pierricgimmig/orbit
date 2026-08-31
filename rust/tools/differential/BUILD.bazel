@@ -59,3 +59,14 @@ cc_binary(
         "//src/LinuxTracing",
     ],
 )
+
+cc_binary(
+    name = "executable_region_differential",
+    srcs = ["executable_region_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_ptrace_ffi",
+        "//src/UserSpaceInstrumentation",
+    ],
+)
