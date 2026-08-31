@@ -227,6 +227,28 @@ cc_library(
     deps = [":orbit_perf_records_ffi_rust"],
 )
 
+# ------------------------------------------------------ orbit-collector
+
+rust_library(
+    name = "orbit_collector",
+    srcs = glob(["crates/orbit-collector/src/**/*.rs"]),
+    crate_root = "crates/orbit-collector/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_perf_merge",
+        ":orbit_perf_records",
+        ":orbit_perf_ring",
+    ] + all_crate_deps(package_name = "rust/crates/orbit-collector"),
+)
+
+rust_test(
+    name = "orbit_collector_test",
+    size = "small",
+    crate = ":orbit_collector",
+    edition = ORBIT_RUST_EDITION,
+)
+
 # ------------------------------------------------------ orbit-perf-ring
 
 rust_library(

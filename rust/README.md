@@ -74,6 +74,10 @@ attr construction, and the mmap ring-buffer protocol, with unsafe confined
 to its `sys` module and one dependency (`libc`). Verified against the C++
 path by `rust/tools/differential/perf_ring_differential.cpp`.
 
+`crates/orbit-collector` is the event loop: TracerImpl's round-robin and
+delayed ordered processing, composing the ported crates natively -- the
+first FFI-free path from kernel bytes to ordered records.
+
 `shims/Demangle` is Orbit's replacement for `llvm::demangle`:
 `abi::__cxa_demangle` for Itanium names, `msvc-demangler` for `?`-prefixed
 ones, the input unchanged otherwise.
