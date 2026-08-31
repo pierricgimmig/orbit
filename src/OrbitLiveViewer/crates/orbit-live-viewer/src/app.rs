@@ -129,6 +129,12 @@ fn touch_vscroll_target(current: f32, drag_y: f32, max: f32) -> f32 {
     crate::vscroll::drag_offset(current, drag_y, max)
 }
 
+/// Phone-width (and real fingers) move the track list; a mouse on a wide
+/// desktop window keeps panning time only.
+fn vscroll_from_primary_drag(any_touches: bool, narrow: bool) -> bool {
+    any_touches || narrow
+}
+
 fn consume_scroll_y(ctx: &Context) {
     ctx.input_mut(|i| {
         i.raw_scroll_delta.y = 0.0;
@@ -3240,7 +3246,8 @@ impl OrbitLiveApp {
         if response.drag_started_by(PointerButton::Primary) {
             // Click or a new drag grabs the list immediately (kills a coast).
             self.vscroll.cancel();
-            if touch_vpan && ctx.input(|i| i.any_touches()) {
+            let y_drag = vscroll_from_primary_drag(ctx.input(|i| i.any_touches()), self.was_narrow);
+            if touch_vpan && y_drag {
                 self.vscroll.begin_drag();
             }
         }
@@ -3251,10 +3258,12 @@ impl OrbitLiveApp {
             self.apply_pan_window(self.t0 + dt, self.t0 + dt + span);
             // A tablet has no wheel, and this drag never reaches the lane
             // ScrollArea's own drag-to-scroll because the timeline body claims
-            // it first -- so one finger pans both axes. Touch only: a mouse
-            // drag keeps panning time alone. Pinch is zoom, not a Y flick.
+            // it first -- so one finger pans both axes. Touch, or a phone-width
+            // window (DevTools device mode often reports the pointer as a
+            // mouse), also moves Y. A mouse on a wide desktop pans time only.
             let pinch = ctx.input(|i| i.multi_touch().is_some());
-            if touch_vpan && !pinch && ctx.input(|i| i.any_touches()) {
+            let y_drag = vscroll_from_primary_drag(ctx.input(|i| i.any_touches()), self.was_narrow);
+            if touch_vpan && !pinch && y_drag {
                 if !self.vscroll.is_dragging() {
                     self.vscroll.begin_drag();
                 }
@@ -5647,6 +5656,13 @@ mod tests {
     }
 
     #[test]
+    fn phone_or_finger_drag_moves_the_track_list() {
+        assert!(vscroll_from_primary_drag(true, false));
+        assert!(vscroll_from_primary_drag(false, true));
+        assert!(vscroll_from_primary_drag(true, true));
+        assert!(!vscroll_from_primary_drag(false, false));
+    }
+
     fn touch_vscroll_follows_the_finger_and_clamps_at_top() {
         // Finger down -> see earlier lanes -> smaller offset.
         assert_eq!(touch_vscroll_target(100.0, 30.0, 1000.0), 70.0);
