@@ -33,6 +33,13 @@
 
 ABSL_FLAG(uint64_t, grpc_port, 44765, "gRPC server port");
 
+ABSL_FLAG(uint64_t, http_port, 44766,
+          "HTTP port for the embedded WASM live viewer (0 disables the viewer)");
+ABSL_FLAG(uint64_t, ring_buffer_bytes, 64ull * 1024 * 1024,
+          "In-process live-event ring buffer size in bytes");
+ABSL_FLAG(std::string, spill_path, "",
+          "Optional directory where the live ring serializes overflow events");
+
 ABSL_FLAG(bool, producer_side_server, true,
           "Start the producer-side server: set it to false if you need to start a second instance "
           "of OrbitService");
@@ -103,12 +110,16 @@ int main(int argc, char** argv) {
 
   InstallSigintHandler();
 
-  const uint16_t grpc_port = absl::GetFlag(FLAGS_grpc_port);
+  const uint16_t grpc_port = static_cast<uint16_t>(absl::GetFlag(FLAGS_grpc_port));
+  const uint16_t http_port = static_cast<uint16_t>(absl::GetFlag(FLAGS_http_port));
+  const uint64_t ring_buffer_bytes = absl::GetFlag(FLAGS_ring_buffer_bytes);
+  const std::string spill_path = absl::GetFlag(FLAGS_spill_path);
   const bool start_producer_side_server = absl::GetFlag(FLAGS_producer_side_server);
   const bool dev_mode = absl::GetFlag(FLAGS_devmode);
 
   exit_requested = false;
-  orbit_service::OrbitService service{grpc_port, start_producer_side_server, dev_mode};
+  orbit_service::OrbitService service{
+      grpc_port, http_port, ring_buffer_bytes, spill_path, start_producer_side_server, dev_mode};
   auto result = service.Run(&exit_requested);
 
   if (!result.has_error()) return 0;
