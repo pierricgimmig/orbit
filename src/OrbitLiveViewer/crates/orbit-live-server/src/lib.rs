@@ -79,6 +79,12 @@ pub struct LiveService {
     pub demo: AtomicBool,
     pub self_profile: AtomicBool,
     pub hooks: Mutex<Option<ControlHooks>>,
+    /// Optional: aggregates sampled callstacks over a time range into a
+    /// sampling report. Set separately from `ControlHooks` so a service that
+    /// does not sample (or predates this) needs no change.
+    #[allow(clippy::type_complexity)]
+    pub sampling_report:
+        Mutex<Option<std::sync::Arc<dyn Fn(u64, u64) -> Result<String, String> + Send + Sync>>>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
@@ -135,6 +141,7 @@ impl LiveService {
             demo: AtomicBool::new(false),
             self_profile: AtomicBool::new(self_on),
             hooks: Mutex::new(None),
+            sampling_report: Mutex::new(None),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
@@ -302,6 +309,16 @@ impl LiveService {
         let r = f();
         self.emit_server_scope(name_id, t0.elapsed().as_nanos() as u64);
         r
+    }
+
+    /// Installs the sampling-report aggregator used by
+    /// `GET /api/sampling/report`.
+    #[allow(clippy::type_complexity)]
+    pub fn set_sampling_report(
+        &self,
+        report: std::sync::Arc<dyn Fn(u64, u64) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_report.lock() = Some(report);
     }
 
     pub fn set_hooks(&self, hooks: ControlHooks) {

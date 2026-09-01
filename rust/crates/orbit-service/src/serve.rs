@@ -15,6 +15,7 @@
 //! `LiveEvent`s, which is what the timeline renders. The mapping is direct:
 //! a slice is a `SCHEDULING_SLICE` on (pid, tid) with the core in `extra`.
 
+use crate::report::{SampleStore, StoredSample};
 use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, LiveEvent};
 use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
@@ -39,13 +40,14 @@ const FRAME_NAME_ID_BASE: u32 = 1 << 20;
 /// LiveEvent carries. The viewer renders the name; we only allocate ids.
 struct FrameNames {
     service: Arc<LiveService>,
+    store: Arc<SampleStore>,
     ids: HashMap<String, u32>,
     next: u32,
 }
 
 impl FrameNames {
-    fn new(service: Arc<LiveService>) -> FrameNames {
-        FrameNames { service, ids: HashMap::new(), next: FRAME_NAME_ID_BASE }
+    fn new(service: Arc<LiveService>, store: Arc<SampleStore>) -> FrameNames {
+        FrameNames { service, store, ids: HashMap::new(), next: FRAME_NAME_ID_BASE }
     }
 
     fn id_for(&mut self, name: &str) -> u32 {
@@ -54,7 +56,10 @@ impl FrameNames {
         }
         let id = self.next;
         self.next += 1;
+        // Both sides need the mapping: the viewer to draw the label, the
+        // report to name the row.
         self.service.intern_id(id, name);
+        self.store.record_name(id, name);
         self.ids.insert(name.to_string(), id);
         id
     }
@@ -98,11 +103,16 @@ fn list_processes_json() -> Result<String, String> {
 /// The capture loop the Record button starts: read per-CPU context-switch
 /// rings, pair them into scheduling slices, and push each slice into the
 /// viewer's ring so it appears on the timeline as it happens.
-fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid: i32) {
+fn capture_loop(
+    service: Arc<LiveService>,
+    running: Arc<AtomicBool>,
+    target_pid: i32,
+    store: Arc<SampleStore>,
+) {
     // Sampling follows the chosen process; scheduling is machine-wide.
     const SAMPLE_HZ: u64 = 1000;
     let period_ns = 1_000_000_000 / SAMPLE_HZ;
-    let mut names = FrameNames::new(service.clone());
+    let mut names = FrameNames::new(service.clone(), store.clone());
     let mut symbolizer = Symbolizer::for_pid(target_pid);
     if symbolizer.module_count() > 0 {
         eprintln!(
@@ -227,8 +237,20 @@ fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid:
                     // frames[0] is the sampled pc; a flame graph stacks the
                     // outermost caller at depth 0, so walk them in reverse.
                     let depth_count = outcome.frames.len().min(u8::MAX as usize);
-                    for (index, pc) in outcome.frames.iter().take(depth_count).rev().enumerate() {
-                        let name_id = names.id_for(&symbolizer.resolve(*pc));
+                    // Innermost-first ids, for the report's self/inclusive
+                    // counts; the timeline spans below want them reversed.
+                    let frame_ids: Vec<u32> = outcome
+                        .frames
+                        .iter()
+                        .take(depth_count)
+                        .map(|pc| names.id_for(&symbolizer.resolve(*pc)))
+                        .collect();
+                    store.push(StoredSample {
+                        timestamp_ns: sample.time,
+                        tid: sample.tid,
+                        frames: frame_ids.clone(),
+                    });
+                    for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
                         batch.push(LiveEvent {
                             start_ns: sample.time,
                             duration_ns: period_ns,
@@ -267,12 +289,19 @@ pub fn run(port: u16) -> Result<(), String> {
     };
     let service = LiveService::new(config)?;
 
+    let store = Arc::new(SampleStore::new());
+    let report_store = store.clone();
+    service.set_sampling_report(Arc::new(move |start_ns, end_ns| {
+        Ok(report_store.report_json(start_ns, end_ns))
+    }));
+
     let capture = CaptureState {
         running: Arc::new(AtomicBool::new(false)),
         target_pid: Arc::new(AtomicI32::new(0)),
     };
 
     let start_service = service.clone();
+    let start_store = store.clone();
     let start_running = capture.running.clone();
     let start_pid = capture.target_pid.clone();
     let stop_running = capture.running.clone();
@@ -291,9 +320,13 @@ pub fn run(port: u16) -> Result<(), String> {
             start_pid.store(pid, Ordering::SeqCst);
             let service = start_service.clone();
             let running = start_running.clone();
+            // A new capture replaces the previous one's samples, so a report
+            // describes the capture you are looking at.
+            start_store.clear();
+            let store = start_store.clone();
             std::thread::Builder::new()
                 .name("orbit-capture".to_string())
-                .spawn(move || capture_loop(service, running, pid))
+                .spawn(move || capture_loop(service, running, pid, store))
                 .map_err(|error| error.to_string())?;
             eprintln!("orbit-service: capture started (pid {pid})");
             Ok(())

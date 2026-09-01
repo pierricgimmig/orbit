@@ -18,6 +18,7 @@
 
 mod interner;
 mod privileges;
+mod report;
 mod serve;
 mod symbolize;
 mod sysinfo;

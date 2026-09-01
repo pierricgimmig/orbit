@@ -54,6 +54,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
+        .route("/api/sampling/report", get(sampling_report))
         .route(
             crate::theverge::THEVERGE_HTTP_PATH,
             get(theverge_trace).head(theverge_trace),
@@ -253,6 +254,40 @@ fn merge_self_processes(svc: &LiveService, json: String) -> String {
         }
     }
     serde_json::to_string(&list).unwrap_or(json)
+}
+
+/// `GET /api/sampling/report?start_ns=&end_ns=` -- aggregates the sampled
+/// callstacks inside a selection into a report. 501 when the service behind
+/// this server does not sample.
+#[derive(Deserialize)]
+pub struct ReportQuery {
+    #[serde(default)]
+    pub start_ns: u64,
+    #[serde(default)]
+    pub end_ns: u64,
+}
+
+async fn sampling_report(
+    State(svc): State<Arc<LiveService>>,
+    axum::extract::Query(query): axum::extract::Query<ReportQuery>,
+) -> Response {
+    let hook = svc.sampling_report.lock().clone();
+    match hook {
+        None => (
+            StatusCode::NOT_IMPLEMENTED,
+            "this service does not provide sampling reports",
+        )
+            .into_response(),
+        Some(report) => {
+            let end = if query.end_ns == 0 { u64::MAX } else { query.end_ns };
+            match tokio::task::spawn_blocking(move || report(query.start_ns, end)).await {
+                Ok(Ok(json)) => ([(axum::http::header::CONTENT_TYPE, "application/json")], json)
+                    .into_response(),
+                Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+                Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
