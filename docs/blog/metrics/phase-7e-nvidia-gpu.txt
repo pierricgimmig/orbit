@@ -1,0 +1,52 @@
+Phase 7e -- NVIDIA GPU tracing (2026-08-31)
+===========================================
+
+NVIDIA GPU tracing has two real paths, and both are now supported through
+the same pod GpuJob pipeline the AMD path uses.
+
+1. Open driver (nouveau / NVIDIA-open) -- tracepoints
+-----------------------------------------------------
+The open NVIDIA driver goes through the generic DRM gpu_scheduler and
+dma-fence subsystems, which emit driver-agnostic tracepoints carrying the
+same (context, seqno, timeline) three-phase shape as amdgpu:
+  submit    = drm_sched_job        (amdgpu: amdgpu_cs_ioctl)
+  scheduled = drm_run_job          (amdgpu: amdgpu_sched_run_job)
+  signaled  = dma_fence_signaled   (shared)
+So the existing correlator serves it unchanged; the gpu module is now
+explicitly multi-source (GpuSource::Amdgpu / DrmScheduler / Cupti) with
+source-neutral method names (on_job_submit / on_job_scheduled /
+on_job_signaled) alongside the amdgpu-named spellings. An NVIDIA-open job
+correlates into a GpuJob identically to an AMD one.
+
+2. Proprietary driver (CUDA) -- CUPTI
+-------------------------------------
+The proprietary NVIDIA driver emits no kernel tracepoints; the supported
+path for CUDA workloads is CUPTI, the activity API Nsight Systems uses. The
+new cupti module maps a CUPTI kernel-activity record (device, stream,
+correlation id, name, start/end GPU timestamps) into the same pod GpuJob:
+device -> context, correlation id -> seqno, "cuda:<device>:<stream>" ->
+timeline, start/end -> hardware start / signaled. Because a CUDA kernel
+arrives already correlated, it goes straight to GpuJobCorrelator::complete_
+job (depth stacking and timeline occupancy, no three-way matching).
+
+How it is verified
+------------------
+- gpu module: unit tests cover the source-neutral correlation (any arrival
+  order, busy-queue hardware-start push-back, overlapping-job depth).
+- cupti module: unit tests map a CUDA kernel to a GpuJob, stack overlapping
+  kernels by depth, and fall back to the start time when no launch record is
+  present. The pod GpuJob round-trips (orbit-wire).
+
+What is NOT built here (honestly)
+---------------------------------
+- The live libcupti activity-buffer pump (subscribe, buffer callbacks, drain
+  CUpti_ActivityKernel records). It links libcupti, a proprietary shared
+  library that would break the fully-static service binary and cannot be
+  exercised without an NVIDIA GPU. A CUDA-capable build adds that thin
+  binding and feeds each record to ingest_cuda_kernel; everything downstream
+  is here and tested.
+- Live nouveau tracepoint capture (root-gated, and no NVIDIA GPU on this
+  machine). The correlation is the verifiable core, same as the AMD path.
+
+The static musl service is unchanged (776 KB, statically linked): the NVIDIA
+additions are pure Rust logic with no new runtime dependency.

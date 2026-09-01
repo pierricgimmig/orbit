@@ -2,15 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! GPU job correlation (Phase 7), twin of `GpuTracepointVisitor`. A single
-//! GPU command-buffer submission shows up as three separate amdgpu
-//! tracepoint events, correlated by (context, seqno, timeline):
-//!   - `amdgpu_cs_ioctl`         -- userspace submitted the job (pid/tid here)
-//!   - `amdgpu_sched_run_job`    -- the driver scheduled it
-//!   - `dma_fence_signaled`      -- the GPU finished it
+//! GPU job correlation (Phase 7), twin of `GpuTracepointVisitor`, generalized
+//! across vendors. A GPU submission shows up as three phases correlated by
+//! (context, seqno, timeline):
+//!   - submit    -- userspace queued the job (pid/tid here)
+//!   - scheduled -- the driver put it on the hardware queue
+//!   - signaled  -- the GPU finished it
 //! When all three for a key have arrived (in any order) a `GpuJob` is
 //! emitted, with a hardware-start time inferred from queue occupancy and a
 //! depth assigned so overlapping jobs stack on separate timeline rows.
+//!
+//! The three phases come from different tracepoints depending on the driver,
+//! but they carry the same (context, seqno, timeline) shape, so one
+//! correlator serves them all:
+//!   - AMD (amdgpu):            amdgpu_cs_ioctl / amdgpu_sched_run_job /
+//!                              dma_fence_signaled
+//!   - NVIDIA-open (nouveau) &  drm_sched_job / drm_run_job /
+//!     any DRM gpu_scheduler:   dma_fence_signaled
+//! For the proprietary NVIDIA driver, which does not emit kernel tracepoints,
+//! CUDA kernel activity arrives already-correlated through CUPTI and is fed to
+//! `complete_job` directly -- see the `cupti` module.
+
+/// Which driver produced a GPU job. Recorded for diagnostics; the correlation
+/// itself is source-agnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuSource {
+    /// AMD amdgpu tracepoints.
+    Amdgpu,
+    /// The generic DRM gpu_scheduler tracepoints (nouveau / NVIDIA-open, i915,
+    /// and others).
+    DrmScheduler,
+    /// NVIDIA proprietary driver via CUPTI CUDA activity.
+    Cupti,
+}
 
 use std::collections::HashMap;
 
@@ -97,6 +121,83 @@ impl GpuJobCorrelator {
         let key = (context, seqno, timeline.to_vec());
         self.dma_fence_signaled.insert(key.clone(), timestamp_ns);
         self.complete(&key)
+    }
+
+    // --- source-neutral names (the amdgpu-named methods above are the AMD
+    // spelling; these are identical and read naturally for other drivers) ---
+
+    /// Submit phase (userspace queued the job). AMD: amdgpu_cs_ioctl;
+    /// NVIDIA-open / generic DRM: drm_sched_job.
+    pub fn on_job_submit(
+        &mut self,
+        pid: i32,
+        tid: i32,
+        context: u32,
+        seqno: u32,
+        timeline: &[u8],
+        timestamp_ns: u64,
+    ) -> Option<GpuJob> {
+        self.on_amdgpu_cs_ioctl(pid, tid, context, seqno, timeline, timestamp_ns)
+    }
+
+    /// Scheduled phase (driver put it on the hardware queue). AMD:
+    /// amdgpu_sched_run_job; NVIDIA-open / generic DRM: drm_run_job.
+    pub fn on_job_scheduled(
+        &mut self,
+        context: u32,
+        seqno: u32,
+        timeline: &[u8],
+        timestamp_ns: u64,
+    ) -> Option<GpuJob> {
+        self.on_amdgpu_sched_run_job(context, seqno, timeline, timestamp_ns)
+    }
+
+    /// Signaled phase (GPU finished). Shared across drivers:
+    /// dma_fence_signaled.
+    pub fn on_job_signaled(
+        &mut self,
+        context: u32,
+        seqno: u32,
+        timeline: &[u8],
+        timestamp_ns: u64,
+    ) -> Option<GpuJob> {
+        self.on_dma_fence_signaled(context, seqno, timeline, timestamp_ns)
+    }
+
+    /// A fully-known job from a source that does not need three-way
+    /// correlation (CUPTI gives a CUDA kernel's submit / start / end
+    /// together). Assigns a depth and updates the timeline's occupancy the
+    /// same way the correlated path does, and returns the `GpuJob`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_job(
+        &mut self,
+        pid: i32,
+        tid: i32,
+        context: u32,
+        seqno: u32,
+        timeline: &[u8],
+        submit_time_ns: u64,
+        hardware_start_time_ns: u64,
+        signaled_time_ns: u64,
+    ) -> GpuJob {
+        let latest = self
+            .latest_dma_signal_per_timeline
+            .entry(timeline.to_vec())
+            .or_insert(0);
+        *latest = (*latest).max(signaled_time_ns);
+        let depth = self.compute_depth(timeline, submit_time_ns, signaled_time_ns);
+        GpuJob {
+            pid,
+            tid,
+            context,
+            seqno,
+            depth,
+            amdgpu_cs_ioctl_time_ns: submit_time_ns,
+            amdgpu_sched_run_job_time_ns: hardware_start_time_ns,
+            gpu_hardware_start_time_ns: hardware_start_time_ns,
+            dma_fence_signaled_time_ns: signaled_time_ns,
+            timeline: timeline.to_vec(),
+        }
     }
 
     /// Emits a `GpuJob` once all three events for `key` are present, mirroring
