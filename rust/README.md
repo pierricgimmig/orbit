@@ -103,7 +103,10 @@ relocation is byte-for-byte identical with the C++ across 888,154 real
 instructions; whole trampolines are byte-identical across 93,696 real
 function starts.
 
-`crates/orbit-service` is the all-Rust capture service entry point: sample a
+`crates/orbit-service` writes a metadata head into every capture
+(`SystemInfo`: CPU model, cores/threads, RAM, kernel, hostname, both clocks;
+`GpuInfo`: one merged record per GPU with PCI ids, VRAM, model, driver). It
+is the all-Rust capture service entry point: sample a
 process (unwind + intern callstacks), capture scheduling system-wide via
 per-CPU context-switch rings, and (where an AMD GPU is present) GPU jobs, all
 written as a pod stream. It

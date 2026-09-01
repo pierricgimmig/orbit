@@ -47,6 +47,12 @@ impl Writer {
     fn u64(&mut self, value: u64) {
         self.buffer.extend_from_slice(&value.to_le_bytes());
     }
+    /// A length-prefixed byte string.
+    fn bytes(&mut self, value: &[u8]) {
+        self.u32(value.len() as u32);
+        self.buffer.extend_from_slice(value);
+    }
+
     fn u64_slice(&mut self, values: &[u64]) {
         self.u32(values.len() as u32);
         for value in values {
@@ -153,6 +159,44 @@ impl Writer {
                 self.u32(*power_milliwatts);
                 self.u32(*sm_clock_mhz);
                 self.u32(*memory_clock_mhz);
+            }
+            Event::SystemInfo {
+                capture_start_unix_ns,
+                capture_start_monotonic_ns,
+                hostname,
+                kernel_release,
+                cpu_model,
+                cpu_cores,
+                cpu_threads,
+                ram_total_bytes,
+                page_size_bytes,
+            } => {
+                self.buffer.push(EventTag::SystemInfo as u8);
+                self.u64(*capture_start_unix_ns);
+                self.u64(*capture_start_monotonic_ns);
+                self.bytes(hostname);
+                self.bytes(kernel_release);
+                self.bytes(cpu_model);
+                self.u32(*cpu_cores);
+                self.u32(*cpu_threads);
+                self.u64(*ram_total_bytes);
+                self.u64(*page_size_bytes);
+            }
+            Event::GpuInfo {
+                device_index,
+                pci_vendor_id,
+                pci_device_id,
+                vram_total_bytes,
+                name,
+                driver_version,
+            } => {
+                self.buffer.push(EventTag::GpuInfo as u8);
+                self.u32(*device_index);
+                self.u32(*pci_vendor_id);
+                self.u32(*pci_device_id);
+                self.u64(*vram_total_bytes);
+                self.bytes(name);
+                self.bytes(driver_version);
             }
         }
     }

@@ -36,6 +36,8 @@ pub enum EventTag {
     InternedString = 5,
     GpuJob = 6,
     GpuMetrics = 7,
+    SystemInfo = 8,
+    GpuInfo = 9,
 }
 
 impl EventTag {
@@ -48,6 +50,8 @@ impl EventTag {
             5 => EventTag::InternedString,
             6 => EventTag::GpuJob,
             7 => EventTag::GpuMetrics,
+            8 => EventTag::SystemInfo,
+            9 => EventTag::GpuInfo,
             _ => return None,
         })
     }
@@ -150,6 +154,36 @@ pub enum Event {
         power_milliwatts: u32,
         sm_clock_mhz: u32,
         memory_clock_mhz: u32,
+    },
+    /// Machine context, emitted once at the head of every capture so a trace
+    /// can be interpreted long after the machine it came from is gone.
+    /// Strings are bytes: /proc content is not guaranteed UTF-8.
+    SystemInfo {
+        /// Wall-clock (UNIX epoch) nanoseconds when the capture started.
+        capture_start_unix_ns: u64,
+        /// The capture clock (CLOCK_MONOTONIC) at that same instant, so
+        /// event timestamps can be placed on a wall clock.
+        capture_start_monotonic_ns: u64,
+        hostname: Vec<u8>,
+        kernel_release: Vec<u8>,
+        cpu_model: Vec<u8>,
+        cpu_cores: u32,
+        cpu_threads: u32,
+        ram_total_bytes: u64,
+        page_size_bytes: u64,
+    },
+    /// One GPU present on the machine. Emitted by the telemetry helper when
+    /// one is running (vendor name and VRAM from the driver), otherwise by
+    /// the service from sysfs.
+    GpuInfo {
+        device_index: u32,
+        /// PCI vendor id (0x10de NVIDIA, 0x1002 AMD, 0x8086 Intel).
+        pci_vendor_id: u32,
+        pci_device_id: u32,
+        vram_total_bytes: u64,
+        /// Model name, when a driver can supply one.
+        name: Vec<u8>,
+        driver_version: Vec<u8>,
     },
 }
 

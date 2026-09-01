@@ -23,6 +23,10 @@ use orbit_wire::{Event, Writer};
 use std::io::Write;
 use std::time::Duration;
 
+fn stdout_handle() -> std::io::Stdout {
+    std::io::stdout()
+}
+
 fn now_ns() -> u64 {
     let mut timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: clock_gettime into a local. CLOCK_MONOTONIC matches the clock
@@ -69,8 +73,30 @@ fn main() {
     }
     eprintln!("orbit-gpu-helper: {device_count} device(s), polling every {interval:?}");
 
+    // Lead with GpuInfo metadata: the model name, VRAM and driver version a
+    // sysfs scan cannot supply. The service writes these into the capture
+    // head alongside its own SystemInfo.
+    {
+        let mut writer = Writer::new();
+        for index in 0..device_count {
+            let Some(info) = nvml.device_info(index) else { continue };
+            writer.write(&Event::GpuInfo {
+                device_index: index,
+                pci_vendor_id: 0x10de,
+                pci_device_id: 0,
+                vram_total_bytes: info.vram_total_bytes,
+                name: info.name,
+                driver_version: info.driver_version,
+            });
+        }
+        let mut lock = stdout_handle().lock();
+        if lock.write_all(writer.as_bytes()).is_err() || lock.flush().is_err() {
+            return;
+        }
+    }
+
     let mut sampler = NvmlSampler::new(interval, target_pid);
-    let stdout = std::io::stdout();
+    let stdout = stdout_handle();
     loop {
         let now = now_ns();
         if !sampler.is_due(now) {

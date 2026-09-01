@@ -59,6 +59,11 @@ impl<'a> Reader<'a> {
     fn u64(&mut self) -> Result<u64, ReadError> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("8 bytes")))
     }
+    fn bytes_vec(&mut self) -> Result<Vec<u8>, ReadError> {
+        let len = self.u32()? as usize;
+        Ok(self.take(len)?.to_vec())
+    }
+
     fn u64_vec(&mut self) -> Result<Vec<u64>, ReadError> {
         let count = self.u32()? as usize;
         let bytes = self.take(count.checked_mul(8).ok_or(ReadError::Truncated)?)?;
@@ -136,6 +141,25 @@ impl<'a> Reader<'a> {
                 sm_clock_mhz: self.u32()?,
                 memory_clock_mhz: self.u32()?,
             },
+            EventTag::SystemInfo => Event::SystemInfo {
+                capture_start_unix_ns: self.u64()?,
+                capture_start_monotonic_ns: self.u64()?,
+                hostname: self.bytes_vec()?,
+                kernel_release: self.bytes_vec()?,
+                cpu_model: self.bytes_vec()?,
+                cpu_cores: self.u32()?,
+                cpu_threads: self.u32()?,
+                ram_total_bytes: self.u64()?,
+                page_size_bytes: self.u64()?,
+            },
+            EventTag::GpuInfo => Event::GpuInfo {
+                device_index: self.u32()?,
+                pci_vendor_id: self.u32()?,
+                pci_device_id: self.u32()?,
+                vram_total_bytes: self.u64()?,
+                name: self.bytes_vec()?,
+                driver_version: self.bytes_vec()?,
+            },
         };
         Ok(Some(event))
     }
@@ -178,6 +202,21 @@ mod tests {
                 process_memory_used_bytes: 1 << 30,
                 temperature_celsius: 71, power_milliwatts: 220_000,
                 sm_clock_mhz: 2520, memory_clock_mhz: 10501,
+            },
+            Event::SystemInfo {
+                capture_start_unix_ns: 1_700_000_000_000_000_000,
+                capture_start_monotonic_ns: 12_345,
+                hostname: b"workstation".to_vec(),
+                kernel_release: b"7.0.0-30-generic".to_vec(),
+                cpu_model: b"AMD Ryzen 9 7950X 16-Core Processor".to_vec(),
+                cpu_cores: 16, cpu_threads: 32,
+                ram_total_bytes: 64 << 30, page_size_bytes: 4096,
+            },
+            Event::GpuInfo {
+                device_index: 0, pci_vendor_id: 0x10de, pci_device_id: 0x2684,
+                vram_total_bytes: 24 << 30,
+                name: b"NVIDIA GeForce RTX 4090".to_vec(),
+                driver_version: b"595.84".to_vec(),
             },
         ]
     }

@@ -77,6 +77,8 @@ pub struct Nvml {
     device_get_power: unsafe extern "C" fn(Device, *mut c_uint) -> c_int,
     device_get_clock: unsafe extern "C" fn(Device, c_uint, *mut c_uint) -> c_int,
     device_get_processes: Option<unsafe extern "C" fn(Device, *mut c_uint, *mut ProcessInfoV3) -> c_int>,
+    device_get_name: Option<unsafe extern "C" fn(Device, *mut c_char, c_uint) -> c_int>,
+    system_get_driver_version: Option<unsafe extern "C" fn(*mut c_char, c_uint) -> c_int>,
     shutdown: unsafe extern "C" fn() -> c_int,
 }
 
@@ -144,6 +146,10 @@ impl Nvml {
                 // per-process attribution.
                 device_get_processes: symbol(handle, "nvmlDeviceGetComputeRunningProcesses_v3")
                     .map(|p| std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Device, *mut c_uint, *mut ProcessInfoV3) -> c_int>(p)),
+                device_get_name: symbol(handle, "nvmlDeviceGetName")
+                    .map(|p| std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Device, *mut c_char, c_uint) -> c_int>(p)),
+                system_get_driver_version: symbol(handle, "nvmlSystemGetDriverVersion")
+                    .map(|p| std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_char, c_uint) -> c_int>(p)),
                 shutdown: required!(handle, "nvmlShutdown", unsafe extern "C" fn() -> c_int),
                 handle,
             };
@@ -254,6 +260,57 @@ impl Nvml {
                 .collect()
         }
     }
+}
+
+/// Static description of a device, for the capture's GpuInfo metadata.
+pub struct DeviceInfo {
+    pub name: Vec<u8>,
+    pub vram_total_bytes: u64,
+    pub driver_version: Vec<u8>,
+}
+
+impl Nvml {
+    /// Model name, VRAM size and driver version for one device.
+    pub fn device_info(&self, index: u32) -> Option<DeviceInfo> {
+        // SAFETY: bound entry points; buffers are sized per the NVML headers
+        // and the results are read back only up to the first NUL.
+        unsafe {
+            let mut device: Device = std::ptr::null_mut();
+            if (self.device_get_handle)(index, &mut device) != NVML_SUCCESS || device.is_null() {
+                return None;
+            }
+            let name = self
+                .device_get_name
+                .and_then(|get_name| {
+                    let mut buffer = [0i8; 96]; // NVML_DEVICE_NAME_V2_BUFFER_SIZE
+                    (get_name(device, buffer.as_mut_ptr(), buffer.len() as c_uint) == NVML_SUCCESS)
+                        .then(|| cstr_bytes(&buffer))
+                })
+                .unwrap_or_default();
+            let driver_version = self
+                .system_get_driver_version
+                .and_then(|get_version| {
+                    let mut buffer = [0i8; 80];
+                    (get_version(buffer.as_mut_ptr(), buffer.len() as c_uint) == NVML_SUCCESS)
+                        .then(|| cstr_bytes(&buffer))
+                })
+                .unwrap_or_default();
+            let vram_total_bytes = self
+                .sample_device(index, 0)
+                .and_then(|sample| sample.memory_total_bytes)
+                .unwrap_or(0);
+            Some(DeviceInfo { name, vram_total_bytes, driver_version })
+        }
+    }
+}
+
+/// The bytes of a NUL-terminated buffer, up to the terminator.
+fn cstr_bytes(buffer: &[c_char]) -> Vec<u8> {
+    buffer
+        .iter()
+        .take_while(|&&byte| byte != 0)
+        .map(|&byte| byte as u8)
+        .collect()
 }
 
 impl Drop for Nvml {

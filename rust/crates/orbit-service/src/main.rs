@@ -17,6 +17,7 @@
 //! at perf_event_paranoid <= 1.
 
 mod interner;
+mod sysinfo;
 mod telemetry;
 
 use interner::CallstackInterner;
@@ -29,6 +30,7 @@ use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
 use orbit_unwind::unwinder::StartRegs;
 use orbit_unwind::ProcessUnwinder;
 use orbit_wire::{CallstackType, Event, Writer};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -169,6 +171,17 @@ fn main() {
     };
 
     let mut writer = Writer::new();
+    // Machine context is assembled separately and prepended when the capture
+    // is written, so it sits at the head of the stream as one block AND can
+    // absorb the richer GpuInfo a telemetry helper reports for its devices --
+    // one merged record per GPU rather than a sysfs one and a helper one.
+    let system_info = sysinfo::system_info(unix_now_ns(), now_monotonic_ns());
+    let mut gpu_info: BTreeMap<u32, Event> = BTreeMap::new();
+    for event in sysinfo::gpu_info_from_sysfs() {
+        if let Event::GpuInfo { device_index, .. } = event {
+            gpu_info.insert(device_index, event);
+        }
+    }
     let mut interner = CallstackInterner::new();
     let mut samples = 0u64;
     let mut interned = 0u64;
@@ -202,7 +215,13 @@ fn main() {
         }
         if let Some(helper) = gpu_helper.as_mut() {
             for event in helper.drain() {
-                writer.write(&event);
+                match event {
+                    // A helper knows the model name, VRAM and driver version
+                    // that sysfs cannot report; sysfs knows the PCI ids the
+                    // helper does not. Keep the best of each.
+                    Event::GpuInfo { .. } => merge_gpu_info(&mut gpu_info, event),
+                    other => writer.write(&other),
+                }
             }
         }
         for switch_ring in switch_rings.iter_mut() {
@@ -282,8 +301,13 @@ fn main() {
     if let Some(helper) = gpu_helper.take() {
         gpu_events = helper.events_received();
         for event in helper.shutdown() {
-            writer.write(&event);
-            gpu_events += 1;
+            match event {
+                Event::GpuInfo { .. } => merge_gpu_info(&mut gpu_info, event),
+                other => {
+                    writer.write(&other);
+                    gpu_events += 1;
+                }
+            }
         }
     }
     std::hint::black_box(busy_accumulator);
@@ -292,7 +316,14 @@ fn main() {
         let _ = worker.join();
     }
 
-    let bytes = writer.into_bytes();
+    // The capture head: SystemInfo, then one GpuInfo per device, then events.
+    let mut capture = Writer::new();
+    capture.write(&system_info);
+    for event in gpu_info.values() {
+        capture.write(event);
+    }
+    let mut bytes = capture.into_bytes();
+    bytes.extend_from_slice(writer.as_bytes());
     let out_path = args.out.unwrap_or_else(|| "orbit-capture.pod".to_string());
     match std::fs::File::create(&out_path).and_then(|mut file| file.write_all(&bytes)) {
         Ok(()) => {}
@@ -315,6 +346,84 @@ fn main() {
         eprintln!("orbit-service: warning: no samples captured");
         std::process::exit(1);
     }
+}
+
+/// Folds a helper-reported GpuInfo into what sysfs found for the same device:
+/// PCI ids come from sysfs (the helper does not report them), while the model
+/// name, VRAM size and driver version come from the helper, which is the only
+/// side that can know them.
+fn merge_gpu_info(existing: &mut BTreeMap<u32, Event>, incoming: Event) {
+    let Event::GpuInfo {
+        device_index,
+        pci_vendor_id,
+        pci_device_id,
+        vram_total_bytes,
+        name,
+        driver_version,
+    } = incoming
+    else {
+        return;
+    };
+    match existing.get_mut(&device_index) {
+        Some(Event::GpuInfo {
+            device_index: _,
+            pci_vendor_id: existing_vendor,
+            pci_device_id: existing_device,
+            vram_total_bytes: existing_vram,
+            name: existing_name,
+            driver_version: existing_driver,
+        }) => {
+            if *existing_vendor == 0 {
+                *existing_vendor = pci_vendor_id;
+            }
+            if *existing_device == 0 {
+                *existing_device = pci_device_id;
+            }
+            if vram_total_bytes != 0 {
+                *existing_vram = vram_total_bytes;
+            }
+            // The sysfs name is only a vendor string; a real model name wins.
+            if !name.is_empty() {
+                *existing_name = name;
+            }
+            if !driver_version.is_empty() {
+                *existing_driver = driver_version;
+            }
+        }
+        _ => {
+            existing.insert(
+                device_index,
+                Event::GpuInfo {
+                    device_index,
+                    pci_vendor_id,
+                    pci_device_id,
+                    vram_total_bytes,
+                    name,
+                    driver_version,
+                },
+            );
+        }
+    }
+}
+
+/// Wall-clock nanoseconds since the UNIX epoch, for anchoring the capture.
+fn unix_now_ns() -> u64 {
+    let mut timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: clock_gettime into a local.
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_REALTIME, &mut timespec);
+    }
+    timespec.tv_sec as u64 * 1_000_000_000 + timespec.tv_nsec as u64
+}
+
+/// The capture clock (CLOCK_MONOTONIC), the one perf event timestamps use.
+fn now_monotonic_ns() -> u64 {
+    let mut timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: clock_gettime into a local.
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timespec);
+    }
+    timespec.tv_sec as u64 * 1_000_000_000 + timespec.tv_nsec as u64
 }
 
 /// Online CPU count, for sizing the self-mode worker pool. Falls back to 4.
