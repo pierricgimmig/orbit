@@ -581,6 +581,10 @@ pub struct OrbitLiveApp {
     vscroll: VScrollInertia,
     vscroll_max: f32,
     measure: Option<TimeMeasure>,
+    /// The sampling report for the current selection, and the range it covers,
+    /// so an unchanged selection is not refetched every frame.
+    sampling: Option<crate::net::SamplingReport>,
+    sampling_range: Option<(u64, u64)>,
     measure_dragging: bool,
     idle_skip_chrome: bool,
     last_n_prims: u32,
@@ -714,6 +718,8 @@ impl OrbitLiveApp {
             vscroll: VScrollInertia::default(),
             vscroll_max: 0.0,
             measure: None,
+            sampling: None,
+            sampling_range: None,
             measure_dragging: false,
             idle_skip_chrome: false,
             last_n_prims: 0,
@@ -1330,6 +1336,9 @@ impl OrbitLiveApp {
         }
         if let Some(p) = inbox.processes {
             self.apply_process_list(p);
+        }
+        if let Some(r) = inbox.sampling {
+            self.sampling = Some(r);
         }
         if let Some(s) = inbox.symbols {
             self.symbols = s;
@@ -3755,6 +3764,97 @@ impl OrbitLiveApp {
         .filter(|p| p.kind != kind::VALUE)
     }
 
+    /// Asks the service for a report whenever the selection changes. An
+    /// unchanged selection is not refetched, so dragging the view around does
+    /// not hammer the endpoint.
+    fn refresh_sampling_report(&mut self) {
+        let range = self.measure.map(|m| {
+            let (a, b) = (m.start_ns.min(m.stop_ns), m.start_ns.max(m.stop_ns));
+            (a, b)
+        });
+        if range == self.sampling_range {
+            return;
+        }
+        self.sampling_range = range;
+        match range {
+            Some((start, end)) => self.net.get_sampling_report(start, end),
+            // No selection: drop the report rather than leave a stale one
+            // describing a range the user can no longer see.
+            None => self.sampling = None,
+        }
+    }
+
+    /// The sampling report for the current selection: self and inclusive
+    /// percentages per function, hottest first, the pair Orbit shows.
+    fn sampling_panel(&mut self, ctx: &Context) {
+        let Some(report) = self.sampling.clone() else { return };
+        if self.measure.is_none() {
+            return;
+        }
+        egui::TopBottomPanel::bottom("orbit_sampling_report")
+            .resizable(true)
+            .default_height(180.0)
+            .frame(
+                Frame::new()
+                    .fill(theme::PANEL)
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .stroke(Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                let span_ms = (report.end_ns.saturating_sub(report.start_ns)) as f64 / 1e6;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Sampling report — {} samples", report.samples))
+                            .color(theme::TEXT)
+                            .size(12.0),
+                    );
+                    ui.label(
+                        RichText::new(format!("over {span_ms:.1} ms"))
+                            .color(theme::MUTED)
+                            .size(11.0),
+                    );
+                });
+                if report.samples == 0 {
+                    ui.label(
+                        RichText::new("No samples in this selection.")
+                            .color(theme::MUTED)
+                            .size(11.0),
+                    );
+                    return;
+                }
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Grid::new("orbit_sampling_rows")
+                        .num_columns(3)
+                        .spacing([16.0, 2.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("self").color(theme::MUTED).size(10.5));
+                            ui.label(RichText::new("incl").color(theme::MUTED).size(10.5));
+                            ui.label(RichText::new("function").color(theme::MUTED).size(10.5));
+                            ui.end_row();
+                            for row in report.rows.iter().take(200) {
+                                ui.label(
+                                    RichText::new(format!("{:.1}%", row.self_percent))
+                                        .color(theme::TEXT)
+                                        .monospace()
+                                        .size(11.0),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{:.1}%", row.inclusive_percent))
+                                        .color(theme::MUTED)
+                                        .monospace()
+                                        .size(11.0),
+                                );
+                                ui.label(
+                                    RichText::new(&row.name).color(theme::TEXT).size(11.0),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                });
+            });
+    }
+
     fn nudge_selection(&mut self, dir: isize) {
         let Some(sel) = self.selected else {
             return;
@@ -3979,6 +4079,9 @@ impl eframe::App for OrbitLiveApp {
                     .frame(Frame::new().fill(theme::RAIL).inner_margin(0))
                     .show(ctx, |_| {});
             }
+
+            self.refresh_sampling_report();
+            self.sampling_panel(ctx);
 
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))

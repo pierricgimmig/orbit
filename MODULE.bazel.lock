@@ -718,7 +718,7 @@
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "FILE:@@//third_party/py-spy-ffi/Cargo.lock 0bce65c427cc41a1af3e4c36003cd0eabe58810d2d0608be85408bff76616642",
           "FILE:@@//third_party/py-spy-ffi/Cargo.toml 53db3d3de107089dc7f52e27f00c4d015cb93d063f1ff768e47f6d64e8ecf8f5",
-          "FILE:@@//rust/Cargo.lock 012afddcf2a6d8da4d0c0668203eab172818e21fa4a4fbbdd245e3ebc0fd52fb",
+          "FILE:@@//rust/Cargo.lock f124192c9a8b88e11e7dbc3e6009f6cff1152c3ec9ef36021393fb53d875f907",
           "FILE:@@//rust/Cargo.toml 2b96d82c776de9da8003ab96449d8a1ac730ff872b8962235806bc78a2c4748a",
           "FILE:@@//rust/crates/orbit-collector/Cargo.toml c35b9c5759f11389bd53184bca7d5c1ce0990908948cb62e7b51662c3b3f3944",
           "FILE:@@//rust/crates/orbit-perf-merge/Cargo.toml ef2fbdcae056cb23d2ff8a9b49a369cfdf2facbf25d08fb92c05598848f85b29",

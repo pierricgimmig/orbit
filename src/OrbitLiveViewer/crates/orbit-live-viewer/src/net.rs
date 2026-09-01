@@ -52,6 +52,25 @@ pub struct ProcessJson {
     pub path: String,
 }
 
+/// One row of `GET /api/sampling/report`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SamplingRow {
+    pub name: String,
+    pub self_count: u64,
+    pub inclusive_count: u64,
+    pub self_percent: f32,
+    pub inclusive_percent: f32,
+}
+
+/// The whole report for one selection.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SamplingReport {
+    pub samples: u64,
+    pub start_ns: u64,
+    pub end_ns: u64,
+    pub rows: Vec<SamplingRow>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct SymbolsStatusJson {
     #[serde(default)]
@@ -140,6 +159,7 @@ pub struct Inbox {
     pub http_ok: bool,
     pub ws_ok: bool,
     pub symbols: Option<SymbolsStatusJson>,
+    pub sampling: Option<SamplingReport>,
     pub function_hits: Option<FunctionSearchJson>,
 }
 
@@ -154,6 +174,54 @@ pub fn parse_processes_json(text: &str) -> Result<Vec<ProcessJson>, String> {
 }
 
 #[allow(dead_code)]
+/// Parses the sampling report. Hand-rolled for the same reason the other
+/// responses are: the wasm bundle does not carry a JSON library.
+pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> {
+    fn number_after(hay: &str, key: &str) -> Option<f64> {
+        let at = hay.find(key)? + key.len();
+        let rest = &hay[at..];
+        let start = rest.find(|c: char| c.is_ascii_digit() || c == '-')?;
+        let tail = &rest[start..];
+        let end = tail
+            .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+            .unwrap_or(tail.len());
+        tail[..end].parse().ok()
+    }
+    let mut report = SamplingReport {
+        samples: number_after(text, "\"samples\":").unwrap_or(0.0) as u64,
+        start_ns: number_after(text, "\"start_ns\":").unwrap_or(0.0) as u64,
+        end_ns: number_after(text, "\"end_ns\":").unwrap_or(0.0) as u64,
+        rows: Vec::new(),
+    };
+    // Each row begins at a "name" key; slice to the next one so a function
+    // name containing braces cannot swallow the rest of the list.
+    let mut rest = match text.find("\"functions\"") {
+        Some(at) => &text[at..],
+        None => return Ok(report),
+    };
+    while let Some(at) = rest.find("{\"name\":\"") {
+        let row_start = at + "{\"name\":\"".len();
+        let after = &rest[row_start..];
+        let Some(name_end) = after.find('"') else { break };
+        let name = after[..name_end].to_string();
+        let tail = &after[name_end..];
+        let row_text = match tail.find("{\"name\":\"") {
+            Some(next) => &tail[..next],
+            None => tail,
+        };
+        report.rows.push(SamplingRow {
+            name,
+            self_count: number_after(row_text, "\"self\":").unwrap_or(0.0) as u64,
+            inclusive_count: number_after(row_text, "\"inclusive\":").unwrap_or(0.0) as u64,
+            self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0) as f32,
+            inclusive_percent: number_after(row_text, "\"inclusive_percent\":").unwrap_or(0.0)
+                as f32,
+        });
+        rest = &tail[row_text.len().max(1)..];
+    }
+    Ok(report)
+}
+
 pub fn parse_symbols_status_json(text: &str) -> Result<SymbolsStatusJson, String> {
     serde_json::from_str(text).map_err(|e| format!("/api/symbols/status: {e}"))
 }
@@ -295,6 +363,7 @@ mod wasm_impl {
             Inbox {
                 status: inbox.status.take(),
                 processes: inbox.processes.take(),
+                sampling: inbox.sampling.take(),
                 error: inbox.error.take(),
                 frames: std::mem::take(&mut inbox.frames),
                 timeline: inbox.timeline.take(),
@@ -411,6 +480,25 @@ mod wasm_impl {
                 match result {
                     Ok(s) => g.symbols = Some(s),
                     Err(e) => g.error = Some(e),
+                }
+            });
+        }
+
+        /// Fetches the sampling report for a selection. `end_ns` of 0 means
+        /// "to the end of the capture", which is what the server expects.
+        pub fn get_sampling_report(&self, start_ns: u64, end_ns: u64) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result =
+                    get_text(&format!("/api/sampling/report?start_ns={start_ns}&end_ns={end_ns}"))
+                        .await
+                        .and_then(|t| parse_sampling_report_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(r) => g.sampling = Some(r),
+                    // A service without sampling answers 501; that is not an
+                    // error worth showing the user on every selection.
+                    Err(_) => g.sampling = None,
                 }
             });
         }
@@ -734,6 +822,7 @@ mod native_impl {
             Inbox::default()
         }
         pub fn get_status(&self) {}
+        pub fn get_sampling_report(&self, _start_ns: u64, _end_ns: u64) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
         pub fn start_capture(&self, _req: &CaptureStart) {}
@@ -755,6 +844,53 @@ pub use native_impl::Net;
 
 #[cfg(test)]
 mod tests {
+    use super::{parse_sampling_report_json, SamplingReport};
+
+    #[test]
+    fn parses_a_sampling_report() {
+        let json = r#"{"samples":1200,"start_ns":10,"end_ns":99,"functions":[
+            {"name":"main","self":0,"inclusive":1200,"self_percent":0.0,"inclusive_percent":100.0},
+            {"name":"work","self":800,"inclusive":900,"self_percent":66.6,"inclusive_percent":75.0}]}"#;
+        let r = parse_sampling_report_json(json).unwrap();
+        assert_eq!(r.samples, 1200);
+        assert_eq!(r.start_ns, 10);
+        assert_eq!(r.end_ns, 99);
+        assert_eq!(r.rows.len(), 2);
+        assert_eq!(r.rows[0].name, "main");
+        assert_eq!(r.rows[0].self_count, 0);
+        assert_eq!(r.rows[0].inclusive_count, 1200);
+        assert_eq!(r.rows[1].name, "work");
+        assert_eq!(r.rows[1].self_count, 800);
+        assert!((r.rows[1].inclusive_percent - 75.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn an_empty_report_is_not_an_error() {
+        let r = parse_sampling_report_json(r#"{"samples":0,"functions":[]}"#).unwrap();
+        assert_eq!(r.samples, 0);
+        assert!(r.rows.is_empty());
+    }
+
+    #[test]
+    fn a_name_containing_braces_does_not_eat_the_rest_of_the_list() {
+        // C++ symbols carry all sorts of punctuation; a row must end at the
+        // next row, not at the next brace.
+        let json = r#"{"samples":2,"functions":[
+            {"name":"std::map<int, {weird}>::find","self":1,"inclusive":1,"self_percent":50.0,"inclusive_percent":50.0},
+            {"name":"other","self":1,"inclusive":1,"self_percent":50.0,"inclusive_percent":50.0}]}"#;
+        let r = parse_sampling_report_json(json).unwrap();
+        assert_eq!(r.rows.len(), 2, "got {:?}", r.rows);
+        assert_eq!(r.rows[1].name, "other");
+    }
+
+    #[test]
+    fn a_501_body_yields_an_empty_report_not_a_panic() {
+        let r: SamplingReport =
+            parse_sampling_report_json("this service does not provide sampling reports").unwrap();
+        assert_eq!(r.samples, 0);
+        assert!(r.rows.is_empty());
+    }
+
     use super::*;
 
     #[test]
