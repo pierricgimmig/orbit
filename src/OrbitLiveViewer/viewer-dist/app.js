@@ -313,8 +313,12 @@ async function tryWasm() {
     await mod.default();
     if (typeof SharedArrayBuffer !== "undefined" && typeof mod.initThreadPool === "function") {
       try {
+        // See index.html: the useful pool width is bounded by the per-frame
+        // collect/raster work, not the core count. ?threads=N overrides.
         const hw = Number(navigator.hardwareConcurrency) || 4;
-        const n = Math.max(1, Math.min(hw, 32));
+        const forced = Number(new URLSearchParams(location.search).get("threads"));
+        const want = Number.isFinite(forced) && forced > 0 ? forced : Math.min(hw, 8);
+        const n = Math.max(1, Math.min(want, 32));
         await mod.initThreadPool(n);
         if (typeof mod.markWasmPoolReady === "function") {
           mod.markWasmPoolReady(n);
