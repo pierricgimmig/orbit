@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Roadmap</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+.pri{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--copper-2)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a class="current" href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">What to fix · what to add · why</p>
+<h1>Roadmap</h1>
+<p class="lede">Priorities follow the product that exists: a Linux collector driven by a Qt viewer, with dynamic timers as the differentiator. Items that only make a leftover Stadia path prettier are last.</p>
+
+<h2><span class="pri">P0</span> — fix the collector contract</h2>
+<h3>Land a fast uprobe teardown</h3>
+<p>Merge the intent of PR #10: one tracefs registration per function, per-CPU fds as TRACEPOINT consumers, still close everything on stop. Keep the opt-in bench. Until this lands, kernel uprobes remain the “slower” method the UI apologizes for, and high-core machines punish Hook count at stop. Do not ship ParallelFor-on-close as the fix.</p>
+<h3>Capability probe at OrbitService start</h3>
+<p>Before any capture, log and expose: uprobe PMU present?, tracefs vs debugfs readable?, <code>perf_event_paranoid</code>, effective RLIMIT_NOFILE, cgroup v1/v2, user-space instrumentation available (arch + lib present). Surface this in the connection dialog. Fail <code>uprobe_type()</code> as an error event, not an exception.</p>
+<h3>Read tracefs first</h3>
+<p><code>GetTracepointId</code>: try <code>/sys/kernel/tracing/events/...</code> then debugfs. Same for any future <code>uprobe_events</code> writer. This is a small patch that restores sched/GPU on distros that never mount debugfs for unprivileged users (the service is root, but some environments only have tracefs).</p>
+
+<h2><span class="pri">P1</span> — make tests tell the truth</h2>
+<ul>
+  <li>Document a privileged job (self-hosted or sudo on a VM with <code>CONFIG_UPROBE_EVENTS</code>) that runs <code>LinuxTracingIntegrationTests</code> without <code>-E IntegrationTest</code>.</li>
+  <li>Replace <code>CheckIsStadiaInstance</code> with “AMD GPU tracepoints exist” so <code>GpuJobs</code> can run on a desktop.</li>
+  <li>Add a test that user-space failure falls back to uprobes for those function ids.</li>
+  <li>Implement or delete <code>OnThreadStateSliceCallstack</code> coverage; set thread-state pid to the real pid.</li>
+  <li>Align CI with the README: Conan 2 or system packages, not both undocumented. Bump Actions to v4.</li>
+  <li>If <code>cargo</code> is missing, do not make <code>LinuxTracing</code> hard-link <code>pyspy_ffi</code>; stub the target.</li>
+</ul>
+
+<h2><span class="pri">P1</span> — design improvements (existing paths)</h2>
+<ul>
+  <li><strong>cgroup v2 cpuset.</strong> Teach <code>GetCpusetCpus</code> the unified hierarchy so fd count matches the quota. Memory tracks should read the same.</li>
+  <li><strong>Watchdog vs cgroup memory.max.</strong> Half of host RAM is the wrong cap in Docker/k8s.</li>
+  <li><strong>Per-function uprobe errors</strong> in the capture log, not one boolean.</li>
+  <li><strong>Configurable reorder delay</strong> or flush-on-stop that drains below 333&nbsp;ms once buffers are disabled.</li>
+  <li><strong>Weighted poll.</strong> The TODO in <code>Run</code> is right: stack samples cost more than sched events.</li>
+  <li><strong>Reuse or forbid.</strong> Make <code>TracingHandler</code> reset-able, or name it <code>TracingSession</code> and construct per capture (it already is constructed in <code>DoCapture</code> — the comment is leftover fear from an older lifetime).</li>
+  <li><strong>Python:</strong> default off unless the user checks a box; detect via <code>/proc/pid/maps</code> for <code>libpython</code>, not the exe name. Add a unit test with a fake FFI.</li>
+</ul>
+
+<h2><span class="pri">P2</span> — features worth adding</h2>
+<p>Grounded in what the UI already almost does:</p>
+<table>
+  <thead><tr><th>Feature</th><th>Why it fits</th></tr></thead>
+  <tbody>
+    <tr><td>Live “kernel can / cannot” badge in the session dialog</td><td>Stops the “I hooked 40 functions and got nothing” loop.</td></tr>
+    <tr><td>Mid-capture hook of newly <code>dlopen</code>ed modules</td><td>Maps updates already exist; <code>OpenUserSpaceProbes</code> is start-only.</td></tr>
+    <tr><td>eBPF fallback / companion for uprobes on kernels where PMU close is painful</td><td>Same product (dynamic timers) without the fd tax. Large; only after the tracefs-once fix is measured.</td></tr>
+    <tr><td>Intel/NVIDIA GPU timelines</td><td>The track types exist; only AMD tracepoints are wired. i915/drm or NVTX-as-producer would reuse <code>GpuTrack</code>.</td></tr>
+    <tr><td>Frame tracks for manual API scopes</td><td>Already a filed TODO (<code>b/169554463</code>); games that only have <code>ORBIT_SCOPE</code> need it.</td></tr>
+    <tr><td>Disable sampling from the options dialog</td><td>Checkbox exists and is hidden. Useful when only timers matter.</td></tr>
+    <tr><td>ARM64 user-space trampolines — or an honest UI</td><td>Either implement <code>StubArm64</code> for real, or hide the Orbit method on aarch64 and default to uprobes.</td></tr>
+    <tr><td>Python + native stacks as first-class tracks</td><td>The FFI is in; the UI still treats them like ordinary samples. A GIL-held bar would match Orbit’s thread-state story.</td></tr>
+    <tr><td>Capture-file streaming / incremental save</td><td>Watchdog kills long captures. Writing the <code>ORBT</code> section as it goes would make “service OOM” less fatal.</td></tr>
+    <tr><td>Windows dynamic instrumentation (or delete the promise)</td><td>MinHook is already in <code>third_party/minhook</code>. Either use it or keep the README’s “deprecated” line louder in the UI.</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="pri">P3</span> — hygiene</h2>
+<ul>
+  <li>Gate <code>PrintInstanceVersions</code> cloudcast reads on the files existing, or drop them. Same for minidump path — use a flag.</li>
+  <li>Move GGP binaries behind <code>WITH_GGP</code> (default off) or delete if unused.</li>
+  <li>Strip copybara comments from the public fork, or keep them only if Google sync is still happening.</li>
+  <li>Fix <code>building_arm64.md</code> wording (uprobes ≠ trampolines).</li>
+  <li>Replace <code>DoZoom</code> global; peel a <code>CaptureController</code> out of <code>OrbitApp</code> as the existing comment asks.</li>
+  <li>Producer socket under <code>/run/orbit/</code> with explicit mode, not world-visible <code>/tmp</code>.</li>
+</ul>
+
+<h2>Suggested order of work</h2>
+<ol>
+  <li>Tracefs fallback + sysfs probes that cannot throw (days of work, high leverage).</li>
+  <li>Finish and merge the tracefs-once uprobe registration; run the bench on a real machine; paste numbers into the existing HTML report on that branch.</li>
+  <li>One privileged CI job or a documented nightly for integration tests.</li>
+  <li>cgroup v2 + watchdog that understands containers (Raspberry Pi / Docker users are already in this fork’s README).</li>
+  <li>Python as an opt-in track, FFI stub when Cargo is absent.</li>
+  <li>Then features (mid-capture hooks, non-AMD GPU, API frame tracks).</li>
+</ol>
+
+<div class="callout">
+  <strong>What not to do first.</strong> A Windows rewrite, a new capture-file version, or a track-hierarchy refactor will not make Hook/Stop trustworthy on Linux. The collector’s kernel contract is the product.
+</div>
+
+<nav class="pager">
+  <a href="audit.html">← Audit</a>
+  <span></span>
+</nav>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Symbols &amp; modules</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a class="current" href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">ELF · DWARF · PE · PDB · mmap updates</p>
+<h1>Symbols and modules</h1>
+<p class="lede">Hooking needs a file offset. Sampling needs a virtual address. The UI needs a name. Those three numbers come from different parsers that all have to agree on load bias.</p>
+
+<h2>Object files</h2>
+<p><code>orbit_object_utils::CreateObjectFile</code> (<code>src/ObjectUtils/ObjectFile.cpp</code>) dispatches on LLVM’s object-file kind:</p>
+<ul>
+  <li><code>ElfFile</code> — ELF, DWARF, GNU build-id, .symtab / .dynsym, .gnu_debuglink, .eh_frame ranges</li>
+  <li><code>CoffFile</code> — PE/COFF, export table, debug directory pointing at a PDB</li>
+  <li><code>PdbFile</code> — PDB via LLVM (<code>PdbFileLlvm</code>) or Windows DIA (<code>PdbFileDia</code>)</li>
+</ul>
+<p><code>ObjectFile</code> explains load bias carefully: ELF symbols are relative to a virtual zero that is not always the first <code>PT_LOAD</code>; PE uses <code>ImageBase</code>. <code>GetExecutableSegmentOffset</code> is the in-memory offset of <code>.text</code>. For ELF that usually matches the file offset; for PE it often does not — which is why uprobes (file offset) and sampling (absolute VA) go through <code>ModuleUtils/VirtualAndAbsoluteAddresses.h</code>.</p>
+<p>Fallback symbols: if DWARF/PDB is missing, <code>LoadDynamicLinkingSymbolsAndUnwindRangesAsSymbols</code> / <code>LoadFallbackSymbolsFromFile</code> still give the Functions tab something to hook (exports, dynsym). This fork’s README commit “Don’t discard symbols with no build-id” is about keeping those modules visible.</p>
+
+<h2>SymbolHelper and SymbolLoader</h2>
+<p><code>SymbolHelper</code> searches, in order-ish: cache directory, user additional paths (<code>--additional_symbol_paths</code>), structured debug directories (<code>/usr/lib/debug</code> style), and — still — Stadia SDK paths:</p>
+<pre><code>GGP_SDK_PATH/sysroot/usr/lib/debug
+// plus a parent-path heuristic tagged SymbolSource::kLocalStadiaSdk</code></pre>
+<p><code>SymbolLoader</code> (owned by <code>OrbitApp</code>) is the async orchestrator:</p>
+<ol>
+  <li><code>RetrieveModuleAndLoadSymbols</code> tries real debug symbols.</li>
+  <li>On failure, <code>RetrieveModuleItselfAndLoadFallbackSymbols</code>.</li>
+  <li>Remote: download the file from the instance via <code>DownloadFileFromInstance</code> (SSH/SFTP), unless <code>--disable_instance_symbols</code>.</li>
+  <li>Optional Microsoft symbol server (<code>RemoteSymbolProvider/MicrosoftSymbolServerSymbolProvider</code>) behind <code>--symbol_store_support</code>.</li>
+  <li><code>--enable_unsafe_symbols</code> allows a file whose build-id does not match.</li>
+  <li><code>--auto_symbol_loading</code> (default true) kicks this off as modules appear; the flag text warns that Orbit can go unresponsive.</li>
+</ol>
+<p><code>ggpvlk.so</code> is still prioritized first in the load queue (<code>OrbitApp.cpp</code>, <code>kGgpVlkModulePathSubstring</code>) so a Stadia Vulkan ICD gets symbols before the game — leftover, harmless if the module is absent.</p>
+
+<h2>Module list and updates</h2>
+<p>At capture start, <code>TracerImpl::Startup</code> reads <code>/proc/&lt;pid&gt;/maps</code> via <code>ModuleUtils/ReadLinuxModules.h</code> and emits <code>ModulesSnapshot</code>.</p>
+<p>During capture, <code>OpenMmapTask</code> records executable and non-executable mmaps. <code>ProcessMmapEventAndReturnTimestamp</code> keeps only the target pid and timestamps after enable. <code>UprobesUnwindingVisitor</code> turns those into <code>ModuleUpdateEvent</code> and refreshes libunwindstack maps. Integration test <code>ModuleUpdateOnDlopen</code> covers the happy path (needs <code>perf_event_paranoid ≤ 0</code> or root).</p>
+<p>Windows uses Toolhelp <code>ListModules</code>, then ETW <code>ListModulesEtw</code> if that is empty.</p>
+
+<h2>Addresses: three numbers</h2>
+<table>
+  <thead><tr><th>Number</th><th>Who uses it</th></tr></thead>
+  <tbody>
+    <tr><td>File offset</td><td>uprobe <code>config2</code> / trampoline patch site</td></tr>
+    <tr><td>Virtual address in module (RVA / ELF st_value)</td><td>symbol tables, Functions tab</td></tr>
+    <tr><td>Absolute address in the process</td><td>samples, mmap, stop-unwinding-at, Wine dispatcher</td></tr>
+  </tbody>
+</table>
+<p>Conversion is <code>SymbolVirtualAddressToAbsoluteAddress(addr, module_start, load_bias, executable_segment_offset)</code>. Getting any of those four wrong produces hooks that never fire or samples that never symbolize. The PE-in-anonymous-map case is the documented footgun: the file offset is in a <code>r--</code> header map, the runtime VA is in an anonymous <code>r-x</code> map.</p>
+
+<h2>Source and disassembly</h2>
+<p>Once symbols include line info, <code>CodeViewer</code> / <code>CodeReport</code> / <code>SyntaxHighlighter</code> show source. Source path remapping is <code>src/SourcePathsMapping</code>. Disassembly uses Capstone (also used to size trampolines). This path was not exercised in this review.</p>
+
+<div class="callout">
+  <strong>Build-id is the join key.</strong> Cache files, instance downloads, and “is this the right PDB?” all go through build-id (or PE equivalent via <code>WindowsBuildIdUtils</code>). <code>--enable_unsafe_symbols</code> is the escape hatch and a good way to silently attribute samples to the wrong binary.
+</div>
+
+<nav class="pager">
+  <a href="client-ui.html">← Client UI</a>
+  <a href="kernel-assumptions.html">Kernel assumptions →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>

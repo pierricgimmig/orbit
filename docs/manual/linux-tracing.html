@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Linux tracing</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a class="current" href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">TracerImpl · perf_event_open · ring buffers</p>
+<h1>Linux tracing</h1>
+<p class="lede">All kernel-side capture on Linux is <code>orbit_linux_tracing::TracerImpl</code>. It is one thread that opens a swarm of per-CPU file descriptors, mmaps ring buffers, polls them round-robin, and a second thread that drains a deferred queue in timestamp order.</p>
+
+<h2>Lifetime</h2>
+<p><code>Tracer::Create</code> (<code>src/LinuxTracing/Tracer.cpp</code>) constructs a <code>TracerImpl</code>. <code>Start</code> spawns <code>run_thread_</code> on <code>TracerImpl::Run</code>. <code>Stop</code> sets <code>stop_run_thread_</code> and joins. There is no pause. <code>TracingHandler</code> does not reset the tracer after <code>Stop</code>; the comment in <code>TracingHandler.cpp</code> says the object cannot be reused.</p>
+<p><code>Run</code> calls <code>Startup</code>, starts <code>ProcessDeferredEvents</code> on a side thread, then loops: sleep 5&nbsp;ms if the last pass saw nothing, otherwise read up to <code>kRoundRobinPollingBatchSize</code> (5) records from each <code>PerfEventRingBuffer</code>. On exit it joins the deferred thread, <code>ProcessAllEvents</code>, then <code>Shutdown</code>.</p>
+
+<h2>What Startup opens</h2>
+<p><code>TracerImpl::Startup</code> (<code>src/LinuxTracing/TracerImpl.cpp</code>) builds two CPU sets: <code>all_cpus = 0 .. GetNumCores()-1</code>, and <code>cpuset_cpus = GetCpusetCpus(target_pid_)</code> (falls back to all CPUs if the cgroup read fails). It raises <code>RLIMIT_NOFILE</code> to the hard limit because each instrumented function costs two fds per CPU.</p>
+<table>
+  <thead><tr><th>Opener</th><th>CPU set</th><th>Kernel mechanism</th><th>Ring buffer</th></tr></thead>
+  <tbody>
+    <tr><td><code>OpenMmapTask</code></td><td>all</td><td>SW dummy + <code>mmap</code>/<code>mmap_data</code>/<code>task</code></td><td>64&nbsp;KiB</td></tr>
+    <tr><td><code>OpenUserSpaceProbes</code></td><td>cpuset</td><td>uprobe + uretprobe PMU, <code>pid=-1</code></td><td>8&nbsp;MiB shared per CPU</td></tr>
+    <tr><td><code>OpenUprobesToRecordAdditionalStackOn</code></td><td>cpuset</td><td>uprobe + user stack</td><td>64&nbsp;MiB</td></tr>
+    <tr><td><code>OpenSampling</code></td><td>cpuset</td><td><code>PERF_COUNT_SW_CPU_CLOCK</code></td><td>16&nbsp;MiB</td></tr>
+    <tr><td><code>OpenThreadNameTracepoints</code></td><td>all</td><td><code>task:task_newtask</code>, <code>task:task_rename</code></td><td>64&nbsp;KiB</td></tr>
+    <tr><td><code>OpenContextSwitchAndThreadStateTracepoints</code></td><td>all</td><td><code>sched:sched_switch</code>, <code>sched:sched_wakeup</code></td><td>2&nbsp;MiB or 64&nbsp;MiB with stacks</td></tr>
+    <tr><td><code>OpenGpuTracepoints</code></td><td>all</td><td>AMD: <code>amdgpu_cs_ioctl</code>, <code>amdgpu_sched_run_job</code>, <code>dma_fence_signaled</code></td><td>256&nbsp;KiB</td></tr>
+    <tr><td><code>OpenInstrumentedTracepoints</code></td><td>all</td><td>user-selected tracepoints</td><td>8&nbsp;MiB</td></tr>
+  </tbody>
+</table>
+<p>Errors are collected and sent as <code>ErrorsWithPerfEventOpenEvent</code> with the line “did you forget to run as root?”. GPU open failure is only logged — capture continues without GPU tracks. After opens, every fd is <code>PERF_EVENT_IOC_ENABLE</code>d in a nested loop over <code>tracing_fds_by_type_</code>.</p>
+<p>Then: maps snapshot, optional <code>WarningInstrumentingWithUprobesEvent</code> for functions not in a file mapping, system-wide thread-name snapshot, tid→pid table, optional initial thread states, optional <code>PythonSamplingThread</code>.</p>
+
+<h2>OpenUprobes: the fd tax</h2>
+<p><code>OpenUprobes</code> and <code>OpenUretprobes</code> iterate <code>cpus</code> and call <code>uprobes_retaddr_event_open</code> / <code>uretprobes_event_open</code> (or the args/retval variants) with <strong><code>pid = -1</code></strong> and <strong><code>cpu = N</code></strong>.</p>
+<pre><code>// TracerImpl::OpenUprobes
+for (int32_t cpu : cpus) {
+  fd = uprobes_retaddr_event_open(module, offset, /*pid=*/-1, cpu);
+  (*fds_per_cpu)[cpu] = fd;
+}</code></pre>
+<p>That is <strong>one uprobe fd and one uretprobe fd per CPU per function</strong>:</p>
+<pre><code>fds = 2 × F × NCPU   (plus extras if record-stack-on is used)</code></pre>
+<p>Each fd is its own <code>perf_event_open</code> of type <code>uprobe</code> (sysfs <code>/sys/bus/event_source/devices/uprobe/type</code>). Bit 0 of <code>perf_event_attr.config</code> selects uretprobe (<code>PerfEventOpen.cpp</code>). Path and file offset go in <code>config1</code>/<code>config2</code>.</p>
+<p>Uretprobe fds are committed before uprobe fds (“we support temporarily not having a uprobe associated with a uretprobe but not the opposite”). All fds on the same CPU redirect into one ring buffer via <code>PERF_EVENT_IOC_SET_OUTPUT</code> (<code>OpenRingBuffersOrRedirectOnExisting</code> — note the local typo <code>ring_bugger_fd</code>).</p>
+
+<div class="callout warn">
+  <strong>Why pid=-1, cpu=N and not pid=target, cpu=-1.</strong> <code>perf_event_open</code>’s <code>pid</code> argument is a <em>tid</em>. A single-task event does not see sibling threads already alive; <code>inherit</code> only covers children created after open; <code>inherit</code> + <code>cpu=-1</code> cannot mmap a sample ring buffer. Production therefore keeps CPU-wide fds so every thread on every core is visible. That choice is why stop cost scales with core count. Documented in PR #10; not re-measured here.
+</div>
+
+<h2>Uprobe fd lifetime</h2>
+<figure class="figure" aria-label="Uprobe fd lifetime">
+<svg viewBox="0 0 720 260" width="100%" height="auto" role="img">
+  <title>Uprobe file-descriptor lifetime on main</title>
+  <rect width="720" height="260" fill="#161b27"/>
+  <g fill="#f3eee4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12">
+    <text x="24" y="32" fill="#c4622d">ON MAIN (this tree)</text>
+    <text x="24" y="58">Open: 2×F×NCPU create_local_trace_uprobe (PMU type)</text>
+    <text x="24" y="80">Enable: ioctl PERF_EVENT_IOC_ENABLE on each fd</text>
+    <text x="24" y="102">Run: mmap ring, redirect siblings, poll</text>
+    <text x="24" y="124">Stop: ioctl DISABLE all → munmap rings → close(fd) each, in series</text>
+    <text x="24" y="146">Each close: kernel holds event_mutex across VMA walk + RCU GPs</text>
+    <text x="24" y="184" fill="#c4622d">PR #10 DIRECTION (not merged)</text>
+    <text x="24" y="208">Register once in tracefs uprobe_events; per-CPU fds are TRACEPOINT consumers</text>
+    <text x="24" y="230">Expensive unregister becomes 2×F (last close of each named probe)</text>
+  </g>
+</svg>
+<figcaption>Current <code>Shutdown</code> is sequential <code>close</code>. A <code>ParallelFor</code> on those closes cannot overlap grace periods while <code>event_mutex</code> is global. Details on the <a href="kernel-assumptions.html">kernel page</a>.</figcaption>
+</figure>
+
+<pre><code>// TracerImpl::Shutdown — the stop cost
+for (auto&amp; [fd_type, fds] : tracing_fds_by_type_) {
+  for (int fd : fds) {
+    close(fd);   // one kernel uprobe destroy per fd
+  }
+}</code></pre>
+
+<h2>Ring buffers and records</h2>
+<p><code>PerfEventRingBuffer</code> mmaps <code>1 + 2^n</code> pages (<code>perf_event_open_mmap_ring_buffer</code>). <code>ProcessOneRecord</code> switches on <code>perf_event_header.type</code>: <code>FORK</code>, <code>EXIT</code>, <code>MMAP</code>, <code>SAMPLE</code>, <code>LOST</code>, throttle. Unexpected <code>PERF_RECORD_SWITCH*</code> is logged as error — context switches are taken from <code>sched:sched_switch</code> raw samples, not the software switch records.</p>
+<p><code>ProcessSampleEventAndReturnTimestamp</code> classifies the sample by <code>PERF_EVENT_IOC_ID</code> stream id against a pile of hash sets (<code>uprobes_ids_</code>, <code>uretprobes_ids_</code>, sampling, sched, AMD GPU, …). An <code>ORBIT_CHECK</code> asserts at most one classification matches.</p>
+<p>Uprobe samples carry SP, IP, and 8 bytes of user stack (the return address about to be hijacked by the uretprobe). Uretprobe samples are empty unless return-value recording is on (then AX / ARM64 X0).</p>
+
+<h2>Ordering: PerfEventProcessor</h2>
+<p>Records from many buffers are not globally ordered. <code>DeferEvent</code> hands them to a mutex-protected vector; <code>ProcessDeferredEvents</code> moves them into <code>PerfEventProcessor</code>. That class assumes nothing older than <code>kProcessingDelayMs = 333</code> will still arrive. Older events are dropped and a <code>DiscardedPerfEvent</code> is synthesized. Visitors then run in timestamp order:</p>
+<ul>
+  <li><code>LostAndDiscardedEventVisitor</code></li>
+  <li><code>UprobesUnwindingVisitor</code> — function calls, DWARF/FP unwind, mmap → module update</li>
+  <li><code>SwitchesStatesNamesVisitor</code> — scheduling slices, thread names, thread states</li>
+  <li><code>GpuTracepointVisitor</code> — joins the three AMD events into <code>FullGpuJob</code></li>
+</ul>
+<p>Call matching is <code>UprobesFunctionCallManager</code>: a per-tid stack of open functions, popped on exit. Depth is <code>stack.size() - 1</code>. A uretprobe with no matching entry returns nullopt (lost uprobe, or capture started mid-call).</p>
+
+<h2>Sampling and unwind</h2>
+<p>DWARF: <code>stack_sample_event_open</code> copies user regs + stack (default dump size up to <code>kMaxStackSampleUserSize = 65000</code>, a kernel <code>short</code> limit documented in <code>PerfEventOpen.h</code>). Unwind is libunwindstack offline (<code>LibunwindstackUnwinder</code>).</p>
+<p>Frame pointers: <code>callchain_sample_event_open</code> uses <code>PERF_SAMPLE_CALLCHAIN</code> plus a small stack/regs dump so <code>LeafFunctionCallManager</code> can DWARF-patch the leaf. <code>exclude_callchain_kernel = true</code>.</p>
+<p>When a sample lands inside a uretprobe trampoline, <code>UprobesReturnAddressManager</code> patches the hijacked return address back so the stack looks like the target’s. The same machinery consumes user-space instrumentation trampoline ranges via <code>UserSpaceInstrumentationAddresses</code>.</p>
+
+<h2>GPU (AMD only)</h2>
+<p><code>OpenGpuTracepoints</code> opens three tracepoints system-wide. <code>GpuTracepointVisitor</code> waits until <code>amdgpu_cs_ioctl</code>, <code>amdgpu_sched_run_job</code>, and <code>dma_fence_signaled</code> share a (context, seqno, timeline) key, then emits one <code>FullGpuJob</code> with a guessed hardware start (max of schedule time and previous dma signal on that timeline). Slack of 1&nbsp;ms when assigning track depth. No Intel/NVIDIA path exists in this tree.</p>
+
+<h2>Python (py-spy)</h2>
+<p>After kernel setup, if <code>enable_python_profiling</code> is set <em>or</em> <code>IsPythonProcess(pid)</code> is true, <code>PythonSamplingThread::Create</code> attaches via <code>pyspy_new</code> / <code>pyspy_new_with_native</code> (<code>third_party/py-spy-ffi</code>, Rust, Cargo required at build). Detection is a symlink read of <code>/proc/&lt;pid&gt;/exe</code> whose filename contains <code>python</code> or <code>pypy</code>. Period defaults to the native sample period or 100&nbsp;Hz. Failure to attach is logged; capture continues. CMake skips the FFI if <code>cargo</code> is missing, which then breaks the <code>LinuxTracing</code> link line (<code>target_link_libraries(LinuxTracing PRIVATE pyspy_ffi)</code>) unless that imported target still exists.</p>
+
+<h2>What the unit tests cover</h2>
+<p><code>LinuxTracingTests</code> (see <code>src/LinuxTracing/CMakeLists.txt</code>) is offline: queues, visitors, unwind fixtures, function-call manager, mmap→module update, GPU visitor. It does <strong>not</strong> call <code>perf_event_open</code>. Integration coverage is a different binary; see the <a href="audit.html">audit</a>.</p>
+
+<nav class="pager">
+  <a href="architecture.html">← Architecture</a>
+  <a href="instrumentation.html">Instrumentation →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>

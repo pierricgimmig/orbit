@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Kernel assumptions</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a class="current" href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">Uprobe PMU · tracefs · event_mutex · cgroup · paranoid</p>
+<h1>Kernel and distro assumptions</h1>
+<p class="lede">Orbit does not probe a kernel version and branch. It assumes a Google/Stadia-era Linux userspace and a kernel that still looks like that. Several of those assumptions are now false on stock Ubuntu, Raspberry Pi OS, and this review VM.</p>
+
+<div class="callout warn">
+  <strong>This page mixes two kinds of fact.</strong> (1) What the <em>Orbit tree</em> does — verified by reading <code>main</code>. (2) What the <em>kernel</em> does on close of a per-CPU uprobe PMU fd — taken from PR #10’s kernel reading and the usual <code>perf_uprobe_destroy</code> path. That kernel path was not re-read from a kernel tree in this review, and no timings were taken here.
+</div>
+
+<h2>There is no kernel version gate</h2>
+<p><code>OrbitService</code> logs <code>uname -a</code> and stops there. The only in-tree comment that names a kernel version is <code>KernelTracepoints.h</code>: <code>sched_wakeup</code> dropped the <code>success</code> field in <strong>v5.14</strong> (commit <code>58b9987de86c</code>). Orbit does not read the tail of that struct, so both layouts work. Nothing else checks <code>KERNEL_VERSION</code>.</p>
+
+<h2>Uprobe PMU must exist</h2>
+<p><code>uprobe_type()</code> in <code>PerfEventOpen.cpp</code> does:</p>
+<pre><code>static uint32_t uprobe_type =
+    read_uint32_from_file("/sys/bus/event_source/devices/uprobe/type");</code></pre>
+<p>That requires <code>CONFIG_UPROBE_EVENTS</code> (and a kernel that exports the uprobe PMU). <code>read_uint32_from_file</code> calls <code>ReadFileToString(...).value()</code> then <code>std::stoul</code>. If the file is missing, this is an exception on first uprobe open — not a structured <code>ErrorsWithPerfEventOpenEvent</code>. This review VM has no such file.</p>
+<p>Uretprobe is bit 0 of <code>perf_event_attr.config</code> on that PMU. That ABI has been stable for a long time; Orbit never negotiates it.</p>
+
+<h2>Privileges: root and perf_event_paranoid</h2>
+<p>CPU-wide events (<code>pid=-1</code>) need either root or <code>perf_event_paranoid ≤ 0</code> (sometimes −1 depending on the event). Integration tests encode that:</p>
+<ul>
+  <li>Most tests: <code>CheckIsRunningAsRoot()</code> or skip.</li>
+  <li>Sampling-only tests: <code>CheckIsPerfEventParanoidAtMost(0)</code>.</li>
+</ul>
+<p>If opens fail, the user-visible hint is only “did you forget to run as root?”. There is no check of the sysctl before capture, and no attempt to drop to a smaller CPU set or switch to per-thread events.</p>
+<p><code>docs/building_arm64.md</code> suggests <code>sysctl kernel.perf_event_paranoid=-1</code> as an alternative to root. That is a machine-wide security change; the service still opens CPU-wide mmap/task/sched fds.</p>
+
+<h2>Tracefs vs debugfs</h2>
+<p><code>GetTracepointId</code> reads <strong>only</strong>:</p>
+<pre><code>/sys/kernel/debug/tracing/events/&lt;cat&gt;/&lt;name&gt;/id</code></pre>
+<p>It never tries <code>/sys/kernel/tracing/...</code> (tracefs, the path distributions have used as the primary mount for years). If debugfs is unmounted or not permitted, <em>every</em> tracepoint open fails: sched, task names, GPU, user-selected tracepoints. Sampling and uprobes (PMU path) do not use this helper; they can still work.</p>
+<p><code>KernelTracepoints.h</code> comments also cite the debugfs format files. Packed structs include “reserved” bytes “not documented in the format file” — another layout assumption.</p>
+
+<div class="callout audit">
+  <strong>This VM.</strong> <code>uname</code> reported <code>Linux 6.12.94+</code>. No <code>/sys/kernel/debug/tracing/events</code>, no <code>/sys/kernel/tracing/events</code> visible to uid 1000, no <code>uprobe_events</code>. A default <code>OrbitService</code> started here would fail the interesting opens and emit <code>ErrorsWithPerfEventOpenEvent</code> — if it got past <code>uprobe_type()</code> without throwing.
+</div>
+
+<h2>cgroup v1 cpuset</h2>
+<p><code>GetCpusetCpus</code> reads <code>/proc/&lt;pid&gt;/cgroup</code>, looks for a line containing <code>cpuset:</code> or <code>cpuset,</code>, then reads:</p>
+<pre><code>/sys/fs/cgroup/cpuset&lt;path&gt;/cpuset.cpus</code></pre>
+<p>That is <strong>cgroup v1</strong>. On cgroup v2 the file is elsewhere (<code>/sys/fs/cgroup/.../cpuset.cpus</code> without the <code>cpuset</code> controller directory, and the cgroup line format is different). The function returns empty, <code>Startup</code> logs “Could not read cpuset” and uses every CPU from <code>hardware_concurrency()</code>. That is safe (more fds, not fewer) but it is a Stadia-shaped leftover: comments mention <code>/game</code>.</p>
+<p><code>GetNumCores</code> prefers <code>std::thread::hardware_concurrency()</code>, then shells out to <code>nproc</code>. Offline CPUs and container quotas can disagree with the perf CPU index space (0..n-1).</p>
+
+<h2>Per-CPU PMU fds and event_mutex</h2>
+<p>On <code>main</code>, each instrumented function does <code>create_local_trace_uprobe</code> once per CPU (uprobe) and once per CPU (uretprobe). Closing a fd tears down that local probe.</p>
+<p>PR #10’s kernel note (not re-verified against a kernel source checkout in this review): <code>perf_uprobe_destroy</code> takes the global <code>event_mutex</code> for the <em>entire</em> close:</p>
+<ol>
+  <li><code>uprobe_apply(false)</code></li>
+  <li><code>uprobe_unregister_nosync</code> — VMA walk, <code>dup_mmap_sem</code> + <code>register_rwsem</code></li>
+  <li><code>uprobe_unregister_sync()</code> — RCU tasks-trace and uretprobes SRCU</li>
+  <li><code>tracepoint_synchronize_unregister</code></li>
+</ol>
+<figure class="figure" aria-label="close under event_mutex">
+<svg viewBox="0 0 720 200" width="100%" height="auto" role="img">
+  <title>Serialized close of per-CPU uprobe fds</title>
+  <rect width="720" height="200" fill="#161b27"/>
+  <g fill="#f3eee4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12">
+    <text x="24" y="32" fill="#c4622d">N parallel close() threads</text>
+    <text x="24" y="70">close fd0 ──► event_mutex ──► VMA walk + 2–3 RCU GPs ──► unlock</text>
+    <text x="24" y="100">close fd1 ──► queued on event_mutex ──────────────────────────► same</text>
+    <text x="24" y="130">close fd2 ──► queued ─────────────────────────────────────────► same</text>
+    <text x="24" y="168" fill="#9a9284">Wall time ≈ O(F × NCPU × 2 × (VMA walk + grace periods)). ParallelFor does not shrink this.</text>
+  </g>
+</svg>
+<figcaption>Historical cost of the current fd model. Newer kernels have grown batch-unregister helpers; Orbit on <code>main</code> does not call them.</figcaption>
+</figure>
+<p>Newer kernels expose more efficient unregister (batch / nosync variants used by perf and systemd-style tools). Orbit never calls those APIs. The production-quality fix explored in PR #10 is orthogonal and older-kernel-friendly: register each probe <strong>once</strong> via <code>uprobe_events</code>, open per-CPU fds as <code>PERF_TYPE_TRACEPOINT</code> consumers of that one registration. Sample fds stay <code>2×F×NCPU</code>; expensive destroys become <code>2×F</code>.</p>
+<p><code>pid=target, cpu=-1</code> was measured on that branch as an fd-count experiment and rejected for production (tid semantics, inherit, mmap). The bench is <code>LinuxTracingIntegrationTest.UprobeAttachDetachBench</code>, off unless <code>ORBIT_UPROBE_BENCH=1</code>. <strong>Not run here.</strong> Do not invent speedup numbers.</p>
+
+<h2>Other kernel / ABI assumptions</h2>
+<table>
+  <thead><tr><th>Assumption</th><th>Where</th><th>If false</th></tr></thead>
+  <tbody>
+    <tr><td>Clock <code>orbit_base::kOrbitCaptureClock</code> is valid in <code>perf_event_attr.clockid</code></td><td><code>generic_event_attr</code></td><td>open fails or timestamps disagree with <code>CaptureTimestampNs</code></td></tr>
+    <tr><td>User stack dump ≤ 65000</td><td><code>kMaxStackSampleUserSize</code></td><td>kernel rejects the attr</td></tr>
+    <tr><td><code>perf_event_max_stack</code> sysctl readable</td><td><code>max_stack()</code></td><td>same <code>.value()</code> throw as uprobe type</td></tr>
+    <tr><td>AMD tracepoints present</td><td><code>OpenGpuTracepoints</code></td><td>GPU silently disabled</td></tr>
+    <tr><td>x86_64 or aarch64 register ABI</td><td><code>PerfEventOpen.h</code></td><td>compile error (<code>#error</code>)</td></tr>
+    <tr><td>ptrace + <code>process_vm_readv</code> + userfault-free writes</td><td>UserSpaceInstrumentation</td><td>Yama, seccomp, or container: fallback to uprobes or hard error</td></tr>
+    <tr><td>Minidumps under <code>/usr/local/cloudcast/core</code></td><td><code>GetTargetProcessStateAfterCapture</code></td><td>crash detection does nothing</td></tr>
+  </tbody>
+</table>
+
+<h2>Raspberry Pi / ARM64</h2>
+<p>Cross-compile path is real (<code>docs/building_arm64.md</code>, <code>build_arm_service.sh</code>). Perf register masks exist for ARM64. User-space trampolines do not. GPU AMD tracepoints will not exist. Uprobe PMU availability depends on the Pi kernel config — not guaranteed, not checked.</p>
+
+<nav class="pager">
+  <a href="symbols-modules.html">← Symbols &amp; modules</a>
+  <a href="audit.html">Audit →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Architecture</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a class="current" href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">Processes · capture pipeline · data flow</p>
+<h1>Architecture</h1>
+<p class="lede">Orbit is a two-process product plus the target. The UI never opens <code>perf_event_open</code>. The service never draws a track. A third channel exists for in-process producers that cannot go through the UI.</p>
+
+<h2>The three processes</h2>
+<h3>Orbit (UI)</h3>
+<p>Entry is <code>src/Orbit/main.cpp</code>. Qt chrome lives in <code>src/OrbitQt</code> (<code>orbitmainwindow.cpp</code>, capture options, connection dialogs). The capture canvas, tracks, and session state live in <code>src/OrbitGl</code>: <code>OrbitApp</code>, <code>TimeGraph</code>, <code>TrackManager</code>, <code>SymbolLoader</code>. <code>OrbitApp</code> is the god object; comments in <code>OrbitApp.h</code> already ask to peel controllers off it.</p>
+<p>The UI talks to the service through generated gRPC stubs in <code>src/GrpcProtos</code>. Default port is <strong>44765</strong> (<code>FLAGS_grpc_port</code> in <code>src/ClientFlags/ClientFlags.cpp</code> and <code>src/Service/main.cpp</code>). The server binds <code>127.0.0.1</code> with <code>InsecureServerCredentials</code> (<code>OrbitGrpcServerImpl::Init</code>). Remote use is an SSH tunnel, not TLS.</p>
+
+<h3>OrbitService</h3>
+<p><code>src/Service/OrbitService.cpp</code> starts the gRPC server and, unless <code>--producer_side_server=false</code>, a second server on the producer-side Unix socket. On Linux, <code>OrbitGrpcServer.cpp</code> registers:</p>
+<ul>
+  <li><code>LinuxCaptureService</code> — bidirectional <code>Capture</code> stream</li>
+  <li><code>ProcessServiceImpl</code> — process list, modules, debug-info path, process memory</li>
+  <li><code>TracepointServiceImpl</code> — enumerate kernel tracepoints</li>
+  <li><code>CrashServiceImpl</code> — only if <code>dev_mode</code></li>
+</ul>
+<p>On Windows the same process registers <code>WindowsCaptureService</code> and <code>WindowsProcessService</code>. There is no Windows tracepoint or crash service in that file.</p>
+<p>At startup on Linux, <code>PrintInstanceVersions</code> runs <code>uname -a</code> and then tries four Stadia/cloudcast paths (<code>/usr/local/cloudcast/VERSION</code>, <code>BASE_VERSION</code>, <code>INSTANCE_VERSION</code>, and <code>/usr/local/cloudcast/bin/gpuinfo</code>). Failures are logged as errors on every ordinary Linux box. See the <a href="audit.html">audit</a>.</p>
+
+<h3>Target + optional in-process producers</h3>
+<p>The target is identified by pid in <code>CaptureOptions</code>. User-space instrumentation injects <code>liborbituserspaceinstrumentation.so</code> and overwrites prologues. The Orbit API (<code>src/Api</code>, enabled via <code>ApiLoader/EnableInTracee.h</code>) and the Vulkan layer (<code>src/OrbitVulkanLayer</code>) connect as producers to <code>unix:/tmp/orbit-producer-side-socket</code> (<code>src/ProducerSideChannel/include/ProducerSideChannel/ProducerSideChannel.h</code>).</p>
+
+<h2>How the UI finds the service</h2>
+<table>
+  <thead><tr><th>Path</th><th>Code</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td>Local</td><td><code>ConnectToLocalWidget</code></td><td>gRPC channel to <code>127.0.0.1:&lt;grpc_port&gt;</code>. Caller must already be running <code>OrbitService</code> (typically as root).</td></tr>
+    <tr><td>SSH / remote</td><td><code>ServiceDeployManager</code></td><td>SFTP-deploys the collector (unless <code>--nodeploy</code>), starts it remotely, opens an SSH tunnel for 44765.</td></tr>
+    <tr><td>Connect-to-target flags</td><td><code>ClientFlags.cpp</code> SSH flags</td><td>Skip the dialog; connect and optionally select <code>--ssh_target_process</code>.</td></tr>
+  </tbody>
+</table>
+<p><code>ServiceDeployManager::Exec</code> is the deploy + tunnel entry. <code>--collector</code> and <code>--collector_root_password</code> are leftover “instance” knobs from the Stadia workflow.</p>
+
+<h2>Capture start / stop</h2>
+<figure class="figure" aria-label="Capture start and stop">
+<svg viewBox="0 0 720 400" width="100%" height="auto" role="img">
+  <title>Capture start and stop</title>
+  <rect width="720" height="400" fill="#161b27"/>
+  <g fill="#f3eee4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="12">
+    <text x="24" y="28" fill="#c4622d">START (LinuxCaptureServiceBase::DoCapture)</text>
+    <text x="24" y="56">1. Enable Orbit API in tracee (optional)</text>
+    <text x="24" y="78">2. If kUserSpaceInstrumentation: InstrumentationManager::InstrumentProcess</text>
+    <text x="24" y="100">3. Filter successfully patched functions out of CaptureOptions</text>
+    <text x="24" y="122">4. TracingHandler::Start → Tracer::Create → TracerImpl::Start</text>
+    <text x="24" y="144">5. MemoryInfoHandler::Start</text>
+    <text x="24" y="166">6. ProducerSideServer notifies in-process producers</text>
+    <text x="24" y="188">7. Wait for client WritesDone or RSS &gt; 50% of physical RAM</text>
+    <text x="24" y="228" fill="#c4622d">STOP</text>
+    <text x="24" y="256">8. Disable API + UninstrumentProcess (restore prologues)</text>
+    <text x="24" y="278">9. Stop TracingHandler, MemoryInfoHandler, producers in parallel threads</text>
+    <text x="24" y="300">10. TracerImpl::Shutdown closes every perf fd (sequential close)</text>
+    <text x="24" y="322">11. Peek /proc/&lt;pid&gt; and /usr/local/cloudcast/core for crash/minidump</text>
+    <text x="24" y="344">12. FinalizeEventProcessing + TerminateCapture</text>
+  </g>
+</svg>
+<figcaption>Sequence is in <code>src/LinuxCaptureService/LinuxCaptureServiceBase.cpp</code> (<code>DoCapture</code>, <code>WaitForStopCaptureRequestOrMemoryThresholdExceeded</code>, <code>StopInternalProducersAndCaptureStartStopListenersInParallel</code>).</figcaption>
+</figure>
+
+<p>The Capture RPC itself is thin: <code>LinuxCaptureService::Capture</code> builds a <code>GrpcClientCaptureEventCollector</code> over the <code>ServerReaderWriter</code>, waits for the first <code>CaptureRequest</code> (the options), then calls <code>DoCapture</code>. A second capture while one is live returns <code>ALREADY_EXISTS</code>.</p>
+
+<div class="callout">
+  <strong>Why stop is parallel at the service layer but serial in the tracer.</strong> Comments in <code>LinuxCaptureServiceBase.cpp</code> say <code>TracingHandler::Stop</code> and producer <code>OnCaptureStopRequested</code> both block, so they are joined on separate threads. Inside the tracer, <code>Shutdown</code> still <code>close()</code>s fds one by one. Parallelizing those closes does not help on current kernels — see <a href="kernel-assumptions.html">kernel assumptions</a>.
+</div>
+
+<h2>Event path: kernel → UI</h2>
+<figure class="figure" aria-label="Event path">
+<svg viewBox="0 0 720 280" width="100%" height="auto" role="img">
+  <title>Event path from kernel to UI</title>
+  <rect width="720" height="280" fill="#161b27"/>
+  <g fill="none" stroke="#c4622d" stroke-width="1.3">
+    <rect x="16" y="40" width="100" height="48" rx="3"/>
+    <rect x="136" y="40" width="110" height="48" rx="3"/>
+    <rect x="266" y="40" width="110" height="48" rx="3"/>
+    <rect x="396" y="40" width="120" height="48" rx="3"/>
+    <rect x="536" y="40" width="168" height="48" rx="3"/>
+    <rect x="16" y="140" width="210" height="48" rx="3"/>
+    <rect x="246" y="140" width="210" height="48" rx="3"/>
+    <rect x="476" y="140" width="228" height="48" rx="3"/>
+  </g>
+  <g fill="#f3eee4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11">
+    <text x="28" y="68">kernel RB</text>
+    <text x="148" y="68">ProcessOneRecord</text>
+    <text x="278" y="68">DeferEvent</text>
+    <text x="408" y="68">PerfEventProcessor</text>
+    <text x="548" y="68">visitors → TracerListener</text>
+    <text x="28" y="168">TracingHandler::On*</text>
+    <text x="258" y="168">ProducerEventProcessor</text>
+    <text x="488" y="168">gRPC CaptureResponse → UI</text>
+    <text x="16" y="220" fill="#9a9284">User-space FunctionEntry/Exit are hijacked back into TracerImpl so unwinding sees them like uretprobes.</text>
+  </g>
+  <g stroke="#2d7a74" stroke-width="1.5" fill="none">
+    <path d="M116 64 H136"/><path d="M246 64 H266"/><path d="M376 64 H396"/><path d="M516 64 H536"/>
+    <path d="M620 88 V140"/><path d="M620 140 H581"/><path d="M476 164 H456"/><path d="M246 164 H226"/>
+  </g>
+</svg>
+<figcaption>Ring-buffer records become <code>PerfEvent</code>s, reordered with a 333&nbsp;ms delay (<code>PerfEventProcessor::kProcessingDelayMs</code>), then protobuf <code>ProducerCaptureEvent</code>s on the capture stream.</figcaption>
+</figure>
+
+<p>User-space instrumentation does not emit timers on its own path into the UI. <code>ProducerEventProcessorHijackingFunctionEntryExitForLinuxTracing</code> intercepts <code>FunctionEntry</code> / <code>FunctionExit</code> and calls <code>TracingHandler::ProcessFunctionEntry/Exit</code>, which forwards into <code>TracerImpl</code>. <code>UprobesFunctionCallManager</code> then builds the same <code>FunctionCall</code> objects it would for uretprobes. That is why trampolines and uprobes can share the unwinder and the call-stack patching logic.</p>
+
+<h2>gRPC surface</h2>
+<p>Protos live under <code>src/GrpcProtos/</code>. The capture contract is <code>capture.proto</code>. <code>CaptureOptions</code> (next id 23 in the comment, with later Python fields at 24+) is the one large message: pid, sample rate, stack dump size, unwinding method, dynamic-instrumentation method, instrumented functions, Wine helpers, GPU flag, memory sampling, API functions, thread-state callstack policy, Python flags.</p>
+<p>The receive size on the server is <code>INT32_MAX</code> so an unbounded options message can arrive. There is no authn/authz on the channel.</p>
+
+<h2>Producer-side channel</h2>
+<p><code>ProducerSideServer</code> implements <code>CaptureStartStopListener</code>. On capture start it is given the hijacking processor so API scopes from the injected library and Vulkan debug markers join the same stream. Socket path: <code>/tmp/orbit-producer-side-socket</code>. Windows uses <code>localhost:1789</code> instead. The injected user-space library calls <code>CreateProducerSideChannel()</code> from <code>OrbitUserSpaceInstrumentation.cpp</code>.</p>
+
+<h2>Memory watchdog</h2>
+<p><code>WaitForStopCaptureRequestOrMemoryThresholdExceeded</code> polls OrbitService RSS every second via <code>/proc/self/stat</code> field 24 (<code>MemoryWatchdog.cpp</code>). Threshold is <strong>half of physical RAM</strong> (<code>kMemTotalBytes / 2</code>). Crossing it stops the capture with <code>StopCaptureReason::kMemoryWatchdog</code>. This is a service-side safety net, not a UI setting (the UI has a separate, flag-gated warning-threshold checkbox).</p>
+
+<h2>Windows path (what exists)</h2>
+<p><code>WindowsCaptureService::Capture</code> enables the API in the tracee, starts <code>WindowsTracing::TracerImpl</code> (krabsetw ETW: sampling + modules + thread names), notifies producers, waits for stop, disables the API, stops the tracer. There is no <code>InstrumentationManager</code>, no uprobes, no sched tracepoints, no memory watchdog loop like Linux. <code>WindowsTracing/TracerImpl.cpp</code> is short: snapshot modules (Toolhelp, fallback ETW), snapshot thread names, run <code>KrabsTracer</code>.</p>
+
+<h2>Capture file</h2>
+<p>On-disk format is documented in <code>src/CaptureFile/FORMAT.md</code>: 4-byte signature <code>ORBT</code>, version, capture-section offset, optional extra sections, optional user-data section. The capture section is a sequence of <code>ClientCaptureEvent</code> messages starting with <code>CaptureStarted</code> and ending with <code>CaptureFinished</code>. The UI can reload a file without a service.</p>
+
+<div class="callout audit">
+  <strong>Stadia-shaped stop.</strong> After stop, <code>GetTargetProcessStateAfterCapture</code> looks for minidumps matching <code>.*&lt;pid&gt;.&lt;epoch&gt;.core.dmp</code> under <code>/usr/local/cloudcast/core</code>. On a machine without that directory the function either reports “still running”, “ended”, or an internal error — never a Stadia crash. Comments still mention <code>CloudCollectorStartStopCaptureRequestWaiter</code>, which is not a type in this tree.
+</div>
+
+<nav class="pager">
+  <a href="index.html">← Overview</a>
+  <a href="linux-tracing.html">Linux tracing →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit field manual — Client UI</title>
+<style>
+:root{--paper:#f3eee4;--paper-2:#e8e0d0;--ink:#1c1914;--mute:#5c564c;--copper:#9a3f1a;--copper-2:#c4622d;--teal:#1a4f4c;--teal-2:#2d7a74;--navy:#161b27;--navy-2:#232a3a;--code:#e8e0d0;--warn:#f4e0c4;--audit:#ead6cc;--note:#d7e6e2;--line:#cfc4b0;--rail:17.4rem}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:16.5px/1.58 "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif}
+.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.4rem;z-index:2}
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--navy);color:#d9d2c4;padding:1.35rem 1.05rem 2rem;position:sticky;top:0;height:100vh;overflow:auto}
+.rail .brand{color:#f3eee4;text-decoration:none;font:700 1.12rem/1.25 ui-sans-serif,system-ui,sans-serif;letter-spacing:.03em;display:block}
+.rail .brand span{color:var(--copper-2)}
+.rail .tag{font:12px/1.4 ui-sans-serif,system-ui,sans-serif;color:#9a9284;margin:.45rem 0 1.15rem}
+.rail ol{list-style:none;margin:0;padding:0}
+.rail a{display:block;color:#cfc6b6;text-decoration:none;padding:.36rem .5rem;border-left:3px solid transparent;font:13.5px/1.35 ui-sans-serif,system-ui,sans-serif}
+.rail a:hover{color:#fff;background:var(--navy-2)}
+.rail a.current{color:#fff;border-left-color:var(--copper-2);background:var(--navy-2)}
+.rail .num{color:var(--copper-2);margin-right:.35rem;font-variant-numeric:tabular-nums}
+main{flex:1;max-width:54rem;padding:2.1rem 2.3rem 4rem}
+h1,h2,h3,h4{font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;letter-spacing:-.02em;line-height:1.25}
+h1{font-size:2.05rem;margin:0 0 .35rem;color:var(--navy)}
+h2{font-size:1.32rem;margin:2.1rem 0 .65rem;padding-top:.55rem;border-top:1px solid var(--line);color:var(--copper)}
+h3{font-size:1.06rem;margin:1.45rem 0 .45rem;color:var(--teal)}
+.lede{font-size:1.12rem;color:var(--mute)}
+.kicker{font:700 .7rem/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin:0 0 .55rem}
+code,pre{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--paper-2);padding:.07em .32em;border-radius:3px}
+pre{background:var(--navy);color:var(--code);padding:1rem 1.1rem;overflow:auto;border-radius:4px;line-height:1.45}
+pre code{background:none;padding:0;color:inherit}
+.figure{background:var(--navy);border-radius:6px;padding:1rem 1rem .55rem;margin:1.15rem 0 1.5rem}
+.figure figcaption{color:#9a9284;font:12.5px/1.4 ui-sans-serif,system-ui,sans-serif;margin-top:.45rem}
+.callout{border-left:4px solid var(--teal-2);background:var(--note);padding:.75rem 1rem;margin:1.05rem 0}
+.callout.warn{border-color:var(--copper);background:var(--warn)}
+.callout.audit{border-color:#7a2e1a;background:var(--audit)}
+.callout strong{font-family:ui-sans-serif,system-ui,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.92rem;margin:1rem 0 1.35rem}
+th,td{border-bottom:1px solid var(--line);padding:.42rem .48rem;text-align:left;vertical-align:top}
+th{font:700 .72rem/1.3 ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin-top:2.4rem;padding-top:1rem;border-top:1px solid var(--line);font:14px/1.4 ui-sans-serif,system-ui,sans-serif}
+.pager a{color:var(--teal)}
+ul,ol{padding-left:1.2rem}li{margin:.26rem 0}
+a{color:var(--teal)}
+@media(max-width:860px){.shell{display:block}.rail{position:relative;height:auto;width:auto}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="rail" aria-label="Manual">
+  <a class="brand" href="index.html">Orbit <span>field manual</span></a>
+  <p class="tag">Architecture + audit<br>tree at <code>96b2714</code></p>
+  <ol>
+    <li><a href="index.html"><span class="num">01</span>Overview</a></li>
+    <li><a href="architecture.html"><span class="num">02</span>Architecture</a></li>
+    <li><a href="linux-tracing.html"><span class="num">03</span>Linux tracing</a></li>
+    <li><a href="instrumentation.html"><span class="num">04</span>Instrumentation</a></li>
+    <li><a class="current" href="client-ui.html"><span class="num">05</span>Client UI</a></li>
+    <li><a href="symbols-modules.html"><span class="num">06</span>Symbols &amp; modules</a></li>
+    <li><a href="kernel-assumptions.html"><span class="num">07</span>Kernel assumptions</a></li>
+    <li><a href="audit.html"><span class="num">08</span>Audit</a></li>
+    <li><a href="roadmap.html"><span class="num">09</span>Roadmap</a></li>
+  </ol>
+</aside>
+<main id="main">
+<p class="kicker">Session · capture view · tracks · Hook</p>
+<h1>Client UI</h1>
+<p class="lede">The client is a Qt5 shell around an immediate-mode-ish OpenGL capture canvas. Almost every product noun — track, hook, preset, sampling report — is a <code>DataView</code> plus a <code>Track</code> plus a pile of state on <code>OrbitApp</code>.</p>
+
+<h2>Session setup</h2>
+<p><code>src/SessionSetup</code> is the connection dialog: local gRPC, SSH deploy, “connect to this process”. <code>ServiceDeployManager</code> copies <code>OrbitService</code> with SFTP, starts it, tunnels 44765. <code>--nodeploy</code> skips the copy. <code>--process_name</code> auto-selects after connect.</p>
+<p>Process list and module list come from <code>ProcessServiceImpl</code> (<code>GetProcessList</code>, <code>GetModuleList</code>, <code>GetDebugInfoFile</code>, <code>GetProcessMemory</code>). The UI does not parse <code>/proc</code> itself when talking to a remote service.</p>
+
+<h2>Main window and capture options</h2>
+<p><code>OrbitMainWindow</code> persists settings in <code>QSettings</code>, including <code>kDynamicInstrumentationMethodSettingKey</code>. Invalid stored values snap back to user-space instrumentation. The options dialog (<code>src/OrbitQt/CaptureOptionsDialog.cpp</code>) is the real catalog of toggles:</p>
+<ul>
+  <li>Sampling on/off is still partially hidden (<code>TODO(b/198748597)</code> — “Don’t hide samplingCheckBox…”).</li>
+  <li>Unwinding: DWARF vs frame pointers. Wine group box enables only for DWARF.</li>
+  <li>Dynamic method: Orbit (user-space) vs kernel uprobes.</li>
+  <li>Thread state, context switches, GPU driver, memory collection, introspection, API.</li>
+  <li>Stack dump size; thread-state callstack collection + dump size.</li>
+</ul>
+<p>Tracepoint picking is behind <code>--enable_tracepoint_feature</code> (default false). Memory warning threshold is behind <code>--enable_warning_threshold</code>. Time-range selection and symbol-store support are also flag-gated defaults-off.</p>
+
+<h2>Capture view and tracks</h2>
+<p><code>TimeGraph</code> owns layout, timeline, sliders, and <code>TrackContainer</code> / <code>TrackManager</code>. <code>ProcessTimer</code> is still on the UI object (<code>TODO(b/214282122)</code>). Tracks that actually exist as classes:</p>
+<table>
+  <thead><tr><th>Track</th><th>Source events</th></tr></thead>
+  <tbody>
+    <tr><td><code>SchedulerTrack</code></td><td><code>SchedulingSlice</code> (sched_switch)</td></tr>
+    <tr><td><code>ThreadTrack</code></td><td>function-call timers, samples, thread-state bar, tracepoint bar</td></tr>
+    <tr><td><code>GpuTrack</code> / <code>GpuSubmissionTrack</code> / <code>GpuDebugMarkerTrack</code></td><td>AMD jobs + Vulkan markers</td></tr>
+    <tr><td><code>FrameTrack</code></td><td>instrumented function used as a frame delimiter</td></tr>
+    <tr><td><code>SystemMemoryTrack</code>, <code>CGroupAndProcessMemoryTrack</code></td><td>memory sampling</td></tr>
+    <tr><td><code>PageFaultsTrack</code> (major/minor)</td><td>page-fault series</td></tr>
+    <tr><td><code>VariableTrack</code>, <code>AsyncTrack</code></td><td>API value tracks / async scopes</td></tr>
+  </tbody>
+</table>
+<p><code>TrackManager::GetOrCreateTrackFromTimerInfo</code> is the factory from a <code>TimerInfo</code>. Visible-track sort prefers tracks that have instrumented timers. There is a long tail of TODOs around track hierarchy, creating tracks only while drawing, and float time-axis precision (<code>b/244736453</code>).</p>
+<p>Thread tracks show samples as ticks and dynamic calls as nested boxes. Filtering of timers is implemented only on <code>ThreadTrack</code> (<code>b/179225487</code>).</p>
+
+<h2>Symbols tab and Functions tab</h2>
+<p>After connect, modules appear in the Symbols data view. <code>SymbolLoader::RetrieveModuleAndLoadSymbols</code> fills them (see <a href="symbols-modules.html">symbols</a>). Successfully loaded symbols populate <code>FunctionsDataView</code>.</p>
+<p>Columns: Hooked, Function, Size, Module, Address in module. Type glyphs include <code>MS</code>/<code>MA</code> (manual sync/async) and <code>D</code> (dynamically instrumented in the last capture). Hook/Unhook and frame-track enable live in the shared <code>DataView</code> context menu and also appear on sampling-report and callstack views so you can hook from a sample.</p>
+
+<h2>Sampling report and call tree</h2>
+<p>Selecting a range on the sampling track builds a <code>SamplingReport</code> (<code>src/OrbitGl/include/OrbitGl/SamplingReport.h</code>). Call tree widgets (<code>CallTreeWidget</code>, <code>CallTreeViewItemModel</code>) default to fully expanded in this fork (recent commit “Make CallTree Widgets fully expand by default”). The call-tree slider is also on by default here.</p>
+
+<h2>Presets</h2>
+<p><code>src/PresetFile</code> plus File → Save Preset. A preset stores hooked function hashes/names per module. Load re-selects via <code>OrbitApp::SelectFunctionsFromHashes</code> / <code>SelectFunctionsByName</code>. This does not persist kernel state; it only restocks the Hook list.</p>
+
+<h2>Keyboard (as documented)</h2>
+<p>The root README is the user-facing map: <kbd>F5</kbd> start/stop, <kbd>W</kbd>/<kbd>S</kbd> or Ctrl+wheel zoom, Ctrl+right-drag zoom-to-range, Ctrl++/− UI scale, Space = last two seconds. Those bindings live in the Qt/GL event handlers (<code>CaptureWindow.cpp</code>, <code>orbitmainwindow.cpp</code>). This review did not click through a running UI.</p>
+
+<h2>Introspection</h2>
+<p>When <code>enable_introspection</code> is on, OrbitService records its own API events and thread states (pid filter includes the service). The UI can also open an <code>IntrospectionWindow</code>. Useful when stop is slow: you can see the collector burning time in <code>Shutdown</code> if introspection was enabled for that capture.</p>
+
+<div class="callout audit">
+  <strong>UI debt that bites users.</strong> <code>DoZoom</code> is still a global. Several tracks copy-paste layout hacks (“Track hierarchy refactor, remove hack below”). <code>OrbitApp</code> still owns symbol loading, capture start, hooking, and frame tracks. None of that is broken in the small, but it is why “just add a track type” is expensive.
+</div>
+
+<nav class="pager">
+  <a href="instrumentation.html">← Instrumentation</a>
+  <a href="symbols-modules.html">Symbols &amp; modules →</a>
+</nav>
+</main>
+</div>
+</body>
+</html>
