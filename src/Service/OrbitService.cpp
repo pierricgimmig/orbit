@@ -4,6 +4,10 @@
 
 #include "OrbitService.h"
 
+#ifdef ORBIT_LIVE_VIEWER
+#include "LiveViewerBridge.h"
+#endif
+
 #include <absl/strings/match.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/string_view.h>
@@ -150,6 +154,18 @@ ErrorMessageOr<void> OrbitService::Run(std::atomic<bool>* exit_requested) {
 
   OUTCOME_TRY(std::unique_ptr<OrbitGrpcServer> grpc_server,
               CreateGrpcServer(grpc_port_, dev_mode_));
+
+#ifdef ORBIT_LIVE_VIEWER
+  LiveViewerBridge live_viewer;
+  OUTCOME_TRY(live_viewer.Start(http_port_, ring_buffer_bytes_, spill_path_, grpc_port_));
+#else
+  if (http_port_ != 0) {
+    ORBIT_ERROR(
+        "Live viewer was requested (--http_port=%u) but OrbitService was built without "
+        "orbit-live-ffi (cargo not found).",
+        http_port_);
+  }
+#endif
 
   std::unique_ptr<ProducerSideServer> producer_side_server;
   if (start_producer_side_server_) {

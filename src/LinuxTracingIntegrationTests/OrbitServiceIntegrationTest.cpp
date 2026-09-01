@@ -60,7 +60,11 @@ int OrbitServiceMain() {
   std::atomic<bool> exit_requested = false;
   // OrbitService's loop terminates when EOF is received, no need to manipulate exit_requested.
   ErrorMessageOr<void> error_message =
-      orbit_service::OrbitService{kOrbitServicePort, /*start_producer_side_server=*/true,
+      orbit_service::OrbitService{kOrbitServicePort,
+                                  /*http_port=*/0,
+                                  /*ring_buffer_bytes=*/0,
+                                  /*spill_path=*/"",
+                                  /*start_producer_side_server=*/true,
                                   /*dev_mode=*/false}
           .Run(&exit_requested);
 
