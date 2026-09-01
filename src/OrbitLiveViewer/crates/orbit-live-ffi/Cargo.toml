@@ -1,0 +1,14 @@
+[package]
+name = "orbit-live-ffi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "C ABI so OrbitService can embed the live HTTP/WebSocket viewer"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+orbit-live-event = { path = "../orbit-live-event" }
+orbit-live-server = { path = "../orbit-live-server" }
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "macros"] }
