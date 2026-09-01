@@ -128,6 +128,32 @@ impl Writer {
                 self.u32(timeline.len() as u32);
                 self.buffer.extend_from_slice(timeline);
             }
+            Event::GpuMetrics {
+                timestamp_ns,
+                device_index,
+                gpu_utilization_percent,
+                memory_utilization_percent,
+                memory_used_bytes,
+                memory_total_bytes,
+                process_memory_used_bytes,
+                temperature_celsius,
+                power_milliwatts,
+                sm_clock_mhz,
+                memory_clock_mhz,
+            } => {
+                self.buffer.push(EventTag::GpuMetrics as u8);
+                self.u64(*timestamp_ns);
+                self.u32(*device_index);
+                self.u32(*gpu_utilization_percent);
+                self.u32(*memory_utilization_percent);
+                self.u64(*memory_used_bytes);
+                self.u64(*memory_total_bytes);
+                self.u64(*process_memory_used_bytes);
+                self.u32(*temperature_celsius);
+                self.u32(*power_milliwatts);
+                self.u32(*sm_clock_mhz);
+                self.u32(*memory_clock_mhz);
+            }
         }
     }
 }

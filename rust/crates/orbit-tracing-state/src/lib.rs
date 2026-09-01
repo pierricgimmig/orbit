@@ -49,5 +49,6 @@ pub mod return_addresses;
 pub mod function_calls;
 pub mod cupti;
 pub mod gpu;
+pub mod nvml;
 pub mod leaf_functions;
 pub mod uprobe_addresses;

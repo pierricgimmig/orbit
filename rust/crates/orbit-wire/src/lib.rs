@@ -35,6 +35,7 @@ pub enum EventTag {
     InternedCallstack = 4,
     InternedString = 5,
     GpuJob = 6,
+    GpuMetrics = 7,
 }
 
 impl EventTag {
@@ -46,6 +47,7 @@ impl EventTag {
             4 => EventTag::InternedCallstack,
             5 => EventTag::InternedString,
             6 => EventTag::GpuJob,
+            7 => EventTag::GpuMetrics,
             _ => return None,
         })
     }
@@ -129,4 +131,29 @@ pub enum Event {
         dma_fence_signaled_time_ns: u64,
         timeline: Vec<u8>,
     },
+    /// A periodic GPU telemetry sample (NVML and friends). Gauges, not spans:
+    /// the same shape as Orbit's periodic SystemMemoryUsage. Fields a device
+    /// does not support are encoded as u32::MAX / u64::MAX ("unknown"), which
+    /// a reader renders as a gap rather than a zero.
+    GpuMetrics {
+        timestamp_ns: u64,
+        device_index: u32,
+        /// Percent of time the GPU was busy since the last sample.
+        gpu_utilization_percent: u32,
+        /// Percent of time GPU memory was being read or written.
+        memory_utilization_percent: u32,
+        memory_used_bytes: u64,
+        memory_total_bytes: u64,
+        /// Bytes of GPU memory attributed to the profiled process.
+        process_memory_used_bytes: u64,
+        temperature_celsius: u32,
+        power_milliwatts: u32,
+        sm_clock_mhz: u32,
+        memory_clock_mhz: u32,
+    },
 }
+
+/// The sentinel for a metric this device or driver does not report.
+pub const METRIC_UNKNOWN_U32: u32 = u32::MAX;
+/// The sentinel for an unsupported 64-bit metric.
+pub const METRIC_UNKNOWN_U64: u64 = u64::MAX;

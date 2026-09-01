@@ -116,6 +116,19 @@ impl<'a> Reader<'a> {
                     self.take(len)?.to_vec()
                 },
             },
+            EventTag::GpuMetrics => Event::GpuMetrics {
+                timestamp_ns: self.u64()?,
+                device_index: self.u32()?,
+                gpu_utilization_percent: self.u32()?,
+                memory_utilization_percent: self.u32()?,
+                memory_used_bytes: self.u64()?,
+                memory_total_bytes: self.u64()?,
+                process_memory_used_bytes: self.u64()?,
+                temperature_celsius: self.u32()?,
+                power_milliwatts: self.u32()?,
+                sm_clock_mhz: self.u32()?,
+                memory_clock_mhz: self.u32()?,
+            },
         };
         Ok(Some(event))
     }
@@ -150,6 +163,14 @@ mod tests {
                 amdgpu_cs_ioctl_time_ns: 1000, amdgpu_sched_run_job_time_ns: 2000,
                 gpu_hardware_start_time_ns: 2000, dma_fence_signaled_time_ns: 8000,
                 timeline: b"gfx".to_vec(),
+            },
+            Event::GpuMetrics {
+                timestamp_ns: 93000, device_index: 0,
+                gpu_utilization_percent: 87, memory_utilization_percent: 42,
+                memory_used_bytes: 3 << 30, memory_total_bytes: 24 << 30,
+                process_memory_used_bytes: 1 << 30,
+                temperature_celsius: 71, power_milliwatts: 220_000,
+                sm_clock_mhz: 2520, memory_clock_mhz: 10501,
             },
         ]
     }
