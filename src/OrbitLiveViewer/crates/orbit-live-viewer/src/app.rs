@@ -5320,6 +5320,21 @@ fn timeslice_label_fitting(
     }
 }
 
+/// Draw origin for a clip label so the *glyphs* sit in the vertical
+/// middle of the scope bar. `mesh` is `Galley::mesh_bounds` (tighter than
+/// the line box). A 11 pt galley is ~16 px tall; `LEFT_BOTTOM` plus that
+/// height pinned the ink to the top of compact (14 px) and even 20 px bars.
+fn clip_label_origin(box_rect: Rect, pos_x: f32, mesh: Rect, galley_size: Vec2) -> Pos2 {
+    const PAD_X: f32 = 2.0;
+    let glyph = if mesh.height() > 0.5 {
+        mesh
+    } else {
+        Rect::from_min_size(Pos2::ZERO, galley_size)
+    };
+    let mid_y = 0.5 * (box_rect.top() + box_rect.bottom());
+    Pos2::new(pos_x + PAD_X, mid_y - glyph.center().y)
+}
+
 /// `TimerTrack::DrawTimesliceText` as an egui overlay on instanced boxes.
 fn paint_clip_labels(
     ui: &Ui,
@@ -5380,12 +5395,8 @@ fn paint_clip_labels(
         let Some(galley) = cache.galley(&fonts, &font, intern, inst, max_size - 2.0) else {
             continue;
         };
-        let pad_y = 5.0_f32.min(inst.h * 0.25).max(1.5);
-        let pos = Align2::LEFT_BOTTOM.anchor_size(
-            Pos2::new(pos_x + 2.0, box_rect.bottom() - pad_y),
-            galley.size(),
-        );
-        ui.painter_at(clip).galley(pos.min, galley, Color32::WHITE);
+        let pos = clip_label_origin(box_rect, pos_x, galley.mesh_bounds, galley.size());
+        ui.painter_at(clip).galley(pos, galley, Color32::WHITE);
     }
 }
 
@@ -5837,6 +5848,40 @@ mod tests {
         let end = time_at_x(200.0, rect, t0, t1);
         assert_eq!(display_time_ns(end - mid), "1.000 s");
         assert!((x_at_time(1_000_000_000, rect, t0, t1) - 150.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn clip_label_origin_centers_glyph_mesh_in_the_bar() {
+        let bar = Rect::from_min_size(Pos2::new(10.0, 100.0), Vec2::new(80.0, 20.0));
+        let mesh = Rect::from_min_max(Pos2::new(0.2, 2.0), Pos2::new(40.0, 11.0));
+        let origin = clip_label_origin(bar, 10.0, mesh, Vec2::new(42.0, 16.0));
+        assert!((origin.x - 12.0).abs() < 1e-5, "keep 2 px left pad");
+        let glyph_mid = origin.y + mesh.center().y;
+        assert!(
+            (glyph_mid - bar.center().y).abs() < 1e-5,
+            "mesh center must sit on the bar midline"
+        );
+        assert!(origin.y + mesh.min.y > bar.top() + 0.5);
+        assert!(origin.y + mesh.max.y < bar.bottom() - 0.5);
+    }
+
+    #[test]
+    fn clip_label_origin_centers_compact_and_wide_scope_bars() {
+        // Compact phone scale 0.72 × 20 px API lane; wide desktop is 20 px.
+        let mesh = Rect::from_min_max(Pos2::new(0.0, 2.0), Pos2::new(30.0, 11.0));
+        for h in [14.4_f32, 20.0] {
+            let bar = Rect::from_min_size(Pos2::ZERO, Vec2::new(60.0, h));
+            let o = clip_label_origin(bar, 0.0, mesh, Vec2::new(32.0, 16.0));
+            assert!(((o.y + mesh.center().y) - h * 0.5).abs() < 1e-4);
+            assert!(
+                o.y + mesh.min.y > 0.4,
+                "must not sit on the top edge at h={h}"
+            );
+            assert!(
+                o.y + mesh.max.y < h - 0.4,
+                "must not sit on the bottom edge at h={h}"
+            );
+        }
     }
 
     #[test]
