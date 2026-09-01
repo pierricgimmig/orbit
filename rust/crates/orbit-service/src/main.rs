@@ -16,6 +16,7 @@
 //! With no --pid it samples its own busy worker thread, which needs no root
 //! at perf_event_paranoid <= 1.
 
+mod functions;
 mod interner;
 mod privileges;
 mod report;
@@ -23,6 +24,7 @@ mod serve;
 mod symbolize;
 mod sysinfo;
 mod telemetry;
+mod uprobes;
 
 use interner::CallstackInterner;
 use telemetry::TelemetryHelper;

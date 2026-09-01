@@ -189,6 +189,9 @@ struct StatusBody {
     self_profile: bool,
     /// OrbitService control hooks are registered (real capture, not rust-only).
     hooks: bool,
+    /// Dynamic-instrumentation outcome for the running capture; empty when
+    /// no functions were selected.
+    instrumentation: String,
 }
 
 impl StatusBody {
@@ -212,6 +215,7 @@ impl StatusBody {
             machine: "local".into(),
             self_profile: svc.self_profile_enabled(),
             hooks: svc.has_hooks(),
+            instrumentation: svc.instrumentation_status(),
         }
     }
 }

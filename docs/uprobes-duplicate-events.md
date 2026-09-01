@@ -105,3 +105,19 @@ A cheaper option is available to the Rust collector specifically: because it can
 open probes **per task instead of per CPU**, the two-buffer duplicate cannot
 arise in the first place. That trades a larger number of file descriptors for
 not needing the workaround. Worth measuring before choosing.
+
+## Follow-up: the Rust service took the per-task route (2026-09-01)
+
+`rust/crates/orbit-service/src/uprobes.rs` arms probes with `pid = <thread>,
+cpu = -1` plus `PERF_ATTR.inherit`, not per CPU. Every thread therefore has
+exactly one buffer for a given probe wherever it is scheduled, so the
+`(sp, ip, cpu)` duplicate this document describes cannot be constructed, and
+the filter it would need was never written. The cost is the one predicted
+above: two file descriptors and two mappings per thread per hook, which is why
+`MAX_HOOKS` is 16.
+
+What replaced the filter is a reordering buffer. Entry and exit arrive on
+separate rings, so a drain can hand back an exit before the entry that opened
+it; hits are held for 100 ms and paired in timestamp order. That is a
+different problem from the duplicate, and it is the one per-task probes
+actually create.

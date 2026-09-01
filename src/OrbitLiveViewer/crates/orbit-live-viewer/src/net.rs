@@ -35,6 +35,10 @@ pub struct StatusJson {
     /// OrbitService registered control hooks (real capture).
     #[serde(default)]
     pub hooks: bool,
+    /// What dynamic instrumentation did for the running capture: how many
+    /// functions were armed, or why none were. Empty when none were asked for.
+    #[serde(default)]
+    pub instrumentation: String,
 }
 
 fn default_machine() -> String {

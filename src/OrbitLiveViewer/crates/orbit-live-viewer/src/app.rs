@@ -1467,6 +1467,9 @@ impl OrbitLiveApp {
                     machine: self.status.machine.clone(),
                     self_profile: self.status.self_profile,
                     hooks: self.status.hooks,
+                    // This frame is the WebSocket's stats push, which carries
+                    // no control state; keep what /api/status last said.
+                    instrumentation: self.status.instrumentation.clone(),
                 });
             }
             LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
@@ -2064,6 +2067,22 @@ impl OrbitLiveApp {
                     .size(11.0)
                     .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
             );
+        }
+        // What actually happened to the ticked functions. Uprobes need
+        // CAP_PERFMON, so "nothing was armed" is a normal outcome that has to
+        // read as a fixable permissions problem rather than as an empty track.
+        if !self.status.instrumentation.is_empty() {
+            let armed = self.status.instrumentation.starts_with("instrumenting");
+            ui.horizontal(|ui| {
+                ui.add_space(52.0);
+                ui.label(
+                    RichText::new(&self.status.instrumentation).size(11.0).color(if armed {
+                        theme::MUTED
+                    } else {
+                        Color32::from_rgb(0xFF, 0xB3, 0x00)
+                    }),
+                );
+            });
         }
     }
 

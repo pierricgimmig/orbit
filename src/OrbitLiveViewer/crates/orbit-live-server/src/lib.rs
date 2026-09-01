@@ -79,6 +79,11 @@ pub struct LiveService {
     pub demo: AtomicBool,
     pub self_profile: AtomicBool,
     pub hooks: Mutex<Option<ControlHooks>>,
+    /// One line about dynamic instrumentation for the capture in progress:
+    /// how many functions were armed, or why none were. The viewer shows it
+    /// under the hook picker, because a hook that was ticked but never armed
+    /// is otherwise indistinguishable from a function that simply never ran.
+    pub instrumentation_status: Mutex<String>,
     /// Optional: aggregates sampled callstacks over a time range into a
     /// sampling report. Set separately from `ControlHooks` so a service that
     /// does not sample (or predates this) needs no change.
@@ -141,6 +146,7 @@ impl LiveService {
             demo: AtomicBool::new(false),
             self_profile: AtomicBool::new(self_on),
             hooks: Mutex::new(None),
+            instrumentation_status: Mutex::new(String::new()),
             sampling_report: Mutex::new(None),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
@@ -314,6 +320,14 @@ impl LiveService {
     /// Installs the sampling-report aggregator used by
     /// `GET /api/sampling/report`.
     #[allow(clippy::type_complexity)]
+    pub fn set_instrumentation_status(&self, status: impl Into<String>) {
+        *self.instrumentation_status.lock() = status.into();
+    }
+
+    pub fn instrumentation_status(&self) -> String {
+        self.instrumentation_status.lock().clone()
+    }
+
     pub fn set_sampling_report(
         &self,
         report: std::sync::Arc<dyn Fn(u64, u64) -> Result<String, String> + Send + Sync>,

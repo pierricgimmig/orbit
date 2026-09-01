@@ -173,6 +173,19 @@ pub fn open_context_switch(pid: i32, cpu: i32, size_kb: u64) -> io::Result<RingB
     RingBuffer::open(&crate::attr::context_switch(), pid, cpu, size_kb)
 }
 
+/// Opens one uprobe (or uretprobe) on a task.
+///
+/// `uprobe` owns the path the kernel reads during the syscall; it only has to
+/// outlive this call, not the returned ring.
+pub fn open_uprobe(
+    uprobe: &crate::attr::UprobeAttr,
+    pid: i32,
+    cpu: i32,
+    size_kb: u64,
+) -> io::Result<RingBuffer> {
+    RingBuffer::open(uprobe.attr(), pid, cpu, size_kb)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

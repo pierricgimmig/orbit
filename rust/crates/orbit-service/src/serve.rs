@@ -15,8 +15,10 @@
 //! `LiveEvent`s, which is what the timeline renders. The mapping is direct:
 //! a slice is a `SCHEDULING_SLICE` on (pid, tid) with the core in `extra`.
 
+use crate::functions::FunctionIndex;
 use crate::report::{SampleStore, StoredSample};
 use crate::telemetry::TelemetryHelper;
+use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
 use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, thread_state, LiveEvent};
 use orbit_wire::{Event as WireEvent, METRIC_UNKNOWN_U32, METRIC_UNKNOWN_U64};
@@ -29,7 +31,7 @@ use orbit_perf_records::reader::parse_context_switch;
 use orbit_perf_records::{record_type, PerfEventHeader};
 use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Default port, matching the C++ service so the URL is familiar.
 pub const DEFAULT_PORT: u16 = 44766;
@@ -172,6 +174,126 @@ struct CaptureState {
     target_pid: Arc<AtomicI32>,
 }
 
+/// The function catalogue behind the viewer's hook picker.
+///
+/// Indexing a large process reads and parses every mapped ELF, which takes
+/// long enough to be noticeable, so it runs on its own thread and the viewer
+/// polls `/api/symbols/status` until it flips from `loading` to `ready`. That
+/// three-state shape is the viewer's, not ours: it already knows how to wait.
+#[derive(Default)]
+struct SymbolState {
+    pid: u32,
+    status: String,
+    error: String,
+    index: Option<Arc<FunctionIndex>>,
+}
+
+impl SymbolState {
+    fn status_json(&self) -> String {
+        let (functions, modules) = match &self.index {
+            Some(index) => (index.len(), index.module_count()),
+            None => (0, 0),
+        };
+        serde_json::json!({
+            "status": if self.status.is_empty() { "idle" } else { self.status.as_str() },
+            "module_count": modules,
+            "function_count": functions,
+            "error": self.error,
+        })
+        .to_string()
+    }
+}
+
+/// Starts indexing `pid` unless that has already been done or is under way.
+fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), String> {
+    if pid == 0 {
+        return Err("a process must be selected before symbols can be loaded".to_string());
+    }
+    {
+        let mut guard = state.lock().map_err(|_| "symbol state poisoned".to_string())?;
+        if guard.pid == pid && (guard.status == "ready" || guard.status == "loading") {
+            return Ok(());
+        }
+        *guard = SymbolState {
+            pid,
+            status: "loading".to_string(),
+            error: String::new(),
+            index: None,
+        };
+    }
+    let state = state.clone();
+    std::thread::Builder::new()
+        .name("orbit-symbols".to_string())
+        .spawn(move || {
+            let index = FunctionIndex::for_pid(pid as i32);
+            let Ok(mut guard) = state.lock() else { return };
+            // A later selection may have superseded this one while it ran.
+            if guard.pid != pid {
+                return;
+            }
+            if index.is_empty() {
+                guard.status = "error".to_string();
+                guard.error =
+                    format!("no symbols found for pid {pid} (unreadable /proc, or stripped binaries)");
+                return;
+            }
+            eprintln!(
+                "orbit-service: indexed {} functions across {} modules for pid {pid}",
+                index.len(),
+                index.module_count()
+            );
+            guard.status = "ready".to_string();
+            guard.index = Some(Arc::new(index));
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Turns the ids the viewer selected into probe placements.
+///
+/// An id the index does not know is reported rather than skipped: silently
+/// dropping a hook the user ticked is exactly the kind of quiet failure that
+/// makes a profiler look broken.
+fn hooks_from_ids(index: &FunctionIndex, ids: &[u64]) -> (Vec<HookSpec>, Vec<String>) {
+    let mut hooks = Vec::new();
+    let mut unknown = Vec::new();
+    for id in ids {
+        match index.by_id(*id) {
+            Some(function) => hooks.push(HookSpec {
+                function_id: function.id,
+                module_path: function.module_path.clone(),
+                file_offset: function.file_offset,
+                name: function.name.clone(),
+            }),
+            None => unknown.push(format!("{id:#x}")),
+        }
+    }
+    (hooks, unknown)
+}
+
+/// The function ids and method the viewer put in the capture request.
+fn hook_request(body: &str) -> (Vec<u64>, String) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return (Vec::new(), String::new());
+    };
+    let ids = value
+        .get("instrumented_functions")
+        .and_then(|v| v.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("function_id").and_then(|id| id.as_u64()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let method = value
+        .get("dynamic_instrumentation_method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    (ids, method)
+}
+
 /// A scheduling slice becomes two events: the core lane it occupied, and the
 /// same interval projected onto the thread that held it.
 ///
@@ -238,6 +360,7 @@ fn capture_loop(
     target_pid: i32,
     store: Arc<SampleStore>,
     gpu_helper: Option<String>,
+    hooks: Vec<HookSpec>,
 ) {
     // GPU telemetry rides the same helper-process path the file mode uses:
     // the static service cannot dlopen NVML, so a helper streams pod events
@@ -300,7 +423,55 @@ fn capture_loop(
         );
     }
 
+    // Dynamic instrumentation. Each hooked function gets a name id up front,
+    // so a span can be labelled the moment it closes.
+    let mut hook_names: HashMap<u64, u32> = HashMap::new();
+    for hook in &hooks {
+        hook_names.insert(hook.function_id, names.id_for(&hook.name));
+    }
+    let mut uprobes = if hooks.is_empty() {
+        service.set_instrumentation_status("");
+        None
+    } else {
+        let (session, report) = UprobeSession::arm(target_pid, &hooks);
+        eprintln!(
+            "orbit-service: armed {} of {} hooks ({} probes)",
+            report.armed_functions,
+            hooks.len(),
+            report.probe_count
+        );
+        for failure in &report.failures {
+            eprintln!("orbit-service: hook not armed -- {failure}");
+        }
+        if report.probe_count == 0 {
+            // The kernel gates the uprobe PMU on CAP_PERFMON in
+            // perf_uprobe_event_init, before perf_event_paranoid is even
+            // consulted, so lowering paranoid does not help and saying it
+            // would send the reader down a dead end.
+            let message = concat!(
+                "no hooks armed: uprobes need CAP_PERFMON. Run the service with sudo, ",
+                "or: sudo setcap cap_perfmon,cap_sys_ptrace+ep <orbit-service>"
+            );
+            eprintln!("orbit-service: {message}");
+            service.set_instrumentation_status(message);
+            None
+        } else {
+            let mut message = format!(
+                "instrumenting {} of {} functions ({} probes)",
+                report.armed_functions,
+                hooks.len(),
+                report.probe_count
+            );
+            for failure in &report.failures {
+                message.push_str(&format!("; {failure}"));
+            }
+            service.set_instrumentation_status(message);
+            Some(session)
+        }
+    };
+
     let mut switches = ContextSwitchManager::new();
+    let mut instrumented_calls: u64 = 0;
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
     while running.load(Ordering::Relaxed) {
         batch.clear();
@@ -415,6 +586,26 @@ fn capture_loop(
             }
         }
 
+        // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
+        // exact spans the target actually executed, and they belong above the
+        // sampled flame graph rather than mixed into it.
+        if let Some(session) = uprobes.as_mut() {
+            for call in session.poll() {
+                instrumented_calls += 1;
+                batch.push(LiveEvent {
+                    start_ns: call.start_ns,
+                    duration_ns: call.duration_ns,
+                    tid: call.tid as u32,
+                    pid: target_pid as u32,
+                    kind: kind::API_SCOPE,
+                    depth: call.depth,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: hook_names.get(&call.function_id).copied().unwrap_or(0),
+                });
+            }
+        }
+
         if let Some(helper) = telemetry.as_mut() {
             for event in helper.drain() {
                 batch.extend(gpu_events(&event));
@@ -430,6 +621,33 @@ fn capture_loop(
             service.push_events(&batch);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // Calls held back for reordering would otherwise be lost with the
+    // session: the last spans of a capture are as real as the first.
+    if let Some(session) = uprobes.as_mut() {
+        let tail: Vec<LiveEvent> = session
+            .flush()
+            .into_iter()
+            .map(|call| LiveEvent {
+                start_ns: call.start_ns,
+                duration_ns: call.duration_ns,
+                tid: call.tid as u32,
+                pid: target_pid as u32,
+                kind: kind::API_SCOPE,
+                depth: call.depth,
+                extra: 0,
+                _pad: 0,
+                name_id: hook_names.get(&call.function_id).copied().unwrap_or(0),
+            })
+            .collect();
+        instrumented_calls += tail.len() as u64;
+        if !tail.is_empty() {
+            service.push_events(&tail);
+        }
+    }
+    if !hooks.is_empty() {
+        eprintln!("orbit-service: {instrumented_calls} instrumented calls recorded");
     }
 }
 
@@ -455,12 +673,18 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
         target_pid: Arc::new(AtomicI32::new(0)),
     };
 
+    let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
+
     let start_service = service.clone();
     let start_store = store.clone();
     let start_helper = gpu_helper.clone();
     let start_running = capture.running.clone();
     let start_pid = capture.target_pid.clone();
     let stop_running = capture.running.clone();
+    let start_symbols = symbols.clone();
+    let load_state = symbols.clone();
+    let status_state = symbols.clone();
+    let search_state = symbols.clone();
 
     service.set_hooks(ControlHooks {
         list_processes_json: Arc::new(list_processes_json),
@@ -474,6 +698,44 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
                 return Err("a capture is already running".to_string());
             }
             start_pid.store(pid, Ordering::SeqCst);
+            // Whatever the viewer ticked in the hook picker. The picker only
+            // offers functions once symbols are ready, so an index is there
+            // whenever the list is non-empty.
+            let (ids, method) = hook_request(body);
+            let mut hooks = Vec::new();
+            if !ids.is_empty() {
+                let index = start_symbols.lock().ok().and_then(|state| state.index.clone());
+                match index {
+                    Some(index) => {
+                        let (resolved, unknown) = hooks_from_ids(&index, &ids);
+                        for id in &unknown {
+                            eprintln!("orbit-service: no such function id {id}, hook skipped");
+                        }
+                        if resolved.len() > MAX_HOOKS {
+                            eprintln!(
+                                "orbit-service: {} functions selected, instrumenting the first {MAX_HOOKS}",
+                                resolved.len()
+                            );
+                        }
+                        hooks = resolved;
+                    }
+                    None => eprintln!(
+                        "orbit-service: {} functions selected but symbols are not loaded; \
+                         starting without instrumentation",
+                        ids.len()
+                    ),
+                }
+                // The trampoline half of Orbit's user-space instrumentation is
+                // not ported, so the request is honoured through uprobes
+                // whichever method was asked for. Saying so beats silently
+                // giving the user something other than what they picked.
+                if method == "user_space" {
+                    eprintln!(
+                        "orbit-service: user-space trampolines are not ported yet; \
+                         instrumenting with kernel uprobes instead"
+                    );
+                }
+            }
             let service = start_service.clone();
             let running = start_running.clone();
             // A new capture replaces the previous one's samples, so a report
@@ -483,7 +745,7 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
             let helper = start_helper.clone();
             std::thread::Builder::new()
                 .name("orbit-capture".to_string())
-                .spawn(move || capture_loop(service, running, pid, store, helper))
+                .spawn(move || capture_loop(service, running, pid, store, helper, hooks))
                 .map_err(|error| error.to_string())?;
             eprintln!("orbit-service: capture started (pid {pid})");
             Ok(())
@@ -493,15 +755,28 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
             eprintln!("orbit-service: capture stopped");
             Ok(())
         }),
-        // Symbolization is not wired into this service yet; say so plainly
-        // rather than returning something that looks like an empty result.
-        load_symbols: Arc::new(|_pid| {
-            Err("symbol loading is not implemented in the Rust service yet".to_string())
+        load_symbols: Arc::new(move |pid| load_symbols_for(&load_state, pid)),
+        symbols_status_json: Arc::new(move |pid| {
+            let state = status_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
+            // A status for a process nobody has asked about is "idle", not
+            // the previous process's answer.
+            if state.pid != pid {
+                return Ok(SymbolState::default().status_json());
+            }
+            Ok(state.status_json())
         }),
-        symbols_status_json: Arc::new(|_pid| {
-            Ok("{\"status\":\"unavailable\",\"module_count\":0,\"function_count\":0}".to_string())
+        search_functions_json: Arc::new(move |pid, query, limit| {
+            let state = search_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
+            match (&state.index, state.pid == pid) {
+                (Some(index), true) => Ok(index.search_json(pid, query, limit as usize)),
+                _ => Ok(serde_json::json!({
+                    "pid": pid,
+                    "status": if state.status.is_empty() { "idle" } else { state.status.as_str() },
+                    "functions": [],
+                })
+                .to_string()),
+            }
         }),
-        search_functions_json: Arc::new(|_pid, _query, _limit| Ok("[]".to_string())),
     });
 
     println!();
