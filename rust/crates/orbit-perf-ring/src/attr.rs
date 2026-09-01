@@ -39,6 +39,7 @@ pub struct PerfEventAttr {
 /// The bit positions of the `perf_event_attr` flag bitfield.
 pub mod flag {
     pub const DISABLED: u64 = 1 << 0;
+    pub const INHERIT: u64 = 1 << 1;
     pub const MMAP: u64 = 1 << 8;
     pub const TASK: u64 = 1 << 13;
     pub const MMAP_DATA: u64 = 1 << 17;

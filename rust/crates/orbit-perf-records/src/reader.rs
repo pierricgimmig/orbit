@@ -261,6 +261,42 @@ pub fn record_timestamp(bytes: &[u8]) -> Option<u64> {
     parse_sample_id_all(bytes).map(|id| id.time)
 }
 
+
+/// `PERF_RECORD_MISC_SWITCH_OUT` in `perf_event_header::misc`: set when a
+/// context-switch record marks the thread switching OUT (cleared for a
+/// switch IN).
+pub const MISC_SWITCH_OUT: u16 = 1 << 13;
+
+/// A parsed `PERF_RECORD_SWITCH` / `PERF_RECORD_SWITCH_CPU_WIDE`: which
+/// thread, on which core, at what time, and whether it is switching out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextSwitch {
+    pub pid: i32,
+    pub tid: i32,
+    pub core: u16,
+    pub timestamp_ns: u64,
+    pub is_switch_out: bool,
+}
+
+/// Parses a context-switch record. `sample_id_all` puts the id at the end of
+/// the record for both the per-task and cpu-wide variants, so reading it from
+/// the tail handles both.
+pub fn parse_context_switch(bytes: &[u8]) -> Option<ContextSwitch> {
+    let header = PerfEventHeader::parse(bytes)?;
+    let start = bytes.len().checked_sub(SampleIdTidTimeStreamidCpu::SIZE)?;
+    if start < PerfEventHeader::SIZE {
+        return None;
+    }
+    let sample_id = SampleIdTidTimeStreamidCpu::parse(&bytes[start..])?;
+    Some(ContextSwitch {
+        pid: sample_id.pid as i32,
+        tid: sample_id.tid as i32,
+        core: sample_id.cpu as u16,
+        timestamp_ns: sample_id.time,
+        is_switch_out: header.misc & MISC_SWITCH_OUT != 0,
+    })
+}
+
 /// Twin of `ReadPerfSampleIdAll`: `sample_id_all` puts the sample id at the
 /// very end of every non-SAMPLE record.
 pub fn parse_sample_id_all(bytes: &[u8]) -> Option<SampleIdTidTimeStreamidCpu> {

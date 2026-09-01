@@ -18,5 +18,6 @@ path = "src/main.rs"
 libc = "0.2"
 orbit-perf-records = { path = "../orbit-perf-records" }
 orbit-perf-ring = { path = "../orbit-perf-ring" }
+orbit-tracing-state = { path = "../orbit-tracing-state" }
 orbit-unwind = { path = "../orbit-unwind" }
 orbit-wire = { path = "../orbit-wire" }

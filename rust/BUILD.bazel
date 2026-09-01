@@ -376,6 +376,7 @@ rust_binary(
     deps = [
         ":orbit_perf_records",
         ":orbit_perf_ring",
+        ":orbit_tracing_state",
         ":orbit_unwind",
         ":orbit_wire",
     ] + all_crate_deps(package_name = "rust/crates/orbit-service"),

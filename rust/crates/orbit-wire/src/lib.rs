@@ -34,6 +34,7 @@ pub enum EventTag {
     FunctionCall = 3,
     InternedCallstack = 4,
     InternedString = 5,
+    GpuJob = 6,
 }
 
 impl EventTag {
@@ -44,6 +45,7 @@ impl EventTag {
             3 => EventTag::FunctionCall,
             4 => EventTag::InternedCallstack,
             5 => EventTag::InternedString,
+            6 => EventTag::GpuJob,
             _ => return None,
         })
     }
@@ -114,5 +116,17 @@ pub enum Event {
     InternedString {
         key: u64,
         bytes: Vec<u8>,
+    },
+    GpuJob {
+        pid: u32,
+        tid: u32,
+        context: u32,
+        seqno: u32,
+        depth: i32,
+        amdgpu_cs_ioctl_time_ns: u64,
+        amdgpu_sched_run_job_time_ns: u64,
+        gpu_hardware_start_time_ns: u64,
+        dma_fence_signaled_time_ns: u64,
+        timeline: Vec<u8>,
     },
 }

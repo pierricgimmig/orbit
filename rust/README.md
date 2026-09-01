@@ -104,7 +104,9 @@ instructions; whole trampolines are byte-identical across 93,696 real
 function starts.
 
 `crates/orbit-service` is the all-Rust capture service entry point: sample a
-process, unwind with orbit-unwind, intern callstacks, write a pod stream. It
+process (unwind + intern callstacks), capture scheduling system-wide via
+per-CPU context-switch rings, and (where an AMD GPU is present) GPU jobs, all
+written as a pod stream. It
 builds as a **fully static musl binary** (`./build-service-musl.sh`) -- 756 KB,
 `ldd` reports "statically linked", zero runtime dependencies.
 

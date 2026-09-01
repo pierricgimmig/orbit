@@ -303,6 +303,7 @@ dependencies = [
  "libc",
  "orbit-perf-records",
  "orbit-perf-ring",
+ "orbit-tracing-state",
  "orbit-unwind",
  "orbit-wire",
 ]

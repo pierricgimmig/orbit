@@ -19,8 +19,11 @@
 mod interner;
 
 use interner::CallstackInterner;
-use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
+use orbit_perf_records::reader::{
+    parse_context_switch, parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT,
+};
 use orbit_perf_records::{record_type, PerfEventHeader};
+use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
 use orbit_unwind::unwinder::StartRegs;
 use orbit_unwind::ProcessUnwinder;
 use orbit_wire::{CallstackType, Event, Writer};
@@ -107,6 +110,28 @@ fn main() {
         std::process::exit(2);
     }
 
+    // Scheduling is captured per-CPU and system-wide, the way Orbit does it:
+    // one context-switch ring per online CPU (pid = -1), producing
+    // PERF_RECORD_SWITCH_CPU_WIDE records the ContextSwitchManager pairs into
+    // scheduling slices. This needs perf_event_paranoid <= 0 (or root); at a
+    // higher setting the rings simply do not open and scheduling is skipped.
+    let mut switch_rings: Vec<orbit_perf_ring::RingBuffer> = Vec::new();
+    for cpu in 0..num_cpus_hint() as i32 {
+        if let Ok(ring) = orbit_perf_ring::ring::open_context_switch(-1, cpu, 8192) {
+            if ring.enable().is_ok() {
+                switch_rings.push(ring);
+            }
+        }
+    }
+    if switch_rings.is_empty() {
+        eprintln!(
+            "orbit-service: no context-switch rings (need perf_event_paranoid <= 0); \
+             scheduling disabled"
+        );
+    }
+    let mut switches = ContextSwitchManager::new();
+    let mut slices = 0u64;
+
     let mut unwinder = match ProcessUnwinder::for_pid(target_pid) {
         Ok(unwinder) => unwinder,
         Err(error) => {
@@ -120,6 +145,23 @@ fn main() {
     let mut samples = 0u64;
     let mut interned = 0u64;
 
+    // In self mode, spawn a few busy worker threads so the scheduler
+    // multiplexes them and produces context switches to capture.
+    let stop_workers = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut workers = Vec::new();
+    if sampling_self {
+        for _ in 0..(num_cpus_hint() + 2) {
+            let stop = stop_workers.clone();
+            workers.push(std::thread::spawn(move || {
+                let mut acc = 0u64;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    acc = burn_cpu(acc);
+                }
+                std::hint::black_box(acc);
+            }));
+        }
+    }
+
     let flags = SampleFlags::stack_sample();
     let deadline = Instant::now() + args.duration;
     let mut busy_accumulator = 0u64;
@@ -129,6 +171,41 @@ fn main() {
         // is something to sample.
         if sampling_self {
             busy_accumulator = burn_cpu(busy_accumulator);
+        }
+        for switch_ring in switch_rings.iter_mut() {
+            while let Ok(Some(record)) = switch_ring.read_record() {
+                let Some(header) = PerfEventHeader::parse(&record) else { continue };
+                if { header.kind } != record_type::SWITCH
+                    && { header.kind } != record_type::SWITCH_CPU_WIDE
+                {
+                    continue;
+                }
+                let Some(switch) = parse_context_switch(&record) else { continue };
+                if switch.is_switch_out {
+                    if let SwitchOut::Slice(slice) = switches.process_context_switch_out(
+                        switch.pid,
+                        switch.tid,
+                        switch.core,
+                        switch.timestamp_ns,
+                    ) {
+                        writer.write(&Event::SchedulingSlice {
+                            pid: slice.pid as u32,
+                            tid: slice.tid as u32,
+                            core: i32::from(slice.core),
+                            duration_ns: slice.duration_ns,
+                            out_timestamp_ns: slice.out_timestamp_ns,
+                        });
+                        slices += 1;
+                    }
+                } else {
+                    switches.process_context_switch_in(
+                        Some(switch.pid),
+                        switch.tid,
+                        switch.core,
+                        switch.timestamp_ns,
+                    );
+                }
+            }
         }
         while let Ok(Some(record)) = ring.read_record() {
             let Some(header) = PerfEventHeader::parse(&record) else { continue };
@@ -169,6 +246,10 @@ fn main() {
         }
     }
     std::hint::black_box(busy_accumulator);
+    stop_workers.store(true, std::sync::atomic::Ordering::Relaxed);
+    for worker in workers {
+        let _ = worker.join();
+    }
 
     let bytes = writer.into_bytes();
     let out_path = args.out.unwrap_or_else(|| "orbit-capture.pod".to_string());
@@ -181,8 +262,8 @@ fn main() {
     }
 
     eprintln!(
-        "orbit-service: captured {samples} samples ({interned} distinct callstacks, \
-         {modules} modules), wrote {len} pod bytes to {out_path}",
+        "orbit-service: captured {samples} samples ({interned} distinct callstacks), \
+         {slices} scheduling slices, {modules} modules; wrote {len} pod bytes to {out_path}",
         modules = unwinder.modules_loaded(),
         len = bytes.len(),
     );
@@ -192,6 +273,13 @@ fn main() {
         eprintln!("orbit-service: warning: no samples captured");
         std::process::exit(1);
     }
+}
+
+/// Online CPU count, for sizing the self-mode worker pool. Falls back to 4.
+fn num_cpus_hint() -> usize {
+    // SAFETY: sysconf is always safe to call.
+    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
+    if n > 0 { n as usize } else { 4 }
 }
 
 /// A non-inlinable CPU burn so a self-capture has real stacks to unwind.

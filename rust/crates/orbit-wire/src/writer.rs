@@ -103,6 +103,31 @@ impl Writer {
                 self.u32(bytes.len() as u32);
                 self.buffer.extend_from_slice(bytes);
             }
+            Event::GpuJob {
+                pid,
+                tid,
+                context,
+                seqno,
+                depth,
+                amdgpu_cs_ioctl_time_ns,
+                amdgpu_sched_run_job_time_ns,
+                gpu_hardware_start_time_ns,
+                dma_fence_signaled_time_ns,
+                timeline,
+            } => {
+                self.buffer.push(EventTag::GpuJob as u8);
+                self.u32(*pid);
+                self.u32(*tid);
+                self.u32(*context);
+                self.u32(*seqno);
+                self.i32(*depth);
+                self.u64(*amdgpu_cs_ioctl_time_ns);
+                self.u64(*amdgpu_sched_run_job_time_ns);
+                self.u64(*gpu_hardware_start_time_ns);
+                self.u64(*dma_fence_signaled_time_ns);
+                self.u32(timeline.len() as u32);
+                self.buffer.extend_from_slice(timeline);
+            }
         }
     }
 }

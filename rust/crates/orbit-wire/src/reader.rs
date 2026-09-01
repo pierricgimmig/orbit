@@ -101,6 +101,21 @@ impl<'a> Reader<'a> {
                 let len = self.u32()? as usize;
                 Event::InternedString { key, bytes: self.take(len)?.to_vec() }
             }
+            EventTag::GpuJob => Event::GpuJob {
+                pid: self.u32()?,
+                tid: self.u32()?,
+                context: self.u32()?,
+                seqno: self.u32()?,
+                depth: self.i32()?,
+                amdgpu_cs_ioctl_time_ns: self.u64()?,
+                amdgpu_sched_run_job_time_ns: self.u64()?,
+                gpu_hardware_start_time_ns: self.u64()?,
+                dma_fence_signaled_time_ns: self.u64()?,
+                timeline: {
+                    let len = self.u32()? as usize;
+                    self.take(len)?.to_vec()
+                },
+            },
         };
         Ok(Some(event))
     }
@@ -130,6 +145,12 @@ mod tests {
                 key: 0x1234, callstack_type: CallstackType::Complete, pcs: vec![0xdead, 0xbeef, 0xcafe],
             },
             Event::InternedString { key: 0x5678, bytes: b"orbit::Frame::draw".to_vec() },
+            Event::GpuJob {
+                pid: 100, tid: 104, context: 7, seqno: 900, depth: 2,
+                amdgpu_cs_ioctl_time_ns: 1000, amdgpu_sched_run_job_time_ns: 2000,
+                gpu_hardware_start_time_ns: 2000, dma_fence_signaled_time_ns: 8000,
+                timeline: b"gfx".to_vec(),
+            },
         ]
     }
 

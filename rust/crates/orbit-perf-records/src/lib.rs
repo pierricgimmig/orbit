@@ -100,6 +100,8 @@ pub mod record_type {
     pub const UNTHROTTLE: u32 = 6;
     pub const FORK: u32 = 7;
     pub const SAMPLE: u32 = 9;
+    pub const SWITCH: u32 = 14;
+    pub const SWITCH_CPU_WIDE: u32 = 15;
 }
 
 record!(
