@@ -307,10 +307,6 @@ impl TrackStrip {
         h
     }
 
-    fn scheduler_rows_owner(&self) -> MachineId {
-        scheduler_machine()
-    }
-
     fn machines_present(&self) -> Vec<MachineId> {
         let mut out = Vec::new();
         for p in &self.process_order {
