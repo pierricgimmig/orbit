@@ -9,6 +9,14 @@ tree at all.
 - Log:  [`docs/blog/`](../docs/blog/index.html)
 - Why:  [`docs/rust-service-port.html`](../docs/rust-service-port.html)
 
+## Sampling in the viewer
+
+Callstacks are sampled, symbolized and drawn as flame-graph spans, and
+`GET /api/sampling/report?start_ns=&end_ns=` returns a self/inclusive report
+for a time range. The per-thread sample bar and a selection-driven report
+panel are viewer-side work still to do -- see
+[docs/sampling-viewer-plan.md](../docs/sampling-viewer-plan.md).
+
 ## Distributing
 
 Two binaries, and only one of them is ever required.

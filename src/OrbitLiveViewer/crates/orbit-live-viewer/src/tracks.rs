@@ -307,6 +307,10 @@ impl TrackStrip {
         h
     }
 
+    fn scheduler_rows_owner(&self) -> MachineId {
+        scheduler_machine()
+    }
+
     fn machines_present(&self) -> Vec<MachineId> {
         let mut out = Vec::new();
         for p in &self.process_order {
@@ -710,24 +714,39 @@ impl TrackStrip {
         let s = self.scale.max(0.01);
         let mut out = Vec::new();
         let cores = scheduler_cores(index);
-        if !cores.is_empty() {
-            out.push((RowId::Scheduler, SCHEDULER_H * s));
-            if !self.collapsed.contains(&RowId::Scheduler) {
-                for k in cores {
-                    out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+        // The scheduler describes a machine's cores, so it belongs under that
+        // machine rather than beside it. It is emitted inside the machine loop
+        // below; `scheduler_machine` says which machine owns it.
+        if threads.is_empty() && self.process_order.is_empty() {
+            // Still show the scheduler when a capture has cores but no
+            // process tracks yet -- otherwise a scheduling-only capture looks
+            // empty.
+            if !cores.is_empty() {
+                let m = scheduler_machine();
+                out.push((RowId::Machine(m), MACHINE_H * s));
+                if !self.collapsed.contains(&RowId::Machine(m)) {
+                    push_scheduler_rows(&mut out, &cores, self, s);
                 }
             }
-        }
-        if threads.is_empty() && self.process_order.is_empty() {
             return out;
         }
         let has_filter = filter_pid
             .map(|pid| index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)))
             .unwrap_or(false);
-        for m in self.machines_present() {
+        let mut machines = self.machines_present();
+        // A capture may have cores before it has processes on that machine.
+        let scheduler_owner = scheduler_machine();
+        if !cores.is_empty() && !machines.contains(&scheduler_owner) {
+            machines.push(scheduler_owner);
+            machines.sort_by_key(|m| m.sort_key());
+        }
+        for m in machines {
             out.push((RowId::Machine(m), MACHINE_H * s));
             if self.collapsed.contains(&RowId::Machine(m)) {
                 continue;
+            }
+            if m == scheduler_owner && !cores.is_empty() {
+                push_scheduler_rows(&mut out, &cores, self, s);
             }
             for &pid in &self.process_order {
                 if MachineId::from_pid(pid) != m {
@@ -794,6 +813,28 @@ fn is_rail_lane(k: LaneKey) -> bool {
 }
 
 /// One paint lane per core, 0..N-1, matching native `num_cores_ = max+1`.
+/// The machine the scheduler track belongs to. Scheduler lanes are keyed with
+/// `pid: 0` (see `LaneKey::scheduler`), which is the local machine.
+fn scheduler_machine() -> MachineId {
+    MachineId::from_pid(0)
+}
+
+/// The Scheduler row and, unless collapsed, one row per core.
+fn push_scheduler_rows(
+    out: &mut Vec<(RowId, f32)>,
+    cores: &[LaneKey],
+    strip: &TrackStrip,
+    s: f32,
+) {
+    out.push((RowId::Scheduler, SCHEDULER_H * s));
+    if strip.collapsed.contains(&RowId::Scheduler) {
+        return;
+    }
+    for k in cores {
+        out.push((RowId::Lane(*k), (lane_height(*k) + lane_gap(*k)) * s));
+    }
+}
+
 fn scheduler_cores(index: &TrackIndex) -> Vec<LaneKey> {
     let mut n = 0u16;
     for (k, _) in index.lanes() {
@@ -1248,11 +1289,57 @@ mod tests {
             RowId::Lane(k) if k.kind == kind::THREAD_STATE || k.kind == kind::API_SCOPE
         )));
         assert!(strip.rows().iter().any(|r| r.id == RowId::Scheduler));
-        assert!(strip.rows()[0].id == RowId::Scheduler);
+        // The machine heads the list; the scheduler is the first row under it.
+        assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
+        assert_eq!(strip.rows()[1].id, RowId::Scheduler);
         assert!(strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
         let th = strip.thread_order[0];
         assert_eq!(th, ThreadId { pid: 1, tid: 100 });
         assert!(!strip.thread_order.iter().any(|t| t.pid == 0 && t.tid == 0));
+    }
+
+    #[test]
+    fn the_scheduler_lives_under_its_machine_not_beside_it() {
+        // Scheduling describes a machine's cores, so it is a child of the
+        // machine track rather than a peer of it, and its cores follow.
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 10, 0, 10, 0));
+        idx.insert(sched(1, 11, 0, 10, 1));
+        idx.insert(ev(kind::API_SCOPE, 1, 100, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        let machine = ids
+            .iter()
+            .position(|id| matches!(id, RowId::Machine(_)))
+            .expect("a machine row");
+        let scheduler = ids
+            .iter()
+            .position(|id| *id == RowId::Scheduler)
+            .expect("a scheduler row");
+        assert!(machine < scheduler, "scheduler must sit under its machine: {ids:?}");
+        // The process for that machine comes after the scheduler's cores.
+        let process = ids
+            .iter()
+            .position(|id| matches!(id, RowId::Process(_)))
+            .expect("a process row");
+        assert!(scheduler < process, "cores come before processes: {ids:?}");
+    }
+
+    #[test]
+    fn a_scheduling_only_capture_still_shows_its_machine() {
+        // Cores can arrive before any process track exists; the capture must
+        // not look empty.
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(9, 99, 0, 10, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        assert_eq!(ids[0], RowId::Machine(MachineId::Local));
+        assert_eq!(ids[1], RowId::Scheduler);
     }
 
     #[test]
@@ -1272,7 +1359,10 @@ mod tests {
             .collect();
         assert_eq!(cores, vec![0, 1, 2, 3, 4]);
         assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 5);
-        assert_eq!(strip.rows()[0].id, RowId::Scheduler);
+        // Scheduling belongs to a machine, so the machine heads the list and
+        // the Scheduler row sits under it.
+        assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
+        assert_eq!(strip.rows()[1].id, RowId::Scheduler);
     }
 
     #[test]
@@ -1331,7 +1421,8 @@ mod tests {
         );
         assert!(strip.process_order.is_empty());
         assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 2);
-        assert_eq!(strip.rows()[0].id, RowId::Scheduler);
+        assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
+        assert_eq!(strip.rows()[1].id, RowId::Scheduler);
         assert!(!strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
         assert!(!strip.rows().iter().any(|r| matches!(r.id, RowId::Process(_))));
     }
