@@ -19,3 +19,5 @@ __pycache__
 third_party/py-spy-ffi/target/
 .bazelrc.user
 /bazel-*
+src/OrbitLiveViewer/target/
+src/OrbitLiveViewer/crates/*/target/

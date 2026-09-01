@@ -3,3 +3,14 @@
 # found in the LICENSE file.
 
 exports_files(["LICENSE"])
+
+# Live WASM viewer. Build the pack; run the server. Do not `bazel run //:wasm`.
+alias(
+    name = "wasm",
+    actual = "//src/OrbitLiveViewer:wasm",
+)
+
+alias(
+    name = "live",
+    actual = "//src/OrbitLiveViewer:serve",
+)

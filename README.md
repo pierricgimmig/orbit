@@ -162,4 +162,18 @@ Then connect the UI to it over an SSH tunnel. Dynamic instrumentation is
 x86-64 only; on ARM64 the service provides sampling and tracing.
 See [docs/building_arm64.md](docs/building_arm64.md).
 
+## Live WASM viewer (Orbit Service)
+
+OrbitService serves a browser live view on `--http_port` (default **44766**).
+The service owns parsing and an in-process event ring; the page gets a packed
+WebSocket stream (API scopes, context switches, thread states).
+
+```
+OrbitService --http_port 44766 --ring_buffer_bytes 67108864 --spill_path /tmp/orbit-spill
+```
+
+Open `http://<host>:44766/`. Build, protocol, renderer choice, tests and
+benches: [`src/OrbitLiveViewer/README.md`](src/OrbitLiveViewer/README.md).
+Run book: [`docs/manual/live-viewer.md`](docs/manual/live-viewer.md).
+
 [orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png

@@ -1,0 +1,9 @@
+[package]
+name = "orbit-live-event"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Tightly packed live-view events grounded in orbit_grpc_protos::ClientCaptureEvent"
+
+[dependencies]
+serde = { workspace = true }
