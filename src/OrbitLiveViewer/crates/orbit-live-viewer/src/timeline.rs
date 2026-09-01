@@ -1,0 +1,1709 @@
+//! One egui `PaintCallback` for the hybrid wgpu timeline.
+//!
+//! Do not emit millions of egui `RectShape`s. Zoomed-out frames upload the
+//! pixel-column raster and blit it. Zoomed-in frames upload visible SDF
+//! instances only.
+
+use egui::PaintCallback;
+use egui_wgpu::wgpu;
+use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use orbit_live_event::dev::{
+    NAME_DIM_SEARCH, NAME_PLACE_EXTENT, NAME_PUNCH_DRAG, NAME_RASTER_WALK, NAME_REMAP_THEME,
+    NAME_TO_RGBA8, TID_RENDER,
+};
+use orbit_live_event::{chrome, LaneKey};
+use orbit_live_render::{
+    collect_instances_layout_opts, CollectOpts, ScopeInstance, ScopePick, TimelineLod, TrackIndex,
+    YCull, BLIT_RECT_WGSL, INSTANCE_WGSL,
+};
+use std::collections::HashMap;
+
+pub const INSTANCE_STRIDE: u64 = 48;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GpuDirtyKey {
+    pub t0: u64,
+    pub t1: u64,
+    pub width_bits: u32,
+    pub scroll_q: i32,
+    pub view_h_q: i32,
+    pub dest_x_q: i32,
+    pub dest_y_q: i32,
+    pub dest_w_q: i32,
+    pub dest_h_q: i32,
+    pub cull_y0_q: i32,
+    pub cull_y1_q: i32,
+    pub scale_q: i32,
+    pub layout_gen: u64,
+    pub lod: u8,
+    pub events: u64,
+    pub selected: Option<(u32, u64)>,
+    pub hover: Option<(u32, u64)>,
+    pub search: u64,
+}
+
+pub fn quant_px(v: f32) -> i32 {
+    (v * 16.0).round() as i32
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadMode {
+    /// Geometry + flags unchanged: write uniforms only (`u_time`).
+    Skip,
+    /// Hover/selection/search only: re-pack flags, `write_buffer`.
+    Flags,
+    /// Zoom/scroll/layout/lod/events: full collect + upload.
+    Full,
+}
+
+pub fn upload_mode(prev: Option<&GpuDirtyKey>, next: &GpuDirtyKey) -> UploadMode {
+    let Some(p) = prev else {
+        return UploadMode::Full;
+    };
+    if p.t0 != next.t0
+        || p.t1 != next.t1
+        || p.width_bits != next.width_bits
+        || p.scroll_q != next.scroll_q
+        || p.view_h_q != next.view_h_q
+        || p.dest_x_q != next.dest_x_q
+        || p.dest_y_q != next.dest_y_q
+        || p.dest_w_q != next.dest_w_q
+        || p.dest_h_q != next.dest_h_q
+        || p.cull_y0_q != next.cull_y0_q
+        || p.cull_y1_q != next.cull_y1_q
+        || p.scale_q != next.scale_q
+        || p.layout_gen != next.layout_gen
+        || p.lod != next.lod
+        || p.events != next.events
+    {
+        return UploadMode::Full;
+    }
+    if p.selected != next.selected || p.hover != next.hover || p.search != next.search {
+        return UploadMode::Flags;
+    }
+    UploadMode::Skip
+}
+
+pub fn pick_key(p: Option<ScopePick>) -> Option<(u32, u64)> {
+    p.map(|s| (s.name_id, s.start_ns))
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ViewUniforms {
+    pub viewport: [f32; 2],
+    pub origin: [f32; 2],
+    pub dest: [f32; 4],
+    pub time: f32,
+}
+
+impl ViewUniforms {
+    pub fn from_rect(rect: egui::Rect, ppp: f32, screen_px: [f32; 2]) -> Self {
+        let dest = [
+            rect.min.x * ppp,
+            rect.min.y * ppp,
+            rect.width() * ppp,
+            rect.height() * ppp,
+        ];
+        Self {
+            viewport: [screen_px[0].max(1.0), screen_px[1].max(1.0)],
+            origin: [dest[0], dest[1]],
+            dest,
+            time: 0.0,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum TimelinePayload {
+    Empty,
+    /// Reuse last GPU buffers; still write view + `u_time`.
+    Keep,
+    Pixel {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+        overlay: Vec<ScopeInstance>,
+        /// Dest in body-relative points: (top, rows), straight from
+        /// `RasterizedFrame::placed_extent`. `None` = cover the whole body
+        /// (service-rasterized frames, which carry no lane layout).
+        place: Option<(f32, f32)>,
+    },
+    Instanced {
+        instances: Vec<ScopeInstance>,
+    },
+}
+
+impl TimelinePayload {
+    /// Also returns the per-lane worker spans the collect/raster walk produced,
+    /// so the caller can hand them to `DevFrame::absorb_worker_spans`. Dropping
+    /// them here is why the pixel-column LOD showed no `render-w*` lanes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_index(
+        index: &TrackIndex,
+        t0: u64,
+        t1: u64,
+        width_pts: f32,
+        lod: TimelineLod,
+        pixels_per_point: f32,
+        layout: &[(LaneKey, f32)],
+        overlay: &[ScopeInstance],
+        search: Option<&std::collections::HashSet<u32>>,
+        punch: Option<(u32, u32)>,
+        intern: Option<&orbit_live_event::InternTable>,
+        scale: f32,
+        y_cull: Option<YCull>,
+        dev: &crate::dev::DevFrame,
+    ) -> (Self, Vec<orbit_live_render::WorkerSpan>) {
+        let width_pts = width_pts.max(1.0);
+        // An empty layout is a deliberate collapse / hide-all, not "no
+        // strip yet". Rebuilding from the index re-painted hidden threads.
+        if layout.is_empty() {
+            return (Self::Empty, Vec::new());
+        }
+        let s = pixels_per_point.max(0.01);
+        match lod {
+            TimelineLod::Instanced => {
+                let mut frame = collect_instances_layout_opts(
+                    index,
+                    t0,
+                    t1,
+                    width_pts,
+                    layout,
+                    intern,
+                    CollectOpts {
+                        y_cull,
+                        early_out: true,
+                    },
+                );
+                for inst in &mut frame.instances {
+                    inst.x *= s;
+                    inst.y *= s;
+                    inst.w *= s;
+                    inst.h *= s;
+                    inst.radius *= s;
+                }
+                (
+                    Self::Instanced {
+                        instances: frame.instances,
+                    },
+                    frame.worker_spans,
+                )
+            }
+            TimelineLod::PixelColumns => {
+                let width_px = (width_pts * pixels_per_point).round().max(1.0) as usize;
+                let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
+                let mut raster = {
+                    // The parallel column walk. Its per-lane RasterLane spans
+                    // nest under this one.
+                    let _walk = dev.scope(TID_RENDER, NAME_RASTER_WALK);
+                    index.rasterize_pixel_layout(
+                        t0,
+                        t1,
+                        width_px,
+                        &keys,
+                        Some(layout),
+                        y_cull,
+                        intern,
+                    )
+                };
+                if let Some((pid, tid)) = punch {
+                    let _punch = dev.scope(TID_RENDER, NAME_PUNCH_DRAG);
+                    punch_raster_thread(&mut raster, pid, tid);
+                }
+                if let Some(ids) = search {
+                    let _dim = dev.scope(TID_RENDER, NAME_DIM_SEARCH);
+                    dim_raster_pixels(index, &mut raster, t0, t1, ids);
+                }
+                let raster_spans = std::mem::take(&mut raster.worker_spans);
+                let (origin, _) = {
+                    let _place = dev.scope(TID_RENDER, NAME_PLACE_EXTENT);
+                    raster.placed_extent(layout, scale)
+                };
+                // Single-threaded, one write per pixel of the whole timeline.
+                let (mut rgba, height) = {
+                    let _rgba = dev.scope(TID_RENDER, NAME_TO_RGBA8);
+                    raster.to_rgba8_placed(layout, scale)
+                };
+                // A second full pass over the same buffer.
+                {
+                    let _remap = dev.scope(TID_RENDER, NAME_REMAP_THEME);
+                    crate::theme::remap_rgba8(&mut rgba);
+                }
+                let overlay = overlay
+                    .iter()
+                    .cloned()
+                    .map(|mut inst| {
+                        inst.x *= s;
+                        inst.y *= s;
+                        inst.w *= s;
+                        inst.h *= s;
+                        inst.radius *= s;
+                        inst
+                    })
+                    .collect();
+                (
+                    Self::Pixel {
+                        rgba,
+                        width: width_px as u32,
+                        height: height.max(1),
+                        overlay,
+                        place: Some((origin, height.max(1) as f32)),
+                    },
+                    raster_spans,
+                )
+            }
+        }
+    }
+}
+
+/// Lifted-drag z-order: keep raster height, punch that thread's rows to track gray
+/// so the blit does not cover the overlay pass.
+fn punch_raster_thread(raster: &mut orbit_live_render::RasterizedFrame, pid: u32, tid: u32) {
+    if raster.width == 0 {
+        return;
+    }
+    for (row, key) in raster.lanes.iter().enumerate() {
+        if key.pid == pid && key.tid == tid {
+            let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+            dest.fill(chrome::TRACK);
+        }
+    }
+}
+
+/// Later GPU instances win. Dragged thread scopes go in `fg` so they paint last.
+pub fn split_drag_instances(
+    instances: Vec<ScopeInstance>,
+    dragged: Option<(u32, u32)>,
+) -> (Vec<ScopeInstance>, Vec<ScopeInstance>) {
+    let Some((pid, tid)) = dragged else {
+        return (instances, Vec::new());
+    };
+    let mut bg = Vec::with_capacity(instances.len());
+    let mut fg = Vec::new();
+    for inst in instances {
+        if inst.pid == pid && inst.tid == tid {
+            fg.push(inst);
+        } else {
+            bg.push(inst);
+        }
+    }
+    (bg, fg)
+}
+
+/// Collapse / hide / drag only changes row Y. Remap existing instances instead
+/// of walking the ring. Returns false when `new` has lanes `old` did not
+/// (expand) so the caller should collect from the index.
+pub fn shift_instances_to_layout(
+    instances: &mut Vec<ScopeInstance>,
+    old: &[(LaneKey, f32)],
+    new: &[(LaneKey, f32)],
+) -> bool {
+    let old_y: HashMap<LaneKey, f32> = old.iter().copied().collect();
+    let new_y: HashMap<LaneKey, f32> = new.iter().copied().collect();
+    if new.iter().any(|(k, _)| !old_y.contains_key(k)) {
+        return false;
+    }
+    instances.retain(|i| new_y.contains_key(&ScopePick::from_instance(i).lane_key()));
+    for inst in instances.iter_mut() {
+        let key = ScopePick::from_instance(inst).lane_key();
+        if let (Some(&from), Some(&to)) = (old_y.get(&key), new_y.get(&key)) {
+            inst.y += to - from;
+        }
+    }
+    true
+}
+
+/// Pin every remaining instance Y to `layout()`. Drops keys that are gone
+/// (hidden / dragged-out of the rest pass).
+pub fn snap_instances_to_layout(instances: &mut Vec<ScopeInstance>, layout: &[(LaneKey, f32)]) {
+    let ys: HashMap<LaneKey, f32> = layout.iter().copied().collect();
+    instances.retain(|i| ys.contains_key(&ScopePick::from_instance(i).lane_key()));
+    for inst in instances.iter_mut() {
+        let key = ScopePick::from_instance(inst).lane_key();
+        if let Some(&y) = ys.get(&key) {
+            inst.y = y;
+        }
+    }
+}
+
+fn dim_raster_pixels(
+    index: &TrackIndex,
+    raster: &mut orbit_live_render::RasterizedFrame,
+    t0: u64,
+    t1: u64,
+    matches: &std::collections::HashSet<u32>,
+) {
+    if raster.width == 0 || t1 <= t0 {
+        return;
+    }
+    let dt = (t1 - t0) as f64 / raster.width as f64;
+    for (row, key) in raster.lanes.iter().enumerate() {
+        let Some(lane) = index.lane(*key) else {
+            continue;
+        };
+        let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+        for (x, px) in dest.iter_mut().enumerate() {
+            if *px == orbit_live_event::chrome::TRACK {
+                continue;
+            }
+            let col0 = t0.saturating_add((x as f64 * dt) as u64);
+            let col1 = t0
+                .saturating_add(((x + 1) as f64 * dt) as u64)
+                .max(col0 + 1);
+            if let Some(e) = lane.overlapping(col0, col1) {
+                if !matches.contains(&e.name_id) {
+                    *px = crate::theme::dim_argb(*px);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimelineLayer {
+    Base,
+    Overlay,
+}
+
+pub fn paint_callback(
+    rect: egui::Rect,
+    payload: TimelinePayload,
+    view: ViewUniforms,
+) -> PaintCallback {
+    paint_callback_layer(rect, payload, view, TimelineLayer::Base)
+}
+
+pub fn paint_overlay_callback(
+    rect: egui::Rect,
+    payload: TimelinePayload,
+    view: ViewUniforms,
+) -> PaintCallback {
+    paint_callback_layer(rect, payload, view, TimelineLayer::Overlay)
+}
+
+fn paint_callback_layer(
+    rect: egui::Rect,
+    payload: TimelinePayload,
+    view: ViewUniforms,
+    layer: TimelineLayer,
+) -> PaintCallback {
+    Callback::new_paint_callback(
+        rect,
+        TimelineCallback {
+            payload,
+            view,
+            layer,
+        },
+    )
+}
+
+struct TimelineCallback {
+    payload: TimelinePayload,
+    view: ViewUniforms,
+    layer: TimelineLayer,
+}
+
+impl CallbackTrait for TimelineCallback {
+    fn prepare(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        _screen_descriptor: &ScreenDescriptor,
+        _egui_encoder: &mut wgpu::CommandEncoder,
+        callback_resources: &mut CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        if let Some(gpu) = callback_resources.get_mut::<TimelineGpuSlot>() {
+            if self.layer == TimelineLayer::Base && !matches!(self.payload, TimelinePayload::Keep) {
+                gpu.clear_overlay();
+            }
+            gpu.upload(device, queue, &self.payload, self.view, self.layer);
+        }
+        Vec::new()
+    }
+
+    fn paint(
+        &self,
+        info: egui::PaintCallbackInfo,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        callback_resources: &CallbackResources,
+    ) {
+        // egui-wgpu sets a courtesy viewport to the callback clip rect. Both
+        // blit and instance shaders emit NDC from full-framebuffer pixels
+        // (`x / viewport.x * 2 - 1` plus `uni.origin` / `uni.dest`), so reset
+        // to the real surface. Scissor stays the clip so we do not paint chrome.
+        let [sw, sh] = info.screen_size_px;
+        if sw > 0 && sh > 0 {
+            render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
+        }
+        if let Some(gpu) = callback_resources.get::<TimelineGpuSlot>() {
+            gpu.draw(render_pass, self.layer);
+        }
+    }
+}
+
+/// TypeMap slot for [`TimelineGpu`].
+///
+/// wgpu types are `!Send`/`!Sync` on wasm32+atomics, but egui-wgpu's
+/// `CallbackResources` requires `Send + Sync`. GPU objects stay on the UI
+/// thread; rayon workers only run CPU collect/raster.
+pub struct TimelineGpuSlot(pub TimelineGpu);
+
+unsafe impl Send for TimelineGpuSlot {}
+unsafe impl Sync for TimelineGpuSlot {}
+
+impl std::ops::Deref for TimelineGpuSlot {
+    type Target = TimelineGpu;
+    fn deref(&self) -> &TimelineGpu {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TimelineGpuSlot {
+    fn deref_mut(&mut self) -> &mut TimelineGpu {
+        &mut self.0
+    }
+}
+
+/// GPU objects stored in `Renderer::callback_resources`.
+pub struct TimelineGpu {
+    blit_pipeline: wgpu::RenderPipeline,
+    inst_pipeline: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
+    blit_layout: wgpu::BindGroupLayout,
+    blit_uni: wgpu::Buffer,
+    inst_uni: wgpu::Buffer,
+    inst_bind: wgpu::BindGroup,
+    base: GpuDrawLayer,
+    overlay: GpuDrawLayer,
+}
+
+struct GpuDrawLayer {
+    instance_buf: Option<wgpu::Buffer>,
+    instance_cap: u64,
+    instance_count: u32,
+    /// Kept alive so the WebGPU `GPUTexture` is not dropped while bound.
+    column_tex: Option<wgpu::Texture>,
+    column_w: u32,
+    column_h: u32,
+    column_bind: Option<wgpu::BindGroup>,
+}
+
+impl GpuDrawLayer {
+    fn empty() -> Self {
+        Self {
+            instance_buf: None,
+            instance_cap: 0,
+            instance_count: 0,
+            column_tex: None,
+            column_w: 0,
+            column_h: 0,
+            column_bind: None,
+        }
+    }
+}
+
+impl TimelineGpu {
+    pub fn init(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("orbit-live-blit-rect"),
+            source: wgpu::ShaderSource::Wgsl(BLIT_RECT_WGSL.into()),
+        });
+        let inst_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("orbit-live-sdf"),
+            source: wgpu::ShaderSource::Wgsl(INSTANCE_WGSL.into()),
+        });
+
+        let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("orbit-blit-rect"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
+        let inst_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("orbit-inst-uni"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let blit_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("orbit-blit-pl"),
+            bind_group_layouts: &[&blit_layout],
+            push_constant_ranges: &[],
+        });
+        let inst_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("orbit-inst-pl"),
+            bind_group_layouts: &[&inst_layout],
+            push_constant_ranges: &[],
+        });
+
+        let target = Some(wgpu::ColorTargetState {
+            format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
+
+        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("orbit-live-blit-rect"),
+            layout: Some(&blit_pl),
+            vertex: wgpu::VertexState {
+                module: &blit_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &blit_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[target.clone()],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let inst_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("orbit-live-sdf"),
+            layout: Some(&inst_pl),
+            vertex: wgpu::VertexState {
+                module: &inst_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: INSTANCE_STRIDE,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 16,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 32,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                    ],
+                }],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &inst_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[target],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let blit_uni = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("orbit-blit-uni"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inst_uni = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("orbit-inst-uni"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inst_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("orbit-inst-bind"),
+            layout: &inst_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: inst_uni.as_entire_binding(),
+            }],
+        });
+
+        Self {
+            blit_pipeline,
+            inst_pipeline,
+            sampler,
+            blit_layout,
+            blit_uni,
+            inst_uni,
+            inst_bind,
+            base: GpuDrawLayer::empty(),
+            overlay: GpuDrawLayer::empty(),
+        }
+    }
+
+    fn layer_mut(&mut self, layer: TimelineLayer) -> &mut GpuDrawLayer {
+        match layer {
+            TimelineLayer::Base => &mut self.base,
+            TimelineLayer::Overlay => &mut self.overlay,
+        }
+    }
+
+    fn layer(&self, layer: TimelineLayer) -> &GpuDrawLayer {
+        match layer {
+            TimelineLayer::Base => &self.base,
+            TimelineLayer::Overlay => &self.overlay,
+        }
+    }
+
+    fn clear_overlay(&mut self) {
+        self.overlay = GpuDrawLayer::empty();
+    }
+
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        payload: &TimelinePayload,
+        view: ViewUniforms,
+        layer: TimelineLayer,
+    ) {
+        queue.write_buffer(
+            &self.blit_uni,
+            0,
+            &pack_blit_uniforms(view.viewport, view.dest),
+        );
+        queue.write_buffer(
+            &self.inst_uni,
+            0,
+            &pack_inst_uniforms(view.viewport, view.origin, view.time),
+        );
+
+        match payload {
+            TimelinePayload::Keep => {}
+            TimelinePayload::Empty => {
+                *self.layer_mut(layer) = GpuDrawLayer::empty();
+            }
+            TimelinePayload::Pixel {
+                rgba,
+                width,
+                height,
+                overlay,
+                place: _,
+            } => {
+                self.upload_instances(device, queue, overlay, layer);
+                if *width == 0 || *height == 0 || rgba.is_empty() {
+                    let slot = self.layer_mut(layer);
+                    slot.column_tex = None;
+                    slot.column_bind = None;
+                    slot.column_w = 0;
+                    slot.column_h = 0;
+                    return;
+                }
+                self.upload_columns(device, queue, rgba, *width, *height, layer);
+            }
+            TimelinePayload::Instanced { instances } => {
+                {
+                    let slot = self.layer_mut(layer);
+                    slot.column_tex = None;
+                    slot.column_bind = None;
+                    slot.column_w = 0;
+                    slot.column_h = 0;
+                }
+                self.upload_instances(device, queue, instances, layer);
+            }
+        }
+    }
+
+    fn upload_columns(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        layer: TimelineLayer,
+    ) {
+        let reuse = {
+            let slot = self.layer(layer);
+            slot.column_tex.is_some() && slot.column_w == width && slot.column_h == height
+        };
+        let (padded, bytes_per_row) = pack_rgba_aligned(rgba, width, height);
+        if reuse {
+            let slot = self.layer_mut(layer);
+            if let Some(texture) = &slot.column_tex {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &padded,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(bytes_per_row),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            return;
+        }
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("orbit-columns"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &padded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("orbit-columns-bind"),
+            layout: &self.blit_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.blit_uni.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        let slot = self.layer_mut(layer);
+        slot.column_bind = Some(bind);
+        slot.column_tex = Some(texture);
+        slot.column_w = width;
+        slot.column_h = height;
+    }
+
+    fn upload_instances(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: &[ScopeInstance],
+        layer: TimelineLayer,
+    ) {
+        let bytes = pack_instances(instances);
+        let need = bytes.len() as u64;
+        let slot = self.layer_mut(layer);
+        slot.instance_count = instances.len() as u32;
+        if bytes.is_empty() {
+            slot.instance_buf = None;
+            slot.instance_cap = 0;
+            record_instance_upload(0, 0);
+            return;
+        }
+        if let Some(buf) = &slot.instance_buf {
+            if slot.instance_cap >= need {
+                let t0 = upload_clock_ns();
+                queue.write_buffer(buf, 0, &bytes);
+                record_instance_upload(upload_clock_ns().saturating_sub(t0), need);
+                return;
+            }
+        }
+        let cap = need.next_multiple_of(256).max(need.saturating_mul(3) / 2);
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("orbit-instances"),
+            size: cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let t0 = upload_clock_ns();
+        queue.write_buffer(&buf, 0, &bytes);
+        record_instance_upload(upload_clock_ns().saturating_sub(t0), need);
+        slot.instance_cap = cap;
+        slot.instance_buf = Some(buf);
+    }
+
+    fn draw(&self, pass: &mut wgpu::RenderPass<'static>, layer: TimelineLayer) {
+        let slot = self.layer(layer);
+        if let Some(bind) = &slot.column_bind {
+            pass.set_pipeline(&self.blit_pipeline);
+            pass.set_bind_group(0, bind, &[]);
+            pass.draw(0..6, 0..1);
+        }
+        if let Some(buf) = &slot.instance_buf {
+            if slot.instance_count > 0 {
+                pass.set_pipeline(&self.inst_pipeline);
+                pass.set_bind_group(0, &self.inst_bind, &[]);
+                pass.set_vertex_buffer(0, buf.slice(..));
+                pass.draw(0..6, 0..slot.instance_count);
+            }
+        }
+    }
+}
+
+/// WebGPU `write_texture` requires `bytes_per_row` to be a multiple of
+/// `COPY_BYTES_PER_ROW_ALIGNMENT` (256). Pack tightly stored RGBA8 into an
+/// aligned staging buffer. Returns `(padded_bytes, bytes_per_row)`.
+pub fn pack_rgba_aligned(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u32) {
+    let src_stride = width.saturating_mul(4);
+    let padded = src_stride.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    if padded == src_stride {
+        return (src.to_vec(), src_stride);
+    }
+    let mut out = vec![0u8; padded as usize * height as usize];
+    for y in 0..height as usize {
+        let s = y * src_stride as usize;
+        let d = y * padded as usize;
+        let n = src_stride as usize;
+        if s + n <= src.len() {
+            out[d..d + n].copy_from_slice(&src[s..s + n]);
+        }
+    }
+    (out, padded)
+}
+
+/// Pack dest-rect blit uniforms. WGSL aligns `vec4` to 16, so `viewport` is padded.
+pub fn pack_blit_uniforms(viewport: [f32; 2], dest: [f32; 4]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[0..4].copy_from_slice(&viewport[0].to_le_bytes());
+    out[4..8].copy_from_slice(&viewport[1].to_le_bytes());
+    out[16..20].copy_from_slice(&dest[0].to_le_bytes());
+    out[20..24].copy_from_slice(&dest[1].to_le_bytes());
+    out[24..28].copy_from_slice(&dest[2].to_le_bytes());
+    out[28..32].copy_from_slice(&dest[3].to_le_bytes());
+    out
+}
+
+pub fn pack_inst_uniforms(viewport: [f32; 2], origin: [f32; 2], time: f32) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[0..4].copy_from_slice(&viewport[0].to_le_bytes());
+    out[4..8].copy_from_slice(&viewport[1].to_le_bytes());
+    out[8..12].copy_from_slice(&origin[0].to_le_bytes());
+    out[12..16].copy_from_slice(&origin[1].to_le_bytes());
+    out[16..20].copy_from_slice(&time.to_le_bytes());
+    out
+}
+
+pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(instances.len() * INSTANCE_STRIDE as usize);
+    for i in instances {
+        bytes.extend_from_slice(&i.x.to_le_bytes());
+        bytes.extend_from_slice(&i.y.to_le_bytes());
+        bytes.extend_from_slice(&i.w.to_le_bytes());
+        bytes.extend_from_slice(&i.h.to_le_bytes());
+        let color = crate::theme::display_argb(i.color);
+        let r = ((color >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((color >> 8) & 0xFF) as f32 / 255.0;
+        let b = (color & 0xFF) as f32 / 255.0;
+        let a = ((i.color >> 24) & 0xFF) as f32 / 255.0;
+        bytes.extend_from_slice(&r.to_le_bytes());
+        bytes.extend_from_slice(&g.to_le_bytes());
+        bytes.extend_from_slice(&b.to_le_bytes());
+        bytes.extend_from_slice(&a.to_le_bytes());
+        bytes.extend_from_slice(&i.radius.to_le_bytes());
+        bytes.extend_from_slice(&i.flags.to_le_bytes());
+        bytes.extend_from_slice(&0f32.to_le_bytes());
+        bytes.extend_from_slice(&0f32.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orbit_live_event::{kind, named_scope_color, LiveEvent};
+    use orbit_live_render::{
+        choose_lod, collect_instances_layout, stacked_layout, TrackIndex, INSTANCE_MIN_PX,
+    };
+
+    #[test]
+    fn pack_instances_is_48_bytes_each() {
+        let inst = ScopeInstance {
+            x: 1.0,
+            y: 2.0,
+            w: 10.0,
+            h: 16.0,
+            color: 0xFFE7_4435,
+            radius: 3.0,
+            name_id: 1,
+            start_ns: 0,
+            duration_ns: 10,
+            pid: 1,
+            tid: 1,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 2.0,
+        };
+        let bytes = pack_instances(&[inst]);
+        assert_eq!(bytes.len(), 48);
+        assert_eq!(&bytes[36..40], &2f32.to_le_bytes());
+    }
+
+    #[test]
+    fn pack_instances_flags_sit_in_extra_y() {
+        let inst = ScopeInstance {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: 0,
+            start_ns: 0,
+            duration_ns: 0,
+            pid: 0,
+            tid: 0,
+            kind: 0,
+            depth: 0,
+            extra: 0,
+            flags: 3.0,
+        };
+        let bytes = pack_instances(&[inst]);
+        assert_eq!(bytes.len(), 48);
+    }
+
+    #[test]
+    fn blit_uniform_has_vec4_padding() {
+        let u = pack_blit_uniforms([1920.0, 1080.0], [10.0, 20.0, 100.0, 50.0]);
+        assert_eq!(&u[16..20], &10f32.to_le_bytes());
+        assert_eq!(&u[8..16], &[0u8; 8]);
+    }
+
+    #[test]
+    fn pack_rgba_pads_bytes_per_row_to_copy_alignment() {
+        let width = 100u32;
+        let height = 2u32;
+        let mut src = vec![0u8; (width * height * 4) as usize];
+        src[0..4].copy_from_slice(&[0xE7, 0x44, 0x35, 0xFF]);
+        src[(width * 4) as usize..(width * 4 + 4) as usize]
+            .copy_from_slice(&[0x32, 0x32, 0x32, 0xFF]);
+        let (padded, stride) = pack_rgba_aligned(&src, width, height);
+        let expect = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        assert_eq!(stride, expect);
+        assert_eq!(stride, 512);
+        assert_eq!(padded.len(), stride as usize * height as usize);
+        assert_eq!(&padded[0..4], &[0xE7, 0x44, 0x35, 0xFF]);
+        let row1 = stride as usize;
+        assert_eq!(&padded[row1..row1 + 4], &[0x32, 0x32, 0x32, 0xFF]);
+        assert_eq!(&padded[400..404], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn pixel_payload_uses_thread_palette_not_track_gray() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 100,
+            tid: 1,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 1,
+            extra: 0,
+            _pad: 0,
+            name_id: 1,
+        });
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let (p, _spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            8.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        let TimelinePayload::Pixel {
+            rgba,
+            width,
+            height,
+            overlay,
+            ..
+        } = p
+        else {
+            panic!("expected pixel payload");
+        };
+        assert!(overlay.is_empty());
+        assert!(width >= 8);
+        assert!(height >= 16);
+        let expect = crate::theme::display_argb(named_scope_color(&1u32.to_le_bytes(), 1));
+        assert_ne!(expect, crate::theme::DISPLAY_TRACK);
+        assert_eq!(rgba[0], ((expect >> 16) & 0xFF) as u8);
+        assert_eq!(rgba[1], ((expect >> 8) & 0xFF) as u8);
+        assert_eq!(rgba[2], (expect & 0xFF) as u8);
+        assert_eq!(rgba[3], 0xFF);
+        assert!(
+            rgba.chunks_exact(4).any(|c| c == [0, 0, 0, 0]),
+            "empty columns stay transparent so process lane washes show through"
+        );
+    }
+
+    #[test]
+    fn payload_uses_pixel_columns_when_scopes_are_subpixel() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 8,
+            tid: 1,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 1,
+        });
+        let lod = choose_lod(&idx, 0, 1_000_000, 200, INSTANCE_MIN_PX);
+        assert_eq!(lod, TimelineLod::PixelColumns);
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let (p, _spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            1_000_000,
+            200.0,
+            lod,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(matches!(p, TimelinePayload::Pixel { .. }));
+    }
+
+    #[test]
+    fn split_drag_instances_paints_thread_last() {
+        let mk = |tid: u32| ScopeInstance {
+            x: 0.0,
+            y: tid as f32,
+            w: 4.0,
+            h: 8.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: tid,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
+        };
+        let (bg, fg) = split_drag_instances(vec![mk(1), mk(2), mk(3)], Some((1, 2)));
+        assert_eq!(bg.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![1, 3]);
+        assert_eq!(fg.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![2]);
+        let (all, none) = split_drag_instances(vec![mk(1)], None);
+        assert_eq!(all.len(), 1);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn shift_instances_moves_ys_and_drops_hidden_lanes() {
+        let lane = |tid: u32, extra: u8| orbit_live_event::LaneKey {
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra,
+        };
+        let mk = |tid: u32, y: f32| ScopeInstance {
+            x: 0.0,
+            y,
+            w: 4.0,
+            h: 8.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: tid,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
+        };
+        let old = [(lane(1, 0), 20.0), (lane(2, 0), 80.0), (lane(3, 0), 140.0)];
+        let new = [(lane(1, 0), 20.0), (lane(3, 0), 60.0)];
+        let mut insts = vec![mk(1, 20.0), mk(2, 80.0), mk(3, 140.0)];
+        assert!(shift_instances_to_layout(&mut insts, &old, &new));
+        assert_eq!(insts.len(), 2);
+        assert_eq!(insts[0].tid, 1);
+        assert!((insts[0].y - 20.0).abs() < 1e-4);
+        assert_eq!(insts[1].tid, 3);
+        assert!((insts[1].y - 60.0).abs() < 1e-4);
+        let expand = [(lane(1, 0), 20.0), (lane(2, 0), 40.0), (lane(3, 0), 60.0)];
+        assert!(!shift_instances_to_layout(&mut insts, &new, &expand));
+    }
+
+    #[test]
+    fn snap_drops_dragged_origin_and_matches_rest_ys() {
+        let lane = |tid: u32| orbit_live_event::LaneKey {
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+        };
+        let mk = |tid: u32, y: f32| ScopeInstance {
+            x: 0.0,
+            y,
+            w: 4.0,
+            h: 8.0,
+            color: 0xFFE7_4435,
+            radius: 1.0,
+            name_id: tid,
+            start_ns: 0,
+            duration_ns: 1,
+            pid: 1,
+            tid,
+            kind: 1,
+            depth: 0,
+            extra: 0,
+            flags: 0.0,
+        };
+        let origin = 80.0;
+        let mut insts = vec![mk(1, 20.0), mk(2, origin), mk(3, 140.0)];
+        let rest = [(lane(1), 20.0), (lane(3), 80.0)];
+        snap_instances_to_layout(&mut insts, &rest);
+        assert_eq!(insts.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![1, 3]);
+        assert!(insts.iter().all(|i| i.tid != 2));
+        assert!(insts
+            .iter()
+            .all(|i| (i.y - origin).abs() > 0.5 || i.tid == 3));
+        assert!((insts.iter().find(|i| i.tid == 3).unwrap().y - 80.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn collapsed_thread_omitted_from_layout_and_draw() {
+        fn ev(tid: u32, name: u32) -> LiveEvent {
+            LiveEvent {
+                start_ns: 0,
+                duration_ns: 100,
+                tid,
+                pid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: name,
+            }
+        }
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(1, 1));
+        idx.insert(ev(2, 2));
+        let mut strip = crate::tracks::TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.layout().len(), 2);
+        let open = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
+        assert_eq!(open.instances.len(), 2);
+        let hide = strip
+            .thread_order
+            .iter()
+            .copied()
+            .find(|t| t.tid == 2)
+            .unwrap();
+        strip.toggle(crate::tracks::RowId::Thread(hide));
+        strip.tick(1.0, &idx, None);
+        assert!(
+            strip.layout().iter().all(|(k, _)| k.tid != 2),
+            "collapsed thread lanes must leave the packed layout"
+        );
+        assert!(strip
+            .rows()
+            .iter()
+            .any(|r| matches!(r.id, crate::tracks::RowId::Thread(t) if t.tid == 2)));
+        let hidden = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
+        assert!(hidden.instances.iter().all(|i| i.tid != 2));
+        assert_eq!(hidden.instances.len(), 1);
+        let (pixel, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            32.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            strip.layout(),
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        let TimelinePayload::Pixel { height, .. } = pixel else {
+            panic!("expected pixel payload for the remaining thread");
+        };
+        assert!(height > 0, "remaining thread must still raster");
+        strip.toggle(crate::tracks::RowId::Process(1));
+        strip.tick(1.0, &idx, None);
+        assert!(
+            strip.layout().is_empty(),
+            "process collapse hides every leaf"
+        );
+        let (gone, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            32.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            strip.layout(),
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(
+            matches!(gone, TimelinePayload::Empty),
+            "empty rest layout must not rebuild index lanes and re-paint hidden scopes"
+        );
+        strip.toggle(crate::tracks::RowId::Process(1));
+        strip.toggle(crate::tracks::RowId::Thread(hide));
+        strip.tick(1.0, &idx, None);
+        assert_eq!(strip.layout().len(), 2);
+        let restored = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
+        assert_eq!(restored.instances.len(), 2);
+    }
+
+    #[test]
+    fn empty_layout_from_index_does_not_paint_index_lanes() {
+        let mut idx = TrackIndex::default();
+        idx.insert(LiveEvent {
+            start_ns: 0,
+            duration_ns: 100,
+            tid: 1,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 1,
+        });
+        let (p, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            8.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(matches!(p, TimelinePayload::Empty));
+        let (inst, _) = TimelinePayload::from_index(
+            &idx,
+            0,
+            100,
+            8.0,
+            TimelineLod::Instanced,
+            1.0,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(matches!(inst, TimelinePayload::Empty));
+    }
+
+    #[test]
+    fn upload_mode_skips_idle_and_flags_hover() {
+        let base = GpuDirtyKey {
+            t0: 0,
+            t1: 100,
+            width_bits: 200f32.to_bits(),
+            scroll_q: 0,
+            view_h_q: 400,
+            dest_x_q: 0,
+            dest_y_q: 0,
+            dest_w_q: 200,
+            dest_h_q: 400,
+            cull_y0_q: 0,
+            cull_y1_q: 400,
+            scale_q: 16,
+            layout_gen: 1,
+            lod: 1,
+            events: 10,
+            selected: None,
+            hover: None,
+            search: 0,
+        };
+        assert_eq!(upload_mode(None, &base), UploadMode::Full);
+        assert_eq!(upload_mode(Some(&base), &base), UploadMode::Skip);
+        let mut hover = base;
+        hover.hover = Some((7, 10));
+        assert_eq!(upload_mode(Some(&base), &hover), UploadMode::Flags);
+        let mut zoom = base;
+        zoom.t0 = 10;
+        assert_eq!(upload_mode(Some(&base), &zoom), UploadMode::Full);
+        let mut scroll = base;
+        scroll.scroll_q = 80;
+        assert_eq!(upload_mode(Some(&base), &scroll), UploadMode::Full);
+        let mut view_h = base;
+        view_h.view_h_q = 800;
+        view_h.cull_y1_q = 800;
+        assert_eq!(upload_mode(Some(&base), &view_h), UploadMode::Full);
+        let mut dest = base;
+        dest.dest_h_q = 240;
+        dest.dest_y_q = 40;
+        assert_eq!(upload_mode(Some(&base), &dest), UploadMode::Full);
+        let mut scale = base;
+        scale.scale_q = quant_px(0.72);
+        assert_eq!(upload_mode(Some(&base), &scale), UploadMode::Full);
+        let mut layout = base;
+        layout.layout_gen = 2;
+        assert_eq!(upload_mode(Some(&base), &layout), UploadMode::Full);
+    }
+
+    #[test]
+    fn pack_inst_uniforms_includes_time() {
+        let u = pack_inst_uniforms([1920.0, 1080.0], [4.0, 8.0], 1.25);
+        assert_eq!(&u[16..20], &1.25f32.to_le_bytes());
+        assert_eq!(&u[8..12], &4f32.to_le_bytes());
+    }
+}
+
+#[cfg(test)]
+mod blit_align_tests {
+    use super::*;
+    use orbit_live_event::{kind, LiveEvent};
+    use orbit_live_render::{lane_height, stacked_layout, TrackIndex};
+
+    fn ev(kind: u8, tid: u32, start: u64, dur: u64, name: u32) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid: 1,
+            kind,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        }
+    }
+
+    /// The pixel blit dest must cover exactly the rows the raster produced.
+    #[test]
+    fn blit_dest_matches_raster_rows_with_sched_lane() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::SCHEDULING_SLICE, 7, 0, 50, 1));
+        idx.insert(ev(kind::API_SCOPE, 8, 0, 50, 2));
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let scale = 1.0_f32;
+
+        assert!(
+            keys.iter().any(|k| k.kind == kind::SCHEDULING_SLICE),
+            "fixture must contain the sched lane this regresses on"
+        );
+
+        let (p, _spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            50,
+            64.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            scale,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        let TimelinePayload::Pixel { height, place, .. } = p else {
+            panic!("expected pixel payload");
+        };
+        let (top, rows) = place.expect("layout-placed raster must declare its dest");
+
+        // The payload's dest must cover exactly the rows it emitted. The old
+        // dest walk excluded sched lanes the rasterizer keeps, so it reported a
+        // shorter rect and the blit was stretched over the whole stack.
+        assert!(
+            (rows - height as f32).abs() < 1e-4,
+            "dest rows {rows} must equal emitted rows {height}"
+        );
+        let (origin, _) = idx
+            .rasterize_pixel_layout(0, 50, 64, &keys, Some(&layout), None, None)
+            .placed_extent(&layout, scale);
+        assert!(
+            (top - origin).abs() < 1e-4,
+            "dest top {top} must be the raster's first placed row {origin}"
+        );
+
+        // The removed dest walk skipped VALUE and SCHEDULING_SLICE lanes, so it
+        // started below the sched lane the rasterizer had already emitted rows
+        // for. Anchor on that gap so a re-introduced filter fails here.
+        let old_top = layout
+            .iter()
+            .filter(|(k, _)| k.kind != kind::VALUE && k.kind != kind::SCHEDULING_SLICE)
+            .map(|(_, y)| *y)
+            .fold(f32::MAX, f32::min);
+        assert!(
+            top < old_top - 1.0,
+            "dest must start at the sched lane ({top}), not below it ({old_top})"
+        );
+        let sched_rows = layout
+            .iter()
+            .find(|(k, _)| k.kind == kind::SCHEDULING_SLICE)
+            .map(|(k, _)| lane_height(*k))
+            .unwrap();
+        assert!(
+            rows > sched_rows,
+            "dest rows {rows} must cover the sched lane plus the leaf stack"
+        );
+    }
+}
+
+/// Last `Queue::write_buffer` of the packed instance buffer: (nanoseconds,
+/// bytes). Written in the egui-wgpu `prepare` phase, which runs *after*
+/// `App::update` returns, so the app reads it one frame late.
+///
+/// This is the CPU cost of staging the copy, not the bus transfer: wgpu
+/// memcpys into a staging belt here and the GPU-visible copy happens at
+/// `Queue::submit`. Timing the real device-side transfer needs
+/// `Features::TIMESTAMP_QUERY`, which browsers gate off by default.
+static INST_UPLOAD_NS: AtomicU64 = AtomicU64::new(0);
+static INST_UPLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
+
+fn record_instance_upload(ns: u64, bytes: u64) {
+    INST_UPLOAD_NS.store(ns, Ordering::Relaxed);
+    INST_UPLOAD_BYTES.store(bytes, Ordering::Relaxed);
+}
+
+/// (nanoseconds, bytes) for the most recent instance-buffer upload.
+pub fn last_instance_upload() -> (u64, u64) {
+    (
+        INST_UPLOAD_NS.load(Ordering::Relaxed),
+        INST_UPLOAD_BYTES.load(Ordering::Relaxed),
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn upload_clock_ns() -> u64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| (p.now() * 1_000_000.0) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn upload_clock_ns() -> u64 {
+    orbit_live_event::dev::now_ns()
+}
+
+#[cfg(test)]
+mod worker_span_tests {
+    use super::*;
+    use orbit_live_event::{kind, LiveEvent};
+    use orbit_live_render::{stacked_layout, TrackIndex};
+
+    /// The pixel-column LOD used to compute per-lane raster spans and throw
+    /// them away, so the self profile showed no `render-w*` lanes however many
+    /// workers were running.
+    #[test]
+    fn pixel_lod_surfaces_per_lane_raster_spans() {
+        if !orbit_live_render::is_parallel() {
+            return; // single core: the walk never splits, so there is nothing to report
+        }
+        let mut idx = TrackIndex::default();
+        // Comfortably over par::PARALLEL_MIN so the walk actually splits.
+        for tid in 0..16u32 {
+            idx.insert(LiveEvent {
+                start_ns: 0,
+                duration_ns: 1_000,
+                tid,
+                pid: 1,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: tid + 1,
+            });
+        }
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let (p, spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            1_000,
+            256.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &crate::dev::DevFrame::begin(false),
+        );
+        assert!(matches!(p, TimelinePayload::Pixel { .. }));
+        assert!(
+            !spans.is_empty(),
+            "raster worker spans must reach the caller, or the self profile \
+             reports no worker lanes for the pixel-column LOD"
+        );
+    }
+}
+
+#[cfg(test)]
+mod span_pipeline_tests {
+    use super::*;
+    use orbit_live_event::{dev::is_render_worker_tid, kind, LiveEvent};
+    use orbit_live_render::{stacked_layout, TrackIndex};
+
+    /// End to end: the parallel walk's spans must survive from_index, the
+    /// absorb guard, and land as scopes on render-worker lanes.
+    #[test]
+    fn worker_spans_reach_the_dev_frame() {
+        if !orbit_live_render::is_parallel() {
+            return;
+        }
+        let mut idx = TrackIndex::default();
+        for tid in 0..24u32 {
+            for i in 0..32u64 {
+                idx.insert(LiveEvent {
+                    start_ns: i * 100,
+                    duration_ns: 40,
+                    tid,
+                    pid: 1,
+                    kind: kind::API_SCOPE,
+                    depth: 0,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: tid + 1,
+                });
+            }
+        }
+        let keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        let layout = stacked_layout(&keys, 0.0);
+        let dev = crate::dev::DevFrame::begin(true);
+        let (_p, spans) = TimelinePayload::from_index(
+            &idx,
+            0,
+            3_200,
+            512.0,
+            TimelineLod::PixelColumns,
+            1.0,
+            &layout,
+            &[],
+            None,
+            None,
+            None,
+            1.0,
+            None,
+            &dev,
+        );
+        assert!(!spans.is_empty(), "the walk produced no spans at all");
+        dev.absorb_worker_spans(&spans);
+        let scopes = dev.finish();
+        let worker: Vec<_> = scopes
+            .iter()
+            .filter(|s| is_render_worker_tid(s.tid))
+            .collect();
+        assert!(
+            !worker.is_empty(),
+            "{} spans produced but none survived absorb into worker lanes",
+            spans.len()
+        );
+    }
+}

@@ -1,0 +1,85 @@
+# Its own workspace, excluded from ../../Cargo.toml. This crate is the wasm32
+# cdylib and drags in eframe / wgpu / winit; the service workspace next door is
+# what Bazel resolves for liborbit_live_ffi.a and must stay free of that tree.
+# ../../rust-toolchain.toml still applies (rustc is picked up by directory).
+[workspace]
+
+[package]
+name = "orbit-live-viewer"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+description = "eframe WebRunner live viewer: Orbit chrome + hybrid wgpu timeline"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["egui"]
+egui = ["dep:eframe", "dep:egui", "dep:egui-wgpu"]
+# Nightly + atomics + build-std. `build_wasm.sh` enables this. Plain
+# `cargo build --target wasm32-unknown-unknown` stays sequential so CI
+# does not need a rebuilt std.
+wasm-threads = ["orbit-live-render/parallel", "dep:wasm-bindgen-rayon"]
+
+[dependencies]
+orbit-live-event = { path = "../orbit-live-event" }
+orbit-live-chrome = { path = "../orbit-live-chrome" }
+orbit-live-protocol = { path = "../orbit-live-protocol" }
+orbit-live-render = { path = "../orbit-live-render" }
+wasm-bindgen = "=0.2.100"
+js-sys = "=0.3.77"
+console_error_panic_hook = "0.1"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Optional: only compiled when `--features wasm-threads` (wasm pack).
+# no-bundler: viewer-dist is served as raw ES modules (no webpack/vite).
+wasm-bindgen-rayon = { version = "1.3.0", features = ["no-bundler"], optional = true }
+# eframe 0.32 (MSRV 1.85, wgpu 25). This workspace pins rustc 1.88.
+eframe = { version = "0.32.3", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"], optional = true }
+egui = { version = "0.32.3", optional = true }
+egui-wgpu = { version = "0.32.3", optional = true }
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "BinaryType",
+    "Blob",
+    "console",
+    "DataTransfer",
+    "Document",
+    "DragEvent",
+    "Element",
+    "Event",
+    "File",
+    "FileList",
+    "Headers",
+    "HtmlCanvasElement",
+    "HtmlInputElement",
+    "Location",
+    "MessageEvent",
+    "Performance",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "RequestInit",
+    "Response",
+    "WebSocket",
+    "Window",
+    "VisualViewport",
+    "CssStyleDeclaration",
+    "HtmlElement",
+    "HtmlDocument",
+]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+orbit-live-render = { path = "../orbit-live-render", features = ["parallel"] }
+rfd = "0.15"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+orbit-live-render = { path = "../orbit-live-render" }
+wasm-bindgen-futures = "=0.4.50"
+# WebGPU first, WebGL fallback (egui-wgpu default).
+wgpu = { version = "25", default-features = false, features = ["webgpu", "webgl", "wgsl"] }

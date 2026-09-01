@@ -1,0 +1,38 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/orbit-live-event",
+    "crates/orbit-live-ring",
+    "crates/orbit-live-protocol",
+    "crates/orbit-live-render",
+    "crates/orbit-live-server",
+    "crates/orbit-live-ffi",
+]
+# orbit-live-viewer is its own workspace: it is a wasm32 cdylib pulling the
+# whole eframe/wgpu tree, and Bazel resolves *this* workspace to build
+# liborbit_live_ffi.a. Keeping them apart keeps the eframe tree out of the
+# Bazel dep graph. See crates/orbit-live-viewer/Cargo.toml.
+exclude = ["crates/orbit-live-viewer", "crates/orbit-live-chrome"]
+
+[workspace.package]
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+# This workspace is newer than Orbit's C++ rustc pin. See rust-toolchain.toml.
+rust-version = "1.88"
+
+[workspace.dependencies]
+clap = "=4.5.23"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+parking_lot = "0.12"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
+
+[profile.bench]
+lto = false
+debug = true
