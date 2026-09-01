@@ -145,6 +145,10 @@ pub unsafe extern "C" fn orbit_wire_time_decode_ns(writer: *mut Writer, iteratio
                 Event::FunctionCall { end_timestamp_ns, .. } => end_timestamp_ns,
                 Event::InternedCallstack { key, .. } => key,
                 Event::InternedString { key, .. } => key,
+                Event::GpuJob { dma_fence_signaled_time_ns, .. } => dma_fence_signaled_time_ns,
+                Event::GpuMetrics { timestamp_ns, .. } => timestamp_ns,
+                Event::SystemInfo { capture_start_monotonic_ns, .. } => capture_start_monotonic_ns,
+                Event::GpuInfo { vram_total_bytes, .. } => vram_total_bytes,
             });
         }
     }
