@@ -298,9 +298,8 @@ fn zoom_time_by_scale(t0: f64, t1: f64, scale: f64, center_ratio: f64) -> (f64, 
 }
 
 /// Like [`zoom_time_by_scale`], but the zoom-out ceiling is the capture
-/// span when that is larger than the 60 s default (Chrome traces whose
-/// cluster is 8 s must not slam into 60 s of empty time; a 34 h *file*
-/// axis must still be zoomable out to the cluster).
+/// span of real timed events — never 60 s of empty time around an 8 s
+/// cluster, and never past the last (or before the first) timestamp.
 fn zoom_time_by_scale_limited(
     t0: f64,
     t1: f64,
@@ -323,40 +322,40 @@ fn zoom_time_by_scale_limited(
     (new_t0, new_t0 + new_span)
 }
 
-/// Fit the visible window to a content cluster (1.1×, same pad as Zoom).
+/// Fit the visible window to a content cluster. No pad: empty time after
+/// the last (or before the first) real timestamp must not be on screen.
 fn fit_content_window(min_ns: f64, max_ns: f64) -> (f64, f64) {
     let lo = min_ns.min(max_ns);
     let hi = min_ns.max(max_ns);
-    let span = (hi - lo).max(1.0);
-    let pad = span * (ZOOM_SCOPE_PAD - 1.0) / 2.0;
-    (lo - pad, hi + pad)
+    if hi > lo {
+        (lo, hi)
+    } else {
+        (lo, lo + 1.0)
+    }
 }
 
-/// Zoom-out ceiling: never smaller than the capture.
+/// Zoom-out ceiling: the capture itself. A shorter cluster must not open
+/// out to the 60 s default (or any 1.1× pad) of empty time.
 fn zoom_max_for_capture(content_span: f64) -> f64 {
-    ZOOM_MAX_NS.max(content_span.abs().max(1.0) * ZOOM_SCOPE_PAD)
+    content_span.abs().max(ZOOM_MIN_NS)
 }
 
 /// Keep `[t0, t1]` inside a capture `[cap0, cap1]` of real timed events.
 ///
 /// Zoomed in (`span` < capture): both edges stay inside the cluster, so
 /// drag / WASD / the slider cannot reveal empty time before the first
-/// event or after the last. Zoomed out (`span` ≥ capture, including the
-/// 1.1× Home pad): pin so the cluster stays on screen — leftover pad can
-/// sit on one side, but the window cannot walk off into empty time.
+/// event or after the last. Zoomed out (`span` ≥ capture): pin both
+/// edges to the cluster — leftover pad is dropped, not shown.
 fn clamp_window_contain(t0: f64, t1: f64, cap0: f64, cap1: f64) -> (f64, f64) {
     let span = (t1 - t0).max(1.0);
     if !cap0.is_finite() || !cap1.is_finite() || cap1 <= cap0 {
         return (t0, t0 + span);
     }
     let content = cap1 - cap0;
-    let nt0 = if span >= content {
-        let min_t0 = cap1 - span;
-        let max_t0 = cap0;
-        t0.clamp(min_t0.min(max_t0), min_t0.max(max_t0))
-    } else {
-        t0.clamp(cap0, cap1 - span)
-    };
+    if span >= content {
+        return (cap0, cap1);
+    }
+    let nt0 = t0.clamp(cap0, cap1 - span);
     (nt0, nt0 + span)
 }
 
@@ -920,6 +919,7 @@ impl OrbitLiveApp {
     fn fit_to_content(&mut self) {
         if let Some((a, b)) = self.content_span() {
             let (t0, t1) = fit_content_window(a, b);
+            let (t0, t1) = clamp_window_contain(t0, t1, a, b);
             self.t0 = t0;
             self.t1 = t1;
             self.follow = false;
@@ -6118,20 +6118,21 @@ mod tests {
     }
 
     #[test]
-    fn fit_content_window_is_1_1x_and_does_not_snap_to_origin() {
+    fn fit_content_window_matches_cluster_and_does_not_snap_to_origin() {
         let cluster0 = 122_403_254_982_000.0;
         let cluster1 = 122_411_498_936_000.0;
         let (t0, t1) = fit_content_window(cluster0, cluster1);
-        assert!(t0 < cluster0 && t1 > cluster1);
-        assert!(((t1 - t0) / (cluster1 - cluster0) - ZOOM_SCOPE_PAD).abs() < 1e-9);
+        assert!((t0 - cluster0).abs() < 1e-9);
+        assert!((t1 - cluster1).abs() < 1e-9);
         assert!(t0 > 1e14, "first paint must not be 0..34 h");
     }
 
     #[test]
-    fn zoom_max_grows_when_capture_exceeds_60s() {
-        assert_eq!(zoom_max_for_capture(8.24e9), ZOOM_MAX_NS);
+    fn zoom_max_is_the_capture_span() {
+        assert!((zoom_max_for_capture(8.24e9) - 8.24e9).abs() < 1.0);
         let span = 120e9;
-        assert!((zoom_max_for_capture(span) - span * ZOOM_SCOPE_PAD).abs() < 1.0);
+        assert!((zoom_max_for_capture(span) - span).abs() < 1.0);
+        assert!((zoom_max_for_capture(0.0) - ZOOM_MIN_NS).abs() < 1e-9);
     }
 
     #[test]
@@ -6154,7 +6155,7 @@ mod tests {
         assert_eq!(ia, ca);
         assert_eq!(ib, cb);
         let (t0, t1) = fit_content_window(ia as f64, ib as f64);
-        assert!(t0 <= ia as f64 && t1 >= ib as f64);
+        assert!((t0 - ia as f64).abs() < 1.0 && (t1 - ib as f64).abs() < 1.0);
         assert!(t0 > 1e14);
         let (z0, z1) = zoom_time_by_scale_limited(
             t0,
@@ -6166,16 +6167,17 @@ mod tests {
         assert_cursor_time_locked(t0, t1, z0, z1, 0.5);
         assert!(z1 - z0 < t1 - t0);
         let (h0, h1) = fit_content_window(ia as f64, ib as f64);
-        assert!(h0 <= ia as f64 && h1 >= ib as f64);
+        assert!((h0 - ia as f64).abs() < 1.0 && (h1 - ib as f64).abs() < 1.0);
         let (s0, s1) = slider_capture_span(ca, cb, t0, t1);
         assert!(s0 > 1e14, "slider must not be 0..34 h: {s0}..{s1}");
         assert!(s1 - s0 < 20e9);
         let empty = clamp_window_contain(0.0, 2e9, ca as f64, cb as f64);
         assert!(
-            empty.0 >= ca as f64 - 1.0,
+            (empty.0 - ca as f64).abs() < 1.0,
             "pan must not stay in empty time left of the cluster"
         );
         assert!(empty.1 <= cb as f64 + 1.0);
+        assert!((empty.1 - empty.0 - 2e9).abs() < 1.0);
     }
 
     #[test]
@@ -6194,14 +6196,29 @@ mod tests {
     #[test]
     fn clamp_window_contain_pins_when_span_exceeds_capture() {
         let (t0, t1) = clamp_window_contain(500.0, 1_800.0, 1_000.0, 2_000.0);
-        assert!((t1 - t0 - 1_300.0).abs() < 1e-9);
-        assert!(t0 <= 1_000.0 && t1 >= 2_000.0);
-        assert!(t0 >= 2_000.0 - 1_300.0 - 1e-9);
-        assert!(t0 <= 1_000.0 + 1e-9);
+        assert!((t0 - 1_000.0).abs() < 1e-9);
+        assert!((t1 - 2_000.0).abs() < 1e-9);
         let (left0, left1) = clamp_window_contain(-10_000.0, -8_700.0, 1_000.0, 2_000.0);
-        assert!((left1 - left0 - 1_300.0).abs() < 1e-9);
-        assert!((left0 - (2_000.0 - 1_300.0)).abs() < 1e-9);
+        assert!((left0 - 1_000.0).abs() < 1e-9);
         assert!((left1 - 2_000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zoom_out_at_full_capture_is_a_noop() {
+        let cap0 = 1_000.0;
+        let cap1 = 2_000.0;
+        let max = zoom_max_for_capture(cap1 - cap0);
+        let (z0, z1) = zoom_time_by_scale_limited(cap0, cap1, 1.0 / 1.1, 0.5, max);
+        let (c0, c1) = clamp_window_contain(z0, z1, cap0, cap1);
+        assert!((c0 - cap0).abs() < 1e-9);
+        assert!((c1 - cap1).abs() < 1e-9);
+        let (wide0, wide1) =
+            zoom_time_by_scale_limited(cap0, cap1, 1.0 / 1.1, 1.0, ZOOM_MAX_NS);
+        let (p0, p1) = clamp_window_contain(wide0, wide1, cap0, cap1);
+        assert!((p0 - cap0).abs() < 1e-9);
+        assert!((p1 - cap1).abs() < 1e-9);
+        assert!(p1 <= cap1 + 1e-9, "no empty time after last timestamp");
+        assert!(p0 >= cap0 - 1e-9, "no empty time before first timestamp");
     }
 
     #[test]
@@ -6239,7 +6256,7 @@ mod tests {
             "theverge cluster {ca}..{cb} = {span_s} s"
         );
         let (t0, t1) = fit_content_window(ia as f64, ib as f64);
-        assert!(t0 <= ia as f64 && t1 >= ib as f64);
+        assert!((t0 - ia as f64).abs() < 1.0 && (t1 - ib as f64).abs() < 1.0);
         assert!(t0 > 1e14);
         let (z0, z1) = zoom_time_by_scale_limited(
             t0,
@@ -6261,8 +6278,10 @@ mod tests {
             zoom_max_for_capture((ib - ia) as f64),
         );
         assert_cursor_time_locked(z0, z1, o0, o1, 0.5);
+        let (o0, o1) = clamp_window_contain(o0, o1, ia as f64, ib as f64);
+        assert!((o0 - ia as f64).abs() < 1.0 && (o1 - ib as f64).abs() < 1.0);
         let (h0, h1) = fit_content_window(ia as f64, ib as f64);
-        assert!(h0 <= ia as f64 && h1 >= ib as f64);
+        assert!((h0 - ia as f64).abs() < 1.0 && (h1 - ib as f64).abs() < 1.0);
         eprintln!(
             "theverge after load t0={t0} t1={t1} span_s={:.6} content={ca}..{cb}",
             (t1 - t0) / 1e9
