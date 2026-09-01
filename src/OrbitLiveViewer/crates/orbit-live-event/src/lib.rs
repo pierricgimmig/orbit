@@ -34,6 +34,10 @@ pub mod kind {
     /// Timestamped scalar sample. `duration_ns` holds `f32::to_bits(value) as u64`
     /// — it is not a duration. [`LiveEvent::end_ns`] is `start_ns + 1`.
     pub const VALUE: u8 = 6;
+    /// A sampled callstack, drawn as a single tick on a per-thread bar.
+    /// `duration_ns` is the sampling period, not a measured duration:
+    /// what the mark means is "a sample landed here".
+    pub const SAMPLE: u8 = 7;
 }
 
 /// `ThreadStateSlice::ThreadState` values from `capture.proto`.
@@ -68,7 +72,11 @@ pub struct LiveEvent {
 
 impl LiveEvent {
     pub fn end_ns(self) -> u64 {
-        if self.kind == kind::VALUE {
+        // VALUE and SAMPLE are instants, not intervals. A sample's
+        // `duration_ns` carries the sampling period for tooltips, but what it
+        // means is "a sample landed at this timestamp", so it must draw as a
+        // tick at every zoom rather than widening into a box.
+        if self.kind == kind::VALUE || self.kind == kind::SAMPLE {
             self.start_ns.saturating_add(1)
         } else {
             self.start_ns.saturating_add(self.duration_ns)
@@ -203,6 +211,7 @@ impl LaneKey {
 /// Thread/CPU scopes need tid+depth — prefer [`LiveEvent::color_rgba`].
 pub fn palette_color(kind: u8, extra: u8, name_id: u32) -> u32 {
     match kind {
+        kind::SAMPLE => 0xFFEC_EFF1,
         kind::THREAD_STATE => thread_state_color(extra),
         kind::API_SCOPE | kind::API_TRACK => named_scope_color(&name_id.to_le_bytes(), extra),
         _ => thread_scope_color(name_id, extra),
@@ -561,6 +570,24 @@ mod tests {
             pid: 1,
         };
         assert_eq!(ev.color_rgba(), 0xFFF4_4336);
+    }
+
+    #[test]
+    fn a_sample_is_an_instant_not_an_interval() {
+        // Otherwise a 1ms sampling period would draw as a 1ms-wide box and
+        // the bar would be solid instead of a row of ticks.
+        let sample = LiveEvent {
+            start_ns: 1_000,
+            duration_ns: 1_000_000,
+            tid: 1,
+            pid: 1,
+            kind: kind::SAMPLE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 0,
+        };
+        assert_eq!(sample.end_ns(), 1_001);
     }
 
     #[test]

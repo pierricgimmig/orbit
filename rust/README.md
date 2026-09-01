@@ -23,11 +23,14 @@ Two binaries, and only one of them is ever required.
 
 | Binary | Build | Size | Needs on the target | Required? |
 |---|---|---|---|---|
-| `orbit-service` | `./build-service-musl.sh` | 865 KB | nothing (static, 0 `DT_NEEDED`) | always |
+| `orbit-service` | `./build-service-musl.sh` | ~12 MB | nothing (static, 0 `DT_NEEDED`) | always |
 | `orbit-gpu-helper` | `cargo build --release -p orbit-gpu-helper` | 361 KB | glibc >= 2.34, libgcc_s; NVIDIA driver at runtime | only for NVIDIA GPU telemetry |
 
 `orbit-service` is statically linked and runs on any x86-64 Linux with no
-runtime dependencies at all. It never links or loads a GPU library, so it
+runtime dependencies at all. It was ~865 KB before it grew the ability to
+serve the viewer UI; embedding the wasm pack and linking the axum/tokio HTTP
+stack is what takes it to ~12 MB. Still one self-contained file, but the
+"under a megabyte" figure in earlier posts predates serve mode. It never links or loads a GPU library, so it
 behaves identically on NVIDIA, AMD, and machines with no GPU.
 
 `orbit-gpu-helper` is dynamically linked *on purpose*: static musl cannot

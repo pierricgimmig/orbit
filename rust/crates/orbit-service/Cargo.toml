@@ -2,13 +2,18 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+# Its own workspace, excluded from ../../Cargo.toml: this crate depends on the
+# live-viewer server crates to serve the UI, whose paths leave rust/. Bazel's
+# crate_universe splices rust/ into a temp directory, where those paths break.
+[workspace]
+
 [package]
 name = "orbit-service"
 version = "0.1.0"
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-rust-version.workspace = true
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
 
 [[bin]]
 name = "orbit-service"

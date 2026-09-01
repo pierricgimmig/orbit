@@ -391,29 +391,9 @@ rust_binary(
     ] + all_crate_deps(package_name = "rust/crates/orbit-gpu-helper"),
 )
 
-# ------------------------------------------------------------ orbit-service
-
-rust_binary(
-    name = "orbit_service",
-    srcs = glob(["crates/orbit-service/src/**/*.rs"]),
-    crate_root = "crates/orbit-service/src/main.rs",
-    edition = ORBIT_RUST_EDITION,
-    target_compatible_with = ["@platforms//os:linux"],
-    deps = [
-        ":orbit_perf_records",
-        ":orbit_perf_ring",
-        ":orbit_tracing_state",
-        ":orbit_unwind",
-        ":orbit_wire",
-    ] + all_crate_deps(package_name = "rust/crates/orbit-service"),
-)
-
-rust_test(
-    name = "orbit_service_test",
-    size = "small",
-    crate = ":orbit_service",
-    edition = ORBIT_RUST_EDITION,
-)
+# orbit-service is built with cargo, not Bazel: it depends on the live-viewer
+# server crates (axum/tokio) whose paths leave rust/, which crate_universe
+# cannot splice. See rust/crates/orbit-service/Cargo.toml and rust.sh.
 
 # ------------------------------------------------------------ orbit-wire
 

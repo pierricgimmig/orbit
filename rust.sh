@@ -96,11 +96,11 @@ fi
 if [[ "$STATIC" -eq 1 ]]; then
   echo "rust.sh: building the static musl service"
   ( cd rust && ./build-service-musl.sh >/dev/null )
-  BIN="$ROOT/rust/target/x86_64-unknown-linux-musl/release/orbit-service"
+  BIN="$ROOT/rust/crates/orbit-service/target/x86_64-unknown-linux-musl/release/orbit-service"
 else
   echo "rust.sh: building orbit-service (release)"
-  ( cd rust && cargo build --release -p orbit-service )
-  BIN="$ROOT/rust/target/release/orbit-service"
+  ( cd rust && cargo build --release --manifest-path crates/orbit-service/Cargo.toml )
+  BIN="$ROOT/rust/crates/orbit-service/target/release/orbit-service"
 fi
 [[ -x "$BIN" ]] || die "built, but $BIN is missing"
 

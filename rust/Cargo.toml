@@ -20,7 +20,6 @@ members = [
     "crates/orbit-perf-ring",
     "crates/orbit-pod-dump",
     "crates/orbit-gpu-helper",
-    "crates/orbit-service",
     "crates/orbit-ptrace",
     "crates/orbit-thread-states",
     "crates/orbit-tracing-state",
@@ -39,6 +38,12 @@ members = [
     "ffi/orbit-unwind-ffi",
     "ffi/orbit-wire-ffi",
 ]
+# orbit-service is its own workspace: it depends on the live-viewer server
+# crates (axum/tokio) to serve the UI, and those paths point outside this
+# directory. crate_universe splices this workspace into a temp dir to generate
+# @orbit_crates, where such a path cannot resolve -- so keeping it here breaks
+# every Bazel build. Same reasoning as orbit-live-viewer next door.
+exclude = ["crates/orbit-service"]
 
 [workspace.package]
 edition = "2021"

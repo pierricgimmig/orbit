@@ -15,9 +15,10 @@ command -v cargo >/dev/null 2>&1 || export PATH="$HOME/.cargo/bin:$PATH"
 
 TARGET=x86_64-unknown-linux-musl
 # rust-toolchain.toml pins the target, so rustup fetches std automatically.
-cargo build --release --target "$TARGET" -p orbit-service
+# orbit-service is its own workspace (see its Cargo.toml).
+cargo build --release --target "$TARGET" --manifest-path crates/orbit-service/Cargo.toml
 
-BIN="target/$TARGET/release/orbit-service"
+BIN="crates/orbit-service/target/$TARGET/release/orbit-service"
 echo
 echo "Built: $BIN"
 file "$BIN"

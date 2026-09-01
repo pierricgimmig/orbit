@@ -384,6 +384,20 @@ fn capture_loop(
                         tid: sample.tid,
                         frames: frame_ids.clone(),
                     });
+                    // One tick on the thread's sample bar, named by the leaf
+                    // frame so hovering it says what was running without a
+                    // lookup. Drawn as an instant: see LiveEvent::end_ns.
+                    batch.push(LiveEvent {
+                        start_ns: sample.time,
+                        duration_ns: period_ns,
+                        tid: sample.tid,
+                        pid: target_pid as u32,
+                        kind: kind::SAMPLE,
+                        depth: 0,
+                        extra: 0,
+                        _pad: 0,
+                        name_id: frame_ids.first().copied().unwrap_or(0),
+                    });
                     for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
                         batch.push(LiveEvent {
                             start_ns: sample.time,

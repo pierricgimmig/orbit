@@ -179,6 +179,9 @@ pub struct InstanceFrame {
 pub fn lane_height(key: LaneKey) -> f32 {
     match key.kind {
         kind::THREAD_STATE => 10.0,
+        // A tick strip, not a lane of boxes: it carries no text, so it only
+        // needs to be tall enough to read as a bar of marks.
+        kind::SAMPLE => 8.0,
         kind::SCHEDULING_SLICE => 12.0,
         kind::VALUE => 38.0,
         _ => 20.0,
@@ -200,7 +203,10 @@ pub fn sort_thread_leaves(lanes: &mut [LaneKey]) {
 fn leaf_rank(kind_id: u8) -> u8 {
     match kind_id {
         kind::THREAD_STATE => 0,
-        kind::SCHEDULING_SLICE => 1,
+        // Directly under the state bar: both answer "what was this thread
+        // doing", at a glance, before any stack detail.
+        kind::SAMPLE => 1,
+        kind::SCHEDULING_SLICE => 2,
         kind::API_SCOPE => 2,
         kind::FUNCTION_CALL => 3,
         kind::API_TRACK => 4,
@@ -212,6 +218,7 @@ fn leaf_rank(kind_id: u8) -> u8 {
 pub fn leaf_label(key: LaneKey) -> String {
     match key.kind {
         kind::THREAD_STATE => "state".into(),
+        kind::SAMPLE => "samples".into(),
         kind::SCHEDULING_SLICE => format!("Core {}", key.extra),
         kind::FUNCTION_CALL => "calls".into(),
         kind::API_TRACK => "async".into(),
