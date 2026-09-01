@@ -313,6 +313,11 @@ pub struct StartBody {
     pub dynamic_instrumentation_method: String,
     #[serde(default)]
     pub instrumented_functions: Vec<InstrumentedFnRef>,
+    /// Show every process on the machine, not just the target and anything
+    /// instrumented. Off by default: system-wide scheduling projects a thread
+    /// bar per process, which buries the target under hundreds of rows.
+    #[serde(default)]
+    pub show_all_processes: bool,
 }
 
 fn default_true() -> bool {

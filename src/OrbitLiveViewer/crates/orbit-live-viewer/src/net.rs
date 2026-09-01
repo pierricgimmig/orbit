@@ -121,6 +121,7 @@ pub struct CaptureStart {
     pub unwinding: String,
     pub dynamic_instrumentation_method: String,
     pub instrumented_function_ids: Vec<u64>,
+    pub show_all_processes: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -457,7 +458,7 @@ mod wasm_impl {
                 .collect::<Vec<_>>()
                 .join(",");
             let body = format!(
-                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}]}}"#,
+                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}],"show_all_processes":{}}}"#,
                 req.pid,
                 req.enable_api,
                 req.context_switches,
@@ -466,6 +467,7 @@ mod wasm_impl {
                 req.samples_per_second,
                 json_escape(&req.unwinding),
                 json_escape(&req.dynamic_instrumentation_method),
+                req.show_all_processes,
             );
             self.send("POST", "/api/capture/start", body);
         }

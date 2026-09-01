@@ -598,6 +598,8 @@ pub struct OrbitLiveApp {
     sample_period_ms: String,
     unwind_dwarf: bool,
     user_space_hooks: bool,
+    /// Off by default: see StartBody::show_all_processes.
+    show_all_processes: bool,
     symbols: SymbolsStatusJson,
     hook_query: String,
     hook_hits: Vec<FunctionHit>,
@@ -733,6 +735,7 @@ impl OrbitLiveApp {
             sample_period_ms: "1.0".into(),
             unwind_dwarf: true,
             user_space_hooks: true,
+            show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
             hook_query: String::new(),
             hook_hits: Vec::new(),
@@ -1154,6 +1157,7 @@ impl OrbitLiveApp {
                 "kernel_uprobes".into()
             },
             instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
+            show_all_processes: self.show_all_processes,
         }
     }
 
@@ -1985,6 +1989,16 @@ impl OrbitLiveApp {
                 .clicked()
             {
                 self.user_space_hooks = false;
+            }
+            if pill(ui, "All procs", self.show_all_processes)
+                .on_hover_text(
+                    "Give every process on the machine its own rows.\n\
+                     Off: only the target, what it spawned, and anything\n\
+                     instrumented. The Scheduler track is machine-wide either way.",
+                )
+                .clicked()
+            {
+                self.show_all_processes = !self.show_all_processes;
             }
             if self.opt_csw {
                 ui.label(

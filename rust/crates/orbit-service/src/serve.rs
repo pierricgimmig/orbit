@@ -19,6 +19,7 @@ use crate::functions::FunctionIndex;
 use crate::report::{SampleStore, StoredSample};
 use crate::telemetry::TelemetryHelper;
 use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
+use crate::visible::VisibleProcesses;
 use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, thread_state, LiveEvent};
 use orbit_wire::{Event as WireEvent, METRIC_UNKNOWN_U32, METRIC_UNKNOWN_U64};
@@ -271,6 +272,17 @@ fn hooks_from_ids(index: &FunctionIndex, ids: &[u64]) -> (Vec<HookSpec>, Vec<Str
     (hooks, unknown)
 }
 
+/// Whether the capture asked to see every process on the machine.
+///
+/// Absent means no, which is what an older viewer sends: the narrow view is
+/// the safe default, since the widest one buries the target.
+fn wants_all_processes(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("show_all_processes").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
 /// The function ids and method the viewer put in the capture request.
 fn hook_request(body: &str) -> (Vec<u64>, String) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -301,6 +313,13 @@ fn hook_request(body: &str) -> (Vec<u64>, String) {
 /// `sched_switch`'s `prev_state` yet, so RUNNING is the only state we can
 /// claim; the gaps between these slices are "not on a core", which is the
 /// useful half of the signal and honest about the rest.
+///
+/// The two halves have different audiences, which is why the caller pushes
+/// them separately. A `SCHEDULING_SLICE` lanes by its *core*, ignoring pid
+/// and tid, so the first event belongs to a capture-global row and is always
+/// worth keeping -- what a core was doing includes the processes competing
+/// with the target. The second lanes by `(pid, tid)`, so keeping it for every
+/// process on the machine is what buries the target under hundreds of rows.
 fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSlice) -> [LiveEvent; 2] {
     let start_ns = slice.out_timestamp_ns.saturating_sub(slice.duration_ns);
     let base = LiveEvent {
@@ -361,6 +380,7 @@ fn capture_loop(
     store: Arc<SampleStore>,
     gpu_helper: Option<String>,
     hooks: Vec<HookSpec>,
+    show_all_processes: bool,
 ) {
     // GPU telemetry rides the same helper-process path the file mode uses:
     // the static service cannot dlopen NVML, so a helper streams pod events
@@ -423,6 +443,19 @@ fn capture_loop(
         );
     }
 
+    // Which processes get rows. Scheduling is traced machine-wide either way;
+    // this decides whose slices are also projected onto a thread bar.
+    let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
+    if show_all_processes {
+        eprintln!("orbit-service: showing every process on the machine");
+    } else {
+        eprintln!(
+            "orbit-service: showing pid {target_pid} and {} related process(es); \
+             the Scheduler track stays machine-wide",
+            visible.len().saturating_sub(1)
+        );
+    }
+
     // Dynamic instrumentation. Each hooked function gets a name id up front,
     // so a span can be labelled the moment it closes.
     let mut hook_names: HashMap<u64, u32> = HashMap::new();
@@ -456,6 +489,8 @@ fn capture_loop(
             service.set_instrumentation_status(message);
             None
         } else {
+            // A hooked process is interesting by definition, even while idle.
+            visible.add_instrumented(target_pid.max(0) as u32);
             let mut message = format!(
                 "instrumenting {} of {} functions ({} probes)",
                 report.armed_functions,
@@ -475,6 +510,8 @@ fn capture_loop(
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
     while running.load(Ordering::Relaxed) {
         batch.clear();
+        // Children appear mid-capture; the refresh is rate-limited internally.
+        visible.maybe_refresh();
         for ring in switch_rings.iter_mut() {
             while let Ok(Some(record)) = ring.read_record() {
                 let Some(header) = PerfEventHeader::parse(&record) else { continue };
@@ -491,15 +528,16 @@ fn capture_loop(
                         switch.core,
                         switch.timestamp_ns,
                     ) {
-                        // Every slice goes in, not just the target's. Orbit's
-                        // scheduling view is system-wide -- what a core was
-                        // doing includes the processes competing with the
-                        // target -- and the viewer lanes by (pid, tid) anyway.
-                        // Filtering to the target also meant seeing nothing at
-                        // all whenever the real work lived in child processes.
+                        // Every slice reaches the core lanes: the Scheduler
+                        // track is system-wide by design, and a core row does
+                        // not care whose thread it was running.
                         let [on_core, on_thread] = scheduling_events(&slice);
                         batch.push(on_core);
-                        batch.push(on_thread);
+                        // The per-thread projection is the half that creates
+                        // rows, so it is the half that is filtered.
+                        if visible.contains(on_thread.pid) {
+                            batch.push(on_thread);
+                        }
                     }
                 } else {
                     switches.process_context_switch_in(
@@ -702,6 +740,7 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
             // offers functions once symbols are ready, so an index is there
             // whenever the list is non-empty.
             let (ids, method) = hook_request(body);
+            let show_all_processes = wants_all_processes(body);
             let mut hooks = Vec::new();
             if !ids.is_empty() {
                 let index = start_symbols.lock().ok().and_then(|state| state.index.clone());
@@ -745,7 +784,9 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
             let helper = start_helper.clone();
             std::thread::Builder::new()
                 .name("orbit-capture".to_string())
-                .spawn(move || capture_loop(service, running, pid, store, helper, hooks))
+                .spawn(move || {
+                    capture_loop(service, running, pid, store, helper, hooks, show_all_processes)
+                })
                 .map_err(|error| error.to_string())?;
             eprintln!("orbit-service: capture started (pid {pid})");
             Ok(())
@@ -904,5 +945,14 @@ mod tests {
         };
         let [on_core, _] = scheduling_events(&slice);
         assert_eq!(on_core.start_ns, 0, "saturating, not wrapped");
+    }
+
+    #[test]
+    fn an_absent_show_all_flag_means_the_narrow_view() {
+        // What an older viewer sends. The default has to be the safe one.
+        assert!(!wants_all_processes(r#"{"pid":7}"#));
+        assert!(!wants_all_processes("not json at all"));
+        assert!(!wants_all_processes(r#"{"pid":7,"show_all_processes":false}"#));
+        assert!(wants_all_processes(r#"{"pid":7,"show_all_processes":true}"#));
     }
 }

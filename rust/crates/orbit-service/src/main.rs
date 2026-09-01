@@ -25,6 +25,7 @@ mod symbolize;
 mod sysinfo;
 mod telemetry;
 mod uprobes;
+mod visible;
 
 use interner::CallstackInterner;
 use telemetry::TelemetryHelper;

@@ -520,9 +520,11 @@ fn capture_start_json_includes_sampling_and_hooks() {
         unwinding: "dwarf".into(),
         dynamic_instrumentation_method: "user_space".into(),
         instrumented_functions: vec![crate::http::InstrumentedFnRef { function_id: 7 }],
+        show_all_processes: false,
     };
     let json = body.to_json();
     assert!(json.contains("\"pid\":42"));
+    assert!(json.contains("\"show_all_processes\":false"));
     assert!(json.contains("\"samples_per_second\":1000"));
     assert!(json.contains("\"unwinding\":\"dwarf\""));
     assert!(json.contains("\"function_id\":7"));
