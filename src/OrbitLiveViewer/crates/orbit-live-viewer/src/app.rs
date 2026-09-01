@@ -3936,6 +3936,23 @@ impl OrbitLiveApp {
                         .color(theme::MUTED)
                         .size(11.0),
                     );
+                    // Expand/collapse all, as the native tree's context menu
+                    // offers. Only meaningful on the two tree tabs.
+                    if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
+                        ui.add_space(8.0);
+                        if pill(ui, "Expand all", false)
+                            .on_hover_text("Expand every node of this tree")
+                            .clicked()
+                        {
+                            self.expand_all_tree_nodes();
+                        }
+                        if pill(ui, "Collapse all", false)
+                            .on_hover_text("Collapse every node back to its roots")
+                            .clicked()
+                        {
+                            self.tree_expanded.clear();
+                        }
+                    }
                     ui.add_space(8.0);
                     for tab in [
                         ReportTab::Flat,
@@ -3988,23 +4005,27 @@ impl OrbitLiveApp {
                 }
                 ui.end_row();
                 for row in report.rows.iter().take(200) {
-                    ui.label(
-                        RichText::new(format!("{:.1}%", row.self_percent))
-                            .color(theme::TEXT)
-                            .monospace()
-                            .size(11.0),
-                    );
-                    ui.label(
-                        RichText::new(format!("{:.1}%", row.inclusive_percent))
-                            .color(theme::MUTED)
-                            .monospace()
-                            .size(11.0),
-                    );
+                    // Bars here as well as in the trees. The native UI only
+                    // paints them on the call tree's Inclusive column, but
+                    // this is the view you scan hardest, and a column of bars
+                    // is read faster than a column of numbers.
+                    percent_bar(ui, row.self_percent as f64, true);
+                    percent_bar(ui, row.inclusive_percent as f64, false);
                     ui.label(RichText::new(&row.name).color(theme::TEXT).size(11.0));
                     ui.label(RichText::new(&row.module).color(theme::MUTED).size(10.5));
                     ui.end_row();
                 }
             });
+    }
+
+    /// Marks every node of the current tree expanded.
+    ///
+    /// Walks the tree that was actually delivered, so this cannot expand past
+    /// the serialization caps -- the service already truncated at 24 levels
+    /// and 24 children per node, and there is nothing below that to open.
+    fn expand_all_tree_nodes(&mut self) {
+        let Some(tree) = self.tree.clone() else { return };
+        self.tree_expanded = all_expandable_paths(&tree.roots);
     }
 
     /// One row per node, indented by depth, with a click target on the
@@ -4024,7 +4045,7 @@ impl OrbitLiveApp {
             .spacing([14.0, 2.0])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["incl", "self", "of parent", "function", "module"] {
+                for h in ["inclusive", "self", "of parent", "function", "module"] {
                     ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
                 }
                 ui.end_row();
@@ -4045,12 +4066,10 @@ impl OrbitLiveApp {
                     drawn += 1;
                     let expandable = !node.children.is_empty();
                     let expanded = self.tree_expanded.contains(&path);
-                    ui.label(
-                        RichText::new(format!("{:.1}%", node.inclusive_percent))
-                            .color(theme::TEXT)
-                            .monospace()
-                            .size(11.0),
-                    );
+                    // Inclusive as a bar, the way the native Inclusive column
+                    // paints it: the shape of the hot path is visible down the
+                    // column without reading a single number.
+                    percent_bar(ui, node.inclusive_percent, true);
                     ui.label(
                         RichText::new(if node.exclusive > 0 {
                             format!("{}", node.exclusive)
@@ -4061,47 +4080,38 @@ impl OrbitLiveApp {
                         .monospace()
                         .size(11.0),
                     );
-                    ui.label(
-                        RichText::new(format!("{:.1}%", node.of_parent_percent))
-                            .color(theme::MUTED)
-                            .monospace()
-                            .size(11.0),
-                    );
+                    percent_bar(ui, node.of_parent_percent, false);
+                    let mut toggle = false;
                     ui.horizontal(|ui| {
                         ui.add_space(depth as f32 * 12.0);
-                        let marker = if !expandable {
-                            "  "
-                        } else if expanded {
-                            "▾"
-                        } else {
-                            "▸"
-                        };
+                        // A painted triangle, not a glyph: the font atlas has
+                        // no chevron and renders one as a replacement box.
+                        toggle |= inline_chevron(ui, expandable.then_some(expanded));
                         let is_thread = node.kind == "thread";
                         let label = ui.add(
                             egui::Label::new(
-                                RichText::new(format!("{marker} {}", node.name))
+                                RichText::new(&node.name)
                                     .color(if is_thread { theme::MUTED } else { theme::TEXT })
                                     .size(11.0),
                             )
                             .sense(egui::Sense::click()),
                         );
-                        if expandable {
-                            if label
-                                .on_hover_text(if node.address != 0 {
-                                    format!("{}\n{:#x}", node.name, node.address)
-                                } else {
-                                    node.name.clone()
-                                })
-                                .clicked()
-                            {
-                                if expanded {
-                                    self.tree_expanded.remove(&path);
-                                } else {
-                                    self.tree_expanded.insert(path.clone());
-                                }
-                            }
+                        let label = label.on_hover_text(if node.address != 0 {
+                            format!("{}\n{}\n{:#x}", node.name, node.module, node.address)
+                        } else {
+                            node.name.clone()
+                        });
+                        if expandable && label.clicked() {
+                            toggle = true;
                         }
                     });
+                    if toggle {
+                        if expanded {
+                            self.tree_expanded.remove(&path);
+                        } else {
+                            self.tree_expanded.insert(path.clone());
+                        }
+                    }
                     ui.label(RichText::new(&node.module).color(theme::MUTED).size(10.5));
                     ui.end_row();
 
@@ -5123,6 +5133,90 @@ fn fmt_int(n: u64) -> String {
         out.push(c);
     }
     out.chars().rev().collect()
+}
+
+/// Every path in a tree that has children, in the same `0/2/1` form the rows
+/// are keyed by.
+///
+/// Walks the tree that was actually delivered, so it cannot expand past the
+/// serialization caps: the service already truncated at 24 levels and 24
+/// children per node, and there is nothing below that to open.
+fn all_expandable_paths(roots: &[crate::net::TreeNodeJson]) -> std::collections::HashSet<String> {
+    let mut paths = std::collections::HashSet::new();
+    let mut stack: Vec<(&crate::net::TreeNodeJson, String)> =
+        roots.iter().enumerate().map(|(i, n)| (n, i.to_string())).collect();
+    while let Some((node, path)) = stack.pop() {
+        if node.children.is_empty() {
+            continue;
+        }
+        for (i, child) in node.children.iter().enumerate() {
+            stack.push((child, format!("{path}/{i}")));
+        }
+        paths.insert(path);
+    }
+    paths
+}
+
+/// A chevron that allocates its own space, for use inside a grid cell where
+/// there is no row rectangle to position against.
+///
+/// Same reason as [`chevron`]: the WASM font atlas has no glyph for the
+/// triangles, so drawing them as text renders a replacement box. `open` is
+/// `None` for a leaf, which reserves the same width so sibling labels line up.
+fn inline_chevron(ui: &mut Ui, open: Option<bool>) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), Sense::click());
+    let Some(open) = open else { return false };
+    let c = rect.center();
+    let color = if resp.hovered() { theme::TEXT } else { theme::MUTED };
+    let pts = if open {
+        vec![
+            Pos2::new(c.x - 3.5, c.y - 2.0),
+            Pos2::new(c.x + 3.5, c.y - 2.0),
+            Pos2::new(c.x, c.y + 2.5),
+        ]
+    } else {
+        vec![
+            Pos2::new(c.x - 2.0, c.y - 3.5),
+            Pos2::new(c.x + 2.5, c.y),
+            Pos2::new(c.x - 2.0, c.y + 3.5),
+        ]
+    };
+    ui.painter().add(Shape::convex_polygon(pts, color, Stroke::NONE));
+    resp.clicked()
+}
+
+/// A percentage as a filled bar with the number drawn on top, the way the Qt
+/// UI's `ProgressBarItemDelegate` paints the Inclusive column. Reading down a
+/// column of bars finds the hot path far faster than reading down a column of
+/// numbers.
+fn percent_bar(ui: &mut Ui, percent: f64, strong: bool) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(66.0, 14.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, theme::INPUT);
+    let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
+    if fraction > 0.0 {
+        let mut filled = rect;
+        filled.set_width(rect.width() * fraction);
+        // Dimmed accent, so the bar reads as a background the text sits on
+        // rather than competing with it -- the Qt delegate darkens the
+        // palette highlight for the same reason.
+        painter.rect_filled(
+            filled,
+            2.0,
+            if strong {
+                Color32::from_rgb(0x3A, 0x54, 0x68)
+            } else {
+                Color32::from_rgb(0x24, 0x2C, 0x36)
+            },
+        );
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{percent:.1}%"),
+        FontId::monospace(10.5),
+        if strong { theme::TEXT } else { theme::MUTED },
+    );
 }
 
 fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> bool {
@@ -6853,5 +6947,40 @@ mod tests {
             stolen, 0,
             "a 1 ns tick must not win pick at the center of a longer same-lane scope"
         );
+    }
+
+    #[test]
+    fn expand_all_finds_every_node_that_has_children() {
+        use crate::net::TreeNodeJson;
+        let leaf = TreeNodeJson::default();
+        let mid = TreeNodeJson { children: vec![leaf.clone(), leaf.clone()], ..Default::default() };
+        let root = TreeNodeJson { children: vec![mid.clone()], ..Default::default() };
+        let paths = all_expandable_paths(&[root, leaf.clone()]);
+        // "0" (root) and "0/0" (mid) have children; the leaves and the second
+        // root do not, so they are not expandable and get no entry.
+        let mut got: Vec<String> = paths.into_iter().collect();
+        got.sort();
+        assert_eq!(got, vec!["0".to_string(), "0/0".to_string()]);
+    }
+
+    #[test]
+    fn expand_all_on_an_empty_tree_expands_nothing() {
+        assert!(all_expandable_paths(&[]).is_empty());
+    }
+
+    #[test]
+    fn expansion_paths_address_siblings_separately() {
+        use crate::net::TreeNodeJson;
+        let leaf = TreeNodeJson::default();
+        let branch = TreeNodeJson { children: vec![leaf.clone()], ..Default::default() };
+        let root = TreeNodeJson {
+            children: vec![branch.clone(), branch.clone()],
+            ..Default::default()
+        };
+        let paths = all_expandable_paths(&[root]);
+        // Two identical siblings must still be independently expandable, or
+        // opening one would open the other.
+        assert!(paths.contains("0/0"));
+        assert!(paths.contains("0/1"));
     }
 }
