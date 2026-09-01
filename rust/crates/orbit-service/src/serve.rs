@@ -15,7 +15,12 @@
 //! `LiveEvent`s, which is what the timeline renders. The mapping is direct:
 //! a slice is a `SCHEDULING_SLICE` on (pid, tid) with the core in `extra`.
 
+use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, LiveEvent};
+use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
+use orbit_unwind::unwinder::StartRegs;
+use orbit_unwind::ProcessUnwinder;
+use std::collections::HashMap;
 use orbit_live_server::{http, ControlHooks, LiveService, ServerConfig};
 use orbit_perf_records::reader::parse_context_switch;
 use orbit_perf_records::{record_type, PerfEventHeader};
@@ -25,6 +30,35 @@ use std::sync::Arc;
 
 /// Default port, matching the C++ service so the URL is familiar.
 pub const DEFAULT_PORT: u16 = 44766;
+
+/// Name ids for symbolized frames start here, clear of the ids the server
+/// assigns to its own lanes.
+const FRAME_NAME_ID_BASE: u32 = 1 << 20;
+
+/// Interns function names into the viewer's table, handing back the id the
+/// LiveEvent carries. The viewer renders the name; we only allocate ids.
+struct FrameNames {
+    service: Arc<LiveService>,
+    ids: HashMap<String, u32>,
+    next: u32,
+}
+
+impl FrameNames {
+    fn new(service: Arc<LiveService>) -> FrameNames {
+        FrameNames { service, ids: HashMap::new(), next: FRAME_NAME_ID_BASE }
+    }
+
+    fn id_for(&mut self, name: &str) -> u32 {
+        if let Some(id) = self.ids.get(name) {
+            return *id;
+        }
+        let id = self.next;
+        self.next += 1;
+        self.service.intern_id(id, name);
+        self.ids.insert(name.to_string(), id);
+        id
+    }
+}
 
 /// One running capture: the flag its thread watches, and who it follows.
 struct CaptureState {
@@ -65,7 +99,40 @@ fn list_processes_json() -> Result<String, String> {
 /// rings, pair them into scheduling slices, and push each slice into the
 /// viewer's ring so it appears on the timeline as it happens.
 fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid: i32) {
-    let _ = target_pid; // recorded by the server; slices are captured machine-wide
+    // Sampling follows the chosen process; scheduling is machine-wide.
+    const SAMPLE_HZ: u64 = 1000;
+    let period_ns = 1_000_000_000 / SAMPLE_HZ;
+    let mut names = FrameNames::new(service.clone());
+    let mut symbolizer = Symbolizer::for_pid(target_pid);
+    if symbolizer.module_count() > 0 {
+        eprintln!(
+            "orbit-service: symbolizing {} modules, {} symbols",
+            symbolizer.module_count(),
+            symbolizer.symbol_count()
+        );
+    }
+    // One sampling ring per thread of the target, opened up front. Threads
+    // started later are missed; refreshing the thread list mid-capture is a
+    // later refinement.
+    let mut sample_rings = Vec::new();
+    if let Ok(tasks) = std::fs::read_dir(format!("/proc/{target_pid}/task")) {
+        for entry in tasks.flatten() {
+            let Some(tid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
+                continue;
+            };
+            if let Ok(ring) = orbit_perf_ring::ring::open_stack_sample(period_ns, 64_000, tid, -1, 4096)
+            {
+                if ring.enable().is_ok() {
+                    sample_rings.push(ring);
+                }
+            }
+        }
+    }
+    if sample_rings.is_empty() {
+        eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
+    }
+    let mut unwinder = ProcessUnwinder::for_pid(target_pid).ok();
+    let sample_flags = SampleFlags::stack_sample();
     let mut switch_rings = Vec::new();
     for cpu in 0..crate::num_cpus_hint() as i32 {
         if let Ok(ring) = orbit_perf_ring::ring::open_context_switch(-1, cpu, 8192) {
@@ -129,6 +196,55 @@ fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid:
                 }
             }
         }
+        // Sampled callstacks: unwind, symbolize, and lay each frame out as a
+        // span one sampling period wide at its stack depth. Consecutive
+        // samples in the same function abut, so the timeline reads as a flame
+        // graph rather than a picket fence.
+        if let Some(unwinder) = unwinder.as_mut() {
+            for ring in sample_rings.iter_mut() {
+                while let Ok(Some(record)) = ring.read_record() {
+                    let Some(header) = PerfEventHeader::parse(&record) else { continue };
+                    if { header.kind } != record_type::SAMPLE {
+                        continue;
+                    }
+                    let Some(sample) = parse_record_sample(&record, sample_flags, true) else {
+                        continue;
+                    };
+                    let (Some(regs), Some(stack)) =
+                        (sample.regs.as_deref(), sample.stack_data.as_deref())
+                    else {
+                        continue;
+                    };
+                    if regs.len() < REGS_USER_ALL_COUNT {
+                        continue;
+                    }
+                    #[cfg(target_arch = "x86_64")]
+                    let start = StartRegs { ip: regs[8], sp: regs[7], frame_pointer: regs[6], link: 0 };
+                    #[cfg(target_arch = "aarch64")]
+                    let start =
+                        StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] };
+                    let outcome = unwinder.unwind(start, start.sp, stack, 64);
+                    // frames[0] is the sampled pc; a flame graph stacks the
+                    // outermost caller at depth 0, so walk them in reverse.
+                    let depth_count = outcome.frames.len().min(u8::MAX as usize);
+                    for (index, pc) in outcome.frames.iter().take(depth_count).rev().enumerate() {
+                        let name_id = names.id_for(&symbolizer.resolve(*pc));
+                        batch.push(LiveEvent {
+                            start_ns: sample.time,
+                            duration_ns: period_ns,
+                            tid: sample.tid,
+                            pid: target_pid as u32,
+                            kind: kind::FUNCTION_CALL,
+                            depth: index as u8,
+                            extra: 0,
+                            _pad: 0,
+                            name_id,
+                        });
+                    }
+                }
+            }
+        }
+
         if !batch.is_empty() {
             // push_events, NOT ring().push_many(): the former also advances
             // the live-end marker the viewer positions its window by, bumps

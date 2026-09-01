@@ -689,6 +689,8 @@ dependencies = [
  "libc",
  "orbit-live-event",
  "orbit-live-server",
+ "orbit-maps",
+ "orbit-object",
  "orbit-perf-records",
  "orbit-perf-ring",
  "orbit-tracing-state",

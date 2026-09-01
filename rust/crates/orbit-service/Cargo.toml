@@ -20,6 +20,8 @@ orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-even
 orbit-live-server = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-server" }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+orbit-maps = { path = "../orbit-maps" }
+orbit-object = { path = "../orbit-object" }
 orbit-perf-records = { path = "../orbit-perf-records" }
 orbit-perf-ring = { path = "../orbit-perf-ring" }
 orbit-tracing-state = { path = "../orbit-tracing-state" }
