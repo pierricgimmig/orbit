@@ -2,9 +2,9 @@
 
 use crate::chrome_load::{self, TraceLoad};
 use eframe::egui::{
-    self, scroll_area::ScrollSource, Align, Align2, Color32, ComboBox, Context, FontFamily, FontId,
-    Frame, Galley, Key, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
-    StrokeKind, Ui, Vec2,
+    self, scroll_area::ScrollSource, Align, Align2, Color32, Context, FontFamily, FontId, Frame,
+    Galley, Key, Layout, Margin, PointerButton, PopupCloseBehavior, Pos2, Rect, RichText, Sense,
+    SetOpenCommand, Shape, Stroke, StrokeKind, Ui, Vec2,
 };
 use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::dev::{
@@ -72,6 +72,31 @@ const KEY_HOLD_DT_MAX: f32 = 1.0 / 60.0;
 /// `CaptureWindow` Up/Down and PageUp/PageDown.
 const VSCROLL_ARROW: f32 = 0.05;
 const VSCROLL_PAGE: f32 = 0.9;
+/// Capture process list: `/api/processes` about once a second, not every frame.
+const PROCESS_POLL_S: f64 = 1.0;
+
+/// Native Orbit `ProcessListWidget` filter: case-insensitive substring on
+/// pid / name / path (`QSortFilterProxyModel::setFilterFixedString`).
+fn process_matches_filter(pid: u32, name: &str, path: &str, query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return true;
+    }
+    let q = q.to_ascii_lowercase();
+    pid.to_string().contains(&q)
+        || name.to_ascii_lowercase().contains(&q)
+        || path.to_ascii_lowercase().contains(&q)
+}
+
+/// Keep the current pick across a process-list refresh. If that pid exited,
+/// leave the selection empty — do not silently substitute another process.
+fn selection_after_process_refresh(selected: Option<u32>, incoming: &[ProcessJson]) -> Option<u32> {
+    selected.filter(|pid| incoming.iter().any(|p| p.pid == *pid))
+}
+
+fn should_poll_processes(list_empty: bool, capture_open: bool, now: f64, last: f64) -> bool {
+    (list_empty || capture_open) && now - last >= PROCESS_POLL_S
+}
 
 fn c32(argb: u32) -> Color32 {
     Color32::from_rgba_unmultiplied(
@@ -501,6 +526,7 @@ pub struct OrbitLiveApp {
     t1: f64,
     follow: bool,
     last_status_request: f64,
+    last_process_request: f64,
     last_view_request: f64,
     view_width: u32,
     service_timeline: Option<TimelineJson>,
@@ -636,6 +662,7 @@ impl OrbitLiveApp {
             t1: FOLLOW_NS,
             follow: true,
             last_status_request: -1.0,
+            last_process_request: -1.0,
             last_view_request: -1.0,
             view_width: 1280,
             service_timeline: None,
@@ -1281,6 +1308,19 @@ impl OrbitLiveApp {
         self.error.clear();
     }
 
+    fn apply_process_list(&mut self, incoming: Vec<ProcessJson>) {
+        let was_empty = self.processes.is_empty();
+        self.selected_pid = selection_after_process_refresh(self.selected_pid, &incoming);
+        self.processes = incoming;
+        self.merge_trace_processes();
+        // Demo convenience on the first list only. A pid that exited stays unset.
+        if was_empty && self.selected_pid.is_none() && !self.status.hooks {
+            if self.processes.iter().any(|p| p.pid == 1) {
+                self.selected_pid = Some(1);
+            }
+        }
+    }
+
     fn drain_net(&mut self) {
         let inbox = self.net.take();
         self.http_ok = inbox.http_ok;
@@ -1289,14 +1329,7 @@ impl OrbitLiveApp {
             self.apply_status(s);
         }
         if let Some(p) = inbox.processes {
-            // Real capture: do not auto-pick a pid. Demo-only may keep a prior pick.
-            if self.selected_pid.is_none() && !self.status.hooks && !p.is_empty() {
-                if p.iter().any(|x| x.pid == 1) {
-                    self.selected_pid = Some(1);
-                }
-            }
-            self.processes = p;
-            self.merge_trace_processes();
+            self.apply_process_list(p);
         }
         if let Some(s) = inbox.symbols {
             self.symbols = s;
@@ -1305,6 +1338,7 @@ impl OrbitLiveApp {
             self.hook_hits = hits.functions;
         }
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
+            let seeded_into_empty = self.processes.is_empty();
             for (pid, name) in [
                 (1u32, "orbit-demo"),
                 (10, "orbit-render"),
@@ -1319,7 +1353,7 @@ impl OrbitLiveApp {
                     });
                 }
             }
-            if self.selected_pid.is_none() {
+            if seeded_into_empty && self.selected_pid.is_none() && !self.status.hooks {
                 self.selected_pid = Some(1);
             }
         }
@@ -1790,34 +1824,62 @@ impl OrbitLiveApp {
             }
             None => "Select a process".into(),
         };
-        ComboBox::from_id_salt(id)
-            .width(ui.available_width().min(360.0))
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.process_filter)
-                        .id_salt(format!("{id}_filter"))
-                        .desired_width(ui.available_width())
-                        .hint_text("filter pid / name / path")
-                        .font(FontId::monospace(11.0))
-                        .background_color(theme::INPUT),
-                );
-                let q = self.process_filter.to_ascii_lowercase();
-                for p in &self.processes {
-                    if !q.is_empty() {
-                        let hay = format!("{} {} {}", p.pid, p.name, p.path).to_ascii_lowercase();
-                        if !hay.contains(&q) {
+        // Stable ids so a 1 Hz list refresh does not tear down the popup or
+        // the Filter TextEdit (ComboBox default CloseOnClick closed on type).
+        let popup_id = egui::Id::new(("orbit_process_popup", id));
+        let filter_id = egui::Id::new(("orbit_process_filter", id));
+        let list_id = egui::Id::new(("orbit_process_scroll", id));
+        let width = ui.available_width().min(360.0);
+        let button = ui.add_sized(
+            Vec2::new(width, 22.0),
+            egui::Button::new(RichText::new(selected_text).size(12.0).color(theme::TEXT))
+                .fill(theme::INPUT),
+        );
+        let opening = button.clicked() && !egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let popup = egui::Popup::from_response(&button)
+            .id(popup_id)
+            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+            .width(button.rect.width().max(width))
+            .open_memory(button.clicked().then_some(SetOpenCommand::Toggle));
+        popup.show(|ui| {
+            let filter = ui.add(
+                egui::TextEdit::singleline(&mut self.process_filter)
+                    .id(filter_id)
+                    .desired_width(ui.available_width())
+                    .hint_text("Filter")
+                    .font(FontId::monospace(11.0))
+                    .background_color(theme::INPUT),
+            );
+            if opening {
+                filter.request_focus();
+            }
+            let q = self.process_filter.clone();
+            let mut pick = None;
+            egui::ScrollArea::vertical()
+                .id_salt(list_id)
+                .max_height(240.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for p in &self.processes {
+                        if !process_matches_filter(p.pid, &p.name, &p.path, &q) {
                             continue;
                         }
+                        let label = if p.path.is_empty() {
+                            format!("{}  {}", p.pid, p.name)
+                        } else {
+                            format!("{}  {}  {:.1}%  {}", p.pid, p.name, p.cpu, p.path)
+                        };
+                        let selected = self.selected_pid == Some(p.pid);
+                        if ui.selectable_label(selected, label).clicked() {
+                            pick = Some(p.pid);
+                        }
                     }
-                    let label = if p.path.is_empty() {
-                        format!("{}  {}", p.pid, p.name)
-                    } else {
-                        format!("{}  {}  {:.1}%  {}", p.pid, p.name, p.cpu, p.path)
-                    };
-                    ui.selectable_value(&mut self.selected_pid, Some(p.pid), label);
-                }
-            });
+                });
+            if let Some(pid) = pick {
+                self.selected_pid = Some(pid);
+                egui::Popup::close_id(ui.ctx(), popup_id);
+            }
+        });
     }
 
     fn capture_strip(&mut self, ui: &mut Ui) {
@@ -1832,6 +1894,7 @@ impl OrbitLiveApp {
             );
             self.paint_process_picker(ui, "orbit_processes_strip");
             if icon_pill(ui, "↻", "Refresh process list").clicked() {
+                self.last_process_request = ui.input(|i| i.time);
                 self.net.get_processes();
             }
             ui.label(
@@ -2050,6 +2113,7 @@ impl OrbitLiveApp {
                 .color(theme::MUTED),
         );
         if icon_pill(ui, "↻", "Refresh process list").clicked() {
+            self.last_process_request = ui.input(|i| i.time);
             self.net.get_processes();
         }
 
@@ -3820,10 +3884,16 @@ impl eframe::App for OrbitLiveApp {
                 if now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
-                    if self.processes.is_empty() || self.dev || self.capture_open {
-                        self.net.get_processes();
-                    }
                     self.tick_capture_net(now);
+                }
+                if should_poll_processes(
+                    self.processes.is_empty(),
+                    self.capture_open,
+                    now,
+                    self.last_process_request,
+                ) {
+                    self.last_process_request = now;
+                    self.net.get_processes();
                 }
                 // Local WS index is the paint path. Hitting /api/timeline every
                 // frame rebuilt the server index and pegged a core after Stop.
@@ -5337,6 +5407,47 @@ mod tests {
     use crate::tracks::TrackStrip;
     use orbit_live_event::{chrome, kind, LiveEvent};
     use orbit_live_render::collect_instances;
+
+    fn proc(pid: u32, name: &str, path: &str) -> ProcessJson {
+        ProcessJson {
+            pid,
+            name: name.into(),
+            cpu: 0.0,
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn process_filter_matches_pid_name_and_path() {
+        assert!(process_matches_filter(42, "chrome", "/opt/chrome", ""));
+        assert!(process_matches_filter(42, "chrome", "/opt/chrome", " 42 "));
+        assert!(process_matches_filter(42, "chrome", "/opt/chrome", "CHR"));
+        assert!(process_matches_filter(42, "chrome", "/opt/chrome", "opt/"));
+        assert!(!process_matches_filter(
+            42,
+            "chrome",
+            "/opt/chrome",
+            "firefox"
+        ));
+        assert!(!process_matches_filter(42, "chrome", "/opt/chrome", "43"));
+    }
+
+    #[test]
+    fn process_refresh_keeps_selection_or_clears_if_gone() {
+        let list = [proc(10, "a", ""), proc(20, "b", "")];
+        assert_eq!(selection_after_process_refresh(Some(20), &list), Some(20));
+        assert_eq!(selection_after_process_refresh(Some(99), &list), None);
+        assert_eq!(selection_after_process_refresh(None, &list), None);
+    }
+
+    #[test]
+    fn process_list_polls_once_per_second_not_every_frame() {
+        assert!(should_poll_processes(true, false, 0.0, -1.0));
+        assert!(should_poll_processes(false, true, 1.0, 0.0));
+        assert!(!should_poll_processes(false, true, 0.5, 0.0));
+        assert!(!should_poll_processes(false, false, 5.0, 0.0));
+        assert!((PROCESS_POLL_S - 1.0).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn iphone_dpr3_points_still_use_css_narrow_column() {
