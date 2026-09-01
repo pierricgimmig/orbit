@@ -9,6 +9,47 @@ tree at all.
 - Log:  [`docs/blog/`](../docs/blog/index.html)
 - Why:  [`docs/rust-service-port.html`](../docs/rust-service-port.html)
 
+## Distributing
+
+Two binaries, and only one of them is ever required.
+
+| Binary | Build | Size | Needs on the target | Required? |
+|---|---|---|---|---|
+| `orbit-service` | `./build-service-musl.sh` | 865 KB | nothing (static, 0 `DT_NEEDED`) | always |
+| `orbit-gpu-helper` | `cargo build --release -p orbit-gpu-helper` | 361 KB | glibc >= 2.34, libgcc_s; NVIDIA driver at runtime | only for NVIDIA GPU telemetry |
+
+`orbit-service` is statically linked and runs on any x86-64 Linux with no
+runtime dependencies at all. It never links or loads a GPU library, so it
+behaves identically on NVIDIA, AMD, and machines with no GPU.
+
+`orbit-gpu-helper` is dynamically linked *on purpose*: static musl cannot
+`dlopen`, and NVML must be loaded at runtime. It does **not** link
+`libnvidia-ml` at build time (it `dlopen`s it), so the same helper binary runs
+on machines without an NVIDIA driver -- it just exits quietly and the capture
+proceeds without GPU telemetry.
+
+The NVIDIA driver itself is never shipped with these binaries: `libnvidia-ml.so.1`
+comes from the driver installed on the target and must match its kernel module.
+
+The glibc >= 2.34 floor (Ubuntu 22.04+, Debian 12+, RHEL 9+) comes from the
+build host. To support older distributions, build the helper on the oldest one
+you need; the service is unaffected, which is the point of the split.
+
+Running:
+
+```
+# CPU sampling + scheduling only (no GPU library anywhere)
+orbit-service --pid <tid> --duration-ms 5000 --out capture.pod
+
+# ...plus NVIDIA GPU telemetry
+orbit-service --pid <tid> --duration-ms 5000 \
+              --gpu-helper ./orbit-gpu-helper --out capture.pod
+```
+
+Privileges: stack sampling needs `perf_event_paranoid <= 1`; system-wide
+scheduling needs `<= 0` (or root). Without them the capture still runs and
+simply omits what it cannot read.
+
 ## Backends
 
 `ObjectUtils` has one implementation now; `ORBIT_OBJECT_BACKEND` is gone with
