@@ -46,13 +46,15 @@ survives review and dies to a test.
 
 What is NOT built here (honestly)
 ---------------------------------
-The live libnvidia-ml binding. Same constraint as libcupti and the same
-reason: it is a proprietary shared library, and the service ships as a fully
-static musl binary, which cannot dlopen one. A dynamically-linked build
-variant on an NVIDIA host calls nvmlDeviceGetUtilizationRates / GetMemoryInfo
-/ GetTemperature / GetPowerUsage / GetClockInfo / GetComputeRunningProcesses
-into a DeviceSample and hands it to NvmlSampler::ingest; everything from
-there on is here and tested.
+The live libnvidia-ml binding, which needs an NVIDIA GPU to exercise. Static
+musl cannot dlopen it -- but that does not keep it out of the capture: it
+lives in the HELPER PROCESS added in 7g, which is dynamically linked, calls
+nvmlDeviceGetUtilizationRates / GetMemoryInfo / GetTemperature /
+GetPowerUsage / GetClockInfo / GetComputeRunningProcesses into a
+DeviceSample, hands it to NvmlSampler::ingest, and streams the resulting pod
+events to the static service over a pipe. (An earlier version of this file
+concluded the static binary could not have NVML support; that was too strong
+and is corrected in 7g.)
 
 The static musl service is unchanged: 776 KB, statically linked. NVIDIA
 support (7e CUPTI + nouveau, 7f NVML) added zero runtime dependencies to it.

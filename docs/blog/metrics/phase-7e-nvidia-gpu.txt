@@ -40,11 +40,12 @@ How it is verified
 What is NOT built here (honestly)
 ---------------------------------
 - The live libcupti activity-buffer pump (subscribe, buffer callbacks, drain
-  CUpti_ActivityKernel records). It links libcupti, a proprietary shared
-  library that would break the fully-static service binary and cannot be
-  exercised without an NVIDIA GPU. A CUDA-capable build adds that thin
-  binding and feeds each record to ingest_cuda_kernel; everything downstream
-  is here and tested.
+  CUpti_ActivityKernel records), which needs an NVIDIA GPU to exercise. It
+  lives in the HELPER PROCESS added in 7g, not in the service: static musl
+  cannot dlopen libcupti, but it can spawn a dynamically-linked helper that
+  streams pod events over a pipe. (An earlier version of this file said the
+  static binary therefore could not have NVIDIA support; that was too strong
+  and is corrected in 7g.)
 - Live nouveau tracepoint capture (root-gated, and no NVIDIA GPU on this
   machine). The correlation is the verifiable core, same as the AMD path.
 

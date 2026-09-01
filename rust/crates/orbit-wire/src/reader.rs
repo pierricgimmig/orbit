@@ -33,6 +33,13 @@ impl<'a> Reader<'a> {
         self.offset >= self.bytes.len()
     }
 
+    /// Bytes consumed so far. A stream reader decodes as many whole events as
+    /// the buffer holds, then keeps everything from here on as the partial
+    /// tail of the next record.
+    pub fn consumed(&self) -> usize {
+        self.offset
+    }
+
     fn take(&mut self, count: usize) -> Result<&'a [u8], ReadError> {
         let end = self.offset.checked_add(count).ok_or(ReadError::Truncated)?;
         let slice = self.bytes.get(self.offset..end).ok_or(ReadError::Truncated)?;

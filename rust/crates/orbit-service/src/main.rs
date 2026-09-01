@@ -17,8 +17,10 @@
 //! at perf_event_paranoid <= 1.
 
 mod interner;
+mod telemetry;
 
 use interner::CallstackInterner;
+use telemetry::TelemetryHelper;
 use orbit_perf_records::reader::{
     parse_context_switch, parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT,
 };
@@ -35,10 +37,21 @@ struct Args {
     duration: Duration,
     frequency_hz: u64,
     out: Option<String>,
+    /// A dynamically-linked helper that streams pod GPU telemetry (NVML /
+    /// CUPTI) on its stdout. Static musl cannot dlopen those libraries, but
+    /// it can spawn a process that has, so vendor telemetry reaches the
+    /// static service over a pipe.
+    gpu_helper: Option<String>,
 }
 
 fn parse_args() -> Args {
-    let mut args = Args { pid: None, duration: Duration::from_millis(500), frequency_hz: 1000, out: None };
+    let mut args = Args {
+        pid: None,
+        duration: Duration::from_millis(500),
+        frequency_hz: 1000,
+        out: None,
+        gpu_helper: None,
+    };
     let mut iter = std::env::args().skip(1);
     while let Some(flag) = iter.next() {
         match flag.as_str() {
@@ -54,9 +67,11 @@ fn parse_args() -> Args {
                 }
             }
             "--out" => args.out = iter.next(),
+            "--gpu-helper" => args.gpu_helper = iter.next(),
             "--help" | "-h" => {
                 eprintln!(
-                    "orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] [--out <path>]"
+                    "orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
+                     [--out <path>] [--gpu-helper <path>]"
                 );
                 std::process::exit(0);
             }
@@ -132,6 +147,19 @@ fn main() {
     let mut switches = ContextSwitchManager::new();
     let mut slices = 0u64;
 
+    // GPU telemetry arrives from a helper process rather than a linked
+    // library: static musl has no dlopen, but it has fork/exec, so the
+    // helper links NVML/CUPTI and streams pod events over a pipe.
+    let mut gpu_helper = args.gpu_helper.as_deref().and_then(|path| {
+        match TelemetryHelper::spawn(path, &[]) {
+            Ok(helper) => Some(helper),
+            Err(error) => {
+                eprintln!("orbit-service: could not start GPU helper {path}: {error}");
+                None
+            }
+        }
+    });
+
     let mut unwinder = match ProcessUnwinder::for_pid(target_pid) {
         Ok(unwinder) => unwinder,
         Err(error) => {
@@ -171,6 +199,11 @@ fn main() {
         // is something to sample.
         if sampling_self {
             busy_accumulator = burn_cpu(busy_accumulator);
+        }
+        if let Some(helper) = gpu_helper.as_mut() {
+            for event in helper.drain() {
+                writer.write(&event);
+            }
         }
         for switch_ring in switch_rings.iter_mut() {
             while let Ok(Some(record)) = switch_ring.read_record() {
@@ -245,6 +278,14 @@ fn main() {
             samples += 1;
         }
     }
+    let mut gpu_events = 0u64;
+    if let Some(helper) = gpu_helper.take() {
+        gpu_events = helper.events_received();
+        for event in helper.shutdown() {
+            writer.write(&event);
+            gpu_events += 1;
+        }
+    }
     std::hint::black_box(busy_accumulator);
     stop_workers.store(true, std::sync::atomic::Ordering::Relaxed);
     for worker in workers {
@@ -263,7 +304,8 @@ fn main() {
 
     eprintln!(
         "orbit-service: captured {samples} samples ({interned} distinct callstacks), \
-         {slices} scheduling slices, {modules} modules; wrote {len} pod bytes to {out_path}",
+         {slices} scheduling slices, {gpu_events} GPU telemetry events, \
+         {modules} modules; wrote {len} pod bytes to {out_path}",
         modules = unwinder.modules_loaded(),
         len = bytes.len(),
     );
