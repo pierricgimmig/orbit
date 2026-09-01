@@ -16,7 +16,7 @@
 //! a slice is a `SCHEDULING_SLICE` on (pid, tid) with the core in `extra`.
 
 use crate::functions::FunctionIndex;
-use crate::report::{SampleStore, StoredSample};
+use crate::report::{FrameInfo, SampleStore, StoredSample, TreeMode};
 use crate::telemetry::TelemetryHelper;
 use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
 use crate::visible::VisibleProcesses;
@@ -155,16 +155,35 @@ impl FrameNames {
     }
 
     fn id_for(&mut self, name: &str) -> u32 {
-        if let Some(id) = self.ids.get(name) {
+        self.id_for_frame(&crate::symbolize::ResolvedFrame {
+            name: name.to_string(),
+            module: String::new(),
+            address: 0,
+        })
+    }
+
+    /// Ids are keyed by name, not by address: two addresses inside one
+    /// function must share a row in the report and a box on the timeline.
+    /// The module and address kept alongside are the first ones seen for that
+    /// name, which is what the call tree shows.
+    fn id_for_frame(&mut self, frame: &crate::symbolize::ResolvedFrame) -> u32 {
+        if let Some(id) = self.ids.get(&frame.name) {
             return *id;
         }
         let id = self.next;
         self.next += 1;
         // Both sides need the mapping: the viewer to draw the label, the
         // report to name the row.
-        self.service.intern_id(id, name);
-        self.store.record_name(id, name);
-        self.ids.insert(name.to_string(), id);
+        self.service.intern_id(id, &frame.name);
+        self.store.record_frame(
+            id,
+            FrameInfo {
+                name: frame.name.clone(),
+                module: frame.module.clone(),
+                address: frame.address,
+            },
+        );
+        self.ids.insert(frame.name.clone(), id);
         id
     }
 }
@@ -606,7 +625,7 @@ fn capture_loop(
                         .frames
                         .iter()
                         .take(depth_count)
-                        .map(|pc| names.id_for(&symbolizer.resolve(*pc)))
+                        .map(|pc| names.id_for_frame(&symbolizer.resolve_frame(*pc)))
                         .collect();
                     store.push(StoredSample {
                         timestamp_ns: sample.time,
@@ -730,10 +749,28 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     let service = LiveService::new(config)?;
     intern_gpu_lane_names(&service);
 
+    let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
     let store = Arc::new(SampleStore::new());
     let report_store = store.clone();
     service.set_sampling_report(Arc::new(move |start_ns, end_ns| {
         Ok(report_store.report_json(start_ns, end_ns))
+    }));
+    let tree_store = store.clone();
+    service.set_sampling_tree(Arc::new(move |start_ns, end_ns, mode| {
+        Ok(tree_store.tree_json(start_ns, end_ns, TreeMode::parse(mode)))
+    }));
+    let modules_state = symbols.clone();
+    service.set_modules_json(Arc::new(move |pid| {
+        let state = modules_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
+        match (&state.index, state.pid == pid) {
+            (Some(index), true) => Ok(index.modules_json(pid)),
+            _ => Ok(serde_json::json!({
+                "pid": pid,
+                "status": if state.status.is_empty() { "idle" } else { state.status.as_str() },
+                "modules": [],
+            })
+            .to_string()),
+        }
     }));
 
     let capture = CaptureState {
@@ -741,7 +778,6 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
         target_pid: Arc::new(AtomicI32::new(0)),
     };
 
-    let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
 
     let start_service = service.clone();
     let start_store = store.clone();

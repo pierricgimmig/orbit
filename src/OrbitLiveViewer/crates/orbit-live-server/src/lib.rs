@@ -90,6 +90,15 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub sampling_report:
         Mutex<Option<std::sync::Arc<dyn Fn(u64, u64) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the same samples as a call tree, top-down or bottom-up.
+    /// Separate from `sampling_report` because it takes a mode.
+    #[allow(clippy::type_complexity)]
+    pub sampling_tree:
+        Mutex<Option<std::sync::Arc<dyn Fn(u64, u64, &str) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the modules of the selected process and their symbol counts.
+    #[allow(clippy::type_complexity)]
+    pub modules_json:
+        Mutex<Option<std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>>>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
@@ -148,6 +157,8 @@ impl LiveService {
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
             sampling_report: Mutex::new(None),
+            sampling_tree: Mutex::new(None),
+            modules_json: Mutex::new(None),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
@@ -326,6 +337,22 @@ impl LiveService {
 
     pub fn instrumentation_status(&self) -> String {
         self.instrumentation_status.lock().clone()
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn set_sampling_tree(
+        &self,
+        tree: std::sync::Arc<dyn Fn(u64, u64, &str) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_tree.lock() = Some(tree);
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn set_modules_json(
+        &self,
+        modules: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.modules_json.lock() = Some(modules);
     }
 
     pub fn set_sampling_report(

@@ -55,6 +55,8 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
         .route("/api/sampling/report", get(sampling_report))
+        .route("/api/sampling/tree", get(sampling_tree))
+        .route("/api/symbols/modules", get(symbols_modules))
         .route(
             crate::theverge::THEVERGE_HTTP_PATH,
             get(theverge_trace).head(theverge_trace),
@@ -269,6 +271,46 @@ pub struct ReportQuery {
     pub start_ns: u64,
     #[serde(default)]
     pub end_ns: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct TreeQuery {
+    t0: Option<u64>,
+    t1: Option<u64>,
+    mode: Option<String>,
+}
+
+async fn sampling_tree(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<TreeQuery>,
+) -> Response {
+    let tree = svc.sampling_tree.lock().clone();
+    let Some(tree) = tree else {
+        return (StatusCode::NOT_FOUND, "no sampling tree available").into_response();
+    };
+    // No range means the whole capture, which is what you want the moment a
+    // capture stops and you have not selected anything yet.
+    let t0 = q.t0.unwrap_or(0);
+    let t1 = q.t1.unwrap_or(u64::MAX);
+    let mode = q.mode.unwrap_or_else(|| "top_down".to_string());
+    match tree(t0, t1, &mode) {
+        Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn symbols_modules(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<SearchQuery>,
+) -> Response {
+    let modules = svc.modules_json.lock().clone();
+    let Some(modules) = modules else {
+        return ([(header::CONTENT_TYPE, "application/json")], r#"{"modules":[]}"#).into_response();
+    };
+    match modules(q.pid.unwrap_or(0)) {
+        Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 async fn sampling_report(

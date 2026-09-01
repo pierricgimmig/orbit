@@ -585,6 +585,16 @@ pub struct OrbitLiveApp {
     /// so an unchanged selection is not refetched every frame.
     sampling: Option<crate::net::SamplingReport>,
     sampling_range: Option<(u64, u64)>,
+    /// Which of the four report views is showing.
+    report_tab: ReportTab,
+    tree: Option<crate::net::SamplingTree>,
+    /// Expanded tree nodes, keyed by their path of child indices. Kept per
+    /// tab so switching top-down/bottom-up does not carry one view's
+    /// expansion into the other's very different shape.
+    tree_expanded: std::collections::HashSet<String>,
+    modules: Option<crate::net::ModulesJson>,
+    /// Previous frame's capturing flag, to catch the moment a capture stops.
+    was_capturing: bool,
     measure_dragging: bool,
     idle_skip_chrome: bool,
     last_n_prims: u32,
@@ -630,6 +640,39 @@ struct TimeMeasure {
     start_ns: u64,
     stop_ns: u64,
     label_y: f32,
+}
+
+/// The four ways Orbit lets you read a capture's samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReportTab {
+    /// Flat: one row per function, self and inclusive. Answers "what is hot".
+    Flat,
+    /// Callers above callees, grouped by thread. Answers "what does this
+    /// program do".
+    TopDown,
+    /// Callees above callers. Answers "what should I fix", which is why
+    /// Orbit opens on it once you know a function is hot.
+    BottomUp,
+    /// The modules the target mapped, and how many symbols each gave up.
+    Modules,
+}
+
+impl ReportTab {
+    fn label(self) -> &'static str {
+        match self {
+            ReportTab::Flat => "Flat",
+            ReportTab::TopDown => "Top-down",
+            ReportTab::BottomUp => "Bottom-up",
+            ReportTab::Modules => "Modules",
+        }
+    }
+
+    fn mode(self) -> &'static str {
+        match self {
+            ReportTab::BottomUp => "bottom_up",
+            _ => "top_down",
+        }
+    }
 }
 
 impl OrbitLiveApp {
@@ -722,6 +765,11 @@ impl OrbitLiveApp {
             measure: None,
             sampling: None,
             sampling_range: None,
+            report_tab: ReportTab::Flat,
+            tree: None,
+            tree_expanded: std::collections::HashSet::new(),
+            modules: None,
+            was_capturing: false,
             measure_dragging: false,
             idle_skip_chrome: false,
             last_n_prims: 0,
@@ -1314,8 +1362,16 @@ impl OrbitLiveApp {
         if s.live_end_ns > 0 {
             self.live_edge_ns = self.live_edge_ns.max(s.live_end_ns);
         }
+        let capturing = s.capturing;
         self.status = s;
         self.error.clear();
+        // The moment recording stops, show the aggregate over everything just
+        // recorded. Orbit does the same: a finished capture with no selection
+        // should answer a question, not sit blank waiting to be dragged on.
+        if self.was_capturing && !capturing {
+            self.show_whole_capture_report();
+        }
+        self.was_capturing = capturing;
     }
 
     fn apply_process_list(&mut self, incoming: Vec<ProcessJson>) {
@@ -1343,6 +1399,12 @@ impl OrbitLiveApp {
         }
         if let Some(r) = inbox.sampling {
             self.sampling = Some(r);
+        }
+        if let Some(t) = inbox.tree {
+            self.tree = Some(t);
+        }
+        if let Some(m) = inbox.modules {
+            self.modules = Some(m);
         }
         if let Some(s) = inbox.symbols {
             self.symbols = s;
@@ -3809,19 +3871,42 @@ impl OrbitLiveApp {
             return;
         }
         self.sampling_range = range;
-        match range {
-            Some((start, end)) => self.net.get_sampling_report(start, end),
-            // No selection: drop the report rather than leave a stale one
-            // describing a range the user can no longer see.
-            None => self.sampling = None,
+        self.request_reports();
+    }
+
+    /// Asks for the flat report and the tree over the current scope.
+    ///
+    /// A range means the timeline selection. No range means the whole
+    /// capture, which is the aggregate view Orbit shows the moment recording
+    /// stops -- before you have selected anything, the answer you want is
+    /// about everything you just recorded.
+    fn request_reports(&mut self) {
+        match self.sampling_range {
+            Some((start, end)) => {
+                self.net.get_sampling_report(start, end);
+                self.net.get_sampling_tree(Some((start, end)), self.report_tab.mode());
+            }
+            None => {
+                self.net.get_sampling_report(0, u64::MAX);
+                self.net.get_sampling_tree(None, self.report_tab.mode());
+            }
         }
+    }
+
+    /// The whole-capture aggregate, shown when a capture stops.
+    fn show_whole_capture_report(&mut self) {
+        self.sampling_range = None;
+        self.tree_expanded.clear();
+        self.request_reports();
     }
 
     /// The sampling report for the current selection: self and inclusive
     /// percentages per function, hottest first, the pair Orbit shows.
     fn sampling_panel(&mut self, ctx: &Context) {
-        let Some(report) = self.sampling.clone() else { return };
-        if self.measure.is_none() {
+        let report = self.sampling.clone();
+        // The panel shows for a selection, and also for a finished capture
+        // with nothing selected -- that is the aggregate view.
+        if report.is_none() && self.tree.is_none() && self.modules.is_none() {
             return;
         }
         egui::TopBottomPanel::bottom("orbit_sampling_report")
@@ -3834,57 +3919,230 @@ impl OrbitLiveApp {
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
-                let span_ms = (report.end_ns.saturating_sub(report.start_ns)) as f64 / 1e6;
+                let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("Sampling report — {} samples", report.samples))
+                        RichText::new(format!("Sampling report — {samples} samples"))
                             .color(theme::TEXT)
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(format!("over {span_ms:.1} ms"))
-                            .color(theme::MUTED)
-                            .size(11.0),
-                    );
-                });
-                if report.samples == 0 {
-                    ui.label(
-                        RichText::new("No samples in this selection.")
-                            .color(theme::MUTED)
-                            .size(11.0),
-                    );
-                    return;
-                }
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    egui::Grid::new("orbit_sampling_rows")
-                        .num_columns(3)
-                        .spacing([16.0, 2.0])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            ui.label(RichText::new("self").color(theme::MUTED).size(10.5));
-                            ui.label(RichText::new("incl").color(theme::MUTED).size(10.5));
-                            ui.label(RichText::new("function").color(theme::MUTED).size(10.5));
-                            ui.end_row();
-                            for row in report.rows.iter().take(200) {
-                                ui.label(
-                                    RichText::new(format!("{:.1}%", row.self_percent))
-                                        .color(theme::TEXT)
-                                        .monospace()
-                                        .size(11.0),
-                                );
-                                ui.label(
-                                    RichText::new(format!("{:.1}%", row.inclusive_percent))
-                                        .color(theme::MUTED)
-                                        .monospace()
-                                        .size(11.0),
-                                );
-                                ui.label(
-                                    RichText::new(&row.name).color(theme::TEXT).size(11.0),
-                                );
-                                ui.end_row();
+                        RichText::new(match self.sampling_range {
+                            Some((a, b)) => {
+                                format!("over {:.1} ms selected", (b.saturating_sub(a)) as f64 / 1e6)
                             }
-                        });
+                            None => "whole capture".to_string(),
+                        })
+                        .color(theme::MUTED)
+                        .size(11.0),
+                    );
+                    ui.add_space(8.0);
+                    for tab in [
+                        ReportTab::Flat,
+                        ReportTab::TopDown,
+                        ReportTab::BottomUp,
+                        ReportTab::Modules,
+                    ] {
+                        if pill(ui, tab.label(), self.report_tab == tab).clicked()
+                            && self.report_tab != tab
+                        {
+                            let was_tree_mode = self.report_tab.mode();
+                            self.report_tab = tab;
+                            // Switching between top-down and bottom-up needs a
+                            // different tree; switching to or from Flat does not.
+                            if tab.mode() != was_tree_mode || self.tree.is_none() {
+                                self.tree_expanded.clear();
+                                self.net.get_sampling_tree(self.sampling_range, tab.mode());
+                            }
+                            if tab == ReportTab::Modules {
+                                if let Some(pid) = self.selected_pid {
+                                    self.net.get_modules(pid);
+                                }
+                            }
+                        }
+                    }
                 });
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    match self.report_tab {
+                        ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
+                        ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
+                        ReportTab::Modules => self.module_rows(ui),
+                    }
+                });
+            });
+    }
+
+    fn flat_report_rows(&mut self, ui: &mut Ui, report: Option<&crate::net::SamplingReport>) {
+        let Some(report) = report else { return };
+        if report.samples == 0 {
+            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(11.0));
+            return;
+        }
+        egui::Grid::new("orbit_sampling_rows")
+            .num_columns(4)
+            .spacing([16.0, 2.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["self", "incl", "function", "module"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
+                }
+                ui.end_row();
+                for row in report.rows.iter().take(200) {
+                    ui.label(
+                        RichText::new(format!("{:.1}%", row.self_percent))
+                            .color(theme::TEXT)
+                            .monospace()
+                            .size(11.0),
+                    );
+                    ui.label(
+                        RichText::new(format!("{:.1}%", row.inclusive_percent))
+                            .color(theme::MUTED)
+                            .monospace()
+                            .size(11.0),
+                    );
+                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(11.0));
+                    ui.label(RichText::new(&row.module).color(theme::MUTED).size(10.5));
+                    ui.end_row();
+                }
+            });
+    }
+
+    /// One row per node, indented by depth, with a click target on the
+    /// expander. Rendered from a clone so the expansion set stays mutable
+    /// while the tree is read.
+    fn call_tree_rows(&mut self, ui: &mut Ui) {
+        let Some(tree) = self.tree.clone() else {
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(11.0));
+            return;
+        };
+        if tree.samples == 0 {
+            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(11.0));
+            return;
+        }
+        egui::Grid::new("orbit_call_tree_rows")
+            .num_columns(5)
+            .spacing([14.0, 2.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["incl", "self", "of parent", "function", "module"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
+                }
+                ui.end_row();
+                // Explicit stack rather than recursion: the borrow of the
+                // expansion set has to end before the next row is drawn.
+                let mut stack: Vec<(crate::net::TreeNodeJson, usize, String)> = tree
+                    .roots
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(i, n)| (n.clone(), 0usize, i.to_string()))
+                    .collect();
+                let mut drawn = 0usize;
+                while let Some((node, depth, path)) = stack.pop() {
+                    if drawn >= 500 {
+                        break;
+                    }
+                    drawn += 1;
+                    let expandable = !node.children.is_empty();
+                    let expanded = self.tree_expanded.contains(&path);
+                    ui.label(
+                        RichText::new(format!("{:.1}%", node.inclusive_percent))
+                            .color(theme::TEXT)
+                            .monospace()
+                            .size(11.0),
+                    );
+                    ui.label(
+                        RichText::new(if node.exclusive > 0 {
+                            format!("{}", node.exclusive)
+                        } else {
+                            String::new()
+                        })
+                        .color(theme::MUTED)
+                        .monospace()
+                        .size(11.0),
+                    );
+                    ui.label(
+                        RichText::new(format!("{:.1}%", node.of_parent_percent))
+                            .color(theme::MUTED)
+                            .monospace()
+                            .size(11.0),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.add_space(depth as f32 * 12.0);
+                        let marker = if !expandable {
+                            "  "
+                        } else if expanded {
+                            "▾"
+                        } else {
+                            "▸"
+                        };
+                        let is_thread = node.kind == "thread";
+                        let label = ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("{marker} {}", node.name))
+                                    .color(if is_thread { theme::MUTED } else { theme::TEXT })
+                                    .size(11.0),
+                            )
+                            .sense(egui::Sense::click()),
+                        );
+                        if expandable {
+                            if label
+                                .on_hover_text(if node.address != 0 {
+                                    format!("{}\n{:#x}", node.name, node.address)
+                                } else {
+                                    node.name.clone()
+                                })
+                                .clicked()
+                            {
+                                if expanded {
+                                    self.tree_expanded.remove(&path);
+                                } else {
+                                    self.tree_expanded.insert(path.clone());
+                                }
+                            }
+                        }
+                    });
+                    ui.label(RichText::new(&node.module).color(theme::MUTED).size(10.5));
+                    ui.end_row();
+
+                    if expanded {
+                        for (i, child) in node.children.iter().enumerate().rev() {
+                            stack.push((child.clone(), depth + 1, format!("{path}/{i}")));
+                        }
+                    }
+                }
+            });
+    }
+
+    fn module_rows(&mut self, ui: &mut Ui) {
+        let Some(modules) = self.modules.clone() else {
+            ui.label(
+                RichText::new("No modules loaded — pick a process and load symbols.")
+                    .color(theme::MUTED)
+                    .size(11.0),
+            );
+            return;
+        };
+        egui::Grid::new("orbit_module_rows")
+            .num_columns(3)
+            .spacing([16.0, 2.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["symbols", "module", "path"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
+                }
+                ui.end_row();
+                for row in modules.modules.iter() {
+                    ui.label(
+                        RichText::new(row.function_count.to_string())
+                            .color(theme::TEXT)
+                            .monospace()
+                            .size(11.0),
+                    );
+                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(11.0));
+                    ui.label(RichText::new(&row.path).color(theme::MUTED).size(10.5));
+                    ui.end_row();
+                }
             });
     }
 

@@ -17,6 +17,8 @@
 //! happily arms a breakpoint in the middle of some other instruction -- so the
 //! conversion is its own tested function.
 
+use std::collections::HashMap;
+
 use orbit_maps::{parse_maps, PROT_EXEC};
 use orbit_object::{load_symbols, parse_elf_metadata, ObjectSegment, SymbolTable};
 
@@ -128,6 +130,31 @@ impl FunctionIndex {
         hits.sort_by(|a, b| a.name.len().cmp(&b.name.len()).then_with(|| a.name.cmp(&b.name)));
         hits.truncate(limit);
         hits
+    }
+
+    /// The modules the index covers, with how many functions each
+    /// contributed. This is Orbit's Modules view: before you go looking for a
+    /// symbol it tells you whether the binary it lives in was even readable.
+    pub fn modules_json(&self, pid: u32) -> String {
+        let mut counts: HashMap<&str, (u64, &str)> = HashMap::new();
+        for function in &self.functions {
+            let entry = counts
+                .entry(function.module.as_str())
+                .or_insert((0, function.module_path.as_str()));
+            entry.0 += 1;
+        }
+        let mut rows: Vec<(&str, u64, &str)> =
+            counts.iter().map(|(name, (n, path))| (*name, *n, *path)).collect();
+        // Most symbols first: the module you care about is usually the one
+        // that contributed most of them.
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let modules: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(name, count, path)| {
+                serde_json::json!({ "name": name, "function_count": count, "path": path })
+            })
+            .collect();
+        serde_json::json!({ "pid": pid, "status": "ready", "modules": modules }).to_string()
     }
 
     /// The `/api/functions/search` shape the viewer parses.
@@ -294,5 +321,22 @@ mod tests {
         let hits = index.search("MALLOC", 8);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].name, "malloc", "shortest match first");
+    }
+
+    #[test]
+    fn modules_are_listed_with_their_symbol_counts() {
+        let index = FunctionIndex::for_pid(std::process::id() as i32);
+        let json: serde_json::Value =
+            serde_json::from_str(&index.modules_json(42)).expect("valid json");
+        assert_eq!(json["pid"], 42);
+        let modules = json["modules"].as_array().unwrap();
+        assert!(!modules.is_empty(), "this process maps modules");
+        // Sorted by contribution, and every row carries a usable path.
+        let counts: Vec<u64> =
+            modules.iter().map(|m| m["function_count"].as_u64().unwrap()).collect();
+        assert!(counts.windows(2).all(|w| w[0] >= w[1]), "richest module first");
+        assert!(modules.iter().all(|m| m["path"].as_str().unwrap().starts_with('/')));
+        let total: u64 = counts.iter().sum();
+        assert_eq!(total, index.len() as u64, "every function belongs to a module");
     }
 }

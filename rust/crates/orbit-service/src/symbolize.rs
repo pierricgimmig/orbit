@@ -33,6 +33,14 @@ pub struct Symbolizer {
     modules: Vec<Module>,
 }
 
+/// A frame with everything the call trees display.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedFrame {
+    pub name: String,
+    pub module: String,
+    pub address: u64,
+}
+
 impl Symbolizer {
     /// Builds a symbolizer for a process by reading its maps and loading the
     /// symbol table of every executable file mapped into it.
@@ -83,6 +91,22 @@ impl Symbolizer {
 
     pub fn symbol_count(&self) -> usize {
         self.modules.iter().map(|module| module.symbols.len()).sum()
+    }
+
+    /// The best label available for an address, with the module it came from
+    /// and the address itself. The call trees show all three: a name alone
+    /// cannot tell two same-named static functions apart, and the address is
+    /// what you paste into a disassembler.
+    pub fn resolve_frame(&self, address: u64) -> ResolvedFrame {
+        let module = self
+            .modules
+            .iter()
+            .find(|module| address >= module.start && address < module.end);
+        ResolvedFrame {
+            name: self.resolve(address),
+            module: module.map(|m| m.name.clone()).unwrap_or_default(),
+            address,
+        }
     }
 
     /// The best label available for an address.
@@ -169,5 +193,15 @@ mod tests {
         let here = this_process_symbolizes_its_own_code as usize as u64;
         let label = symbolizer.resolve(here);
         assert!(!label.starts_with("0x"), "unresolved: {label}");
+    }
+
+    #[test]
+    fn a_resolved_frame_carries_its_module_and_address() {
+        let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
+        let here = a_resolved_frame_carries_its_module_and_address as usize as u64;
+        let frame = symbolizer.resolve_frame(here);
+        assert_eq!(frame.address, here);
+        assert!(!frame.module.is_empty(), "the running binary is a module");
+        assert_eq!(frame.name, symbolizer.resolve(here), "same name either way");
     }
 }

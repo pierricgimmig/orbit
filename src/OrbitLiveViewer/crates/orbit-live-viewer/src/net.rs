@@ -60,6 +60,9 @@ pub struct ProcessJson {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SamplingRow {
     pub name: String,
+    /// The binary the function came from. Two static functions can share a
+    /// name; the module is what tells them apart.
+    pub module: String,
     pub self_count: u64,
     pub inclusive_count: u64,
     pub self_percent: f32,
@@ -108,6 +111,72 @@ pub struct FunctionSearchJson {
     pub status: String,
     #[serde(default)]
     pub functions: Vec<FunctionHit>,
+}
+
+/// One node of a call tree. Recursive, because that is what it is: the JSON
+/// nests children inside parents and the panel walks it the same way.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TreeNodeJson {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub module: String,
+    #[serde(default)]
+    pub address: u64,
+    #[serde(default)]
+    pub inclusive: u64,
+    #[serde(default)]
+    pub exclusive: u64,
+    #[serde(default)]
+    pub inclusive_percent: f64,
+    #[serde(default)]
+    pub of_parent_percent: f64,
+    #[serde(default)]
+    pub children: Vec<TreeNodeJson>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SamplingTree {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub samples: u64,
+    #[serde(default)]
+    pub start_ns: u64,
+    #[serde(default)]
+    pub end_ns: u64,
+    #[serde(default)]
+    pub roots: Vec<TreeNodeJson>,
+}
+
+pub fn parse_sampling_tree_json(text: &str) -> Result<SamplingTree, String> {
+    serde_json::from_str(text).map_err(|e| format!("/api/sampling/tree: {e}"))
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ModuleRow {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub function_count: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ModulesJson {
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub modules: Vec<ModuleRow>,
+}
+
+pub fn parse_modules_json(text: &str) -> Result<ModulesJson, String> {
+    serde_json::from_str(text).map_err(|e| format!("/api/symbols/modules: {e}"))
 }
 
 #[derive(Clone, Debug)]
@@ -164,6 +233,8 @@ pub struct Inbox {
     pub http_ok: bool,
     pub ws_ok: bool,
     pub symbols: Option<SymbolsStatusJson>,
+    pub tree: Option<SamplingTree>,
+    pub modules: Option<ModulesJson>,
     pub sampling: Option<SamplingReport>,
     pub function_hits: Option<FunctionSearchJson>,
 }
@@ -182,6 +253,16 @@ pub fn parse_processes_json(text: &str) -> Result<Vec<ProcessJson>, String> {
 /// Parses the sampling report. Hand-rolled for the same reason the other
 /// responses are: the wasm bundle does not carry a JSON library.
 pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> {
+    /// The string value following `key`, up to the closing quote. Names and
+    /// module paths here are plain -- the service writes them through serde --
+    /// so an escaped quote is not expected and not handled.
+    fn string_after(hay: &str, key: &str) -> Option<String> {
+        let at = hay.find(key)? + key.len();
+        let rest = &hay[at..];
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+
     fn number_after(hay: &str, key: &str) -> Option<f64> {
         let at = hay.find(key)? + key.len();
         let rest = &hay[at..];
@@ -216,6 +297,7 @@ pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> 
         };
         report.rows.push(SamplingRow {
             name,
+            module: string_after(row_text, "\"module\":\"").unwrap_or_default(),
             self_count: number_after(row_text, "\"self\":").unwrap_or(0.0) as u64,
             inclusive_count: number_after(row_text, "\"inclusive\":").unwrap_or(0.0) as u64,
             self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0) as f32,
@@ -376,6 +458,8 @@ mod wasm_impl {
                 http_ok: inbox.http_ok,
                 ws_ok: inbox.ws_ok,
                 symbols: inbox.symbols.take(),
+                tree: inbox.tree.take(),
+                modules: inbox.modules.take(),
                 function_hits: inbox.function_hits.take(),
             }
         }
@@ -506,6 +590,35 @@ mod wasm_impl {
                     // error worth showing the user on every selection.
                     Err(_) => g.sampling = None,
                 }
+            });
+        }
+
+        /// The same samples as a call tree. `None` bounds mean the whole
+        /// capture, which is what the panel asks for when a capture stops and
+        /// nothing is selected.
+        pub fn get_sampling_tree(&self, range: Option<(u64, u64)>, mode: &str) {
+            let inbox = self.inbox.clone();
+            let query = match range {
+                Some((t0, t1)) => format!("?mode={mode}&t0={t0}&t1={t1}"),
+                None => format!("?mode={mode}"),
+            };
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&format!("/api/sampling/tree{query}"))
+                    .await
+                    .and_then(|t| parse_sampling_tree_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.tree = result.ok();
+            });
+        }
+
+        pub fn get_modules(&self, pid: u32) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&format!("/api/symbols/modules?pid={pid}"))
+                    .await
+                    .and_then(|t| parse_modules_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.modules = result.ok();
             });
         }
 
@@ -829,6 +942,8 @@ mod native_impl {
         }
         pub fn get_status(&self) {}
         pub fn get_sampling_report(&self, _start_ns: u64, _end_ns: u64) {}
+        pub fn get_sampling_tree(&self, _range: Option<(u64, u64)>, _mode: &str) {}
+        pub fn get_modules(&self, _pid: u32) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
         pub fn start_capture(&self, _req: &CaptureStart) {}
@@ -851,6 +966,46 @@ pub use native_impl::Net;
 #[cfg(test)]
 mod tests {
     use super::{parse_sampling_report_json, SamplingReport};
+
+    #[test]
+    fn a_row_keeps_the_module_its_function_came_from() {
+        let json = r#"{"samples":10,"start_ns":0,"end_ns":9,"functions":[
+            {"name":"work","module":"libc.so.6","self":6,"inclusive":6,"self_percent":60.0,"inclusive_percent":60.0},
+            {"name":"main","module":"app","self":4,"inclusive":10,"self_percent":40.0,"inclusive_percent":100.0}]}"#;
+        let report = parse_sampling_report_json(json).unwrap();
+        assert_eq!(report.rows[0].module, "libc.so.6");
+        assert_eq!(report.rows[1].module, "app");
+        // The row slice must not leak the next row's module into this one.
+        assert_eq!(report.rows[0].name, "work");
+    }
+
+    #[test]
+    fn a_report_without_modules_still_parses() {
+        // An older service does not send the field; an empty column beats a
+        // failed parse.
+        let json = r#"{"samples":1,"functions":[{"name":"main","self":1,"inclusive":1,"self_percent":100.0,"inclusive_percent":100.0}]}"#;
+        let report = parse_sampling_report_json(json).unwrap();
+        assert_eq!(report.rows[0].module, "");
+    }
+
+    #[test]
+    fn a_call_tree_parses_with_its_nesting_intact() {
+        let json = r#"{"mode":"bottom_up","samples":3,"roots":[
+            {"kind":"function","name":"inner","module":"app","address":4096,"inclusive":2,"exclusive":0,
+             "inclusive_percent":66.6,"of_parent_percent":66.6,"children":[
+               {"kind":"thread","name":"Thread 7","module":"","address":0,"inclusive":2,"exclusive":2,
+                "inclusive_percent":66.6,"of_parent_percent":100.0,"children":[]}]}]}"#;
+        let tree = parse_sampling_tree_json(json).unwrap();
+        assert_eq!(tree.mode, "bottom_up");
+        assert_eq!(tree.samples, 3);
+        let root = &tree.roots[0];
+        assert_eq!(root.name, "inner");
+        assert_eq!(root.address, 4096);
+        let leaf = &root.children[0];
+        assert_eq!(leaf.kind, "thread");
+        assert_eq!(leaf.exclusive, 2);
+        assert!(leaf.children.is_empty());
+    }
 
     #[test]
     fn parses_a_sampling_report() {
