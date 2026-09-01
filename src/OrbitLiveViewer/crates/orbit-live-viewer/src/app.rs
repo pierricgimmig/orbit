@@ -2282,7 +2282,7 @@ impl OrbitLiveApp {
             }
             hit.on_hover_text("Show all threads");
         }
-        paint_timebar(ui, ruler, self.t0, self.t1);
+        paint_timebar(ui, ruler, self.t0, self.t1, self.status.oldest_start_ns as f64);
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false, dt);
         self.handle_measure(&ruler_resp, ruler, false);
@@ -5101,7 +5101,20 @@ fn tick_steps(span_ns: f64, width_px: f32) -> (f64, f64) {
     (major, major / 5.0)
 }
 
-fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
+/// Can a tick label be drawn at `x` without touching the previous one or
+/// running off the end of the bar? Labels are variable width (`"12ms"` next
+/// to `"1.250s"`), so spacing alone cannot guarantee they do not collide;
+/// this is checked per label against what was actually drawn.
+fn label_fits(x: f32, width: f32, last_right: f32, right_edge: f32) -> bool {
+    const GAP_PX: f32 = 6.0;
+    x >= last_right + GAP_PX && x + width <= right_edge - 2.0
+}
+
+/// `origin_ns` is the start of the capture: ruler labels are relative to it,
+/// the way Orbit shows capture time. Without it the labels carry the raw
+/// CLOCK_MONOTONIC value -- time since boot, tens of thousands of seconds --
+/// which is both meaningless to read and wide enough to overlap its neighbour.
+fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64, origin_ns: f64) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     if t1 <= t0 {
@@ -5111,6 +5124,8 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
     let (_major, minor) = tick_steps(span, rect.width());
     let mut t = (t0 / minor).floor() * minor;
     let mut step_i = ((t / minor).round() as i64).max(0);
+    let font = FontId::new(10.0, FontFamily::Monospace);
+    let mut last_label_right = f32::NEG_INFINITY;
     while t <= t1 {
         let x = rect.left() + ((t - t0) / span) as f32 * rect.width();
         if x >= rect.left() && x <= rect.right() {
@@ -5131,13 +5146,16 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
                 ),
             );
             if is_major {
-                painter.text(
-                    Pos2::new(x + 4.0, rect.top() + 4.0),
-                    Align2::LEFT_TOP,
-                    format_ns(t),
-                    FontId::new(10.0, FontFamily::Monospace),
-                    theme::MUTED,
-                );
+                let text = format_ns((t - origin_ns).max(0.0));
+                let galley = painter.layout_no_wrap(text, font.clone(), theme::MUTED);
+                let label_x = x + 4.0;
+                let width = galley.rect.width();
+                // Drop a label rather than let it overlap: a gap in the ruler
+                // is readable, two numbers on top of each other are not.
+                if label_fits(label_x, width, last_label_right, rect.right()) {
+                    painter.galley(Pos2::new(label_x, rect.top() + 4.0), galley, theme::MUTED);
+                    last_label_right = label_x + width;
+                }
             }
         }
         let next = t + minor;
@@ -5528,6 +5546,32 @@ mod tests {
     fn tabular_grouping_uses_commas() {
         assert_eq!(fmt_int(2_000_000), "2,000,000");
         assert_eq!(fmt_int(64), "64");
+    }
+
+    #[test]
+    fn ruler_labels_never_overlap_or_run_off_the_end() {
+        let right = 800.0;
+        // First label always places.
+        assert!(label_fits(10.0, 40.0, f32::NEG_INFINITY, right));
+        // A second one too close to the first is dropped rather than drawn
+        // on top of it.
+        assert!(!label_fits(52.0, 40.0, 50.0, right));
+        // Far enough along, it places again.
+        assert!(label_fits(60.0, 40.0, 50.0, right));
+        // A label that would spill past the bar's end is dropped.
+        assert!(!label_fits(780.0, 40.0, 0.0, right));
+    }
+
+    #[test]
+    fn ruler_labels_are_relative_to_the_capture_origin() {
+        // Raw CLOCK_MONOTONIC is time since boot: tens of thousands of
+        // seconds, which is both unreadable and wide enough to collide.
+        let raw = 137_458_471_912_752.0;
+        assert_eq!(format_ns(raw), "137458.472s");
+        // Measured from the capture origin it is a sane, narrow label.
+        let origin = 137_458_000_000_000.0;
+        assert_eq!(format_ns(raw - origin), "471.9ms");
+        assert!(format_ns(raw - origin).len() < format_ns(raw).len());
     }
 
     #[test]
