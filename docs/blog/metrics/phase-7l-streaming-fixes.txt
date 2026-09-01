@@ -1,0 +1,47 @@
+Phase 7l -- two bugs that made the live timeline stay empty (2026-08-31)
+========================================================================
+
+Reported: "ran ./rust.sh --sudo, no context switches stream in, nothing at
+all for the target process." Two independent bugs, both mine, both found by
+measuring rather than guessing.
+
+Bug 1: pushed events into the ring by the wrong door
+-----------------------------------------------------
+The capture thread called `service.ring().push_many(&batch)`. Events landed
+in the ring -- `/api/status` showed produced=16 -- but the viewer showed
+nothing, and the tell was `live_end_ns = 0` while the events sat at
+~137,000,000,000,000 ns.
+
+`LiveService::push_events` is the door to use. Besides pushing, it:
+  - advances `live_end_ns`, the marker the viewer positions its window by,
+  - bumps `data_gen`, the generation counter the viewer polls,
+  - broadcasts the batch over the WebSocket, which IS the "streaming in".
+Going straight to the ring skipped all three, so the events were stored
+where nothing would ever look at them. One-line fix; the comment now says
+why the low-level call is wrong.
+
+Bug 2: filtering to the target pid hid everything
+--------------------------------------------------
+The loop kept only slices whose pid equalled the captured process:
+    if target_pid != 0 && slice.pid != target_pid { continue; }
+Two problems. It is wrong on its own terms -- Orbit's scheduling view is
+system-wide, because what a core was doing includes the processes competing
+with the target. And it fails badly whenever the real work lives in child
+processes: capturing a shell that spawns 40 spinners yielded produced=0,
+since the shell itself only waits.
+
+Measured, same workload:
+    with the filter     produced = 0
+    without it          produced = 48,138   (0 dropped)
+
+A third thing worth knowing (not a bug)
+----------------------------------------
+A process that owns a core outright is rarely preempted, so it produces very
+few context switches -- 9 in 3 seconds for a single spinning loop on a
+32-thread machine. A sparse scheduling track for a busy single-threaded
+target is what the data actually looks like, not a failure.
+
+Verification
+------------
+  before: produced=16, live_end_ns=0        -> nothing renders
+  after : produced=48138, live_end_ns=137458471912752, dropped=0

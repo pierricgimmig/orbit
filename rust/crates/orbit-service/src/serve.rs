@@ -65,6 +65,7 @@ fn list_processes_json() -> Result<String, String> {
 /// rings, pair them into scheduling slices, and push each slice into the
 /// viewer's ring so it appears on the timeline as it happens.
 fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid: i32) {
+    let _ = target_pid; // recorded by the server; slices are captured machine-wide
     let mut switch_rings = Vec::new();
     for cpu in 0..crate::num_cpus_hint() as i32 {
         if let Ok(ring) = orbit_perf_ring::ring::open_context_switch(-1, cpu, 8192) {
@@ -100,11 +101,12 @@ fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid:
                         switch.core,
                         switch.timestamp_ns,
                     ) {
-                        // Show the whole machine, but keep the target's own
-                        // threads distinguishable by pid as the viewer lanes.
-                        if target_pid != 0 && slice.pid != target_pid {
-                            continue;
-                        }
+                        // Every slice goes in, not just the target's. Orbit's
+                        // scheduling view is system-wide -- what a core was
+                        // doing includes the processes competing with the
+                        // target -- and the viewer lanes by (pid, tid) anyway.
+                        // Filtering to the target also meant seeing nothing at
+                        // all whenever the real work lived in child processes.
                         batch.push(LiveEvent {
                             start_ns: slice.out_timestamp_ns.saturating_sub(slice.duration_ns),
                             duration_ns: slice.duration_ns,
@@ -128,7 +130,12 @@ fn capture_loop(service: Arc<LiveService>, running: Arc<AtomicBool>, target_pid:
             }
         }
         if !batch.is_empty() {
-            service.ring().push_many(&batch);
+            // push_events, NOT ring().push_many(): the former also advances
+            // the live-end marker the viewer positions its window by, bumps
+            // the data generation it polls, and broadcasts the batch over the
+            // WebSocket. Pushing straight into the ring stores the events
+            // where nothing will ever look at them.
+            service.push_events(&batch);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
