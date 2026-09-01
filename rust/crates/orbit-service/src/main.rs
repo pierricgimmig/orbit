@@ -17,6 +17,7 @@
 //! at perf_event_paranoid <= 1.
 
 mod interner;
+mod privileges;
 mod sysinfo;
 mod telemetry;
 
@@ -108,24 +109,32 @@ fn main() {
 
     let period_ns = 1_000_000_000 / args.frequency_hz.max(1);
     let stack_dump_size = 64_000u16;
-    let mut ring = match orbit_perf_ring::ring::open_stack_sample(
-        period_ns,
-        stack_dump_size,
-        target_tid,
-        -1,
-        8192,
-    ) {
-        Ok(ring) => ring,
-        Err(error) => {
-            eprintln!("orbit-service: could not open a perf ring for tid {target_tid}: {error}");
-            eprintln!("  (need perf_event_paranoid <= 1, or a target you may trace)");
-            std::process::exit(2);
-        }
-    };
-    if let Err(error) = ring.enable() {
-        eprintln!("orbit-service: could not enable the perf ring: {error}");
-        std::process::exit(2);
-    }
+    let access = privileges::probe();
+    let program_path = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "orbit-service".to_string());
+
+    // Sampling is best-effort: if perf is unavailable the capture continues
+    // without it rather than dying, since metadata and GPU telemetry need no
+    // privileges at all.
+    let mut sample_ring =
+        match orbit_perf_ring::ring::open_stack_sample(period_ns, stack_dump_size, target_tid, -1, 8192)
+        {
+            Ok(ring) => match ring.enable() {
+                Ok(()) => Some(ring),
+                Err(error) => {
+                    eprintln!("orbit-service: could not enable the sampling ring: {error}");
+                    None
+                }
+            },
+            Err(error) => {
+                eprintln!(
+                    "orbit-service: cannot sample tid {target_tid}: {error}\n\n{}",
+                    access.report(&program_path)
+                );
+                None
+            }
+        };
 
     // Scheduling is captured per-CPU and system-wide, the way Orbit does it:
     // one context-switch ring per online CPU (pid = -1), producing
@@ -142,8 +151,8 @@ fn main() {
     }
     if switch_rings.is_empty() {
         eprintln!(
-            "orbit-service: no context-switch rings (need perf_event_paranoid <= 0); \
-             scheduling disabled"
+            "orbit-service: scheduling capture unavailable (no per-CPU context-switch rings).\n\n{}",
+            access.report(&program_path)
         );
     }
     let mut switches = ContextSwitchManager::new();
@@ -162,11 +171,18 @@ fn main() {
         }
     });
 
+    // Without the target's maps there is nothing to unwind against; sampling
+    // is dropped but the rest of the capture proceeds.
     let mut unwinder = match ProcessUnwinder::for_pid(target_pid) {
-        Ok(unwinder) => unwinder,
+        Ok(unwinder) => Some(unwinder),
         Err(error) => {
-            eprintln!("orbit-service: could not read maps for pid {target_pid}: {error}");
-            std::process::exit(2);
+            eprintln!(
+                "orbit-service: cannot read /proc/{target_pid}/maps: {error}\n\
+                 \x20 (the process may have exited, or belong to another user)\n\
+                 \x20 continuing without stack sampling"
+            );
+            sample_ring = None;
+            None
         }
     };
 
@@ -259,6 +275,9 @@ fn main() {
                 }
             }
         }
+        let (Some(ring), Some(unwinder)) = (sample_ring.as_mut(), unwinder.as_mut()) else {
+            continue;
+        };
         while let Ok(Some(record)) = ring.read_record() {
             let Some(header) = PerfEventHeader::parse(&record) else { continue };
             if { header.kind } != record_type::SAMPLE {
@@ -333,18 +352,35 @@ fn main() {
         }
     }
 
+    let modules = unwinder.as_ref().map_or(0, |u| u.modules_loaded());
     eprintln!(
         "orbit-service: captured {samples} samples ({interned} distinct callstacks), \
          {slices} scheduling slices, {gpu_events} GPU telemetry events, \
          {modules} modules; wrote {len} pod bytes to {out_path}",
-        modules = unwinder.modules_loaded(),
         len = bytes.len(),
     );
-    // A capture with zero samples means the ring never delivered -- surface
-    // it as a failure so a broken run does not look successful.
+
+    // Say plainly what was NOT captured, so a degraded run is never mistaken
+    // for a complete one. This is a report, not a failure: a capture with
+    // only metadata and GPU telemetry is still a useful capture.
+    let mut missing = Vec::new();
     if samples == 0 {
-        eprintln!("orbit-service: warning: no samples captured");
-        std::process::exit(1);
+        missing.push("stack samples");
+    }
+    if slices == 0 {
+        missing.push("scheduling slices");
+    }
+    if !missing.is_empty() {
+        eprintln!(
+            "orbit-service: ran in reduced mode -- no {}. The capture still contains \
+             machine metadata{}.",
+            missing.join(" and "),
+            if gpu_events > 0 { " and GPU telemetry" } else { "" }
+        );
+        let capabilities = access.capabilities();
+        if !capabilities.own_process_sampling || !capabilities.system_wide {
+            eprintln!("\n{}", access.report(&program_path));
+        }
     }
 }
 

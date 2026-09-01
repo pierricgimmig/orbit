@@ -46,9 +46,16 @@ orbit-service --pid <tid> --duration-ms 5000 \
               --gpu-helper ./orbit-gpu-helper --out capture.pod
 ```
 
-Privileges: stack sampling needs `perf_event_paranoid <= 1`; system-wide
-scheduling needs `<= 0` (or root). Without them the capture still runs and
-simply omits what it cannot read.
+Privileges: stack sampling needs `perf_event_paranoid <= 2`; system-wide
+scheduling needs `<= 0`; tracing another user's process also needs
+`CAP_SYS_PTRACE`. Root, `CAP_PERFMON` (Linux 5.8+) or `CAP_SYS_ADMIN` bypass
+the sysctl entirely.
+
+**The service never exits over missing privileges.** It drops the features it
+cannot read, prints exactly which ones and the commands that would enable
+them (`setcap`, `sysctl`, or `sudo`, with this binary's real path filled in),
+and still writes a valid capture -- machine metadata and GPU telemetry need no
+privileges at all.
 
 ## Backends
 
