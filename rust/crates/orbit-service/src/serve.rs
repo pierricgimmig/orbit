@@ -16,8 +16,10 @@
 //! a slice is a `SCHEDULING_SLICE` on (pid, tid) with the core in `extra`.
 
 use crate::report::{SampleStore, StoredSample};
+use crate::telemetry::TelemetryHelper;
 use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, thread_state, LiveEvent};
+use orbit_wire::{Event as WireEvent, METRIC_UNKNOWN_U32, METRIC_UNKNOWN_U64};
 use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
 use orbit_unwind::unwinder::StartRegs;
 use orbit_unwind::ProcessUnwinder;
@@ -35,6 +37,105 @@ pub const DEFAULT_PORT: u16 = 44766;
 /// Name ids for symbolized frames start here, clear of the ids the server
 /// assigns to its own lanes.
 const FRAME_NAME_ID_BASE: u32 = 1 << 20;
+
+/// A synthetic pid for machine-wide GPU tracks, so they lane on their own
+/// rather than inside whatever process happened to be captured.
+const GPU_PID: u32 = 0xFFFF_FF01;
+
+/// Name ids for the GPU metric lanes. Fixed, so a lane keeps its identity
+/// across captures.
+mod gpu_lane {
+    pub const UTILIZATION: u32 = 4_000;
+    pub const MEMORY_MIB: u32 = 4_001;
+    pub const POWER_W: u32 = 4_002;
+    pub const TEMPERATURE_C: u32 = 4_003;
+    pub const SM_CLOCK_MHZ: u32 = 4_004;
+    pub const PROCESS_MEMORY_MIB: u32 = 4_005;
+    pub const JOB: u32 = 4_006;
+}
+
+/// Registers the GPU lane names once, so the viewer can label them.
+fn intern_gpu_lane_names(service: &LiveService) {
+    service.intern_id(gpu_lane::UTILIZATION, "GPU utilization %");
+    service.intern_id(gpu_lane::MEMORY_MIB, "GPU memory MiB");
+    service.intern_id(gpu_lane::POWER_W, "GPU power W");
+    service.intern_id(gpu_lane::TEMPERATURE_C, "GPU temperature C");
+    service.intern_id(gpu_lane::SM_CLOCK_MHZ, "GPU SM clock MHz");
+    service.intern_id(gpu_lane::PROCESS_MEMORY_MIB, "GPU memory (process) MiB");
+    service.intern_id(gpu_lane::JOB, "GPU job");
+}
+
+/// Turns one pod telemetry/job event into viewer events.
+///
+/// Metrics become VALUE samples on their own named lanes -- the viewer draws
+/// those as value-over-time tracks. Unsupported metrics (the sentinels) are
+/// skipped rather than plotted as zero, so a card that cannot report power
+/// leaves a gap instead of a flat line at the bottom.
+fn gpu_events(event: &WireEvent) -> Vec<LiveEvent> {
+    let mut out = Vec::new();
+    match event {
+        WireEvent::GpuMetrics {
+            timestamp_ns,
+            device_index,
+            gpu_utilization_percent,
+            memory_used_bytes,
+            process_memory_used_bytes,
+            temperature_celsius,
+            power_milliwatts,
+            sm_clock_mhz,
+            ..
+        } => {
+            let tid = *device_index;
+            let mut value = |name_id: u32, v: f32| {
+                out.push(LiveEvent::from_value(*timestamp_ns, GPU_PID, tid, name_id, v));
+            };
+            if *gpu_utilization_percent != METRIC_UNKNOWN_U32 {
+                value(gpu_lane::UTILIZATION, *gpu_utilization_percent as f32);
+            }
+            if *memory_used_bytes != METRIC_UNKNOWN_U64 {
+                value(gpu_lane::MEMORY_MIB, (*memory_used_bytes / (1 << 20)) as f32);
+            }
+            if *process_memory_used_bytes != METRIC_UNKNOWN_U64 {
+                value(
+                    gpu_lane::PROCESS_MEMORY_MIB,
+                    (*process_memory_used_bytes / (1 << 20)) as f32,
+                );
+            }
+            if *temperature_celsius != METRIC_UNKNOWN_U32 {
+                value(gpu_lane::TEMPERATURE_C, *temperature_celsius as f32);
+            }
+            if *power_milliwatts != METRIC_UNKNOWN_U32 {
+                value(gpu_lane::POWER_W, *power_milliwatts as f32 / 1000.0);
+            }
+            if *sm_clock_mhz != METRIC_UNKNOWN_U32 {
+                value(gpu_lane::SM_CLOCK_MHZ, *sm_clock_mhz as f32);
+            }
+        }
+        // A GPU job is a span on the device's own lane, from submission to
+        // the fence signalling completion.
+        WireEvent::GpuJob {
+            tid,
+            depth,
+            amdgpu_cs_ioctl_time_ns,
+            dma_fence_signaled_time_ns,
+            ..
+        } => {
+            out.push(LiveEvent {
+                start_ns: *amdgpu_cs_ioctl_time_ns,
+                duration_ns: dma_fence_signaled_time_ns.saturating_sub(*amdgpu_cs_ioctl_time_ns),
+                tid: *tid,
+                pid: GPU_PID,
+                kind: kind::API_SCOPE,
+                depth: *depth as u8,
+                extra: 0,
+                _pad: 0,
+                name_id: gpu_lane::JOB,
+            });
+        }
+        _ => {}
+    }
+    out
+}
 
 /// Interns function names into the viewer's table, handing back the id the
 /// LiveEvent carries. The viewer renders the name; we only allocate ids.
@@ -136,7 +237,20 @@ fn capture_loop(
     running: Arc<AtomicBool>,
     target_pid: i32,
     store: Arc<SampleStore>,
+    gpu_helper: Option<String>,
 ) {
+    // GPU telemetry rides the same helper-process path the file mode uses:
+    // the static service cannot dlopen NVML, so a helper streams pod events
+    // in and they are converted to viewer lanes here.
+    let mut telemetry = gpu_helper.as_deref().and_then(|path| {
+        match TelemetryHelper::spawn(path, &["--interval-ms".to_string(), "100".to_string()]) {
+            Ok(helper) => Some(helper),
+            Err(error) => {
+                eprintln!("orbit-service: GPU helper {path} did not start: {error}");
+                None
+            }
+        }
+    });
     // Sampling follows the chosen process; scheduling is machine-wide.
     const SAMPLE_HZ: u64 = 1000;
     let period_ns = 1_000_000_000 / SAMPLE_HZ;
@@ -287,6 +401,12 @@ fn capture_loop(
             }
         }
 
+        if let Some(helper) = telemetry.as_mut() {
+            for event in helper.drain() {
+                batch.extend(gpu_events(&event));
+            }
+        }
+
         if !batch.is_empty() {
             // push_events, NOT ring().push_many(): the former also advances
             // the live-end marker the viewer positions its window by, bumps
@@ -300,7 +420,7 @@ fn capture_loop(
 }
 
 /// Starts the live-viewer server and blocks. Returns only on error.
-pub fn run(port: u16) -> Result<(), String> {
+pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     let config = ServerConfig {
         bind: format!("127.0.0.1:{port}").parse().map_err(|_| "bad bind address".to_string())?,
         ring_buffer_bytes: 256 << 20,
@@ -308,6 +428,7 @@ pub fn run(port: u16) -> Result<(), String> {
         dev_self_profile: false,
     };
     let service = LiveService::new(config)?;
+    intern_gpu_lane_names(&service);
 
     let store = Arc::new(SampleStore::new());
     let report_store = store.clone();
@@ -322,6 +443,7 @@ pub fn run(port: u16) -> Result<(), String> {
 
     let start_service = service.clone();
     let start_store = store.clone();
+    let start_helper = gpu_helper.clone();
     let start_running = capture.running.clone();
     let start_pid = capture.target_pid.clone();
     let stop_running = capture.running.clone();
@@ -344,9 +466,10 @@ pub fn run(port: u16) -> Result<(), String> {
             // describes the capture you are looking at.
             start_store.clear();
             let store = start_store.clone();
+            let helper = start_helper.clone();
             std::thread::Builder::new()
                 .name("orbit-capture".to_string())
-                .spawn(move || capture_loop(service, running, pid, store))
+                .spawn(move || capture_loop(service, running, pid, store, helper))
                 .map_err(|error| error.to_string())?;
             eprintln!("orbit-service: capture started (pid {pid})");
             Ok(())
@@ -412,6 +535,73 @@ mod tests {
         // Both belong to the same thread, so they lane together.
         assert_eq!(on_thread.pid, 1234);
         assert_eq!(on_thread.tid, 5678);
+    }
+
+    #[test]
+    fn gpu_metrics_become_named_value_lanes() {
+        let event = WireEvent::GpuMetrics {
+            timestamp_ns: 500,
+            device_index: 0,
+            gpu_utilization_percent: 87,
+            memory_utilization_percent: 40,
+            memory_used_bytes: 3 << 30,
+            memory_total_bytes: 24 << 30,
+            process_memory_used_bytes: 1 << 30,
+            temperature_celsius: 71,
+            power_milliwatts: 220_000,
+            sm_clock_mhz: 2520,
+            memory_clock_mhz: 10501,
+        };
+        let events = gpu_events(&event);
+        assert!(events.iter().all(|e| e.kind == kind::VALUE));
+        assert!(events.iter().all(|e| e.pid == GPU_PID));
+        let by_name = |id: u32| events.iter().find(|e| e.name_id == id).and_then(|e| e.value_f32());
+        assert_eq!(by_name(gpu_lane::UTILIZATION), Some(87.0));
+        // Bytes are reported in MiB, milliwatts in watts: the axis should read
+        // in units a human recognises.
+        assert_eq!(by_name(gpu_lane::MEMORY_MIB), Some(3072.0));
+        assert_eq!(by_name(gpu_lane::POWER_W), Some(220.0));
+        assert_eq!(by_name(gpu_lane::TEMPERATURE_C), Some(71.0));
+    }
+
+    #[test]
+    fn unsupported_metrics_are_skipped_not_plotted_as_zero() {
+        let event = WireEvent::GpuMetrics {
+            timestamp_ns: 500,
+            device_index: 0,
+            gpu_utilization_percent: METRIC_UNKNOWN_U32,
+            memory_utilization_percent: METRIC_UNKNOWN_U32,
+            memory_used_bytes: METRIC_UNKNOWN_U64,
+            memory_total_bytes: METRIC_UNKNOWN_U64,
+            process_memory_used_bytes: METRIC_UNKNOWN_U64,
+            temperature_celsius: METRIC_UNKNOWN_U32,
+            power_milliwatts: METRIC_UNKNOWN_U32,
+            sm_clock_mhz: METRIC_UNKNOWN_U32,
+            memory_clock_mhz: METRIC_UNKNOWN_U32,
+        };
+        assert!(gpu_events(&event).is_empty(), "a gap, not a flat line at zero");
+    }
+
+    #[test]
+    fn a_gpu_job_spans_submission_to_fence() {
+        let event = WireEvent::GpuJob {
+            pid: 10,
+            tid: 2,
+            context: 1,
+            seqno: 7,
+            depth: 1,
+            amdgpu_cs_ioctl_time_ns: 1_000,
+            amdgpu_sched_run_job_time_ns: 1_500,
+            gpu_hardware_start_time_ns: 1_500,
+            dma_fence_signaled_time_ns: 9_000,
+            timeline: b"gfx".to_vec(),
+        };
+        let events = gpu_events(&event);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].start_ns, 1_000);
+        assert_eq!(events[0].duration_ns, 8_000);
+        assert_eq!(events[0].depth, 1);
+        assert_eq!(events[0].name_id, gpu_lane::JOB);
     }
 
     #[test]

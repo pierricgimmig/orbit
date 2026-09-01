@@ -79,7 +79,7 @@ fn parse_args() -> Args {
                     .next()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(serve::DEFAULT_PORT);
-                if let Err(error) = serve::run(port) {
+                if let Err(error) = serve::run(port, args.gpu_helper.clone().or_else(default_gpu_helper)) {
                     eprintln!("orbit-service: could not start the live viewer: {error}");
                     std::process::exit(2);
                 }
@@ -116,7 +116,7 @@ fn main() {
     // let the operator drive captures from it, rather than guessing what they
     // wanted to profile.
     if std::env::args().count() == 1 {
-        if let Err(error) = serve::run(serve::DEFAULT_PORT) {
+        if let Err(error) = serve::run(serve::DEFAULT_PORT, default_gpu_helper()) {
             eprintln!("orbit-service: could not start the live viewer: {error}");
             std::process::exit(2);
         }
@@ -473,6 +473,15 @@ fn merge_gpu_info(existing: &mut BTreeMap<u32, Event>, incoming: Event) {
             );
         }
     }
+}
+
+/// The GPU telemetry helper shipped beside this binary, when it is there.
+/// Serve mode picks it up automatically so GPU tracks appear without the
+/// operator having to know the flag.
+fn default_gpu_helper() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.join("orbit-gpu-helper");
+    candidate.is_file().then(|| candidate.to_string_lossy().into_owned())
 }
 
 /// Wall-clock nanoseconds since the UNIX epoch, for anchoring the capture.
