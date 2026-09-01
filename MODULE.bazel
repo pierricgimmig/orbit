@@ -138,3 +138,20 @@ crate.from_cargo(
     manifests = ["//third_party/py-spy-ffi:Cargo.toml"],
 )
 use_repo(crate, "crates")
+
+# --- Rust (live viewer) --------------------------------------------------
+
+# OrbitService embeds the live HTTP/WebSocket viewer through the C ABI in
+# src/OrbitLiveViewer. Only the service-side Cargo workspace is resolved here.
+# The wasm32 eframe viewer is a separate workspace built by
+# src/OrbitLiveViewer/build_wasm.sh, which keeps the wgpu/winit tree out of
+# Bazel entirely; its output is checked in under viewer-dist/ and embedded by
+# orbit-live-server's build script.
+live_crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+live_crate.from_cargo(
+    name = "live_crates",
+    cargo_lockfile = "//src/OrbitLiveViewer:Cargo.lock",
+    # The workspace root is enough; crate_universe reads its members from there.
+    manifests = ["//src/OrbitLiveViewer:Cargo.toml"],
+)
+use_repo(live_crate, "live_crates")
