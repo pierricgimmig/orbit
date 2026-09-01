@@ -752,17 +752,21 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
     let store = Arc::new(SampleStore::new());
     let report_store = store.clone();
-    service.set_sampling_report(Arc::new(move |start_ns, end_ns| {
-        Ok(report_store.report_json(start_ns, end_ns))
+    service.set_sampling_report(Arc::new(move |start_ns, end_ns, tid| {
+        Ok(report_store.report_json_for(start_ns, end_ns, tid))
     }));
     let tree_store = store.clone();
-    service.set_sampling_tree(Arc::new(move |start_ns, end_ns, mode| {
-        Ok(tree_store.tree_json(start_ns, end_ns, TreeMode::parse(mode)))
+    service.set_sampling_tree(Arc::new(move |start_ns, end_ns, mode, tid| {
+        Ok(tree_store.tree_json_for(start_ns, end_ns, TreeMode::parse(mode), tid))
     }));
     let modules_state = symbols.clone();
     service.set_modules_json(Arc::new(move |pid| {
         let state = modules_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
-        match (&state.index, state.pid == pid) {
+        // pid 0 means "whatever symbols are loaded", which is what a reloaded
+        // page asking for the modules view has: a deep link carries no
+        // process selection.
+        let pid = if pid == 0 { state.pid } else { pid };
+        match (&state.index, state.pid == pid && pid != 0) {
             (Some(index), true) => Ok(index.modules_json(pid)),
             _ => Ok(serde_json::json!({
                 "pid": pid,

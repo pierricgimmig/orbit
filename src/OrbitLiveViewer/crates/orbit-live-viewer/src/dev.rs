@@ -190,6 +190,39 @@ pub fn query_dev_locked_off_from_location() -> bool {
     }
 }
 
+/// `?report=flat|top_down|bottom_up|modules` — open the report panel on a
+/// given tab.
+///
+/// A deep link is worth having on its own, and it is what makes the
+/// screenshot suite deterministic: egui paints to a canvas, so there is no
+/// DOM node for a tab pill to click. Automating the UI otherwise means
+/// synthesising mouse events at hard-coded coordinates, which breaks the
+/// first time a pill moves.
+pub fn query_report_tab_from_location() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|s| query_report_tab(&s))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+/// Parses `report=` out of a location query string.
+pub fn query_report_tab(search: &str) -> Option<String> {
+    for pair in search.trim_start_matches('?').split('&') {
+        if let Some(value) = pair.strip_prefix("report=") {
+            if !value.is_empty() {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
+}
+
 fn now_ns() -> u64 {
     // Same clock as lane-worker spans (`orbit_live_event::dev::now_ns`).
     // WASM: installed hook (`globalThis.performance.now`) so DedicatedWorkers
@@ -336,5 +369,15 @@ mod absorb_guard_tests {
             f.finish().is_empty(),
             "pre-origin spans must not be clamped onto rel 0"
         );
+    }
+
+    #[test]
+    fn a_report_tab_is_read_from_the_query_string() {
+        assert_eq!(query_report_tab("?report=bottom_up").as_deref(), Some("bottom_up"));
+        assert_eq!(query_report_tab("?dev=0&report=Modules").as_deref(), Some("modules"));
+        assert_eq!(query_report_tab("?report="), None);
+        assert_eq!(query_report_tab("?dev=0"), None);
+        // A different parameter ending in the same letters must not match.
+        assert_eq!(query_report_tab("?myreport=flat"), None);
     }
 }

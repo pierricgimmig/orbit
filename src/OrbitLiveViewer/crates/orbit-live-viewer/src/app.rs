@@ -585,6 +585,8 @@ pub struct OrbitLiveApp {
     /// so an unchanged selection is not refetched every frame.
     sampling: Option<crate::net::SamplingReport>,
     sampling_range: Option<(u64, u64)>,
+    /// Set when the selection was made on one thread's sample bar.
+    sampling_tid: Option<u32>,
     /// Which of the four report views is showing.
     report_tab: ReportTab,
     tree: Option<crate::net::SamplingTree>,
@@ -595,6 +597,8 @@ pub struct OrbitLiveApp {
     modules: Option<crate::net::ModulesJson>,
     /// Previous frame's capturing flag, to catch the moment a capture stops.
     was_capturing: bool,
+    /// A `?report=` deep link asks for the reports once the service answers.
+    pending_report_request: bool,
     measure_dragging: bool,
     idle_skip_chrome: bool,
     last_n_prims: u32,
@@ -640,6 +644,13 @@ struct TimeMeasure {
     start_ns: u64,
     stop_ns: u64,
     label_y: f32,
+    /// The thread whose sample bar the drag began on, if it began on one.
+    ///
+    /// Orbit's `CallstackThreadBar::SelectCallstacks` selects the callstack
+    /// events *of that tid* in the range; only the all-threads bar selects
+    /// across the process. Dragging anywhere else keeps the process-wide
+    /// meaning, which is what the ruler and the empty space below tracks do.
+    sample_tid: Option<u32>,
 }
 
 /// The four ways Orbit lets you read a capture's samples.
@@ -658,6 +669,18 @@ enum ReportTab {
 }
 
 impl ReportTab {
+    /// The `?report=` values, matching the API's mode strings where they
+    /// overlap so one vocabulary covers both.
+    fn from_query(value: &str) -> Option<ReportTab> {
+        match value {
+            "flat" => Some(ReportTab::Flat),
+            "top_down" | "topdown" => Some(ReportTab::TopDown),
+            "bottom_up" | "bottomup" => Some(ReportTab::BottomUp),
+            "modules" => Some(ReportTab::Modules),
+            _ => None,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             ReportTab::Flat => "Flat",
@@ -765,11 +788,15 @@ impl OrbitLiveApp {
             measure: None,
             sampling: None,
             sampling_range: None,
-            report_tab: ReportTab::Flat,
+            sampling_tid: None,
+            report_tab: crate::dev::query_report_tab_from_location()
+                .and_then(|v| ReportTab::from_query(&v))
+                .unwrap_or(ReportTab::Flat),
             tree: None,
             tree_expanded: std::collections::HashSet::new(),
             modules: None,
             was_capturing: false,
+            pending_report_request: crate::dev::query_report_tab_from_location().is_some(),
             measure_dragging: false,
             idle_skip_chrome: false,
             last_n_prims: 0,
@@ -1364,6 +1391,13 @@ impl OrbitLiveApp {
         }
         let capturing = s.capturing;
         self.status = s;
+        // A deep-linked report has no capture-stop transition to ride on, so
+        // it asks once, as soon as the service is talking.
+        if self.pending_report_request {
+            self.pending_report_request = false;
+            self.show_whole_capture_report();
+            self.net.get_modules(self.selected_pid.unwrap_or(0));
+        }
         self.error.clear();
         // The moment recording stops, show the aggregate over everything just
         // recorded. Orbit does the same: a finished capture with no selection
@@ -3784,10 +3818,15 @@ impl OrbitLiveApp {
         if response.drag_started_by(PointerButton::Secondary) {
             if let Some(p) = response.interact_pointer_pos() {
                 let t = time_at_x(p.x, rect, self.t0, self.t1);
+                // Only the lane area knows about threads; a drag on the ruler
+                // is process-wide by construction.
+                let sample_tid =
+                    if label_here { self.sample_lane_at_y(p.y - rect.top()) } else { None };
                 self.measure = Some(TimeMeasure {
                     start_ns: t,
                     stop_ns: t,
                     label_y: p.y,
+                    sample_tid,
                 });
                 self.measure_dragging = true;
                 self.follow = false;
@@ -3824,6 +3863,23 @@ impl OrbitLiveApp {
             self.measure = None;
             self.measure_dragging = false;
         }
+    }
+
+    /// The tid of the sample bar at body-local `y`, if that is what is there.
+    ///
+    /// Deliberately only SAMPLE lanes: dragging over a thread's flame graph or
+    /// its state bar is not the same gesture as dragging over its sample bar,
+    /// and quietly scoping the report from either would make the selection
+    /// mean different things in places that look alike.
+    fn sample_lane_at_y(&self, y: f32) -> Option<u32> {
+        let scale = self.tracks.scale.max(0.01);
+        self.tracks.layout().iter().find_map(|(key, lane_y)| {
+            if key.kind != kind::SAMPLE {
+                return None;
+            }
+            let h = lane_height(*key) * scale;
+            (y >= *lane_y && y < *lane_y + h).then_some(key.tid)
+        })
     }
 
     fn pick_at(&self, x: f32, y: f32, t0: u64, t1: u64, width: f32) -> Option<ScopePick> {
@@ -3867,10 +3923,12 @@ impl OrbitLiveApp {
             let (a, b) = (m.start_ns.min(m.stop_ns), m.start_ns.max(m.stop_ns));
             (a, b)
         });
-        if range == self.sampling_range {
+        let tid = self.measure.and_then(|m| m.sample_tid);
+        if range == self.sampling_range && tid == self.sampling_tid {
             return;
         }
         self.sampling_range = range;
+        self.sampling_tid = tid;
         self.request_reports();
     }
 
@@ -3881,14 +3939,15 @@ impl OrbitLiveApp {
     /// stops -- before you have selected anything, the answer you want is
     /// about everything you just recorded.
     fn request_reports(&mut self) {
+        let tid = self.sampling_tid;
         match self.sampling_range {
             Some((start, end)) => {
-                self.net.get_sampling_report(start, end);
-                self.net.get_sampling_tree(Some((start, end)), self.report_tab.mode());
+                self.net.get_sampling_report(start, end, tid);
+                self.net.get_sampling_tree(Some((start, end)), self.report_tab.mode(), tid);
             }
             None => {
-                self.net.get_sampling_report(0, u64::MAX);
-                self.net.get_sampling_tree(None, self.report_tab.mode());
+                self.net.get_sampling_report(0, u64::MAX, tid);
+                self.net.get_sampling_tree(None, self.report_tab.mode(), tid);
             }
         }
     }
@@ -3896,6 +3955,7 @@ impl OrbitLiveApp {
     /// The whole-capture aggregate, shown when a capture stops.
     fn show_whole_capture_report(&mut self) {
         self.sampling_range = None;
+        self.sampling_tid = None;
         self.tree_expanded.clear();
         self.request_reports();
     }
@@ -3927,11 +3987,15 @@ impl OrbitLiveApp {
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(match self.sampling_range {
-                            Some((a, b)) => {
+                        RichText::new(match (self.sampling_range, self.sampling_tid) {
+                            (Some((a, b)), Some(tid)) => format!(
+                                "thread {tid}, {:.1} ms selected",
+                                (b.saturating_sub(a)) as f64 / 1e6
+                            ),
+                            (Some((a, b)), None) => {
                                 format!("over {:.1} ms selected", (b.saturating_sub(a)) as f64 / 1e6)
                             }
-                            None => "whole capture".to_string(),
+                            (None, _) => "whole capture".to_string(),
                         })
                         .color(theme::MUTED)
                         .size(11.0),
@@ -3969,7 +4033,7 @@ impl OrbitLiveApp {
                             // different tree; switching to or from Flat does not.
                             if tab.mode() != was_tree_mode || self.tree.is_none() {
                                 self.tree_expanded.clear();
-                                self.net.get_sampling_tree(self.sampling_range, tab.mode());
+                                self.net.get_sampling_tree(self.sampling_range, tab.mode(), self.sampling_tid);
                             }
                             if tab == ReportTab::Modules {
                                 if let Some(pid) = self.selected_pid {

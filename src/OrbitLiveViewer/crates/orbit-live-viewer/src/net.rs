@@ -576,11 +576,14 @@ mod wasm_impl {
 
         /// Fetches the sampling report for a selection. `end_ns` of 0 means
         /// "to the end of the capture", which is what the server expects.
-        pub fn get_sampling_report(&self, start_ns: u64, end_ns: u64) {
+        pub fn get_sampling_report(&self, start_ns: u64, end_ns: u64, tid: Option<u32>) {
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result =
-                    get_text(&format!("/api/sampling/report?start_ns={start_ns}&end_ns={end_ns}"))
+                    get_text(&format!(
+                        "/api/sampling/report?start_ns={start_ns}&end_ns={end_ns}{}",
+                        tid.map(|t| format!("&tid={t}")).unwrap_or_default()
+                    ))
                         .await
                         .and_then(|t| parse_sampling_report_json(&t));
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
@@ -596,11 +599,12 @@ mod wasm_impl {
         /// The same samples as a call tree. `None` bounds mean the whole
         /// capture, which is what the panel asks for when a capture stops and
         /// nothing is selected.
-        pub fn get_sampling_tree(&self, range: Option<(u64, u64)>, mode: &str) {
+        pub fn get_sampling_tree(&self, range: Option<(u64, u64)>, mode: &str, tid: Option<u32>) {
             let inbox = self.inbox.clone();
+            let scope = tid.map(|t| format!("&tid={t}")).unwrap_or_default();
             let query = match range {
-                Some((t0, t1)) => format!("?mode={mode}&t0={t0}&t1={t1}"),
-                None => format!("?mode={mode}"),
+                Some((t0, t1)) => format!("?mode={mode}&t0={t0}&t1={t1}{scope}"),
+                None => format!("?mode={mode}{scope}"),
             };
             wasm_bindgen_futures::spawn_local(async move {
                 let result = get_text(&format!("/api/sampling/tree{query}"))
@@ -941,8 +945,8 @@ mod native_impl {
             Inbox::default()
         }
         pub fn get_status(&self) {}
-        pub fn get_sampling_report(&self, _start_ns: u64, _end_ns: u64) {}
-        pub fn get_sampling_tree(&self, _range: Option<(u64, u64)>, _mode: &str) {}
+        pub fn get_sampling_report(&self, _start_ns: u64, _end_ns: u64, _tid: Option<u32>) {}
+        pub fn get_sampling_tree(&self, _range: Option<(u64, u64)>, _mode: &str, _tid: Option<u32>) {}
         pub fn get_modules(&self, _pid: u32) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}

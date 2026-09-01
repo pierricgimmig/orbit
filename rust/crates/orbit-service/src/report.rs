@@ -80,16 +80,35 @@ impl SampleStore {
     /// `{"samples":N,"functions":[{"name":..,"self":N,"inclusive":N,
     /// "self_percent":F,"inclusive_percent":F}, ...]}` sorted by self count.
     pub fn report_json(&self, start_ns: u64, end_ns: u64) -> String {
+        self.report_json_for(start_ns, end_ns, None)
+    }
+
+    /// `tid` narrows the report to one thread, which is what dragging on a
+    /// single thread's sample bar means: Orbit's `CallstackThreadBar` selects
+    /// the callstack events *of that tid* in the range, and only the
+    /// all-threads bar selects across the process.
+    pub fn report_json_for(&self, start_ns: u64, end_ns: u64, tid: Option<u32>) -> String {
         let inner = self.inner.lock().unwrap();
         let mut self_counts: HashMap<u32, u64> = HashMap::new();
         let mut inclusive_counts: HashMap<u32, u64> = HashMap::new();
         let mut total = 0u64;
+        // The span the counted samples actually occupy, which is not the span
+        // that was asked for: a request for the whole capture gets 0..u64::MAX
+        // back otherwise, and the ring's own range covers every capture the
+        // service has run, not this one.
+        let mut first_sample_ns = u64::MAX;
+        let mut last_sample_ns = 0u64;
 
         for sample in inner.samples.iter() {
             if sample.timestamp_ns < start_ns || sample.timestamp_ns > end_ns {
                 continue;
             }
+            if tid.is_some_and(|tid| sample.tid != tid) {
+                continue;
+            }
             total += 1;
+            first_sample_ns = first_sample_ns.min(sample.timestamp_ns);
+            last_sample_ns = last_sample_ns.max(sample.timestamp_ns);
             if let Some(leaf) = sample.frames.first() {
                 *self_counts.entry(*leaf).or_insert(0) += 1;
             }
@@ -136,6 +155,9 @@ impl SampleStore {
             "samples": total,
             "start_ns": start_ns,
             "end_ns": end_ns,
+            "tid": tid,
+            "first_sample_ns": if total == 0 { 0 } else { first_sample_ns },
+            "last_sample_ns": last_sample_ns,
             "functions": functions,
         })
         .to_string()
@@ -214,6 +236,19 @@ impl SampleStore {
     /// top-down iterates the frames in reverse (they arrive innermost-first),
     /// bottom-up iterates them forward.
     pub fn tree_json(&self, start_ns: u64, end_ns: u64, mode: TreeMode) -> String {
+        self.tree_json_for(start_ns, end_ns, mode, None)
+    }
+
+    /// As `tree_json`, narrowed to one thread. A top-down tree of one thread
+    /// still carries its thread root, so the shape does not change with the
+    /// filter -- only which samples reach it.
+    pub fn tree_json_for(
+        &self,
+        start_ns: u64,
+        end_ns: u64,
+        mode: TreeMode,
+        tid: Option<u32>,
+    ) -> String {
         let inner = self.inner.lock().unwrap();
         let mut total = 0u64;
         let mut threads: HashMap<u32, ThreadNode> = HashMap::new();
@@ -225,6 +260,9 @@ impl SampleStore {
                 continue;
             }
             if sample.frames.is_empty() {
+                continue;
+            }
+            if tid.is_some_and(|tid| sample.tid != tid) {
                 continue;
             }
             total += 1;
@@ -295,6 +333,7 @@ impl SampleStore {
             "samples": total,
             "start_ns": start_ns,
             "end_ns": end_ns,
+            "tid": tid,
             "roots": roots,
         })
         .to_string()
@@ -642,5 +681,61 @@ mod tests {
             .map(|c| c["name"].as_str().unwrap())
             .collect();
         assert_eq!(threads, vec!["Thread 7", "Thread 9"], "busiest thread first");
+    }
+
+    #[test]
+    fn a_thread_filter_narrows_the_flat_report_to_that_thread() {
+        let store = tree_store();
+        store.push(StoredSample { timestamp_ns: 40, tid: 9, frames: vec![4, 1] });
+        let all = parse(&store.report_json_for(0, 100, None));
+        assert_eq!(all["samples"], 4);
+        let one = parse(&store.report_json_for(0, 100, Some(9)));
+        assert_eq!(one["samples"], 1, "only thread 9's sample");
+        assert_eq!(one["tid"], 9);
+        // And the percentages are relative to that thread, not the capture.
+        let other = one["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == "other")
+            .unwrap();
+        assert_eq!(other["self_percent"], 100.0);
+    }
+
+    #[test]
+    fn a_thread_filter_narrows_the_tree_too() {
+        let store = tree_store();
+        store.push(StoredSample { timestamp_ns: 40, tid: 9, frames: vec![4, 1] });
+        let tree = parse(&store.tree_json_for(0, 100, TreeMode::TopDown, Some(9)));
+        let roots = tree["roots"].as_array().unwrap();
+        assert_eq!(roots.len(), 1, "one thread selected, one thread root");
+        assert_eq!(roots[0]["name"], "Thread 9");
+        assert_eq!(tree["samples"], 1);
+    }
+
+    #[test]
+    fn filtering_to_a_thread_with_no_samples_is_empty_not_an_error() {
+        let tree = parse(&tree_store().tree_json_for(0, 100, TreeMode::BottomUp, Some(4242)));
+        assert_eq!(tree["samples"], 0);
+        assert!(tree["roots"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_report_says_which_span_its_samples_actually_cover() {
+        // Not the span that was asked for. A whole-capture request passes
+        // 0..u64::MAX, and the ring's own range spans every capture the
+        // service has run -- neither tells you where these samples are.
+        let report = parse(&tree_store().report_json_for(0, u64::MAX, None));
+        assert_eq!(report["first_sample_ns"], 10);
+        assert_eq!(report["last_sample_ns"], 30);
+        assert_eq!(report["start_ns"], 0, "the request is echoed as asked");
+    }
+
+    #[test]
+    fn an_empty_report_reports_no_span_rather_than_a_sentinel() {
+        let report = parse(&tree_store().report_json_for(1_000, 2_000, None));
+        assert_eq!(report["samples"], 0);
+        assert_eq!(report["first_sample_ns"], 0, "not u64::MAX leaking out");
+        assert_eq!(report["last_sample_ns"], 0);
     }
 }

@@ -271,6 +271,8 @@ pub struct ReportQuery {
     pub start_ns: u64,
     #[serde(default)]
     pub end_ns: u64,
+    /// Narrows to one thread; absent means every thread.
+    pub tid: Option<u32>,
 }
 
 #[derive(serde::Deserialize)]
@@ -278,6 +280,9 @@ struct TreeQuery {
     t0: Option<u64>,
     t1: Option<u64>,
     mode: Option<String>,
+    /// Narrows to one thread, the way dragging on a single thread's sample
+    /// bar does in the native UI. Absent means every thread.
+    tid: Option<u32>,
 }
 
 async fn sampling_tree(
@@ -293,7 +298,7 @@ async fn sampling_tree(
     let t0 = q.t0.unwrap_or(0);
     let t1 = q.t1.unwrap_or(u64::MAX);
     let mode = q.mode.unwrap_or_else(|| "top_down".to_string());
-    match tree(t0, t1, &mode) {
+    match tree(t0, t1, &mode, q.tid) {
         Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -326,7 +331,7 @@ async fn sampling_report(
             .into_response(),
         Some(report) => {
             let end = if query.end_ns == 0 { u64::MAX } else { query.end_ns };
-            match tokio::task::spawn_blocking(move || report(query.start_ns, end)).await {
+            match tokio::task::spawn_blocking(move || report(query.start_ns, end, query.tid)).await {
                 Ok(Ok(json)) => ([(axum::http::header::CONTENT_TYPE, "application/json")], json)
                     .into_response(),
                 Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
