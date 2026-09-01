@@ -7,6 +7,17 @@
 # crate_universe splices rust/ into a temp directory, where those paths break.
 [workspace]
 
+# Its own workspace means it inherits nothing from ../../Cargo.toml, release
+# profile included. Keep this in sync with the profile there: without it the
+# binary ships unstripped, unwinding and without cross-crate LTO, which cost
+# 1.7 MB when the split first happened.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
 [package]
 name = "orbit-service"
 version = "0.1.0"
