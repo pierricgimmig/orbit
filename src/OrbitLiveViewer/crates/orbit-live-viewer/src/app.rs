@@ -2612,9 +2612,7 @@ impl OrbitLiveApp {
                 let band = Rect::from_min_max(
                     Pos2::new(head.left(), r.top()),
                     Pos2::new(
-                        if self.light_canvas
-                            || matches!(row.id, RowId::Machine(_) | RowId::Scheduler)
-                        {
+                        if self.light_canvas || matches!(row.id, RowId::Machine(_)) {
                             r.right()
                         } else {
                             body.right()
@@ -2714,9 +2712,11 @@ impl OrbitLiveApp {
             RowId::Scheduler => {
                 let n = TrackStrip::scheduler_core_count_in(&self.index);
                 let label = format!("Scheduler ({n} cores)");
+                // Indented like a Process: the scheduler is a child of its
+                // machine, not a peer of one.
                 if !interactive {
                     ui.painter().text(
-                        Pos2::new(r.left() + 22.0, r.center().y),
+                        Pos2::new(r.left() + 30.0, r.center().y),
                         Align2::LEFT_CENTER,
                         label,
                         FontId::new(11.0, fonts::medium()),
@@ -2725,12 +2725,12 @@ impl OrbitLiveApp {
                     return;
                 }
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 8.0, open, ("s", 0u32, 0u32)) {
+                if chevron(ui, r, 16.0, open, ("s", 0u32, 0u32)) {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
                 }
                 ui.painter().text(
-                    Pos2::new(r.left() + 22.0, r.center().y),
+                    Pos2::new(r.left() + 30.0, r.center().y),
                     Align2::LEFT_CENTER,
                     label,
                     FontId::new(11.0, fonts::medium()),

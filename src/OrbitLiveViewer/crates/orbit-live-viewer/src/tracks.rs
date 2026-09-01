@@ -1325,6 +1325,31 @@ mod tests {
     }
 
     #[test]
+    fn collapsing_the_machine_hides_its_scheduler() {
+        // The test of real nesting: the parent's collapse must take the
+        // scheduler and its cores with it.
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 10, 0, 10, 0));
+        idx.insert(sched(1, 11, 0, 10, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert!(strip.rows().iter().any(|r| r.id == RowId::Scheduler));
+
+        strip.toggle(RowId::Machine(MachineId::Local));
+        strip.tick(1.0, &idx, None);
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        assert!(
+            !ids.iter().any(|id| *id == RowId::Scheduler),
+            "collapsing the machine must hide the scheduler: {ids:?}"
+        );
+        assert!(
+            !ids.iter().any(|id| matches!(id, RowId::Lane(k) if k.is_scheduler())),
+            "and its core lanes: {ids:?}"
+        );
+    }
+
+    #[test]
     fn a_scheduling_only_capture_still_shows_its_machine() {
         // Cores can arrive before any process track exists; the capture must
         // not look empty.
