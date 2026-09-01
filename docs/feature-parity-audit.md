@@ -80,14 +80,22 @@ Roughly: **2 done, 6 partial, 9 none** of 17.
 | Source-code view | **none** | |
 | Symbol servers / caches | **none** | |
 
-## 5. Capture files
+## 5. Capture files — a deliberate non-goal
 
 C++ writes and reads `.orbit` files through `src/CaptureFile`. The Rust
-service writes a different format — the pod wire format in `orbit-wire`, one
-tag byte and fixed little-endian fields — and **cannot read or write
-`.orbit`**. The viewer's Open button loads Chrome Trace Event JSON, which is a
-third format neither side shares. There is no migration path today, and
-nothing that opens an existing `.orbit` capture.
+service writes the pod wire format in `orbit-wire` instead — one tag byte and
+fixed little-endian fields — and does not read or write `.orbit`.
+
+**This is a decision, not a gap.** Legacy capture files are explicitly out of
+scope, so `src/CaptureFile` has no counterpart to port and none is planned.
+The pod format is not a partial replacement for `.orbit`; it is what replaces
+it.
+
+What the port does still owe here is its own round trip: the service writes
+pod files and `orbit-pod-dump` reads them, but the viewer cannot open one, so
+a capture is live-only. That is a real gap and it is about the *new* format,
+not the old one. (The Open button loads Chrome Trace Event JSON, which is an
+import path for other tools' data and unrelated to either.)
 
 ## 6. Where the Rust side is ahead
 
@@ -124,6 +132,8 @@ yet is a *general* profiler. The three gaps that matter most, in order:
    it knows, but "why was this thread not running" is a question it cannot
    answer, and that is half the value of a state bar.
 
-After those: memory tracking, frame tracks, and reading existing `.orbit`
-captures. Demangling is small and disproportionately visible — every C++
-symbol in every report is currently unreadable.
+After those: memory tracking, frame tracks, and opening a saved pod capture in
+the viewer, which today can only show a live one. Demangling is small and
+disproportionately visible — every C++ symbol in every report is currently
+unreadable. Reading legacy `.orbit` files is not on this list and will not be:
+see section 5.
