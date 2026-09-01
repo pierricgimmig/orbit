@@ -365,6 +365,16 @@ cc_library(
     deps = [":orbit_ptrace_ffi_rust"],
 )
 
+# --------------------------------------------------------- orbit-pod-dump
+
+rust_binary(
+    name = "orbit_pod_dump",
+    srcs = glob(["crates/orbit-pod-dump/src/**/*.rs"]),
+    crate_root = "crates/orbit-pod-dump/src/main.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_wire"],
+)
+
 # -------------------------------------------------------- orbit-gpu-helper
 
 # Dynamically linked on purpose: it dlopens libnvidia-ml, which the fully

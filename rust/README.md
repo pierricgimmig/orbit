@@ -44,7 +44,18 @@ orbit-service --pid <tid> --duration-ms 5000 --out capture.pod
 # ...plus NVIDIA GPU telemetry
 orbit-service --pid <tid> --duration-ms 5000 \
               --gpu-helper ./orbit-gpu-helper --out capture.pod
+
+# read the capture back
+orbit-pod-dump capture.pod            # machine, counts, hottest callstacks
+orbit-pod-dump capture.pod --top 20   # more stacks
+orbit-pod-dump capture.pod --events   # every event, for debugging
 ```
+
+`orbit-pod-dump` is how you inspect a capture: it prints the machine it was
+taken on, the GPUs, the event counts and time span, and the hottest
+callstacks by sample count (addresses only -- symbolization is a later
+stage). With no `--pid`, the service profiles its own busy worker threads,
+which is the quickest way to confirm a build works.
 
 Privileges: stack sampling needs `perf_event_paranoid <= 2`; system-wide
 scheduling needs `<= 0`; tracing another user's process also needs

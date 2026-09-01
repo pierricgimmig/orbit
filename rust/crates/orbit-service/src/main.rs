@@ -319,6 +319,12 @@ fn main() {
     let mut gpu_events = 0u64;
     if let Some(helper) = gpu_helper.take() {
         gpu_events = helper.events_received();
+        if helper.decode_errors() > 0 {
+            eprintln!(
+                "orbit-service: GPU helper stream had {} malformed record(s)",
+                helper.decode_errors()
+            );
+        }
         for event in helper.shutdown() {
             match event {
                 Event::GpuInfo { .. } => merge_gpu_info(&mut gpu_info, event),

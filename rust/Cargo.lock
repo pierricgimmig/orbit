@@ -291,6 +291,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-pod-dump"
+version = "0.1.0"
+dependencies = [
+ "orbit-wire",
+]
+
+[[package]]
 name = "orbit-ptrace"
 version = "0.1.0"
 dependencies = [
