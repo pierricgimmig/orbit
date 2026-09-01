@@ -426,7 +426,21 @@ fn capture_loop(
     if sample_rings.is_empty() {
         eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
     }
-    let mut unwinder = ProcessUnwinder::for_pid(target_pid).ok();
+    let mut unwinder = match ProcessUnwinder::for_pid(target_pid) {
+        Ok(unwinder) => Some(unwinder),
+        Err(error) => {
+            // Not fatal, and worth saying out loud: without an unwinder there
+            // are no callstacks, but the sample bar below still works.
+            eprintln!("orbit-service: no unwinder for pid {target_pid} ({error}); \
+                       sample ticks only, no callstacks");
+            None
+        }
+    };
+    eprintln!(
+        "orbit-service: {} sampling ring(s) at {SAMPLE_HZ} Hz, unwinder {}",
+        sample_rings.len(),
+        if unwinder.is_some() { "ready" } else { "unavailable" }
+    );
     let sample_flags = SampleFlags::stack_sample();
     let mut switch_rings = Vec::new();
     for cpu in 0..crate::num_cpus_hint() as i32 {
@@ -507,6 +521,9 @@ fn capture_loop(
 
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
+    let mut sample_records: u64 = 0;
+    let mut samples_parsed: u64 = 0;
+    let mut samples_short_regs: u64 = 0;
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
     while running.load(Ordering::Relaxed) {
         batch.clear();
@@ -560,15 +577,18 @@ fn capture_loop(
                     if { header.kind } != record_type::SAMPLE {
                         continue;
                     }
+                    sample_records += 1;
                     let Some(sample) = parse_record_sample(&record, sample_flags, true) else {
                         continue;
                     };
+                    samples_parsed += 1;
                     let (Some(regs), Some(stack)) =
                         (sample.regs.as_deref(), sample.stack_data.as_deref())
                     else {
                         continue;
                     };
                     if regs.len() < REGS_USER_ALL_COUNT {
+                        samples_short_regs += 1;
                         continue;
                     }
                     #[cfg(target_arch = "x86_64")]
@@ -683,6 +703,16 @@ fn capture_loop(
         if !tail.is_empty() {
             service.push_events(&tail);
         }
+    }
+    eprintln!("orbit-service: {samples_parsed} callstack samples recorded");
+    // Only worth a line when it happened: a sample whose register set came
+    // back short is one the unwinder could not start from.
+    let unparsed = sample_records.saturating_sub(samples_parsed);
+    if unparsed > 0 || samples_short_regs > 0 {
+        eprintln!(
+            "orbit-service: {unparsed} sample(s) failed to parse, \
+             {samples_short_regs} had too few registers"
+        );
     }
     if !hooks.is_empty() {
         eprintln!("orbit-service: {instrumented_calls} instrumented calls recorded");
