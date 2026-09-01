@@ -17,7 +17,7 @@
 
 use crate::report::{SampleStore, StoredSample};
 use crate::symbolize::Symbolizer;
-use orbit_live_event::{kind, LiveEvent};
+use orbit_live_event::{kind, thread_state, LiveEvent};
 use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
 use orbit_unwind::unwinder::StartRegs;
 use orbit_unwind::ProcessUnwinder;
@@ -69,6 +69,34 @@ impl FrameNames {
 struct CaptureState {
     running: Arc<AtomicBool>,
     target_pid: Arc<AtomicI32>,
+}
+
+/// A scheduling slice becomes two events: the core lane it occupied, and the
+/// same interval projected onto the thread that held it.
+///
+/// The projection is what gives every thread a state bar. We do not trace
+/// `sched_switch`'s `prev_state` yet, so RUNNING is the only state we can
+/// claim; the gaps between these slices are "not on a core", which is the
+/// useful half of the signal and honest about the rest.
+fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSlice) -> [LiveEvent; 2] {
+    let start_ns = slice.out_timestamp_ns.saturating_sub(slice.duration_ns);
+    let base = LiveEvent {
+        start_ns,
+        duration_ns: slice.duration_ns,
+        tid: slice.tid as u32,
+        pid: slice.pid as u32,
+        kind: kind::SCHEDULING_SLICE,
+        depth: 0,
+        extra: slice.core as u8,
+        _pad: 0,
+        name_id: 0,
+    };
+    let on_thread = LiveEvent {
+        kind: kind::THREAD_STATE,
+        extra: thread_state::RUNNING,
+        ..base
+    };
+    [base, on_thread]
 }
 
 /// Enumerates processes for the viewer's Capture strip. The viewer expects
@@ -184,17 +212,9 @@ fn capture_loop(
                         // target -- and the viewer lanes by (pid, tid) anyway.
                         // Filtering to the target also meant seeing nothing at
                         // all whenever the real work lived in child processes.
-                        batch.push(LiveEvent {
-                            start_ns: slice.out_timestamp_ns.saturating_sub(slice.duration_ns),
-                            duration_ns: slice.duration_ns,
-                            tid: slice.tid as u32,
-                            pid: slice.pid as u32,
-                            kind: kind::SCHEDULING_SLICE,
-                            depth: 0,
-                            extra: slice.core as u8,
-                            _pad: 0,
-                            name_id: 0,
-                        });
+                        let [on_core, on_thread] = scheduling_events(&slice);
+                        batch.push(on_core);
+                        batch.push(on_thread);
                     }
                 } else {
                     switches.process_context_switch_in(
@@ -359,4 +379,51 @@ pub fn run(port: u16) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     runtime.block_on(http::serve(service))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orbit_tracing_state::context_switches::SchedulingSlice;
+
+    #[test]
+    fn a_slice_lands_on_both_the_core_and_its_thread() {
+        let slice = SchedulingSlice {
+            pid: 1234,
+            tid: 5678,
+            core: 3,
+            duration_ns: 400,
+            out_timestamp_ns: 1000,
+        };
+        let [on_core, on_thread] = scheduling_events(&slice);
+
+        // Same interval on both.
+        assert_eq!(on_core.start_ns, 600);
+        assert_eq!(on_core.duration_ns, 400);
+        assert_eq!(on_thread.start_ns, on_core.start_ns);
+        assert_eq!(on_thread.duration_ns, on_core.duration_ns);
+
+        // The core lane carries the core; the thread bar carries the state.
+        assert_eq!(on_core.kind, kind::SCHEDULING_SLICE);
+        assert_eq!(on_core.extra, 3);
+        assert_eq!(on_thread.kind, kind::THREAD_STATE);
+        assert_eq!(on_thread.extra, thread_state::RUNNING);
+
+        // Both belong to the same thread, so they lane together.
+        assert_eq!(on_thread.pid, 1234);
+        assert_eq!(on_thread.tid, 5678);
+    }
+
+    #[test]
+    fn a_slice_longer_than_its_end_timestamp_does_not_underflow() {
+        let slice = SchedulingSlice {
+            pid: 1,
+            tid: 1,
+            core: 0,
+            duration_ns: 5_000,
+            out_timestamp_ns: 100,
+        };
+        let [on_core, _] = scheduling_events(&slice);
+        assert_eq!(on_core.start_ns, 0, "saturating, not wrapped");
+    }
 }
