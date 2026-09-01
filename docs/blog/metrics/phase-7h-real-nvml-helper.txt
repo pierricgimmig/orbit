@@ -1,0 +1,78 @@
+Phase 7h -- the real NVML helper, on real hardware (2026-08-31)
+==============================================================
+
+Two corrections first
+---------------------
+1. I had written repeatedly that there was "no NVIDIA GPU on this machine"
+   without ever checking. There is: /sys/class/drm/card0/device reports
+   vendor 0x10de device 0x2684 -- a GeForce RTX 4090, driver 595.84, with
+   libnvidia-ml.so.1 installed. Everything below is measured on it.
+2. The AMD GPU correlator (Phase 7e) is ported and unit-tested but is NOT
+   wired to a data source in the service, so an AMD machine produces no GPU
+   job events today. See "What happens on AMD" below.
+
+The helper, for real
+--------------------
+crates/orbit-gpu-helper is now a working NVML telemetry helper, not a
+placeholder: it dlopens libnvidia-ml at runtime (so a machine with no driver
+is a quiet no-op, not a broken binary), binds the eight entry points the
+sampler needs, polls each device, and writes pod GpuMetrics to stdout for the
+static service to ingest.
+
+Verified against nvidia-smi as ground truth:
+  metric          helper        nvidia-smi     match
+  memory total    24564 MiB     24564 MiB      exact
+  memory used      1394 MiB      1395 MiB      exact (1 MiB rounding)
+  temperature        36 C          36 C        exact
+  SM clock          210 MHz       210 MHz      exact
+  memory clock      405 MHz       405 MHz      exact
+  power           10.44 W       11.03 W        differs by sampling instant
+  utilization         0 %           0 %        differs by sampling instant
+
+A discrepancy worth recording: the first version read 1875 MiB used against
+nvidia-smi's 1395 MiB. That is not a bug in the port, it is NVML v1 vs v2
+semantics -- nvmlDeviceGetMemoryInfo (v1) counts driver-reserved memory in
+`used`, while v2 breaks the reservation into its own field, and nvidia-smi
+shows the v2 figure. The helper now prefers nvmlDeviceGetMemoryInfo_v2 (with
+the NVML_STRUCT_VERSION dance) and falls back to v1 on older drivers. Shipping
+the v1 number would have looked "close enough" and quietly disagreed with the
+tool every user checks against.
+
+End to end, on real hardware:
+  service: statically linked (0 DT_NEEDED entries)
+  helper:  dynamically linked, 1 device, polling every 100ms
+  capture: 50 samples, 4199 scheduling slices, 9 GPU telemetry events
+
+Graceful degradation without NVIDIA libraries -- proven, not asserted
+---------------------------------------------------------------------
+The question "if the nvidia libs are not there, will the service still load
+fine?" has a structural answer: the static service has ZERO DT_NEEDED entries
+and zero NVIDIA symbols, so there is nothing for a dynamic loader to fail to
+resolve. Measured, all exiting 0 with a full capture:
+  no --gpu-helper at all              -> 93 samples, 951 slices, 0 GPU events
+  --gpu-helper /nonexistent/...       -> message, 100 samples, 824 slices
+  --gpu-helper that dies instantly    -> 104 samples, 3138 slices
+And the helper itself degrades the same way: no libnvidia-ml, no driver, or
+no devices each end it quietly rather than failing.
+
+What happens on AMD
+-------------------
+Today: the service captures samples and scheduling normally (both are
+vendor-neutral perf infrastructure), and produces no GPU events, because the
+amdgpu tracepoint reader is not wired up -- the same gap scheduling had before
+7d. The correlator behind it is ported and tested.
+
+What AMD needs, and why it is the EASIER case once wired:
+  - GPU jobs: read the amdgpu_cs_ioctl / amdgpu_sched_run_job /
+    dma_fence_signaled tracepoints and feed the existing correlator. These are
+    kernel tracepoints, so no proprietary library and no helper process is
+    needed -- it can live entirely inside the static binary. The blocker is
+    tracepoint access (tracefs is root-gated here) and per-kernel field-offset
+    parsing from each tracepoint's `format` file.
+  - Telemetry: AMD exposes gpu_busy_percent, mem_info_vram_used/total, and
+    hwmon power/temperature through sysfs -- plain file reads, no library at
+    all, often without root. That is strictly simpler than NVML and needs no
+    helper.
+So AMD ends up with a better story than NVIDIA (nothing proprietary, nothing
+dynamic), but it is unwired today and cannot be verified here: this machine
+has an NVIDIA GPU, not an AMD one.

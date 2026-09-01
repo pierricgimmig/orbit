@@ -365,6 +365,22 @@ cc_library(
     deps = [":orbit_ptrace_ffi_rust"],
 )
 
+# -------------------------------------------------------- orbit-gpu-helper
+
+# Dynamically linked on purpose: it dlopens libnvidia-ml, which the fully
+# static service cannot. It streams pod events to the service over a pipe.
+rust_binary(
+    name = "orbit_gpu_helper",
+    srcs = glob(["crates/orbit-gpu-helper/src/**/*.rs"]),
+    crate_root = "crates/orbit-gpu-helper/src/main.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_tracing_state",
+        ":orbit_wire",
+    ] + all_crate_deps(package_name = "rust/crates/orbit-gpu-helper"),
+)
+
 # ------------------------------------------------------------ orbit-service
 
 rust_binary(

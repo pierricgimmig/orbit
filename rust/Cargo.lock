@@ -216,6 +216,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-gpu-helper"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "orbit-tracing-state",
+ "orbit-wire",
+]
+
+[[package]]
 name = "orbit-maps"
 version = "0.1.0"
 
