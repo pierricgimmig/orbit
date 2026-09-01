@@ -38,6 +38,11 @@ you need; the service is unaffected, which is the point of the split.
 Running:
 
 ```
+# no arguments: serve the WASM live viewer and drive captures from the UI
+orbit-service                      # -> http://127.0.0.1:44766/
+orbit-service --serve 44768        # a different port
+
+
 # CPU sampling + scheduling only (no GPU library anywhere)
 orbit-service --pid <tid> --duration-ms 5000 --out capture.pod
 

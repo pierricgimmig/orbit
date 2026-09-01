@@ -18,6 +18,7 @@
 
 mod interner;
 mod privileges;
+mod serve;
 mod sysinfo;
 mod telemetry;
 
@@ -71,9 +72,22 @@ fn parse_args() -> Args {
             }
             "--out" => args.out = iter.next(),
             "--gpu-helper" => args.gpu_helper = iter.next(),
+            "--serve" => {
+                let port = iter
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(serve::DEFAULT_PORT);
+                if let Err(error) = serve::run(port) {
+                    eprintln!("orbit-service: could not start the live viewer: {error}");
+                    std::process::exit(2);
+                }
+                std::process::exit(0);
+            }
             "--help" | "-h" => {
                 eprintln!(
-                    "orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
+                    "orbit-service                       serve the live viewer UI\n\
+                     orbit-service --serve [port]        ... on a specific port\n\
+                     orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]"
                 );
                 std::process::exit(0);
@@ -96,6 +110,17 @@ fn start_regs(regs: &[u64]) -> StartRegs {
 }
 
 fn main() {
+    // No arguments at all means "bring up the UI": start the live viewer and
+    // let the operator drive captures from it, rather than guessing what they
+    // wanted to profile.
+    if std::env::args().count() == 1 {
+        if let Err(error) = serve::run(serve::DEFAULT_PORT) {
+            eprintln!("orbit-service: could not start the live viewer: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+
     let args = parse_args();
 
     // Without a target, sample this process's own busy thread.
@@ -469,7 +494,7 @@ fn now_monotonic_ns() -> u64 {
 }
 
 /// Online CPU count, for sizing the self-mode worker pool. Falls back to 4.
-fn num_cpus_hint() -> usize {
+pub(crate) fn num_cpus_hint() -> usize {
     // SAFETY: sysconf is always safe to call.
     let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
     if n > 0 { n as usize } else { 4 }
