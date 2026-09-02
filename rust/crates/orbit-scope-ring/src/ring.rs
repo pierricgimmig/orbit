@@ -96,8 +96,9 @@ pub struct Slot {
     /// say so to the compiler -- writing through a `&T` cast to `*mut T` is
     /// undefined behaviour regardless of any handshake.
     pub event: UnsafeCell<ScopeEvent>,
-    pub _pad: [u8; CACHE_LINE - 16 - EVENT_SIZE],
 }
+
+const _: () = assert!(8 + 8 + EVENT_SIZE == CACHE_LINE);
 
 const _: () = assert!(std::mem::size_of::<Slot>() == CACHE_LINE);
 

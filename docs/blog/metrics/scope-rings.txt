@@ -3,25 +3,32 @@ Measured 2026-09-02T01:51:33Z on Linux 7.0.0-30-generic, 32 threads.
 Commit: 29b0c754d
 
 Write path, taken apart (release build, single thread, one ring, no consumer)
+Three runs, medians; from tests/cost.rs.
 
-  push, ring only            6.98 ns    claim, announce, payload, publish
-  push + clock read         15.93 ns    what an instrumented scope costs
-  clock read alone           9.37 ns    59% of a real scope
-  atomic fetch_add           4.33 ns
-  plain increment            0.18 ns    what rseq's per-CPU exclusivity buys
-  atomic premium             4.14 ns    26% of a real scope
+  push, ring only            9.1 ns    claim, announce, 48-byte payload, publish
+  push + clock read         15.7 ns    what an instrumented scope costs
+  clock read alone           9.5 ns    60% of a real scope
+  atomic fetch_add           4.4 ns
+  plain increment            0.2 ns    what rseq's per-CPU exclusivity buys
+  atomic premium             4.2 ns    27% of a real scope
+
+  Growing the record from 32 to 48 bytes to carry inline names cost 2.1 ns in
+  isolation (6.98 -> 9.1) and nothing at all in the real path: push + clock
+  was 15.93 ns before and 15.7 ns after. The extra stores hide under the
+  clock read's latency on an out-of-order core, which is the argument for
+  putting the text inline rather than in a side table.
 
   An earlier run reported "98 million events/s, 10.2 ns each" and attributed
   about half of it to the clock. That was wrong: the benchmark pushed a
-  pre-built event with a constant timestamp and never read the clock. The
-  table above is from tests/cost.rs, which measures each part separately.
+  pre-built event with a constant timestamp and never read the clock.
 
   Reproduce:
     cargo test -p orbit-scope-ring --release --test cost -- --nocapture
 
 Layout
-  event                    32 bytes
-  slot                     64 bytes (one cache line: seq + pending_ns + event)
+  event                    48 bytes (28 fixed + 20 inline name bytes)
+  slot                     64 bytes (one cache line: seq + pending_ns + event,
+                           exactly, with no padding left)
   ring control block       64 bytes (one cache line, so neighbours never share)
   rings                    one per core, capped at 128
   default slots per ring   16384 (1 MiB per ring)
@@ -30,7 +37,7 @@ Write path instruction budget, per event:
   1 x relaxed fetch_add    claim a slot
   1 x release store        announce the timestamp, so a consumer can bound
                            what is still coming if this producer stalls
-  4 x plain 64-bit store   the payload
+  6 x plain 64-bit store   the payload
   1 x release store        publish (a plain mov on x86-64; one stlr on aarch64)
   no lock, no CAS loop, no allocation, no syscall
 

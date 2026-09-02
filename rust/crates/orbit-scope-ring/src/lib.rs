@@ -14,6 +14,7 @@
 //! - [`ring`] is the shared-memory layout and the write path.
 //! - [`merge`] is the drain-then-merge consumer.
 //! - [`shm`] creates and opens the mapping.
+//! - [`text`] splits and reassembles names too long to fit in one record.
 //!
 //! Two claims from the original design are qualified in [`ring`], both
 //! because userspace cannot disable preemption: rings are MPSC rather than
@@ -23,8 +24,10 @@ pub mod event;
 pub mod merge;
 pub mod ring;
 pub mod shm;
+pub mod text;
 
-pub use event::{kind, ScopeEvent, EVENT_SIZE};
+pub use event::{flags, kind, ScopeEvent, EVENT_SIZE, INLINE_TEXT};
 pub use merge::{drain, Cursors, Drain, Merger, RingSlice};
 pub use ring::{ring_count_for, ring_for_cpu, Rings, MAX_RINGS};
 pub use shm::{ScopeRingReader, ScopeRingWriter};
+pub use text::{split_name, Completeness, TextAssembler};
