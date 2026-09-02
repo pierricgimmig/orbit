@@ -87,6 +87,19 @@ impl RingBuffer {
         unsafe { self.mmap.address.add(self.metadata().data_offset as usize) }
     }
 
+    /// How much of the ring holds unread data, 0.0 to 1.0.
+    ///
+    /// The consumer's early warning: a ring that stays near full is one the
+    /// kernel is about to overwrite, and the events it overwrites are gone
+    /// with no record but a `PERF_RECORD_LOST`. Cheap enough to sample every
+    /// pass -- two atomic loads on a page we already touch.
+    pub fn fill_fraction(&self) -> f32 {
+        let metadata = self.metadata();
+        let head = metadata.data_head.load(Ordering::Acquire);
+        let tail = metadata.data_tail.load(Ordering::Relaxed);
+        (head.saturating_sub(tail) as f32 / self.ring_size as f32).min(1.0)
+    }
+
     pub fn has_new_data(&self) -> bool {
         let metadata = self.metadata();
         metadata.data_head.load(Ordering::Acquire) > metadata.data_tail.load(Ordering::Relaxed)

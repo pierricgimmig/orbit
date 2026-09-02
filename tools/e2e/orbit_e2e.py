@@ -407,7 +407,11 @@ def _instrumented_app(run, lang, shot_index):
     try:
         run.service.post("/api/capture/start", {"pid": app.pid})
         time.sleep(6.0)
-        run.open_viewer()
+        # Scheduler folded so the process's own lanes are the picture, and
+        # photographed while still capturing, before the report panel takes
+        # the bottom of the window.
+        run.open_viewer("?collapse=scheduler")
+        run.shot(f"{shot_index:02d}-api-{lang}", settle=3.0)
         run.service.post("/api/capture/stop")
         time.sleep(1.5)
         log = run.service.stderr_text()
@@ -422,7 +426,6 @@ def _instrumented_app(run, lang, shot_index):
         check_at_least(events, 500, f"{lang}: scope events pushed to the timeline")
         links = int(re.search(r"(\d+) links", summary[-1]).group(1))
         check_at_least(links, 1, f"{lang}: async job links seen")
-        run.shot(f"{shot_index:02d}-api-{lang}", settle=3.0)
         return f"{events} events, {links} links"
     finally:
         app.stop()
@@ -446,6 +449,36 @@ def api_cpp(run):
 @scenario("api-python", "OrbitTestPython: every instrumentation call, from Python over ctypes")
 def api_python(run):
     return _instrumented_app(run, "python", 10)
+
+
+@scenario("self-instrumentation", "The service profiles its own capture loop with the public API")
+def self_instrumentation(run):
+    # Any target will do; what is under test is that the service's own
+    # segment is opened and its scopes -- read context switches, read
+    # samples, unwind, symbolize, drain scope rings, push to viewer -- and its
+    # buffer-fill values reach the timeline like any other process's.
+    app = Target(_build_app("rust"))
+    try:
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(5.0)
+        run.open_viewer("?collapse=scheduler")
+        run.shot("11-self-instrumentation", settle=3.0)
+        run.service.post("/api/capture/stop")
+        time.sleep(1.5)
+        log = run.service.stderr_text()
+        service_pid = run.service.proc.pid
+        check(
+            f"opened segment of pid {service_pid}" in log,
+            f"the service did not open its own segment (pid {service_pid}); log tail: {log[-500:]}",
+        )
+        check(f"opened segment of pid {app.pid}" in log, "and still opened the target's")
+        summary = [l for l in log.splitlines() if "manual instrumentation:" in l and "segment(s)" in l]
+        check(summary, "no closing summary")
+        segments = int(re.search(r"(\d+) segment\(s\)", summary[-1]).group(1))
+        check(segments >= 2, f"expected the target's segment and the service's own, got {segments}")
+        return summary[-1].split("manual instrumentation: ")[-1]
+    finally:
+        app.stop()
 
 
 @scenario("thread-states", "Thread state bars report real states, not just RUNNING")

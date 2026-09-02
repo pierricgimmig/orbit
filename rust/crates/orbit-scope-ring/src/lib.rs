@@ -65,5 +65,8 @@ pub use ring::{
     ring_count_for_threads, ring_for_thread, slots_for_budget, Rings, DEFAULT_RING_COUNT,
     MAX_RINGS,
 };
-pub use shm::{ScopeRingReader, ScopeRingWriter, DEFAULT_BUDGET_BYTES, DEFAULT_SLOTS_PER_RING};
+pub use shm::{
+    sweep_dead_segments, unlink_segment, ScopeRingReader, ScopeRingWriter, DEFAULT_BUDGET_BYTES,
+    DEFAULT_SLOTS_PER_RING,
+};
 pub use text::{split_name, Completeness, TextAssembler};

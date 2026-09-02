@@ -61,6 +61,37 @@ pub fn shm_file_name(pid: u32) -> String {
     format!("orbit-scopes-{pid}")
 }
 
+/// Removes the segment of `pid`, whether or not this process created it.
+///
+/// For sweeping: a process killed by a signal never runs its shutdown, and
+/// its segment stays in tmpfs until reboot. Eighteen of them, 144 MiB, were
+/// found after one day of testing. A service that unlinks segments whose pid
+/// is gone keeps the machine clean without anybody remembering to.
+pub fn unlink_segment(pid: u32) -> bool {
+    let name = shm_name(pid);
+    // SAFETY: unlinking a name; the call has no other effect on this process.
+    unsafe { libc::shm_unlink(name.as_ptr()) == 0 }
+}
+
+/// Unlinks every Orbit segment in [`SHM_DIR`] whose process no longer exists.
+/// Returns how many were removed. Never touches a live process's segment.
+pub fn sweep_dead_segments() -> usize {
+    let Ok(entries) = std::fs::read_dir(SHM_DIR) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(pid_from_shm_file_name) else {
+            continue;
+        };
+        if pid == std::process::id() {
+            continue;
+        }
+        if !std::path::Path::new(&format!("/proc/{pid}")).exists() && unlink_segment(pid) {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// The pid a segment filename belongs to, or `None` if it is not one of ours.
 ///
 /// A service watching the directory sees every POSIX segment on the machine,
@@ -401,5 +432,28 @@ mod tests {
         assert!(std::path::Path::new(&path).exists(), "{path} should exist");
         drop(writer);
         assert!(!std::path::Path::new(&path).exists(), "and be unlinked on drop");
+    }
+
+    #[test]
+    fn the_sweep_removes_only_segments_whose_process_is_gone() {
+        let _guard = exclusive();
+        // Our own segment, alive: must survive a sweep.
+        let mine = ScopeRingWriter::create(2, 8).expect("create");
+        // A segment for a pid that certainly does not exist.
+        let dead_pid = 4_000_000_000u32 - 7;
+        let name = std::ffi::CString::new(format!("/orbit-scopes-{dead_pid}")).unwrap();
+        let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600) };
+        assert!(fd >= 0);
+        unsafe { libc::close(fd) };
+        let dead_path = format!("{SHM_DIR}/{}", shm_file_name(dead_pid));
+        assert!(std::path::Path::new(&dead_path).exists());
+
+        let removed = sweep_dead_segments();
+        assert!(removed >= 1, "the dead pid's segment was swept");
+        assert!(!std::path::Path::new(&dead_path).exists());
+        assert!(
+            ScopeRingReader::open(mine.pid()).is_ok(),
+            "a live process's segment is never touched"
+        );
     }
 }

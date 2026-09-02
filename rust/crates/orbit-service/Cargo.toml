@@ -32,6 +32,7 @@ path = "src/main.rs"
 
 [dependencies]
 libc = "0.2"
+orbit-api = { path = "../orbit-api" }
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
 orbit-live-server = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-server" }
 serde_json = "1"

@@ -80,6 +80,13 @@ pub struct ScopeSource {
 
 impl ScopeSource {
     pub fn new(service: Arc<orbit_live_server::LiveService>) -> ScopeSource {
+        // Segments of processes that died without running shutdown would
+        // otherwise sit in tmpfs until reboot. Cheap, and the only party in
+        // a position to do it.
+        let swept = orbit_scope_ring::sweep_dead_segments();
+        if swept > 0 {
+            eprintln!("orbit-service: swept {swept} scope segment(s) left by dead processes");
+        }
         ScopeSource {
             service,
             names: NameInterner::starting_at(SCOPE_NAME_ID_BASE),
@@ -94,9 +101,33 @@ impl ScopeSource {
         self.segments.len()
     }
 
-    /// Opens segments for any visible pid that has one and is not open yet.
+    /// The fullest ring across every open segment, 0.0 to 1.0: unread claims
+    /// over capacity. A ring at 1.0 is being lapped and losing events.
+    pub fn fill_fraction(&self) -> f32 {
+        let mut worst = 0.0f32;
+        for segment in &self.segments {
+            let rings = segment.reader.rings();
+            let slots = rings.slots_per_ring() as f32;
+            for ring in 0..rings.ring_count() {
+                let unread = rings.write_cursor(ring).saturating_sub(segment.cursors.read[ring]);
+                worst = worst.max((unread as f32 / slots).min(1.0));
+            }
+        }
+        worst
+    }
+
+    /// Opens segments for any visible pid that has one and is not open yet --
+    /// and always for the service itself.
+    ///
+    /// The service instruments its own capture loop with the same API any
+    /// program uses, so it has a segment like any other and is discovered the
+    /// same way. It is simply always on the list: whether it shows up in the
+    /// viewer should not depend on whether it happens to be a descendant of
+    /// the target.
     fn discover(&mut self, visible: &VisibleProcesses, now_ns: u64) {
-        for pid in visible.pids() {
+        let mut pids = visible.pids();
+        pids.push(std::process::id());
+        for pid in pids {
             if self.segments.iter().any(|s| s.pid == pid) {
                 continue;
             }

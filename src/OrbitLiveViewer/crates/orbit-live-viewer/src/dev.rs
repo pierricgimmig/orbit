@@ -211,6 +211,33 @@ pub fn query_report_tab_from_location() -> Option<String> {
     }
 }
 
+/// `?collapse=scheduler` -- start with the machine-wide scheduler track
+/// folded, so a process's own lanes are in view without scrolling. On a
+/// 32-core box the scheduler alone is taller than a screenshot, and the
+/// screenshot suite exists to show the process, not the cores.
+pub fn query_collapse_scheduler_from_location() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .map(|s| query_collapses_scheduler(&s))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+/// Parses `collapse=` out of a location query string; `scheduler` is the
+/// only value so far.
+pub fn query_collapses_scheduler(search: &str) -> bool {
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .any(|pair| pair == "collapse=scheduler")
+}
+
 /// Parses `report=` out of a location query string.
 pub fn query_report_tab(search: &str) -> Option<String> {
     for pair in search.trim_start_matches('?').split('&') {
@@ -379,5 +406,14 @@ mod absorb_guard_tests {
         assert_eq!(query_report_tab("?dev=0"), None);
         // A different parameter ending in the same letters must not match.
         assert_eq!(query_report_tab("?myreport=flat"), None);
+    }
+
+    #[test]
+    fn collapse_scheduler_is_read_from_the_query_string() {
+        assert!(query_collapses_scheduler("?collapse=scheduler"));
+        assert!(query_collapses_scheduler("?report=flat&collapse=scheduler"));
+        assert!(!query_collapses_scheduler("?collapse=machine"));
+        assert!(!query_collapses_scheduler("?xcollapse=scheduler"));
+        assert!(!query_collapses_scheduler(""));
     }
 }

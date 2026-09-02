@@ -604,6 +604,9 @@ pub struct OrbitLiveApp {
     was_capturing: bool,
     /// A `?report=` deep link asks for the reports once the service answers.
     pending_report_request: bool,
+    /// A `?collapse=scheduler` deep link, applied on the first status so the
+    /// track strip exists to fold.
+    pending_collapse_scheduler: bool,
     measure_dragging: bool,
     idle_skip_chrome: bool,
     last_n_prims: u32,
@@ -803,6 +806,7 @@ impl OrbitLiveApp {
             modules: None,
             was_capturing: false,
             pending_report_request: crate::dev::query_report_tab_from_location().is_some(),
+            pending_collapse_scheduler: crate::dev::query_collapse_scheduler_from_location(),
             measure_dragging: false,
             idle_skip_chrome: false,
             last_n_prims: 0,
@@ -1441,6 +1445,13 @@ impl OrbitLiveApp {
             self.pending_report_request = false;
             self.show_whole_capture_report();
             self.net.get_modules(self.selected_pid.unwrap_or(0));
+        }
+        if self.pending_collapse_scheduler {
+            self.pending_collapse_scheduler = false;
+            if !self.tracks.collapsed(crate::tracks::RowId::Scheduler) {
+                self.tracks.toggle(crate::tracks::RowId::Scheduler);
+                self.relayout_tracks();
+            }
         }
         self.error.clear();
         // The moment recording stops, show the aggregate over everything just

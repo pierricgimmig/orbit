@@ -617,10 +617,18 @@ fn capture_loop(
     let mut samples_parsed: u64 = 0;
     let mut samples_short_regs: u64 = 0;
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
+    // Buffer fullness is graphed as values on the service's own lanes. Read
+    // every pass, pushed twenty times a second: enough to see a ring climbing
+    // towards a lap, few enough not to be the busiest lane in the capture.
+    let mut last_fill_push_ns: u64 = 0;
+    const FILL_EVERY_NS: u64 = 50_000_000;
+
     while running.load(Ordering::Relaxed) {
+        let _pass = orbit_api::scope("capture pass");
         batch.clear();
         // Children appear mid-capture; the refresh is rate-limited internally.
         visible.maybe_refresh();
+        let _switches = orbit_api::scope("read context switches");
         for ring in switch_rings.iter_mut() {
             while let Ok(Some(record)) = ring.read_record() {
                 let Some(header) = PerfEventHeader::parse(&record) else { continue };
@@ -665,6 +673,8 @@ fn capture_loop(
         // span one sampling period wide at its stack depth. Consecutive
         // samples in the same function abut, so the timeline reads as a flame
         // graph rather than a picket fence.
+        drop(_switches);
+        let _samples = orbit_api::scope("read samples");
         if let Some(unwinder) = unwinder.as_mut() {
             for ring in sample_rings.iter_mut() {
                 while let Ok(Some(record)) = ring.read_record() {
@@ -691,18 +701,24 @@ fn capture_loop(
                     #[cfg(target_arch = "aarch64")]
                     let start =
                         StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] };
-                    let outcome = unwinder.unwind(start, start.sp, stack, 64);
+                    let outcome = {
+                        let _unwind = orbit_api::scope("unwind");
+                        unwinder.unwind(start, start.sp, stack, 64)
+                    };
                     // frames[0] is the sampled pc; a flame graph stacks the
                     // outermost caller at depth 0, so walk them in reverse.
                     let depth_count = outcome.frames.len().min(u8::MAX as usize);
                     // Innermost-first ids, for the report's self/inclusive
                     // counts; the timeline spans below want them reversed.
-                    let frame_ids: Vec<u32> = outcome
-                        .frames
-                        .iter()
-                        .take(depth_count)
-                        .map(|pc| names.id_for_frame(&symbolizer.resolve_frame(*pc)))
-                        .collect();
+                    let frame_ids: Vec<u32> = {
+                        let _symbolize = orbit_api::scope("symbolize");
+                        outcome
+                            .frames
+                            .iter()
+                            .take(depth_count)
+                            .map(|pc| names.id_for_frame(&symbolizer.resolve_frame(*pc)))
+                            .collect()
+                    };
                     store.push(StoredSample {
                         timestamp_ns: sample.time,
                         tid: sample.tid,
@@ -739,7 +755,9 @@ fn capture_loop(
             }
         }
 
+        drop(_samples);
         if let Some(tracer) = thread_states.as_mut() {
+            let _states = orbit_api::scope("read thread states");
             for slice in tracer.poll() {
                 if let Some(event) = thread_state_event(&slice, &visible) {
                     batch.push(event);
@@ -747,12 +765,16 @@ fn capture_loop(
             }
         }
 
-        scopes.poll(&visible, crate::now_monotonic_ns(), &mut batch);
+        {
+            let _drain = orbit_api::scope("drain scope rings");
+            scopes.poll(&visible, crate::now_monotonic_ns(), &mut batch);
+        }
 
         // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
         // exact spans the target actually executed, and they belong above the
         // sampled flame graph rather than mixed into it.
         if let Some(session) = uprobes.as_mut() {
+            let _probes = orbit_api::scope("read uprobes");
             for call in session.poll() {
                 instrumented_calls += 1;
                 batch.push(LiveEvent {
@@ -770,9 +792,32 @@ fn capture_loop(
         }
 
         if let Some(helper) = telemetry.as_mut() {
+            let _gpu = orbit_api::scope("read gpu telemetry");
             for event in helper.drain() {
                 batch.extend(gpu_events(&event));
             }
+        }
+
+        // How full is everything? The perf rings the kernel writes, the
+        // scope rings the instrumented process writes, and the ring the
+        // viewer reads. Each is a value lane on the service's own process.
+        let now_ns = crate::now_monotonic_ns();
+        if now_ns.saturating_sub(last_fill_push_ns) >= FILL_EVERY_NS {
+            last_fill_push_ns = now_ns;
+            let worst = |rings: &[orbit_perf_ring::RingBuffer]| {
+                rings.iter().map(|r| r.fill_fraction()).fold(0.0f32, f32::max)
+            };
+            orbit_api::value("perf switch rings fill %", f64::from(worst(&switch_rings)) * 100.0);
+            orbit_api::value("perf sample rings fill %", f64::from(worst(&sample_rings)) * 100.0);
+            orbit_api::value("scope rings fill %", f64::from(scopes.fill_fraction()) * 100.0);
+            let stats = service.stats();
+            let viewer_fill = if stats.events_capacity > 0 {
+                stats.events_live as f64 / stats.events_capacity as f64 * 100.0
+            } else {
+                0.0
+            };
+            orbit_api::value("viewer ring fill %", viewer_fill);
+            orbit_api::value("events per pass", batch.len() as f64);
         }
 
         if !batch.is_empty() {
@@ -781,6 +826,7 @@ fn capture_loop(
             // the data generation it polls, and broadcasts the batch over the
             // WebSocket. Pushing straight into the ring stores the events
             // where nothing will ever look at them.
+            let _push = orbit_api::scope("push to viewer");
             service.push_events(&batch);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -864,6 +910,12 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     };
     let service = LiveService::new(config)?;
     intern_gpu_lane_names(&service);
+    // The service instruments its own capture loop with the public API, so
+    // it appears in the viewer as one more process using it. Failing here
+    // only means the service goes unprofiled; it is not a reason to stop.
+    if let Err(errno) = orbit_api::init() {
+        eprintln!("orbit-service: self-instrumentation off (orbit_init errno {errno})");
+    }
 
     let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
     let store = Arc::new(SampleStore::new());
