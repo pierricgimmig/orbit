@@ -57,7 +57,10 @@ pub mod shm;
 pub mod text;
 
 pub use event::{flags, kind, ScopeEvent, EVENT_SIZE, INLINE_TEXT};
-pub use merge::{drain, Cursors, Drain, Merger, RingSlice};
-pub use ring::{ring_count_for_threads, ring_for_thread, slots_for_budget, Rings, MAX_RINGS};
-pub use shm::{ScopeRingReader, ScopeRingWriter};
+pub use merge::{drain, drain_from, Cursors, Drain, Merger, Producer, RingSlice, BACKSTOP_NS};
+pub use ring::{
+    ring_count_for_threads, ring_for_thread, slots_for_budget, Rings, DEFAULT_RING_COUNT,
+    MAX_RINGS,
+};
+pub use shm::{ScopeRingReader, ScopeRingWriter, DEFAULT_BUDGET_BYTES, DEFAULT_SLOTS_PER_RING};
 pub use text::{split_name, Completeness, TextAssembler};
