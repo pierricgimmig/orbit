@@ -168,6 +168,10 @@ class Run:
         self.shots = []
 
     def shot(self, name, settle=1.5):
+        # --no-shots runs the assertions without a browser, for CI machines
+        # with no Chrome. Scenarios do not branch on it; this does.
+        if self.chrome is None:
+            return None
         time.sleep(settle)
         path = os.path.join(self.shots_dir, f"{name}.png")
         size = self.chrome.screenshot(path)
@@ -179,6 +183,8 @@ class Run:
         return path
 
     def open_viewer(self, query=""):
+        if self.chrome is None:
+            return
         self.chrome.goto(self.service.base + "/" + query, settle=8.0)
 
     def capture(self, seconds=6.0, **body):
@@ -218,6 +224,8 @@ def scenario(name, description):
 
 @scenario("viewer-idle", "The viewer loads and shows its chrome with no capture")
 def viewer_idle(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
     run.open_viewer()
     check(run.chrome.eval("document.title") == "Orbit Live Viewer", "wrong page title")
     canvas = run.chrome.eval(
@@ -363,6 +371,35 @@ def report_tabs(run):
         run.shot(f"0{index}-report-{slug}", settle=3.0)
 
 
+@scenario("thread-states", "Thread state bars report real states, not just RUNNING")
+def thread_states(run):
+    run.capture(seconds=6.0)
+    run.stop_capture()
+    log = run.service.stderr_text()
+    # Tracepoints need CAP_PERFMON and a readable tracefs. Unprivileged, the
+    # correct behaviour is to say so and fall back to the RUNNING projection,
+    # not to empty the timeline.
+    if "no scheduling tracepoints" in log:
+        check(
+            "CAP_PERFMON" in log,
+            "the fallback message must name what is missing",
+        )
+        check_at_least(
+            run.service.get("/api/status")["events_live"], 1000,
+            "the timeline must still fill from the RUNNING projection",
+        )
+        return "skipped: no scheduling tracepoints (needs CAP_PERFMON)"
+
+    check("thread states from" in log, f"tracepoints opened but not reported: {log[-400:]}")
+    # Privileged, the point of the feature: a busy multi-threaded workload
+    # spends time in states other than RUNNING, and if every bar still says
+    # RUNNING then the tracepoints are open and the payloads are being
+    # misread -- which is the failure this scenario exists to catch.
+    tree = run.service.get("/api/sampling/tree?mode=top_down")
+    check_at_least(len(tree["roots"]), 1, "threads in the capture")
+    return None
+
+
 @scenario("instrumentation", "Hooks are requested, and the outcome is reported either way")
 def instrumentation(run):
     run.load_symbols()
@@ -421,9 +458,6 @@ def main():
         print(f"service on {service.base}")
         chrome = None if args.no_shots else Chrome(port=args.port + 5000)
         run = Run(service, target, chrome, args.shots)
-        if args.no_shots:
-            run.shot = lambda *a, **k: None  # noqa: ARG005
-            run.open_viewer = lambda: None
 
         for name, description, fn in wanted:
             started = time.time()

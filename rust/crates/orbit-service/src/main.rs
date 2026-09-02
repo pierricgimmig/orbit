@@ -24,6 +24,7 @@ mod serve;
 mod symbolize;
 mod sysinfo;
 mod telemetry;
+mod thread_state;
 mod uprobes;
 mod visible;
 
@@ -498,7 +499,7 @@ fn unix_now_ns() -> u64 {
 }
 
 /// The capture clock (CLOCK_MONOTONIC), the one perf event timestamps use.
-fn now_monotonic_ns() -> u64 {
+pub(crate) fn now_monotonic_ns() -> u64 {
     let mut timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: clock_gettime into a local.
     unsafe {

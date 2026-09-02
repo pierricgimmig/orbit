@@ -123,6 +123,40 @@ pub fn callchain_sample(period_ns: u64, stack_dump_size: u16) -> PerfEventAttr {
     attr
 }
 
+pub const PERF_TYPE_TRACEPOINT: u32 = 2;
+
+/// The numeric id of a kernel tracepoint, from tracefs.
+///
+/// Two mount points are tried because distributions disagree: the modern one
+/// is `/sys/kernel/tracing`, the older `/sys/kernel/debug/tracing`. Reading
+/// either usually needs privilege, so `None` here means "cannot see
+/// tracefs", which is the same answer as "this kernel has no such
+/// tracepoint" from the caller's point of view -- both mean the feature is
+/// unavailable, and the service says so rather than guessing an id.
+pub fn tracepoint_id(category: &str, name: &str) -> Option<u64> {
+    for root in ["/sys/kernel/tracing", "/sys/kernel/debug/tracing"] {
+        let path = format!("{root}/events/{category}/{name}/id");
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(id) = text.trim().parse() {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+/// Attributes for one kernel tracepoint.
+///
+/// `RAW` is the point of it: the tracepoint's own fields arrive as an opaque
+/// payload, and `orbit_perf_records::tracepoints` is what gives them shape.
+pub fn tracepoint(id: u64) -> PerfEventAttr {
+    let mut attr = generic_event_attr();
+    attr.kind = PERF_TYPE_TRACEPOINT;
+    attr.config = id;
+    attr.sample_type |= sample_bits::RAW;
+    attr
+}
+
 /// The uprobe PMU's dynamic type number, from
 /// `/sys/bus/event_source/devices/uprobe/type`.
 ///
@@ -240,5 +274,21 @@ mod tests {
 
         let ret = UprobeAttr::new("/bin/true", 0x1234, true).unwrap();
         assert_ne!(ret.attr().config, 0, "the retprobe bit distinguishes exit from entry");
+    }
+
+    #[test]
+    fn a_tracepoint_attr_carries_its_id_and_asks_for_the_payload() {
+        let attr = tracepoint(319);
+        assert_eq!(attr.kind, PERF_TYPE_TRACEPOINT);
+        assert_eq!(attr.config, 319);
+        assert!(attr.sample_type & sample_bits::RAW != 0, "the fields are the payload");
+        // Still the generic shape: who and when.
+        assert!(attr.sample_type & sample_bits::TID != 0);
+        assert!(attr.sample_type & sample_bits::TIME != 0);
+    }
+
+    #[test]
+    fn a_missing_tracepoint_has_no_id() {
+        assert_eq!(tracepoint_id("sched", "no_such_tracepoint_exists"), None);
     }
 }

@@ -18,10 +18,12 @@
 use crate::functions::FunctionIndex;
 use crate::report::{FrameInfo, SampleStore, StoredSample, TreeMode};
 use crate::telemetry::TelemetryHelper;
+use crate::thread_state::ThreadStateTracer;
 use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
 use crate::visible::VisibleProcesses;
 use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, thread_state, LiveEvent};
+use orbit_thread_states::Slice;
 use orbit_wire::{Event as WireEvent, METRIC_UNKNOWN_U32, METRIC_UNKNOWN_U64};
 use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
 use orbit_unwind::unwinder::StartRegs;
@@ -360,6 +362,42 @@ fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSl
     [base, on_thread]
 }
 
+/// A closed thread-state interval as a bar segment on its thread's row.
+///
+/// Returns `None` for threads outside the visible set, which is the same rule
+/// the scheduling projection follows: the trace is machine-wide, the rows are
+/// not. The pid comes from `/proc` because a state slice carries only a tid --
+/// a thread that has already exited resolves to nothing and is dropped, which
+/// is correct: there is no row to draw it on.
+fn thread_state_event(slice: &Slice, visible: &VisibleProcesses) -> Option<LiveEvent> {
+    let pid = pid_of_tid(slice.tid)?;
+    if !visible.contains(pid) {
+        return None;
+    }
+    Some(LiveEvent {
+        start_ns: slice.end_timestamp_ns.saturating_sub(slice.duration_ns),
+        duration_ns: slice.duration_ns,
+        tid: slice.tid as u32,
+        pid,
+        kind: kind::THREAD_STATE,
+        depth: 0,
+        extra: slice.thread_state.clamp(0, u8::MAX as i32) as u8,
+        _pad: 0,
+        name_id: 0,
+    })
+}
+
+/// The process a thread belongs to, from `/proc/self/task` upwards.
+fn pid_of_tid(tid: i32) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{tid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("Tgid:") {
+            return value.trim().parse().ok();
+        }
+    }
+    None
+}
+
 /// Enumerates processes for the viewer's Capture strip. The viewer expects
 /// `[{"pid":N,"name":"...","cpu":F,"path":"..."}]`.
 fn list_processes_json() -> Result<String, String> {
@@ -538,6 +576,36 @@ fn capture_loop(
         }
     };
 
+    // Real thread states, from the scheduler's tracepoints. When they cannot
+    // be opened the projection below still gives every thread a RUNNING bar,
+    // so the timeline degrades rather than emptying.
+    // CLOCK_MONOTONIC, not orbit_live_event::dev::now_ns: that one counts from
+    // its own first call, while perf timestamps are absolute. Seeding initial
+    // states on the wrong epoch would make every one of them look older than
+    // every transition by several decades.
+    let capture_start_ns = crate::now_monotonic_ns();
+    let (mut thread_states, tracepoint_report) =
+        ThreadStateTracer::open(crate::num_cpus_hint());
+    match thread_states.as_mut() {
+        Some(tracer) => {
+            let seeded = tracer.seed_initial_states(target_pid, capture_start_ns);
+            eprintln!(
+                "orbit-service: thread states from {} tracepoint ring(s), {seeded} initial state(s)",
+                tracepoint_report.rings
+            );
+        }
+        None => {
+            eprintln!(
+                "orbit-service: no scheduling tracepoints; thread bars will show only \
+                 RUNNING (tracepoints need CAP_PERFMON and a readable tracefs)"
+            );
+        }
+    }
+    for failure in &tracepoint_report.failures {
+        eprintln!("orbit-service: tracepoint unavailable -- {failure}");
+    }
+    let project_running = thread_states.is_none();
+
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
     let mut sample_records: u64 = 0;
@@ -570,8 +638,11 @@ fn capture_loop(
                         let [on_core, on_thread] = scheduling_events(&slice);
                         batch.push(on_core);
                         // The per-thread projection is the half that creates
-                        // rows, so it is the half that is filtered.
-                        if visible.contains(on_thread.pid) {
+                        // rows, so it is the half that is filtered -- and it
+                        // is only needed when the tracepoints are unavailable,
+                        // since they report the same intervals with real
+                        // states instead of RUNNING for everything.
+                        if project_running && visible.contains(on_thread.pid) {
                             batch.push(on_thread);
                         }
                     }
@@ -663,6 +734,14 @@ fn capture_loop(
             }
         }
 
+        if let Some(tracer) = thread_states.as_mut() {
+            for slice in tracer.poll() {
+                if let Some(event) = thread_state_event(&slice, &visible) {
+                    batch.push(event);
+                }
+            }
+        }
+
         // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
         // exact spans the target actually executed, and they belong above the
         // sampled flame graph rather than mixed into it.
@@ -698,6 +777,18 @@ fn capture_loop(
             service.push_events(&batch);
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    if let Some(tracer) = thread_states.as_mut() {
+        let end_ns = crate::now_monotonic_ns();
+        let tail: Vec<LiveEvent> = tracer
+            .flush(end_ns)
+            .iter()
+            .filter_map(|slice| thread_state_event(slice, &visible))
+            .collect();
+        if !tail.is_empty() {
+            service.push_events(&tail);
+        }
     }
 
     // Calls held back for reordering would otherwise be lost with the

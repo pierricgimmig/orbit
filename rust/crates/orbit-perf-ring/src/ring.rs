@@ -173,6 +173,12 @@ pub fn open_context_switch(pid: i32, cpu: i32, size_kb: u64) -> io::Result<RingB
     RingBuffer::open(&crate::attr::context_switch(), pid, cpu, size_kb)
 }
 
+/// Opens one kernel tracepoint. Per CPU (`pid = -1`) is the useful shape for
+/// scheduling: a switch is a property of a core, not of the thread watching.
+pub fn open_tracepoint(id: u64, pid: i32, cpu: i32, size_kb: u64) -> io::Result<RingBuffer> {
+    RingBuffer::open(&crate::attr::tracepoint(id), pid, cpu, size_kb)
+}
+
 /// Opens one uprobe (or uretprobe) on a task.
 ///
 /// `uprobe` owns the path the kernel reads during the syscall; it only has to

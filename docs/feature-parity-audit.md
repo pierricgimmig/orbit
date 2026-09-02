@@ -26,7 +26,7 @@ Every field of `CaptureOptions`, in the proto's own order.
 | `instrumented_functions` | **partial** | Selected from the UI, armed as uprobes; see above |
 | `functions_to_stop_unwinding_at` | **none** | |
 | `functions_to_record_additional_stack_on` | **none** | |
-| `trace_thread_state` | **partial** | Every thread has a state bar, but the only state is RUNNING, projected from scheduling slices. `sched_switch`'s `prev_state` is not traced, so RUNNABLE / sleeping / blocked are absent — gaps mean "not on a core", nothing finer |
+| `trace_thread_state` | **partial** | `sched_switch` / `sched_wakeup` / `task_newtask` are traced and drive the ported `ThreadStateManager`, so all ten states are reported. Unverified against a live kernel: tracepoints need CAP_PERFMON and this machine has none, so the payload offsets are only checked against the C++ layout, not against real records. Falls back to the RUNNING-only projection when tracepoints cannot be opened |
 | `trace_gpu_driver` | **none** | The amdgpu tracepoint path is not traced. NVML telemetry *is* collected, which is a different feature that C++ also has |
 | `instrumented_tracepoint` | **none** | Arbitrary kernel tracepoints |
 | `enable_introspection` | **none** | Orbit profiling itself. The viewer self-profiles, which is unrelated |
@@ -58,7 +58,7 @@ Roughly: **2 done, 6 partial, 9 none** of 17.
 | `SchedulerTrack` | **done** | Per-core lanes under a machine track, system-wide |
 | `ThreadTrack` (timers) | **done** | Sampled flame graph per thread |
 | `CallstackThreadBar` | **done** | One tick per sample; drag-select scopes the report to that thread |
-| `ThreadStateBar` | **partial** | RUNNING only, as above |
+| `ThreadStateBar` | **partial** | All ten states, colours already in the palette; unverified on a live kernel, as above |
 | `GpuTrack` / `GpuSubmissionTrack` / `GpuDebugMarkerTrack` | **partial** | NVML metrics as value lanes and job spans; no submission or debug-marker tracks |
 | `GraphTrack` / `LineGraphTrack` | **partial** | `kind::VALUE` lanes render; no axis labels or aggregation controls |
 | `FrameTrack` | **none** | |
@@ -128,9 +128,12 @@ yet is a *general* profiler. The three gaps that matter most, in order:
 2. **Dynamic instrumentation that demonstrably works.** Uprobes are written
    but unproven, and the user-space trampolines — Orbit's default and much
    cheaper method — are never installed into a live process.
-3. **Thread states beyond RUNNING.** The bar exists and is honest about what
-   it knows, but "why was this thread not running" is a question it cannot
-   answer, and that is half the value of a state bar.
+3. **Thread states beyond RUNNING** — *written, unverified.* The tracepoints,
+   the payload parsing and the ported state machine are wired together, and
+   the whole path below the syscall is unit-tested. What has never happened is
+   a real record reaching it: tracefs is unreadable without CAP_PERFMON here,
+   so the hard-coded field offsets are checked against the C++ layout rather
+   than against a kernel. One privileged run settles it.
 
 After those: memory tracking, frame tracks, and opening a saved pod capture in
 the viewer, which today can only show a live one. Demangling is small and

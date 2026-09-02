@@ -596,12 +596,17 @@ dependencies = [
  "orbit-object",
  "orbit-perf-records",
  "orbit-perf-ring",
+ "orbit-thread-states",
  "orbit-tracing-state",
  "orbit-unwind",
  "orbit-wire",
  "serde_json",
  "tokio",
 ]
+
+[[package]]
+name = "orbit-thread-states"
+version = "0.1.0"
 
 [[package]]
 name = "orbit-tracing-state"
