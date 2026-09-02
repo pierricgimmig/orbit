@@ -2,7 +2,7 @@
 //!
 //! Reserved pids (demo already uses `pid = 1`):
 //! - [`VIEWER_PID`] `orbit-live-viewer` — WASM/egui `ui` / `render` / `net`
-//! - [`SERVICE_PID`] `orbit-live-service` — native HTTP / ring
+//! - [`SERVICE_PID`] `orbit-service` — native HTTP / ring / capture ingest
 //!
 //! Product choice **A**: self scopes share the active capture ring. Batches are
 //! sequential on the capture clock (`self_cursor_ns`): each occupies
@@ -57,13 +57,15 @@ impl MachineId {
 }
 
 pub const VIEWER_NAME: &str = "orbit-live-viewer";
-pub const SERVICE_NAME: &str = "orbit-live-service";
+pub const SERVICE_NAME: &str = "orbit-service";
 
 pub const TID_UI: u32 = 1;
 pub const TID_RENDER: u32 = 2;
 pub const TID_NET: u32 = 3;
 pub const TID_SERVER: u32 = 4;
 pub const TID_STATS: u32 = 5;
+/// C++ `LiveViewerBridge` capture ingest (`ReadLoop` / `IngestEvent`).
+pub const TID_INGEST: u32 = 6;
 /// First native render-worker tid (`render-w0` … `render-w31`).
 pub const TID_RENDER_W0: u32 = 10;
 pub const RENDER_WORKER_COUNT: u32 = 32;
@@ -125,6 +127,18 @@ pub const NAME_WORKER_SPANS: u32 = 30_042;
 pub const NAME_SPANS_DROPPED: u32 = 30_043;
 /// Collect + place the capture-global Scheduler core lanes.
 pub const NAME_SCHEDULER: u32 = 30_044;
+/// Native HTTP `/api/status` (idle open-viewer heartbeat).
+pub const NAME_STATUS_API: u32 = 30_045;
+/// Native HTTP `/api/processes`.
+pub const NAME_PROCESSES_API: u32 = 30_046;
+/// C++ `LiveViewerBridge::ReadLoop` one gRPC `Read` + its ingest.
+pub const NAME_READ_LOOP: u32 = 30_047;
+/// C++ `LiveViewerBridge::IngestEvent` one capture event.
+pub const NAME_INGEST_EVENT: u32 = 30_048;
+/// C++ `StartCaptureImpl` / HTTP capture start.
+pub const NAME_START_CAPTURE: u32 = 30_049;
+/// C++ `StopCaptureImpl` / HTTP capture stop.
+pub const NAME_STOP_CAPTURE: u32 = 30_050;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +167,7 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(TID_NET, "net");
     intern.insert_id(TID_SERVER, "server");
     intern.insert_id(TID_STATS, "stats");
+    intern.insert_id(TID_INGEST, "ingest");
     intern.insert_id(NAME_FRAME, "Frame");
     intern.insert_id(NAME_NET, "Net");
     intern.insert_id(NAME_TRACKS, "Tracks");
@@ -197,6 +212,12 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_WORKER_SPANS, "worker_spans");
     intern.insert_id(NAME_SPANS_DROPPED, "spans_dropped");
     intern.insert_id(NAME_SCHEDULER, "Scheduler");
+    intern.insert_id(NAME_STATUS_API, "StatusApi");
+    intern.insert_id(NAME_PROCESSES_API, "ProcessesApi");
+    intern.insert_id(NAME_READ_LOOP, "ReadLoop");
+    intern.insert_id(NAME_INGEST_EVENT, "IngestEvent");
+    intern.insert_id(NAME_START_CAPTURE, "StartCapture");
+    intern.insert_id(NAME_STOP_CAPTURE, "StopCapture");
     intern_render_worker_names(intern);
 }
 
@@ -345,6 +366,20 @@ pub const DEMO_ORIGIN_NS: u64 = 1_000_000;
 pub const DEMO_TICK_NS: u64 = 20_000_000;
 /// If self runs more than two demo ticks ahead of producer `t`, snap back.
 pub const SELF_AHEAD_SNAP_NS: u64 = 2 * DEMO_TICK_NS;
+
+/// Producer edge used to stamp self-profile batches.
+///
+/// No demo/capture clock yet (`live_edge == 0`) still has to land on the
+/// same axis the viewer uses once a file/demo starts — [`DEMO_ORIGIN_NS`],
+/// not ts=0. Frozen-cursor march then keeps an idle `orbit-service` lane
+/// alive instead of dropping the batch.
+pub fn self_place_edge(live_edge: u64) -> u64 {
+    if live_edge == 0 {
+        DEMO_ORIGIN_NS
+    } else {
+        live_edge
+    }
+}
 
 /// Align `cursor` onto demo/capture `live_edge` (never newest_end of pid 2/3).
 /// No producer clock (`live_edge == 0`) → stay at 0 so we do not walk an
@@ -523,7 +558,10 @@ mod tests {
         );
         assert_eq!(align_self_cursor(80_000_000, 0), 0);
         assert!(place_self_batch(
-            &mut SelfCursor { next_ns: 80_000_000, edge_ns: 0 },
+            &mut SelfCursor {
+                next_ns: 80_000_000,
+                edge_ns: 0
+            },
             &[RelScope {
                 pid: VIEWER_PID,
                 tid: TID_UI,
@@ -535,7 +573,10 @@ mod tests {
             0
         )
         .is_empty());
-        let mut cursor = SelfCursor { next_ns: 80_000_000, edge_ns: 0 };
+        let mut cursor = SelfCursor {
+            next_ns: 80_000_000,
+            edge_ns: 0,
+        };
         let ev = place_self_batch(
             &mut cursor,
             &[RelScope {
@@ -571,7 +612,10 @@ mod tests {
         for _ in 0..n {
             demo_t += DEMO_TICK_NS;
         }
-        let mut cursor = SelfCursor { next_ns: DEMO_ORIGIN_NS, edge_ns: 0 };
+        let mut cursor = SelfCursor {
+            next_ns: DEMO_ORIGIN_NS,
+            edge_ns: 0,
+        };
         let first = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
         let second = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
         let hi = demo_t.saturating_add(2 * DEMO_TICK_NS);
@@ -589,7 +633,10 @@ mod tests {
 
     #[test]
     fn demo_restart_resets_self_origin() {
-        let mut cursor = SelfCursor { next_ns: 80_000_000, edge_ns: 0 };
+        let mut cursor = SelfCursor {
+            next_ns: 80_000_000,
+            edge_ns: 0,
+        };
         let _ = place_self_batch(&mut cursor, &[frame_scope(1_000)], 80_000_000);
         cursor.reset_to(DEMO_ORIGIN_NS);
         let ev = place_self_batch(&mut cursor, &[frame_scope(1_000)], DEMO_ORIGIN_NS);
@@ -613,6 +660,10 @@ mod tests {
         assert_eq!(MachineId::from_pid(REMOTE_RENDER_PID), MachineId::Remote);
         assert_ne!(REMOTE_DEMO_PID, VIEWER_PID);
         assert_ne!(REMOTE_RENDER_PID, SERVICE_PID);
+        assert_eq!(SERVICE_NAME, "orbit-service");
+        assert_eq!(SERVICE_PID, 3);
+        assert_eq!(self_place_edge(0), DEMO_ORIGIN_NS);
+        assert_eq!(self_place_edge(50_000), 50_000);
     }
 
     #[test]
@@ -641,6 +692,10 @@ mod tests {
         assert_eq!(intern.get(NAME_SCHEDULER), Some("Scheduler"));
         assert_eq!(intern.get(NAME_WORKER_SPANS), Some("worker_spans"));
         assert_eq!(intern.get(TID_STATS), Some("stats"));
+        assert_eq!(intern.get(TID_INGEST), Some("ingest"));
+        assert_eq!(intern.get(NAME_STATUS_API), Some("StatusApi"));
+        assert_eq!(intern.get(NAME_READ_LOOP), Some("ReadLoop"));
+        assert_eq!(intern.get(NAME_INGEST_EVENT), Some("IngestEvent"));
         assert_eq!(intern.get(TID_RENDER_W0), Some("render-w0"));
         assert_eq!(
             intern.get(render_worker_tid(3)),
@@ -681,7 +736,10 @@ mod frozen_edge_tests {
     #[test]
     fn frozen_live_edge_does_not_restamp_over_placed_scopes() {
         let live_edge = 10_000_000u64;
-        let mut cursor = SelfCursor { next_ns: live_edge, edge_ns: 0 };
+        let mut cursor = SelfCursor {
+            next_ns: live_edge,
+            edge_ns: 0,
+        };
         let batch = [frame(2_000_000)]; // 2 ms of self scopes per frame
         let mut starts = Vec::new();
         for _ in 0..40 {

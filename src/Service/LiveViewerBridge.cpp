@@ -7,6 +7,7 @@
 #include <absl/strings/str_format.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -69,6 +70,17 @@ std::string JsonEscape(std::string_view input) {
 
 uint32_t InternName(const std::string& name) {
   return orbit_live_intern_or_insert(name.data(), static_cast<uint32_t>(name.size()));
+}
+
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point t0) {
+  const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+  return ns > 0 ? static_cast<uint64_t>(ns) : 1;
+}
+
+void EmitIngestScope(uint32_t name_id, std::chrono::steady_clock::time_point t0) {
+  orbit_live_emit_self_scope(kOrbitLiveServicePid, kOrbitLiveTidIngest, name_id, ElapsedNs(t0));
 }
 
 bool WriteCString(const std::string& json, char* out, size_t out_len) {
@@ -195,6 +207,13 @@ int LiveViewerBridge::ListProcessesJsonImpl(char* out, size_t out_len) {
 }
 
 int LiveViewerBridge::StartCaptureImpl(const char* json) {
+  const auto scope_t0 = std::chrono::steady_clock::now();
+  const int rc = StartCaptureImplBody(json);
+  EmitIngestScope(kOrbitLiveNameStartCapture, scope_t0);
+  return rc;
+}
+
+int LiveViewerBridge::StartCaptureImplBody(const char* json) {
   if (json == nullptr) {
     return -1;
   }
@@ -207,6 +226,11 @@ int LiveViewerBridge::StartCaptureImpl(const char* json) {
     return -4;
   }
   const LiveCaptureStartRequest& request = parsed.value();
+  if (request.pid == static_cast<uint32_t>(getpid()) || request.pid == kOrbitLiveServicePid ||
+      request.pid == 2) {
+    ORBIT_ERROR("Refusing to capture OrbitService / dogfood pid %u", request.pid);
+    return -5;
+  }
 
   LiveCaptureSymbols snapshot;
   {
@@ -248,6 +272,7 @@ int LiveViewerBridge::StartCaptureImpl(const char* json) {
 }
 
 int LiveViewerBridge::StopCaptureImpl() {
+  const auto scope_t0 = std::chrono::steady_clock::now();
   if (stream_ == nullptr) {
     return 0;
   }
@@ -268,6 +293,7 @@ int LiveViewerBridge::StopCaptureImpl() {
   interned_callstacks_.clear();
   function_name_ids_.clear();
   orbit_live_mark_capture_finished();
+  EmitIngestScope(kOrbitLiveNameStopCapture, scope_t0);
   return 0;
 }
 
@@ -349,10 +375,17 @@ uint32_t LiveViewerBridge::NameIdForFunctionId(uint64_t function_id) {
 
 void LiveViewerBridge::ReadLoop() {
   orbit_grpc_protos::CaptureResponse response;
-  while (!stopping_ && stream_ != nullptr && stream_->Read(&response)) {
-    for (const orbit_grpc_protos::ClientCaptureEvent& event : response.capture_events()) {
-      IngestEvent(event);
+  while (!stopping_ && stream_ != nullptr) {
+    const auto read_t0 = std::chrono::steady_clock::now();
+    if (!stream_->Read(&response)) {
+      break;
     }
+    for (const orbit_grpc_protos::ClientCaptureEvent& event : response.capture_events()) {
+      const auto ingest_t0 = std::chrono::steady_clock::now();
+      IngestEvent(event);
+      EmitIngestScope(kOrbitLiveNameIngestEvent, ingest_t0);
+    }
+    EmitIngestScope(kOrbitLiveNameReadLoop, read_t0);
   }
   if (stream_ != nullptr) {
     stream_->Finish();

@@ -12,10 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use orbit_live_event::dev::{
-    align_self_cursor, batch_span, render_worker_label, render_worker_tid, stamp_batch_from,
-    RelScope, NAME_CHROME, NAME_COLLECT_LANE, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD,
-    NAME_PRIMITIVE_LISTING, NAME_PUSH, NAME_RASTER, NAME_RASTER_LANE, NAME_TIMELINE_API,
-    NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
+    align_self_cursor, batch_span, intern_self_names, self_place_edge, stamp_batch_from, RelScope,
+    NAME_PUSH, NAME_RASTER, NAME_TIMELINE_API, SERVICE_PID, TID_SERVER,
 };
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
@@ -169,24 +167,16 @@ impl LiveService {
         if self.self_names.swap(true, Ordering::Relaxed) {
             return;
         }
-        self.intern_id(TID_UI, "ui");
-        self.intern_id(TID_RENDER, "render");
-        self.intern_id(TID_NET, "net");
-        self.intern_id(TID_SERVER, "server");
-        self.intern_id(NAME_FRAME, "Frame");
-        self.intern_id(NAME_NET, "Net");
-        self.intern_id(NAME_TRACKS, "Tracks");
-        self.intern_id(NAME_LOD, "ChooseLod");
-        self.intern_id(NAME_PAYLOAD, "TimelinePayload");
-        self.intern_id(NAME_CHROME, "Chrome");
-        self.intern_id(NAME_PUSH, "PushEvents");
-        self.intern_id(NAME_RASTER, "Rasterize");
-        self.intern_id(NAME_TIMELINE_API, "TimelineApi");
-        self.intern_id(NAME_PRIMITIVE_LISTING, "PrimitiveListing");
-        self.intern_id(NAME_COLLECT_LANE, "CollectLane");
-        self.intern_id(NAME_RASTER_LANE, "RasterLane");
-        for i in 0..RENDER_WORKER_COUNT {
-            self.intern_id(render_worker_tid(i), render_worker_label(i));
+        let pairs = {
+            let mut intern = self.intern.lock();
+            intern_self_names(&mut intern);
+            intern
+                .iter()
+                .map(|(id, text)| (id, text.to_string()))
+                .collect::<Vec<_>>()
+        };
+        for (id, text) in pairs {
+            self.broadcast_frame(&LiveFrame::InternedString { id, text });
         }
     }
 
@@ -260,10 +250,14 @@ impl LiveService {
         }
         self.ensure_self_names();
         let span = batch_span(scopes);
-        let live_edge = self.live_edge_ns();
-        if span == 0 || live_edge == 0 {
+        if span == 0 {
             return;
         }
+        // Idle / pre-demo / chrome-trace sessions have no producer clock.
+        // Still stamp onto the viewer axis (`DEMO_ORIGIN_NS`) so an open
+        // viewer keeps a live orbit-service lane. Frozen-cursor march when
+        // that edge is unchanged.
+        let live_edge = self_place_edge(self.live_edge_ns());
         let Some(origin) = self.take_self_origin(span, live_edge) else {
             return;
         };
@@ -281,7 +275,7 @@ impl LiveService {
     }
 
     pub fn emit_server_scope(&self, name_id: u32, duration_ns: u64) {
-        if !self.self_profile.load(Ordering::Relaxed) || duration_ns == 0 {
+        if !self.self_profile.load(Ordering::Relaxed) {
             return;
         }
         self.apply_self_scopes(&[RelScope {
@@ -289,12 +283,12 @@ impl LiveService {
             tid: TID_SERVER,
             name_id,
             start_rel_ns: 0,
-            duration_ns,
+            duration_ns: duration_ns.max(1),
             depth: 0,
         }]);
     }
 
-    fn with_server_scope<R>(&self, name_id: u32, f: impl FnOnce() -> R) -> R {
+    pub fn with_server_scope<R>(&self, name_id: u32, f: impl FnOnce() -> R) -> R {
         if !self.self_profile.load(Ordering::Relaxed) {
             return f();
         }

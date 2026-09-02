@@ -8,14 +8,14 @@ use eframe::egui::{
 };
 use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::dev::{
-    intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
-    NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT,
-    NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS,
-    NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE, NAME_SCALE_PPP,
-    NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW,
-    NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM,
-    NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
-    VIEWER_NAME, VIEWER_PID,
+    intern_self_names, is_self_pid, place_self_batch, RelScope, DEMO_ORIGIN_NS, NAME_APPLY_HL,
+    NAME_CHROME, NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME,
+    NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK,
+    NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
+    NAME_SCALE_PPP, NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG,
+    NAME_STATUS_API, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES,
+    NAME_UPLOAD_INST_US, NAME_WASM_MEM, NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET,
+    TID_RENDER, TID_SERVER, TID_STATS, TID_UI, VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
@@ -96,6 +96,55 @@ fn selection_after_process_refresh(selected: Option<u32>, incoming: &[ProcessJso
 
 fn should_poll_processes(list_empty: bool, capture_open: bool, now: f64, last: f64) -> bool {
     (list_empty || capture_open) && now - last >= PROCESS_POLL_S
+}
+
+/// Dogfood pids and the OrbitService OS process are not Record targets.
+fn record_pid_is_forbidden(pid: u32, processes: &[ProcessJson]) -> bool {
+    if is_self_pid(pid) {
+        return true;
+    }
+    processes
+        .iter()
+        .any(|p| p.pid == pid && is_orbit_service_exe(&p.name, &p.path))
+}
+
+fn is_orbit_service_exe(name: &str, path: &str) -> bool {
+    fn leaf(s: &str) -> &str {
+        s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s)
+    }
+    let n = leaf(name);
+    let p = leaf(path);
+    n.eq_ignore_ascii_case("OrbitService") || p.eq_ignore_ascii_case("OrbitService")
+}
+
+/// Chrome-trace overlay: keep viewer/service self-scopes, drop capture pids.
+fn file_trace_keeps_live_event(ev: &LiveEvent) -> bool {
+    is_self_pid(ev.pid)
+}
+
+/// Turn a stamped EventBatch into relative scopes so `place_self_batch` can
+/// pin them to the viewer's capture clock (file-trace live_edge).
+fn rel_scopes_from_events(events: &[LiveEvent]) -> Vec<RelScope> {
+    let t0 = events
+        .iter()
+        .filter(|e| e.kind == kind::API_SCOPE || e.kind == kind::FUNCTION_CALL)
+        .filter(|e| e.duration_ns > 0)
+        .map(|e| e.start_ns)
+        .min()
+        .unwrap_or(0);
+    events
+        .iter()
+        .filter(|e| e.kind == kind::API_SCOPE || e.kind == kind::FUNCTION_CALL)
+        .filter(|e| e.duration_ns > 0)
+        .map(|e| RelScope {
+            pid: e.pid,
+            tid: e.tid,
+            name_id: e.name_id,
+            start_rel_ns: e.start_ns.saturating_sub(t0),
+            duration_ns: e.duration_ns,
+            depth: e.depth,
+        })
+        .collect()
 }
 
 fn c32(argb: u32) -> Color32 {
@@ -804,6 +853,10 @@ impl OrbitLiveApp {
                 self.error = "Select a process in the capture strip.".into();
                 return;
             };
+            if record_pid_is_forbidden(pid, &self.processes) {
+                self.error = "OrbitService is not a capture target.".into();
+                return;
+            }
             self.recording = true;
             self.net.start_capture(&self.capture_start(pid));
         } else {
@@ -1397,19 +1450,35 @@ impl OrbitLiveApp {
     fn apply_frame(&mut self, frame: LiveFrame) {
         match frame {
             LiveFrame::EventBatch { events } => {
-                if self.file_trace_active() {
-                    return;
-                }
+                let file = self.file_trace_active();
+                let mut remap = Vec::new();
                 for ev in events {
-                    // Viewer scopes are inserted locally on the capture clock
-                    // so a lagged WS (demo flood) cannot hide pid 2.
+                    // Chrome-trace load: overlay dogfood pids, ignore live
+                    // capture of the target. Viewer scopes stay local.
+                    if file && !is_self_pid(ev.pid) {
+                        continue;
+                    }
                     if self.dev && ev.pid == VIEWER_PID {
+                        continue;
+                    }
+                    if file && ev.pid == SERVICE_PID {
+                        remap.push(ev);
                         continue;
                     }
                     if !is_self_pid(ev.pid) {
                         self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
                     }
                     self.index.insert(ev);
+                }
+                if !remap.is_empty() {
+                    intern_self_names(&mut self.intern);
+                    let live_edge = self.live_edge_ns;
+                    let scopes = rel_scopes_from_events(&remap);
+                    if !scopes.is_empty() && live_edge > 0 {
+                        for ev in place_self_batch(&mut self.self_cursor, &scopes, live_edge) {
+                            self.index.insert(ev);
+                        }
+                    }
                 }
                 self.refresh_content_bounds();
             }
@@ -5461,6 +5530,68 @@ mod tests {
     }
 
     #[test]
+    fn record_skips_dogfood_and_orbitservice() {
+        assert!(record_pid_is_forbidden(VIEWER_PID, &[]));
+        assert!(record_pid_is_forbidden(SERVICE_PID, &[]));
+        assert!(!record_pid_is_forbidden(42, &[]));
+        assert!(record_pid_is_forbidden(
+            99,
+            &[proc(99, "OrbitService", "/opt/OrbitService")]
+        ));
+        assert!(!record_pid_is_forbidden(99, &[proc(99, "chrome", "")]));
+        assert_eq!(SERVICE_NAME, "orbit-service");
+    }
+
+    fn scope_ev(pid: u32, tid: u32, name: u32, start: u64, dur: u64) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        }
+    }
+
+    #[test]
+    fn file_trace_keeps_self_pids_and_drops_capture() {
+        assert!(file_trace_keeps_live_event(&scope_ev(
+            VIEWER_PID, 1, 1, 10, 5
+        )));
+        assert!(file_trace_keeps_live_event(&scope_ev(
+            SERVICE_PID,
+            4,
+            1,
+            10,
+            5
+        )));
+        assert!(!file_trace_keeps_live_event(&scope_ev(1, 1, 1, 10, 5)));
+        assert!(!file_trace_keeps_live_event(&scope_ev(42, 7, 1, 10, 5)));
+    }
+
+    #[test]
+    fn service_file_trace_scopes_remap_onto_viewer_live_edge() {
+        let stamped = [
+            scope_ev(SERVICE_PID, TID_SERVER, NAME_STATUS_API, 1_000_000, 800),
+            scope_ev(SERVICE_PID, TID_SERVER, NAME_STATUS_API, 1_000_800, 200),
+        ];
+        let scopes = rel_scopes_from_events(&stamped);
+        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes[0].start_rel_ns, 0);
+        assert_eq!(scopes[1].start_rel_ns, 800);
+        let mut cursor = orbit_live_event::dev::SelfCursor::default();
+        let placed = place_self_batch(&mut cursor, &scopes, 50_000_000);
+        assert_eq!(placed.len(), 2);
+        assert_eq!(placed[0].pid, SERVICE_PID);
+        assert_eq!(placed[0].start_ns, 50_000_000);
+        assert_eq!(placed[1].start_ns, 50_000_800);
+        assert_eq!(placed[0].duration_ns, 800);
+    }
+
+    #[test]
     fn iphone_dpr3_points_still_use_css_narrow_column() {
         assert!(is_narrow_width(390.0));
         let points_w = 390.0 * 3.0;
@@ -6257,8 +6388,7 @@ mod tests {
         let (c0, c1) = clamp_window_contain(z0, z1, cap0, cap1);
         assert!((c0 - cap0).abs() < 1e-9);
         assert!((c1 - cap1).abs() < 1e-9);
-        let (wide0, wide1) =
-            zoom_time_by_scale_limited(cap0, cap1, 1.0 / 1.1, 1.0, ZOOM_MAX_NS);
+        let (wide0, wide1) = zoom_time_by_scale_limited(cap0, cap1, 1.0 / 1.1, 1.0, ZOOM_MAX_NS);
         let (p0, p1) = clamp_window_contain(wide0, wide1, cap0, cap1);
         assert!((p0 - cap0).abs() < 1e-9);
         assert!((p1 - cap1).abs() < 1e-9);

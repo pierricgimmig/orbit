@@ -52,6 +52,19 @@ void orbit_live_ingest_thread_state_slice(uint32_t pid, uint32_t tid, uint32_t t
 void orbit_live_mark_capture_started(uint32_t pid, uint64_t start_ns);
 void orbit_live_mark_capture_finished(void);
 
+// Self-profile RelScope onto SERVICE_PID. Must match orbit_live_event::dev.
+enum {
+  kOrbitLiveServicePid = 3,
+  kOrbitLiveTidServer = 4,
+  kOrbitLiveTidIngest = 6,
+  kOrbitLiveNameReadLoop = 30047,
+  kOrbitLiveNameIngestEvent = 30048,
+  kOrbitLiveNameStartCapture = 30049,
+  kOrbitLiveNameStopCapture = 30050
+};
+
+void orbit_live_emit_self_scope(uint32_t pid, uint32_t tid, uint32_t name_id, uint64_t duration_ns);
+
 #ifdef __cplusplus
 }
 #endif

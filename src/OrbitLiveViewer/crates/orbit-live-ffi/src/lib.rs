@@ -41,7 +41,12 @@ pub struct OrbitLiveCallbacks {
     pub stop_capture: Option<unsafe extern "C" fn(user_data: *mut c_void) -> c_int>,
     pub load_symbols: Option<unsafe extern "C" fn(user_data: *mut c_void, pid: u32) -> c_int>,
     pub symbols_status_json: Option<
-        unsafe extern "C" fn(user_data: *mut c_void, pid: u32, out: *mut c_char, out_len: usize) -> c_int,
+        unsafe extern "C" fn(
+            user_data: *mut c_void,
+            pid: u32,
+            out: *mut c_char,
+            out_len: usize,
+        ) -> c_int,
     >,
     pub search_functions_json: Option<
         unsafe extern "C" fn(
@@ -72,7 +77,13 @@ fn call_json_out(
     what: &str,
 ) -> Result<String, String> {
     let mut buf = vec![0u8; buf_len];
-    let rc = unsafe { func(user_data as *mut c_void, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    let rc = unsafe {
+        func(
+            user_data as *mut c_void,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
     if rc != 0 {
         return Err(format!("{what} failed ({rc})"));
     }
@@ -94,7 +105,9 @@ pub extern "C" fn orbit_live_server_start(config: *const OrbitLiveServerConfig) 
     } else {
         cfg.ring_buffer_bytes
     };
-    sc.spill_path = cstr(cfg.spill_path).filter(|s| !s.is_empty()).map(PathBuf::from);
+    sc.spill_path = cstr(cfg.spill_path)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
 
     let service = match LiveService::new(sc) {
         Ok(s) => s,
@@ -272,10 +285,14 @@ pub extern "C" fn orbit_live_ingest_function_call(
     depth: i32,
 ) {
     let _ = with_service(|svc| {
-        let ev = svc
-            .pairer
-            .lock()
-            .function_call(pid, tid, name_id, duration_ns, end_timestamp_ns, depth);
+        let ev = svc.pairer.lock().function_call(
+            pid,
+            tid,
+            name_id,
+            duration_ns,
+            end_timestamp_ns,
+            depth,
+        );
         svc.push_event(ev);
     });
 }
@@ -347,6 +364,21 @@ pub extern "C" fn orbit_live_mark_capture_started(pid: u32, start_ns: u64) {
 #[no_mangle]
 pub extern "C" fn orbit_live_mark_capture_finished() {
     let _ = with_service(|svc| svc.mark_capture_finished());
+}
+
+/// RelScope batch of one: same path as `/api/self/events` / `apply_self_scopes`.
+#[no_mangle]
+pub extern "C" fn orbit_live_emit_self_scope(pid: u32, tid: u32, name_id: u32, duration_ns: u64) {
+    let _ = with_service(|svc| {
+        svc.apply_self_scopes(&[orbit_live_event::dev::RelScope {
+            pid,
+            tid,
+            name_id,
+            start_rel_ns: 0,
+            duration_ns,
+            depth: 0,
+        }]);
+    });
 }
 
 #[allow(dead_code)]

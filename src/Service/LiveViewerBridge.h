@@ -56,6 +56,7 @@ class LiveViewerBridge {
 
   int ListProcessesJsonImpl(char* out, size_t out_len);
   int StartCaptureImpl(const char* json);
+  int StartCaptureImplBody(const char* json);
   int StopCaptureImpl();
   int LoadSymbolsImpl(uint32_t pid);
   int SymbolsStatusJsonImpl(uint32_t pid, char* out, size_t out_len);

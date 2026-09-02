@@ -13,7 +13,10 @@ use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
 use orbit_live_event::argb_to_css;
-use orbit_live_event::dev::{RelScopeBatch, SERVICE_NAME, SERVICE_PID, VIEWER_NAME, VIEWER_PID};
+use orbit_live_event::dev::{
+    RelScopeBatch, NAME_PROCESSES_API, NAME_STATUS_API, SERVICE_NAME, SERVICE_PID, VIEWER_NAME,
+    VIEWER_PID,
+};
 use orbit_live_render::{
     choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
 };
@@ -165,7 +168,7 @@ fn asset_response(path: &str) -> Option<Response> {
 }
 
 async fn status(State(svc): State<Arc<LiveService>>) -> Json<StatusBody> {
-    Json(StatusBody::from_service(&svc))
+    Json(svc.with_server_scope(NAME_STATUS_API, || StatusBody::from_service(&svc)))
 }
 
 #[derive(Serialize)]
@@ -220,21 +223,23 @@ fn hooks_clone(svc: &LiveService) -> Option<crate::ControlHooks> {
 }
 
 async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
-    let raw = match hooks_clone(&svc) {
-        Some(h) => match (h.list_processes_json)() {
-            Ok(json) => json,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-        },
-        None => {
-            if svc.demo.load(std::sync::atomic::Ordering::Relaxed) || svc.live_end_ns() > 0 {
-                crate::demo::process_list_json()
-            } else {
-                "[]".into()
+    svc.with_server_scope(NAME_PROCESSES_API, || {
+        let raw = match hooks_clone(&svc) {
+            Some(h) => match (h.list_processes_json)() {
+                Ok(json) => json,
+                Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+            },
+            None => {
+                if svc.demo.load(std::sync::atomic::Ordering::Relaxed) || svc.live_end_ns() > 0 {
+                    crate::demo::process_list_json()
+                } else {
+                    "[]".into()
+                }
             }
-        }
-    };
-    let json = merge_self_processes(&svc, raw);
-    ([(header::CONTENT_TYPE, "application/json")], json).into_response()
+        };
+        let json = merge_self_processes(&svc, raw);
+        ([(header::CONTENT_TYPE, "application/json")], json).into_response()
+    })
 }
 
 fn merge_self_processes(svc: &LiveService, json: String) -> String {

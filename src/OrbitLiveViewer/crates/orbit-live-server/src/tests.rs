@@ -215,6 +215,9 @@ fn self_names_are_interned_for_the_rail() {
     assert_eq!(intern.get(1), Some("ui"));
     assert_eq!(intern.get(30_000), Some("Frame"));
     assert_eq!(intern.get(4), Some("server"));
+    assert_eq!(intern.get(6), Some("ingest"));
+    assert_eq!(intern.get(30_045), Some("StatusApi"));
+    assert_eq!(intern.get(30_047), Some("ReadLoop"));
 }
 
 #[test]
@@ -247,7 +250,10 @@ fn demo_scope_names_are_interned_as_words() {
     assert_eq!(intern.get(100), Some("Main"));
     assert_eq!(intern.get(10), Some("Async"));
     assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE), Some("Tick"));
-    assert_eq!(intern.get(crate::demo::DEMO_SCOPE_BASE + 1), Some("Simulate"));
+    assert_eq!(
+        intern.get(crate::demo::DEMO_SCOPE_BASE + 1),
+        Some("Simulate")
+    );
     assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE), Some("GpuSubmit"));
     assert_eq!(intern.get(crate::demo::DEMO_ASYNC_BASE + 3), Some("Encode"));
     assert_eq!(intern.get(600), Some("values"));
@@ -310,7 +316,8 @@ fn self_scopes_stamp_to_demo_clock_not_wall() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.enable_self_profile();
     svc.note_live_end(50_000_000);
-    svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
+    svc.capturing
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     svc.apply_self_scopes(&[RelScope {
         pid: VIEWER_PID,
         tid: 1,
@@ -336,7 +343,8 @@ fn successive_self_scopes_do_not_overlap_when_live_edge_is_frozen() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.enable_self_profile();
     svc.note_live_end(10_000);
-    svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
+    svc.capturing
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let mk = |name, dur| RelScope {
         pid: VIEWER_PID,
         tid: 1,
@@ -432,9 +440,7 @@ fn capture_started_resets_self_cursor_onto_demo_t() {
 
 #[test]
 fn self_batches_after_demo_ticks_stay_on_demo_clock() {
-    use orbit_live_event::dev::{
-        RelScope, DEMO_ORIGIN_NS, DEMO_TICK_NS, NAME_FRAME, VIEWER_PID,
-    };
+    use orbit_live_event::dev::{RelScope, DEMO_ORIGIN_NS, DEMO_TICK_NS, NAME_FRAME, VIEWER_PID};
 
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.enable_self_profile();
@@ -578,12 +584,54 @@ fn function_call_ingest_uses_interned_pretty_name() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.disable_self_profile();
     let name_id = svc.intern_string("HookMe");
-    let ev = svc
-        .pairer
-        .lock()
-        .function_call(1, 2, name_id, 40, 140, 0);
+    let ev = svc.pairer.lock().function_call(1, 2, name_id, 40, 140, 0);
     svc.push_event(ev);
     let snap = svc.ring().snapshot().1;
     assert_eq!(snap[0].name_id, name_id);
     assert_eq!(svc.intern.lock().get(snap[0].name_id), Some("HookMe"));
+}
+
+#[test]
+fn idle_service_emits_orbit_service_scopes_without_producer_clock() {
+    use orbit_live_event::dev::{
+        DEMO_ORIGIN_NS, NAME_STATUS_API, SERVICE_NAME, SERVICE_PID, TID_SERVER,
+    };
+
+    assert_eq!(SERVICE_NAME, "orbit-service");
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    assert_eq!(svc.live_end_ns(), 0);
+    svc.with_server_scope(NAME_STATUS_API, || {
+        std::thread::sleep(std::time::Duration::from_micros(50));
+    });
+    let snap = svc.ring().snapshot().1;
+    let ev = snap
+        .iter()
+        .find(|e| e.pid == SERVICE_PID && e.name_id == NAME_STATUS_API)
+        .expect("idle StatusApi on orbit-service");
+    assert_eq!(ev.tid, TID_SERVER);
+    assert_eq!(ev.start_ns, DEMO_ORIGIN_NS);
+    assert!(ev.duration_ns > 0);
+}
+
+#[test]
+fn frozen_producer_clock_still_emits_service_scopes() {
+    use orbit_live_event::dev::{NAME_PUSH, SERVICE_PID};
+
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.enable_self_profile();
+    svc.note_live_end(10_000_000);
+    svc.emit_server_scope(NAME_PUSH, 1_000);
+    svc.emit_server_scope(NAME_PUSH, 800);
+    let mut evs: Vec<_> = svc
+        .ring()
+        .snapshot()
+        .1
+        .into_iter()
+        .filter(|e| e.pid == SERVICE_PID && e.name_id == NAME_PUSH)
+        .collect();
+    evs.sort_by_key(|e| e.start_ns);
+    assert_eq!(evs.len(), 2);
+    assert_eq!(evs[0].start_ns, 10_000_000);
+    assert_eq!(evs[1].start_ns, 10_001_000);
 }
