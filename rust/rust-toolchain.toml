@@ -4,4 +4,4 @@
 channel = "1.88.0"
 components = ["rustfmt", "clippy"]
 # The service ships as a fully static musl binary; see build-service-musl.sh.
-targets = ["x86_64-unknown-linux-musl"]
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-gnu"]

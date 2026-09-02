@@ -282,7 +282,7 @@ impl Nvml {
             let name = self
                 .device_get_name
                 .and_then(|get_name| {
-                    let mut buffer = [0i8; 96]; // NVML_DEVICE_NAME_V2_BUFFER_SIZE
+                    let mut buffer = [0 as c_char; 96]; // NVML_DEVICE_NAME_V2_BUFFER_SIZE. c_char is i8 on x86, u8 on aarch64.
                     (get_name(device, buffer.as_mut_ptr(), buffer.len() as c_uint) == NVML_SUCCESS)
                         .then(|| cstr_bytes(&buffer))
                 })
@@ -290,7 +290,7 @@ impl Nvml {
             let driver_version = self
                 .system_get_driver_version
                 .and_then(|get_version| {
-                    let mut buffer = [0i8; 80];
+                    let mut buffer = [0 as c_char; 80];
                     (get_version(buffer.as_mut_ptr(), buffer.len() as c_uint) == NVML_SUCCESS)
                         .then(|| cstr_bytes(&buffer))
                 })
