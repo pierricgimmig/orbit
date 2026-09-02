@@ -19,6 +19,12 @@ pub mod kind {
     /// fit inline. Carries the same `(tid, scope_id)` as its head and the
     /// chain position in `depth`, which a continuation has no other use for.
     pub const TEXT: u8 = 4;
+    /// An arrow from one event to another. `scope_id` is the source handle
+    /// and the first eight bytes of `text` are the target handle; both are
+    /// handles the process already returned, so the reader resolves them
+    /// against the events it has seen. Text past the target, if any, labels
+    /// the arrow.
+    pub const LINK: u8 = 5;
 }
 
 /// Bits in `ScopeEvent::flags`.
