@@ -66,6 +66,39 @@ Robustness against a dead producer
   for a full second keeps its event and delivers it on waking; the backstop
   fires; and the default entry point assumes life.
 
+Isolation: one segment per process, and one merge per process
+
+  Each instrumented process owns /dev/shm/orbit-scopes-<pid> and the rings in
+  it. A process that dies mid-write, or stops at a breakpoint, stalls only its
+  own rings. The merge stays inside one segment for the same reason: a global
+  horizon is the minimum across every input, so breakpointing one process
+  would freeze every other process's timeline.
+
+  Nothing needs a global order. Scope nesting is matched within a thread by
+  (tid, scope_id), the viewer lanes by pid, and events carry absolute
+  CLOCK_MONOTONIC timestamps, so processes interleave correctly on the
+  timeline however they arrive.
+
+Considered and rejected: one ring per process
+
+  A single multi-producer ring per process gets the same isolation with less
+  machinery. Measured on 32 threads, ns per claim:
+
+    threads        1 ring     128 rings      ratio
+          1           5.1           5.0       1.0x
+          2          10.0           2.5       4.0x
+          4          10.6           1.4       7.3x
+          8          13.0           0.7      18.3x
+         16          11.4           0.6      20.3x
+         32          12.8           0.4      36.3x
+
+  The number that decides it is not the ratio but the shape of the first
+  column: with one ring the per-claim cost stops falling as threads are added,
+  because the cursor is a serialisation point. That caps a process at roughly
+  78 million events a second however many cores it has, and nearly triples the
+  claim cost of every individual scope. Sharding is what keeps the profiler
+  from becoming the bottleneck in the thing it is measuring.
+
 Sizing
 
 One rule picks a ring, with no fast path and no fallback. An earlier version
