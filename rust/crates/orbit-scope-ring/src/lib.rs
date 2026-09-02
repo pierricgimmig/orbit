@@ -35,14 +35,14 @@
 //! event carries an absolute `CLOCK_MONOTONIC` timestamp, so the timeline
 //! interleaves processes correctly however they arrive.
 //!
-//! The alternative considered was one multi-producer ring per process rather
-//! than a sharded set, which gets the same isolation with less machinery. It
-//! was measured and rejected: one cursor is a serialisation point, and at 32
-//! threads a claim costs 12.8 ns against 0.4 ns sharded, a factor of 36. The
-//! cost does not fall as threads are added, so a single ring caps a process
-//! at roughly 78 million events a second however many cores it has. Sharding
-//! is what stops the profiler becoming the bottleneck in the thing it is
-//! measuring.
+//! How many rings inside that segment is a separate question, and the answer
+//! is sixteen. Not for throughput -- a single ring caps a process at about 78
+//! million events a second, which no real application approaches. What
+//! matters is that instrumenting a 50 ns scope inflates it by 46% on one ring
+//! against 26% on sixteen, and distortion is worse than slowdown because it
+//! is a lie rather than a tax. Past sixteen the contention saved is under
+//! half a nanosecond, while every extra ring takes buffer from the ones doing
+//! the work. See `docs/blog/metrics/scope-rings.txt`.
 //!
 //! One rule picks a ring: `ring_for_thread(tid)`. There is no fast path and
 //! no fallback, because with a bounded number of rings and an unbounded

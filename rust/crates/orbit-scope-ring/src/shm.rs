@@ -26,16 +26,14 @@ use std::sync::atomic::Ordering;
 /// eight megabytes is small enough not to be an argument.
 pub const DEFAULT_BUDGET_BYTES: usize = 8 * 1024 * 1024;
 
-/// Rings at the default budget: one per thread up to the cap, plus the
-/// shared overflow.
-pub const DEFAULT_RING_COUNT: usize = MAX_RINGS;
+pub use crate::ring::DEFAULT_RING_COUNT;
 
-/// Slots per ring at the default budget and ring count: 1024 slots, 64 KiB.
+/// Slots per ring at the default budget and ring count: 8192 slots, 512 KiB.
 ///
 /// A thread emitting a hundred thousand events a second fills about five
-/// hundred slots between five-millisecond drains, so this is comfortable
-/// without being generous. A thread that outruns it laps, and the drain says
-/// how many events were lost rather than hiding it.
+/// hundred slots between five-millisecond drains, so there is an order of
+/// magnitude of headroom for a burst. A thread that outruns it laps, and the
+/// drain says how many events were lost rather than hiding it.
 pub const DEFAULT_SLOTS_PER_RING: usize =
     crate::ring::slots_for_budget(DEFAULT_RING_COUNT, DEFAULT_BUDGET_BYTES);
 
@@ -340,7 +338,8 @@ mod tests {
 
     #[test]
     fn the_default_budget_is_what_it_claims() {
-        assert_eq!(DEFAULT_SLOTS_PER_RING, 1024);
+        assert_eq!(DEFAULT_RING_COUNT, 16);
+        assert_eq!(DEFAULT_SLOTS_PER_RING, 8192);
         let bytes = crate::ring::layout_size(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING);
         assert!(bytes <= DEFAULT_BUDGET_BYTES + 64 * 1024, "{bytes} bytes for 8 MiB budget");
         assert!(bytes > DEFAULT_BUDGET_BYTES / 2, "and not wastefully under it");

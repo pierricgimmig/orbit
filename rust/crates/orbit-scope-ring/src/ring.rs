@@ -42,8 +42,28 @@ pub const VERSION: u32 = 1;
 /// Cache line, to keep one ring's cursor off another's.
 pub const CACHE_LINE: usize = 64;
 
-/// The most rings a process will ever open, however many cores it sees.
+/// The most rings a segment may declare. A hard limit, for validating a
+/// header written by another process -- not a recommendation.
 pub const MAX_RINGS: usize = 128;
+
+/// How many rings a process actually opens.
+///
+/// Sixteen, and the number is a knee rather than a preference. Rings trade
+/// two things off. More of them means less contention when several threads
+/// claim at once; fewer of them means each gets a larger share of the memory
+/// budget, which is what decides how long a single busy thread can run before
+/// it laps its ring.
+///
+/// Measured at 32 threads claiming flat out, the cost of a whole scope is
+/// 22.9 ns on one ring, 14.0 on eight, 12.9 on sixteen and 12.5 on 128. Most
+/// of the benefit is gone by eight and all of it by sixteen. Meanwhile at an
+/// 8 MiB budget, 128 rings leaves each with 1024 slots -- a single hot thread
+/// laps after a thousand events -- against 8192 slots at sixteen.
+///
+/// So sixteen buys 95% of the contention win and eight times the headroom
+/// against the far more likely failure, which is one thread doing most of the
+/// work while the other rings sit empty.
+pub const DEFAULT_RING_COUNT: usize = 16;
 
 /// Fixed header at the start of the shared mapping.
 #[repr(C)]
@@ -138,8 +158,8 @@ pub fn slots_offset(ring_count: usize, slots_per_ring: usize, ring: usize) -> us
 /// `tid % ring_count`. Thread ids are not arbitrary numbers: they are handed
 /// out in runs, and Windows hands them out in multiples of four. This code
 /// compiles into the profiled application, so Windows is not hypothetical,
-/// and on multiples of four a plain modulo over 128 rings reaches 32 of them
-/// and leaves 96 idle. Multiplying by the 64-bit golden-ratio constant and
+/// and on multiples of four a plain modulo over sixteen rings reaches four of
+/// them and leaves twelve idle. Multiplying by the 64-bit golden-ratio constant and
 /// taking the *high* bits fixes it: the multiply pushes low-bit structure
 /// upward and the shift discards the low bits entirely.
 pub const fn ring_for_thread(tid: u64, ring_count: usize) -> usize {
@@ -151,18 +171,17 @@ pub const fn ring_for_thread(tid: u64, ring_count: usize) -> usize {
 /// How many rings to open for a process expected to record from `threads`
 /// threads.
 ///
-/// Sized by threads rather than by cores, since a ring is picked by thread
-/// and a process routinely has more threads than the machine has cores. More
-/// rings than threads is waste; fewer just means threads share, which every
-/// ring is built to survive.
+/// One per thread up to [`DEFAULT_RING_COUNT`], then no more: past sixteen the
+/// contention saved is under half a nanosecond a scope, while every extra ring
+/// takes memory away from the ones doing the work. Threads beyond that share,
+/// which every ring is built to survive.
 pub const fn ring_count_for_threads(threads: usize) -> usize {
-    let wanted = threads;
-    if wanted < 2 {
+    if threads < 2 {
         2
-    } else if wanted > MAX_RINGS {
-        MAX_RINGS
+    } else if threads > DEFAULT_RING_COUNT {
+        DEFAULT_RING_COUNT
     } else {
-        wanted
+        threads
     }
 }
 
@@ -406,18 +425,24 @@ mod tests {
 
     #[test]
     fn rings_are_sized_by_threads_and_a_memory_budget() {
-        // One per thread, and never zero.
+        // One per thread up to the knee, and never zero.
         assert_eq!(ring_count_for_threads(0), 2, "a floor, so there is always somewhere to write");
-        assert_eq!(ring_count_for_threads(32), 32);
-        assert_eq!(ring_count_for_threads(4096), MAX_RINGS, "capped, however many threads");
+        assert_eq!(ring_count_for_threads(8), 8);
+        assert_eq!(
+            ring_count_for_threads(4096),
+            DEFAULT_RING_COUNT,
+            "past the knee, more rings only fragment the buffer"
+        );
 
         // The budget is respected, never exceeded by rounding up.
-        let slots = slots_for_budget(128, 8 * 1024 * 1024);
-        assert_eq!(slots, 1024);
-        assert!(128 * slots * CACHE_LINE <= 8 * 1024 * 1024);
+        let slots = slots_for_budget(DEFAULT_RING_COUNT, 8 * 1024 * 1024);
+        assert_eq!(slots, 8192, "512 KiB a ring, not 64");
+        assert!(DEFAULT_RING_COUNT * slots * CACHE_LINE <= 8 * 1024 * 1024);
         assert!(slots.is_power_of_two());
         // A budget too small for a real ring still yields a legal one.
         assert_eq!(slots_for_budget(128, 16), 2);
+        // The old default fragmented the buffer sixteen ways further.
+        assert_eq!(slots_for_budget(128, 8 * 1024 * 1024), 1024);
     }
 
     #[test]
@@ -468,7 +493,7 @@ mod tests {
     fn every_thread_gets_a_ring_by_the_same_rule() {
         // No fast path, no fallback: one rule, and it always answers.
         for tid in [0u64, 1, 7, u64::MAX] {
-            assert!(ring_for_thread(tid, 128) < 128);
+            assert!(ring_for_thread(tid, DEFAULT_RING_COUNT) < DEFAULT_RING_COUNT);
         }
         assert_eq!(ring_for_thread(42, 1), 0, "one ring is still a ring");
         assert_eq!(ring_for_thread(42, 0), 0, "no rings is not a divide by zero");
@@ -479,7 +504,7 @@ mod tests {
         // Windows hands out thread ids in multiples of four, and Linux in
         // runs of one. A plain `tid % ring_count` collapses the first case
         // onto a fraction of the rings; the mix has to survive both.
-        const RINGS: usize = 128;
+        const RINGS: usize = DEFAULT_RING_COUNT;
         for stride in [1u64, 4, 16, 4096] {
             let mut counts = vec![0usize; RINGS];
             const THREADS: u64 = 64_000;
@@ -503,7 +528,7 @@ mod tests {
         // cargo-culting: on multiples of four, `tid % 128` reaches a quarter
         // of the rings and leaves the rest idle.
         let reached: std::collections::HashSet<u64> =
-            (0..64_000u64).map(|i| (100_000 + i * 4) % 128).collect();
-        assert_eq!(reached.len(), 32, "32 of 128 rings, and 96 idle");
+            (0..64_000u64).map(|i| (100_000 + i * 4) % 16).collect();
+        assert_eq!(reached.len(), 4, "4 of 16 rings, and 12 idle");
     }
 }
