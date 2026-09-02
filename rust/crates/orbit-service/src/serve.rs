@@ -610,6 +610,8 @@ fn capture_loop(
         eprintln!("orbit-service: tracepoint unavailable -- {failure}");
     }
     let project_running = thread_states.is_none();
+    // The service's own pid, so its threads get the scheduling projection too.
+    let self_pid = std::process::id();
 
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
@@ -645,17 +647,28 @@ fn capture_loop(
                         switch.core,
                         switch.timestamp_ns,
                     ) {
-                        // Every slice reaches the core lanes: the Scheduler
-                        // track is system-wide by design, and a core row does
+                        // Skip the idle task. tid 0 is the per-core swapper, so
+                        // a slice for it is a core doing nothing -- which the
+                        // timeline should show as an empty gap, not a bar.
+                        // Emitting them filled every core lane wall to wall and
+                        // cost size and render time for no information.
+                        if slice.tid == 0 {
+                            continue;
+                        }
+                        // Every real slice reaches the core lanes: the
+                        // Scheduler track is system-wide, and a core row does
                         // not care whose thread it was running.
                         let [on_core, on_thread] = scheduling_events(&slice);
                         batch.push(on_core);
                         // The per-thread projection is the half that creates
-                        // rows, so it is the half that is filtered -- and it
-                        // is only needed when the tracepoints are unavailable,
-                        // since they report the same intervals with real
-                        // states instead of RUNNING for everything.
-                        if project_running && visible.contains(on_thread.pid) {
+                        // rows, so it is the half that is filtered -- to the
+                        // shown processes, plus the service's own threads, so
+                        // orbit-service gets state bars like anything else.
+                        // Only needed when tracepoints are unavailable, which
+                        // report real states instead of RUNNING for everything.
+                        if project_running
+                            && (visible.contains(on_thread.pid) || on_thread.pid == self_pid)
+                        {
                             batch.push(on_thread);
                         }
                     }
