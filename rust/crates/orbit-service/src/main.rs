@@ -53,6 +53,7 @@ struct Args {
     /// it can spawn a process that has, so vendor telemetry reaches the
     /// static service over a pipe.
     gpu_helper: Option<String>,
+    host: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -62,6 +63,7 @@ fn parse_args() -> Args {
         frequency_hz: 1000,
         out: None,
         gpu_helper: None,
+        host: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(flag) = iter.next() {
@@ -79,12 +81,18 @@ fn parse_args() -> Args {
             }
             "--out" => args.out = iter.next(),
             "--gpu-helper" => args.gpu_helper = iter.next(),
+            "--host" => args.host = iter.next(),
             "--serve" => {
                 let port = iter
                     .next()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(serve::DEFAULT_PORT);
-                if let Err(error) = serve::run(port, args.gpu_helper.clone().or_else(default_gpu_helper)) {
+                // --host 0.0.0.0 exposes the viewer on the LAN. Default is
+                // loopback: this has no auth, so opening it wider is a choice.
+                let host = args.host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
+                if let Err(error) =
+                    serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper))
+                {
                     eprintln!("orbit-service: could not start the live viewer: {error}");
                     std::process::exit(2);
                 }

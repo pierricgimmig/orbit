@@ -178,10 +178,21 @@ impl ScopeSource {
                 let segment = &mut self.segments[index];
                 drain_from(segment.reader.rings(), &mut segment.cursors, now_ns, alive)
             };
-            for slice in pass.slices {
-                for event in slice.events {
-                    self.accept(index, event, batch);
-                }
+            // Sort this pass by timestamp before pairing. The rings arrive in
+            // ring-index order, but a START and its STOP can be on different
+            // rings -- an async scope is started on one thread and stopped on
+            // another. Processed in ring order, a STOP whose ring comes first
+            // is dropped as unmatched and its START is orphaned, then closed
+            // at capture end with a nonsense duration. A START always has an
+            // earlier timestamp than its STOP, so ordering the pass by time
+            // guarantees the START is seen first. Text continuations share
+            // their head's timestamp and the assembler keys on
+            // (tid, scope_id), so interleaving them is harmless.
+            let mut events: Vec<ScopeEvent> =
+                pass.slices.into_iter().flat_map(|s| s.events).collect();
+            events.sort_by_key(|e| e.timestamp_ns);
+            for event in events {
+                self.accept(index, event, batch);
             }
             new_names.extend(self.names.take_new());
         }

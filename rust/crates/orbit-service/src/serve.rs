@@ -902,13 +902,27 @@ fn capture_loop(
 
 /// Starts the live-viewer server and blocks. Returns only on error.
 pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
+    run_on("127.0.0.1", port, gpu_helper)
+}
+
+/// As [`run`], on a chosen host. `0.0.0.0` exposes the viewer on the LAN;
+/// the default `127.0.0.1` keeps it to this machine, which is the safe
+/// default for something with no authentication in front of it.
+pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     let config = ServerConfig {
-        bind: format!("127.0.0.1:{port}").parse().map_err(|_| "bad bind address".to_string())?,
+        bind: format!("{host}:{port}").parse().map_err(|_| "bad bind address".to_string())?,
         ring_buffer_bytes: 256 << 20,
         spill_path: None,
         dev_self_profile: false,
     };
     let service = LiveService::new(config)?;
+    // The live-viewer server can profile itself (its rasterize/timeline
+    // handlers, shown as pids 2/3). That is a viewer-development feature, and
+    // for someone capturing real processes it is pure noise -- worse, it runs
+    // on a clock relative to viewer start while a capture uses CLOCK_MONOTONIC,
+    // so the two never share a time axis and the view parks on the self-
+    // profile with the capture off-screen. Off, in serve mode.
+    service.disable_self_profile();
     intern_gpu_lane_names(&service);
     // The service instruments its own capture loop with the public API, so
     // it appears in the viewer as one more process using it. Failing here
@@ -1059,7 +1073,7 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     });
 
     println!();
-    println!("  Orbit live viewer:  http://127.0.0.1:{port}/");
+    println!("  Orbit live viewer:  http://{host}:{port}/");
     println!();
     println!("  Pick a process in the Capture strip and press Record.");
     println!("  Ctrl-C to stop the server.");
