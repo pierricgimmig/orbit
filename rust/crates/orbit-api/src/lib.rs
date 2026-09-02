@@ -100,10 +100,10 @@ thread_local! {
 fn with_thread<R>(ring_count: usize, f: impl FnOnce(&mut ThreadState) -> R) -> R {
     THREAD.with(|cell| {
         let mut state = cell.get().unwrap_or_else(|| {
-            // The one syscall, paid once per thread rather than per scope.
-            // SAFETY: gettid has no preconditions.
-            let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
-            ThreadState { tid, ring: ring_for_thread(u64::from(tid), ring_count), counter: 0 }
+            // The one OS call, paid once per thread rather than per scope.
+            let raw = orbit_scope_ring::platform::thread_id();
+            let tid = raw as u32;
+            ThreadState { tid, ring: ring_for_thread(raw, ring_count), counter: 0 }
         });
         let out = f(&mut state);
         cell.set(Some(state));
@@ -516,7 +516,7 @@ mod tests {
         init().expect("init");
         ScopeRingReader::open(std::process::id()).unwrap().set_capturing(true);
         let h = start(b"h");
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u64;
+        let tid = orbit_scope_ring::platform::thread_id() & 0xFFFF_FFFF;
         assert_eq!(h >> 32, tid);
         assert_ne!(h & 0xFFFF_FFFF, 0, "zero is reserved for no event");
         stop(h);

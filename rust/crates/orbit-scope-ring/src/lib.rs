@@ -54,6 +54,7 @@
 pub mod event;
 pub mod intern;
 pub mod merge;
+pub mod platform;
 pub mod ring;
 pub mod shm;
 pub mod text;
