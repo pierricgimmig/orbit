@@ -1,0 +1,1356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbit's Timeline Shaders</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+
+<style>
+:root {
+  --ground: #F5F7F8;
+  --surface: #FFFFFF;
+  --surface-2: #ECF0F2;
+  --code-bg: #F0F4F6;
+  --text: #1B2225;
+  --text-dim: #55646B;
+  --text-faint: #7F8D94;
+  --rule: #D6DEE2;
+  --rule-strong: #B9C6CC;
+  --accent: #1F7B95;
+  --accent-bright: #2B91AF;
+  --selected: #3C8FD0;
+  --warn: #C4362A;
+  --good: #47883D;
+  --tok-kw: #A03A8C;
+  --tok-type: #1F7B95;
+  --tok-fn: #2B6CB0;
+  --tok-num: #99591F;
+  --tok-com: #6E7F86;
+  --tok-attr: #47883D;
+  --shadow: 0 1px 2px rgba(27,34,37,.06), 0 4px 14px rgba(27,34,37,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #1D2022;
+    --surface: #26292C;
+    --surface-2: #2E3236;
+    --code-bg: #23272A;
+    --text: #E4E9EB;
+    --text-dim: #A6B2B8;
+    --text-faint: #7E8C93;
+    --rule: #363C40;
+    --rule-strong: #4A5257;
+    --accent: #58B4CE;
+    --accent-bright: #6FC7DE;
+    --selected: #64B5F6;
+    --warn: #EF6B5E;
+    --good: #78C46A;
+    --tok-kw: #D98FC6;
+    --tok-type: #6FC7DE;
+    --tok-fn: #8FB8E8;
+    --tok-num: #E0A96D;
+    --tok-com: #7B888E;
+    --tok-attr: #86CC78;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.22);
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #1D2022;
+  --surface: #26292C;
+  --surface-2: #2E3236;
+  --code-bg: #23272A;
+  --text: #E4E9EB;
+  --text-dim: #A6B2B8;
+  --text-faint: #7E8C93;
+  --rule: #363C40;
+  --rule-strong: #4A5257;
+  --accent: #58B4CE;
+  --accent-bright: #6FC7DE;
+  --selected: #64B5F6;
+  --warn: #EF6B5E;
+  --good: #78C46A;
+  --tok-kw: #D98FC6;
+  --tok-type: #6FC7DE;
+  --tok-fn: #8FB8E8;
+  --tok-num: #E0A96D;
+  --tok-com: #7B888E;
+  --tok-attr: #86CC78;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.22);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  line-height: 1.62;
+  margin: 0;
+  padding: 0 24px 120px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; }
+.col { max-width: 660px; margin-left: auto; margin-right: auto; }
+
+/* ---- masthead ---- */
+header.top {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 72px 0 40px;
+  border-bottom: 1px solid var(--rule);
+}
+.eyebrow {
+  font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 18px;
+}
+h1 {
+  font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  font-size: clamp(38px, 6.5vw, 66px);
+  line-height: 1.02;
+  letter-spacing: -.02em;
+  text-wrap: balance;
+  margin: 0 0 20px;
+}
+.standfirst {
+  font-size: clamp(19px, 2.2vw, 23px);
+  line-height: 1.5;
+  color: var(--text-dim);
+  max-width: 640px;
+  margin: 0 0 28px;
+}
+.meta {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+/* ---- headings ---- */
+h2 {
+  font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  font-size: clamp(27px, 3.4vw, 36px);
+  line-height: 1.14;
+  letter-spacing: -.01em;
+  text-wrap: balance;
+  margin: 0 0 6px;
+}
+h3 {
+  font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 600;
+  font-size: 21px;
+  line-height: 1.25;
+  letter-spacing: .002em;
+  text-wrap: balance;
+  margin: 0 0 10px;
+}
+h4 {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+section.part { padding-top: 68px; }
+.part-num {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  color: var(--accent);
+  display: block;
+  margin-bottom: 12px;
+}
+.deck {
+  color: var(--text-dim);
+  font-size: 19px;
+  margin: 0 0 6px;
+}
+
+p { margin: 0 0 20px; }
+.col > p:last-child { margin-bottom: 0; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+strong { font-weight: 600; }
+
+code {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: .855em;
+  background: var(--surface-2);
+  padding: .12em .34em;
+  border-radius: 3px;
+  color: var(--text);
+}
+pre code { background: none; padding: 0; font-size: 13px; }
+pre {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  line-height: 1.62;
+  margin: 0 0 22px;
+  font-size: 13px;
+}
+
+/* ---- syntax tokens ---- */
+.t-kw   { color: var(--tok-kw); }
+.t-type { color: var(--tok-type); }
+.t-fn   { color: var(--tok-fn); }
+.t-num  { color: var(--tok-num); }
+.t-com  { color: var(--tok-com); font-style: italic; }
+.t-attr { color: var(--tok-attr); font-weight: 700; }
+
+/* ---- file label above code ---- */
+.filelabel {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: .04em;
+  color: var(--text-faint);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 6px;
+  margin: 0 0 12px;
+}
+.filelabel b { color: var(--text-dim); font-weight: 700; }
+
+/* ---- line-by-line walkthrough ---- */
+.walk {
+  border-top: 1px solid var(--rule);
+  margin: 0 0 30px;
+}
+.wl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px 28px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rule);
+}
+@media (min-width: 900px) {
+  .wl { grid-template-columns: minmax(0, 46%) minmax(0, 54%); align-items: start; }
+}
+.wl > .wc {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 9px 11px;
+  color: var(--text);
+}
+.wl > .wd { margin: 0; font-size: 16.5px; line-height: 1.55; color: var(--text-dim); }
+.wl > .wd strong { color: var(--text); }
+.wl > .wd p { margin: 0 0 10px; }
+.wl > .wd p:last-child { margin: 0; }
+.wl.head { background: var(--surface-2); border-radius: 6px; padding: 12px 14px; margin-top: 10px; border-bottom: none; }
+.wl.head .wd, .wl.head .wc { background: none; border: none; padding: 0; }
+.wl.head .wc { color: var(--accent); font-weight: 700; }
+
+/* ---- callouts ---- */
+.note {
+  border-left: 3px solid var(--rule-strong);
+  background: var(--surface);
+  padding: 16px 20px;
+  border-radius: 0 5px 5px 0;
+  margin: 0 0 24px;
+  font-size: 16.5px;
+  line-height: 1.55;
+  box-shadow: var(--shadow);
+}
+.note p { margin: 0 0 12px; }
+.note p:last-child { margin: 0; }
+.note.warn { border-left-color: var(--warn); }
+.note.good { border-left-color: var(--good); }
+.note .tag {
+  font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-faint);
+}
+.note.warn .tag { color: var(--warn); }
+.note.good .tag { color: var(--good); }
+
+/* ---- figures ---- */
+figure { margin: 30px 0 34px; }
+figure svg { display: block; width: 100%; max-width: 100%; height: auto; color: var(--text-dim); }
+.figbox {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  padding: 22px 20px 16px;
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+figcaption {
+  font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+figcaption b { color: var(--text-dim); font-weight: 600; }
+svg text { font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif; }
+svg .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; }
+
+/* ---- tables ---- */
+.tablewrap { overflow-x: auto; margin: 0 0 26px; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 15px;
+  font-family: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+}
+th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th {
+  font-size: 11.5px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+td.num, th.num { font-variant-numeric: tabular-nums; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; }
+
+hr.sep { border: none; border-top: 1px solid var(--rule); margin: 56px 0 0; }
+
+footer.end {
+  max-width: 660px;
+  margin: 64px auto 0;
+  padding-top: 26px;
+  border-top: 1px solid var(--rule);
+  font-size: 15.5px;
+  color: var(--text-faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+</head><body>
+
+<header class="top">
+  <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 16 &middot; Renderer internals</p>
+  <h1>How Orbit Draws a Million Scopes</h1>
+  <p class="standfirst">A line-by-line reading of the three WGSL shaders behind the live timeline &mdash; written for someone who has never opened a shader before.</p>
+  <div class="meta">
+    <span>src/OrbitLiveViewer/crates/orbit-live-render/src/shaders/</span>
+    <span>wgpu 25 &middot; WGSL</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section class="part">
+<div class="col">
+<span class="part-num">01 &mdash; THE PROBLEM</span>
+<h2>Why any of this exists</h2>
+<p class="deck">A profiler timeline is a pathological drawing problem.</p>
+
+<p>Orbit's live viewer shows a flame chart: thousands of nested coloured rectangles, each one a function call, scrolling and zooming at 60 frames per second. The naive approach &mdash; ask the UI toolkit to draw a rectangle, a million times &mdash; falls over immediately. egui would need to build a million shape objects, tessellate each into triangles, and hand the lot to the GPU every single frame.</p>
+
+<p>So the viewer does something different. The entire timeline is <strong>one draw call</strong>. The rectangles never exist as objects; they exist as 48 bytes each in a flat buffer, and the GPU invents the geometry on the fly. And when you zoom out far enough that rectangles are thinner than a pixel, the viewer stops drawing rectangles altogether and draws a photograph of them instead.</p>
+
+<p>Three small shader programs make that work. This post reads all three, line by line. If you know what a function is but have never heard of a fragment shader, you are the intended reader &mdash; the vocabulary section below is not optional filler, it's the part that makes the rest legible.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 900 300" role="img" aria-label="Packed events flow into a level-of-detail decision, which routes to either the instanced SDF path or the pixel-column raster path, both of which composite into the same frame.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+    </marker>
+    <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B91AF"></path>
+    </marker>
+  </defs>
+
+  <rect x="12" y="118" width="128" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+  <text x="76" y="144" text-anchor="middle" font-size="13" fill="currentColor" font-weight="600">Event ring</text>
+  <text x="76" y="162" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72" class="mono">32 B / event</text>
+
+  <line x1="140" y1="150" x2="196" y2="150" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"></line>
+
+  <path d="M 262 108 L 316 150 L 262 192 L 208 150 Z" fill="none" stroke="#2B91AF" stroke-width="1.5"></path>
+  <text x="262" y="146" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">widest</text>
+  <text x="262" y="160" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">&#8805; 4px?</text>
+
+  <path d="M 316 138 L 380 74 L 430 74" fill="none" stroke="#2B91AF" stroke-width="1.5" marker-end="url(#ar-a)"></path>
+  <text x="352" y="96" font-size="11" fill="#2B91AF" font-weight="600">yes</text>
+
+  <path d="M 316 162 L 380 226 L 430 226" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"></path>
+  <text x="352" y="218" font-size="11" fill="currentColor" opacity=".8" font-weight="600">no</text>
+
+  <rect x="430" y="44" width="216" height="60" rx="4" fill="none" stroke="#2B91AF" stroke-width="1.5"></rect>
+  <text x="538" y="68" text-anchor="middle" font-size="13" fill="#2B91AF" font-weight="600">Instanced SDF</text>
+  <text x="538" y="86" text-anchor="middle" font-size="11" fill="#2B91AF" opacity=".9" class="mono">instance.wgsl</text>
+
+  <rect x="430" y="196" width="216" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+  <text x="538" y="220" text-anchor="middle" font-size="13" fill="currentColor" font-weight="600">CPU raster &#8594; blit</text>
+  <text x="538" y="238" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72" class="mono">blit_rect.wgsl</text>
+
+  <path d="M 646 74 L 706 74 L 706 136" fill="none" stroke="#2B91AF" stroke-width="1.5" marker-end="url(#ar-a)"></path>
+  <path d="M 646 226 L 706 226 L 706 164" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"></path>
+
+  <rect x="742" y="118" width="146" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+  <text x="815" y="144" text-anchor="middle" font-size="13" fill="currentColor" font-weight="600">Frame</text>
+  <text x="815" y="162" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72" class="mono">alpha blended</text>
+  <line x1="706" y1="150" x2="738" y2="150" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"></line>
+
+  <text x="538" y="150" text-anchor="middle" font-size="11.5" fill="currentColor" opacity=".62">one path per frame, never both</text>
+</svg>
+</div>
+<figcaption><b>The level-of-detail fork.</b> <code>choose_lod</code> samples the densest lanes; if any event in view is at least <code>INSTANCE_MIN_PX</code> (4 pixels) wide, the frame takes the instanced path. Otherwise rectangles are smaller than pixels and the CPU rasterises columns instead.</figcaption>
+</figure>
+</div>
+
+<div class="col">
+<p>That fork is the single most important structural fact about the renderer, and it's four lines of Rust:</p>
+</div>
+
+<div class="wrap">
+<p class="filelabel"><span><b>crates/orbit-live-render/src/lod.rs</b> &middot; choose_lod_from_keys</span><span>Rust</span></p>
+<pre><code class="lang-rust">let ns_per_px = (t1 - t0) as f64 / width as f64;
+for key in keys {
+    if let Some(e) = lane.overlapping(t0, t1) {
+        if (e.duration_ns as f64 / ns_per_px) &gt;= min_wide_px as f64 {
+            return TimelineLod::Instanced;
+        }
+    }
+}
+TimelineLod::PixelColumns</code></pre>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">02 &mdash; VOCABULARY</span>
+<h2>What a shader actually is</h2>
+<p class="deck">Skip this only if you already know what a fragment shader does.</p>
+
+<p>A GPU draws triangles. That is the entire primitive vocabulary &mdash; no circles, no rectangles, no rounded corners. Everything you see on a screen is triangles with a colour computed per pixel.</p>
+
+<p>To draw, you give the GPU a <em>pipeline</em> made of two small programs:</p>
+
+<p><strong>The vertex shader</strong> runs once per corner of each triangle. Its job is to decide where that corner lands on screen. It runs in parallel across all corners at once.</p>
+
+<p><strong>The fragment shader</strong> runs once per pixel covered by the triangle. Its job is to return a colour. Also massively parallel &mdash; a modern GPU runs thousands of these simultaneously.</p>
+
+<p>Between them sits <em>interpolation</em>. Whatever extra values the vertex shader returns get smoothly blended across the triangle before reaching the fragment shader. If one corner says <code>0.0</code> and another says <code>10.0</code>, a pixel halfway between receives <code>5.0</code>. This is the mechanism by which the vertex shader talks to the fragment shader, and Orbit leans on it heavily.</p>
+
+<p>Three kinds of input feed these programs:</p>
+</div>
+
+<div class="wrap">
+<div class="tablewrap">
+<table>
+<thead><tr><th>Input kind</th><th>Changes how often</th><th>In Orbit</th></tr></thead>
+<tbody>
+<tr><td><strong>Uniform</strong></td><td>Once per draw call &mdash; same value for every vertex and pixel</td><td>Viewport size, scroll origin, animation clock</td></tr>
+<tr><td><strong>Vertex attribute</strong></td><td>Per vertex, or (here) per <em>instance</em></td><td>The 48 bytes describing one scope rectangle</td></tr>
+<tr><td><strong>Texture + sampler</strong></td><td>Random access, read per pixel</td><td>The CPU-rasterised timeline image</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="col">
+<h3>Normalised device coordinates</h3>
+<p>The one piece of coordinate maths you need. A vertex shader must output position in <em>normalised device coordinates</em> (NDC): a box from &minus;1 to +1 on both axes, with <strong>Y pointing up</strong>. But every UI framework, Orbit included, thinks in pixels with <strong>Y pointing down</strong> from the top-left. So every vertex shader here ends with the same conversion, and the Y line has that <code>1.0 -</code> in front precisely because the axis flips.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 880 260" role="img" aria-label="Screen pixel space with origin top-left and Y increasing downward is converted to normalised device coordinates spanning minus one to plus one with Y increasing upward.">
+  <rect x="60" y="42" width="270" height="170" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+  <text x="195" y="30" text-anchor="middle" font-size="12.5" fill="currentColor" font-weight="600">Screen pixels</text>
+  <circle cx="60" cy="42" r="4" fill="#E74435"></circle>
+  <text x="70" y="60" font-size="11" fill="#E74435" class="mono">(0, 0)</text>
+  <text x="272" y="206" font-size="11" fill="currentColor" opacity=".7" class="mono">(w, h)</text>
+  <line x1="60" y1="42" x2="60" y2="150" stroke="#E74435" stroke-width="1.5" marker-end="url(#ar2)"></line>
+  <text x="34" y="105" font-size="11" fill="#E74435" font-weight="700">y+</text>
+  <line x1="60" y1="42" x2="170" y2="42" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2b)"></line>
+  <text x="120" y="34" font-size="11" fill="currentColor" font-weight="700">x+</text>
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#E74435"></path></marker>
+    <marker id="ar2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path></marker>
+  </defs>
+
+  <line x1="360" y1="127" x2="470" y2="127" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"></line>
+  <text x="415" y="112" text-anchor="middle" font-size="11.5" fill="currentColor" font-weight="600" class="mono">x/w*2-1</text>
+  <text x="415" y="148" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="600" class="mono">1-y/h*2</text>
+
+  <rect x="510" y="42" width="270" height="170" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+  <text x="645" y="30" text-anchor="middle" font-size="12.5" fill="currentColor" font-weight="600">NDC</text>
+  <line x1="510" y1="127" x2="780" y2="127" stroke="currentColor" stroke-width="1" opacity=".45"></line>
+  <line x1="645" y1="42" x2="645" y2="212" stroke="currentColor" stroke-width="1" opacity=".45"></line>
+  <circle cx="645" cy="127" r="4" fill="#2B91AF"></circle>
+  <text x="655" y="145" font-size="11" fill="#2B91AF" class="mono">(0, 0)</text>
+  <line x1="645" y1="127" x2="645" y2="58" stroke="#2B91AF" stroke-width="1.5" marker-end="url(#ar2c)"></line>
+  <text x="656" y="70" font-size="11" fill="#2B91AF" font-weight="700">y+</text>
+  <defs>
+    <marker id="ar2c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2B91AF"></path></marker>
+  </defs>
+  <text x="516" y="60" font-size="11" fill="currentColor" opacity=".7" class="mono">(-1, +1)</text>
+  <text x="722" y="206" font-size="11" fill="currentColor" opacity=".7" class="mono">(+1, -1)</text>
+</svg>
+</div>
+<figcaption><b>Why every vertex shader ends the same way.</b> The X conversion is a plain rescale. The Y conversion subtracts from 1 instead of adding, because screen Y grows downward and NDC Y grows upward &mdash; forget the flip and your timeline renders upside down.</figcaption>
+</figure>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">03 &mdash; THE SIMPLE PATH</span>
+<h2>blit_rect.wgsl, in full</h2>
+<p class="deck">31 lines. Copy a CPU-drawn image onto a rectangle of the screen.</p>
+
+<p>When you zoom out past the point where individual calls are visible, Orbit's CPU walks the event ring and paints an RGBA image &mdash; one texel per pixel column per lane. The GPU's only job is to put that image on screen at the right place. This shader does nothing else, which makes it a good place to learn the shape of a WGSL program.</p>
+</div>
+
+<div class="wrap">
+<div class="walk">
+
+  <div class="wl head"><div class="wc">Bindings</div><div class="wd">What the shader can read from outside</div></div>
+
+  <div class="wl">
+    <div class="wc">struct Uniforms {
+  viewport: vec2&lt;f32&gt;,
+  dest: vec4&lt;f32&gt;,
+};</div>
+    <div class="wd"><p>A plain data record. <code>vec2&lt;f32&gt;</code> is two 32-bit floats; <code>vec4</code> is four. <code>viewport</code> holds the framebuffer size in pixels. <code>dest</code> packs the destination rectangle as <code>(x, y, width, height)</code>.</p><p>Packing four numbers into one <code>vec4</code> isn't cosmetic &mdash; GPU uniform buffers have alignment rules that make four-float groups the natural unit.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">@group(0) @binding(0) var&lt;uniform&gt; uni: Uniforms;</div>
+    <div class="wd"><p>Declares that record as an actual input. <code>@group</code> and <code>@binding</code> are the address the Rust side uses to attach a buffer; you can see the matching numbers in <code>create_bind_group_layout</code> in <code>timeline.rs</code>.</p><p><code>var&lt;uniform&gt;</code> means read-only, same value for every invocation this draw call.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">@group(0) @binding(1) var tex: texture_2d&lt;f32&gt;;
+@group(0) @binding(2) var samp: sampler;</div>
+    <div class="wd"><p>The image, and the rule for reading it. A <em>sampler</em> decides what happens between texels &mdash; blend neighbours, or snap to the nearest one.</p><p>Orbit configures this one as <code>FilterMode::Nearest</code>. That matters: each texel is a measured pixel column of profiling data, not a photograph. Blurring adjacent columns would invent activity that never happened.</p></div>
+  </div>
+
+  <div class="wl head"><div class="wc">Vertex stage</div><div class="wd">Runs 6 times, once per triangle corner</div></div>
+
+  <div class="wl">
+    <div class="wc">struct VsOut {
+  @builtin(position) pos: vec4&lt;f32&gt;,
+  @location(0) uv: vec2&lt;f32&gt;
+}</div>
+    <div class="wd"><p>What the vertex stage hands onward. <code>@builtin(position)</code> is mandatory and special &mdash; the GPU reads it to place the triangle.</p><p><code>@location(0)</code> is a free slot for anything else you want interpolated across the surface. Here it carries texture coordinates.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
+    <div class="wd"><p><code>@vertex</code> marks the entry point. <code>vertex_index</code> is a counter the GPU supplies: 0, 1, 2, 3, 4, 5 for the six corners.</p><p>Notice there is no vertex buffer. The geometry is generated from that counter alone.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  var corners = array&lt;vec2&lt;f32&gt;, 6&gt;(
+    vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
+    vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0)
+  );
+  let uv = corners[vid];</div>
+    <div class="wd"><p>A rectangle is two triangles. These six entries are those triangles' corners in unit space, where <code>(0,0)</code> is top-left of the rectangle and <code>(1,1)</code> is bottom-right.</p><p>Read them as two groups of three: the first triangle covers the top-left half, the second the bottom-right. The middle two corners appear in both.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let x = uni.dest.x + uv.x * uni.dest.z;
+  let y = uni.dest.y + uv.y * uni.dest.w;</div>
+    <div class="wd"><p>Stretch the unit square onto the real destination rectangle. <code>.x .y .z .w</code> are the four components; here they mean left, top, width, height.</p><p>A corner at <code>uv = (1, 0)</code> becomes <code>(left + width, top)</code> &mdash; the top-right corner, in screen pixels.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  o.pos = vec4((x / uni.viewport.x) * 2.0 - 1.0,
+               1.0 - (y / uni.viewport.y) * 2.0,
+               0.0, 1.0);</div>
+    <div class="wd"><p>Pixels to NDC, exactly as in the diagram above. The <code>0.0</code> is depth &mdash; unused, since Orbit runs without a depth buffer and relies on draw order for layering. The <code>1.0</code> is the perspective divisor, and 1 means "no perspective".</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  o.uv = uv;
+  return o;</div>
+    <div class="wd"><p>Pass the unit-square coordinate through untouched. Because it gets interpolated, a pixel in the middle of the rectangle receives <code>(0.5, 0.5)</code> &mdash; which is exactly the middle of the texture. The mapping falls out for free.</p></div>
+  </div>
+
+  <div class="wl head"><div class="wc">Fragment stage</div><div class="wd">Runs once per covered pixel</div></div>
+
+  <div class="wl">
+    <div class="wc">@fragment
+fn fs_main(v: VsOut) -&gt; @location(0) vec4&lt;f32&gt; {
+  return textureSampleLevel(tex, samp, v.uv, 0.0);
+}</div>
+    <div class="wd"><p>Read the texture at this pixel's interpolated coordinate and return it as the colour. <code>@location(0)</code> on the return type means "write to the first colour attachment" &mdash; the screen.</p><p>The trailing <code>0.0</code> picks mip level zero. <code>textureSampleLevel</code> rather than plain <code>textureSample</code> because the explicit level makes the call legal from any control flow, and there are no mips to choose from anyway.</p></div>
+  </div>
+
+</div>
+</div>
+
+<div class="col">
+<div class="note">
+<span class="tag">Aside &mdash; the fourth shader that isn't</span>
+<p>There is a third file, <code>blit.wgsl</code>, that looks almost identical but skips the destination rectangle and covers the whole viewport using a three-vertex trick (a single oversized triangle instead of two). It is <strong>exported but never compiled into a pipeline</strong> &mdash; only <code>BLIT_RECT_WGSL</code> and <code>INSTANCE_WGSL</code> reach <code>create_shader_module</code>. Its only remaining reference is a string assertion in a test. Worth knowing before you go looking for where it runs.</p>
+</div>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">04 &mdash; THE DATA</span>
+<h2>48 bytes per rectangle</h2>
+<p class="deck">Before the interesting shader, the buffer it reads.</p>
+
+<p>The instanced path issues exactly one draw call: <code>pass.draw(0..6, 0..instance_count)</code>. Six vertices, N instances. The GPU runs the vertex shader <code>6 &times; N</code> times, and for each run it hands over one slice of the instance buffer &mdash; because the vertex layout declares <code>step_mode: VertexStepMode::Instance</code> rather than the usual per-vertex stepping.</p>
+
+<p>That is the whole trick. One quad definition, reused N times, each time with different numbers attached.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 900 268" role="img" aria-label="A 48-byte instance record splits into three vertex attributes: rect at offset zero, colour at offset sixteen, and extra at offset thirty-two, with the final eight bytes unused padding.">
+  <text x="10" y="22" font-size="12" fill="currentColor" opacity=".7" font-weight="600">One instance &mdash; 48 bytes, written by pack_instances()</text>
+
+  <rect x="10" y="36" width="220" height="46" fill="none" stroke="#2B91AF" stroke-width="1.5"></rect>
+  <rect x="230" y="36" width="220" height="46" fill="none" stroke="#57A64A" stroke-width="1.5"></rect>
+  <rect x="450" y="36" width="110" height="46" fill="none" stroke="#D7AB69" stroke-width="1.5"></rect>
+  <rect x="560" y="36" width="110" height="46" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3" opacity=".55"></rect>
+
+  <text x="120" y="57" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700" class="mono">x  y  w  h</text>
+  <text x="120" y="73" text-anchor="middle" font-size="10.5" fill="#2B91AF" opacity=".85">bytes 0&ndash;15</text>
+  <text x="340" y="57" text-anchor="middle" font-size="11.5" fill="#57A64A" font-weight="700" class="mono">r  g  b  a</text>
+  <text x="340" y="73" text-anchor="middle" font-size="10.5" fill="#57A64A" opacity=".85">bytes 16&ndash;31</text>
+  <text x="505" y="57" text-anchor="middle" font-size="11.5" fill="#D7AB69" font-weight="700" class="mono">radius flags</text>
+  <text x="505" y="73" text-anchor="middle" font-size="10.5" fill="#D7AB69" opacity=".9">32&ndash;39</text>
+  <text x="615" y="57" text-anchor="middle" font-size="11.5" fill="currentColor" opacity=".6" class="mono">0.0  0.0</text>
+  <text x="615" y="73" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".6">40&ndash;47 unused</text>
+
+  <line x1="120" y1="82" x2="120" y2="126" stroke="#2B91AF" stroke-width="1.5" marker-end="url(#ar-a)"></line>
+  <line x1="340" y1="82" x2="340" y2="126" stroke="#57A64A" stroke-width="1.5" marker-end="url(#ar-g)"></line>
+  <line x1="505" y1="82" x2="505" y2="126" stroke="#D7AB69" stroke-width="1.5" marker-end="url(#ar-y)"></line>
+  <defs>
+    <marker id="ar-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#57A64A"></path></marker>
+    <marker id="ar-y" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#D7AB69"></path></marker>
+  </defs>
+
+  <rect x="10" y="130" width="220" height="42" rx="3" fill="none" stroke="#2B91AF" stroke-width="1.5"></rect>
+  <text x="120" y="156" text-anchor="middle" font-size="11.5" fill="#2B91AF" class="mono" font-weight="700">@location(0) rect</text>
+  <rect x="230" y="130" width="220" height="42" rx="3" fill="none" stroke="#57A64A" stroke-width="1.5"></rect>
+  <text x="340" y="156" text-anchor="middle" font-size="11.5" fill="#57A64A" class="mono" font-weight="700">@location(1) color</text>
+  <rect x="450" y="130" width="110" height="42" rx="3" fill="none" stroke="#D7AB69" stroke-width="1.5"></rect>
+  <text x="505" y="156" text-anchor="middle" font-size="11.5" fill="#D7AB69" class="mono" font-weight="700">@loc(2) extra</text>
+
+  <text x="10" y="206" font-size="12" fill="currentColor" opacity=".7" font-weight="600">Offsets declared once, in the Rust vertex layout</text>
+  <text x="10" y="228" font-size="11.5" fill="currentColor" opacity=".85" class="mono">offset 0  &#8594; Float32x4     offset 16 &#8594; Float32x4     offset 32 &#8594; Float32x2</text>
+  <text x="10" y="250" font-size="11.5" fill="currentColor" opacity=".6" class="mono">array_stride = 48   step_mode = Instance</text>
+</svg>
+</div>
+<figcaption><b>The contract between Rust and WGSL.</b> Nothing checks that <code>pack_instances</code> and the shader's <code>VsIn</code> agree &mdash; the offsets in the vertex layout are the only thing tying them together. The last eight bytes are written as zeroes and never bound to an attribute; they exist to round the stride to 48.</figcaption>
+</figure>
+</div>
+
+<div class="col">
+<p>Two of those fields deserve a note. <code>extra.x</code> is the corner radius in pixels. <code>extra.y</code> is a <em>mark</em> &mdash; a small integer smuggled through a float, encoding the rectangle's interaction state:</p>
+</div>
+
+<div class="wrap">
+<div class="tablewrap">
+<table>
+<thead><tr><th class="num">Value</th><th>Constant</th><th>What it means on screen</th></tr></thead>
+<tbody>
+<tr><td class="num">0.0</td><td><code>FLAG_NONE</code></td><td>Ordinary scope, palette colour</td></tr>
+<tr><td class="num">1.0</td><td><code>FLAG_HOVER</code></td><td>Under the cursor &mdash; 5% brighter, stronger rim</td></tr>
+<tr><td class="num">2.0</td><td><code>FLAG_SELECTED</code></td><td>Clicked &mdash; recoloured blue, lifted, pulsing</td></tr>
+<tr><td class="num">3.0</td><td><code>FLAG_SIBLING</code></td><td>Same function elsewhere &mdash; recoloured light blue</td></tr>
+<tr><td class="num">4.0</td><td><code>FLAG_DIMMED</code></td><td>Filtered out by search &mdash; desaturated and darkened</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="col">
+<p>Hence the odd-looking comparisons in the shader: <code>mark &gt; 1.5 &amp;&amp; mark &lt; 2.5</code> rather than <code>mark == 2.0</code>. Floats that have been through interpolation are not reliably exact, so the shader tests a window around each integer instead of equality.</p>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">05 &mdash; UNIFORMS</span>
+<h2>32 bytes, and why the number matters</h2>
+
+<p>The instanced shader's uniform block is small &mdash; viewport, scroll origin, a clock &mdash; but its <em>size</em> was recently a bug that stopped the viewer from starting at all.</p>
+</div>
+
+<div class="wrap">
+<p class="filelabel"><span><b>shaders/instance.wgsl</b> &middot; lines 11&ndash;18</span><span>WGSL</span></p>
+<pre><code class="lang-wgsl">struct Uniforms {
+  viewport: vec2&lt;f32&gt;,   // framebuffer size in physical pixels
+  origin: vec2&lt;f32&gt;,     // where the timeline body starts on screen
+  time: f32,             // seconds, drives the selection pulse
+  _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
+};</code></pre>
+</div>
+
+<div class="col">
+<p>Those three <code>_pad</code> fields are never read. They exist because WebGPU's downlevel targets &mdash; WebGL2 among them &mdash; require a uniform struct's total size to be a multiple of 16 bytes. Without them the struct is 8 + 8 + 4 = 20, rounded to 24 by alignment. Pipeline creation fails outright:</p>
+
+<div class="note warn">
+<span class="tag">The error this produced</span>
+<p><code>In Device::create_render_pipeline, label = 'orbit-live-sdf': the type given for group 0 binding 0 has a size of 24. As the device does not support <b>DownlevelFlags::BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED</b>, the type must have a size that is a multiple of 16 bytes.</code></p>
+<p>Not a subtle rendering artefact &mdash; the viewer panicked before drawing a single frame.</p>
+</div>
+
+<p>The fix is three scalar pads rather than one <code>vec3&lt;f32&gt;</code>, and that distinction is worth understanding because it's the kind of thing that looks arbitrary and isn't. A <code>vec3</code> in WGSL has 16-byte alignment. Placing one after <code>time</code> at offset 20 would round its start up to 32, making the struct 48 bytes &mdash; still legal, but no longer matching the 32 bytes the Rust side writes. Three separate <code>f32</code>s have 4-byte alignment, so they pack at offsets 20, 24, 28 and land the struct at exactly 32.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 880 250" role="img" aria-label="Three uniform layouts compared: the broken 24-byte struct, the correct 32-byte struct using three scalar pads, and the 48-byte struct that a vec3 pad would have produced.">
+  <text x="10" y="20" font-size="11.5" fill="#E74435" font-weight="700">BROKEN &mdash; 24 bytes, not a multiple of 16</text>
+  <rect x="10" y="30" width="120" height="30" fill="none" stroke="currentColor" stroke-width="1.3"></rect>
+  <text x="70" y="50" text-anchor="middle" font-size="10.5" fill="currentColor" class="mono">viewport 8</text>
+  <rect x="130" y="30" width="120" height="30" fill="none" stroke="currentColor" stroke-width="1.3"></rect>
+  <text x="190" y="50" text-anchor="middle" font-size="10.5" fill="currentColor" class="mono">origin 8</text>
+  <rect x="250" y="30" width="60" height="30" fill="none" stroke="currentColor" stroke-width="1.3"></rect>
+  <text x="280" y="50" text-anchor="middle" font-size="10.5" fill="currentColor" class="mono">time</text>
+  <rect x="310" y="30" width="60" height="30" fill="none" stroke="#E74435" stroke-width="1.3" stroke-dasharray="3 3"></rect>
+  <text x="340" y="50" text-anchor="middle" font-size="10.5" fill="#E74435" class="mono">_pad</text>
+  <line x1="370" y1="24" x2="370" y2="66" stroke="#E74435" stroke-width="2"></line>
+  <text x="382" y="50" font-size="11" fill="#E74435" font-weight="700">24 &#10007;</text>
+
+  <text x="10" y="105" font-size="11.5" fill="#57A64A" font-weight="700">CORRECT &mdash; 32 bytes via three scalar pads</text>
+  <rect x="10" y="115" width="120" height="30" fill="none" stroke="currentColor" stroke-width="1.3"></rect>
+  <text x="70" y="135" text-anchor="middle" font-size="10.5" fill="currentColor" class="mono">viewport 8</text>
+  <rect x="130" y="115" width="120" height="30" fill="none" stroke="currentColor" stroke-width="1.3"></rect>
+  <text x="190" y="135" text-anchor="middle" font-size="10.5" fill="currentColor" class="mono">origin 8</text>
+  <rect x="250" y="115" width="60" height="30" fill="none" stroke="currentColor" stroke-width="1.3"></rect>
+  <text x="280" y="135" text-anchor="middle" font-size="10.5" fill="currentColor" class="mono">time</text>
+  <rect x="310" y="115" width="60" height="30" fill="none" stroke="#57A64A" stroke-width="1.3"></rect>
+  <text x="340" y="135" text-anchor="middle" font-size="10.5" fill="#57A64A" class="mono">_pad0</text>
+  <rect x="370" y="115" width="60" height="30" fill="none" stroke="#57A64A" stroke-width="1.3"></rect>
+  <text x="400" y="135" text-anchor="middle" font-size="10.5" fill="#57A64A" class="mono">_pad1</text>
+  <rect x="430" y="115" width="60" height="30" fill="none" stroke="#57A64A" stroke-width="1.3"></rect>
+  <text x="460" y="135" text-anchor="middle" font-size="10.5" fill="#57A64A" class="mono">_pad2</text>
+  <line x1="490" y1="109" x2="490" y2="151" stroke="#57A64A" stroke-width="2"></line>
+  <text x="502" y="135" font-size="11" fill="#57A64A" font-weight="700">32 &#10003; matches Rust</text>
+
+  <text x="10" y="190" font-size="11.5" fill="currentColor" opacity=".7" font-weight="700">IF _pad WERE A vec3 &mdash; align 16 pushes it to offset 32</text>
+  <rect x="10" y="200" width="120" height="30" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".6"></rect>
+  <text x="70" y="220" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7" class="mono">viewport 8</text>
+  <rect x="130" y="200" width="120" height="30" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".6"></rect>
+  <text x="190" y="220" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7" class="mono">origin 8</text>
+  <rect x="250" y="200" width="60" height="30" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".6"></rect>
+  <text x="280" y="220" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7" class="mono">time</text>
+  <rect x="310" y="200" width="180" height="30" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="3 3" opacity=".5"></rect>
+  <text x="400" y="220" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".6" class="mono">skipped to reach align 16</text>
+  <rect x="490" y="200" width="180" height="30" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".6"></rect>
+  <text x="580" y="220" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7" class="mono">vec3 pad</text>
+  <line x1="670" y1="194" x2="670" y2="236" stroke="currentColor" stroke-width="2" opacity=".6"></line>
+  <text x="682" y="220" font-size="11" fill="currentColor" opacity=".7" font-weight="700">48 &#10007; mismatch</text>
+</svg>
+</div>
+<figcaption><b>Padding is not free-form.</b> All three layouts are valid WGSL; only the middle one is both 16-byte-legal and byte-compatible with the 32 bytes <code>pack_inst_uniforms()</code> writes on the Rust side.</figcaption>
+</figure>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">06 &mdash; THE VERTEX STAGE</span>
+<h2>Inventing a quad that's bigger than the rectangle</h2>
+<p class="deck">instance.wgsl lines 50&ndash;80.</p>
+
+<p>The vertex shader builds the same unit-square quad as the blit, but with two twists. First, it must offset the quad by the instance's own position. Second &mdash; and this is the non-obvious part &mdash; it deliberately makes the quad <em>larger</em> than the rectangle being drawn, because the drop shadow needs somewhere to live.</p>
+
+<p>A fragment shader can only colour pixels inside its triangles. A shadow that extends 6 pixels beyond the rectangle therefore needs 6 pixels of extra triangle to be painted on.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 820 250" role="img" aria-label="The drawn quad is inflated by six pixels of shadow padding on every side, so the fragment shader has coverage available for the drop shadow that falls outside the rectangle itself.">
+  <rect x="120" y="46" width="290" height="150" fill="none" stroke="#2B91AF" stroke-width="1.6" stroke-dasharray="6 4"></rect>
+  <rect x="162" y="70" width="206" height="102" rx="8" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+
+  <text x="265" y="126" text-anchor="middle" font-size="12.5" fill="currentColor" font-weight="600">the scope rect</text>
+  <text x="265" y="145" text-anchor="middle" font-size="11" fill="currentColor" opacity=".7" class="mono">rect.zw</text>
+
+  <text x="265" y="38" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">quad actually drawn</text>
+
+  <line x1="120" y1="215" x2="162" y2="215" stroke="#2B91AF" stroke-width="1.4"></line>
+  <line x1="120" y1="211" x2="120" y2="219" stroke="#2B91AF" stroke-width="1.4"></line>
+  <line x1="162" y1="211" x2="162" y2="219" stroke="#2B91AF" stroke-width="1.4"></line>
+  <text x="141" y="234" text-anchor="middle" font-size="10.5" fill="#2B91AF" class="mono">pad</text>
+
+  <text x="450" y="66" font-size="12" fill="currentColor" font-weight="600">pad =</text>
+  <text x="450" y="90" font-size="11.5" fill="currentColor" opacity=".85" class="mono">SHADOW_PAD (6.0)</text>
+  <text x="450" y="112" font-size="11.5" fill="currentColor" opacity=".85" class="mono">+ 1.0 if selected</text>
+  <text x="450" y="134" font-size="11.5" fill="currentColor" opacity=".85" class="mono">+ pulse * PULSE_RADIUS</text>
+
+  <text x="450" y="170" font-size="11.5" fill="currentColor" opacity=".65">Grows with the pulse so the</text>
+  <text x="450" y="188" font-size="11.5" fill="currentColor" opacity=".65">breathing shadow never gets</text>
+  <text x="450" y="206" font-size="11.5" fill="currentColor" opacity=".65">clipped by its own quad.</text>
+</svg>
+</div>
+<figcaption><b>Padding the geometry.</b> Every instance draws a quad inflated on all four sides. Inside that margin the fill is zero and only the shadow contributes &mdash; which is why the alpha at the end of the fragment shader takes a <code>max</code> of fill and shadow rather than just returning the fill.</figcaption>
+</figure>
+</div>
+
+<div class="wrap">
+<div class="walk">
+
+  <div class="wl">
+    <div class="wc">const SHADOW_PAD: f32 = 6.0;
+const SHADOW_SIGMA: f32 = 1.35;
+const SIBLING_RGB = vec3(0.392, 0.710, 0.965);
+const SELECTED_RGB = vec3(0.0, 0.502, 1.0);
+const PULSE_PERIOD: f32 = 1.2;
+const PULSE_RADIUS: f32 = 0.45;
+const PULSE_SIGMA: f32 = 0.18;
+const PULSE_BRIGHT: f32 = 0.05;</div>
+    <div class="wd"><p>Compile-time constants. <code>SIGMA</code> is the shadow's blur radius in pixels &mdash; the standard deviation of the Gaussian.</p><p>The four <code>PULSE_</code> values tune the selected-scope animation: a 1.2-second cycle that grows the quad by 0.45px, widens the blur by 0.18px, and brightens the fill by 5% at its peak. Small numbers on purpose &mdash; a breathing highlight, not a flashing one.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">fn selected_pulse(time: f32) -&gt; f32 {
+  return 0.5 + 0.5 * sin(time * 6.28318530718 / PULSE_PERIOD);
+}</div>
+    <div class="wd"><p>A sine wave remapped from its natural &minus;1&hellip;+1 range into 0&hellip;1, so it can be used directly as a blend factor.</p><p><code>6.28318&hellip;</code> is 2&pi;. Dividing by <code>PULSE_PERIOD</code> makes one full cycle take 1.2 seconds regardless of frame rate, because the input is wall-clock time rather than a frame counter.</p></div>
+  </div>
+
+  <div class="wl head"><div class="wc">vs_main</div><div class="wd">6 &times; N invocations</div></div>
+
+  <div class="wl">
+    <div class="wc">@vertex
+fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
+    <div class="wd"><p>Two inputs now. <code>vid</code> still counts 0&hellip;5 around the quad, but <code>inst</code> arrives from the instance buffer and holds the same values for all six corners of one rectangle.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let uv = corners[vid];
+  let mark = inst.extra.y;
+  let selected = mark &gt; 1.5 &amp;&amp; mark &lt; 2.5;</div>
+    <div class="wd"><p>Unpack. <code>mark</code> is the interaction state from the table earlier; <code>selected</code> tests the window around 2.0.</p><p>The vertex stage cares about selection because selected rectangles change <em>shape</em>, not just colour &mdash; they lift and grow.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let pulse = select(0.0, selected_pulse(uni.time), selected);
+  let lift = select(0.0, -0.8, selected);</div>
+    <div class="wd"><p><code>select(a, b, cond)</code> returns <code>b</code> when the condition holds, <code>a</code> otherwise &mdash; note the reversed argument order compared to a ternary in most languages.</p><p>GPUs run many invocations in lockstep, so a branch where different pixels disagree costs both sides. <code>select</code> computes both and picks, which is cheaper for something this small.</p><p><code>lift</code> is negative because screen Y grows downward: &minus;0.8 moves the selected scope <em>up</em> by eight-tenths of a pixel.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let pad = SHADOW_PAD + select(0.0, 1.0, selected)
+            + pulse * PULSE_RADIUS;</div>
+    <div class="wd"><p>The inflation from the diagram. Base 6px, one extra pixel when selected, plus up to 0.45px more at the peak of the pulse &mdash; so the quad breathes in step with the shadow it has to contain.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let x = uni.origin.x + inst.rect.x - pad
+          + uv.x * (inst.rect.z + 2.0 * pad);
+  let y = uni.origin.y + inst.rect.y + lift - pad
+          + uv.y * (inst.rect.w + 2.0 * pad);</div>
+    <div class="wd"><p>The corner in screen pixels, assembled in four parts: the timeline's scroll origin, the rectangle's own position, minus one pad to start outside the rectangle, plus the unit coordinate scaled across the padded width.</p><p><code>2.0 * pad</code> because the inflation applies to both edges.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  o.pos = vec4((x / uni.viewport.x) * 2.0 - 1.0,
+               1.0 - (y / uni.viewport.y) * 2.0, 0.0, 1.0);</div>
+    <div class="wd"><p>The same pixels-to-NDC conversion as before. Every vertex shader in the codebase ends with this identical pair of expressions.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let cx = inst.rect.x + inst.rect.z * 0.5;
+  let cy = inst.rect.y + inst.rect.w * 0.5 + lift;
+  o.local = vec2(x - (uni.origin.x + cx),
+                 y - (uni.origin.y + cy));</div>
+    <div class="wd"><p><strong>The key line of the whole shader.</strong> <code>o.local</code> is this corner's offset from the rectangle's <em>centre</em>.</p><p>Because it gets interpolated, every pixel in the fragment stage receives its own distance-from-centre vector for free &mdash; no per-pixel maths required. That vector is exactly what the distance function needs.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  o.half_size = vec2(inst.rect.z, inst.rect.w) * 0.5;
+  o.color = inst.color;
+  o.radius = inst.extra.x;
+  o.mark = mark;</div>
+    <div class="wd"><p>Constants forwarded to the fragment stage. These are identical at all six corners, so interpolating them is a no-op &mdash; it's simply the only channel available for passing values down the pipeline.</p><p><code>half_size</code> is halved here rather than in the fragment shader: computed 6 times per rectangle instead of once per pixel.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  o.pix = vec2(x - (uni.origin.x + inst.rect.x),
+               y - (uni.origin.y + inst.rect.y + lift));</div>
+    <div class="wd"><p>A second coordinate frame, this time relative to the rectangle's <em>top-left</em> rather than its centre. Used for exactly one effect: a 1-pixel lighter band along the top edge that gives each bar a subtle bevel.</p></div>
+  </div>
+
+</div>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">07 &mdash; SIGNED DISTANCE FIELDS</span>
+<h2>How you draw a rounded rectangle with no rounded rectangle</h2>
+<p class="deck">The idea that makes the whole approach work.</p>
+
+<p>The quad is a plain rectangle with hard corners. The thing on screen has soft, rounded, antialiased corners. The gap between those two facts is closed by a <em>signed distance function</em>.</p>
+
+<p>The idea: instead of describing the shape's outline, write a function that answers a simpler question &mdash; <em>how far is this point from the shape's edge?</em> Negative inside, zero exactly on the boundary, positive outside. Every pixel evaluates it independently, and the shape emerges from where the sign flips.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 860 280" role="img" aria-label="Contour rings around a rounded rectangle show the distance function going negative inside the shape, zero at its boundary, and positive outside.">
+  <rect x="150" y="70" width="230" height="130" rx="26" fill="none" stroke="currentColor" stroke-width="1" opacity=".28"></rect>
+  <rect x="138" y="58" width="254" height="154" rx="38" fill="none" stroke="currentColor" stroke-width="1" opacity=".28"></rect>
+  <rect x="126" y="46" width="278" height="178" rx="50" fill="none" stroke="currentColor" stroke-width="1" opacity=".28"></rect>
+  <rect x="174" y="94" width="182" height="82" rx="14" fill="none" stroke="currentColor" stroke-width="1" opacity=".28"></rect>
+  <rect x="186" y="106" width="158" height="58" rx="8" fill="none" stroke="currentColor" stroke-width="1" opacity=".28"></rect>
+  <rect x="162" y="82" width="206" height="106" rx="20" fill="#2B91AF" fill-opacity=".1" stroke="#2B91AF" stroke-width="2.2"></rect>
+
+  <circle cx="265" cy="135" r="3.5" fill="#57A64A"></circle>
+  <text x="274" y="139" font-size="11" fill="#57A64A" font-weight="700" class="mono">d &lt; 0</text>
+  <circle cx="368" cy="82" r="3.5" fill="#2B91AF"></circle>
+  <text x="330" y="72" font-size="11" fill="#2B91AF" font-weight="700" class="mono">d = 0</text>
+  <circle cx="415" cy="46" r="3.5" fill="#E74435"></circle>
+  <text x="424" y="42" font-size="11" fill="#E74435" font-weight="700" class="mono">d &gt; 0</text>
+
+  <text x="265" y="248" text-anchor="middle" font-size="11.5" fill="currentColor" opacity=".65">contours of equal distance</text>
+
+  <line x1="470" y1="40" x2="470" y2="230" stroke="currentColor" stroke-width="1" opacity=".3"></line>
+
+  <text x="510" y="62" font-size="12.5" fill="currentColor" font-weight="600">The whole shape, in two lines:</text>
+  <text x="510" y="92" font-size="11.5" fill="currentColor" class="mono">q = abs(p) - b + r</text>
+  <text x="510" y="114" font-size="11.5" fill="currentColor" class="mono">d = min(max(q.x,q.y),0)</text>
+  <text x="510" y="134" font-size="11.5" fill="currentColor" class="mono">    + length(max(q,0)) - r</text>
+
+  <text x="510" y="168" font-size="11.5" fill="currentColor" opacity=".68">p &mdash; pixel offset from centre</text>
+  <text x="510" y="188" font-size="11.5" fill="currentColor" opacity=".68">b &mdash; half width and height</text>
+  <text x="510" y="208" font-size="11.5" fill="currentColor" opacity=".68">r &mdash; corner radius</text>
+</svg>
+</div>
+<figcaption><b>A shape defined by distance, not by outline.</b> Each contour ring is a set of points at equal distance from the edge. The visible rectangle is simply the contour where <code>d</code> crosses zero &mdash; and because <code>d</code> is continuous, the crossing can be found to sub-pixel precision.</figcaption>
+</figure>
+</div>
+
+<div class="wrap">
+<div class="walk">
+  <div class="wl">
+    <div class="wc">fn sd_rounded_box(p: vec2&lt;f32&gt;, b: vec2&lt;f32&gt;, r: f32) -&gt; f32 {
+  let q = abs(p) - b + vec2(r);
+  return min(max(q.x, q.y), 0.0)
+       + length(max(q, vec2(0.0))) - r;
+}</div>
+    <div class="wd"><p><strong>Line 1.</strong> <code>abs(p)</code> folds all four quadrants onto one &mdash; the shape is symmetric, so only one corner needs solving. Subtracting <code>b</code> puts the origin at that corner; adding <code>r</code> shrinks the box to the radius-inset rectangle whose corners the rounding arcs are centred on.</p>
+    <p><strong>Line 2, first term.</strong> <code>max(q.x, q.y)</code> is the distance for a point inside; <code>min(&hellip;, 0.0)</code> discards it when the point is outside.</p>
+    <p><strong>Line 2, second term.</strong> <code>length(max(q, 0))</code> is straight-line distance to the corner for points outside, and zero for points inside. The two terms are mutually exclusive &mdash; exactly one is non-zero.</p>
+    <p><strong>Finally</strong> subtracting <code>r</code> pushes the whole field outward by the radius, which is what rounds the corners. This is Inigo Quilez's formulation, near-universal in SDF code.</p></div>
+  </div>
+</div>
+</div>
+
+<div class="col">
+<h3>From distance to a crisp edge</h3>
+<p>A distance alone doesn't draw anything. Two lines in the fragment shader turn it into antialiased coverage:</p>
+</div>
+
+<div class="wrap">
+<div class="walk">
+  <div class="wl">
+    <div class="wc">  let d = sd_rounded_box(v.local, v.half_size, v.radius);
+  let aa = fwidth(d) * 0.75;
+  let fill = 1.0 - smoothstep(-aa, aa, d);</div>
+    <div class="wd"><p><code>fwidth(d)</code> is the trick. It reports how much <code>d</code> changes between this pixel and its neighbours &mdash; the GPU computes fragments in 2&times;2 groups specifically so derivatives like this are available. In effect it answers "how many units of distance is one pixel worth, here?"</p>
+    <p><code>smoothstep(-aa, aa, d)</code> then ramps smoothly from 0 to 1 across a band roughly one pixel wide, and <code>1.0 -</code> flips it so inside is 1. Pixels straddling the edge get a fractional value.</p>
+    <p>That is the entire antialiasing scheme. No multisampling, no supersampling &mdash; the coverage is computed analytically from the distance, and it stays correct at any zoom because <code>fwidth</code> rescales with the geometry.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let border = 1.0 - smoothstep(-aa, aa, abs(d) - 0.5);</div>
+    <div class="wd"><p>The same trick applied to <code>abs(d)</code> instead of <code>d</code>. Because absolute distance is small near the boundary on <em>both</em> sides, this peaks in a thin band straddling the edge &mdash; a 1-pixel ring, used later for the rim highlight.</p></div>
+  </div>
+</div>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">08 &mdash; THE SHADOW</span>
+<h2>Blurring without blurring</h2>
+<p class="deck">The most mathematically dense part of the file, and the only borrowed code.</p>
+
+<p>The usual way to soften a shape is to render it, then blur the result &mdash; a second pass, an offscreen texture, and dozens of texture reads per pixel. For a timeline drawing hundreds of thousands of rectangles, that is not affordable.</p>
+
+<p>Instead Orbit uses Evan Wallace's <a href="https://madebyevan.com/shaders/fast-rounded-rectangle-shadows/">fast rounded rectangle shadows</a>: rather than blurring pixels, it <em>evaluates the analytic result</em> of blurring a rounded rectangle at this point. No neighbours are sampled at all.</p>
+
+<p>The reasoning runs like this. Blurring is convolution with a Gaussian. For a plain box, that convolution has a closed form &mdash; it's the error function, <code>erf</code>. A rounded box isn't quite a box, but slice it into horizontal strips and each strip <em>is</em> a box, just with a width that varies as you move up and down through the corners. So: solve each strip exactly, then sum the strips.</p>
+</div>
+
+<div class="wrap">
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 860 260" role="img" aria-label="The rounded rectangle is sliced into four horizontal strips within three sigma of the sample point; each strip's blurred width is solved exactly with the error function and weighted by a Gaussian.">
+  <rect x="90" y="60" width="215" height="130" rx="26" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="1.5"></rect>
+
+  <line x1="70" y1="88" x2="325" y2="88" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
+  <line x1="70" y1="112" x2="325" y2="112" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
+  <line x1="70" y1="136" x2="325" y2="136" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
+  <line x1="70" y1="160" x2="325" y2="160" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
+
+  <circle cx="340" cy="124" r="4" fill="#E74435"></circle>
+  <text x="350" y="128" font-size="11" fill="#E74435" font-weight="700">sample point</text>
+
+  <text x="197" y="46" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">4 strips, spanning &plusmn;3&sigma;</text>
+  <text x="197" y="216" text-anchor="middle" font-size="11" fill="currentColor" opacity=".62">each strip is a plain box &#8594; erf solves it exactly</text>
+
+  <line x1="420" y1="40" x2="420" y2="230" stroke="currentColor" stroke-width="1" opacity=".3"></line>
+
+  <text x="455" y="62" font-size="12.5" fill="currentColor" font-weight="600">Per strip:</text>
+  <text x="455" y="88" font-size="11.5" fill="currentColor" class="mono">width  &#8592; corner geometry</text>
+  <text x="455" y="110" font-size="11.5" fill="currentColor" class="mono">blur   &#8592; erf_approx(...)</text>
+  <text x="455" y="132" font-size="11.5" fill="currentColor" class="mono">weight &#8592; gaussian(y, sigma)</text>
+  <text x="455" y="160" font-size="12.5" fill="#2B91AF" font-weight="600">Sum the four &#8594; shadow alpha</text>
+  <text x="455" y="192" font-size="11.5" fill="currentColor" opacity=".62">Zero texture reads. Constant cost</text>
+  <text x="455" y="210" font-size="11.5" fill="currentColor" opacity=".62">per pixel, whatever the blur radius.</text>
+</svg>
+</div>
+<figcaption><b>Four samples, not a blur kernel.</b> A conventional Gaussian blur at this radius would need dozens of texture reads per pixel and a second render pass. This integrates the analytic solution over four strips and reads nothing.</figcaption>
+</figure>
+</div>
+
+<div class="wrap">
+<div class="walk">
+
+  <div class="wl">
+    <div class="wc">fn gaussian(x: f32, sigma: f32) -&gt; f32 {
+  let pi = 3.141592653589793;
+  return exp(-(x * x) / (2.0 * sigma * sigma))
+       / (sqrt(2.0 * pi) * sigma);
+}</div>
+    <div class="wd"><p>The textbook normal distribution, unmodified. Used as a weight: strips near the sample point count for more than strips far from it.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">fn erf_approx(x: f32) -&gt; f32 {
+  let s = sign(x);
+  let a = abs(x);
+  var t = 1.0 + (0.278393 + (0.230389
+        + 0.078108 * (a * a)) * a) * a;
+  t = t * t;
+  return s - s / (t * t);
+}</div>
+    <div class="wd"><p>The error function has no elementary closed form, so this is a rational approximation &mdash; the Abramowitz &amp; Stegun 7.1.27 form, in Wallace's variant that drops the tiny cubic coefficient.</p>
+    <p><code>t = t*t</code> then <code>t*t</code> in the denominator gives the fourth power the formula calls for, using two multiplications instead of a <code>pow</code> call.</p>
+    <p>Odd symmetry is handled by pulling out <code>sign(x)</code> up front and working with <code>abs(x)</code>, since the approximation is only valid for positive inputs.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">fn rounded_box_shadow_x(x: f32, y: f32, sigma: f32,
+                        corner: f32, half: vec2&lt;f32&gt;) -&gt; f32 {
+  let delta = min(half.y - corner - abs(y), 0.0);
+  let curved = half.x - corner
+             + sqrt(max(0.0, corner*corner - delta*delta));
+  return 0.5 + 0.5 * erf_approx((x + curved) * (sqrt(0.5) / sigma));
+}</div>
+    <div class="wd"><p>One strip. <code>delta</code> measures how far into the corner region this height sits &mdash; it stays 0 through the straight middle of the rectangle and goes negative once you're level with a corner arc.</p>
+    <p><code>curved</code> is then the strip's half-width: the flat part <code>half.x - corner</code>, plus a circular term that shortens the strip as it rides up the curve. The <code>max(0.0, &hellip;)</code> guards the square root against a negative argument from floating-point drift.</p>
+    <p>The final line is the blurred edge: <code>erf</code> rescaled from &minus;1&hellip;1 into 0&hellip;1 coverage.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let low = point.y - half.y;
+  let high = point.y + half.y;
+  let start = clamp(-3.0 * sigma, low, high);
+  let end = clamp(3.0 * sigma, low, high);</div>
+    <div class="wd"><p>Choose the integration range. A Gaussian is negligible past three standard deviations, so there's no point integrating further &mdash; but the range is also clamped to the rectangle's actual vertical extent, so a short rectangle doesn't waste samples on empty space.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let step = (end - start) / 4.0;
+  var y = start + step * 0.5;
+  var value = 0.0;
+  for (var i = 0; i &lt; 4; i++) {
+    value += rounded_box_shadow_x(point.x, point.y - y,
+                                  sigma, corner, half)
+           * gaussian(y, sigma) * step;
+    y += step;
+  }
+  return value;</div>
+    <div class="wd"><p>Midpoint-rule numerical integration with four samples. <code>start + step * 0.5</code> begins at the centre of the first strip rather than its edge, which is what makes it the midpoint rule and roughly doubles the accuracy for free.</p>
+    <p>Each term is <em>strip coverage &times; Gaussian weight &times; strip height</em> &mdash; a weighted sum approximating the true integral.</p>
+    <p>Four is a deliberate choice: enough for a shadow at this scale, small enough that the loop unrolls and stays cheap when it runs for every pixel of every rectangle on screen.</p></div>
+  </div>
+
+</div>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">09 &mdash; THE FRAGMENT STAGE</span>
+<h2>Assembling one pixel</h2>
+<p class="deck">instance.wgsl lines 123&ndash;160. Everything above, combined.</p>
+
+<p>This runs for every pixel of every rectangle &mdash; the hottest code in the viewer by a wide margin. It reads the interpolated values, computes coverage and shadow, applies whatever state the mark encodes, and returns a single colour.</p>
+</div>
+
+<div class="wrap">
+<div class="walk">
+
+  <div class="wl">
+    <div class="wc">  let hover    = v.mark &gt; 0.5 &amp;&amp; v.mark &lt; 1.5;
+  let selected = v.mark &gt; 1.5 &amp;&amp; v.mark &lt; 2.5;
+  let sibling  = v.mark &gt; 2.5 &amp;&amp; v.mark &lt; 3.5;
+  let dimmed   = v.mark &gt; 3.5 &amp;&amp; v.mark &lt; 4.5;</div>
+    <div class="wd"><p>Decode the state, one window per value. Only one can be true at a time.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected)
+            + pulse * PULSE_SIGMA;
+  let shadow = rounded_box_shadow(v.local + vec2(0.4, 0.7),
+                                  v.half_size, v.radius, sigma);</div>
+    <div class="wd"><p>The shadow, offset by <code>(0.4, 0.7)</code> &mdash; slightly right and slightly down, implying a light source above and to the left. Sub-pixel offsets, so the effect reads as depth rather than as a visible duplicate.</p>
+    <p>Selected rectangles get a wider blur, and the pulse widens it further still, so the highlight appears to breathe.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  var rgb = v.color.rgb;
+  if dimmed {
+    let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    rgb = mix(rgb, vec3(luma), 0.84) * 0.36;
+  }</div>
+    <div class="wd"><p>Search filtering. Those three coefficients are the Rec. 709 luminance weights &mdash; green dominates because human vision is most sensitive to it, so this preserves perceived brightness where a naive average wouldn't.</p>
+    <p><code>mix</code> pulls 84% of the way toward grey, then <code>* 0.36</code> darkens the result. Non-matching scopes recede without disappearing.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  if sibling {
+    rgb = SIBLING_RGB;
+  } else if selected {
+    rgb = SELECTED_RGB * (1.0 + pulse * PULSE_BRIGHT);
+  }</div>
+    <div class="wd"><p>Selection recolouring replaces the palette colour entirely rather than tinting it, so a selected scope is unmistakable regardless of its original hue.</p>
+    <p>The pulse contributes at most 5% brightness &mdash; visible as motion, never as flashing.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let top = v.pix.y &lt; 1.15 &amp;&amp; fill &gt; 0.5;
+  rgb = rgb * select(1.0, 1.08, top);
+  rgb = rgb * select(1.0, 1.05, hover);</div>
+    <div class="wd"><p>This is where <code>o.pix</code> from the vertex stage earns its slot. Within 1.15 pixels of the rectangle's top edge &mdash; and only where the shape is actually solid &mdash; brighten by 8%. A one-pixel bevel that gives a flat rectangle a hint of dimensionality.</p>
+    <p>Hover adds a further flat 5%.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  var rim = vec3(0.92, 0.93, 0.95);
+  var rim_w = 0.18;
+  if selected { rim_w = 0.40; }
+  else if hover { rim_w = 0.36; }
+  rgb = mix(rgb, rim, border * rim_w * fill);</div>
+    <div class="wd"><p>The rim highlight, using the <code>border</code> band computed earlier. Multiplying by <code>fill</code> confines it to the inside of the shape, so the outline reads as a lit edge rather than a drawn stroke.</p>
+    <p>The rim colour is very slightly blue &mdash; 0.92, 0.93, 0.95 rather than flat white &mdash; which keeps it from looking like a hard graphic outline.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  let shadow_a = select(0.10, 0.20, selected);
+  let alpha = max(fill * v.color.a,
+                  shadow * shadow_a * (1.0 - fill));
+  return vec4(rgb, alpha);</div>
+    <div class="wd"><p><strong>The line that makes the padded quad work.</strong> Inside the shape, <code>fill</code> is 1 and <code>(1.0 - fill)</code> kills the shadow term. Out in the padding, <code>fill</code> is 0 and only the shadow survives. <code>max</code> picks whichever applies, with a smooth handover across the antialiased edge.</p>
+    <p>Shadows are subtle by design &mdash; 10% opacity normally, 20% when selected. With the pipeline's alpha blending, hundreds of overlapping rectangles would otherwise accumulate into mud.</p></div>
+  </div>
+
+</div>
+</div>
+
+<div class="col">
+<div class="note good">
+<span class="tag">Why there is no depth buffer</span>
+<p>The pipeline sets <code>depth_stencil: None</code>, so nothing sorts by depth &mdash; later draws simply paint over earlier ones. That's why <code>split_drag_instances</code> exists on the Rust side: to make a dragged thread's scopes paint last, it moves them to the end of the buffer. Draw order <em>is</em> the z-order.</p>
+</div>
+</div>
+</section>
+
+<hr class="sep">
+
+<section class="part">
+<div class="col">
+<span class="part-num">10 &mdash; ORIENTATION</span>
+<h2>Where to look</h2>
+
+<p>All paths below are relative to <code>src/OrbitLiveViewer/</code>.</p>
+</div>
+
+<div class="wrap">
+<div class="tablewrap">
+<table>
+<thead><tr><th>File</th><th>What lives there</th></tr></thead>
+<tbody>
+<tr><td><code>crates/orbit-live-render/src/shaders/instance.wgsl</code></td><td>The SDF path &mdash; everything in sections 6 through 9</td></tr>
+<tr><td><code>crates/orbit-live-render/src/shaders/blit_rect.wgsl</code></td><td>The pixel-column path &mdash; section 3</td></tr>
+<tr><td><code>crates/orbit-live-render/src/shaders/blit.wgsl</code></td><td>Compiled into the binary; never made into a pipeline</td></tr>
+<tr><td><code>crates/orbit-live-render/src/shaders.rs</code></td><td>Three <code>include_str!</code> lines and nothing else</td></tr>
+<tr><td><code>crates/orbit-live-viewer/src/timeline.rs</code></td><td>Pipelines, bind groups, vertex layout, <code>pack_instances</code>, the draw call</td></tr>
+<tr><td><code>crates/orbit-live-render/src/lod.rs</code></td><td><code>choose_lod</code>, lane heights, the <code>FLAG_*</code> constants</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="col">
+<p>The shaders live in <code>.wgsl</code> files rather than Rust string literals specifically so they can be checked on their own:</p>
+</div>
+
+<div class="wrap">
+<pre><code class="lang-rust">naga crates/orbit-live-render/src/shaders/instance.wgsl --validate 15
+# Validation successful</code></pre>
+</div>
+
+<div class="col">
+<div class="note warn">
+<span class="tag">One limit worth knowing</span>
+<p><code>naga --validate</code> checks that the WGSL is well-formed. It does <strong>not</strong> catch the 16-byte uniform rule from section 5 &mdash; that's a downlevel-adapter capability, not a language violation, and the broken 24-byte struct validated cleanly right up until <code>create_render_pipeline</code> rejected it at runtime. Standalone validation is a real check, but it is not the same as building the pipeline.</p>
+</div>
+</div>
+
+<footer class="end">
+<p>Source: <code>orbit-live-render</code> and <code>orbit-live-viewer</code>, branch <code>cursor/wasm-live-viewer-217f</code>. The shadow integral is Evan Wallace's, used under the terms described in the file header; everything else is Orbit's own.</p>
+</footer>
+
+</section>
+</div>
+
+<script>
+(function () {
+  var LANGS = {
+    wgsl: [
+      ['t-com',  /\/\/[^\n]*/],
+      ['t-attr', /@[A-Za-z_]\w*/],
+      ['t-kw',   /\b(?:fn|let|var|const|struct|return|if|else|for|while|switch|case|default|break|continue|discard|true|false)\b/],
+      ['t-type', /\b(?:f32|i32|u32|bool|vec2|vec3|vec4|mat2x2|mat3x3|mat4x4|array|texture_2d|sampler|uniform)\b/],
+      ['t-fn',   /\b(?:sin|cos|tan|exp|sqrt|abs|sign|min|max|clamp|mix|smoothstep|step|fwidth|length|dot|cross|normalize|select|floor|ceil|pow|textureSampleLevel|textureSample)\b/],
+      ['t-num',  /\b\d+\.?\d*(?:[eE][-+]?\d+)?\b/]
+    ],
+    rust: [
+      ['t-com',  /\/\/[^\n]*|#[^\n]*/],
+      ['t-kw',   /\b(?:fn|let|mut|const|struct|enum|impl|for|in|if|else|match|return|pub|use|as|Some|None|true|false)\b/],
+      ['t-type', /\b(?:f32|f64|u8|u32|u64|i32|usize|bool|Vec|Option|TimelineLod|Instanced|PixelColumns)\b/],
+      ['t-fn',   /\b(?:overlapping|choose_lod|pack_instances|validate)\b/],
+      ['t-num',  /\b\d+\.?\d*\b/]
+    ]
+  };
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function build(rules) {
+    return new RegExp(rules.map(function (r) { return '(' + r[1].source + ')'; }).join('|'), 'g');
+  }
+
+  Object.keys(LANGS).forEach(function (lang) {
+    var rules = LANGS[lang];
+    var re = build(rules);
+    document.querySelectorAll('code.lang-' + lang).forEach(function (el) {
+      var src = el.textContent;
+      var out = '';
+      var last = 0;
+      var m;
+      re.lastIndex = 0;
+      while ((m = re.exec(src)) !== null) {
+        if (m.index > last) out += esc(src.slice(last, m.index));
+        var cls = null;
+        for (var i = 1; i < m.length; i++) {
+          if (m[i] !== undefined) { cls = rules[i - 1][0]; break; }
+        }
+        out += '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+        last = m.index + m[0].length;
+        if (m[0].length === 0) re.lastIndex++;
+      }
+      out += esc(src.slice(last));
+      el.innerHTML = out;
+    });
+  });
+
+  // The walkthrough code cells are WGSL too, but hand-authored as escaped HTML.
+  document.querySelectorAll('.wl > .wc').forEach(function (el) {
+    var rules = LANGS.wgsl;
+    var re = build(rules);
+    var src = el.textContent;
+    var out = '';
+    var last = 0;
+    var m;
+    re.lastIndex = 0;
+    while ((m = re.exec(src)) !== null) {
+      if (m.index > last) out += esc(src.slice(last, m.index));
+      var cls = null;
+      for (var i = 1; i < m.length; i++) {
+        if (m[i] !== undefined) { cls = rules[i - 1][0]; break; }
+      }
+      out += '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+      last = m.index + m[0].length;
+      if (m[0].length === 0) re.lastIndex++;
+    }
+    out += esc(src.slice(last));
+    el.innerHTML = out;
+  });
+})();
+</script>
+</body>
+</html>

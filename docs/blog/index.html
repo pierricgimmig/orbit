@@ -641,6 +641,16 @@
   <h2 id="posts">Posts</h2>
 
   <div class="posts wide">
+    <a href="16-how-orbit-draws-a-million-scopes.html">
+      <span class="n">16 &middot; renderer internals</span>
+      <h3>How Orbit Draws a Million Scopes</h3>
+      <p>A line-by-line reading of the three WGSL shaders behind the live timeline, for someone who has never opened a shader: normalised device coordinates, 48 bytes per rectangle, a quad deliberately bigger than the thing it draws, and how you round a corner with no rounded rectangle.</p>
+    </a>
+    <a href="15-a-ring-per-core.html">
+      <span class="n">15 &middot; manual instrumentation</span>
+      <h3>A Ring Per Core</h3>
+      <p>A ten-nanosecond write path for manual instrumentation: why per-core single-producer rings are unsound in userspace, what rseq is and why it was not used, and the ordering bug that only appeared when someone asked whether a migrating thread still merges correctly.</p>
+    </a>
     <a href="14-the-hook-that-would-not-arm.html">
       <span class="n">14 &middot; dynamic instrumentation</span>
       <h3>The Hook That Would Not Arm</h3>
