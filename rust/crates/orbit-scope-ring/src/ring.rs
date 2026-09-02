@@ -282,6 +282,18 @@ impl Rings {
         claim
     }
 
+    /// Publishes a slot reserved by `reserve_for_test`, as a producer would
+    /// on waking from whatever stalled it. Test-only.
+    #[doc(hidden)]
+    pub fn publish_reserved_for_test(&self, ring: usize, claim: u64, event: ScopeEvent) {
+        let slot = self.slot(ring, claim);
+        // SAFETY: the test owns this claim; nothing else writes it.
+        unsafe {
+            std::ptr::write_volatile(slot.event.get(), event);
+        }
+        slot.seq.store(claim + 1, Ordering::Release);
+    }
+
     /// The claim counter, for the consumer.
     pub fn write_cursor(&self, ring: usize) -> u64 {
         self.ring_header(ring).write_cursor.load(Ordering::Acquire)

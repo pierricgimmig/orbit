@@ -6,7 +6,7 @@
 //! properties that matter: nothing is lost, and what comes out is ordered.
 
 use orbit_scope_ring::event::kind;
-use orbit_scope_ring::merge::{drain, Cursors, Merger, ABANDON_AFTER_NS};
+use orbit_scope_ring::merge::{drain, drain_from, Cursors, Merger, Producer, BACKSTOP_NS};
 use orbit_scope_ring::ring::{ring_count_for_threads, ring_for_thread, Rings};
 use orbit_scope_ring::shm::now_monotonic_ns;
 use orbit_scope_ring::{ring, ScopeEvent};
@@ -219,11 +219,11 @@ fn a_stalled_producer_cannot_be_overtaken_by_a_later_claim() {
 ///
 /// This is the shared-memory failure that matters most in practice: the
 /// consumer is a different process, and it cannot make the dead one finish.
-/// Without a deadline the ring's frontier never advances, the horizon is the
+/// Without a way out, the ring's frontier never advances, the horizon is the
 /// minimum across rings, and the entire stream stops -- permanently, and
 /// silently, which is the worst combination.
 #[test]
-fn a_producer_that_dies_mid_write_does_not_wedge_the_stream_forever() {
+fn a_dead_producer_does_not_wedge_the_stream() {
     let region = Region::new(2, 16);
     let rings = region.rings();
 
@@ -235,40 +235,82 @@ fn a_producer_that_dies_mid_write_does_not_wedge_the_stream_forever() {
 
     let mut cursors = Cursors::for_rings(2);
     let mut merger = Merger::new(2);
+    let now = 1_000_000_000;
 
-    // Before the deadline the stream holds, exactly as it should: the missing
-    // event is stamped 20 and everything after it has to wait.
-    let start_ns = 1_000_000_000;
-    let early = merger.merge(drain(&rings, &mut cursors, start_ns));
+    // While the process is alive, the stalled claim blocks what follows,
+    // which is right: the event is still coming.
+    let early = merger.merge(drain_from(&rings, &mut cursors, now, Producer::Alive));
     let out: Vec<u64> = early.iter().map(|e| e.timestamp_ns).collect();
-    assert_eq!(out, vec![10], "the stalled claim still blocks what follows");
+    assert_eq!(out, vec![10]);
 
-    let still_waiting =
-        merger.merge(drain(&rings, &mut cursors, start_ns + ABANDON_AFTER_NS / 2));
-    assert!(still_waiting.is_empty(), "half the deadline is not the deadline");
-
-    // Past it, the claim is written off and the stream moves again.
-    let pass = drain(&rings, &mut cursors, start_ns + ABANDON_AFTER_NS + 1);
+    // Once it is gone, there is nothing left to wait for and no reason to
+    // wait even a millisecond.
+    let pass = drain_from(&rings, &mut cursors, now, Producer::Gone);
     assert_eq!(pass.dropped, 1, "the lost event is counted, not hidden");
     let recovered: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
     assert_eq!(recovered, vec![30, 40], "and everything behind it is delivered");
 }
 
-/// The same, when the process dies with nothing else in the ring behind it.
+/// A thread stopped at a breakpoint, or starved by a cgroup, is not dead.
+///
+/// The failure this pins is a false positive. An earlier version abandoned any
+/// claim unpublished for 250 ms, on the theory that no live producer could
+/// exceed it. A thread stopped under a debugger exceeds it by minutes, and
+/// throwing its events away -- while the process sits there, alive, about to
+/// resume and publish them -- is the profiler corrupting its own measurement.
 #[test]
-fn a_ring_stalled_with_nothing_behind_it_still_releases_the_others() {
+fn a_live_but_stalled_producer_keeps_its_event() {
     let region = Region::new(2, 16);
     let rings = region.rings();
-    rings.reserve_for_test(0, 50); // ring 0's only claim, never published
+    rings.push(0, ScopeEvent { timestamp_ns: 10, ..Default::default() });
+    rings.reserve_for_test(0, 20);
+
+    let mut cursors = Cursors::for_rings(2);
+    let mut merger = Merger::new(2);
+    let start = 1_000_000_000;
+
+    // A full second of being stopped: twenty times the old timeout.
+    for step in 0..10u64 {
+        let pass = drain_from(&rings, &mut cursors, start + step * 100_000_000, Producer::Alive);
+        assert_eq!(pass.dropped, 0, "a live producer's event is not thrown away");
+        merger.merge(pass);
+    }
+
+    // It wakes up and publishes. The event arrives, in order, intact.
+    rings.publish_reserved_for_test(0, 1, ScopeEvent { timestamp_ns: 20, ..Default::default() });
+    let pass = drain_from(&rings, &mut cursors, start + 2_000_000_000, Producer::Alive);
+    assert_eq!(pass.dropped, 0);
+    let out: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(out, vec![20], "the event that was nearly discarded");
+}
+
+/// The backstop, for a liveness answer that is somehow wrong.
+#[test]
+fn a_claim_stuck_past_the_backstop_is_eventually_released() {
+    let region = Region::new(2, 16);
+    let rings = region.rings();
+    rings.reserve_for_test(0, 50);
     rings.push(1, ScopeEvent { timestamp_ns: 60, ..Default::default() });
 
     let mut cursors = Cursors::for_rings(2);
     let mut merger = Merger::new(2);
-    let start_ns = 5_000_000_000;
-    assert!(merger.merge(drain(&rings, &mut cursors, start_ns)).is_empty());
+    let start = 5_000_000_000;
+    assert!(merger.merge(drain_from(&rings, &mut cursors, start, Producer::Alive)).is_empty());
 
-    let pass = drain(&rings, &mut cursors, start_ns + ABANDON_AFTER_NS + 1);
+    let pass = drain_from(&rings, &mut cursors, start + BACKSTOP_NS + 1, Producer::Alive);
     assert_eq!(pass.dropped, 1);
     let out: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
-    assert_eq!(out, vec![60], "a live ring is not held hostage by a dead one");
+    assert_eq!(out, vec![60], "finite, even when liveness says otherwise");
+}
+
+/// The default entry point still behaves, for callers with no pid to check.
+#[test]
+fn the_default_drain_assumes_the_producer_is_alive() {
+    let region = Region::new(1, 16);
+    let rings = region.rings();
+    rings.push(0, ScopeEvent { timestamp_ns: 5, ..Default::default() });
+    let mut cursors = Cursors::for_rings(1);
+    let pass = drain(&rings, &mut cursors, 1_000);
+    assert_eq!(pass.dropped, 0);
+    assert_eq!(pass.slices[0].events.len(), 1);
 }

@@ -46,15 +46,38 @@ pub struct Drain {
     pub dropped: u64,
 }
 
-/// How long a claim may sit unpublished before the consumer gives up on it.
+/// Whether the process writing the segment still exists.
 ///
-/// The write between claiming a slot and publishing it is a handful of stores
-/// -- about eight nanoseconds. A producer that has not finished after a
-/// quarter of a second is not slow, it is gone: killed, crashed, or stopped
-/// under a debugger. This is a thirty-million-fold margin over the work
-/// itself, so no live producer will ever be declared dead by it, and it is
-/// short enough that a viewer does not appear to hang.
-pub const ABANDON_AFTER_NS: u64 = 250_000_000;
+/// The consumer's evidence that a claim will never be published. It is
+/// evidence rather than inference, which matters: an earlier version used a
+/// 250 ms timeout and claimed no live producer could ever exceed it. That was
+/// simply untrue. A thread can sit far longer than that while perfectly
+/// alive -- stopped at a debugger breakpoint, throttled by a cgroup whose
+/// quota it has spent, waiting on a major page fault under memory pressure,
+/// or descheduled by a hypervisor. Every one of those is *more* likely while
+/// profiling, not less.
+///
+/// Checking liveness is portable enough where it is needed. Only the producer
+/// has to run everywhere; the consumer is orbit-service, which already reads
+/// `/proc` for everything else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Producer {
+    /// The process is still there. A claim may still be published, however
+    /// long it has been waiting, so waiting is the correct thing to do.
+    Alive,
+    /// The process is gone. Nothing it claimed can ever be published, so
+    /// there is no reason to wait even one millisecond longer.
+    Gone,
+}
+
+/// A backstop for the case this design has not thought of.
+///
+/// Liveness answers the question properly; this only exists so that a
+/// consumer cannot be stuck forever if it ever answers wrongly -- a pid
+/// recycled onto a different process, say. Half a minute is far too long to
+/// be a timeout and exactly right for a last resort: it will never fire in
+/// normal operation, and it bounds the worst case at something finite.
+pub const BACKSTOP_NS: u64 = 30_000_000_000;
 
 /// Per-ring read position, carried between drains.
 ///
@@ -86,6 +109,16 @@ impl Cursors {
 /// `now_ns` is read once by the caller before scanning, and becomes the
 /// frontier of any ring with nothing in flight.
 pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
+    drain_from(rings, cursors, now_ns, Producer::Alive)
+}
+
+/// As [`drain`], told whether the producing process still exists.
+pub fn drain_from(
+    rings: &Rings,
+    cursors: &mut Cursors,
+    now_ns: u64,
+    producer: Producer,
+) -> Drain {
     let mut out = Drain::default();
     for ring in 0..rings.ring_count() {
         let write = rings.write_cursor(ring);
@@ -118,12 +151,16 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
                     if cursors.stalled_at[ring] != read {
                         cursors.stalled_at[ring] = read;
                         cursors.stalled_since_ns[ring] = now_ns;
-                    } else if now_ns.saturating_sub(cursors.stalled_since_ns[ring])
-                        >= ABANDON_AFTER_NS
-                    {
-                        // Declared abandoned. Skipping it loses one event and
-                        // says so, which is a far better failure than a
-                        // timeline that silently stops updating.
+                    }
+                    let waited = now_ns.saturating_sub(cursors.stalled_since_ns[ring]);
+                    // A dead process cannot publish, so there is nothing to
+                    // wait for. A live one may be stopped at a breakpoint or
+                    // starved by its cgroup for as long as it likes, and
+                    // waiting is then the *correct* behaviour -- the event is
+                    // coming.
+                    if producer == Producer::Gone || waited >= BACKSTOP_NS {
+                        // Skipping loses one event and says so, which is a far
+                        // better failure than a timeline that silently stops.
                         read += 1;
                         out.dropped += 1;
                         cursors.stalled_at[ring] = u64::MAX;

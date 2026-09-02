@@ -40,14 +40,31 @@ Robustness against a dead producer
   waits for it stalls that ring's frontier -- and the horizon is the minimum
   across every ring, so the whole stream stops. Permanently, and silently.
 
-  The consumer therefore carries a deadline. A claim unpublished for 250 ms is
-  written off, counted as dropped, and stepped over. The write it is waiting
-  for takes about eight nanoseconds, so the margin is thirty-million-fold: no
-  live producer is ever declared dead, and a viewer never appears to hang.
+  The consumer decides by *liveness*, not by a timeout. If the producing
+  process is gone, nothing it claimed can ever be published, so the claim is
+  written off immediately, counted as dropped, and stepped over.
 
-  Two tests cover it: one checks the stream still holds at half the deadline
-  and recovers past it, and one checks a ring stalled with nothing behind it
-  does not hold the other rings hostage.
+  A timeout was tried first -- 250 ms, on the theory that no live producer
+  could exceed it. That was wrong, and the counter-examples are all things
+  that happen more often while profiling, not less: a thread stopped at a
+  debugger breakpoint, a cgroup that has spent its CPU quota, a major page
+  fault under memory pressure, a guest descheduled by its hypervisor. Any of
+  them outlasts 250 ms easily, and throwing away the events of a process that
+  is alive and about to publish them is the profiler corrupting its own
+  measurement.
+
+  A 30-second backstop remains, not as a timeout but as a bound on the
+  unforeseen -- a recycled pid answering the liveness question wrongly, say.
+  It will never fire in normal operation.
+
+  Worth recording: a false positive costs lost events, never corruption. The
+  seq stamp is re-read after the payload, so a producer waking late and
+  writing into a slot the consumer has already stepped past is detected rather
+  than mistaken for live data.
+
+  Four tests: a dead producer releases the stream at once; a live one stalled
+  for a full second keeps its event and delivers it on waking; the backstop
+  fires; and the default entry point assumes life.
 
 Sizing
 
