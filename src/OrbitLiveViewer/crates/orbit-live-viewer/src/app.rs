@@ -108,6 +108,16 @@ fn record_pid_is_forbidden(pid: u32, processes: &[ProcessJson]) -> bool {
         .any(|p| p.pid == pid && is_orbit_service_exe(&p.name, &p.path))
 }
 
+fn reserved_process_name(pid: u32) -> Option<&'static str> {
+    if pid == VIEWER_PID {
+        Some(VIEWER_NAME)
+    } else if pid == SERVICE_PID {
+        Some(SERVICE_NAME)
+    } else {
+        None
+    }
+}
+
 fn is_orbit_service_exe(name: &str, path: &str) -> bool {
     fn leaf(s: &str) -> &str {
         s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s)
@@ -897,6 +907,9 @@ impl OrbitLiveApp {
     }
 
     fn process_display_name(&self, pid: u32) -> String {
+        if let Some(name) = reserved_process_name(pid) {
+            return name.into();
+        }
         self.processes
             .iter()
             .find(|p| p.pid == pid)
@@ -1034,6 +1047,8 @@ impl OrbitLiveApp {
         self.thread_names.clear();
         self.trace_processes.clear();
         self.trace_name = Some(load.name.clone());
+        intern_self_names(&mut self.intern);
+        self.merge_self_processes();
         self.live_edge_ns = 0;
         self.t0 = 0.0;
         self.t1 = FOLLOW_NS;
@@ -1320,7 +1335,9 @@ impl OrbitLiveApp {
             return;
         }
         for (pid, name) in [(VIEWER_PID, VIEWER_NAME), (SERVICE_PID, SERVICE_NAME)] {
-            if !self.processes.iter().any(|p| p.pid == pid) {
+            if let Some(exist) = self.processes.iter_mut().find(|p| p.pid == pid) {
+                exist.name = name.into();
+            } else {
                 self.processes.push(ProcessJson {
                     pid,
                     name: name.into(),
@@ -5540,6 +5557,9 @@ mod tests {
         ));
         assert!(!record_pid_is_forbidden(99, &[proc(99, "chrome", "")]));
         assert_eq!(SERVICE_NAME, "orbit-service");
+        assert_eq!(reserved_process_name(VIEWER_PID), Some(VIEWER_NAME));
+        assert_eq!(reserved_process_name(SERVICE_PID), Some("orbit-service"));
+        assert_eq!(reserved_process_name(1), None);
     }
 
     fn scope_ev(pid: u32, tid: u32, name: u32, start: u64, dur: u64) -> LiveEvent {
