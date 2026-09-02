@@ -885,7 +885,7 @@ impl OrbitLiveApp {
         live_repaint(
             self.recording || self.status.demo || self.trace_load.is_some(),
             self.status.capturing,
-            self.tracks.dragging(),
+            self.tracks.any_dragging(),
             self.selected.is_some(),
         ) || self.vscroll.is_coasting()
     }
@@ -2545,9 +2545,11 @@ impl OrbitLiveApp {
             paint_quiet_grid(ui, body, self.t0, self.t1, self.light_canvas);
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
-            if self.tracks.dragging() {
+            if self.tracks.any_dragging() {
                 if let Some(p) = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) {
-                    self.tracks.update_drag(p.y - head.top());
+                    let ry = p.y - head.top();
+                    self.tracks.update_drag(ry);
+                    self.tracks.update_header_drag(ry);
                     self.tracks.tick(0.0, &self.index, filter);
                 }
             }
@@ -2961,6 +2963,33 @@ impl OrbitLiveApp {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
                 }
+                let m_drag = self.tracks.is_dragging_machine(m);
+                let m_chev = Rect::from_center_size(
+                    Pos2::new(r.left() + 8.0, r.center().y),
+                    Vec2::splat(14.0),
+                );
+                paint_handle_dots(
+                    ui.painter(),
+                    Rect::from_min_size(Pos2::new(r.left() + 2.0, r.top()), Vec2::new(10.0, r.height())),
+                    m_drag,
+                );
+                let m_resp =
+                    ui.interact(r, ui.id().with(("mdrag", m.sort_key() as u32, 0u32)), Sense::drag());
+                if m_resp.drag_started() {
+                    if let Some(p) = m_resp.interact_pointer_pos() {
+                        if !m_chev.contains(p) {
+                            self.tracks.begin_machine_drag(m, p.y - head.top());
+                        }
+                    }
+                }
+                if m_resp.dragged() {
+                    if let Some(p) = m_resp.interact_pointer_pos() {
+                        self.tracks.update_header_drag(p.y - head.top());
+                    }
+                }
+                if m_resp.drag_stopped() {
+                    self.tracks.end_header_drag();
+                }
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
                     Align2::LEFT_CENTER,
@@ -2984,6 +3013,34 @@ impl OrbitLiveApp {
                 if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
+                }
+                let p_drag = self.tracks.is_dragging_process(pid);
+                let p_chev = Rect::from_center_size(
+                    Pos2::new(r.left() + 16.0, r.center().y),
+                    Vec2::splat(14.0),
+                );
+                if !tight {
+                    paint_handle_dots(
+                        ui.painter(),
+                        Rect::from_min_size(Pos2::new(r.left() + 2.0, r.top()), Vec2::new(12.0, r.height())),
+                        p_drag,
+                    );
+                }
+                let p_resp = ui.interact(r, ui.id().with(("pdrag", pid, 0u32)), Sense::drag());
+                if p_resp.drag_started() {
+                    if let Some(p) = p_resp.interact_pointer_pos() {
+                        if !p_chev.contains(p) {
+                            self.tracks.begin_process_drag(pid, p.y - head.top());
+                        }
+                    }
+                }
+                if p_resp.dragged() {
+                    if let Some(p) = p_resp.interact_pointer_pos() {
+                        self.tracks.update_header_drag(p.y - head.top());
+                    }
+                }
+                if p_resp.drag_stopped() {
+                    self.tracks.end_header_drag();
                 }
                 let name = self.process_display_name(pid);
                 let proc_label = if tight {

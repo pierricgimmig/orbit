@@ -46,6 +46,7 @@ pub struct TrackStrip {
     hidden: HashSet<ThreadId>,
     y: HashMap<RowId, f32>,
     drag: Option<Drag>,
+    header_drag: Option<HeaderDrag>,
     cached_rows: Vec<TrackRow>,
     cached_layout: Vec<(LaneKey, f32)>,
     cached_total_h: f32,
@@ -55,6 +56,8 @@ pub struct TrackStrip {
     /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
     pub process_sort: HashMap<u32, i32>,
     pub thread_sort: HashMap<(u32, u32), i32>,
+    /// User order for whole machine trees, overriding MachineId::sort_key.
+    pub machine_sort: HashMap<MachineId, i32>,
 }
 
 struct Drag {
@@ -62,6 +65,20 @@ struct Drag {
     grab_off: f32,
     pointer_y: f32,
     dest: usize,
+}
+
+/// Header rows (processes, machines) reorder by live shuffle rather than the
+/// thread drag's float-and-hole affordance: as the pointer crosses a sibling
+/// header the order is rewritten in place, so no separate ghost row is drawn.
+#[derive(Clone, Copy)]
+enum HeaderItem {
+    Process(u32),
+    Machine(MachineId),
+}
+
+struct HeaderDrag {
+    item: HeaderItem,
+    pointer_y: f32,
 }
 
 impl Default for TrackStrip {
@@ -74,6 +91,7 @@ impl Default for TrackStrip {
             hidden: HashSet::new(),
             y: HashMap::new(),
             drag: None,
+            header_drag: None,
             cached_rows: Vec::new(),
             cached_layout: Vec::new(),
             cached_total_h: 0.0,
@@ -82,6 +100,7 @@ impl Default for TrackStrip {
             layout_gen: 0,
             process_sort: HashMap::new(),
             thread_sort: HashMap::new(),
+            machine_sort: HashMap::new(),
         }
     }
 }
@@ -117,7 +136,7 @@ impl TrackStrip {
         pids.sort_unstable();
         pids.sort_by_key(|p| {
             (
-                MachineId::from_pid(*p).sort_key(),
+                machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
                 process_rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
@@ -125,7 +144,7 @@ impl TrackStrip {
         });
         threads.sort_by_key(|t| {
             (
-                MachineId::from_pid(t.pid).sort_key(),
+                machine_rank(&self.machine_sort, MachineId::from_pid(t.pid)),
                 process_rank(t.pid),
                 self.process_sort.get(&t.pid).copied().unwrap_or(0),
                 t.pid,
@@ -144,7 +163,7 @@ impl TrackStrip {
         }
         self.process_order.sort_by_key(|p| {
             (
-                MachineId::from_pid(*p).sort_key(),
+                machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
                 process_rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
@@ -212,6 +231,93 @@ impl TrackStrip {
 
     pub fn dragging_thread(&self) -> Option<ThreadId> {
         self.drag.as_ref().map(|d| d.thread)
+    }
+
+    /// True while any row -- thread or header -- is being dragged, so the app
+    /// keeps repainting and routing pointer moves through the drag handlers.
+    pub fn any_dragging(&self) -> bool {
+        self.drag.is_some() || self.header_drag.is_some()
+    }
+
+    pub fn is_dragging_process(&self, pid: u32) -> bool {
+        matches!(
+            self.header_drag.as_ref().map(|d| d.item),
+            Some(HeaderItem::Process(p)) if p == pid
+        )
+    }
+
+    pub fn is_dragging_machine(&self, m: MachineId) -> bool {
+        matches!(
+            self.header_drag.as_ref().map(|d| d.item),
+            Some(HeaderItem::Machine(mm)) if mm == m
+        )
+    }
+
+    pub fn begin_process_drag(&mut self, pid: u32, pointer_y: f32) {
+        self.header_drag = Some(HeaderDrag {
+            item: HeaderItem::Process(pid),
+            pointer_y,
+        });
+    }
+
+    pub fn begin_machine_drag(&mut self, m: MachineId, pointer_y: f32) {
+        self.header_drag = Some(HeaderDrag {
+            item: HeaderItem::Machine(m),
+            pointer_y,
+        });
+    }
+
+    /// Reorder live from the pointer's current rail Y. `dest` is the count of
+    /// sibling headers whose midpoint sits above the pointer, which is exactly
+    /// the insertion slot `reorder_*` wants once the dragged item is removed.
+    pub fn update_header_drag(&mut self, pointer_y: f32) {
+        let Some(hd) = self.header_drag.as_mut() else {
+            return;
+        };
+        hd.pointer_y = pointer_y;
+        let item = hd.item;
+        let s = self.scale.max(0.01);
+        match item {
+            HeaderItem::Process(pid) => {
+                let machine = MachineId::from_pid(pid);
+                let tier = process_rank(pid);
+                let dest = self
+                    .process_order
+                    .iter()
+                    .copied()
+                    .filter(|p| {
+                        *p != pid
+                            && MachineId::from_pid(*p) == machine
+                            && process_rank(*p) == tier
+                    })
+                    .filter(|p| {
+                        self.y
+                            .get(&RowId::Process(*p))
+                            .map(|&y| y + PROCESS_H * s * 0.5 < pointer_y)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                self.reorder_process(pid, dest);
+            }
+            HeaderItem::Machine(m) => {
+                let dest = self
+                    .machines_present()
+                    .into_iter()
+                    .filter(|mm| *mm != m)
+                    .filter(|mm| {
+                        self.y
+                            .get(&RowId::Machine(*mm))
+                            .map(|&y| y + MACHINE_H * s * 0.5 < pointer_y)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                self.reorder_machine(m, dest);
+            }
+        }
+    }
+
+    pub fn end_header_drag(&mut self) {
+        self.header_drag = None;
     }
 
     pub fn row_on_thread(row: RowId, t: ThreadId) -> bool {
@@ -307,6 +413,10 @@ impl TrackStrip {
         h
     }
 
+    fn machine_rank(&self, m: MachineId) -> i64 {
+        machine_rank(&self.machine_sort, m)
+    }
+
     fn machines_present(&self) -> Vec<MachineId> {
         let mut out = Vec::new();
         for p in &self.process_order {
@@ -315,7 +425,7 @@ impl TrackStrip {
                 out.push(m);
             }
         }
-        out.sort_by_key(|m| m.sort_key());
+        out.sort_by_key(|m| self.machine_rank(*m));
         out
     }
 
@@ -601,6 +711,53 @@ impl TrackStrip {
         self.cached_insert_y = None;
     }
 
+    /// Move `pid` to slot `dest` among the processes sharing its machine, then
+    /// renumber `process_sort` densely so the order survives the next rebuild
+    /// (which re-sorts `process_order` by that map). Reorder acts within a
+    /// `process_rank` tier: the viewer and the service stay pinned to the top
+    /// of their machine, and the general processes reorder among themselves.
+    pub fn reorder_process(&mut self, pid: u32, dest: usize) {
+        let machine = MachineId::from_pid(pid);
+        let mut same: Vec<u32> = self
+            .process_order
+            .iter()
+            .copied()
+            .filter(|p| MachineId::from_pid(*p) == machine && process_rank(*p) == process_rank(pid))
+            .collect();
+        let Some(cur) = same.iter().position(|p| *p == pid) else {
+            return;
+        };
+        same.remove(cur);
+        let dest = dest.min(same.len());
+        same.insert(dest, pid);
+        for (i, p) in same.iter().enumerate() {
+            self.process_sort.insert(*p, i as i32);
+        }
+        self.process_order.sort_by_key(|p| {
+            (
+                machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
+                process_rank(*p),
+                self.process_sort.get(p).copied().unwrap_or(0),
+                *p,
+            )
+        });
+    }
+
+    /// Move `machine` to slot `dest` among the machines on screen, then
+    /// renumber `machine_sort` densely so the order sticks across rebuilds.
+    pub fn reorder_machine(&mut self, machine: MachineId, dest: usize) {
+        let mut order = self.machines_present();
+        let Some(cur) = order.iter().position(|m| *m == machine) else {
+            return;
+        };
+        order.remove(cur);
+        let dest = dest.min(order.len());
+        order.insert(dest, machine);
+        for (i, m) in order.iter().enumerate() {
+            self.machine_sort.insert(*m, i as i32);
+        }
+    }
+
     pub fn total_height(&self) -> f32 {
         self.cached_total_h
     }
@@ -841,6 +998,17 @@ fn scheduler_cores(index: &TrackIndex) -> Vec<LaneKey> {
     (0..n).map(|c| LaneKey::scheduler(c as u8)).collect()
 }
 
+/// A machine's sort position: the user's order if it has one, else the
+/// built-in Local-before-Remote. i64 so an explicit 0..N always sorts ahead
+/// of the default key. Free function so a closure sorting one `self` field can
+/// capture only `machine_sort`, not all of `self`.
+fn machine_rank(machine_sort: &HashMap<MachineId, i32>, m: MachineId) -> i64 {
+    machine_sort
+        .get(&m)
+        .map(|&r| r as i64)
+        .unwrap_or(1_000 + m.sort_key() as i64)
+}
+
 fn process_rank(pid: u32) -> u8 {
     if pid == orbit_live_event::dev::VIEWER_PID {
         0
@@ -1046,6 +1214,68 @@ mod tests {
         strip.end_drag();
         assert_eq!(strip.thread_order[0], second);
         assert_eq!(strip.thread_order[1], first);
+    }
+
+    #[test]
+    fn reorder_process_moves_and_persists() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(10, 1, 1));
+        idx.insert(scope(11, 1, 2));
+        idx.insert(scope(12, 1, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order, vec![10, 11, 12]);
+        // Move the last process to the front.
+        strip.reorder_process(12, 0);
+        assert_eq!(strip.process_order, vec![12, 10, 11]);
+        // The order survives a rebuild (process_order is re-sorted by the map).
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order, vec![12, 10, 11]);
+    }
+
+    #[test]
+    fn reorder_process_stays_within_rank_tier() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(orbit_live_event::dev::VIEWER_PID, 1, 1));
+        idx.insert(scope(10, 1, 2));
+        idx.insert(scope(11, 1, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order[0], orbit_live_event::dev::VIEWER_PID);
+        // Asking a general process to slot 0 cannot displace the pinned viewer.
+        strip.reorder_process(11, 0);
+        assert_eq!(
+            strip.process_order[0],
+            orbit_live_event::dev::VIEWER_PID,
+            "viewer stays pinned above general processes"
+        );
+        assert_eq!(strip.process_order[1], 11);
+        assert_eq!(strip.process_order[2], 10);
+    }
+
+    #[test]
+    fn reorder_machine_moves_and_persists() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(10, 1, 1));
+        idx.insert(scope(orbit_live_event::dev::REMOTE_DEMO_PID, 1, 2));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert_eq!(
+            strip.machines_present(),
+            vec![MachineId::Local, MachineId::Remote]
+        );
+        strip.reorder_machine(MachineId::Remote, 0);
+        assert_eq!(
+            strip.machines_present(),
+            vec![MachineId::Remote, MachineId::Local]
+        );
+        // Persists across rebuild, and the remote process now sorts first.
+        strip.sync(&idx, None);
+        assert_eq!(
+            strip.machines_present(),
+            vec![MachineId::Remote, MachineId::Local]
+        );
+        assert_eq!(strip.process_order[0], orbit_live_event::dev::REMOTE_DEMO_PID);
     }
 
     #[test]
