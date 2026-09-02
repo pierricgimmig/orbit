@@ -2,21 +2,27 @@ Manual instrumentation: per-core scope rings
 Measured 2026-09-02T01:51:33Z on Linux 7.0.0-30-generic, 32 threads.
 Commit: 29b0c754d
 
-Write path, taken apart (release build, single thread, one ring, no consumer)
+Write path, taken apart (release build, single thread, release build)
 Three runs, medians; from tests/cost.rs.
 
-  push, ring only            9.1 ns    claim, announce, 48-byte payload, publish
-  push + clock read         15.7 ns    what an instrumented scope costs
-  clock read alone           9.5 ns    60% of a real scope
+  owned ring, no clock       6.3 ns    load cursor, store payload, publish
+  owned ring + clock        14.1 ns    what an instrumented scope costs
+  shared ring, no clock      9.8 ns    the same, with an atomic claim
+  shared ring + clock       16.2 ns
+  clock read alone           9.3 ns    66% of a real scope
   atomic fetch_add           4.4 ns
-  plain increment            0.2 ns    what rseq's per-CPU exclusivity buys
-  atomic premium             4.2 ns    27% of a real scope
+  plain increment            0.2 ns
+  atomic premium             4.3 ns    what the owned path avoids
+
+  The owned path is the portable one: a thread takes a ring for its lifetime,
+  so there is one producer and the cursor needs a load and a store rather than
+  a read-modify-write. It saves 3.5 ns of ring cost -- close to the whole
+  4.3 ns atomic premium that rseq would have removed, and without a line of
+  assembly or a dependency on Linux.
 
   Growing the record from 32 to 48 bytes to carry inline names cost 2.1 ns in
-  isolation (6.98 -> 9.1) and nothing at all in the real path: push + clock
-  was 15.93 ns before and 15.7 ns after. The extra stores hide under the
-  clock read's latency on an out-of-order core, which is the argument for
-  putting the text inline rather than in a side table.
+  isolation and nothing in the real path: the extra stores hide under the
+  clock read's latency on an out-of-order core.
 
   An earlier run reported "98 million events/s, 10.2 ns each" and attributed
   about half of it to the clock. That was wrong: the benchmark pushed a
@@ -30,16 +36,20 @@ Layout
   slot                     64 bytes (one cache line: seq + pending_ns + event,
                            exactly, with no padding left)
   ring control block       64 bytes (one cache line, so neighbours never share)
-  rings                    one per core, capped at 128
+  rings                    one per recording thread, capped at 128;
+                           ring 0 is reserved as the shared overflow
   default slots per ring   16384 (1 MiB per ring)
 
-Write path instruction budget, per event:
-  1 x relaxed fetch_add    claim a slot
-  1 x release store        announce the timestamp, so a consumer can bound
-                           what is still coming if this producer stalls
+Write path instruction budget, per event, on an owned ring:
+  1 x relaxed load         read the cursor (nobody else writes it)
   6 x plain 64-bit store   the payload
-  1 x release store        publish (a plain mov on x86-64; one stlr on aarch64)
-  no lock, no CAS loop, no allocation, no syscall
+  1 x release store        commit the slot
+  1 x release store        publish the cursor, after the commit, so a consumer
+                           never sees an unfinished slot
+  no atomic read-modify-write, no lock, no allocation, no syscall
+
+  On the shared overflow ring, add one relaxed fetch_add to claim the slot and
+  one release store to announce the timestamp.
 
 Tests
   test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

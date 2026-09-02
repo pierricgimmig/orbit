@@ -62,11 +62,23 @@ const _: () = assert!(std::mem::size_of::<Header>() == CACHE_LINE);
 /// Per-ring control block, one cache line so neighbouring rings never share.
 #[repr(C, align(64))]
 pub struct RingHeader {
-    /// Monotonically increasing claim counter. Producers bump it; it never
-    /// wraps back, so a slot index is `claim % slots_per_ring` and the claim
-    /// number itself doubles as the sequence stamp.
+    /// Monotonically increasing claim counter. It never wraps back, so a slot
+    /// index is `claim % slots_per_ring` and the claim number itself doubles
+    /// as the sequence stamp.
+    ///
+    /// What publishes it differs by ownership. An owned ring stores it
+    /// *after* committing the slot, so the consumer only ever sees finished
+    /// events. The shared ring bumps it *before* writing, because a claim has
+    /// to be handed out before the payload can be written into it.
     pub write_cursor: AtomicU64,
-    pub _pad: [u64; 7],
+    /// The thread that owns this ring, or 0 for the shared overflow ring.
+    ///
+    /// Ownership is what makes the fast path possible: one producer means the
+    /// cursor needs no read-modify-write, and it means the ring's timestamps
+    /// are strictly increasing, which is what lets the consumer stop
+    /// second-guessing the order it finds them in.
+    pub owner_tid: AtomicU64,
+    pub _pad: [u64; 6],
 }
 
 const _: () = assert!(std::mem::size_of::<RingHeader>() == CACHE_LINE);
@@ -197,8 +209,79 @@ impl Rings {
         unsafe { &*self.base.add(offset).cast::<Slot>() }
     }
 
-    /// Appends one event. Never blocks and never fails; when the ring is full
-    /// the oldest unread slot is overwritten, which the consumer detects.
+    /// Takes ownership of a free ring for `tid`, if one is left.
+    ///
+    /// Called once per thread, not once per event, which is the whole point:
+    /// the only atomic read-modify-write in the design happens at thread
+    /// registration and is amortised to nothing.
+    pub fn claim_ring(&self, tid: u64) -> Option<usize> {
+        self.claim_ring_above(0, tid)
+    }
+
+    /// As `claim_ring`, skipping the first `reserved` rings.
+    pub fn claim_ring_above(&self, reserved: usize, tid: u64) -> Option<usize> {
+        for ring in (reserved + 1)..self.ring_count {
+            let owner = &self.ring_header(ring).owner_tid;
+            if owner
+                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Some(ring);
+            }
+        }
+        None
+    }
+
+    /// Gives a ring back when its thread exits, so a later thread can take it.
+    pub fn release_ring(&self, ring: usize) {
+        if ring < self.ring_count {
+            self.ring_header(ring).owner_tid.store(0, Ordering::Release);
+        }
+    }
+
+    pub fn owner_of(&self, ring: usize) -> u64 {
+        self.ring_header(ring).owner_tid.load(Ordering::Acquire)
+    }
+
+    /// Whether this ring has a single owning producer.
+    pub fn is_owned(&self, ring: usize) -> bool {
+        self.owner_of(ring) != 0
+    }
+
+    /// Appends one event to a ring this thread owns.
+    ///
+    /// The fast path, and the reason ownership is worth arranging. With one
+    /// producer the cursor needs no atomic bump: read it, write the slot,
+    /// then publish. Publishing *after* the commit means a consumer never
+    /// observes a half-written slot at all -- there is no in-flight state on
+    /// an owned ring, so nothing has to be held back for one.
+    ///
+    /// Two release stores and six plain ones. On x86-64 every one of them is
+    /// an ordinary `mov`.
+    ///
+    /// # Correctness
+    /// Only the owning thread may call this for `ring`. Two callers would
+    /// read the same cursor and write the same slot.
+    pub fn push_owned(&self, ring: usize, event: ScopeEvent) {
+        let ring = ring.min(self.ring_count.saturating_sub(1));
+        let header = self.ring_header(ring);
+        // Relaxed: nobody else writes this, so there is nothing to race with.
+        let claim = header.write_cursor.load(Ordering::Relaxed);
+        let slot = self.slot(ring, claim);
+        // SAFETY: this thread owns the ring, so it alone writes this slot.
+        unsafe {
+            std::ptr::write_volatile(slot.event.get(), event);
+        }
+        slot.seq.store(claim + 1, Ordering::Release);
+        // Last, so everything below the cursor is finished by construction.
+        header.write_cursor.store(claim + 1, Ordering::Release);
+    }
+
+    /// Appends one event to the shared ring, which any thread may write.
+    ///
+    /// Used when every ring is already owned. Slower by one atomic
+    /// read-modify-write, and the only place the consumer has to reason about
+    /// a producer caught mid-write.
     ///
     /// The whole write path: one relaxed bump, plain stores, one release
     /// store.

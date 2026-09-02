@@ -15,11 +15,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const EVENTS: u64 = 4_000_000;
 
-fn region(slots: usize) -> (Vec<u8>, usize) {
-    let mut bytes = vec![0u8; ring::layout_size(1, slots) + CACHE_LINE];
+fn region_n(rings: usize, slots: usize) -> (Vec<u8>, usize) {
+    let mut bytes = vec![0u8; ring::layout_size(rings, slots) + CACHE_LINE];
     let offset = bytes.as_ptr().align_offset(CACHE_LINE);
     // SAFETY: the allocation has room for the layout past the alignment.
-    unsafe { ring::init_region(bytes.as_mut_ptr().add(offset), 1, slots, 1) };
+    unsafe { ring::init_region(bytes.as_mut_ptr().add(offset), rings, slots, 1) };
     (bytes, offset)
 }
 
@@ -32,9 +32,9 @@ fn nanos_each(work: impl Fn()) -> f64 {
 #[test]
 fn what_each_part_of_the_write_path_costs() {
     let slots = 1 << 16;
-    let (bytes, offset) = region(slots);
+    let (bytes, offset) = region_n(2, slots);
     // SAFETY: initialised above at these dimensions.
-    let rings = unsafe { Rings::from_raw(bytes.as_ptr().add(offset) as *mut u8, 1, slots) };
+    let rings = unsafe { Rings::from_raw(bytes.as_ptr().add(offset) as *mut u8, 2, slots) };
     let event = ScopeEvent { timestamp_ns: 1, kind: kind::INSTANT, ..Default::default() };
     for _ in 0..slots {
         rings.push(0, event); // warm the mapping
@@ -43,6 +43,21 @@ fn what_each_part_of_the_write_path_costs() {
     let push_only = nanos_each(|| {
         for _ in 0..EVENTS {
             rings.push(0, event);
+        }
+    });
+
+    // The portable fast path: one thread owning one ring, so the cursor needs
+    // a load and a store rather than a read-modify-write.
+    let mine = orbit_scope_ring::ThreadRing::acquire(&rings, 1);
+    assert!(mine.is_owned(), "a free ring should have been available");
+    let push_owned = nanos_each(|| {
+        for _ in 0..EVENTS {
+            mine.push(&rings, event);
+        }
+    });
+    let owned_with_clock = nanos_each(|| {
+        for _ in 0..EVENTS {
+            mine.push(&rings, ScopeEvent { timestamp_ns: now_monotonic_ns(), ..event });
         }
     });
 
@@ -79,8 +94,10 @@ fn what_each_part_of_the_write_path_costs() {
     });
     std::hint::black_box(plain.get());
 
-    println!("\n  push (ring only)        {push_only:6.2} ns");
-    println!("  push + clock read       {push_with_clock:6.2} ns   <- what a scope actually costs");
+    println!("\n  shared ring, no clock   {push_only:6.2} ns");
+    println!("  owned ring, no clock    {push_owned:6.2} ns   <- portable fast path");
+    println!("  owned ring + clock      {owned_with_clock:6.2} ns   <- what a scope costs now");
+    println!("  shared ring + clock     {push_with_clock:6.2} ns");
     println!("  clock read alone        {clock_only:6.2} ns");
     println!("  atomic fetch_add        {atomic_claim:6.2} ns");
     println!("  plain increment         {plain_claim:6.2} ns   <- what rseq would buy");

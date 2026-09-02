@@ -78,6 +78,13 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
             read = write - capacity;
         }
 
+        // An owned ring publishes its cursor *after* committing each slot, so
+        // everything below the cursor is finished and there is no in-flight
+        // state to reason about. Its events are also strictly increasing in
+        // time, because one thread wrote them one after another -- so no
+        // reordering pass, and its frontier is simply the moment we looked.
+        let owned = rings.is_owned(ring);
+
         let mut events = Vec::new();
         let mut in_flight: Option<Option<u64>> = None;
         while read < write {
@@ -100,12 +107,20 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
         }
         cursors.read[ring] = read;
 
-        // Within a ring, two producers can read the clock in one order and
-        // claim slots in the other, so the slice is nearly-ordered rather
-        // than ordered. An insertion pass is linear on that shape.
-        insertion_sort_by_timestamp(&mut events);
+        if !owned {
+            // On the shared ring two producers can read the clock in one
+            // order and claim slots in the other, so the slice is
+            // nearly-ordered rather than ordered. An insertion pass is linear
+            // on that shape. An owned ring is already sorted and this would
+            // be a walk over it for nothing.
+            insertion_sort_by_timestamp(&mut events);
+        }
 
         let frontier_ns = match in_flight {
+            // Cannot happen on an owned ring, whose cursor trails its
+            // commits; keeping the arm costs nothing and means a mislabelled
+            // ring degrades to correct-but-slow rather than to wrong.
+            _ if owned && in_flight.is_none() => now_ns,
             // A producer is mid-write and has announced its timestamp: that
             // is an exact lower bound on what is still to come, so the
             // stream may advance right up to it.

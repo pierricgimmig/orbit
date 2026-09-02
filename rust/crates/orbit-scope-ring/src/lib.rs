@@ -22,12 +22,14 @@
 
 pub mod event;
 pub mod merge;
+pub mod producer;
 pub mod ring;
 pub mod shm;
 pub mod text;
 
 pub use event::{flags, kind, ScopeEvent, EVENT_SIZE, INLINE_TEXT};
 pub use merge::{drain, Cursors, Drain, Merger, RingSlice};
+pub use producer::{ThreadRing, SHARED_RING};
 pub use ring::{ring_count_for, ring_for_cpu, Rings, MAX_RINGS};
 pub use shm::{ScopeRingReader, ScopeRingWriter};
 pub use text::{split_name, Completeness, TextAssembler};
