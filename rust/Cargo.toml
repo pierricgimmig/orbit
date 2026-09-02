@@ -12,6 +12,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/orbit-api",
+    "crates/orbit-test-rust",
     "crates/orbit-collector",
     "crates/orbit-maps",
     "crates/orbit-object",

@@ -36,6 +36,10 @@ pub mod flags {
     /// the last record of the chain, so the reader reports the name as
     /// truncated rather than passing off a prefix as the whole thing.
     pub const CUT: u8 = 1 << 1;
+    /// A scope that may be stopped from any thread. Drawn on its own track
+    /// rather than nested in the starting thread's, and not counted towards
+    /// that thread's depth.
+    pub const ASYNC: u8 = 1 << 2;
 }
 
 /// One event, exactly 32 bytes and `repr(C)`.

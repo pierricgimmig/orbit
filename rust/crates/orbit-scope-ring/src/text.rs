@@ -114,6 +114,12 @@ impl TextAssembler {
     /// Offers one event. Returns the finished name when this event completes
     /// a chain, along with whether anything was lost.
     pub fn accept(&mut self, event: &ScopeEvent) -> Option<(String, Completeness)> {
+        // A link's text is the target handle, not a name. Reading it as one
+        // produced eight bytes of binary per link in the first dump of a real
+        // program, so this is not hypothetical.
+        if event.kind == kind::LINK {
+            return None;
+        }
         let key = (event.tid, event.scope_id);
         if event.kind == kind::TEXT {
             let partial = self.open.entry(key).or_default();
@@ -350,5 +356,15 @@ mod tests {
         assert_eq!(text, name);
         assert_eq!(completeness, Completeness::Complete, "at the limit is not past it");
         assert_eq!(chunks, 255);
+    }
+
+    #[test]
+    fn a_links_target_handle_is_not_mistaken_for_a_name() {
+        let mut link = head(1);
+        link.kind = kind::LINK;
+        link.text_len = 8;
+        link.text[..8].copy_from_slice(&0x4E5C_0000_0000_0001u64.to_le_bytes());
+        let mut assembler = TextAssembler::new();
+        assert_eq!(assembler.accept(&link), None, "handle bytes are not text");
     }
 }
