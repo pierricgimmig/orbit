@@ -472,13 +472,19 @@ pub struct TimelineGpu {
     inst_pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     blit_layout: wgpu::BindGroupLayout,
-    blit_uni: wgpu::Buffer,
-    inst_uni: wgpu::Buffer,
-    inst_bind: wgpu::BindGroup,
     base: GpuDrawLayer,
     overlay: GpuDrawLayer,
 }
 
+/// One layer's draw state **and its own view uniforms**.
+///
+/// The uniforms must not be shared. `egui_wgpu` runs `prepare` for every
+/// callback in the frame before it runs any `paint`, so a single buffer holds
+/// whatever the *last* callback wrote by the time the first one draws. Lifting
+/// a track adds the overlay callback, whose view is the whole body rect; the
+/// base blit then drew the pixel-column raster stretched over the full body
+/// instead of into its placed extent, which put every lane under the wrong
+/// header until the drag ended.
 struct GpuDrawLayer {
     instance_buf: Option<wgpu::Buffer>,
     instance_cap: u64,
@@ -488,10 +494,33 @@ struct GpuDrawLayer {
     column_w: u32,
     column_h: u32,
     column_bind: Option<wgpu::BindGroup>,
+    blit_uni: wgpu::Buffer,
+    inst_uni: wgpu::Buffer,
+    inst_bind: wgpu::BindGroup,
 }
 
 impl GpuDrawLayer {
-    fn empty() -> Self {
+    fn new(device: &wgpu::Device, inst_layout: &wgpu::BindGroupLayout, label: &str) -> Self {
+        let blit_uni = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&format!("orbit-blit-uni-{label}")),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inst_uni = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&format!("orbit-inst-uni-{label}")),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inst_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("orbit-inst-bind-{label}")),
+            layout: inst_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: inst_uni.as_entire_binding(),
+            }],
+        });
         Self {
             instance_buf: None,
             instance_cap: 0,
@@ -500,7 +529,21 @@ impl GpuDrawLayer {
             column_w: 0,
             column_h: 0,
             column_bind: None,
+            blit_uni,
+            inst_uni,
+            inst_bind,
         }
+    }
+
+    /// Drop what this layer draws, keeping its uniform buffers and bind group.
+    fn reset(&mut self) {
+        self.instance_buf = None;
+        self.instance_cap = 0;
+        self.instance_count = 0;
+        self.column_tex = None;
+        self.column_w = 0;
+        self.column_h = 0;
+        self.column_bind = None;
     }
 }
 
@@ -645,37 +688,13 @@ impl TimelineGpu {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        let blit_uni = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("orbit-blit-uni"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let inst_uni = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("orbit-inst-uni"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let inst_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("orbit-inst-bind"),
-            layout: &inst_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: inst_uni.as_entire_binding(),
-            }],
-        });
-
         Self {
             blit_pipeline,
             inst_pipeline,
             sampler,
             blit_layout,
-            blit_uni,
-            inst_uni,
-            inst_bind,
-            base: GpuDrawLayer::empty(),
-            overlay: GpuDrawLayer::empty(),
+            base: GpuDrawLayer::new(device, &inst_layout, "base"),
+            overlay: GpuDrawLayer::new(device, &inst_layout, "overlay"),
         }
     }
 
@@ -694,7 +713,7 @@ impl TimelineGpu {
     }
 
     fn clear_overlay(&mut self) {
-        self.overlay = GpuDrawLayer::empty();
+        self.overlay.reset();
     }
 
     fn upload(
@@ -705,21 +724,24 @@ impl TimelineGpu {
         view: ViewUniforms,
         layer: TimelineLayer,
     ) {
-        queue.write_buffer(
-            &self.blit_uni,
-            0,
-            &pack_blit_uniforms(view.viewport, view.dest),
-        );
-        queue.write_buffer(
-            &self.inst_uni,
-            0,
-            &pack_inst_uniforms(view.viewport, view.origin, view.time),
-        );
+        {
+            let slot = self.layer_mut(layer);
+            queue.write_buffer(
+                &slot.blit_uni,
+                0,
+                &pack_blit_uniforms(view.viewport, view.dest),
+            );
+            queue.write_buffer(
+                &slot.inst_uni,
+                0,
+                &pack_inst_uniforms(view.viewport, view.origin, view.time),
+            );
+        }
 
         match payload {
             TimelinePayload::Keep => {}
             TimelinePayload::Empty => {
-                *self.layer_mut(layer) = GpuDrawLayer::empty();
+                self.layer_mut(layer).reset();
             }
             TimelinePayload::Pixel {
                 rgba,
@@ -831,7 +853,7 @@ impl TimelineGpu {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.blit_uni.as_entire_binding(),
+                    resource: self.layer(layer).blit_uni.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -899,7 +921,7 @@ impl TimelineGpu {
         if let Some(buf) = &slot.instance_buf {
             if slot.instance_count > 0 {
                 pass.set_pipeline(&self.inst_pipeline);
-                pass.set_bind_group(0, &self.inst_bind, &[]);
+                pass.set_bind_group(0, &slot.inst_bind, &[]);
                 pass.set_vertex_buffer(0, buf.slice(..));
                 pass.draw(0..6, 0..slot.instance_count);
             }

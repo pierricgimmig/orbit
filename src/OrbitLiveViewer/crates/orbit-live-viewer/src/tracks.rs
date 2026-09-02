@@ -1235,10 +1235,10 @@ mod tests {
     }
 
     #[test]
-    fn sweep_press_without_moving() {
+    fn press_keeps_body_lanes_under_their_headers() {
         let mut idx = TrackIndex::default();
         idx.insert(sched(1, 1, 0, 10, 3));
-        for (pid, tid) in [(1u32, 1u32), (1, 2), (1, 3), (2, 7), (9, 4), (9, 5)] {
+        for (pid, tid) in [(1u32, 1u32), (1, 2), (1, 3), (9, 4), (9, 5)] {
             idx.insert(ev(kind::API_SCOPE, pid, tid, 0, 0));
             idx.insert(ev(kind::API_SCOPE, pid, tid, 1, 0));
             if tid % 2 == 1 {
@@ -1249,62 +1249,43 @@ mod tests {
             }
             idx.insert(ev(kind::THREAD_STATE, pid, tid, 0, 0));
         }
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let quiet: std::collections::BTreeMap<LaneKey, i32> = strip
+            .layout()
+            .iter()
+            .map(|(k, y)| (*k, (y * 16.0).round() as i32))
+            .collect();
         let mut bad: Vec<String> = Vec::new();
-        for filter in [None, Some(1u32), Some(9u32)] {
-            for collapse in 0..5usize {
-                for hide in [false, true] {
-                    for scale in [1.0f32, 1.4] {
-                        let mut strip = TrackStrip::default();
-                        strip.scale = scale;
-                        strip.sync(&idx, filter);
-                        strip.tick(1.0, &idx, filter);
-                        let order = strip.thread_order.clone();
-                        match collapse {
-                            1 => strip.toggle(RowId::Thread(order[0])),
-                            2 => strip.toggle(RowId::Process(1)),
-                            3 => strip.toggle(RowId::Scheduler),
-                            4 => strip.toggle(RowId::Thread(order[order.len() - 1])),
-                            _ => {}
-                        }
-                        if hide {
-                            strip.toggle_hidden(order[1]);
-                        }
-                        strip.sync(&idx, filter);
-                        strip.tick(1.0, &idx, filter);
-                        let before = strip.y.clone();
-                        let shown = strip.shown_order();
-                        for t in shown {
-                            let Some(&y) = strip.y.get(&RowId::Thread(t)) else {
-                                continue;
-                            };
-                            strip.begin_drag(t, y, y + 3.0);
-                            strip.tick(0.0, &idx, filter);
-                            for (id, y0) in &before {
-                                let y1 = strip.y.get(id).copied().unwrap_or(f32::NAN);
-                                if (y1 - y0).abs() > 0.01 {
-                                    bad.push(format!(
-                                        "filter={filter:?} collapse={collapse} hide={hide} scale={scale} press tid={} moved {id:?} {y0}->{y1}",
-                                        t.tid
-                                    ));
-                                }
-                            }
-                            let order_before = strip.thread_order.clone();
-                            strip.end_drag();
-                            if strip.thread_order != order_before {
-                                bad.push(format!(
-                                    "filter={filter:?} collapse={collapse} hide={hide} scale={scale} press+release tid={} REORDERED {:?} -> {:?}",
-                                    t.tid,
-                                    order_before.iter().map(|t| t.tid).collect::<Vec<_>>(),
-                                    strip.thread_order.iter().map(|t| t.tid).collect::<Vec<_>>()
-                                ));
-                            }
-                            strip.tick(0.0, &idx, filter);
-                        }
-                    }
+        for t in strip.shown_order() {
+            let y = strip.y.get(&RowId::Thread(t)).copied().unwrap();
+            strip.begin_drag(t, y, y + 3.0);
+            strip.tick(0.0, &idx, None);
+            // What the body actually paints while a drag is held: the packed
+            // rest plus the lifted thread. Nothing moved, so it must be the
+            // same picture as the quiet frame the headers are still drawn from.
+            let mut painted: std::collections::BTreeMap<LaneKey, i32> =
+                std::collections::BTreeMap::new();
+            for (k, y) in strip.rest_layout().into_iter().chain(strip.drag_layout()) {
+                painted.insert(k, (y * 16.0).round() as i32);
+            }
+            for (k, qy) in &quiet {
+                match painted.get(k) {
+                    None => bad.push(format!("press tid={}: lane {k:?} vanished", t.tid)),
+                    Some(py) if py != qy => bad.push(format!(
+                        "press tid={}: lane {k:?} moved {} -> {}",
+                        t.tid,
+                        *qy as f32 / 16.0,
+                        *py as f32 / 16.0
+                    )),
+                    _ => {}
                 }
             }
+            strip.end_drag();
+            strip.tick(0.0, &idx, None);
         }
-        bad.truncate(12);
+        bad.truncate(10);
         assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 

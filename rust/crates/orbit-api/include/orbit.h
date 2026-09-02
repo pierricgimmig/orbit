@@ -2,7 +2,7 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-/* Orbit manual instrumentation. Seven functions, one C ABI, no macros in it.
+/* Orbit manual instrumentation. Eight functions, one C ABI, no macros in it.
  *
  * Link this into the program you want to profile and call orbit_init() once.
  * That creates the program's shared-memory segment; a running orbit-service
@@ -38,8 +38,11 @@ int orbit_init(void);
  * segment the service sweeps once the pid is gone. */
 void orbit_shutdown(void);
 
-/* A handle to an open scope. Zero means "no scope" -- what orbit_start
- * returns when profiling is off -- and orbit_stop(0) does nothing. */
+/* A handle to an event this process recorded: a scope from orbit_start, or an
+ * instant. It is an identity, not a resource -- nothing needs to be freed --
+ * and it is what orbit_stop and orbit_link take, from any thread. Zero means
+ * "no event", which is what every call returns while profiling is off, and
+ * every function accepts zero and does nothing. */
 typedef uint64_t orbit_scope;
 
 /* Begins a scope on the calling thread. Nesting is worked out by the reader
@@ -57,8 +60,20 @@ orbit_scope orbit_start_async(const char* name, size_t name_len);
  * everything needed to match it, so this may be called from any thread. */
 void orbit_stop(orbit_scope scope);
 
-/* A point in time with a name and no duration. */
-void orbit_instant(const char* name, size_t name_len);
+/* A point in time with a name and no duration: a frame boundary, "level
+ * loaded", a signal fired. Drawn as a tick, not a bar. Returns a handle so an
+ * instant can be either end of a link. */
+orbit_scope orbit_instant(const char* name, size_t name_len);
+
+/* Draws an arrow from one event to another, across threads if need be.
+ *
+ * Both handles must already exist, which they will in every pattern this is
+ * for: a job enqueued on one thread and run on another carries the enqueue
+ * handle in the job; a signal sent on one thread and received on another
+ * carries it in the message. There is no separate flow id to invent -- the
+ * handle is the identity, and a link is a relation between two of them.
+ * Chains are links in sequence. */
+void orbit_link(orbit_scope from, orbit_scope to);
 
 /* A value to graph over time, on a track named `name`. Every numeric type is
  * a double here; integers above 2^53 lose precision, which is acceptable for
@@ -70,13 +85,13 @@ void orbit_value(const char* name, size_t name_len, double value);
 #endif
 
 /* --------------------------------------------------------------------------
- * Convenience for C and C++. Everything below is sugar over the seven
+ * Convenience for C and C++. Everything below is sugar over the eight
  * functions above; other languages provide their own. */
 
 /* A string literal's length at compile time; strlen for anything else. */
 #define ORBIT_LIT(s) (s), (sizeof(s) - 1)
 
-#define ORBIT_INSTANT(lit) orbit_instant(ORBIT_LIT(lit))
+#define ORBIT_INSTANT(lit) ((void)orbit_instant(ORBIT_LIT(lit)))
 #define ORBIT_VALUE(lit, v) orbit_value(ORBIT_LIT(lit), (double)(v))
 
 #ifdef __cplusplus
@@ -89,6 +104,9 @@ class Scope {
   ~Scope() { orbit_stop(handle_); }
   Scope(const Scope&) = delete;
   Scope& operator=(const Scope&) = delete;
+
+  /* For orbit_link: `orbit_link(job.trace, running.handle())`. */
+  orbit_scope handle() const { return handle_; }
 
  private:
   orbit_scope handle_;
