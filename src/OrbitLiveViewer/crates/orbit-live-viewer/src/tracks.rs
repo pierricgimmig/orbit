@@ -1184,6 +1184,131 @@ mod tests {
     }
 
     #[test]
+    fn press_without_moving_leaves_every_row_where_it_was() {
+        let mut idx = TrackIndex::default();
+        // A layout with everything a real capture has: a scheduler with
+        // cores, two processes, threads of unequal height, and VALUE rails
+        // (which are laid out as sibling rows, not inside the thread row).
+        idx.insert(sched(1, 1, 0, 10, 3));
+        for (pid, tid) in [(1u32, 1u32), (1, 2), (1, 3), (9, 4), (9, 5)] {
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 0, 0));
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 1, 0));
+            if tid % 2 == 1 {
+                idx.insert(ev(kind::API_SCOPE, pid, tid, 2, 0));
+            }
+            if tid != 2 {
+                idx.insert(ev(kind::VALUE, pid, tid, 0, 0));
+            }
+            idx.insert(ev(kind::THREAD_STATE, pid, tid, 0, 0));
+        }
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let n = strip.thread_order.len();
+        assert_eq!(n, 5);
+        let before = strip.y.clone();
+        let before_h = strip.total_height();
+        for k in 0..n {
+            let t = strip.thread_order[k];
+            let y = strip.y.get(&RowId::Thread(t)).copied().unwrap();
+            strip.begin_drag(t, y, y);
+            strip.tick(0.0, &idx, None);
+            let mut moved: Vec<String> = Vec::new();
+            for (id, y0) in &before {
+                let y1 = strip.y.get(id).copied().unwrap_or(f32::NAN);
+                if (y1 - y0).abs() > 0.01 {
+                    moved.push(format!("{id:?} {y0} -> {y1}"));
+                }
+            }
+            assert!(
+                moved.is_empty(),
+                "press on thread {k} moved rows: {moved:?}"
+            );
+            assert!(
+                (strip.total_height() - before_h).abs() < 0.01,
+                "press on thread {k} changed total height {before_h} -> {}",
+                strip.total_height()
+            );
+            strip.end_drag();
+            strip.tick(0.0, &idx, None);
+        }
+    }
+
+    #[test]
+    fn sweep_press_without_moving() {
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 1, 0, 10, 3));
+        for (pid, tid) in [(1u32, 1u32), (1, 2), (1, 3), (2, 7), (9, 4), (9, 5)] {
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 0, 0));
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 1, 0));
+            if tid % 2 == 1 {
+                idx.insert(ev(kind::API_SCOPE, pid, tid, 2, 0));
+            }
+            if tid != 2 {
+                idx.insert(ev(kind::VALUE, pid, tid, 0, 0));
+            }
+            idx.insert(ev(kind::THREAD_STATE, pid, tid, 0, 0));
+        }
+        let mut bad: Vec<String> = Vec::new();
+        for filter in [None, Some(1u32), Some(9u32)] {
+            for collapse in 0..5usize {
+                for hide in [false, true] {
+                    for scale in [1.0f32, 1.4] {
+                        let mut strip = TrackStrip::default();
+                        strip.scale = scale;
+                        strip.sync(&idx, filter);
+                        strip.tick(1.0, &idx, filter);
+                        let order = strip.thread_order.clone();
+                        match collapse {
+                            1 => strip.toggle(RowId::Thread(order[0])),
+                            2 => strip.toggle(RowId::Process(1)),
+                            3 => strip.toggle(RowId::Scheduler),
+                            4 => strip.toggle(RowId::Thread(order[order.len() - 1])),
+                            _ => {}
+                        }
+                        if hide {
+                            strip.toggle_hidden(order[1]);
+                        }
+                        strip.sync(&idx, filter);
+                        strip.tick(1.0, &idx, filter);
+                        let before = strip.y.clone();
+                        let shown = strip.shown_order();
+                        for t in shown {
+                            let Some(&y) = strip.y.get(&RowId::Thread(t)) else {
+                                continue;
+                            };
+                            strip.begin_drag(t, y, y + 3.0);
+                            strip.tick(0.0, &idx, filter);
+                            for (id, y0) in &before {
+                                let y1 = strip.y.get(id).copied().unwrap_or(f32::NAN);
+                                if (y1 - y0).abs() > 0.01 {
+                                    bad.push(format!(
+                                        "filter={filter:?} collapse={collapse} hide={hide} scale={scale} press tid={} moved {id:?} {y0}->{y1}",
+                                        t.tid
+                                    ));
+                                }
+                            }
+                            let order_before = strip.thread_order.clone();
+                            strip.end_drag();
+                            if strip.thread_order != order_before {
+                                bad.push(format!(
+                                    "filter={filter:?} collapse={collapse} hide={hide} scale={scale} press+release tid={} REORDERED {:?} -> {:?}",
+                                    t.tid,
+                                    order_before.iter().map(|t| t.tid).collect::<Vec<_>>(),
+                                    strip.thread_order.iter().map(|t| t.tid).collect::<Vec<_>>()
+                                ));
+                            }
+                            strip.tick(0.0, &idx, filter);
+                        }
+                    }
+                }
+            }
+        }
+        bad.truncate(12);
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
     fn drag_skips_hidden_threads() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(1, 1, 1));

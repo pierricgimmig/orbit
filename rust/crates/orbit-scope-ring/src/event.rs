@@ -26,6 +26,10 @@ pub mod flags {
     /// More text follows in a [`kind::TEXT`] record with the same
     /// `(tid, scope_id)`.
     pub const MORE_TEXT: u8 = 1 << 0;
+    /// The producer could not carry the whole name and cut it here. Set on
+    /// the last record of the chain, so the reader reports the name as
+    /// truncated rather than passing off a prefix as the whole thing.
+    pub const CUT: u8 = 1 << 1;
 }
 
 /// One event, exactly 32 bytes and `repr(C)`.
@@ -77,10 +81,15 @@ pub const INLINE_TEXT: usize = 32;
 
 const _: () = assert!(INLINE_TEXT == 32);
 
-/// The longest name a chain will carry: the head plus seven continuations.
-/// A `__PRETTY_FUNCTION__` can run to hundreds of bytes and would otherwise
-/// eat a ring; past this the name is cut and the record says so.
-pub const MAX_NAME_BYTES: usize = INLINE_TEXT * 8;
+/// The longest name a chain can carry, and the reason is structural rather
+/// than a policy: a continuation's position rides in `depth`, a `u8`, so a
+/// chain is the head plus at most 255 continuations. There is no smaller
+/// cap. A caller's name is the caller's data, and a ring that fills is
+/// already handled honestly -- it laps and reports the count -- so cutting
+/// names short to protect it would only trade a counted loss for a silent one.
+/// Past this limit the name *is* cut, and the last record carries
+/// [`flags::CUT`] so the reader is told.
+pub const MAX_NAME_BYTES: usize = INLINE_TEXT * 256;
 
 pub const EVENT_SIZE: usize = 56;
 

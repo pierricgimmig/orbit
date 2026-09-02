@@ -121,8 +121,20 @@ Names: written in full, never interned
 
   Records grew from 28 to 32 inline bytes: the four-byte name_id the producer
   no longer sets went to text. Longer names spill into continuation records
-  keyed by the same (tid, scope_id), capped at 256 bytes -- eight records --
-  so a __PRETTY_FUNCTION__ cannot eat a ring. Two tests push chained names
+  keyed by the same (tid, scope_id).
+
+  There is no policy cap on name length. One was added at 256 bytes with the
+  justification that a long name "would eat a ring", and it was wrong twice
+  over: a ring that fills is already handled honestly, by lapping and
+  reporting the count, so cutting names to protect it only trades a counted
+  loss for a silent one -- and it *was* silent, since the reader reported a
+  cut name as Complete. The only limit now is structural: a continuation's
+  position rides in a u8, so a chain is at most 256 records, 8 KiB. Past that
+  the last record is flagged CUT and the reader reports Truncated. A test
+  asserts a name one byte over the limit is reported as cut, and another that
+  a name exactly at it is not.
+
+  Two tests push chained names
   through the ring itself rather than through the splitter in memory: one
   rebuilds an 80-byte name across three records, and one has two threads
   interleave 200 long names each on a single ring and checks every chain

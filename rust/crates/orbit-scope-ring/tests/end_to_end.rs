@@ -360,3 +360,20 @@ fn interleaved_chains_from_two_threads_do_not_mix() {
         }
     }
 }
+
+#[test]
+fn a_cut_name_actually_says_so() {
+    use orbit_scope_ring::text::{split_name, Completeness, TextAssembler};
+    use orbit_scope_ring::MAX_NAME_BYTES;
+    let name = "n".repeat(MAX_NAME_BYTES + 1);
+    let mut head = ScopeEvent { scope_id: 1, tid: 1, ..Default::default() };
+    let chunks = split_name(&mut head, &name);
+    let mut assembler = TextAssembler::new();
+    let mut result = assembler.accept(&head);
+    for c in &chunks {
+        if let Some(r) = assembler.accept(c) { result = Some(r); }
+    }
+    let (text, completeness) = result.expect("chain ends");
+    assert!(text.len() < name.len(), "it was cut");
+    assert_eq!(completeness, Completeness::Truncated, "and the reader must be told");
+}

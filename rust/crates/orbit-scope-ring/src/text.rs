@@ -28,9 +28,11 @@ use std::collections::HashMap;
 /// records for the rest, in the order they must be written.
 ///
 /// The head keeps its own kind; continuations are [`kind::TEXT`] and carry
-/// their position in `depth`, starting at 1. Names past [`MAX_NAME_BYTES`]
-/// are cut there.
+/// their position in `depth`, starting at 1. A name past [`MAX_NAME_BYTES`]
+/// -- the most a `u8` chain position can address -- is cut there, and the
+/// last record is flagged [`flags::CUT`] so the reader knows.
 pub fn split_name(head: &mut ScopeEvent, name: &str) -> Vec<ScopeEvent> {
+    let cut = name.len() > MAX_NAME_BYTES;
     let bytes = &name.as_bytes()[..name.len().min(MAX_NAME_BYTES)];
     let first = bytes.len().min(INLINE_TEXT);
     head.text[..first].copy_from_slice(&bytes[..first]);
@@ -39,6 +41,9 @@ pub fn split_name(head: &mut ScopeEvent, name: &str) -> Vec<ScopeEvent> {
     let mut rest = &bytes[first..];
     if rest.is_empty() {
         head.flags &= !flags::MORE_TEXT;
+        if cut {
+            head.flags |= flags::CUT;
+        }
         return Vec::new();
     }
     head.flags |= flags::MORE_TEXT;
@@ -61,6 +66,8 @@ pub fn split_name(head: &mut ScopeEvent, name: &str) -> Vec<ScopeEvent> {
         rest = &rest[take..];
         if !rest.is_empty() {
             chunk.flags |= flags::MORE_TEXT;
+        } else if cut {
+            chunk.flags |= flags::CUT;
         }
         out.push(chunk);
         index += 1;
@@ -122,8 +129,12 @@ impl TextAssembler {
                 return None;
             }
             let partial = self.open.remove(&key)?;
-            let completeness =
-                if partial.saw_gap { Completeness::Truncated } else { Completeness::Complete };
+            let cut = event.flags & flags::CUT != 0;
+            let completeness = if partial.saw_gap || cut {
+                Completeness::Truncated
+            } else {
+                Completeness::Complete
+            };
             return Some((String::from_utf8_lossy(&partial.bytes).into_owned(), completeness));
         }
 
@@ -132,10 +143,12 @@ impl TextAssembler {
         }
         if !event.has_more_text() {
             // Fits in one record, the common case for a dynamic name.
-            return Some((
-                String::from_utf8_lossy(event.text_bytes()).into_owned(),
-                Completeness::Complete,
-            ));
+            let completeness = if event.flags & flags::CUT != 0 {
+                Completeness::Truncated
+            } else {
+                Completeness::Complete
+            };
+            return Some((String::from_utf8_lossy(event.text_bytes()).into_owned(), completeness));
         }
         // A head with continuations to come.
         self.open.insert(
@@ -315,13 +328,27 @@ mod tests {
     }
 
     #[test]
-    fn a_pathological_name_is_cut_rather_than_eating_the_ring() {
-        // __PRETTY_FUNCTION__ on a templated method can run to kilobytes.
-        let name = "n".repeat(10_000);
+    fn a_name_past_what_a_u8_chain_can_address_is_cut_and_says_so() {
+        // 8 KiB is the structural limit, not a preference: 255 continuations
+        // is all a u8 position can count. Beyond it the name is cut, and the
+        // one thing that must not happen is the reader being told the
+        // prefix is the whole name.
+        let name = "n".repeat(MAX_NAME_BYTES + 1);
         let mut event = head(1);
         let chunks = split_name(&mut event, &name);
-        assert_eq!(chunks.len(), MAX_NAME_BYTES / INLINE_TEXT - 1, "seven continuations, no more");
-        let (text, _, _) = round_trip(&name);
+        assert_eq!(chunks.len(), 255, "every position a u8 can address, and no more");
+        assert_eq!(chunks.last().unwrap().depth, 255);
+        let (text, completeness, _) = round_trip(&name);
         assert_eq!(text.len(), MAX_NAME_BYTES);
+        assert_eq!(completeness, Completeness::Truncated, "the reader is told");
+    }
+
+    #[test]
+    fn a_name_exactly_at_the_limit_is_complete() {
+        let name = "e".repeat(MAX_NAME_BYTES);
+        let (text, completeness, chunks) = round_trip(&name);
+        assert_eq!(text, name);
+        assert_eq!(completeness, Completeness::Complete, "at the limit is not past it");
+        assert_eq!(chunks, 255);
     }
 }
