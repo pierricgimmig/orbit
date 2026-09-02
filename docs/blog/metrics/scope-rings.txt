@@ -31,6 +31,21 @@ Three runs, medians; from tests/cost.rs.
   Reproduce:
     cargo test -p orbit-scope-ring --release --test cost -- --nocapture
 
+Sizing
+
+  Ring count is derived from expected threads, not from cores: rings follow
+  threads, and a process routinely has more threads than the machine has
+  cores. Sizing by cores would have put the excess on the shared ring.
+
+  Slots per ring are derived from a total budget rather than chosen, because
+  the number a profiled process cares about is what the segment costs it:
+
+    128 rings x 1024 slots x 64 B = 8.0 MiB
+
+  At 16384 slots -- the figure from when rings were per-core and there were
+  only as many as cores -- 128 rings would have been 128 MiB, which is not a
+  reasonable thing to ask of a process for agreeing to be profiled.
+
 Layout
   event                    48 bytes (28 fixed + 20 inline name bytes)
   slot                     64 bytes (one cache line: seq + pending_ns + event,
@@ -38,7 +53,8 @@ Layout
   ring control block       64 bytes (one cache line, so neighbours never share)
   rings                    one per recording thread, capped at 128;
                            ring 0 is reserved as the shared overflow
-  default slots per ring   16384 (1 MiB per ring)
+  default slots per ring   1024 (64 KiB), derived from the budget below
+  default total budget     8 MiB for the whole segment
 
 Write path instruction budget, per event, on an owned ring:
   1 x relaxed load         read the cursor (nobody else writes it)

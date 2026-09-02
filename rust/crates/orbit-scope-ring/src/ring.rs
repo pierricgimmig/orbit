@@ -129,17 +129,40 @@ pub fn slots_offset(ring_count: usize, slots_per_ring: usize, ring: usize) -> us
     CACHE_LINE + ring_count * CACHE_LINE + ring * slots_per_ring * CACHE_LINE
 }
 
-/// How many rings to open for a machine with `cores` cores.
-pub fn ring_count_for(cores: usize) -> usize {
-    cores.clamp(1, MAX_RINGS)
+/// How many rings to open for a process expected to record from
+/// `threads` threads, plus one for the shared overflow.
+///
+/// Sized by threads, not by cores. Rings follow threads now, and a process
+/// routinely has more threads than the machine has cores -- a server or a
+/// game with sixty threads on a thirty-two core box would otherwise put half
+/// of them on the shared ring, which is the slow path.
+pub const fn ring_count_for_threads(threads: usize) -> usize {
+    let wanted = threads + 1;
+    if wanted < 2 {
+        2
+    } else if wanted > MAX_RINGS {
+        MAX_RINGS
+    } else {
+        wanted
+    }
 }
 
-/// Which ring a thread on `cpu_id` writes to.
-pub fn ring_for_cpu(cpu_id: usize, ring_count: usize) -> usize {
-    if ring_count == 0 {
-        return 0;
+/// Slots per ring for a total budget, rounded down to a power of two.
+///
+/// The budget is the honest knob. Per-ring size stopped being one the moment
+/// rings became per-thread: the interesting number is what the whole segment
+/// costs the profiled process, and dividing that by the ring count is how you
+/// get there. A ring that is too small laps and says so; a segment that is
+/// too big is a tax on every run.
+pub const fn slots_for_budget(ring_count: usize, total_bytes: usize) -> usize {
+    let ring_count = if ring_count == 0 { 1 } else { ring_count };
+    let per_ring = total_bytes / ring_count;
+    let slots = per_ring / CACHE_LINE;
+    if slots < 2 {
+        return 2;
     }
-    cpu_id % ring_count
+    // Rounding *up* to a power of two would blow the budget, so round down.
+    1usize << (usize::BITS - 1 - slots.leading_zeros()) as usize
 }
 
 /// The write path over an already-mapped region.
@@ -422,13 +445,19 @@ mod tests {
     }
 
     #[test]
-    fn rings_are_sharded_by_core_and_capped() {
-        assert_eq!(ring_count_for(0), 1);
-        assert_eq!(ring_count_for(32), 32);
-        assert_eq!(ring_count_for(4096), MAX_RINGS, "capped, however big the box");
-        assert_eq!(ring_for_cpu(0, 8), 0);
-        assert_eq!(ring_for_cpu(9, 8), 1, "a migrating thread just wraps");
-        assert_eq!(ring_for_cpu(5, 0), 0, "no rings is not a divide by zero");
+    fn rings_are_sized_by_threads_and_a_memory_budget() {
+        // One per thread, plus the shared overflow.
+        assert_eq!(ring_count_for_threads(0), 2, "always room for one thread and the overflow");
+        assert_eq!(ring_count_for_threads(31), 32);
+        assert_eq!(ring_count_for_threads(4096), MAX_RINGS, "capped, however many threads");
+
+        // The budget is respected, never exceeded by rounding up.
+        let slots = slots_for_budget(128, 8 * 1024 * 1024);
+        assert_eq!(slots, 1024);
+        assert!(128 * slots * CACHE_LINE <= 8 * 1024 * 1024);
+        assert!(slots.is_power_of_two());
+        // A budget too small for a real ring still yields a legal one.
+        assert_eq!(slots_for_budget(128, 16), 2);
     }
 
     #[test]

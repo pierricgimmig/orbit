@@ -7,8 +7,9 @@
 
 use orbit_scope_ring::event::kind;
 use orbit_scope_ring::merge::{drain, Cursors, Merger};
-use orbit_scope_ring::ring::{ring_count_for, Rings};
-use orbit_scope_ring::shm::{current_cpu, now_monotonic_ns};
+use orbit_scope_ring::ring::{ring_count_for_threads, Rings};
+use orbit_scope_ring::shm::now_monotonic_ns;
+use orbit_scope_ring::ThreadRing;
 use orbit_scope_ring::{ring, ScopeEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -47,7 +48,7 @@ impl Region {
 fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
     const THREADS: usize = 4;
     const PER_THREAD: u64 = 10_000;
-    let ring_count = ring_count_for(8);
+    let ring_count = ring_count_for_threads(THREADS);
     // Sized so the whole run fits even if every thread lands on one ring.
     // Overload and lapping are a separate test: a producer that never stalls
     // *will* outrun a consumer given enough events, and that is the design
@@ -60,14 +61,13 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
         for tid in 0..THREADS {
             let rings = &rings;
             scope.spawn(move || {
+                // A thread takes a ring once and keeps it, which is what
+                // makes migration a non-event: the ring follows the thread.
+                let mine = ThreadRing::acquire(rings, tid as u64 + 1);
+                assert!(mine.is_owned(), "the pool was sized for these threads");
                 for i in 0..PER_THREAD {
-                    // A thread writes to whichever ring its current core
-                    // owns, re-read every event, exactly as a real producer
-                    // would -- so migration mid-run is exercised, not
-                    // designed away.
-                    let ring = ring::ring_for_cpu(current_cpu(), ring_count);
-                    rings.push(
-                        ring,
+                    mine.push(
+                        rings,
                         ScopeEvent {
                             timestamp_ns: now_monotonic_ns(),
                             scope_id: i,
@@ -78,6 +78,7 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
                         },
                     );
                 }
+                mine.release(rings);
             });
         }
 

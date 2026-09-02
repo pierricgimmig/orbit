@@ -19,10 +19,25 @@ use crate::ring::{self, Header, Rings, MAGIC, MAX_RINGS, VERSION};
 use std::io;
 use std::sync::atomic::Ordering;
 
-/// Slots per ring. At 64 bytes each, 16384 slots is 1 MiB per ring -- room
-/// for a burst without the consumer having to keep up microsecond by
-/// microsecond.
-pub const DEFAULT_SLOTS_PER_RING: usize = 16 * 1024;
+/// What the whole segment costs the profiled process by default.
+///
+/// This is the number that matters, not the per-ring size: a process is
+/// entitled to know what instrumenting it will cost in resident memory, and
+/// eight megabytes is small enough not to be an argument.
+pub const DEFAULT_BUDGET_BYTES: usize = 8 * 1024 * 1024;
+
+/// Rings at the default budget: one per thread up to the cap, plus the
+/// shared overflow.
+pub const DEFAULT_RING_COUNT: usize = MAX_RINGS;
+
+/// Slots per ring at the default budget and ring count: 1024 slots, 64 KiB.
+///
+/// A thread emitting a hundred thousand events a second fills about five
+/// hundred slots between five-millisecond drains, so this is comfortable
+/// without being generous. A thread that outruns it laps, and the drain says
+/// how many events were lost rather than hiding it.
+pub const DEFAULT_SLOTS_PER_RING: usize =
+    crate::ring::slots_for_budget(DEFAULT_RING_COUNT, DEFAULT_BUDGET_BYTES);
 
 fn shm_name(pid: u32) -> std::ffi::CString {
     std::ffi::CString::new(format!("/orbit-scopes-{pid}")).expect("no NUL in a formatted pid")
@@ -54,6 +69,17 @@ unsafe impl Send for ScopeRingWriter {}
 unsafe impl Sync for ScopeRingWriter {}
 
 impl ScopeRingWriter {
+    /// Creates this process's segment at the default budget.
+    pub fn create_default() -> io::Result<ScopeRingWriter> {
+        ScopeRingWriter::create(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING)
+    }
+
+    /// Creates this process's segment sized to a total memory budget.
+    pub fn create_with_budget(threads: usize, total_bytes: usize) -> io::Result<ScopeRingWriter> {
+        let rings = crate::ring::ring_count_for_threads(threads);
+        ScopeRingWriter::create(rings, crate::ring::slots_for_budget(rings, total_bytes))
+    }
+
     /// Creates (or replaces) this process's segment.
     pub fn create(ring_count: usize, slots_per_ring: usize) -> io::Result<ScopeRingWriter> {
         let pid = std::process::id();
@@ -237,10 +263,11 @@ pub fn now_monotonic_ns() -> u64 {
     timespec.tv_sec as u64 * 1_000_000_000 + timespec.tv_nsec as u64
 }
 
-/// The core this thread is running on, for picking a ring.
+/// The core this thread is running on.
 ///
-/// Advisory by nature: the answer can be stale before it is used, which is
-/// why rings are MPSC. See the module docs in [`crate::ring`].
+/// No longer used to pick a ring -- rings follow threads, which is what made
+/// the design portable. Kept because it is the cheapest way to record which
+/// core a scope ran on, should that ever be wanted.
 pub fn current_cpu() -> usize {
     // SAFETY: sched_getcpu takes no arguments and cannot fail meaningfully.
     let cpu = unsafe { libc::sched_getcpu() };
@@ -312,9 +339,10 @@ mod tests {
     }
 
     #[test]
-    fn the_current_cpu_is_a_usable_ring_index() {
-        let cpu = current_cpu();
-        assert!(cpu < 4096);
-        assert!(crate::ring::ring_for_cpu(cpu, 8) < 8);
+    fn the_default_budget_is_what_it_claims() {
+        assert_eq!(DEFAULT_SLOTS_PER_RING, 1024);
+        let bytes = crate::ring::layout_size(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING);
+        assert!(bytes <= DEFAULT_BUDGET_BYTES + 64 * 1024, "{bytes} bytes for 8 MiB budget");
+        assert!(bytes > DEFAULT_BUDGET_BYTES / 2, "and not wastefully under it");
     }
 }
