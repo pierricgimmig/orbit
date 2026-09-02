@@ -42,6 +42,18 @@ fn segment() -> Option<&'static ScopeRingWriter> {
     unsafe { p.as_ref() }
 }
 
+/// The segment, but only when a service is actually draining it.
+///
+/// This is the gate every call passes first. When nobody is capturing it is a
+/// pointer load, a relaxed load of the capturing flag, and a return -- so an
+/// instrumented program that ships with Orbit linked in pays almost nothing
+/// until the moment someone captures it.
+#[inline]
+fn active_segment() -> Option<&'static ScopeRingWriter> {
+    let writer = segment()?;
+    writer.is_capturing().then_some(writer)
+}
+
 /// Serialises `init`. A compare-exchange on the pointer is not enough:
 /// creating a segment unlinks any existing one of the same name first, so two
 /// threads initialising at once would have the loser destroy the winner's
@@ -119,7 +131,7 @@ fn push_named(writer: &ScopeRingWriter, state: &ThreadState, mut head: ScopeEven
 }
 
 fn start_with(flag: u8, name: &[u8]) -> Handle {
-    let Some(writer) = segment() else { return 0 };
+    let Some(writer) = active_segment() else { return 0 };
     with_thread(writer.rings().ring_count(), |state| {
         let handle = next_handle(state);
         let head = ScopeEvent {
@@ -150,7 +162,7 @@ pub fn stop(handle: Handle) {
     if handle == 0 {
         return;
     }
-    let Some(writer) = segment() else { return };
+    let Some(writer) = active_segment() else { return };
     with_thread(writer.rings().ring_count(), |state| {
         writer.rings().push(
             state.ring,
@@ -168,7 +180,7 @@ pub fn stop(handle: Handle) {
 /// A point in time with a name and no duration.
 pub fn instant(name: impl AsRef<[u8]>) -> Handle {
     let name = name.as_ref();
-    let Some(writer) = segment() else { return 0 };
+    let Some(writer) = active_segment() else { return 0 };
     with_thread(writer.rings().ring_count(), |state| {
         let handle = next_handle(state);
         let head = ScopeEvent {
@@ -188,7 +200,7 @@ pub fn link(from: Handle, to: Handle) {
     if from == 0 || to == 0 {
         return;
     }
-    let Some(writer) = segment() else { return };
+    let Some(writer) = active_segment() else { return };
     with_thread(writer.rings().ring_count(), |state| {
         let mut event = ScopeEvent {
             timestamp_ns: now_monotonic_ns(),
@@ -206,7 +218,7 @@ pub fn link(from: Handle, to: Handle) {
 /// A value to graph over time on a track named `name`.
 pub fn value(name: impl AsRef<[u8]>, value: f64) {
     let name = name.as_ref();
-    let Some(writer) = segment() else { return };
+    let Some(writer) = active_segment() else { return };
     with_thread(writer.rings().ring_count(), |state| {
         let head = ScopeEvent {
             timestamp_ns: now_monotonic_ns(),
@@ -357,6 +369,9 @@ mod tests {
     fn every_api_writes_the_record_it_promises() {
         let _serial = WRITES.lock().unwrap_or_else(|p| p.into_inner());
         init().expect("init");
+        // No service here, so nothing has set the capturing flag; the calls
+        // would all be no-ops. Stand in for the service and set it.
+        ScopeRingReader::open(std::process::id()).unwrap().set_capturing(true);
         let s = start(b"outer");
         assert_ne!(s, 0);
         let i = instant(b"marker");
@@ -418,10 +433,31 @@ mod tests {
     fn handles_encode_the_starting_thread() {
         let _serial = WRITES.lock().unwrap_or_else(|p| p.into_inner());
         init().expect("init");
+        ScopeRingReader::open(std::process::id()).unwrap().set_capturing(true);
         let h = start(b"h");
         let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u64;
         assert_eq!(h >> 32, tid);
         assert_ne!(h & 0xFFFF_FFFF, 0, "zero is reserved for no event");
         stop(h);
     }
+
+    #[test]
+    fn nothing_is_written_until_a_service_is_capturing() {
+        let _serial = WRITES.lock().unwrap_or_else(|p| p.into_inner());
+        init().expect("init");
+        let reader = ScopeRingReader::open(std::process::id()).unwrap();
+        reader.set_capturing(false);
+        // Not capturing: every call is inert and returns the zero handle.
+        assert_eq!(start(b"ignored"), 0);
+        assert_eq!(instant(b"ignored"), 0);
+        value(b"ignored", 1.0);
+
+        // Capturing: the same calls now record.
+        reader.set_capturing(true);
+        let h = start(b"recorded");
+        assert_ne!(h, 0);
+        stop(h);
+        reader.set_capturing(false);
+    }
 }
+

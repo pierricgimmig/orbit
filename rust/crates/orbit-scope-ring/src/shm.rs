@@ -195,6 +195,17 @@ impl ScopeRingWriter {
         self.pid
     }
 
+    /// Whether a service is draining this segment right now.
+    ///
+    /// The producer's cheap gate: one relaxed load. When it is false, an
+    /// instrumented process skips writing entirely, so being linked against
+    /// Orbit costs almost nothing until someone actually captures.
+    pub fn is_capturing(&self) -> bool {
+        // SAFETY: base maps the header, which lives for the mapping's life.
+        let header = unsafe { &*self.mapping.base.cast::<Header>() };
+        header.capturing.load(Ordering::Relaxed) != 0
+    }
+
     /// Removes the name so a later process with the same pid starts clean.
     /// The mapping itself lives until this value drops.
     pub fn unlink(&self) {
@@ -213,9 +224,14 @@ impl Drop for ScopeRingWriter {
     }
 }
 
-/// The consumer side: opens another process's segment read-only.
+/// The consumer side: opens another process's segment.
+///
+/// The rings are mapped read-only, so a bug here cannot corrupt the process
+/// being observed. The control page alone is mapped read-write, so the
+/// service can set `capturing`, and that page holds nothing but the header.
 pub struct ScopeRingReader {
     mapping: Mapping,
+    control: Mapping,
     rings: Rings,
     pid: u32,
 }
@@ -228,8 +244,11 @@ impl ScopeRingReader {
     /// Opens the segment of `pid`, validating everything the producer claims.
     pub fn open(pid: u32) -> io::Result<ScopeRingReader> {
         let name = shm_name(pid);
+        // O_RDWR, not O_RDONLY: the rings are still mapped read-only below,
+        // but the control page needs a writable mapping so the service can set
+        // `capturing`. The segment is mode 0600, so this is same-user only.
         // SAFETY: plain syscall, result checked.
-        let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDONLY, 0) };
+        let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, 0) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -289,9 +308,44 @@ impl ScopeRingReader {
             return Err(bad("scope segment is smaller than its header describes"));
         }
 
+        // A second, writable mapping of the control page alone. It overlaps
+        // the read-only mapping's first page, which is harmless: nothing but
+        // the header lives there, and the rings begin on the next page.
+        // SAFETY: mapping the same fd; failure is checked. fd was reopened
+        // below because the first was closed after the read-only mapping.
+        let control_len = ring::control_bytes();
+        let ctl_fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, 0) };
+        if ctl_fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let control_base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                control_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                ctl_fd,
+                0,
+            )
+        };
+        unsafe { libc::close(ctl_fd) };
+        if control_base == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        let control = Mapping { base: control_base.cast::<u8>(), len: control_len };
+
         // SAFETY: dimensions validated against the mapped length above.
         let rings = unsafe { Rings::from_raw(base, ring_count, slots_per_ring) };
-        Ok(ScopeRingReader { mapping, rings, pid })
+        Ok(ScopeRingReader { mapping, control, rings, pid })
+    }
+
+    /// Tells the producer whether it should be writing. Set true when a
+    /// capture starts, false when it stops. Release-ordered, so a producer
+    /// that sees `true` also sees a fully initialised segment behind it.
+    pub fn set_capturing(&self, on: bool) {
+        // SAFETY: control maps the header page read-write, alone.
+        let header = unsafe { &*self.control.base.cast::<Header>() };
+        header.capturing.store(u32::from(on), Ordering::Release);
     }
 
     pub fn rings(&self) -> &Rings {

@@ -146,6 +146,11 @@ impl ScopeSource {
                 eprintln!(
                     "orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)"
                 );
+                // Tell the producer to start writing: until this, an
+                // instrumented process pays a relaxed load per call and writes
+                // nothing. This is also what turns on the service's own
+                // scopes, since it reads its own segment here like any other.
+                reader.set_capturing(true);
                 self.segments.push(Segment {
                     pid,
                     reader,
@@ -275,9 +280,14 @@ impl ScopeSource {
     }
 
     /// Closes every scope still open at `end_ns`, so the last frame of a
-    /// capture is drawn rather than lost.
+    /// capture is drawn rather than lost, and tells every producer to stop
+    /// writing.
     pub fn finish(&mut self, end_ns: u64, batch: &mut Vec<LiveEvent>) {
         for segment in &mut self.segments {
+            // Stop the producer before the final drain below reads what it
+            // has: once clear, nothing new is written, so the drain is
+            // complete.
+            segment.reader.set_capturing(false);
             for (_, open) in segment.open.drain() {
                 batch.push(span(open, end_ns));
                 self.events_pushed += 1;

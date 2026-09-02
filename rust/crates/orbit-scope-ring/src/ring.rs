@@ -33,10 +33,10 @@
 
 use crate::event::{ScopeEvent, EVENT_SIZE};
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 pub const MAGIC: u64 = 0x4F52_4249_545F_5347; // "ORBIT_SG"
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// Cache line, to keep one ring's cursor off another's.
 pub const CACHE_LINE: usize = 64;
@@ -64,17 +64,38 @@ pub const MAX_RINGS: usize = 128;
 /// work while the other rings sit empty.
 pub const DEFAULT_RING_COUNT: usize = 16;
 
-/// Fixed header at the start of the shared mapping.
+/// The control block, alone on the first page of the segment.
+///
+/// It is on its own page for one reason: the service maps it read-write to
+/// set `capturing`, and maps the rings read-only. Because nothing but this
+/// header lives on the page, a service that mishandled its writable view
+/// still could not touch a single ring slot. `version` and the layout fields
+/// let a reader validate a segment written by another process, possibly a
+/// different build; `api_version` is the semantic version of the calls, bumped
+/// when their meaning changes rather than when the record layout does.
 #[repr(C)]
 pub struct Header {
     pub magic: AtomicU64,
+    /// Layout version; a reader refuses a segment it does not match. Bumped to
+    /// 2 when the header moved onto its own page and gained the capturing and
+    /// api_version fields, which changed every ring offset.
     pub version: u32,
     pub ring_count: u32,
     pub slots_per_ring: u32,
     pub event_size: u32,
     pub pid: u32,
-    pub _pad: [u32; 9],
+    /// Set by the service while it is draining this segment, cleared when it
+    /// stops. A producer reads it before doing any work, so an instrumented
+    /// process that nobody is capturing pays a single relaxed load per call
+    /// instead of writing a record no one will ever read.
+    pub capturing: AtomicU32,
+    /// Semantic version of the instrumentation calls.
+    pub api_version: u32,
+    pub _pad: [u32; 6],
 }
+
+/// Semantic version of the API. Bumped when the meaning of a call changes.
+pub const API_VERSION: u32 = 1;
 
 const _: () = assert!(std::mem::size_of::<Header>() == CACHE_LINE);
 
@@ -112,19 +133,31 @@ const _: () = assert!(8 + EVENT_SIZE == CACHE_LINE);
 
 const _: () = assert!(std::mem::size_of::<Slot>() == CACHE_LINE);
 
+/// Bytes reserved for the control page, ahead of the rings.
+///
+/// A whole page rather than a cache line, so the service can map it
+/// read-write to set `capturing` while mapping the rings read-only, and the
+/// two mappings never overlap a byte of ring data. Page-sized so the rings
+/// that follow begin at a page boundary, which the split mapping needs.
+pub fn control_bytes() -> usize {
+    // SAFETY: sysconf(_SC_PAGESIZE) is always safe and never fails here.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    page.max(CACHE_LINE)
+}
+
 /// Total bytes for a mapping with these dimensions.
 pub fn layout_size(ring_count: usize, slots_per_ring: usize) -> usize {
-    CACHE_LINE + ring_count * CACHE_LINE + ring_count * slots_per_ring * CACHE_LINE
+    control_bytes() + ring_count * CACHE_LINE + ring_count * slots_per_ring * CACHE_LINE
 }
 
 /// Byte offset of a ring's control block.
 pub fn ring_header_offset(ring: usize) -> usize {
-    CACHE_LINE + ring * CACHE_LINE
+    control_bytes() + ring * CACHE_LINE
 }
 
 /// Byte offset of a ring's slot array.
 pub fn slots_offset(ring_count: usize, slots_per_ring: usize, ring: usize) -> usize {
-    CACHE_LINE + ring_count * CACHE_LINE + ring * slots_per_ring * CACHE_LINE
+    control_bytes() + ring_count * CACHE_LINE + ring * slots_per_ring * CACHE_LINE
 }
 
 /// Which ring a thread writes to. The only policy there is.
@@ -224,6 +257,10 @@ pub unsafe fn init_region(
     (*header).slots_per_ring = slots_per_ring as u32;
     (*header).event_size = EVENT_SIZE as u32;
     (*header).pid = pid;
+    (*header).api_version = API_VERSION;
+    // capturing is left at zero by the write_bytes above: a fresh segment is
+    // not being captured until a service says so.
+
     // Magic last and with release ordering: a consumer that sees the magic
     // must see a fully written header behind it.
     (*header).magic.store(MAGIC, Ordering::Release);
