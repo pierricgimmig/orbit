@@ -98,7 +98,7 @@ fn should_poll_processes(list_empty: bool, capture_open: bool, now: f64, last: f
     (list_empty || capture_open) && now - last >= PROCESS_POLL_S
 }
 
-fn c32(argb: u32) -> Color32 {
+pub(crate) fn c32(argb: u32) -> Color32 {
     Color32::from_rgba_unmultiplied(
         ((argb >> 16) & 0xFF) as u8,
         ((argb >> 8) & 0xFF) as u8,
@@ -611,6 +611,8 @@ pub struct OrbitLiveApp {
     idle_skip_chrome: bool,
     last_n_prims: u32,
     last_n_lanes_kept: u32,
+    self_profile: crate::self_pane::SelfProfile,
+    self_pane_open: bool,
     capture_open: bool,
     process_filter: String,
     opt_api: bool,
@@ -811,6 +813,8 @@ impl OrbitLiveApp {
             idle_skip_chrome: false,
             last_n_prims: 0,
             last_n_lanes_kept: 0,
+            self_profile: crate::self_pane::SelfProfile::default(),
+            self_pane_open: false,
             capture_open: true,
             process_filter: String::new(),
             opt_api: true,
@@ -1944,6 +1948,12 @@ impl OrbitLiveApp {
             }
             if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
+            }
+            if pill(ui, "Self", self.self_pane_open)
+                .on_hover_text("Profile the viewer itself, in its own pane — independent of any capture")
+                .clicked()
+            {
+                self.self_pane_open = !self.self_pane_open;
             }
             ui.add_space(6.0);
             self.paint_search(ui);
@@ -4085,6 +4095,36 @@ impl OrbitLiveApp {
         self.request_reports();
     }
 
+    /// The viewer's own frame timing, in a pane of its own. Independent of the
+    /// capture: it draws whatever the last instrumented frame produced, whether
+    /// or not a capture is loaded.
+    fn self_pane(&mut self, ctx: &Context) {
+        if !self.self_pane_open {
+            return;
+        }
+        egui::TopBottomPanel::bottom("orbit_self_profile")
+            .resizable(true)
+            .default_height(190.0)
+            .min_height(150.0)
+            .frame(
+                Frame::new()
+                    .fill(theme::PANEL)
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .stroke(Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                if self.self_profile.is_empty() {
+                    ui.label(
+                        RichText::new("waiting for the first instrumented frame…")
+                            .color(theme::MUTED)
+                            .size(11.0),
+                    );
+                    return;
+                }
+                self.self_profile.draw(ui, &self.intern);
+            });
+    }
+
     /// The sampling report for the current selection: self and inclusive
     /// percentages per function, hottest first, the pair Orbit shows.
     fn sampling_panel(&mut self, ctx: &Context) {
@@ -4404,7 +4444,9 @@ impl OrbitLiveApp {
 
 impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let devf = DevFrame::begin(self.dev);
+        // The self-profile pane needs the same scopes the track injection does,
+        // so a frame is instrumented when either wants it.
+        let devf = DevFrame::begin(self.dev || self.self_pane_open);
         {
             let _frame_scope = devf.scope(TID_UI, NAME_FRAME);
             let interaction = ctx.input(|i| {
@@ -4572,6 +4614,7 @@ impl eframe::App for OrbitLiveApp {
 
             self.refresh_sampling_report();
             self.sampling_panel(ctx);
+            self.self_pane(ctx);
 
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
@@ -4586,6 +4629,20 @@ impl eframe::App for OrbitLiveApp {
         }
         let devf_counts = devf.worker_span_counts();
         let scopes = devf.finish();
+        if self.self_pane_open && !scopes.is_empty() {
+            intern_self_names(&mut self.intern);
+            self.self_profile.push_frame(
+                &scopes,
+                crate::self_pane::FrameStats {
+                    fps: self.fps_ema.max(0.0),
+                    prims: self.last_n_prims,
+                    lanes_kept: self.last_n_lanes_kept,
+                    pool_threads: orbit_live_render::parallelism() as u32,
+                    worker_kept: devf_counts.0,
+                    worker_dropped: devf_counts.1,
+                },
+            );
+        }
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
             let live_edge = self.live_edge_ns;
