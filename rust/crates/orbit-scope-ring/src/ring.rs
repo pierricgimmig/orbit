@@ -129,6 +129,46 @@ pub fn slots_offset(ring_count: usize, slots_per_ring: usize, ring: usize) -> us
     CACHE_LINE + ring_count * CACHE_LINE + ring * slots_per_ring * CACHE_LINE
 }
 
+/// How many of a segment's rings are kept shared rather than handed out
+/// exclusively.
+///
+/// Threads that arrive after the exclusive pool is exhausted hash across
+/// these. Sending them all to *one* ring, which is what this replaces, is the
+/// worst thing the design could do under load: every one of those threads
+/// contends on a single cache line, and their events all land in one ring's
+/// slots and lap it. A sixteenth of the rings is enough to turn a pile-up
+/// into a spread, and cheap enough that a process with few threads never
+/// notices the reservation.
+pub const fn shared_ring_count(ring_count: usize) -> usize {
+    let wanted = ring_count / 16;
+    if wanted < 1 {
+        1
+    } else if wanted >= ring_count {
+        ring_count - 1
+    } else {
+        wanted
+    }
+}
+
+/// Which shared ring a thread falls back to.
+///
+/// The thread id is mixed before the remainder is taken, never `tid % shared`.
+/// Thread ids are not arbitrary numbers: they are handed out in runs, and on
+/// some systems in strides. Windows hands out thread ids in multiples of
+/// four, and this code compiles into the profiled application, so Windows is
+/// not a hypothetical. With eight shared rings, `tid % 8` on multiples of
+/// four reaches exactly two of them and leaves six idle.
+///
+/// Multiplying by the 64-bit golden-ratio constant and taking the *high* bits
+/// is what fixes it: the multiply pushes low-bit structure upward, and the
+/// shift throws the low bits away entirely. `distribution_survives_strided_thread_ids`
+/// checks that against strides of 1, 4, 16 and 4096.
+pub const fn shared_ring_for(tid: u64, shared: usize) -> usize {
+    let shared = if shared == 0 { 1 } else { shared };
+    let mixed = (tid.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize;
+    mixed % shared
+}
+
 /// How many rings to open for a process expected to record from
 /// `threads` threads, plus one for the shared overflow.
 ///
@@ -238,12 +278,12 @@ impl Rings {
     /// the only atomic read-modify-write in the design happens at thread
     /// registration and is amortised to nothing.
     pub fn claim_ring(&self, tid: u64) -> Option<usize> {
-        self.claim_ring_above(0, tid)
+        self.claim_ring_from(0, tid)
     }
 
-    /// As `claim_ring`, skipping the first `reserved` rings.
-    pub fn claim_ring_above(&self, reserved: usize, tid: u64) -> Option<usize> {
-        for ring in (reserved + 1)..self.ring_count {
+    /// As `claim_ring`, considering only rings at or after `first`.
+    pub fn claim_ring_from(&self, first: usize, tid: u64) -> Option<usize> {
+        for ring in first..self.ring_count {
             let owner = &self.ring_header(ring).owner_tid;
             if owner
                 .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Relaxed)
@@ -502,5 +542,50 @@ mod tests {
         assert_eq!(header.slots_per_ring, 16);
         assert_eq!(header.event_size, EVENT_SIZE as u32);
         assert_eq!(header.pid, 4242);
+    }
+
+    #[test]
+    fn the_shared_pool_is_a_pool_not_a_single_ring() {
+        // The failure this replaces: every overflowing thread on one ring,
+        // contending on one cache line and lapping one ring's slots.
+        assert_eq!(shared_ring_count(128), 8);
+        assert_eq!(shared_ring_count(32), 2);
+        // Small segments still keep one back, and never all of them.
+        assert_eq!(shared_ring_count(2), 1);
+        assert_eq!(shared_ring_count(1), 1);
+        assert!(shared_ring_count(8) < 8);
+    }
+
+    #[test]
+    fn distribution_survives_strided_thread_ids() {
+        // Windows hands out thread ids in multiples of four, and Linux in
+        // runs of one. A plain `tid % shared` collapses the first case onto a
+        // fraction of the rings; the mix has to survive both.
+        let shared = shared_ring_count(128);
+        assert_eq!(shared, 8);
+        for stride in [1u64, 4, 16, 4096] {
+            let mut counts = vec![0usize; shared];
+            const THREADS: u64 = 4_000;
+            for i in 0..THREADS {
+                counts[shared_ring_for(100_000 + i * stride, shared)] += 1;
+            }
+            let ideal = THREADS as usize / shared;
+            for (ring, count) in counts.iter().enumerate() {
+                assert!(
+                    *count > ideal / 2 && *count < ideal * 2,
+                    "stride {stride} put {count} of {THREADS} threads on ring {ring}, \
+                     against an even share of {ideal}: {counts:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_plain_modulo_would_have_failed_that() {
+        // Kept as the counter-example, so the mix is not mistaken for
+        // cargo-culting: on multiples of four, `tid % 8` reaches two rings.
+        let reached: std::collections::HashSet<u64> =
+            (0..4_000u64).map(|i| (100_000 + i * 4) % 8).collect();
+        assert_eq!(reached.len(), 2, "two of eight rings, and six idle");
     }
 }

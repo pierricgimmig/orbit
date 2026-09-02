@@ -38,8 +38,9 @@
 use crate::event::ScopeEvent;
 use crate::ring::Rings;
 
-/// The ring index every unowned thread shares.
-pub const SHARED_RING: usize = 0;
+/// The lowest ring index. Rings below [`crate::ring::shared_ring_count`] are
+/// the shared pool; everything above is handed out exclusively.
+pub const FIRST_SHARED_RING: usize = 0;
 
 /// A thread's claim on a ring, released when the thread exits.
 pub struct ThreadRing {
@@ -48,15 +49,23 @@ pub struct ThreadRing {
 }
 
 impl ThreadRing {
-    /// Takes a ring for this thread, or settles for the shared one.
+    /// Takes a ring for this thread, or hashes into the shared pool.
     ///
-    /// Ring 0 is never handed out exclusively: something has to remain
-    /// available to threads that arrive after the pool is exhausted, and
-    /// reserving it up front is simpler than discovering the shortage later.
+    /// A sixteenth of the rings is reserved as shared and never handed out
+    /// exclusively, because something has to be available to threads that
+    /// arrive after the pool is exhausted. Reserving a *pool* rather than a
+    /// single ring is the difference between overflow degrading gracefully
+    /// and overflow collapsing: every overflowing thread on one ring means
+    /// every one of them contending on one cache line and lapping one ring's
+    /// slots, which is worst exactly when the process has the most threads.
     pub fn acquire(rings: &Rings, tid: u64) -> ThreadRing {
-        match rings.claim_ring_above(SHARED_RING, tid) {
+        let shared = crate::ring::shared_ring_count(rings.ring_count());
+        match rings.claim_ring_from(shared, tid) {
             Some(ring) => ThreadRing { ring, owned: true },
-            None => ThreadRing { ring: SHARED_RING, owned: false },
+            None => ThreadRing {
+                ring: crate::ring::shared_ring_for(tid, shared),
+                owned: false,
+            },
         }
     }
 
@@ -135,8 +144,9 @@ mod tests {
         let b = ThreadRing::acquire(&rings, 22);
         let c = ThreadRing::acquire(&rings, 33);
         assert!(a.is_owned() && b.is_owned() && c.is_owned());
+        let shared = crate::ring::shared_ring_count(4);
         let taken = [a.index(), b.index(), c.index()];
-        assert!(taken.iter().all(|r| *r != SHARED_RING), "ring 0 is kept for sharing");
+        assert!(taken.iter().all(|r| *r >= shared), "the shared pool is not handed out");
         assert_eq!(
             taken.iter().collect::<std::collections::HashSet<_>>().len(),
             3,
@@ -145,26 +155,38 @@ mod tests {
     }
 
     #[test]
-    fn threads_past_the_pool_fall_back_to_the_shared_ring() {
-        // Four rings, one reserved for sharing, so three exclusive claims.
-        let region = Region::new(4, 8);
+    fn threads_past_the_pool_spread_over_the_shared_rings() {
+        // 32 rings: 2 shared, 30 exclusive. The 30 threads after those take
+        // the shared pool, and the point is that they do not all take the
+        // same ring in it.
+        let region = Region::new(32, 8);
         let rings = region.rings();
+        let shared = crate::ring::shared_ring_count(32);
+        assert_eq!(shared, 2);
         let owned: Vec<ThreadRing> =
-            (1..=3).map(|tid| ThreadRing::acquire(&rings, tid)).collect();
-        assert!(owned.iter().all(|r| r.is_owned()));
-        let overflow = ThreadRing::acquire(&rings, 99);
-        assert!(!overflow.is_owned());
-        assert_eq!(overflow.index(), SHARED_RING);
-        assert!(!rings.is_owned(SHARED_RING), "the shared ring stays unowned");
+            (1..=30).map(|tid| ThreadRing::acquire(&rings, tid)).collect();
+        assert!(owned.iter().all(|r| r.is_owned()), "the exclusive pool was available");
+
+        let overflow: Vec<ThreadRing> =
+            (100..140).map(|tid| ThreadRing::acquire(&rings, tid)).collect();
+        assert!(overflow.iter().all(|r| !r.is_owned()));
+        assert!(overflow.iter().all(|r| r.index() < shared), "overflow stays in the pool");
+        let landed: std::collections::HashSet<usize> =
+            overflow.iter().map(|r| r.index()).collect();
+        assert_eq!(landed.len(), shared, "every shared ring is used, not just one");
+        for ring in 0..shared {
+            assert!(!rings.is_owned(ring), "shared rings are never owned");
+        }
     }
 
     #[test]
     fn a_released_ring_is_handed_to_the_next_thread() {
+        // Three rings: one shared, two exclusive.
         let region = Region::new(3, 8);
         let rings = region.rings();
         let first = ThreadRing::acquire(&rings, 1);
         let second = ThreadRing::acquire(&rings, 2);
-        assert!(ThreadRing::acquire(&rings, 3).index() == SHARED_RING, "pool exhausted");
+        assert!(!ThreadRing::acquire(&rings, 3).is_owned(), "pool exhausted");
         first.release(&rings);
         let recycled = ThreadRing::acquire(&rings, 4);
         assert!(recycled.is_owned());
@@ -212,7 +234,7 @@ mod tests {
 
     #[test]
     fn many_threads_claiming_at_once_never_share_a_ring() {
-        let region = Region::new(33, 8);
+        let region = Region::new(35, 8);
         let rings = region.rings();
         let taken: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
         std::thread::scope(|scope| {

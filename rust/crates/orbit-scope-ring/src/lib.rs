@@ -29,7 +29,10 @@ pub mod text;
 
 pub use event::{flags, kind, ScopeEvent, EVENT_SIZE, INLINE_TEXT};
 pub use merge::{drain, Cursors, Drain, Merger, RingSlice};
-pub use producer::{ThreadRing, SHARED_RING};
-pub use ring::{ring_count_for_threads, slots_for_budget, Rings, MAX_RINGS};
+pub use producer::{ThreadRing, FIRST_SHARED_RING};
+pub use ring::{
+    ring_count_for_threads, shared_ring_count, shared_ring_for, slots_for_budget, Rings,
+    MAX_RINGS,
+};
 pub use shm::{ScopeRingReader, ScopeRingWriter};
 pub use text::{split_name, Completeness, TextAssembler};

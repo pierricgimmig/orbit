@@ -33,6 +33,22 @@ Three runs, medians; from tests/cost.rs.
 
 Sizing
 
+  Overflow spreads across a pool, not onto one ring. Threads that arrive
+  after the exclusive rings are gone hash into the shared eighth. Sending
+  them all to a single ring would put every one of them on one cache line and
+  lap one ring's slots -- worst exactly when the process has the most threads.
+
+  The hash is a 64-bit golden-ratio multiply taking the high bits, never
+  `tid % shared`. Thread ids are not arbitrary: Windows hands them out in
+  multiples of four, and this code compiles into the profiled application. On
+  multiples of four, `tid % 8` reaches two rings of eight and leaves six idle;
+  there is a test asserting exactly that as the counter-example, and another
+  checking even spread at strides of 1, 4, 16 and 4096.
+
+  Measured on this machine, Linux tids stride by 1 (sequential and concurrent
+  creation both), so the defence is for the platforms the producer will be
+  compiled into rather than for this one.
+
   Ring count is derived from expected threads, not from cores: rings follow
   threads, and a process routinely has more threads than the machine has
   cores. Sizing by cores would have put the excess on the shared ring.
@@ -52,7 +68,7 @@ Layout
                            exactly, with no padding left)
   ring control block       64 bytes (one cache line, so neighbours never share)
   rings                    one per recording thread, capped at 128;
-                           ring 0 is reserved as the shared overflow
+                           a sixteenth (8 of 128) reserved as a shared pool
   default slots per ring   1024 (64 KiB), derived from the budget below
   default total budget     8 MiB for the whole segment
 
