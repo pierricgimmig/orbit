@@ -87,5 +87,16 @@ fn what_each_part_of_the_write_path_costs() {
     println!("  plain increment         {plain_claim:6.2} ns   <- unreachable: rings are shared");
     println!("  atomic premium          {:6.2} ns\n", atomic_claim - plain_claim);
 
-    assert!(push_only > 0.0 && push_with_clock >= push_only);
+    // Not a benchmark assertion: timings vary, and in a debug build they vary
+    // enough to invert. This test exists to print the table, and only checks
+    // that every measurement actually happened.
+    for (what, ns) in [
+        ("push", push_only),
+        ("push + clock", push_with_clock),
+        ("clock", clock_only),
+        ("atomic", atomic_claim),
+        ("plain", plain_claim),
+    ] {
+        assert!(ns > 0.0 && ns.is_finite(), "{what} did not measure: {ns}");
+    }
 }

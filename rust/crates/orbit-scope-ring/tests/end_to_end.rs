@@ -6,7 +6,7 @@
 //! properties that matter: nothing is lost, and what comes out is ordered.
 
 use orbit_scope_ring::event::kind;
-use orbit_scope_ring::merge::{drain, drain_from, Cursors, Merger, Producer, BACKSTOP_NS};
+use orbit_scope_ring::merge::{drain, drain_from, Cursors, Producer, BACKSTOP_NS};
 use orbit_scope_ring::ring::{ring_count_for_threads, ring_for_thread, Rings};
 use orbit_scope_ring::shm::now_monotonic_ns;
 use orbit_scope_ring::{ring, ScopeEvent};
@@ -44,14 +44,11 @@ impl Region {
 }
 
 #[test]
-fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
+fn every_event_arrives_exactly_once_and_in_its_own_thread_order() {
     const THREADS: usize = 4;
     const PER_THREAD: u64 = 10_000;
     let ring_count = ring_count_for_threads(THREADS);
-    // Sized so the whole run fits even if every thread lands on one ring.
-    // Overload and lapping are a separate test: a producer that never stalls
-    // *will* outrun a consumer given enough events, and that is the design
-    // working, not failing.
+    // Sized so the whole run fits even if every thread hashes to one ring.
     let region = Region::new(ring_count, 1 << 16);
     let rings = region.rings();
 
@@ -60,8 +57,9 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
         for tid in 0..THREADS {
             let rings = &rings;
             scope.spawn(move || {
-                // One rule, applied once: the ring follows the thread, so
-                // migration is a non-event and there is nothing to release.
+                // ring_for_thread is a pure function of the tid, so this
+                // thread writes one ring for its whole life and its events
+                // land at increasing claim numbers.
                 let mine = ring_for_thread(tid as u64 + 1, ring_count);
                 for i in 0..PER_THREAD {
                     rings.push(
@@ -76,24 +74,22 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
                         },
                     );
                 }
-
             });
         }
 
-        // The consumer runs concurrently, as it would in the service.
         let rings = &rings;
         let consumer_done = done.clone();
         scope.spawn(move || {
             let mut cursors = Cursors::for_rings(ring_count);
-            let mut merger = Merger::new(ring_count);
             let mut seen: Vec<ScopeEvent> = Vec::new();
             loop {
                 let finished = consumer_done.load(Ordering::Acquire);
                 let pass = drain(rings, &mut cursors, now_monotonic_ns());
                 assert_eq!(pass.dropped, 0, "the rings were sized so this run cannot lap");
-                seen.extend(merger.merge(pass));
+                for slice in pass.slices {
+                    seen.extend(slice.events);
+                }
                 if finished {
-                    seen.extend(merger.flush());
                     break;
                 }
                 std::thread::yield_now();
@@ -104,13 +100,10 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
                 THREADS as u64 * PER_THREAD,
                 "every event arrived exactly once"
             );
-            // Globally ordered by timestamp: this is the property the merge
-            // exists for, and it holds across rings, not just within one.
-            assert!(
-                seen.windows(2).all(|w| w[0].timestamp_ns <= w[1].timestamp_ns),
-                "the merged stream is not ordered"
-            );
-            // And each producer's own events kept their order.
+            // The property that replaced the global merge: each thread's own
+            // events come out in the order that thread wrote them. Nothing
+            // downstream needs more, because a viewer lane is keyed by
+            // (pid, tid, kind, depth) and so holds one thread's events.
             for tid in 0..THREADS as u32 {
                 let ids: Vec<u64> =
                     seen.iter().filter(|e| e.tid == tid).map(|e| e.scope_id).collect();
@@ -119,11 +112,15 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
                     ids.windows(2).all(|w| w[0] < w[1]),
                     "thread {tid} lost its own ordering"
                 );
+                let times: Vec<u64> =
+                    seen.iter().filter(|e| e.tid == tid).map(|e| e.timestamp_ns).collect();
+                assert!(
+                    times.windows(2).all(|w| w[0] <= w[1]),
+                    "thread {tid}'s timestamps are not monotonic"
+                );
             }
         });
 
-        // Let the producers finish, then tell the consumer to make a last
-        // pass. Joining happens at the end of the scope.
         std::thread::sleep(std::time::Duration::from_millis(50));
         done.store(true, Ordering::Release);
     });
@@ -177,87 +174,38 @@ fn the_write_path_sustains_millions_of_events_per_second() {
     );
 }
 
-/// A producer stalled between claiming a slot and publishing it, whose event
-/// is *older* than one a neighbour already committed behind it.
-///
-/// This is only possible because rings are MPSC: two producers can read the
-/// clock in one order and claim slots in the other. If the consumer treats
-/// "the last committed timestamp" as the frontier of a ring with a slot in
-/// flight, it will emit past the stalled event and then have to deliver it
-/// late -- out of order, which is the one thing the merge exists to prevent.
-#[test]
-fn a_stalled_producer_cannot_be_overtaken_by_a_later_claim() {
-    let region = Region::new(2, 16);
-    let rings = region.rings();
-
-    // The interleaving, which is physically realisable and not contrived:
-    //   producer A reads the clock, gets 100, and is descheduled before it
-    //   can claim a slot;
-    //   producer B reads the clock, gets 105, claims slot 0, commits;
-    //   producer A wakes, claims slot 1, announces 100, and stalls again.
-    // So the ring holds a *committed* event at 105 ahead of a *pending* one
-    // at 100. The committed event must not be emitted.
-    rings.push(0, ScopeEvent { timestamp_ns: 105, ..Default::default() });
-    rings.reserve_for_test(0, 100);
-    // Ring 1 is idle and has committed something at 110.
-    rings.push(1, ScopeEvent { timestamp_ns: 110, ..Default::default() });
-
-    let mut cursors = Cursors::for_rings(2);
-    let mut merger = Merger::new(2);
-    let out = merger.merge(drain(&rings, &mut cursors, 1_000));
-
-    // Nothing at or after 100 may be emitted while a claim stamped 100 is
-    // still in flight.
-    assert!(
-        out.iter().all(|e| e.timestamp_ns < 100),
-        "emitted past a stalled producer: {:?}",
-        out.iter().map(|e| e.timestamp_ns).collect::<Vec<_>>()
-    );
-}
-
 /// A producer killed between claiming a slot and publishing it.
 ///
-/// This is the shared-memory failure that matters most in practice: the
-/// consumer is a different process, and it cannot make the dead one finish.
-/// Without a way out, the ring's frontier never advances, the horizon is the
-/// minimum across rings, and the entire stream stops -- permanently, and
-/// silently, which is the worst combination.
+/// With the horizon gone this is a local problem, which is the point: the
+/// stalled ring waits and every other ring keeps flowing. Liveness is what
+/// releases the stalled one.
 #[test]
-fn a_dead_producer_does_not_wedge_the_stream() {
+fn a_dead_producer_stalls_only_its_own_ring() {
     let region = Region::new(2, 16);
     let rings = region.rings();
 
     rings.push(0, ScopeEvent { timestamp_ns: 10, ..Default::default() });
-    // Claimed, timestamp announced, then the writer vanishes.
-    rings.reserve_for_test(0, 20);
+    rings.reserve_for_test(0, 20); // claimed, never published
     rings.push(0, ScopeEvent { timestamp_ns: 30, ..Default::default() });
     rings.push(1, ScopeEvent { timestamp_ns: 40, ..Default::default() });
 
     let mut cursors = Cursors::for_rings(2);
-    let mut merger = Merger::new(2);
     let now = 1_000_000_000;
 
-    // While the process is alive, the stalled claim blocks what follows,
-    // which is right: the event is still coming.
-    let early = merger.merge(drain_from(&rings, &mut cursors, now, Producer::Alive));
-    let out: Vec<u64> = early.iter().map(|e| e.timestamp_ns).collect();
-    assert_eq!(out, vec![10]);
+    let pass = drain_from(&rings, &mut cursors, now, Producer::Alive);
+    let ring0: Vec<u64> = pass.slices[0].events.iter().map(|e| e.timestamp_ns).collect();
+    let ring1: Vec<u64> = pass.slices[1].events.iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(ring0, vec![10], "ring 0 stops at the unpublished claim");
+    assert_eq!(ring1, vec![40], "ring 1 is not held up by it at all");
 
-    // Once it is gone, there is nothing left to wait for and no reason to
-    // wait even a millisecond.
+    // Once the process is gone the claim is written off and ring 0 catches up.
     let pass = drain_from(&rings, &mut cursors, now, Producer::Gone);
     assert_eq!(pass.dropped, 1, "the lost event is counted, not hidden");
-    let recovered: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
-    assert_eq!(recovered, vec![30, 40], "and everything behind it is delivered");
+    let ring0: Vec<u64> = pass.slices[0].events.iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(ring0, vec![30]);
 }
 
 /// A thread stopped at a breakpoint, or starved by a cgroup, is not dead.
-///
-/// The failure this pins is a false positive. An earlier version abandoned any
-/// claim unpublished for 250 ms, on the theory that no live producer could
-/// exceed it. A thread stopped under a debugger exceeds it by minutes, and
-/// throwing its events away -- while the process sits there, alive, about to
-/// resume and publish them -- is the profiler corrupting its own measurement.
 #[test]
 fn a_live_but_stalled_producer_keeps_its_event() {
     let region = Region::new(2, 16);
@@ -266,21 +214,18 @@ fn a_live_but_stalled_producer_keeps_its_event() {
     rings.reserve_for_test(0, 20);
 
     let mut cursors = Cursors::for_rings(2);
-    let mut merger = Merger::new(2);
     let start = 1_000_000_000;
 
-    // A full second of being stopped: twenty times the old timeout.
+    // A full second stopped: twenty times the timeout an earlier version used.
     for step in 0..10u64 {
         let pass = drain_from(&rings, &mut cursors, start + step * 100_000_000, Producer::Alive);
         assert_eq!(pass.dropped, 0, "a live producer's event is not thrown away");
-        merger.merge(pass);
     }
 
-    // It wakes up and publishes. The event arrives, in order, intact.
     rings.publish_reserved_for_test(0, 1, ScopeEvent { timestamp_ns: 20, ..Default::default() });
     let pass = drain_from(&rings, &mut cursors, start + 2_000_000_000, Producer::Alive);
     assert_eq!(pass.dropped, 0);
-    let out: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
+    let out: Vec<u64> = pass.slices[0].events.iter().map(|e| e.timestamp_ns).collect();
     assert_eq!(out, vec![20], "the event that was nearly discarded");
 }
 
@@ -290,27 +235,14 @@ fn a_claim_stuck_past_the_backstop_is_eventually_released() {
     let region = Region::new(2, 16);
     let rings = region.rings();
     rings.reserve_for_test(0, 50);
-    rings.push(1, ScopeEvent { timestamp_ns: 60, ..Default::default() });
+    rings.push(0, ScopeEvent { timestamp_ns: 60, ..Default::default() });
 
     let mut cursors = Cursors::for_rings(2);
-    let mut merger = Merger::new(2);
     let start = 5_000_000_000;
-    assert!(merger.merge(drain_from(&rings, &mut cursors, start, Producer::Alive)).is_empty());
+    assert!(drain_from(&rings, &mut cursors, start, Producer::Alive).slices[0].events.is_empty());
 
     let pass = drain_from(&rings, &mut cursors, start + BACKSTOP_NS + 1, Producer::Alive);
     assert_eq!(pass.dropped, 1);
-    let out: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
-    assert_eq!(out, vec![60], "finite, even when liveness says otherwise");
-}
-
-/// The default entry point still behaves, for callers with no pid to check.
-#[test]
-fn the_default_drain_assumes_the_producer_is_alive() {
-    let region = Region::new(1, 16);
-    let rings = region.rings();
-    rings.push(0, ScopeEvent { timestamp_ns: 5, ..Default::default() });
-    let mut cursors = Cursors::for_rings(1);
-    let pass = drain(&rings, &mut cursors, 1_000);
-    assert_eq!(pass.dropped, 0);
-    assert_eq!(pass.slices[0].events.len(), 1);
+    let out: Vec<u64> = pass.slices[0].events.iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(out, vec![60], "finite, even when liveness is wrong");
 }

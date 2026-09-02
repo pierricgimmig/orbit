@@ -63,19 +63,21 @@ pub struct ScopeEvent {
     /// 1.88 hits an internal compiler error on struct-update syntax
     /// (`..event`) when an array field is sized by a const from another
     /// crate. The assertion below keeps the two honest.
-    pub text: [u8; 20],
+    pub text: [u8; 28],
 }
 
 /// Bytes of name that fit in one record.
 ///
-/// Not a tuning knob: the slot is one cache line, the handshake takes 16
-/// bytes of it, and this is what is left after the fixed fields. Growing it
-/// would cost a second cache line per event.
-pub const INLINE_TEXT: usize = 20;
+/// Not a tuning knob: the slot is one cache line, the sequence stamp takes
+/// eight bytes of it, and this is what is left after the fixed fields.
+/// Growing it would cost a second cache line per event. It went from twenty
+/// to twenty-eight when the horizon was deleted and the slot's second atomic
+/// with it.
+pub const INLINE_TEXT: usize = 28;
 
-const _: () = assert!(INLINE_TEXT == 20);
+const _: () = assert!(INLINE_TEXT == 28);
 
-pub const EVENT_SIZE: usize = 48;
+pub const EVENT_SIZE: usize = 56;
 
 impl Default for ScopeEvent {
     fn default() -> ScopeEvent {
@@ -88,7 +90,7 @@ impl Default for ScopeEvent {
             depth: 0,
             flags: 0,
             text_len: 0,
-            text: [0; 20],
+            text: [0; 28],
         }
     }
 }
@@ -121,11 +123,10 @@ mod tests {
     #[test]
     fn an_event_plus_its_handshake_is_exactly_one_cache_line() {
         // The record is sized by what is left of a 64-byte slot once the
-        // sequence stamp and the pending timestamp have taken 16 bytes. That
-        // is where the twenty inline text bytes come from: they are the
-        // slack, not a chosen number.
+        // sequence stamp has taken eight. That is where the inline text bytes
+        // come from: they are the slack, not a chosen number.
         assert_eq!(std::mem::size_of::<ScopeEvent>(), EVENT_SIZE);
-        assert_eq!(8 + 8 + EVENT_SIZE, 64);
+        assert_eq!(8 + EVENT_SIZE, 64);
         assert_eq!(INLINE_TEXT, EVENT_SIZE - 28, "the fixed fields take 28 bytes");
     }
 

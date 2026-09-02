@@ -66,6 +66,39 @@ Robustness against a dead producer
   for a full second keeps its event and delivers it on waking; the backstop
   fires; and the default entry point assumes life.
 
+No merge, and why
+
+  An earlier version ran a k-way merge behind a horizon to deliver one
+  globally timestamp-ordered stream. It is gone. ring_for_thread is a pure
+  function of the thread id, so a thread always writes the same ring and its
+  events sit at increasing claim numbers; reading a ring in claim order yields
+  every thread's events in the order that thread wrote them. That is the only
+  order anything downstream needs -- the viewer's lanes are keyed by
+  (pid, tid, kind, depth), so a lane holds one thread's events and they arrive
+  already sorted. Lane::insert has an append fast path that now always hits.
+
+  What the merge bought was ordering between threads, which no consumer asked
+  for. What it cost was a global gate held at the minimum frontier across
+  every ring, so one producer stopped at a breakpoint stalled every other
+  thread's events. Removing it turns a global stall into a local one.
+
+  It also removed the slot's second atomic. pending_ns existed only to tell
+  the horizon how far back to hold; without a horizon the eight bytes went to
+  inline text, which grew from 20 to 28 bytes.
+
+Discovery: inotify on /dev/shm, no polling
+
+  /dev/shm is a tmpfs and an ordinary filesystem to the kernel, so inotify
+  works on it. Verified with a probe rather than assumed: a watch on the
+  directory reported mask 0x100 (IN_CREATE) when a process called shm_open and
+  0x200 (IN_DELETE) on shm_unlink.
+
+  A watcher still enumerates the directory once at startup for processes
+  already running, and treats a create as "try to open, retry if the header is
+  not initialised" -- the notification fires when the file appears, which is
+  before the writer has finished its header. That is the case the reader
+  already reports rather than mapping garbage.
+
 Isolation: one segment per process, and one merge per process
 
   Each instrumented process owns /dev/shm/orbit-scopes-<pid> and the rings in

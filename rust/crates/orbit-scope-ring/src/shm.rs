@@ -37,6 +37,38 @@ pub use crate::ring::DEFAULT_RING_COUNT;
 pub const DEFAULT_SLOTS_PER_RING: usize =
     crate::ring::slots_for_budget(DEFAULT_RING_COUNT, DEFAULT_BUDGET_BYTES);
 
+/// The directory POSIX shared memory lives in on Linux, for a service that
+/// wants to notice segments appearing.
+///
+/// It is a tmpfs, which is an ordinary filesystem as far as the kernel is
+/// concerned, so `inotify` works on it: `IN_CREATE` fires when a process
+/// calls `shm_open` and `IN_DELETE` when it calls `shm_unlink`. Verified
+/// rather than assumed -- a probe watching this directory saw mask 0x100 on
+/// creation and 0x200 on unlink. No polling is needed to find instrumented
+/// processes.
+///
+/// A watcher still has to enumerate the directory once at startup, for the
+/// processes that were already running, and should treat a create as "try to
+/// open, and retry if the header is not initialised yet" -- the notification
+/// arrives when the file appears, which is before the writer has finished
+/// writing its header. That is exactly the case [`ScopeRingReader::open`]
+/// reports as "not initialised yet" rather than mapping garbage.
+pub const SHM_DIR: &str = "/dev/shm";
+
+/// The filename, without a leading slash, that `pid`'s segment appears under
+/// in [`SHM_DIR`].
+pub fn shm_file_name(pid: u32) -> String {
+    format!("orbit-scopes-{pid}")
+}
+
+/// The pid a segment filename belongs to, or `None` if it is not one of ours.
+///
+/// A service watching the directory sees every POSIX segment on the machine,
+/// most of them nothing to do with Orbit.
+pub fn pid_from_shm_file_name(name: &str) -> Option<u32> {
+    name.strip_prefix("orbit-scopes-")?.parse().ok()
+}
+
 fn shm_name(pid: u32) -> std::ffi::CString {
     std::ffi::CString::new(format!("/orbit-scopes-{pid}")).expect("no NUL in a formatted pid")
 }
@@ -343,5 +375,31 @@ mod tests {
         let bytes = crate::ring::layout_size(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING);
         assert!(bytes <= DEFAULT_BUDGET_BYTES + 64 * 1024, "{bytes} bytes for 8 MiB budget");
         assert!(bytes > DEFAULT_BUDGET_BYTES / 2, "and not wastefully under it");
+    }
+
+    #[test]
+    fn a_segment_name_round_trips_to_its_pid() {
+        let name = shm_file_name(4242);
+        assert_eq!(name, "orbit-scopes-4242");
+        assert_eq!(pid_from_shm_file_name(&name), Some(4242));
+    }
+
+    #[test]
+    fn other_processes_shared_memory_is_not_mistaken_for_ours() {
+        // A watcher on /dev/shm sees every POSIX segment on the machine.
+        assert_eq!(pid_from_shm_file_name("sem.something"), None);
+        assert_eq!(pid_from_shm_file_name("orbit-scopes-"), None);
+        assert_eq!(pid_from_shm_file_name("orbit-scopes-abc"), None);
+        assert_eq!(pid_from_shm_file_name("not-orbit-scopes-1"), None);
+    }
+
+    #[test]
+    fn the_writer_creates_a_file_a_watcher_can_see() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 8).expect("create");
+        let path = format!("{SHM_DIR}/{}", shm_file_name(writer.pid()));
+        assert!(std::path::Path::new(&path).exists(), "{path} should exist");
+        drop(writer);
+        assert!(!std::path::Path::new(&path).exists(), "and be unlinked on drop");
     }
 }

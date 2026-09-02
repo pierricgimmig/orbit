@@ -118,6 +118,18 @@ impl Lane {
         }
     }
 
+    /// Drop every event the predicate rejects, keeping start order.
+    pub fn retain<F: FnMut(&LiveEvent) -> bool>(&mut self, mut f: F) {
+        let before = self.events.len();
+        self.events.retain(|e| f(e));
+        if self.events.len() != before {
+            // Removing events can only restore end order, never break it, but
+            // a lane that was already unsorted may now be sorted -- recheck so
+            // it does not stay on the linear fallback forever.
+            self.ends_sorted = self.ends_are_sorted();
+        }
+    }
+
     /// First event with `end_ns > t`.
     ///
     /// Non-overlapping start-sorted lanes have non-decreasing `end_ns`
@@ -286,6 +298,18 @@ impl TrackIndex {
 
     pub fn clear(&mut self) {
         self.lanes.clear();
+    }
+
+    /// Drop every event the predicate rejects, and any lane left empty.
+    ///
+    /// An empty lane is not a lane: `TrackStrip` builds the thread rows from
+    /// [`Self::lanes`], so leaving one behind keeps a row (and its height) on
+    /// screen with nothing in it.
+    pub fn retain<F: FnMut(&LiveEvent) -> bool>(&mut self, mut f: F) {
+        for lane in self.lanes.values_mut() {
+            lane.retain(&mut f);
+        }
+        self.lanes.retain(|_, lane| !lane.is_empty());
     }
 
     pub fn lane_count(&self) -> usize {
@@ -807,6 +831,42 @@ mod tests {
         let (a, b) = idx.time_bounds().expect("bounds");
         assert_eq!(a, 0);
         assert_eq!(b, 25_000);
+    }
+
+    #[test]
+    fn retain_drops_events_and_the_lanes_they_emptied() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 10, 0, 1));
+        idx.insert(scope(20, 10, 0, 2));
+        idx.insert(LiveEvent {
+            pid: 2,
+            ..scope(40, 10, 0, 3)
+        });
+        assert_eq!(idx.lane_count(), 2);
+        idx.retain(|e| e.pid != 1);
+        assert_eq!(idx.event_count(), 1);
+        // An empty lane still builds a row in the track strip, so it must go
+        // with its last event.
+        assert_eq!(idx.lane_count(), 1);
+        assert!(idx.lanes().all(|(k, _)| k.pid == 2));
+    }
+
+    #[test]
+    fn retain_keeps_lane_lookups_answering() {
+        let mut idx = TrackIndex::default();
+        // A long scope with a 1 ns instant inside it: ends are out of order,
+        // so the lane is on the duration-aware linear fallback. Dropping the
+        // instant must leave the lane searchable, not stuck mid-state.
+        idx.insert(scope(0, 1_000, 1, 1));
+        let mut instant = scope(10, 1, 1, 2);
+        instant.pid = 2;
+        idx.insert(instant);
+        let key = idx.lanes().next().expect("lane").0;
+        idx.retain(|e| e.pid != 2);
+        let lane = idx.lane(key).expect("lane");
+        assert!(lane.ends_are_sorted());
+        assert_eq!(lane.first_ending_after(10), 0);
+        assert_eq!(lane.overlapping(10, 11).map(|e| e.start_ns), Some(0));
     }
 
     #[test]

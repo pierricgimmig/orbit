@@ -26,11 +26,10 @@
 //! elsewhere, which is the honest version of the claim.
 //!
 //! A consequence of MPSC worth stating: records within one ring are *not*
-//! perfectly timestamp-ordered, because two producers can read the clock in
-//! one order and claim slots in the other. The disorder is bounded by the
-//! number of threads concurrently on one core -- usually one -- so the
-//! consumer sorts each drained slice with an insertion pass, which is linear
-//! on nearly-ordered input.
+//! perfectly timestamp-ordered across threads, because two producers can read
+//! the clock in one order and claim slots in the other. Each *thread's* own
+//! events are ordered, which is the only order anything downstream needs --
+//! see the module docs in [`crate::merge`].
 
 use crate::event::{ScopeEvent, EVENT_SIZE};
 use std::cell::UnsafeCell;
@@ -101,18 +100,6 @@ const _: () = assert!(std::mem::size_of::<RingHeader>() == CACHE_LINE);
 #[repr(C, align(64))]
 pub struct Slot {
     pub seq: AtomicU64,
-    /// The timestamp of the event being written, published immediately after
-    /// the claim and before the payload.
-    ///
-    /// This is what makes a ring with a slot in flight safe to reason about.
-    /// Because rings are MPSC, claim order is not timestamp order: a producer
-    /// can read the clock, be descheduled, and have a neighbour claim the
-    /// next slot and commit a *later* event behind it. A consumer that took
-    /// "the last committed timestamp" as the ring's frontier would emit past
-    /// the stalled event and then deliver it late. Publishing the timestamp
-    /// at claim time gives the consumer an exact lower bound on what is still
-    /// coming, so the frontier is the pending timestamp itself.
-    pub pending_ns: AtomicU64,
     /// `UnsafeCell` because two threads hold `&Slot` while one writes: the
     /// producer that claimed this index, and the consumer reading it. The
     /// `seq` handshake is what makes that safe, and `UnsafeCell` is how you
@@ -121,7 +108,7 @@ pub struct Slot {
     pub event: UnsafeCell<ScopeEvent>,
 }
 
-const _: () = assert!(8 + 8 + EVENT_SIZE == CACHE_LINE);
+const _: () = assert!(8 + EVENT_SIZE == CACHE_LINE);
 
 const _: () = assert!(std::mem::size_of::<Slot>() == CACHE_LINE);
 
@@ -279,9 +266,6 @@ impl Rings {
         let ring = ring.min(self.ring_count.saturating_sub(1));
         let claim = self.ring_header(ring).write_cursor.fetch_add(1, Ordering::Relaxed);
         let slot = self.slot(ring, claim);
-        // Before the payload: a consumer that sees this claim in flight needs
-        // to know how far back it must hold the stream.
-        slot.pending_ns.store(event.timestamp_ns, Ordering::Release);
         // SAFETY: this claim is ours alone -- fetch_add handed it out once --
         // so writing the payload needs no further synchronisation. The
         // release store below is what makes it visible.
@@ -295,10 +279,8 @@ impl Rings {
     /// a producer descheduled mid-write. Test-only, and the only way to
     /// construct that interleaving deterministically.
     #[doc(hidden)]
-    pub fn reserve_for_test(&self, ring: usize, timestamp_ns: u64) -> u64 {
-        let claim = self.ring_header(ring).write_cursor.fetch_add(1, Ordering::Relaxed);
-        self.slot(ring, claim).pending_ns.store(timestamp_ns, Ordering::Release);
-        claim
+    pub fn reserve_for_test(&self, ring: usize, _timestamp_ns: u64) -> u64 {
+        self.ring_header(ring).write_cursor.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Publishes a slot reserved by `reserve_for_test`, as a producer would
@@ -316,20 +298,6 @@ impl Rings {
     /// The claim counter, for the consumer.
     pub fn write_cursor(&self, ring: usize) -> u64 {
         self.ring_header(ring).write_cursor.load(Ordering::Acquire)
-    }
-
-    /// The timestamp a claimed-but-unpublished slot will carry, if its
-    /// producer got as far as announcing it.
-    ///
-    /// `None` means the producer is inside the two instructions between the
-    /// claim and the announcement, in which case the consumer has no bound
-    /// and must hold the stream where it is rather than guess.
-    pub fn pending_timestamp(&self, ring: usize, claim: u64) -> Option<u64> {
-        let slot = self.slot(ring, claim);
-        match slot.pending_ns.load(Ordering::Acquire) {
-            0 => None,
-            ns => Some(ns),
-        }
     }
 
     /// The event in a slot if it is committed for `claim`, else `None`.

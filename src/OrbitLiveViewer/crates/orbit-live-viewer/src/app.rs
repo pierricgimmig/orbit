@@ -551,6 +551,11 @@ pub struct OrbitLiveApp {
     self_cursor: orbit_live_event::dev::SelfCursor,
     /// Demo/capture end only. Not ring newest_end (pid 2/3).
     live_edge_ns: u64,
+    /// The capture axis is a guess: `CaptureStarted` arrived without a start
+    /// timestamp, so self-profile scopes are being laid on [`DEMO_ORIGIN_NS`]
+    /// until a real event says where the capture clock actually is. See
+    /// [`OrbitApp::adopt_capture_axis`].
+    self_axis_provisional: bool,
     slider_grab: Option<f32>,
     fps_ema: f32,
     fullscreen: bool,
@@ -757,6 +762,7 @@ impl OrbitLiveApp {
             skip_clip_labels: false,
             self_cursor: Default::default(),
             live_edge_ns: 0,
+            self_axis_provisional: false,
             slider_grab: None,
             fps_ema: 0.0,
             fullscreen: false,
@@ -889,11 +895,19 @@ impl OrbitLiveApp {
                 return;
             };
             self.recording = true;
+            // The capture clock is the target's, and nothing here knows it
+            // yet -- `CaptureStarted` brings it. Until then self-profile
+            // scopes go on a provisional axis that the first real event
+            // replaces, rather than on whatever a previous demo left behind.
+            self.self_cursor.reset_to(DEMO_ORIGIN_NS);
+            self.live_edge_ns = DEMO_ORIGIN_NS;
+            self.self_axis_provisional = true;
             self.net.start_capture(&self.capture_start(pid));
         } else {
             self.recording = true;
             self.self_cursor.reset_to(DEMO_ORIGIN_NS);
             self.live_edge_ns = DEMO_ORIGIN_NS;
+            self.self_axis_provisional = false;
             self.net.start_demo();
         }
         if !self.dev_locked_off {
@@ -910,6 +924,7 @@ impl OrbitLiveApp {
         self.recording = true;
         self.self_cursor.reset_to(DEMO_ORIGIN_NS);
         self.live_edge_ns = DEMO_ORIGIN_NS;
+        self.self_axis_provisional = false;
         self.net.start_demo();
         if !self.dev_locked_off {
             intern_self_names(&mut self.intern);
@@ -1000,6 +1015,34 @@ impl OrbitLiveApp {
         )
     }
 
+    /// First real event of a capture that started without a clock: this is
+    /// where the capture axis actually is.
+    ///
+    /// Self-profile scopes laid down while the axis was a guess are on the
+    /// wrong one -- typically 1 ms against a capture at time since boot. They
+    /// cannot be shifted (the gap is not a constant offset, it is a different
+    /// clock), and keeping them makes the content span the whole gap: fit then
+    /// crams the self scopes into the leftmost pixel, the real capture into
+    /// the rightmost, and every ruler label reads the same. Drop them and
+    /// re-pin the cursor; the next frame's batch lands on the real axis.
+    fn adopt_capture_axis(&mut self, start_ns: u64) {
+        self.self_axis_provisional = false;
+        self.index.retain(|e| !is_self_pid(e.pid));
+        self.self_cursor.reset_to(start_ns);
+        self.live_edge_ns = start_ns;
+        self.mark_layout_changed();
+    }
+
+    /// Zero of the ruler: the start of what is on screen, so labels read as
+    /// capture time. Falls back to the ring's oldest event when there is no
+    /// content cluster yet.
+    fn timeline_origin_ns(&self) -> f64 {
+        match self.content_span() {
+            Some((a, _)) => a,
+            None => self.status.oldest_start_ns as f64,
+        }
+    }
+
     fn fit_to_content(&mut self) {
         if let Some((a, b)) = self.content_span() {
             let (t0, t1) = fit_content_window(a, b);
@@ -1066,6 +1109,7 @@ impl OrbitLiveApp {
         self.trace_processes.clear();
         self.trace_name = Some(load.name.clone());
         self.live_edge_ns = 0;
+        self.self_axis_provisional = false;
         self.t0 = 0.0;
         self.t1 = FOLLOW_NS;
         self.content_t0 = None;
@@ -1516,6 +1560,9 @@ impl OrbitLiveApp {
                         continue;
                     }
                     if !is_self_pid(ev.pid) {
+                        if self.self_axis_provisional {
+                            self.adopt_capture_axis(ev.start_ns);
+                        }
                         self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
                     }
                     self.index.insert(ev);
@@ -1531,6 +1578,16 @@ impl OrbitLiveApp {
                 self.selected = None;
                 self.hover = None;
                 self.measure = None;
+                // `start_ns == 0` means "a capture is starting, its clock is
+                // not known yet". `LiveViewerBridge` sends that as soon as the
+                // gRPC request is written and the real CLOCK_MONOTONIC origin
+                // only when the service answers with `CaptureStarted` -- which
+                // is late, and never at all when no probe fires. Every
+                // self-profile scope emitted in between lands on
+                // `DEMO_ORIGIN_NS`, 1 ms, while the capture itself is at time
+                // since boot. Flag the axis so the first real event can throw
+                // those away instead of leaving a cluster hours to the left.
+                self.self_axis_provisional = start_ns == 0;
                 let origin = if start_ns > 0 {
                     start_ns
                 } else {
@@ -2420,7 +2477,7 @@ impl OrbitLiveApp {
             }
             hit.on_hover_text("Show all threads");
         }
-        paint_timebar(ui, ruler, self.t0, self.t1, self.status.oldest_start_ns as f64);
+        paint_timebar(ui, ruler, self.t0, self.t1, self.timeline_origin_ns());
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false, dt);
         self.handle_measure(&ruler_resp, ruler, false);
@@ -5698,7 +5755,10 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64, origin_ns: f64) {
                 ),
             );
             if is_major {
-                let text = format_ns((t - origin_ns).max(0.0));
+                // Signed, not clamped. Clamping turned every tick left of
+                // `origin_ns` into the same "0ns", which reads as a broken
+                // ruler rather than as "this is before the origin".
+                let text = format_ns(t - origin_ns);
                 let galley = painter.layout_no_wrap(text, font.clone(), theme::MUTED);
                 let label_x = x + 4.0;
                 let width = galley.rect.width();
@@ -5971,14 +6031,16 @@ fn paint_clip_labels(
 }
 
 fn format_ns(t: f64) -> String {
+    let sign = if t < 0.0 { "-" } else { "" };
+    let t = t.abs();
     if t >= 1e9 {
-        format!("{:.3}s", t / 1e9)
+        format!("{sign}{:.3}s", t / 1e9)
     } else if t >= 1e6 {
-        format!("{:.1}ms", t / 1e6)
+        format!("{sign}{:.1}ms", t / 1e6)
     } else if t >= 1e3 {
-        format!("{:.0}µs", t / 1e3)
+        format!("{sign}{:.0}µs", t / 1e3)
     } else {
-        format!("{t:.0}ns")
+        format!("{sign}{t:.0}ns")
     }
 }
 
@@ -6112,6 +6174,78 @@ mod tests {
         assert!(label_fits(60.0, 40.0, 50.0, right));
         // A label that would spill past the bar's end is dropped.
         assert!(!label_fits(780.0, 40.0, 0.0, right));
+    }
+
+    #[test]
+    fn a_provisional_self_axis_is_purged_by_the_first_real_event() {
+        use orbit_live_event::dev::{is_self_pid, DEMO_ORIGIN_NS, TID_UI, VIEWER_PID};
+        // `LiveViewerBridge` marks the capture started with `start_ns == 0`
+        // the moment the gRPC request is written, so the viewer lays
+        // self-profile scopes on DEMO_ORIGIN_NS (1 ms) until the service
+        // answers with the real CLOCK_MONOTONIC origin -- late, or never when
+        // no probe fires.
+        let mut idx = TrackIndex::default();
+        for i in 0..64u64 {
+            idx.insert(LiveEvent {
+                start_ns: DEMO_ORIGIN_NS + i * 8_000_000,
+                duration_ns: 400_000,
+                tid: TID_UI,
+                pid: VIEWER_PID,
+                kind: kind::API_SCOPE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: 1,
+            });
+        }
+        let capture0 = 137_458_000_000_000u64;
+        let real = |start, dur| LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid: 7,
+            pid: 4242,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 2,
+        };
+        idx.insert(real(capture0, 1_000_000));
+        idx.insert(real(capture0 + 4_000_000, 2_000_000));
+
+        // Both axes in one index: fit spans a day and a half, so the capture
+        // is a handful of pixels on the right and the self scopes a smear on
+        // the left -- with every ruler label reading the same.
+        let (a, b) = idx.time_bounds().expect("mixed bounds");
+        assert_eq!(a, DEMO_ORIGIN_NS);
+        let (m0, m1) = fit_content_window(a as f64, b as f64);
+        assert!(
+            (m1 - m0) > 1e14,
+            "the mixed fit must be the pathological one this test is about"
+        );
+
+        idx.retain(|e| !is_self_pid(e.pid));
+
+        let (a, b) = idx.time_bounds().expect("capture bounds");
+        assert_eq!(a, capture0);
+        assert_eq!(b, capture0 + 6_000_000);
+        let (t0, t1) = fit_content_window(a as f64, b as f64);
+        assert!(
+            (t1 - t0 - 6e6).abs() < 1.0,
+            "fit is the capture, {t0}..{t1}"
+        );
+        // And no empty viewer lanes left behind to hold rows on screen.
+        assert!(!idx.lanes().any(|(k, _)| is_self_pid(k.pid)));
+    }
+
+    #[test]
+    fn ruler_labels_left_of_the_origin_are_signed_not_zero() {
+        // Clamping to 0 painted "0ns" on every tick before the origin, which
+        // is what a wrong origin looked like on screen.
+        assert_eq!(format_ns(-1_250_000.0), "-1.2ms");
+        assert_eq!(format_ns(-400.0), "-400ns");
+        assert_eq!(format_ns(0.0), "0ns");
+        assert_ne!(format_ns(-1_250_000.0), format_ns(-2_500_000.0));
     }
 
     #[test]

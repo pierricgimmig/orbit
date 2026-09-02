@@ -55,7 +55,7 @@ pub fn split_name(head: &mut ScopeEvent, name: &str) -> Vec<ScopeEvent> {
             depth: head.depth,
             flags: 0,
             text_len: take as u8,
-            text: [0; 20],
+            text: [0; 28],
         };
         chunk.text[..take].copy_from_slice(&rest[..take]);
         rest = &rest[take..];
