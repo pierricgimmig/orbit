@@ -46,7 +46,7 @@ members = [
 # directory. crate_universe splices this workspace into a temp dir to generate
 # @orbit_crates, where such a path cannot resolve -- so keeping it here breaks
 # every Bazel build. Same reasoning as orbit-live-viewer next door.
-exclude = ["crates/orbit-service"]
+exclude = ["crates/orbit-service", "crates/orbit-capture"]
 
 [workspace.package]
 edition = "2021"

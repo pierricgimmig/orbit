@@ -104,6 +104,12 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub modules_json:
         Mutex<Option<std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the whole capture serialized as an Arrow IPC file, for
+    /// download. Set by the service, which owns the encoder (and its arrow
+    /// dependency) so this crate need not.
+    #[allow(clippy::type_complexity)]
+    pub capture_export:
+        Mutex<Option<std::sync::Arc<dyn Fn() -> Result<Vec<u8>, String> + Send + Sync>>>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
@@ -164,6 +170,7 @@ impl LiveService {
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
             modules_json: Mutex::new(None),
+            capture_export: Mutex::new(None),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
@@ -358,6 +365,13 @@ impl LiveService {
         modules: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
     ) {
         *self.modules_json.lock() = Some(modules);
+    }
+
+    pub fn set_capture_export(
+        &self,
+        export: std::sync::Arc<dyn Fn() -> Result<Vec<u8>, String> + Send + Sync>,
+    ) {
+        *self.capture_export.lock() = Some(export);
     }
 
     pub fn set_sampling_report(

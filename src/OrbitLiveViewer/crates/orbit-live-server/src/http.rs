@@ -57,6 +57,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/sampling/report", get(sampling_report))
         .route("/api/sampling/tree", get(sampling_tree))
         .route("/api/symbols/modules", get(symbols_modules))
+        .route("/api/capture/export", get(capture_export))
         .route(
             crate::theverge::THEVERGE_HTTP_PATH,
             get(theverge_trace).head(theverge_trace),
@@ -336,6 +337,34 @@ async fn sampling_tree(
     match tree(&ranges, &mode) {
         Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `GET /api/capture/export` -- the whole capture as an Arrow IPC file,
+/// offered as a download. 501 when the service does not provide an encoder.
+async fn capture_export(State(svc): State<Arc<LiveService>>) -> Response {
+    let hook = svc.capture_export.lock().clone();
+    let Some(export) = hook else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "this service does not export captures",
+        )
+            .into_response();
+    };
+    match tokio::task::spawn_blocking(move || export()).await {
+        Ok(Ok(bytes)) => (
+            [
+                (header::CONTENT_TYPE, "application/vnd.apache.arrow.file"),
+                (
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"capture.arrow\"",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
 
@@ -917,6 +946,72 @@ mod isolation_tests {
             "content-length: {}",
             crate::theverge::THEVERGE_BYTES
         )));
+    }
+
+    async fn spawn_router(svc: std::sync::Arc<crate::LiveService>) -> String {
+        let app = super::router(svc);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    }
+
+    fn curl_si(url: &str) -> std::process::Output {
+        for _ in 0..40 {
+            let attempt = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "5", url])
+                .output()
+                .expect("curl -si");
+            if attempt.status.success() && !attempt.stdout.is_empty() {
+                return attempt;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("curl never reached {url}");
+    }
+
+    fn test_service() -> std::sync::Arc<crate::LiveService> {
+        crate::LiveService::new(crate::ServerConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            ring_buffer_bytes: 1024 * 32,
+            spill_path: None,
+            dev_self_profile: false,
+        })
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_export_serves_arrow_when_a_hook_is_set() {
+        let svc = test_service();
+        svc.set_capture_export(std::sync::Arc::new(|| Ok(b"ARROW1_stub_body".to_vec())));
+        let base = spawn_router(svc).await;
+        let out = curl_si(&format!("{base}/api/capture/export"));
+        let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(text.contains("200 ok"), "status line: {text}");
+        assert!(
+            text.contains("application/vnd.apache.arrow.file"),
+            "content-type missing: {text}"
+        );
+        assert!(
+            text.contains("attachment; filename=\"capture.arrow\""),
+            "content-disposition missing: {text}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("ARROW1_stub_body"),
+            "body missing"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_export_is_501_without_a_hook() {
+        let base = spawn_router(test_service()).await;
+        let out = curl_si(&format!("{base}/api/capture/export"));
+        let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(text.contains("501"), "expected 501, got: {text}");
     }
 
     #[test]

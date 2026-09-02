@@ -1,0 +1,18 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-capture"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+rust-version = "1.88"
+
+[dependencies]
+orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
+# Granular arrow crates, no compression features, so the service stays a pure
+# static musl binary with no C toolchain pulled in through lz4/zstd.
+arrow-array = { version = "59", default-features = false }
+arrow-schema = { version = "59", default-features = false }
+arrow-ipc = { version = "59", default-features = false }

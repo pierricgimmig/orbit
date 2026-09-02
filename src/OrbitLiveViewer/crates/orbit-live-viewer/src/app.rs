@@ -1964,6 +1964,13 @@ impl OrbitLiveApp {
             {
                 self.self_pane_open = !self.self_pane_open;
             }
+            if pill(ui, "Save", false)
+                .on_hover_text("Download the capture as an Arrow IPC file (open with pyarrow / pandas)")
+                .clicked()
+            {
+                ui.ctx()
+                    .open_url(egui::OpenUrl::new_tab("/api/capture/export"));
+            }
             ui.add_space(6.0);
             self.paint_search(ui);
             ui.add_space(8.0);
