@@ -20,6 +20,7 @@ mod functions;
 mod interner;
 mod privileges;
 mod report;
+mod scopes;
 mod serve;
 mod symbolize;
 mod sysinfo;

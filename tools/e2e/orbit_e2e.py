@@ -74,12 +74,12 @@ def build_target(box3d_root, out_path):
 
 
 class Target:
-    """The profiled process."""
+    """The profiled process. `command` is a full argv; the process must print
+    `pid=<n>` on its first line of stdout."""
 
-    def __init__(self, binary, threads=3):
+    def __init__(self, command):
         self.proc = subprocess.Popen(
-            [binary, "--threads", str(threads)],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
         )
         line = self.proc.stdout.readline()
         match = re.search(r"pid=(\d+)", line)
@@ -371,6 +371,83 @@ def report_tabs(run):
         run.shot(f"0{index}-report-{slug}", settle=3.0)
 
 
+# The four manual-instrumentation test programs. Each runs the same scenario
+# -- frames, three physics workers, an async job with an arrow, two graphed
+# values, a name long enough to spill -- so their captures look alike and the
+# documentation can show any of them.
+
+def _build_app(lang):
+    """Returns the argv to launch the test app for `lang`, building it first."""
+    if lang == "rust":
+        binary = os.path.join(REPO, "rust/target/release/OrbitTestRust")
+        if not os.path.exists(binary):
+            subprocess.run(["cargo", "build", "--release", "-p", "orbit-test-rust"],
+                           cwd=os.path.join(REPO, "rust"), check=True)
+        return [binary, "--seconds", "0"]
+    if lang in ("c", "cpp"):
+        name = {"c": "OrbitTestC", "cpp": "OrbitTestCpp"}[lang]
+        folder = os.path.join(REPO, "src", name)
+        binary = os.path.join(folder, name)
+        if not os.path.exists(binary):
+            subprocess.run([os.path.join(folder, "build.sh")], check=True)
+        return [binary, "--seconds", "0"]
+    if lang == "python":
+        lib = os.path.join(REPO, "rust/target/release/liborbit_api.so")
+        if not os.path.exists(lib):
+            subprocess.run(["cargo", "build", "--release", "-p", "orbit-api"],
+                           cwd=os.path.join(REPO, "rust"), check=True)
+        return [sys.executable, os.path.join(REPO, "src/OrbitTestPython/OrbitTestPython.py"),
+                "--seconds", "0"]
+    raise Failure(f"unknown app language {lang}")
+
+
+def _instrumented_app(run, lang, shot_index):
+    """Captures one of the test apps and photographs it."""
+    app = Target(_build_app(lang))
+    try:
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(6.0)
+        run.open_viewer()
+        run.service.post("/api/capture/stop")
+        time.sleep(1.5)
+        log = run.service.stderr_text()
+        check(
+            f"opened segment of pid {app.pid}" in log,
+            f"the service never opened {lang}'s scope segment; log tail: {log[-600:]}",
+        )
+        # The closing line reports what reached the timeline.
+        summary = [l for l in log.splitlines() if "manual instrumentation:" in l and "events" in l]
+        check(summary, "no manual-instrumentation summary in the service log")
+        events = int(re.search(r"(\d+) events", summary[-1]).group(1))
+        check_at_least(events, 500, f"{lang}: scope events pushed to the timeline")
+        links = int(re.search(r"(\d+) links", summary[-1]).group(1))
+        check_at_least(links, 1, f"{lang}: async job links seen")
+        run.shot(f"{shot_index:02d}-api-{lang}", settle=3.0)
+        return f"{events} events, {links} links"
+    finally:
+        app.stop()
+
+
+@scenario("api-rust", "OrbitTestRust: every instrumentation call, from Rust")
+def api_rust(run):
+    return _instrumented_app(run, "rust", 7)
+
+
+@scenario("api-c", "OrbitTestC: every instrumentation call, from C")
+def api_c(run):
+    return _instrumented_app(run, "c", 8)
+
+
+@scenario("api-cpp", "OrbitTestCpp: every instrumentation call, from C++ with RAII")
+def api_cpp(run):
+    return _instrumented_app(run, "cpp", 9)
+
+
+@scenario("api-python", "OrbitTestPython: every instrumentation call, from Python over ctypes")
+def api_python(run):
+    return _instrumented_app(run, "python", 10)
+
+
 @scenario("thread-states", "Thread state bars report real states, not just RUNNING")
 def thread_states(run):
     run.capture(seconds=6.0)
@@ -452,7 +529,7 @@ def main():
     results = []
     target = service = chrome = None
     try:
-        target = Target(target_bin)
+        target = Target([target_bin, "--threads", "3"])
         print(f"target pid {target.pid}")
         service = Service(args.port)
         print(f"service on {service.base}")

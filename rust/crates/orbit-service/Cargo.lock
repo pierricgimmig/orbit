@@ -586,6 +586,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-scope-ring"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "orbit-service"
 version = "0.1.0"
 dependencies = [
@@ -596,6 +603,7 @@ dependencies = [
  "orbit-object",
  "orbit-perf-records",
  "orbit-perf-ring",
+ "orbit-scope-ring",
  "orbit-thread-states",
  "orbit-tracing-state",
  "orbit-unwind",

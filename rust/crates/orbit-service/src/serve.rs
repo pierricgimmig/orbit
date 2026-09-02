@@ -17,6 +17,7 @@
 
 use crate::functions::FunctionIndex;
 use crate::report::{FrameInfo, SampleStore, StoredSample, TreeMode};
+use crate::scopes::ScopeSource;
 use crate::telemetry::TelemetryHelper;
 use crate::thread_state::ThreadStateTracer;
 use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
@@ -517,6 +518,10 @@ fn capture_loop(
     // Which processes get rows. Scheduling is traced machine-wide either way;
     // this decides whose slices are also projected onto a thread bar.
     let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
+    // Manual instrumentation: the target's own scope segment, if it has one.
+    // Opened lazily -- a process may call orbit_init after the capture
+    // starts -- and drained every pass alongside the perf rings.
+    let mut scopes = ScopeSource::new(service.clone());
     if show_all_processes {
         eprintln!("orbit-service: showing every process on the machine");
     } else {
@@ -742,6 +747,8 @@ fn capture_loop(
             }
         }
 
+        scopes.poll(&visible, crate::now_monotonic_ns(), &mut batch);
+
         // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
         // exact spans the target actually executed, and they belong above the
         // sampled flame graph rather than mixed into it.
@@ -788,6 +795,24 @@ fn capture_loop(
             .collect();
         if !tail.is_empty() {
             service.push_events(&tail);
+        }
+    }
+
+    // Manual scopes still open when the capture stops are closed at its end
+    // timestamp, so the last frame is drawn rather than lost.
+    {
+        let mut tail = Vec::new();
+        scopes.finish(crate::now_monotonic_ns(), &mut tail);
+        if !tail.is_empty() {
+            service.push_events(&tail);
+        }
+        if scopes.segment_count() > 0 {
+            eprintln!(
+                "orbit-service: manual instrumentation: {} segment(s), {} events, {} links (not drawn yet)",
+                scopes.segment_count(),
+                scopes.events_pushed,
+                scopes.links_seen
+            );
         }
     }
 

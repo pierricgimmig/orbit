@@ -71,6 +71,14 @@ impl VisibleProcesses {
         self.all || self.allowed.contains(&pid)
     }
 
+    /// The processes whose rows are shown -- the target and its descendants.
+    /// Empty when everything is visible, since "everything" is not a list.
+    pub fn pids(&self) -> Vec<u32> {
+        let mut pids: Vec<u32> = self.allowed.iter().copied().collect();
+        pids.sort_unstable();
+        pids
+    }
+
     /// Rebuilds the descendant set if enough time has passed. Cheap to call
     /// every loop iteration.
     pub fn maybe_refresh(&mut self) {
