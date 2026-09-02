@@ -2,8 +2,22 @@ Manual instrumentation: per-core scope rings
 Measured 2026-09-02T01:51:33Z on Linux 7.0.0-30-generic, 32 threads.
 Commit: 29b0c754d
 
-Write path (single thread, one ring, no consumer, release build):
-push: 95396249 events/s, 10.5 ns each
+Write path, taken apart (release build, single thread, one ring, no consumer)
+
+  push, ring only            6.98 ns    claim, announce, payload, publish
+  push + clock read         15.93 ns    what an instrumented scope costs
+  clock read alone           9.37 ns    59% of a real scope
+  atomic fetch_add           4.33 ns
+  plain increment            0.18 ns    what rseq's per-CPU exclusivity buys
+  atomic premium             4.14 ns    26% of a real scope
+
+  An earlier run reported "98 million events/s, 10.2 ns each" and attributed
+  about half of it to the clock. That was wrong: the benchmark pushed a
+  pre-built event with a constant timestamp and never read the clock. The
+  table above is from tests/cost.rs, which measures each part separately.
+
+  Reproduce:
+    cargo test -p orbit-scope-ring --release --test cost -- --nocapture
 
 Layout
   event                    32 bytes

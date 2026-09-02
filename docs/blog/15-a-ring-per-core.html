@@ -620,12 +620,12 @@
   <div class="masthead-inner">
     <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 15</p>
     <h1>A Ring Per Core</h1>
-    <p class="dek">Manual instrumentation has to cost almost nothing or people turn it off. Here is the write path that costs ten nanoseconds, the two places the obvious design is unsound, and the bug that only appeared when someone asked the right question.</p>
+    <p class="dek">Manual instrumentation has to cost almost nothing or people turn it off. Here is the write path, measured honestly at sixteen nanoseconds a scope, the two places the obvious design is unsound, what rseq is and what it would actually be worth, and the bug that only appeared when someone asked the right question.</p>
     <p class="byline">Design notes, with the corrections left in</p>
 
     <div class="stats">
-      <div class="stat"><b>10.2 ns</b><span>Per event</span></div>
-      <div class="stat"><b>98 M/s</b><span>Events, one thread</span></div>
+      <div class="stat"><b>15.9 ns</b><span>Per scope</span></div>
+      <div class="stat"><b>7.0 ns</b><span>Ring alone</span></div>
       <div class="stat"><b>0</b><span>Locks</span></div>
       <div class="stat"><b>32 B</b><span>Per record</span></div>
       <div class="stat"><b>128</b><span>Rings, capped</span></div>
@@ -756,7 +756,31 @@
     <figcaption>The entire producer. <code>fetch_add</code> hands out a slot index that belongs to exactly one caller, so the payload needs no further synchronisation.</figcaption>
   </figure>
 
-  <p>The cursor only ever increases; it never wraps back. A slot index is <code>claim % slots_per_ring</code>, and the claim number doubles as the sequence stamp, so a consumer can always tell a slot's current occupant from the one that occupied it a lap ago. Ten nanoseconds an event, ninety-eight million a second on one thread &mdash; and a good half of that is the clock read, not the ring.</p>
+  <p>The cursor only ever increases; it never wraps back. A slot index is <code>claim % slots_per_ring</code>, and the claim number doubles as the sequence stamp, so a consumer can always tell a slot's current occupant from the one that occupied it a lap ago.</p>
+
+  <h3>Where the time actually goes</h3>
+
+  <p>An earlier version of this post said the ring cost about ten nanoseconds an event and that "a good half of that is the clock read". The second half of that sentence was wrong, and wrong in the way benchmarks usually are: the benchmark pushed a pre-built event with a constant timestamp, so it never read the clock at all. Here is the same write path taken apart properly.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>Cost</th><th>ns</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>push, ring only</td><td class="v">6.98</td><td>claim, announce, payload, publish</td></tr>
+        <tr><td><strong>push + clock read</strong></td><td class="v bump">15.93</td><td><strong>what a scope actually costs</strong></td></tr>
+        <tr><td>clock read alone</td><td class="v">9.37</td><td>59% of a real scope</td></tr>
+        <tr><td>atomic <code>fetch_add</code></td><td class="v">4.33</td><td></td></tr>
+        <tr><td>plain increment</td><td class="v">0.18</td><td>what rseq would buy</td></tr>
+        <tr><td>atomic premium</td><td class="v hold-t">4.14</td><td>26% of a real scope</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two things fall out of that table, and both are more interesting than the number I first reported.</p>
+
+  <p>The atomic claim is <strong>4.14 ns, a quarter of a real scope</strong>. That is a much better case for <code>rseq</code> than the dismissal a few paragraphs down originally implied &mdash; it is not "one instruction", it is a lock-prefixed read-modify-write against a plain increment, and the ratio is twenty-four to one.</p>
+
+  <p>But the clock read is <strong>9.37 ns, more than half</strong>. Optimising the atomic while leaving that untouched is the wrong order of work. <code>clock_gettime</code> through the vDSO already reads the timestamp counter internally; what costs the nine nanoseconds is the vDSO's own generality. Reading <code>rdtscp</code> directly and converting with the same calibration the kernel publishes is the larger prize, and it is the one I would take first.</p>
 
   <h2 id="preemption">Where the obvious design is unsound</h2>
 
@@ -800,7 +824,11 @@
 
   <p>The clever part is the second half. You also register a <em>critical section descriptor</em>: a start address, an end address, and an <em>abort</em> address. While the thread's instruction pointer is inside that range, the kernel promises that if the thread is preempted or migrated, it will not simply resume where it left off &mdash; it will jump to the abort handler instead. So you write the sequence as "read the CPU id, compute the slot, store", and if anything interrupts you anywhere in the middle, you land in the abort path and start over. What you get is an atomic-free, lock-free critical section with true per-CPU exclusivity, which is precisely the guarantee the naive design assumed it already had.</p>
 
-  <p>It is what makes genuinely per-CPU userspace data structures possible, and it is why allocators like tcmalloc use it for their per-CPU caches. It is also Linux-only, needs the critical section written so it can be restarted from the top with no side effects, and on most architectures wants a hand-written assembly sequence with the abort handler placed by the linker at a specific signature. That is a lot of machinery, and a hard dependency on one operating system, to save one instruction.</p>
+  <p>It is what makes genuinely per-CPU userspace data structures possible, and it is why allocators like tcmalloc use it for their per-CPU caches. It needs the critical section written so it can be restarted from the top with no side effects, and on most architectures wants a hand-written assembly sequence with the abort handler placed by the linker behind a specific signature.</p>
+
+  <p>I first wrote that this was "a lot of machinery, and a hard dependency on one operating system, to save one instruction". The measurement above says the saving is 4.14 ns, a quarter of a scope, so "one instruction" was a bad way to put it. And the operating-system objection is weaker than it sounds for most of this port &mdash; the service is Linux-only throughout, tracepoints and uprobes and <code>/proc</code> and all.</p>
+
+  <p>It is not weak <em>here</em>, though, and the reason is worth stating because it is easy to miss: this is the one part of Orbit that does not run in Orbit. The producer is compiled into the profiled application, which may well be a game shipping on Windows. So a portable path has to exist regardless, and the question is not "rseq or the atomic" but "rseq <em>and</em> the atomic, chosen at compile time". That is a perfectly reasonable thing to build &mdash; it is just two write paths to keep correct instead of one, and the second one has to be there either way.</p>
 
   <p>So the rings are multi-producer instead, and the slot is claimed with a relaxed <code>fetch_add</code>. Uncontended that is about twenty cycles; contended it is the one thing on a cache line that two cores are fighting over, which is why the per-core sharding still matters even though it is no longer a correctness argument. It stopped being a correctness argument and became a contention argument, and it is still worth having.</p>
 
