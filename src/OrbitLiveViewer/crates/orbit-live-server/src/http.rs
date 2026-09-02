@@ -273,6 +273,10 @@ pub struct ReportQuery {
     pub end_ns: u64,
     /// Narrows to one thread; absent means every thread.
     pub tid: Option<u32>,
+    /// Multi-select: a comma-separated list of `start-end` or `start-end:tid`
+    /// windows. When present it supersedes `start_ns`/`end_ns`/`tid`, and the
+    /// report is the union over all of them.
+    pub ranges: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -283,6 +287,30 @@ struct TreeQuery {
     /// Narrows to one thread, the way dragging on a single thread's sample
     /// bar does in the native UI. Absent means every thread.
     tid: Option<u32>,
+    /// Multi-select union of windows; see `ReportQuery::ranges`.
+    ranges: Option<String>,
+}
+
+/// Parses `start-end` / `start-end:tid` windows separated by commas into range
+/// specs. Malformed entries are skipped rather than failing the request, so a
+/// stray comma never blanks a report.
+fn parse_ranges(text: &str) -> Vec<crate::SampleRangeSpec> {
+    text.split(',')
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return None;
+            }
+            let (window, tid) = match part.split_once(':') {
+                Some((w, t)) => (w, t.parse::<u32>().ok()),
+                None => (part, None),
+            };
+            let (a, b) = window.split_once('-')?;
+            let start = a.trim().parse::<u64>().ok()?;
+            let end = b.trim().parse::<u64>().ok()?;
+            Some((start.min(end), start.max(end), tid))
+        })
+        .collect()
 }
 
 async fn sampling_tree(
@@ -293,12 +321,19 @@ async fn sampling_tree(
     let Some(tree) = tree else {
         return (StatusCode::NOT_FOUND, "no sampling tree available").into_response();
     };
+    let mode = q.mode.unwrap_or_else(|| "top_down".to_string());
     // No range means the whole capture, which is what you want the moment a
     // capture stops and you have not selected anything yet.
-    let t0 = q.t0.unwrap_or(0);
-    let t1 = q.t1.unwrap_or(u64::MAX);
-    let mode = q.mode.unwrap_or_else(|| "top_down".to_string());
-    match tree(t0, t1, &mode, q.tid) {
+    let ranges: Vec<crate::SampleRangeSpec> = match q.ranges.as_deref() {
+        Some(text) => parse_ranges(text),
+        None => vec![(q.t0.unwrap_or(0), q.t1.unwrap_or(u64::MAX), q.tid)],
+    };
+    let ranges = if ranges.is_empty() {
+        vec![(0, u64::MAX, None)]
+    } else {
+        ranges
+    };
+    match tree(&ranges, &mode) {
         Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -330,8 +365,19 @@ async fn sampling_report(
         )
             .into_response(),
         Some(report) => {
-            let end = if query.end_ns == 0 { u64::MAX } else { query.end_ns };
-            match tokio::task::spawn_blocking(move || report(query.start_ns, end, query.tid)).await {
+            let ranges: Vec<crate::SampleRangeSpec> = match query.ranges.as_deref() {
+                Some(text) => parse_ranges(text),
+                None => {
+                    let end = if query.end_ns == 0 { u64::MAX } else { query.end_ns };
+                    vec![(query.start_ns, end, query.tid)]
+                }
+            };
+            let ranges = if ranges.is_empty() {
+                vec![(0, u64::MAX, None)]
+            } else {
+                ranges
+            };
+            match tokio::task::spawn_blocking(move || report(&ranges)).await {
                 Ok(Ok(json)) => ([(axum::http::header::CONTENT_TYPE, "application/json")], json)
                     .into_response(),
                 Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
@@ -871,6 +917,20 @@ mod isolation_tests {
             "content-length: {}",
             crate::theverge::THEVERGE_BYTES
         )));
+    }
+
+    #[test]
+    fn parse_ranges_round_trips_the_viewer_query() {
+        // Mirrors orbit-live-viewer's ranges_query output.
+        let got = super::parse_ranges("100-200:7,500-800");
+        assert_eq!(got, vec![(100, 200, Some(7)), (500, 800, None)]);
+    }
+
+    #[test]
+    fn parse_ranges_orders_endpoints_and_skips_garbage() {
+        // Reversed window is normalised; a stray empty entry is dropped.
+        let got = super::parse_ranges("300-100,,notarange,50-60:9");
+        assert_eq!(got, vec![(100, 300, None), (50, 60, Some(9))]);
     }
 
     #[test]

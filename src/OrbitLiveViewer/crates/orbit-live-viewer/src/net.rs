@@ -250,6 +250,23 @@ pub fn parse_processes_json(text: &str) -> Result<Vec<ProcessJson>, String> {
 }
 
 #[allow(dead_code)]
+/// Builds the `?ranges=` (or empty) query for a set of `(start, end, tid)`
+/// windows. `end` of 0 is left as 0, which the server reads as "to the end".
+/// An empty selection returns an empty string -- the whole capture.
+pub fn ranges_query(ranges: &[(u64, u64, Option<u32>)]) -> String {
+    if ranges.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = ranges
+        .iter()
+        .map(|&(a, b, tid)| match tid {
+            Some(t) => format!("{a}-{b}:{t}"),
+            None => format!("{a}-{b}"),
+        })
+        .collect();
+    format!("?ranges={}", parts.join(","))
+}
+
 /// Parses the sampling report. Hand-rolled for the same reason the other
 /// responses are: the wasm bundle does not carry a JSON library.
 pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> {
@@ -574,18 +591,16 @@ mod wasm_impl {
             });
         }
 
-        /// Fetches the sampling report for a selection. `end_ns` of 0 means
-        /// "to the end of the capture", which is what the server expects.
-        pub fn get_sampling_report(&self, start_ns: u64, end_ns: u64, tid: Option<u32>) {
+        /// Fetches the sampling report for a selection: the union of the given
+        /// `(start_ns, end_ns, tid)` windows. An empty slice means the whole
+        /// capture, which is what the panel shows before anything is selected.
+        pub fn get_sampling_report(&self, ranges: &[(u64, u64, Option<u32>)]) {
+            let query = ranges_query(ranges);
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let result =
-                    get_text(&format!(
-                        "/api/sampling/report?start_ns={start_ns}&end_ns={end_ns}{}",
-                        tid.map(|t| format!("&tid={t}")).unwrap_or_default()
-                    ))
-                        .await
-                        .and_then(|t| parse_sampling_report_json(&t));
+                let result = get_text(&format!("/api/sampling/report{query}"))
+                    .await
+                    .and_then(|t| parse_sampling_report_json(&t));
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 match result {
                     Ok(r) => g.sampling = Some(r),
@@ -596,16 +611,14 @@ mod wasm_impl {
             });
         }
 
-        /// The same samples as a call tree. `None` bounds mean the whole
-        /// capture, which is what the panel asks for when a capture stops and
-        /// nothing is selected.
-        pub fn get_sampling_tree(&self, range: Option<(u64, u64)>, mode: &str, tid: Option<u32>) {
+        /// The same samples as a call tree over the union of `ranges`. An empty
+        /// slice means the whole capture, which is what the panel asks for when
+        /// a capture stops and nothing is selected.
+        pub fn get_sampling_tree(&self, ranges: &[(u64, u64, Option<u32>)], mode: &str) {
+            let rq = ranges_query(ranges);
+            let sep = if rq.is_empty() { '?' } else { '&' };
+            let query = format!("{rq}{sep}mode={mode}");
             let inbox = self.inbox.clone();
-            let scope = tid.map(|t| format!("&tid={t}")).unwrap_or_default();
-            let query = match range {
-                Some((t0, t1)) => format!("?mode={mode}&t0={t0}&t1={t1}{scope}"),
-                None => format!("?mode={mode}{scope}"),
-            };
             wasm_bindgen_futures::spawn_local(async move {
                 let result = get_text(&format!("/api/sampling/tree{query}"))
                     .await
@@ -945,8 +958,8 @@ mod native_impl {
             Inbox::default()
         }
         pub fn get_status(&self) {}
-        pub fn get_sampling_report(&self, _start_ns: u64, _end_ns: u64, _tid: Option<u32>) {}
-        pub fn get_sampling_tree(&self, _range: Option<(u64, u64)>, _mode: &str, _tid: Option<u32>) {}
+        pub fn get_sampling_report(&self, _ranges: &[(u64, u64, Option<u32>)]) {}
+        pub fn get_sampling_tree(&self, _ranges: &[(u64, u64, Option<u32>)], _mode: &str) {}
         pub fn get_modules(&self, _pid: u32) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
@@ -969,7 +982,19 @@ pub use native_impl::Net;
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sampling_report_json, SamplingReport};
+    use super::{parse_sampling_report_json, ranges_query, SamplingReport};
+
+    #[test]
+    fn ranges_query_is_empty_for_the_whole_capture() {
+        assert_eq!(ranges_query(&[]), "");
+    }
+
+    #[test]
+    fn ranges_query_encodes_windows_and_tids() {
+        let q = ranges_query(&[(100, 200, Some(7)), (500, 800, None)]);
+        assert_eq!(q, "?ranges=100-200:7,500-800");
+    }
+
 
     #[test]
     fn a_row_keeps_the_module_its_function_came_from() {

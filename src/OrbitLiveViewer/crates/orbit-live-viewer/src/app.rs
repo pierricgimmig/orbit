@@ -54,6 +54,8 @@ const TIME_SLIDER_H: f32 = 13.0;
 const TIME_SLIDER_MIN_THUMB: f32 = 8.0;
 /// `CaptureWindow` overlay: Color(0,0,0,128).
 const MEASURE_DIM: Color32 = Color32::from_black_alpha(128);
+/// Translucent fill marking a committed multi-select band (accent, low alpha).
+const MEASURE_FILL: Color32 = Color32::from_rgba_premultiplied(0x2C, 0x3B, 0x47, 0x50);
 const RADIUS: f32 = theme::RADIUS;
 /// `TimeGraph::ZoomTime` `kIncrementalZoomTimeRatio`.
 const ZOOM_TIME_RATIO: f64 = 0.1;
@@ -586,12 +588,17 @@ pub struct OrbitLiveApp {
     vscroll: VScrollInertia,
     vscroll_max: f32,
     measure: Option<TimeMeasure>,
+    /// Committed multi-select windows (shift-drag adds; a plain drag replaces).
+    /// The report and trees aggregate over their union plus any in-progress drag.
+    sample_sels: Vec<TimeMeasure>,
     /// The sampling report for the current selection, and the range it covers,
     /// so an unchanged selection is not refetched every frame.
     sampling: Option<crate::net::SamplingReport>,
-    sampling_range: Option<(u64, u64)>,
+    /// The committed selection the report reflects, as `(start, end, tid)`
+    /// windows. Empty means the whole capture. Cached so an unchanged
+    /// selection is not refetched each frame.
+    sampling_ranges: Vec<(u64, u64, Option<u32>)>,
     /// Set when the selection was made on one thread's sample bar.
-    sampling_tid: Option<u32>,
     /// Which of the four report views is showing.
     report_tab: ReportTab,
     tree: Option<crate::net::SamplingTree>,
@@ -797,9 +804,9 @@ impl OrbitLiveApp {
             vscroll: VScrollInertia::default(),
             vscroll_max: 0.0,
             measure: None,
+            sample_sels: Vec::new(),
             sampling: None,
-            sampling_range: None,
-            sampling_tid: None,
+            sampling_ranges: Vec::new(),
             report_tab: crate::dev::query_report_tab_from_location()
                 .and_then(|v| ReportTab::from_query(&v))
                 .unwrap_or(ReportTab::Flat),
@@ -1110,6 +1117,7 @@ impl OrbitLiveApp {
         self.selected = None;
         self.hover = None;
         self.measure = None;
+        self.sample_sels.clear();
         self.follow = false;
         self.trace_args.clear();
         self.trace_flows.clear();
@@ -1593,6 +1601,7 @@ impl OrbitLiveApp {
                 self.selected = None;
                 self.hover = None;
                 self.measure = None;
+                self.sample_sels.clear();
                 // `start_ns == 0` means "a capture is starting, its clock is
                 // not known yet". `LiveViewerBridge` sends that as soon as the
                 // gRPC request is written and the real CLOCK_MONOTONIC origin
@@ -2639,7 +2648,7 @@ impl OrbitLiveApp {
                 && self.trace_load.is_none();
             if empty {
                 paint_empty(ui, body, dropping);
-                paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
+                paint_selection_overlay(ui, body, self.t0, self.t1, &self.sample_sels, self.measure, true);
                 self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
             }
@@ -2747,7 +2756,7 @@ impl OrbitLiveApp {
                     self.live_edge_ns as f64,
                     self.light_canvas,
                 );
-                paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
+                paint_selection_overlay(ui, body, self.t0, self.t1, &self.sample_sels, self.measure, true);
                 paint_flow_arrows(
                     ui,
                     body,
@@ -2786,7 +2795,7 @@ impl OrbitLiveApp {
         // the ruler's white line trailed the lane area's by one frame for the
         // whole drag. Painting it here reads the same `self.measure` the lane
         // overlay just used, whichever region the drag started in.
-        paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
+        paint_selection_overlay(ui, ruler, self.t0, self.t1, &self.sample_sels, self.measure, false);
         let fps_area = Rect::from_min_max(
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
@@ -3952,6 +3961,12 @@ impl OrbitLiveApp {
         }
         if response.drag_started_by(PointerButton::Secondary) {
             if let Some(p) = response.interact_pointer_pos() {
+                let mods = response.ctx.input(|i| i.modifiers);
+                // Shift adds to the selection; Ctrl is the zoom gesture and
+                // leaves the selection be. A plain drag starts a fresh one.
+                if !mods.shift && !(mods.ctrl || mods.command) {
+                    self.sample_sels.clear();
+                }
                 let t = time_at_x(p.x, rect, self.t0, self.t1);
                 // Only the lane area knows about threads; a drag on the ruler
                 // is process-wide by construction.
@@ -3991,11 +4006,18 @@ impl OrbitLiveApp {
                     let b = m.start_ns.max(m.stop_ns) as f64;
                     self.apply_zoom_window(a, b.max(a + 1.0));
                     self.measure = None;
+                } else {
+                    // Commit the drag into the selection set. A plain drag
+                    // already cleared the set at drag-start, so it replaces;
+                    // a shift drag left it, so it adds.
+                    self.sample_sels.push(m);
+                    self.measure = None;
                 }
             }
         }
         if response.clicked_by(PointerButton::Secondary) {
             self.measure = None;
+            self.sample_sels.clear();
             self.measure_dragging = false;
         }
     }
@@ -4053,44 +4075,50 @@ impl OrbitLiveApp {
     /// Asks the service for a report whenever the selection changes. An
     /// unchanged selection is not refetched, so dragging the view around does
     /// not hammer the endpoint.
+    /// The committed selections plus any in-progress drag, as report windows.
+    /// Empty means the whole capture.
+    fn sample_ranges(&self) -> Vec<(u64, u64, Option<u32>)> {
+        self.sample_sels
+            .iter()
+            .copied()
+            .chain(self.measure)
+            .filter(|m| m.start_ns != m.stop_ns)
+            .map(|m| {
+                (
+                    m.start_ns.min(m.stop_ns),
+                    m.start_ns.max(m.stop_ns),
+                    m.sample_tid,
+                )
+            })
+            .collect()
+    }
+
     fn refresh_sampling_report(&mut self) {
-        let range = self.measure.map(|m| {
-            let (a, b) = (m.start_ns.min(m.stop_ns), m.start_ns.max(m.stop_ns));
-            (a, b)
-        });
-        let tid = self.measure.and_then(|m| m.sample_tid);
-        if range == self.sampling_range && tid == self.sampling_tid {
+        let ranges = self.sample_ranges();
+        if ranges == self.sampling_ranges {
             return;
         }
-        self.sampling_range = range;
-        self.sampling_tid = tid;
+        self.sampling_ranges = ranges;
         self.request_reports();
     }
 
     /// Asks for the flat report and the tree over the current scope.
     ///
-    /// A range means the timeline selection. No range means the whole
-    /// capture, which is the aggregate view Orbit shows the moment recording
-    /// stops -- before you have selected anything, the answer you want is
-    /// about everything you just recorded.
+    /// The ranges are the timeline selection; an empty set means the whole
+    /// capture, the aggregate view Orbit shows the moment recording stops --
+    /// before you have selected anything, the answer you want is about
+    /// everything you just recorded.
     fn request_reports(&mut self) {
-        let tid = self.sampling_tid;
-        match self.sampling_range {
-            Some((start, end)) => {
-                self.net.get_sampling_report(start, end, tid);
-                self.net.get_sampling_tree(Some((start, end)), self.report_tab.mode(), tid);
-            }
-            None => {
-                self.net.get_sampling_report(0, u64::MAX, tid);
-                self.net.get_sampling_tree(None, self.report_tab.mode(), tid);
-            }
-        }
+        self.net.get_sampling_report(&self.sampling_ranges);
+        self.net
+            .get_sampling_tree(&self.sampling_ranges, self.report_tab.mode());
     }
 
     /// The whole-capture aggregate, shown when a capture stops.
     fn show_whole_capture_report(&mut self) {
-        self.sampling_range = None;
-        self.sampling_tid = None;
+        self.sample_sels.clear();
+        self.measure = None;
+        self.sampling_ranges.clear();
         self.tree_expanded.clear();
         self.request_reports();
     }
@@ -4152,16 +4180,7 @@ impl OrbitLiveApp {
                             .size(12.0),
                     );
                     ui.label(
-                        RichText::new(match (self.sampling_range, self.sampling_tid) {
-                            (Some((a, b)), Some(tid)) => format!(
-                                "thread {tid}, {:.1} ms selected",
-                                (b.saturating_sub(a)) as f64 / 1e6
-                            ),
-                            (Some((a, b)), None) => {
-                                format!("over {:.1} ms selected", (b.saturating_sub(a)) as f64 / 1e6)
-                            }
-                            (None, _) => "whole capture".to_string(),
-                        })
+                        RichText::new(describe_selection(&self.sampling_ranges))
                         .color(theme::MUTED)
                         .size(11.0),
                     );
@@ -4198,7 +4217,7 @@ impl OrbitLiveApp {
                             // different tree; switching to or from Flat does not.
                             if tab.mode() != was_tree_mode || self.tree.is_none() {
                                 self.tree_expanded.clear();
-                                self.net.get_sampling_tree(self.sampling_range, tab.mode(), self.sampling_tid);
+                                self.net.get_sampling_tree(&self.sampling_ranges, tab.mode());
                             }
                             if tab == ReportTab::Modules {
                                 if let Some(pid) = self.selected_pid {
@@ -5924,58 +5943,127 @@ fn paint_measure_overlay(
     measure: Option<TimeMeasure>,
     draw_label: bool,
 ) {
-    let Some(m) = measure else {
-        return;
-    };
-    if m.start_ns == m.stop_ns || t1 <= t0 || !rect.is_positive() {
+    paint_selection_overlay(ui, rect, t0, t1, &[], measure, draw_label);
+}
+
+/// Draws the committed multi-select bands plus any in-progress drag.
+///
+/// A lone selection keeps the original look -- the area outside it is dimmed
+/// and its edges drawn white. Two or more do not compose that way (dimming
+/// outside each would darken the others), so a multi-band selection is marked
+/// by a translucent fill inside each band instead, with white edges. The
+/// in-progress drag always carries its duration label.
+fn paint_selection_overlay(
+    ui: &Ui,
+    rect: Rect,
+    t0: f64,
+    t1: f64,
+    committed: &[TimeMeasure],
+    active: Option<TimeMeasure>,
+    draw_label: bool,
+) {
+    if t1 <= t0 || !rect.is_positive() {
         return;
     }
-    let min_t = m.start_ns.min(m.stop_ns);
-    let max_t = m.start_ns.max(m.stop_ns);
-    let x0 = x_at_time(min_t, rect, t0, t1);
-    let x1 = x_at_time(max_t, rect, t0, t1);
-    if (x1 - x0).abs() < 0.5 {
+    let bands: Vec<TimeMeasure> = committed
+        .iter()
+        .copied()
+        .chain(active)
+        .filter(|m| m.start_ns != m.stop_ns)
+        .collect();
+    if bands.is_empty() {
         return;
     }
     let painter = ui.painter_at(rect);
-    if x0 > rect.left() {
-        painter.rect_filled(
-            Rect::from_min_max(rect.min, Pos2::new(x0, rect.bottom())),
-            0.0,
-            MEASURE_DIM,
-        );
-        painter.line_segment(
-            [Pos2::new(x0, rect.top()), Pos2::new(x0, rect.bottom())],
-            Stroke::new(1.0, Color32::WHITE),
-        );
+    let edge_x = |m: &TimeMeasure| {
+        let min_t = m.start_ns.min(m.stop_ns);
+        let max_t = m.start_ns.max(m.stop_ns);
+        (
+            x_at_time(min_t, rect, t0, t1),
+            x_at_time(max_t, rect, t0, t1),
+        )
+    };
+
+    if bands.len() == 1 {
+        // The familiar single-selection look: dim outside, white edges.
+        let (x0, x1) = edge_x(&bands[0]);
+        if (x1 - x0).abs() >= 0.5 {
+            if x0 > rect.left() {
+                painter.rect_filled(
+                    Rect::from_min_max(rect.min, Pos2::new(x0, rect.bottom())),
+                    0.0,
+                    MEASURE_DIM,
+                );
+            }
+            if x1 < rect.right() {
+                painter.rect_filled(
+                    Rect::from_min_max(Pos2::new(x1, rect.top()), rect.max),
+                    0.0,
+                    MEASURE_DIM,
+                );
+            }
+            for x in [x0, x1] {
+                painter.line_segment(
+                    [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+        }
+    } else {
+        // Multi-select: highlight each band, no outside dimming.
+        for m in &bands {
+            let (x0, x1) = edge_x(m);
+            if (x1 - x0).abs() < 0.5 {
+                continue;
+            }
+            painter.rect_filled(
+                Rect::from_min_max(Pos2::new(x0, rect.top()), Pos2::new(x1, rect.bottom())),
+                0.0,
+                MEASURE_FILL,
+            );
+            for x in [x0, x1] {
+                painter.line_segment(
+                    [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+        }
     }
-    if x1 < rect.right() {
-        painter.rect_filled(
-            Rect::from_min_max(Pos2::new(x1, rect.top()), rect.max),
-            0.0,
-            MEASURE_DIM,
-        );
-        painter.line_segment(
-            [Pos2::new(x1, rect.top()), Pos2::new(x1, rect.bottom())],
-            Stroke::new(1.0, Color32::WHITE),
-        );
-    }
+
     if draw_label {
-        let text = display_time_ns(max_t.saturating_sub(min_t));
-        let stop_x = x_at_time(m.stop_ns, rect, t0, t1);
-        let y = m.label_y.clamp(rect.top() + 8.0, rect.bottom() - 8.0);
-        let align = if m.stop_ns < m.start_ns {
-            Align2::LEFT_CENTER
-        } else {
-            Align2::RIGHT_CENTER
-        };
-        painter.text(
-            Pos2::new(stop_x, y),
-            align,
-            text,
-            FontId::new(12.0, fonts::medium()),
-            Color32::WHITE,
-        );
+        if let Some(m) = active.filter(|m| m.start_ns != m.stop_ns) {
+            let min_t = m.start_ns.min(m.stop_ns);
+            let max_t = m.start_ns.max(m.stop_ns);
+            let text = display_time_ns(max_t.saturating_sub(min_t));
+            let stop_x = x_at_time(m.stop_ns, rect, t0, t1);
+            let y = m.label_y.clamp(rect.top() + 8.0, rect.bottom() - 8.0);
+            let align = if m.stop_ns < m.start_ns {
+                Align2::LEFT_CENTER
+            } else {
+                Align2::RIGHT_CENTER
+            };
+            painter.text(
+                Pos2::new(stop_x, y),
+                align,
+                text,
+                FontId::new(12.0, fonts::medium()),
+                Color32::WHITE,
+            );
+        }
+    }
+}
+
+/// The report panel's one-line description of what is selected.
+fn describe_selection(ranges: &[(u64, u64, Option<u32>)]) -> String {
+    let total: u64 = ranges.iter().map(|(a, b, _)| b.saturating_sub(*a)).sum();
+    let ms = total as f64 / 1e6;
+    match ranges {
+        [] => "whole capture".to_string(),
+        [(a, b, Some(tid))] => {
+            format!("thread {tid}, {:.1} ms selected", (b.saturating_sub(*a)) as f64 / 1e6)
+        }
+        [(a, b, None)] => format!("over {:.1} ms selected", (b.saturating_sub(*a)) as f64 / 1e6),
+        _ => format!("{} selections, {ms:.1} ms total", ranges.len()),
     }
 }
 

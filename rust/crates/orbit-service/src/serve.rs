@@ -16,7 +16,7 @@
 //! a slice is a `SCHEDULING_SLICE` on (pid, tid) with the core in `extra`.
 
 use crate::functions::FunctionIndex;
-use crate::report::{FrameInfo, SampleStore, StoredSample, TreeMode};
+use crate::report::{FrameInfo, SampleRange, SampleStore, StoredSample, TreeMode};
 use crate::scopes::ScopeSource;
 use crate::telemetry::TelemetryHelper;
 use crate::thread_state::ThreadStateTracer;
@@ -947,12 +947,20 @@ pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), S
     let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
     let store = Arc::new(SampleStore::new());
     let report_store = store.clone();
-    service.set_sampling_report(Arc::new(move |start_ns, end_ns, tid| {
-        Ok(report_store.report_json_for(start_ns, end_ns, tid))
+    service.set_sampling_report(Arc::new(move |ranges| {
+        let ranges: Vec<SampleRange> = ranges
+            .iter()
+            .map(|&(start_ns, end_ns, tid)| SampleRange::new(start_ns, end_ns, tid))
+            .collect();
+        Ok(report_store.report_json_for_ranges(&ranges))
     }));
     let tree_store = store.clone();
-    service.set_sampling_tree(Arc::new(move |start_ns, end_ns, mode, tid| {
-        Ok(tree_store.tree_json_for(start_ns, end_ns, TreeMode::parse(mode), tid))
+    service.set_sampling_tree(Arc::new(move |ranges, mode| {
+        let ranges: Vec<SampleRange> = ranges
+            .iter()
+            .map(|&(start_ns, end_ns, tid)| SampleRange::new(start_ns, end_ns, tid))
+            .collect();
+        Ok(tree_store.tree_json_for_ranges(&ranges, TreeMode::parse(mode)))
     }));
     let modules_state = symbols.clone();
     service.set_modules_json(Arc::new(move |pid| {

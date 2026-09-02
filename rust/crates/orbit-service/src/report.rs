@@ -34,6 +34,43 @@ pub struct StoredSample {
     pub frames: Vec<u32>,
 }
 
+/// One selected slice of the timeline: a time window and, optionally, a single
+/// thread. The report and the trees aggregate over the *union* of a set of
+/// these, which is what multi-select in the viewer produces -- several
+/// disjoint drags, each possibly on a different thread's sample bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SampleRange {
+    pub start_ns: u64,
+    pub end_ns: u64,
+    pub tid: Option<u32>,
+}
+
+impl SampleRange {
+    pub fn new(start_ns: u64, end_ns: u64, tid: Option<u32>) -> SampleRange {
+        SampleRange { start_ns, end_ns, tid }
+    }
+
+    fn contains(&self, sample: &StoredSample) -> bool {
+        sample.timestamp_ns >= self.start_ns
+            && sample.timestamp_ns <= self.end_ns
+            && self.tid.is_none_or(|tid| sample.tid == tid)
+    }
+}
+
+/// True when `sample` falls in any of the selected ranges. An empty set means
+/// nothing is selected, which the callers turn into the whole capture before
+/// they get here, so this is never asked to mean "match everything".
+fn in_any(ranges: &[SampleRange], sample: &StoredSample) -> bool {
+    ranges.iter().any(|r| r.contains(sample))
+}
+
+/// The union bounds of a range set, for the report's informational metadata.
+fn union_bounds(ranges: &[SampleRange]) -> (u64, u64) {
+    let start = ranges.iter().map(|r| r.start_ns).min().unwrap_or(0);
+    let end = ranges.iter().map(|r| r.end_ns).max().unwrap_or(u64::MAX);
+    (start, end)
+}
+
 /// The samples of a capture, plus the name table their frame ids point into.
 #[derive(Default)]
 pub struct SampleStore {
@@ -88,6 +125,13 @@ impl SampleStore {
     /// the callstack events *of that tid* in the range, and only the
     /// all-threads bar selects across the process.
     pub fn report_json_for(&self, start_ns: u64, end_ns: u64, tid: Option<u32>) -> String {
+        self.report_json_for_ranges(&[SampleRange::new(start_ns, end_ns, tid)])
+    }
+
+    /// Aggregates over the union of several selected ranges -- the multi-select
+    /// report. A sample counts once no matter how many ranges it falls in, and
+    /// each range carries its own optional thread filter.
+    pub fn report_json_for_ranges(&self, ranges: &[SampleRange]) -> String {
         let inner = self.inner.lock().unwrap();
         let mut self_counts: HashMap<u32, u64> = HashMap::new();
         let mut inclusive_counts: HashMap<u32, u64> = HashMap::new();
@@ -100,10 +144,7 @@ impl SampleStore {
         let mut last_sample_ns = 0u64;
 
         for sample in inner.samples.iter() {
-            if sample.timestamp_ns < start_ns || sample.timestamp_ns > end_ns {
-                continue;
-            }
-            if tid.is_some_and(|tid| sample.tid != tid) {
+            if !in_any(ranges, sample) {
                 continue;
             }
             total += 1;
@@ -151,11 +192,17 @@ impl SampleStore {
                 })
             })
             .collect();
+        let (start_ns, end_ns) = union_bounds(ranges);
+        let single_tid = match ranges {
+            [only] => only.tid,
+            _ => None,
+        };
         serde_json::json!({
             "samples": total,
             "start_ns": start_ns,
             "end_ns": end_ns,
-            "tid": tid,
+            "tid": single_tid,
+            "range_count": ranges.len(),
             "first_sample_ns": if total == 0 { 0 } else { first_sample_ns },
             "last_sample_ns": last_sample_ns,
             "functions": functions,
@@ -249,6 +296,11 @@ impl SampleStore {
         mode: TreeMode,
         tid: Option<u32>,
     ) -> String {
+        self.tree_json_for_ranges(&[SampleRange::new(start_ns, end_ns, tid)], mode)
+    }
+
+    /// As `tree_json_for`, over the union of several selected ranges.
+    pub fn tree_json_for_ranges(&self, ranges: &[SampleRange], mode: TreeMode) -> String {
         let inner = self.inner.lock().unwrap();
         let mut total = 0u64;
         let mut threads: HashMap<u32, ThreadNode> = HashMap::new();
@@ -256,13 +308,10 @@ impl SampleStore {
         let mut merged = ThreadNode::default();
 
         for sample in inner.samples.iter() {
-            if sample.timestamp_ns < start_ns || sample.timestamp_ns > end_ns {
-                continue;
-            }
             if sample.frames.is_empty() {
                 continue;
             }
-            if tid.is_some_and(|tid| sample.tid != tid) {
+            if !in_any(ranges, sample) {
                 continue;
             }
             total += 1;
@@ -328,12 +377,18 @@ impl SampleStore {
             TreeMode::BottomUp => serialize_children(&merged.root, merged.sample_count, total, &inner, 0),
         };
 
+        let (start_ns, end_ns) = union_bounds(ranges);
+        let single_tid = match ranges {
+            [only] => only.tid,
+            _ => None,
+        };
         serde_json::json!({
             "mode": match mode { TreeMode::TopDown => "top_down", TreeMode::BottomUp => "bottom_up" },
             "samples": total,
             "start_ns": start_ns,
             "end_ns": end_ns,
-            "tid": tid,
+            "tid": single_tid,
+            "range_count": ranges.len(),
             "roots": roots,
         })
         .to_string()
@@ -737,5 +792,75 @@ mod tests {
         assert_eq!(report["samples"], 0);
         assert_eq!(report["first_sample_ns"], 0, "not u64::MAX leaking out");
         assert_eq!(report["last_sample_ns"], 0);
+    }
+
+    #[test]
+    fn multi_range_report_unions_disjoint_selections() {
+        // store() has samples at 100, 200, 300 (inner) and 400 (other), all tid 7.
+        // Select two disjoint windows: {100} and {400}. inner and other each
+        // appear once; work/inner's third sample at 300 is excluded.
+        let ranges = [
+            SampleRange::new(50, 150, None),
+            SampleRange::new(350, 450, None),
+        ];
+        let value: serde_json::Value =
+            serde_json::from_str(&store().report_json_for_ranges(&ranges)).unwrap();
+        assert_eq!(value["samples"], 2);
+        assert_eq!(value["range_count"], 2);
+        let functions = value["functions"].as_array().unwrap();
+        let inner = functions.iter().find(|f| f["name"] == "inner").unwrap();
+        assert_eq!(inner["self"], 1);
+        let other = functions.iter().find(|f| f["name"] == "other").unwrap();
+        assert_eq!(other["self"], 1);
+        // Union bounds span both windows.
+        assert_eq!(value["start_ns"], 50);
+        assert_eq!(value["end_ns"], 450);
+    }
+
+    #[test]
+    fn a_sample_in_two_overlapping_ranges_counts_once() {
+        let ranges = [
+            SampleRange::new(0, 250, None),
+            SampleRange::new(150, 500, None),
+        ];
+        let value: serde_json::Value =
+            serde_json::from_str(&store().report_json_for_ranges(&ranges)).unwrap();
+        // All four samples fall in the union; the 200ns sample is in both
+        // ranges but must not be double-counted.
+        assert_eq!(value["samples"], 4);
+    }
+
+    #[test]
+    fn per_range_tid_filter_is_independent() {
+        let store = SampleStore::new();
+        store.record_name(1, "a");
+        store.record_name(2, "b");
+        store.push(StoredSample { timestamp_ns: 100, tid: 7, frames: vec![1] });
+        store.push(StoredSample { timestamp_ns: 100, tid: 8, frames: vec![2] });
+        store.push(StoredSample { timestamp_ns: 500, tid: 7, frames: vec![1] });
+        store.push(StoredSample { timestamp_ns: 500, tid: 8, frames: vec![2] });
+        // First window keeps only tid 7; second keeps only tid 8.
+        let ranges = [
+            SampleRange::new(50, 150, Some(7)),
+            SampleRange::new(450, 550, Some(8)),
+        ];
+        let value: serde_json::Value =
+            serde_json::from_str(&store.report_json_for_ranges(&ranges)).unwrap();
+        assert_eq!(value["samples"], 2);
+        // tid is not a single value across ranges, so it is reported as null.
+        assert!(value["tid"].is_null());
+    }
+
+    #[test]
+    fn multi_range_tree_unions_selections() {
+        let ranges = [
+            SampleRange::new(50, 150, None),
+            SampleRange::new(350, 450, None),
+        ];
+        let value: serde_json::Value =
+            serde_json::from_str(&store().tree_json_for_ranges(&ranges, TreeMode::BottomUp))
+                .unwrap();
+        assert_eq!(value["samples"], 2);
+        assert_eq!(value["range_count"], 2);
     }
 }

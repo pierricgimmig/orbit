@@ -24,6 +24,11 @@ use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
 
+/// One selected time window for a sampling report: `(start_ns, end_ns, tid)`,
+/// `tid` narrowing to a single thread when present. A report aggregates over a
+/// slice of these -- the multi-select union.
+pub type SampleRangeSpec = (u64, u64, Option<u32>);
+
 thread_local! {
     static IN_SELF: Cell<bool> = const { Cell::new(false) };
 }
@@ -89,12 +94,12 @@ pub struct LiveService {
     /// does not sample (or predates this) needs no change.
     #[allow(clippy::type_complexity)]
     pub sampling_report:
-        Mutex<Option<std::sync::Arc<dyn Fn(u64, u64, Option<u32>) -> Result<String, String> + Send + Sync>>>,
+        Mutex<Option<std::sync::Arc<dyn Fn(&[SampleRangeSpec]) -> Result<String, String> + Send + Sync>>>,
     /// Optional: the same samples as a call tree, top-down or bottom-up.
     /// Separate from `sampling_report` because it takes a mode.
     #[allow(clippy::type_complexity)]
     pub sampling_tree:
-        Mutex<Option<std::sync::Arc<dyn Fn(u64, u64, &str, Option<u32>) -> Result<String, String> + Send + Sync>>>,
+        Mutex<Option<std::sync::Arc<dyn Fn(&[SampleRangeSpec], &str) -> Result<String, String> + Send + Sync>>>,
     /// Optional: the modules of the selected process and their symbol counts.
     #[allow(clippy::type_complexity)]
     pub modules_json:
@@ -342,7 +347,7 @@ impl LiveService {
     #[allow(clippy::type_complexity)]
     pub fn set_sampling_tree(
         &self,
-        tree: std::sync::Arc<dyn Fn(u64, u64, &str, Option<u32>) -> Result<String, String> + Send + Sync>,
+        tree: std::sync::Arc<dyn Fn(&[SampleRangeSpec], &str) -> Result<String, String> + Send + Sync>,
     ) {
         *self.sampling_tree.lock() = Some(tree);
     }
@@ -357,7 +362,7 @@ impl LiveService {
 
     pub fn set_sampling_report(
         &self,
-        report: std::sync::Arc<dyn Fn(u64, u64, Option<u32>) -> Result<String, String> + Send + Sync>,
+        report: std::sync::Arc<dyn Fn(&[SampleRangeSpec]) -> Result<String, String> + Send + Sync>,
     ) {
         *self.sampling_report.lock() = Some(report);
     }
