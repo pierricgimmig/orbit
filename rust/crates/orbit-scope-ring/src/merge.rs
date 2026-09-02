@@ -79,7 +79,7 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
         }
 
         let mut events = Vec::new();
-        let mut in_flight = false;
+        let mut in_flight: Option<Option<u64>> = None;
         while read < write {
             match rings.committed(ring, read) {
                 Some(event) => {
@@ -88,9 +88,12 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
                 }
                 None => {
                     // A claim was handed out but not yet published: a
-                    // producer is mid-write, and everything behind it has to
-                    // wait for it.
-                    in_flight = true;
+                    // producer is mid-write, and the stream has to wait for
+                    // it. How far back depends on when its event is stamped,
+                    // which it announces at claim time -- and that can be
+                    // *older* than events already committed behind it, since
+                    // claim order is not timestamp order in an MPSC ring.
+                    in_flight = Some(rings.pending_timestamp(ring, read));
                     break;
                 }
             }
@@ -102,12 +105,20 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
         // than ordered. An insertion pass is linear on that shape.
         insertion_sort_by_timestamp(&mut events);
 
-        let frontier_ns = if in_flight {
-            events.last().map(|e| e.timestamp_ns).unwrap_or(0)
-        } else {
+        let frontier_ns = match in_flight {
+            // A producer is mid-write and has announced its timestamp: that
+            // is an exact lower bound on what is still to come, so the
+            // stream may advance right up to it.
+            Some(Some(pending_ns)) => pending_ns.saturating_sub(1),
+            // Mid-write and not yet announced: the producer is between the
+            // claim and the announcement, two instructions with no clock read
+            // in them. There is no sound bound, so the stream holds where it
+            // is rather than guessing. Rare, and self-clearing on the next
+            // pass.
+            Some(None) => 0,
             // Nothing in flight: the next event this ring produces will be
             // stamped at or after the moment we looked.
-            now_ns
+            None => now_ns,
         };
         out.slices.push(RingSlice { events, frontier_ns, dropped: 0 });
     }

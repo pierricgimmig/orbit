@@ -177,3 +177,41 @@ fn the_write_path_sustains_millions_of_events_per_second() {
         "the write path should clear millions per second, got {per_second:.0}/s"
     );
 }
+
+/// A producer stalled between claiming a slot and publishing it, whose event
+/// is *older* than one a neighbour already committed behind it.
+///
+/// This is only possible because rings are MPSC: two producers can read the
+/// clock in one order and claim slots in the other. If the consumer treats
+/// "the last committed timestamp" as the frontier of a ring with a slot in
+/// flight, it will emit past the stalled event and then have to deliver it
+/// late -- out of order, which is the one thing the merge exists to prevent.
+#[test]
+fn a_stalled_producer_cannot_be_overtaken_by_a_later_claim() {
+    let region = Region::new(2, 16);
+    let rings = region.rings();
+
+    // The interleaving, which is physically realisable and not contrived:
+    //   producer A reads the clock, gets 100, and is descheduled before it
+    //   can claim a slot;
+    //   producer B reads the clock, gets 105, claims slot 0, commits;
+    //   producer A wakes, claims slot 1, announces 100, and stalls again.
+    // So the ring holds a *committed* event at 105 ahead of a *pending* one
+    // at 100. The committed event must not be emitted.
+    rings.push(0, ScopeEvent { timestamp_ns: 105, ..Default::default() });
+    rings.reserve_for_test(0, 100);
+    // Ring 1 is idle and has committed something at 110.
+    rings.push(1, ScopeEvent { timestamp_ns: 110, ..Default::default() });
+
+    let mut cursors = Cursors::for_rings(2);
+    let mut merger = Merger::new(2);
+    let out = merger.merge(drain(&rings, &mut cursors, 1_000));
+
+    // Nothing at or after 100 may be emitted while a claim stamped 100 is
+    // still in flight.
+    assert!(
+        out.iter().all(|e| e.timestamp_ns < 100),
+        "emitted past a stalled producer: {:?}",
+        out.iter().map(|e| e.timestamp_ns).collect::<Vec<_>>()
+    );
+}

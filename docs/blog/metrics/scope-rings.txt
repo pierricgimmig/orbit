@@ -3,17 +3,19 @@ Measured 2026-09-02T01:51:33Z on Linux 7.0.0-30-generic, 32 threads.
 Commit: 29b0c754d
 
 Write path (single thread, one ring, no consumer, release build):
-  push: 100611578 events/s, 9.9 ns each
+push: 95396249 events/s, 10.5 ns each
 
 Layout
   event                    32 bytes
-  slot                     64 bytes (one cache line: seq + event + pad)
+  slot                     64 bytes (one cache line: seq + pending_ns + event)
   ring control block       64 bytes (one cache line, so neighbours never share)
   rings                    one per core, capped at 128
   default slots per ring   16384 (1 MiB per ring)
 
 Write path instruction budget, per event:
   1 x relaxed fetch_add    claim a slot
+  1 x release store        announce the timestamp, so a consumer can bound
+                           what is still coming if this producer stalls
   4 x plain 64-bit store   the payload
   1 x release store        publish (a plain mov on x86-64; one stlr on aarch64)
   no lock, no CAS loop, no allocation, no syscall
