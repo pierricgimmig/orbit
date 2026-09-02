@@ -46,15 +46,38 @@ pub struct Drain {
     pub dropped: u64,
 }
 
+/// How long a claim may sit unpublished before the consumer gives up on it.
+///
+/// The write between claiming a slot and publishing it is a handful of stores
+/// -- about eight nanoseconds. A producer that has not finished after a
+/// quarter of a second is not slow, it is gone: killed, crashed, or stopped
+/// under a debugger. This is a thirty-million-fold margin over the work
+/// itself, so no live producer will ever be declared dead by it, and it is
+/// short enough that a viewer does not appear to hang.
+pub const ABANDON_AFTER_NS: u64 = 250_000_000;
+
 /// Per-ring read position, carried between drains.
+///
+/// Also carries what the consumer is waiting on, which is what lets it notice
+/// that it has been waiting too long. Without that, one producer killed
+/// between claiming a slot and publishing it stops the entire stream forever:
+/// the slot never commits, the ring's frontier never advances, and the
+/// horizon is the minimum across every ring.
 #[derive(Clone, Debug, Default)]
 pub struct Cursors {
     pub read: Vec<u64>,
+    /// The claim each ring is blocked on, and when it was first seen blocked.
+    stalled_at: Vec<u64>,
+    stalled_since_ns: Vec<u64>,
 }
 
 impl Cursors {
     pub fn for_rings(ring_count: usize) -> Cursors {
-        Cursors { read: vec![0; ring_count] }
+        Cursors {
+            read: vec![0; ring_count],
+            stalled_at: vec![u64::MAX; ring_count],
+            stalled_since_ns: vec![0; ring_count],
+        }
     }
 }
 
@@ -78,13 +101,6 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
             read = write - capacity;
         }
 
-        // An owned ring publishes its cursor *after* committing each slot, so
-        // everything below the cursor is finished and there is no in-flight
-        // state to reason about. Its events are also strictly increasing in
-        // time, because one thread wrote them one after another -- so no
-        // reordering pass, and its frontier is simply the moment we looked.
-        let owned = rings.is_owned(ring);
-
         let mut events = Vec::new();
         let mut in_flight: Option<Option<u64>> = None;
         while read < write {
@@ -92,8 +108,27 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
                 Some(event) => {
                     events.push(event);
                     read += 1;
+                    cursors.stalled_at[ring] = u64::MAX;
                 }
                 None => {
+                    // Nothing here waits forever. A slot claimed by a
+                    // producer that died before publishing would otherwise
+                    // hold the whole stream: the claim never commits, so this
+                    // ring's frontier never moves, so the horizon never moves.
+                    if cursors.stalled_at[ring] != read {
+                        cursors.stalled_at[ring] = read;
+                        cursors.stalled_since_ns[ring] = now_ns;
+                    } else if now_ns.saturating_sub(cursors.stalled_since_ns[ring])
+                        >= ABANDON_AFTER_NS
+                    {
+                        // Declared abandoned. Skipping it loses one event and
+                        // says so, which is a far better failure than a
+                        // timeline that silently stops updating.
+                        read += 1;
+                        out.dropped += 1;
+                        cursors.stalled_at[ring] = u64::MAX;
+                        continue;
+                    }
                     // A claim was handed out but not yet published: a
                     // producer is mid-write, and the stream has to wait for
                     // it. How far back depends on when its event is stamped,
@@ -107,20 +142,12 @@ pub fn drain(rings: &Rings, cursors: &mut Cursors, now_ns: u64) -> Drain {
         }
         cursors.read[ring] = read;
 
-        if !owned {
-            // On the shared ring two producers can read the clock in one
-            // order and claim slots in the other, so the slice is
-            // nearly-ordered rather than ordered. An insertion pass is linear
-            // on that shape. An owned ring is already sorted and this would
-            // be a walk over it for nothing.
-            insertion_sort_by_timestamp(&mut events);
-        }
+        // Two threads sharing a ring can read the clock in one order and
+        // claim slots in the other, so the slice is nearly-ordered rather
+        // than ordered. An insertion pass is linear on that shape.
+        insertion_sort_by_timestamp(&mut events);
 
         let frontier_ns = match in_flight {
-            // Cannot happen on an owned ring, whose cursor trails its
-            // commits; keeping the arm costs nothing and means a mislabelled
-            // ring degrades to correct-but-slow rather than to wrong.
-            _ if owned && in_flight.is_none() => now_ns,
             // A producer is mid-write and has announced its timestamp: that
             // is an exact lower bound on what is still to come, so the
             // stream may advance right up to it.

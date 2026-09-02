@@ -31,15 +31,36 @@ Three runs, medians; from tests/cost.rs.
   Reproduce:
     cargo test -p orbit-scope-ring --release --test cost -- --nocapture
 
+Robustness against a dead producer
+
+  There is no CAS loop anywhere in the design, so there is nothing to spin in:
+  the claim is a single wait-free fetch_add that always succeeds first try.
+  The hazard is on the other side. A producer killed between claiming a slot
+  and publishing it leaves a slot that never commits, and a consumer that
+  waits for it stalls that ring's frontier -- and the horizon is the minimum
+  across every ring, so the whole stream stops. Permanently, and silently.
+
+  The consumer therefore carries a deadline. A claim unpublished for 250 ms is
+  written off, counted as dropped, and stepped over. The write it is waiting
+  for takes about eight nanoseconds, so the margin is thirty-million-fold: no
+  live producer is ever declared dead, and a viewer never appears to hang.
+
+  Two tests cover it: one checks the stream still holds at half the deadline
+  and recovers past it, and one checks a ring stalled with nothing behind it
+  does not hold the other rings hostage.
+
 Sizing
 
-  Overflow spreads across a pool, not onto one ring. Threads that arrive
-  after the exclusive rings are gone hash into the shared eighth. Sending
-  them all to a single ring would put every one of them on one cache line and
-  lap one ring's slots -- worst exactly when the process has the most threads.
+One rule picks a ring, with no fast path and no fallback. An earlier version
+  handed out exclusive rings while any were free and sent the rest to a shared
+  pool; that was two policies wearing one name, since with bounded rings and
+  unbounded threads sharing is guaranteed by pigeonhole. Hashing is also
+  stateless, which matters more: a claim must be released when a thread exits,
+  and this code lives inside somebody else's application where a thread-local
+  destructor may run late or not at all.
 
   The hash is a 64-bit golden-ratio multiply taking the high bits, never
-  `tid % shared`. Thread ids are not arbitrary: Windows hands them out in
+  `tid % ring_count`. Thread ids are not arbitrary: Windows hands them out in
   multiples of four, and this code compiles into the profiled application. On
   multiples of four, `tid % 8` reaches two rings of eight and leaves six idle;
   there is a test asserting exactly that as the counter-example, and another
@@ -67,8 +88,8 @@ Layout
   slot                     64 bytes (one cache line: seq + pending_ns + event,
                            exactly, with no padding left)
   ring control block       64 bytes (one cache line, so neighbours never share)
-  rings                    one per recording thread, capped at 128;
-                           a sixteenth (8 of 128) reserved as a shared pool
+  rings                    128, chosen by ring_for_thread(tid); threads share
+                           whenever there are more of them than rings
   default slots per ring   1024 (64 KiB), derived from the budget below
   default total budget     8 MiB for the whole segment
 

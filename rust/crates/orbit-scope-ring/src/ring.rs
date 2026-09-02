@@ -66,19 +66,10 @@ pub struct RingHeader {
     /// index is `claim % slots_per_ring` and the claim number itself doubles
     /// as the sequence stamp.
     ///
-    /// What publishes it differs by ownership. An owned ring stores it
-    /// *after* committing the slot, so the consumer only ever sees finished
-    /// events. The shared ring bumps it *before* writing, because a claim has
-    /// to be handed out before the payload can be written into it.
+    /// Bumped *before* the payload is written, because a claim has to be
+    /// handed out before there is anywhere to write.
     pub write_cursor: AtomicU64,
-    /// The thread that owns this ring, or 0 for the shared overflow ring.
-    ///
-    /// Ownership is what makes the fast path possible: one producer means the
-    /// cursor needs no read-modify-write, and it means the ring's timestamps
-    /// are strictly increasing, which is what lets the consumer stop
-    /// second-guessing the order it finds them in.
-    pub owner_tid: AtomicU64,
-    pub _pad: [u64; 6],
+    pub _pad: [u64; 7],
 }
 
 const _: () = assert!(std::mem::size_of::<RingHeader>() == CACHE_LINE);
@@ -129,55 +120,43 @@ pub fn slots_offset(ring_count: usize, slots_per_ring: usize, ring: usize) -> us
     CACHE_LINE + ring_count * CACHE_LINE + ring * slots_per_ring * CACHE_LINE
 }
 
-/// How many of a segment's rings are kept shared rather than handed out
-/// exclusively.
+/// Which ring a thread writes to. The only policy there is.
 ///
-/// Threads that arrive after the exclusive pool is exhausted hash across
-/// these. Sending them all to *one* ring, which is what this replaces, is the
-/// worst thing the design could do under load: every one of those threads
-/// contends on a single cache line, and their events all land in one ring's
-/// slots and lap it. A sixteenth of the rings is enough to turn a pile-up
-/// into a spread, and cheap enough that a process with few threads never
-/// notices the reservation.
-pub const fn shared_ring_count(ring_count: usize) -> usize {
-    let wanted = ring_count / 16;
-    if wanted < 1 {
-        1
-    } else if wanted >= ring_count {
-        ring_count - 1
-    } else {
-        wanted
-    }
-}
-
-/// Which shared ring a thread falls back to.
+/// One rule for every thread, with no fast path and no fallback. An earlier
+/// version handed out exclusive rings while any were free and sent the rest
+/// to a shared pool, which was two policies wearing one name: with a bounded
+/// number of rings and an unbounded number of threads, sharing is guaranteed
+/// by pigeonhole, so exclusivity was never a policy but a lucky case.
 ///
-/// The thread id is mixed before the remainder is taken, never `tid % shared`.
-/// Thread ids are not arbitrary numbers: they are handed out in runs, and on
-/// some systems in strides. Windows hands out thread ids in multiples of
-/// four, and this code compiles into the profiled application, so Windows is
-/// not a hypothetical. With eight shared rings, `tid % 8` on multiples of
-/// four reaches exactly two of them and leaves six idle.
+/// Hashing is also *stateless*, which matters more than the arithmetic. A
+/// claim has to be released when a thread exits, and this code lives inside
+/// somebody else's application, where a thread-local destructor may run late
+/// or not at all. An application that spawns thousands of short-lived threads
+/// would have leaked rings until the pool was gone. Nothing to leak here.
 ///
-/// Multiplying by the 64-bit golden-ratio constant and taking the *high* bits
-/// is what fixes it: the multiply pushes low-bit structure upward, and the
-/// shift throws the low bits away entirely. `distribution_survives_strided_thread_ids`
-/// checks that against strides of 1, 4, 16 and 4096.
-pub const fn shared_ring_for(tid: u64, shared: usize) -> usize {
-    let shared = if shared == 0 { 1 } else { shared };
+/// The thread id is mixed before the remainder is taken, never
+/// `tid % ring_count`. Thread ids are not arbitrary numbers: they are handed
+/// out in runs, and Windows hands them out in multiples of four. This code
+/// compiles into the profiled application, so Windows is not hypothetical,
+/// and on multiples of four a plain modulo over 128 rings reaches 32 of them
+/// and leaves 96 idle. Multiplying by the 64-bit golden-ratio constant and
+/// taking the *high* bits fixes it: the multiply pushes low-bit structure
+/// upward and the shift discards the low bits entirely.
+pub const fn ring_for_thread(tid: u64, ring_count: usize) -> usize {
+    let ring_count = if ring_count == 0 { 1 } else { ring_count };
     let mixed = (tid.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize;
-    mixed % shared
+    mixed % ring_count
 }
 
-/// How many rings to open for a process expected to record from
-/// `threads` threads, plus one for the shared overflow.
+/// How many rings to open for a process expected to record from `threads`
+/// threads.
 ///
-/// Sized by threads, not by cores. Rings follow threads now, and a process
-/// routinely has more threads than the machine has cores -- a server or a
-/// game with sixty threads on a thirty-two core box would otherwise put half
-/// of them on the shared ring, which is the slow path.
+/// Sized by threads rather than by cores, since a ring is picked by thread
+/// and a process routinely has more threads than the machine has cores. More
+/// rings than threads is waste; fewer just means threads share, which every
+/// ring is built to survive.
 pub const fn ring_count_for_threads(threads: usize) -> usize {
-    let wanted = threads + 1;
+    let wanted = threads;
     if wanted < 2 {
         2
     } else if wanted > MAX_RINGS {
@@ -272,79 +251,8 @@ impl Rings {
         unsafe { &*self.base.add(offset).cast::<Slot>() }
     }
 
-    /// Takes ownership of a free ring for `tid`, if one is left.
-    ///
-    /// Called once per thread, not once per event, which is the whole point:
-    /// the only atomic read-modify-write in the design happens at thread
-    /// registration and is amortised to nothing.
-    pub fn claim_ring(&self, tid: u64) -> Option<usize> {
-        self.claim_ring_from(0, tid)
-    }
-
-    /// As `claim_ring`, considering only rings at or after `first`.
-    pub fn claim_ring_from(&self, first: usize, tid: u64) -> Option<usize> {
-        for ring in first..self.ring_count {
-            let owner = &self.ring_header(ring).owner_tid;
-            if owner
-                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                return Some(ring);
-            }
-        }
-        None
-    }
-
-    /// Gives a ring back when its thread exits, so a later thread can take it.
-    pub fn release_ring(&self, ring: usize) {
-        if ring < self.ring_count {
-            self.ring_header(ring).owner_tid.store(0, Ordering::Release);
-        }
-    }
-
-    pub fn owner_of(&self, ring: usize) -> u64 {
-        self.ring_header(ring).owner_tid.load(Ordering::Acquire)
-    }
-
-    /// Whether this ring has a single owning producer.
-    pub fn is_owned(&self, ring: usize) -> bool {
-        self.owner_of(ring) != 0
-    }
-
-    /// Appends one event to a ring this thread owns.
-    ///
-    /// The fast path, and the reason ownership is worth arranging. With one
-    /// producer the cursor needs no atomic bump: read it, write the slot,
-    /// then publish. Publishing *after* the commit means a consumer never
-    /// observes a half-written slot at all -- there is no in-flight state on
-    /// an owned ring, so nothing has to be held back for one.
-    ///
-    /// Two release stores and six plain ones. On x86-64 every one of them is
-    /// an ordinary `mov`.
-    ///
-    /// # Correctness
-    /// Only the owning thread may call this for `ring`. Two callers would
-    /// read the same cursor and write the same slot.
-    pub fn push_owned(&self, ring: usize, event: ScopeEvent) {
-        let ring = ring.min(self.ring_count.saturating_sub(1));
-        let header = self.ring_header(ring);
-        // Relaxed: nobody else writes this, so there is nothing to race with.
-        let claim = header.write_cursor.load(Ordering::Relaxed);
-        let slot = self.slot(ring, claim);
-        // SAFETY: this thread owns the ring, so it alone writes this slot.
-        unsafe {
-            std::ptr::write_volatile(slot.event.get(), event);
-        }
-        slot.seq.store(claim + 1, Ordering::Release);
-        // Last, so everything below the cursor is finished by construction.
-        header.write_cursor.store(claim + 1, Ordering::Release);
-    }
-
-    /// Appends one event to the shared ring, which any thread may write.
-    ///
-    /// Used when every ring is already owned. Slower by one atomic
-    /// read-modify-write, and the only place the consumer has to reason about
-    /// a producer caught mid-write.
+    /// Appends one event. Never blocks and never fails; when the ring is full
+    /// the oldest unread slot is overwritten, which the consumer detects.
     ///
     /// The whole write path: one relaxed bump, plain stores, one release
     /// store.
@@ -486,9 +394,9 @@ mod tests {
 
     #[test]
     fn rings_are_sized_by_threads_and_a_memory_budget() {
-        // One per thread, plus the shared overflow.
-        assert_eq!(ring_count_for_threads(0), 2, "always room for one thread and the overflow");
-        assert_eq!(ring_count_for_threads(31), 32);
+        // One per thread, and never zero.
+        assert_eq!(ring_count_for_threads(0), 2, "a floor, so there is always somewhere to write");
+        assert_eq!(ring_count_for_threads(32), 32);
         assert_eq!(ring_count_for_threads(4096), MAX_RINGS, "capped, however many threads");
 
         // The budget is respected, never exceeded by rounding up.
@@ -545,36 +453,33 @@ mod tests {
     }
 
     #[test]
-    fn the_shared_pool_is_a_pool_not_a_single_ring() {
-        // The failure this replaces: every overflowing thread on one ring,
-        // contending on one cache line and lapping one ring's slots.
-        assert_eq!(shared_ring_count(128), 8);
-        assert_eq!(shared_ring_count(32), 2);
-        // Small segments still keep one back, and never all of them.
-        assert_eq!(shared_ring_count(2), 1);
-        assert_eq!(shared_ring_count(1), 1);
-        assert!(shared_ring_count(8) < 8);
+    fn every_thread_gets_a_ring_by_the_same_rule() {
+        // No fast path, no fallback: one rule, and it always answers.
+        for tid in [0u64, 1, 7, u64::MAX] {
+            assert!(ring_for_thread(tid, 128) < 128);
+        }
+        assert_eq!(ring_for_thread(42, 1), 0, "one ring is still a ring");
+        assert_eq!(ring_for_thread(42, 0), 0, "no rings is not a divide by zero");
     }
 
     #[test]
     fn distribution_survives_strided_thread_ids() {
         // Windows hands out thread ids in multiples of four, and Linux in
-        // runs of one. A plain `tid % shared` collapses the first case onto a
-        // fraction of the rings; the mix has to survive both.
-        let shared = shared_ring_count(128);
-        assert_eq!(shared, 8);
+        // runs of one. A plain `tid % ring_count` collapses the first case
+        // onto a fraction of the rings; the mix has to survive both.
+        const RINGS: usize = 128;
         for stride in [1u64, 4, 16, 4096] {
-            let mut counts = vec![0usize; shared];
-            const THREADS: u64 = 4_000;
+            let mut counts = vec![0usize; RINGS];
+            const THREADS: u64 = 64_000;
             for i in 0..THREADS {
-                counts[shared_ring_for(100_000 + i * stride, shared)] += 1;
+                counts[ring_for_thread(100_000 + i * stride, RINGS)] += 1;
             }
-            let ideal = THREADS as usize / shared;
+            let ideal = THREADS as usize / RINGS;
             for (ring, count) in counts.iter().enumerate() {
                 assert!(
                     *count > ideal / 2 && *count < ideal * 2,
                     "stride {stride} put {count} of {THREADS} threads on ring {ring}, \
-                     against an even share of {ideal}: {counts:?}"
+                     against an even share of {ideal}"
                 );
             }
         }
@@ -583,9 +488,10 @@ mod tests {
     #[test]
     fn a_plain_modulo_would_have_failed_that() {
         // Kept as the counter-example, so the mix is not mistaken for
-        // cargo-culting: on multiples of four, `tid % 8` reaches two rings.
+        // cargo-culting: on multiples of four, `tid % 128` reaches a quarter
+        // of the rings and leaves the rest idle.
         let reached: std::collections::HashSet<u64> =
-            (0..4_000u64).map(|i| (100_000 + i * 4) % 8).collect();
-        assert_eq!(reached.len(), 2, "two of eight rings, and six idle");
+            (0..64_000u64).map(|i| (100_000 + i * 4) % 128).collect();
+        assert_eq!(reached.len(), 32, "32 of 128 rings, and 96 idle");
     }
 }

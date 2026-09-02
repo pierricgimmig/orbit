@@ -6,10 +6,9 @@
 //! properties that matter: nothing is lost, and what comes out is ordered.
 
 use orbit_scope_ring::event::kind;
-use orbit_scope_ring::merge::{drain, Cursors, Merger};
-use orbit_scope_ring::ring::{ring_count_for_threads, Rings};
+use orbit_scope_ring::merge::{drain, Cursors, Merger, ABANDON_AFTER_NS};
+use orbit_scope_ring::ring::{ring_count_for_threads, ring_for_thread, Rings};
 use orbit_scope_ring::shm::now_monotonic_ns;
-use orbit_scope_ring::ThreadRing;
 use orbit_scope_ring::{ring, ScopeEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -61,13 +60,12 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
         for tid in 0..THREADS {
             let rings = &rings;
             scope.spawn(move || {
-                // A thread takes a ring once and keeps it, which is what
-                // makes migration a non-event: the ring follows the thread.
-                let mine = ThreadRing::acquire(rings, tid as u64 + 1);
-                assert!(mine.is_owned(), "the pool was sized for these threads");
+                // One rule, applied once: the ring follows the thread, so
+                // migration is a non-event and there is nothing to release.
+                let mine = ring_for_thread(tid as u64 + 1, ring_count);
                 for i in 0..PER_THREAD {
-                    mine.push(
-                        rings,
+                    rings.push(
+                        mine,
                         ScopeEvent {
                             timestamp_ns: now_monotonic_ns(),
                             scope_id: i,
@@ -78,7 +76,7 @@ fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
                         },
                     );
                 }
-                mine.release(rings);
+
             });
         }
 
@@ -215,4 +213,62 @@ fn a_stalled_producer_cannot_be_overtaken_by_a_later_claim() {
         "emitted past a stalled producer: {:?}",
         out.iter().map(|e| e.timestamp_ns).collect::<Vec<_>>()
     );
+}
+
+/// A producer killed between claiming a slot and publishing it.
+///
+/// This is the shared-memory failure that matters most in practice: the
+/// consumer is a different process, and it cannot make the dead one finish.
+/// Without a deadline the ring's frontier never advances, the horizon is the
+/// minimum across rings, and the entire stream stops -- permanently, and
+/// silently, which is the worst combination.
+#[test]
+fn a_producer_that_dies_mid_write_does_not_wedge_the_stream_forever() {
+    let region = Region::new(2, 16);
+    let rings = region.rings();
+
+    rings.push(0, ScopeEvent { timestamp_ns: 10, ..Default::default() });
+    // Claimed, timestamp announced, then the writer vanishes.
+    rings.reserve_for_test(0, 20);
+    rings.push(0, ScopeEvent { timestamp_ns: 30, ..Default::default() });
+    rings.push(1, ScopeEvent { timestamp_ns: 40, ..Default::default() });
+
+    let mut cursors = Cursors::for_rings(2);
+    let mut merger = Merger::new(2);
+
+    // Before the deadline the stream holds, exactly as it should: the missing
+    // event is stamped 20 and everything after it has to wait.
+    let start_ns = 1_000_000_000;
+    let early = merger.merge(drain(&rings, &mut cursors, start_ns));
+    let out: Vec<u64> = early.iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(out, vec![10], "the stalled claim still blocks what follows");
+
+    let still_waiting =
+        merger.merge(drain(&rings, &mut cursors, start_ns + ABANDON_AFTER_NS / 2));
+    assert!(still_waiting.is_empty(), "half the deadline is not the deadline");
+
+    // Past it, the claim is written off and the stream moves again.
+    let pass = drain(&rings, &mut cursors, start_ns + ABANDON_AFTER_NS + 1);
+    assert_eq!(pass.dropped, 1, "the lost event is counted, not hidden");
+    let recovered: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(recovered, vec![30, 40], "and everything behind it is delivered");
+}
+
+/// The same, when the process dies with nothing else in the ring behind it.
+#[test]
+fn a_ring_stalled_with_nothing_behind_it_still_releases_the_others() {
+    let region = Region::new(2, 16);
+    let rings = region.rings();
+    rings.reserve_for_test(0, 50); // ring 0's only claim, never published
+    rings.push(1, ScopeEvent { timestamp_ns: 60, ..Default::default() });
+
+    let mut cursors = Cursors::for_rings(2);
+    let mut merger = Merger::new(2);
+    let start_ns = 5_000_000_000;
+    assert!(merger.merge(drain(&rings, &mut cursors, start_ns)).is_empty());
+
+    let pass = drain(&rings, &mut cursors, start_ns + ABANDON_AFTER_NS + 1);
+    assert_eq!(pass.dropped, 1);
+    let out: Vec<u64> = merger.merge(pass).iter().map(|e| e.timestamp_ns).collect();
+    assert_eq!(out, vec![60], "a live ring is not held hostage by a dead one");
 }

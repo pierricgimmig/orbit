@@ -16,23 +16,20 @@
 //! - [`shm`] creates and opens the mapping.
 //! - [`text`] splits and reassembles names too long to fit in one record.
 //!
-//! Two claims from the original design are qualified in [`ring`], both
-//! because userspace cannot disable preemption: rings are MPSC rather than
-//! SPSC, and the commit is a release store. Neither costs a lock.
+//! One rule picks a ring: `ring_for_thread(tid)`. There is no fast path and
+//! no fallback, because with a bounded number of rings and an unbounded
+//! number of threads, sharing is guaranteed and every ring has to survive it
+//! anyway. Rings are therefore multi-producer, and the commit is a release
+//! store; neither costs a lock. [`ring`] has the reasoning.
 
 pub mod event;
 pub mod merge;
-pub mod producer;
 pub mod ring;
 pub mod shm;
 pub mod text;
 
 pub use event::{flags, kind, ScopeEvent, EVENT_SIZE, INLINE_TEXT};
 pub use merge::{drain, Cursors, Drain, Merger, RingSlice};
-pub use producer::{ThreadRing, FIRST_SHARED_RING};
-pub use ring::{
-    ring_count_for_threads, shared_ring_count, shared_ring_for, slots_for_budget, Rings,
-    MAX_RINGS,
-};
+pub use ring::{ring_count_for_threads, ring_for_thread, slots_for_budget, Rings, MAX_RINGS};
 pub use shm::{ScopeRingReader, ScopeRingWriter};
 pub use text::{split_name, Completeness, TextAssembler};

@@ -46,20 +46,6 @@ fn what_each_part_of_the_write_path_costs() {
         }
     });
 
-    // The portable fast path: one thread owning one ring, so the cursor needs
-    // a load and a store rather than a read-modify-write.
-    let mine = orbit_scope_ring::ThreadRing::acquire(&rings, 1);
-    assert!(mine.is_owned(), "a free ring should have been available");
-    let push_owned = nanos_each(|| {
-        for _ in 0..EVENTS {
-            mine.push(&rings, event);
-        }
-    });
-    let owned_with_clock = nanos_each(|| {
-        for _ in 0..EVENTS {
-            mine.push(&rings, ScopeEvent { timestamp_ns: now_monotonic_ns(), ..event });
-        }
-    });
 
     // What a real scope costs: the clock read is not optional, and the
     // benchmark that reports only `push` is not measuring instrumentation.
@@ -94,13 +80,11 @@ fn what_each_part_of_the_write_path_costs() {
     });
     std::hint::black_box(plain.get());
 
-    println!("\n  shared ring, no clock   {push_only:6.2} ns");
-    println!("  owned ring, no clock    {push_owned:6.2} ns   <- portable fast path");
-    println!("  owned ring + clock      {owned_with_clock:6.2} ns   <- what a scope costs now");
-    println!("  shared ring + clock     {push_with_clock:6.2} ns");
+    println!("\n  push (ring only)        {push_only:6.2} ns");
+    println!("  push + clock read       {push_with_clock:6.2} ns   <- what a scope costs");
     println!("  clock read alone        {clock_only:6.2} ns");
     println!("  atomic fetch_add        {atomic_claim:6.2} ns");
-    println!("  plain increment         {plain_claim:6.2} ns   <- what rseq would buy");
+    println!("  plain increment         {plain_claim:6.2} ns   <- unreachable: rings are shared");
     println!("  atomic premium          {:6.2} ns\n", atomic_claim - plain_claim);
 
     assert!(push_only > 0.0 && push_with_clock >= push_only);
