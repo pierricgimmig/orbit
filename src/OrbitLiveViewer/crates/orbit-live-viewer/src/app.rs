@@ -13,9 +13,9 @@ use orbit_live_event::dev::{
     NAME_HANDLE_INPUT, NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK,
     NAME_PAINT_HEADERS, NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE,
     NAME_SCALE_PPP, NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG,
-    NAME_STATUS_API, NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES,
-    NAME_UPLOAD_INST_US, NAME_WASM_MEM, NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET,
-    TID_RENDER, TID_SERVER, TID_STATS, TID_UI, VIEWER_NAME, VIEWER_PID,
+    NAME_TICK_FOLLOW, NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US,
+    NAME_WASM_MEM, NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS,
+    TID_UI, VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
@@ -1455,7 +1455,7 @@ impl OrbitLiveApp {
                 for ev in events {
                     // Chrome-trace load: overlay dogfood pids, ignore live
                     // capture of the target. Viewer scopes stay local.
-                    if file && !is_self_pid(ev.pid) {
+                    if file && !file_trace_keeps_live_event(&ev) {
                         continue;
                     }
                     if self.dev && ev.pid == VIEWER_PID {
@@ -5575,8 +5575,20 @@ mod tests {
     #[test]
     fn service_file_trace_scopes_remap_onto_viewer_live_edge() {
         let stamped = [
-            scope_ev(SERVICE_PID, TID_SERVER, NAME_STATUS_API, 1_000_000, 800),
-            scope_ev(SERVICE_PID, TID_SERVER, NAME_STATUS_API, 1_000_800, 200),
+            scope_ev(
+                SERVICE_PID,
+                orbit_live_event::dev::TID_SERVER,
+                orbit_live_event::dev::NAME_STATUS_API,
+                1_000_000,
+                800,
+            ),
+            scope_ev(
+                SERVICE_PID,
+                orbit_live_event::dev::TID_SERVER,
+                orbit_live_event::dev::NAME_STATUS_API,
+                1_000_800,
+                200,
+            ),
         ];
         let scopes = rel_scopes_from_events(&stamped);
         assert_eq!(scopes.len(), 2);
