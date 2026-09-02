@@ -99,6 +99,35 @@ Discovery: inotify on /dev/shm, no polling
   before the writer has finished its header. That is the case the reader
   already reports rather than mapping garbage.
 
+Names: written in full, never interned
+
+  Every record carries its name. No interned id, no hash, no registration.
+
+  The reasoning is that the record is a fixed-width write_volatile, so the
+  text bytes are stored whether they mean anything or not; what a name adds
+  on the write path is a length and a copy into the local record. Measured,
+  three release runs, against a record with no name at all:
+
+    no name                    7.6 -  10.3 ns
+    11-byte name inline       10.7 -  11.5 ns
+    32-byte name inline        7.0 -   8.9 ns   (fills the record)
+    cost of the copy          -2.5 -  +1.4 ns   noise
+
+  What it buys: a self-describing segment. No protocol for registering a name
+  before an event uses it, no race between the two across threads, no table to
+  ship to the service, nothing dangling when a process dies mid-run, and one
+  path for static and dynamic names alike. Interning happens on the consumer,
+  where a hash map costs nothing that matters.
+
+  Records grew from 28 to 32 inline bytes: the four-byte name_id the producer
+  no longer sets went to text. Longer names spill into continuation records
+  keyed by the same (tid, scope_id), capped at 256 bytes -- eight records --
+  so a __PRETTY_FUNCTION__ cannot eat a ring. Two tests push chained names
+  through the ring itself rather than through the splitter in memory: one
+  rebuilds an 80-byte name across three records, and one has two threads
+  interleave 200 long names each on a single ring and checks every chain
+  rejoins with its own pieces.
+
 Isolation: one segment per process, and one merge per process
 
   Each instrumented process owns /dev/shm/orbit-scopes-<pid> and the rings in
@@ -200,7 +229,7 @@ One rule picks a ring, with no fast path and no fallback. An earlier version
   reasonable thing to ask of a process for agreeing to be profiled.
 
 Layout
-  event                    48 bytes (28 fixed + 20 inline name bytes)
+  event                    56 bytes (24 fixed + 32 inline name bytes)
   slot                     64 bytes (one cache line: seq + pending_ns + event,
                            exactly, with no padding left)
   ring control block       64 bytes (one cache line, so neighbours never share)

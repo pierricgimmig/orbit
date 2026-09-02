@@ -21,16 +21,17 @@
 //! decoded once rejoined. Decoding a lone chunk would be wrong, and nothing
 //! here does it.
 
-use crate::event::{flags, kind, ScopeEvent, INLINE_TEXT};
+use crate::event::{flags, kind, ScopeEvent, INLINE_TEXT, MAX_NAME_BYTES};
 use std::collections::HashMap;
 
 /// Fills `head` with as much of `name` as fits and returns the continuation
 /// records for the rest, in the order they must be written.
 ///
 /// The head keeps its own kind; continuations are [`kind::TEXT`] and carry
-/// their position in `name_id`, starting at 1.
+/// their position in `depth`, starting at 1. Names past [`MAX_NAME_BYTES`]
+/// are cut there.
 pub fn split_name(head: &mut ScopeEvent, name: &str) -> Vec<ScopeEvent> {
-    let bytes = name.as_bytes();
+    let bytes = &name.as_bytes()[..name.len().min(MAX_NAME_BYTES)];
     let first = bytes.len().min(INLINE_TEXT);
     head.text[..first].copy_from_slice(&bytes[..first]);
     head.text_len = first as u8;
@@ -50,12 +51,11 @@ pub fn split_name(head: &mut ScopeEvent, name: &str) -> Vec<ScopeEvent> {
             timestamp_ns: head.timestamp_ns,
             scope_id: head.scope_id,
             tid: head.tid,
-            name_id: index,
             kind: kind::TEXT,
-            depth: head.depth,
+            depth: index as u8,
             flags: 0,
             text_len: take as u8,
-            text: [0; 28],
+            text: [0; 32],
         };
         chunk.text[..take].copy_from_slice(&rest[..take]);
         rest = &rest[take..];
@@ -112,10 +112,10 @@ impl TextAssembler {
             let partial = self.open.entry(key).or_default();
             // Chain positions run 1, 2, 3. Anything else means a slot was
             // overwritten before it was read.
-            if event.name_id != partial.last_index + 1 {
+            if u32::from(event.depth) != partial.last_index + 1 {
                 partial.saw_gap = true;
             }
-            partial.last_index = event.name_id;
+            partial.last_index = u32::from(event.depth);
             partial.bytes.extend_from_slice(event.text_bytes());
             partial.expecting_more = event.has_more_text();
             if partial.expecting_more {
@@ -308,9 +308,20 @@ mod tests {
     }
 
     #[test]
-    fn an_event_with_no_inline_name_passes_through() {
-        let event = ScopeEvent { name_id: 42, ..head(1) };
+    fn an_event_with_no_name_passes_through() {
+        let event = head(1);
         let mut assembler = TextAssembler::new();
-        assert_eq!(assembler.accept(&event), None, "interned names are not chains");
+        assert_eq!(assembler.accept(&event), None, "nothing to assemble");
+    }
+
+    #[test]
+    fn a_pathological_name_is_cut_rather_than_eating_the_ring() {
+        // __PRETTY_FUNCTION__ on a templated method can run to kilobytes.
+        let name = "n".repeat(10_000);
+        let mut event = head(1);
+        let chunks = split_name(&mut event, &name);
+        assert_eq!(chunks.len(), MAX_NAME_BYTES / INLINE_TEXT - 1, "seven continuations, no more");
+        let (text, _, _) = round_trip(&name);
+        assert_eq!(text.len(), MAX_NAME_BYTES);
     }
 }

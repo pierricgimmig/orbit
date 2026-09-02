@@ -100,3 +100,59 @@ fn what_each_part_of_the_write_path_costs() {
         assert!(ns > 0.0 && ns.is_finite(), "{what} did not measure: {ns}");
     }
 }
+
+/// Does carrying the name inline cost anything on the write path?
+///
+/// The record is a fixed-width write_volatile, so the text bytes are stored
+/// whether they mean anything or not. What a real scope adds is building the
+/// record: a length and a copy of the name into it.
+#[test]
+fn what_an_inline_name_costs() {
+    let slots = 1 << 16;
+    let (bytes, offset) = region_n(2, slots);
+    // SAFETY: initialised above at these dimensions.
+    let rings = unsafe { Rings::from_raw(bytes.as_ptr().add(offset) as *mut u8, 2, slots) };
+    let base = ScopeEvent { timestamp_ns: 1, kind: kind::INSTANT, ..Default::default() };
+    for _ in 0..slots {
+        rings.push(0, base);
+    }
+
+    // What a record with no name costs: the baseline the copy is measured
+    // against.
+    let by_id = nanos_each(|| {
+        for _ in 0..EVENTS {
+            rings.push(0, base);
+        }
+    });
+
+    // The shape ORBIT_SCOPE("PhysicsStep") produces: a static string whose
+    // length is a compile-time constant.
+    let short: &[u8] = b"PhysicsStep";
+    let inline_short = nanos_each(|| {
+        for _ in 0..EVENTS {
+            let mut e = base;
+            e.text[..short.len()].copy_from_slice(std::hint::black_box(short));
+            e.text_len = short.len() as u8;
+            rings.push(0, e);
+        }
+    });
+
+    let full: &[u8] = b"PhysicsStep_solveContacts_v3_xyz";
+    assert_eq!(full.len(), orbit_scope_ring::INLINE_TEXT);
+    let inline_full = nanos_each(|| {
+        for _ in 0..EVENTS {
+            let mut e = base;
+            e.text.copy_from_slice(std::hint::black_box(full));
+            e.text_len = full.len() as u8;
+            rings.push(0, e);
+        }
+    });
+
+    println!("\n  no name                  {by_id:6.2} ns");
+    println!("  11-byte name inline      {inline_short:6.2} ns");
+    println!("  32-byte name inline      {inline_full:6.2} ns   (fills the record)");
+    println!("  cost of the copy         {:6.2} ns\n", inline_full - by_id);
+    for ns in [by_id, inline_short, inline_full] {
+        assert!(ns > 0.0 && ns.is_finite());
+    }
+}

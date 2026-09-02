@@ -17,7 +17,7 @@ pub mod kind {
     pub const VALUE: u8 = 3;
     /// A continuation of the preceding record's text, for names too long to
     /// fit inline. Carries the same `(tid, scope_id)` as its head and the
-    /// chain position in `name_id`.
+    /// chain position in `depth`, which a continuation has no other use for.
     pub const TEXT: u8 = 4;
 }
 
@@ -45,25 +45,25 @@ pub struct ScopeEvent {
     /// same value, so a name reassembles by the same key.
     pub scope_id: u64,
     pub tid: u32,
-    /// Interned name for the common case. On a [`kind::TEXT`] record this is
-    /// the chain position instead, starting at 1 -- a continuation has no
-    /// name of its own, and reusing the field is what lets a dropped middle
-    /// chunk be detected rather than silently concatenated over.
-    pub name_id: u32,
     pub kind: u8,
     /// Nesting depth, stamped from thread-local storage. The ring never
-    /// tracks hierarchy.
+    /// tracks hierarchy. On a [`kind::TEXT`] record this is the chain
+    /// position instead, starting at 1.
     pub depth: u8,
     pub flags: u8,
     /// Bytes of `text` in use.
     pub text_len: u8,
-    /// A dynamic name, inline. Most scopes have a static name and use
-    /// `name_id`; this is for the ones built at runtime.
-    /// Written as a literal length rather than `[u8; INLINE_TEXT]`: rustc
-    /// 1.88 hits an internal compiler error on struct-update syntax
-    /// (`..event`) when an array field is sized by a const from another
-    /// crate. The assertion below keeps the two honest.
-    pub text: [u8; 28],
+    /// The name, always, in full or as the head of a chain.
+    ///
+    /// There is no interned id and no hash. The record is a fixed-width write
+    /// whether these bytes mean anything or not, so carrying the name costs
+    /// nothing on the write path -- measured within noise of an id -- and it
+    /// buys a segment that is self-describing. No registration protocol, no
+    /// race between a name being registered and an event using it, no table
+    /// to ship to the service, nothing dangling when a process dies. Static
+    /// and dynamic names are one path. Interning happens on the consumer,
+    /// which is allowed to be slow.
+    pub text: [u8; 32],
 }
 
 /// Bytes of name that fit in one record.
@@ -71,11 +71,16 @@ pub struct ScopeEvent {
 /// Not a tuning knob: the slot is one cache line, the sequence stamp takes
 /// eight bytes of it, and this is what is left after the fixed fields.
 /// Growing it would cost a second cache line per event. It went from twenty
-/// to twenty-eight when the horizon was deleted and the slot's second atomic
-/// with it.
-pub const INLINE_TEXT: usize = 28;
+/// to twenty-eight when the horizon was deleted, and to thirty-two when the
+/// interned name id went too.
+pub const INLINE_TEXT: usize = 32;
 
-const _: () = assert!(INLINE_TEXT == 28);
+const _: () = assert!(INLINE_TEXT == 32);
+
+/// The longest name a chain will carry: the head plus seven continuations.
+/// A `__PRETTY_FUNCTION__` can run to hundreds of bytes and would otherwise
+/// eat a ring; past this the name is cut and the record says so.
+pub const MAX_NAME_BYTES: usize = INLINE_TEXT * 8;
 
 pub const EVENT_SIZE: usize = 56;
 
@@ -85,12 +90,11 @@ impl Default for ScopeEvent {
             timestamp_ns: 0,
             scope_id: 0,
             tid: 0,
-            name_id: 0,
             kind: 0,
             depth: 0,
             flags: 0,
             text_len: 0,
-            text: [0; 28],
+            text: [0; 32],
         }
     }
 }
@@ -110,6 +114,12 @@ impl ScopeEvent {
         self.flags & flags::MORE_TEXT != 0
     }
 
+    /// This record's name as text, decoded leniently. For a chained name only
+    /// the head's share; see [`crate::text::TextAssembler`] for the whole.
+    pub fn name(&self) -> String {
+        String::from_utf8_lossy(self.text_bytes()).into_owned()
+    }
+
     /// The `f64` a VALUE record carries.
     pub fn value(self) -> Option<f64> {
         (self.kind == kind::VALUE).then(|| f64::from_bits(self.scope_id))
@@ -127,7 +137,7 @@ mod tests {
         // come from: they are the slack, not a chosen number.
         assert_eq!(std::mem::size_of::<ScopeEvent>(), EVENT_SIZE);
         assert_eq!(8 + EVENT_SIZE, 64);
-        assert_eq!(INLINE_TEXT, EVENT_SIZE - 28, "the fixed fields take 28 bytes");
+        assert_eq!(INLINE_TEXT, EVENT_SIZE - 24, "the fixed fields take 24 bytes");
     }
 
     #[test]

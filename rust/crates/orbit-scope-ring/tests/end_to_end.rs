@@ -68,7 +68,6 @@ fn every_event_arrives_exactly_once_and_in_its_own_thread_order() {
                             timestamp_ns: now_monotonic_ns(),
                             scope_id: i,
                             tid: tid as u32,
-                            name_id: 1,
                             kind: kind::INSTANT,
                             ..Default::default()
                         },
@@ -245,4 +244,119 @@ fn a_claim_stuck_past_the_backstop_is_eventually_released() {
     assert_eq!(pass.dropped, 1);
     let out: Vec<u64> = pass.slices[0].events.iter().map(|e| e.timestamp_ns).collect();
     assert_eq!(out, vec![60], "finite, even when liveness is wrong");
+}
+
+/// A name too long for one record, written through the ring and read back.
+///
+/// The unit tests in `text.rs` check splitting and reassembly against each
+/// other in memory. This is the path that matters: head and continuations
+/// claimed as separate slots, drained in claim order, and rejoined on the
+/// far side.
+#[test]
+fn a_long_name_spills_across_records_and_the_reader_rebuilds_it() {
+    use orbit_scope_ring::text::{split_name, Completeness, TextAssembler};
+    use orbit_scope_ring::INLINE_TEXT;
+
+    let region = Region::new(1, 64);
+    let rings = region.rings();
+
+    let name = "Renderer::submitCommandBuffer(queue=graphics, frame=1042, pass=shadow_cascade_3)";
+    assert!(name.len() > INLINE_TEXT * 2, "long enough to need at least two continuations");
+
+    let mut head = ScopeEvent {
+        timestamp_ns: 500,
+        scope_id: 77,
+        tid: 9,
+        kind: kind::SCOPE_START,
+        ..Default::default()
+    };
+    let continuations = split_name(&mut head, name);
+    rings.push(0, head);
+    for chunk in &continuations {
+        rings.push(0, *chunk);
+    }
+    // And an unrelated short-named scope after it, to prove the chain ends
+    // where it should.
+    let mut other = ScopeEvent { timestamp_ns: 600, scope_id: 78, tid: 9, ..Default::default() };
+    split_name(&mut other, "tiny");
+    rings.push(0, other);
+
+    let mut cursors = Cursors::for_rings(1);
+    let pass = drain(&rings, &mut cursors, now_monotonic_ns());
+    assert_eq!(pass.dropped, 0);
+    assert_eq!(pass.slices[0].events.len(), 2 + continuations.len());
+
+    let mut assembler = TextAssembler::new();
+    let mut names = Vec::new();
+    for event in &pass.slices[0].events {
+        if let Some(done) = assembler.accept(event) {
+            names.push(done);
+        }
+    }
+    assert_eq!(
+        names,
+        vec![(name.to_string(), Completeness::Complete), ("tiny".to_string(), Completeness::Complete)]
+    );
+    assert_eq!(assembler.open_chains(), 0, "nothing left dangling");
+}
+
+/// Two threads writing long names into the same ring at the same time.
+///
+/// Their chains interleave in claim order, since the ring is multi-producer.
+/// Reassembly keys on (tid, scope_id), so each chain rejoins with its own
+/// pieces and never with the other thread's.
+#[test]
+fn interleaved_chains_from_two_threads_do_not_mix() {
+    use orbit_scope_ring::text::{split_name, Completeness, TextAssembler};
+
+    let region = Region::new(1, 1 << 12);
+    let rings = region.rings();
+    const NAMES_EACH: u64 = 200;
+
+    std::thread::scope(|scope| {
+        for tid in 1..=2u32 {
+            let rings = &rings;
+            scope.spawn(move || {
+                for i in 0..NAMES_EACH {
+                    // Distinct per thread and per scope, and long enough to
+                    // need continuations, so a mix-up would be visible.
+                    let name = format!("thread{tid}/scope{i:04}/{}", "-".repeat(70));
+                    let mut head = ScopeEvent {
+                        timestamp_ns: now_monotonic_ns(),
+                        scope_id: i,
+                        tid,
+                        kind: kind::SCOPE_START,
+                        ..Default::default()
+                    };
+                    let chunks = split_name(&mut head, &name);
+                    rings.push(0, head);
+                    for chunk in &chunks {
+                        rings.push(0, *chunk);
+                    }
+                }
+            });
+        }
+    });
+
+    let mut cursors = Cursors::for_rings(1);
+    let pass = drain(&rings, &mut cursors, now_monotonic_ns());
+    assert_eq!(pass.dropped, 0, "the ring was sized so nothing laps");
+
+    let mut assembler = TextAssembler::new();
+    let mut by_tid: std::collections::HashMap<u32, Vec<String>> = Default::default();
+    for event in &pass.slices[0].events {
+        if let Some((name, completeness)) = assembler.accept(event) {
+            assert_eq!(completeness, Completeness::Complete, "no chain lost a piece: {name}");
+            by_tid.entry(event.tid).or_default().push(name);
+        }
+    }
+    assert_eq!(assembler.open_chains(), 0);
+    for tid in 1..=2u32 {
+        let names = &by_tid[&tid];
+        assert_eq!(names.len() as u64, NAMES_EACH);
+        for (i, name) in names.iter().enumerate() {
+            let expected = format!("thread{tid}/scope{i:04}/{}", "-".repeat(70));
+            assert_eq!(name, &expected, "thread {tid}'s chain {i} rejoined with the wrong pieces");
+        }
+    }
 }
