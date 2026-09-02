@@ -1,0 +1,179 @@
+// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! Producers on every core, a consumer draining and merging, and the two
+//! properties that matter: nothing is lost, and what comes out is ordered.
+
+use orbit_scope_ring::event::kind;
+use orbit_scope_ring::merge::{drain, Cursors, Merger};
+use orbit_scope_ring::ring::{ring_count_for, Rings};
+use orbit_scope_ring::shm::{current_cpu, now_monotonic_ns};
+use orbit_scope_ring::{ring, ScopeEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+/// A heap-backed region, so these tests do not fight over the process's one
+/// pid-named shared segment.
+struct Region {
+    bytes: Vec<u8>,
+    offset: usize,
+    ring_count: usize,
+    slots: usize,
+}
+
+impl Region {
+    fn new(ring_count: usize, slots: usize) -> Region {
+        let mut bytes = vec![0u8; ring::layout_size(ring_count, slots) + ring::CACHE_LINE];
+        let offset = bytes.as_ptr().align_offset(ring::CACHE_LINE);
+        // SAFETY: the allocation has room for the layout past the alignment.
+        unsafe { ring::init_region(bytes.as_mut_ptr().add(offset), ring_count, slots, 1) };
+        Region { bytes, offset, ring_count, slots }
+    }
+
+    fn rings(&self) -> Rings {
+        // SAFETY: initialised above at exactly these dimensions.
+        unsafe {
+            Rings::from_raw(
+                self.bytes.as_ptr().add(self.offset) as *mut u8,
+                self.ring_count,
+                self.slots,
+            )
+        }
+    }
+}
+
+#[test]
+fn every_event_from_every_core_arrives_exactly_once_and_in_order() {
+    const THREADS: usize = 4;
+    const PER_THREAD: u64 = 10_000;
+    let ring_count = ring_count_for(8);
+    // Sized so the whole run fits even if every thread lands on one ring.
+    // Overload and lapping are a separate test: a producer that never stalls
+    // *will* outrun a consumer given enough events, and that is the design
+    // working, not failing.
+    let region = Region::new(ring_count, 1 << 16);
+    let rings = region.rings();
+
+    let done = Arc::new(AtomicBool::new(false));
+    std::thread::scope(|scope| {
+        for tid in 0..THREADS {
+            let rings = &rings;
+            scope.spawn(move || {
+                for i in 0..PER_THREAD {
+                    // A thread writes to whichever ring its current core
+                    // owns, re-read every event, exactly as a real producer
+                    // would -- so migration mid-run is exercised, not
+                    // designed away.
+                    let ring = ring::ring_for_cpu(current_cpu(), ring_count);
+                    rings.push(
+                        ring,
+                        ScopeEvent {
+                            timestamp_ns: now_monotonic_ns(),
+                            scope_id: i,
+                            tid: tid as u32,
+                            name_id: 1,
+                            kind: kind::INSTANT,
+                            ..Default::default()
+                        },
+                    );
+                }
+            });
+        }
+
+        // The consumer runs concurrently, as it would in the service.
+        let rings = &rings;
+        let consumer_done = done.clone();
+        scope.spawn(move || {
+            let mut cursors = Cursors::for_rings(ring_count);
+            let mut merger = Merger::new(ring_count);
+            let mut seen: Vec<ScopeEvent> = Vec::new();
+            loop {
+                let finished = consumer_done.load(Ordering::Acquire);
+                let pass = drain(rings, &mut cursors, now_monotonic_ns());
+                assert_eq!(pass.dropped, 0, "the rings were sized so this run cannot lap");
+                seen.extend(merger.merge(pass));
+                if finished {
+                    seen.extend(merger.flush());
+                    break;
+                }
+                std::thread::yield_now();
+            }
+
+            assert_eq!(
+                seen.len() as u64,
+                THREADS as u64 * PER_THREAD,
+                "every event arrived exactly once"
+            );
+            // Globally ordered by timestamp: this is the property the merge
+            // exists for, and it holds across rings, not just within one.
+            assert!(
+                seen.windows(2).all(|w| w[0].timestamp_ns <= w[1].timestamp_ns),
+                "the merged stream is not ordered"
+            );
+            // And each producer's own events kept their order.
+            for tid in 0..THREADS as u32 {
+                let ids: Vec<u64> =
+                    seen.iter().filter(|e| e.tid == tid).map(|e| e.scope_id).collect();
+                assert_eq!(ids.len() as u64, PER_THREAD);
+                assert!(
+                    ids.windows(2).all(|w| w[0] < w[1]),
+                    "thread {tid} lost its own ordering"
+                );
+            }
+        });
+
+        // Let the producers finish, then tell the consumer to make a last
+        // pass. Joining happens at the end of the scope.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        done.store(true, Ordering::Release);
+    });
+}
+
+#[test]
+fn a_lapped_ring_reports_what_it_lost_rather_than_lying() {
+    // Eight slots, a hundred events, no consumer in between: the ring wraps
+    // and the drain must account for the loss instead of reporting garbage
+    // or silently renumbering.
+    let region = Region::new(1, 8);
+    let rings = region.rings();
+    for i in 0..100u64 {
+        rings.push(0, ScopeEvent { timestamp_ns: i, ..Default::default() });
+    }
+    let mut cursors = Cursors::for_rings(1);
+    let pass = drain(&rings, &mut cursors, now_monotonic_ns());
+    assert_eq!(pass.dropped, 92, "100 pushed, 8 resident");
+    assert_eq!(pass.slices[0].events.len(), 8);
+    assert_eq!(pass.slices[0].events[0].timestamp_ns, 92);
+}
+
+#[test]
+fn the_write_path_sustains_millions_of_events_per_second() {
+    // The design's headline claim, measured rather than assumed. Single
+    // thread, one ring, no consumer: this times the producer alone.
+    let region = Region::new(1, 1 << 16);
+    let rings = region.rings();
+    let event = ScopeEvent { timestamp_ns: 1, kind: kind::INSTANT, ..Default::default() };
+
+    // Warm the mapping so page faults are not counted as ring cost.
+    for _ in 0..(1 << 16) {
+        rings.push(0, event);
+    }
+
+    const EVENTS: u64 = 2_000_000;
+    let started = std::time::Instant::now();
+    for _ in 0..EVENTS {
+        rings.push(0, event);
+    }
+    let elapsed = started.elapsed();
+    let per_second = EVENTS as f64 / elapsed.as_secs_f64();
+    let nanos_each = elapsed.as_nanos() as f64 / EVENTS as f64;
+    println!("push: {per_second:.0} events/s, {nanos_each:.1} ns each");
+
+    // Deliberately far below what the machine does, so this fails on a
+    // regression rather than on a busy CI box.
+    assert!(
+        per_second > 5_000_000.0,
+        "the write path should clear millions per second, got {per_second:.0}/s"
+    );
+}

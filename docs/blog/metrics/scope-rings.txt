@@ -1,0 +1,29 @@
+Manual instrumentation: per-core scope rings
+Measured 2026-09-02T01:51:33Z on Linux 7.0.0-30-generic, 32 threads.
+Commit: 29b0c754d
+
+Write path (single thread, one ring, no consumer, release build):
+  push: 100611578 events/s, 9.9 ns each
+
+Layout
+  event                    32 bytes
+  slot                     64 bytes (one cache line: seq + event + pad)
+  ring control block       64 bytes (one cache line, so neighbours never share)
+  rings                    one per core, capped at 128
+  default slots per ring   16384 (1 MiB per ring)
+
+Write path instruction budget, per event:
+  1 x relaxed fetch_add    claim a slot
+  4 x plain 64-bit store   the payload
+  1 x release store        publish (a plain mov on x86-64; one stlr on aarch64)
+  no lock, no CAS loop, no allocation, no syscall
+
+Tests
+  test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Not measured, and why
+  Cross-process throughput. The shared-memory path is exercised by a
+  writer and reader in one process; a second process mapping the same
+  segment is the next step, together with the C API that fills it.

@@ -313,6 +313,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbit-scope-ring"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "orbit-thread-states"
 version = "0.1.0"
 

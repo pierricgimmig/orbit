@@ -21,6 +21,7 @@ members = [
     "crates/orbit-pod-dump",
     "crates/orbit-gpu-helper",
     "crates/orbit-ptrace",
+    "crates/orbit-scope-ring",
     "crates/orbit-thread-states",
     "crates/orbit-tracing-state",
     "crates/orbit-trampoline",
