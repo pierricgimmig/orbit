@@ -113,7 +113,7 @@
           // knee can actually be measured on a given machine.
           const hw = Number(navigator.hardwareConcurrency) || 4;
           const forced = Number(new URLSearchParams(location.search).get("threads"));
-          const want = Number.isFinite(forced) && forced > 0 ? forced : Math.min(hw, 8);
+          const want = Number.isFinite(forced) && forced > 0 ? forced : Math.min(hw, 16);
           const n = Math.max(1, Math.min(want, 32));
           await mod.initThreadPool(n);
           if (typeof mod.markWasmPoolReady === "function") {

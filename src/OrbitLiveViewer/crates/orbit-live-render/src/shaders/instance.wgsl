@@ -1,8 +1,4 @@
-// Instanced scope rects: SDF rounded boxes + an analytical drop shadow.
-//
-// Shadow integral is Evan Wallace's "Fast Rounded Rectangle Shadows"
-// (https://madebyevan.com/shaders/fast-rounded-rectangle-shadows/).
-// Copied into this crate (public article / MIT-clean algorithm).
+// Instanced scope rects: SDF rounded boxes.
 
 // Must be a multiple of 16 bytes: WebGL2 and other downlevel adapters lack
 // DownlevelFlags::BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED. Three trailing scalars
@@ -34,13 +30,15 @@ struct VsOut {
   @location(5) mark: f32,
 };
 
-const SHADOW_PAD: f32 = 6.0;
-const SHADOW_SIGMA: f32 = 1.35;
+// Just enough slack around the rect for the antialiased edge and, on a
+// selected scope, its glow. There is no drop shadow: it expanded every quad
+// by six pixels a side -- huge overdraw on a dense track -- to draw a faint
+// offset copy that read as a rendering artifact more than a shadow.
+const AA_PAD: f32 = 2.0;
 const SIBLING_RGB: vec3<f32> = vec3(0.392, 0.710, 0.965);
 const SELECTED_RGB: vec3<f32> = vec3(0.0, 0.502, 1.0);
 const PULSE_PERIOD: f32 = 1.2;
 const PULSE_RADIUS: f32 = 0.45;
-const PULSE_SIGMA: f32 = 0.18;
 const PULSE_BRIGHT: f32 = 0.05;
 
 fn selected_pulse(time: f32) -> f32 {
@@ -58,7 +56,7 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -> VsOut {
   let selected = mark > 1.5 && mark < 2.5;
   let pulse = select(0.0, selected_pulse(uni.time), selected);
   let lift = select(0.0, -0.8, selected);
-  let pad = SHADOW_PAD + select(0.0, 1.0, selected) + pulse * PULSE_RADIUS;
+  let pad = AA_PAD + select(0.0, 1.0, selected) + pulse * PULSE_RADIUS;
   let x = uni.origin.x + inst.rect.x - pad + uv.x * (inst.rect.z + 2.0 * pad);
   let y = uni.origin.y + inst.rect.y + lift - pad + uv.y * (inst.rect.w + 2.0 * pad);
   var o: VsOut;
@@ -84,41 +82,9 @@ fn sd_rounded_box(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
   return min(max(q.x, q.y), 0.0) + length(max(q, vec2(0.0))) - r;
 }
 
-fn gaussian(x: f32, sigma: f32) -> f32 {
-  let pi = 3.141592653589793;
-  return exp(-(x * x) / (2.0 * sigma * sigma)) / (sqrt(2.0 * pi) * sigma);
-}
 
-fn erf_approx(x: f32) -> f32 {
-  let s = sign(x);
-  let a = abs(x);
-  var t = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
-  t = t * t;
-  return s - s / (t * t);
-}
 
-fn rounded_box_shadow_x(x: f32, y: f32, sigma: f32, corner: f32, half: vec2<f32>) -> f32 {
-  let delta = min(half.y - corner - abs(y), 0.0);
-  let curved = half.x - corner + sqrt(max(0.0, corner * corner - delta * delta));
-  return 0.5 + 0.5 * erf_approx((x + curved) * (sqrt(0.5) / sigma));
-}
 
-// https://madebyevan.com/shaders/fast-rounded-rectangle-shadows/
-fn rounded_box_shadow(point: vec2<f32>, half: vec2<f32>, corner: f32, sigma: f32) -> f32 {
-  let low = point.y - half.y;
-  let high = point.y + half.y;
-  let start = clamp(-3.0 * sigma, low, high);
-  let end = clamp(3.0 * sigma, low, high);
-  let step = (end - start) / 4.0;
-  var y = start + step * 0.5;
-  var value = 0.0;
-  for (var i = 0; i < 4; i++) {
-    value += rounded_box_shadow_x(point.x, point.y - y, sigma, corner, half)
-      * gaussian(y, sigma) * step;
-    y += step;
-  }
-  return value;
-}
 
 @fragment
 fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
@@ -131,8 +97,6 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   let aa = fwidth(d) * 0.75;
   let fill = 1.0 - smoothstep(-aa, aa, d);
   let border = 1.0 - smoothstep(-aa, aa, abs(d) - 0.5);
-  let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected) + pulse * PULSE_SIGMA;
-  let shadow = rounded_box_shadow(v.local + vec2(0.4, 0.7), v.half_size, v.radius, sigma);
   var rgb = v.color.rgb;
   if dimmed {
     let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -154,7 +118,5 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
     rim_w = 0.36;
   }
   rgb = mix(rgb, rim, border * rim_w * fill);
-  let shadow_a = select(0.10, 0.20, selected);
-  let alpha = max(fill * v.color.a, shadow * shadow_a * (1.0 - fill));
-  return vec4(rgb, alpha);
+  return vec4(rgb, fill * v.color.a);
 }
