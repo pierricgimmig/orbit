@@ -107,6 +107,9 @@ int main(int argc, char** argv) {
     orbit_scope render = orbit_start(ORBIT_LIT("render"));
     busy(3000);
     orbit_stop(render);
+    /* A pre-timestamped GPU span: timers read back after the fact. */
+    uint64_t gpu_start = orbit_now_ns() - 4000000;
+    orbit_span_async(ORBIT_LIT("gpu: shadow pass"), gpu_start, gpu_start + 2500000);
 
     if (frame % 8 == 0) {
       Job job = { frame / 8, 0, 0 };

@@ -130,12 +130,12 @@ fn push_named(writer: &ScopeRingWriter, state: &ThreadState, mut head: ScopeEven
     }
 }
 
-fn start_with(flag: u8, name: &[u8]) -> Handle {
+fn start_at(flag: u8, name: &[u8], timestamp_ns: u64) -> Handle {
     let Some(writer) = active_segment() else { return 0 };
     with_thread(writer.rings().ring_count(), |state| {
         let handle = next_handle(state);
         let head = ScopeEvent {
-            timestamp_ns: now_monotonic_ns(),
+            timestamp_ns,
             scope_id: handle,
             tid: state.tid,
             kind: kind::SCOPE_START,
@@ -147,18 +147,7 @@ fn start_with(flag: u8, name: &[u8]) -> Handle {
     })
 }
 
-/// Begins a scope on the calling thread. Takes `&str` or `&[u8]`.
-pub fn start(name: impl AsRef<[u8]>) -> Handle {
-    start_with(0, name.as_ref())
-}
-
-/// Begins a scope that may be stopped from any thread.
-pub fn start_async(name: impl AsRef<[u8]>) -> Handle {
-    start_with(flags::ASYNC, name.as_ref())
-}
-
-/// Ends a scope, from any thread. `0` is a no-op.
-pub fn stop(handle: Handle) {
+fn stop_at(handle: Handle, timestamp_ns: u64) {
     if handle == 0 {
         return;
     }
@@ -167,7 +156,7 @@ pub fn stop(handle: Handle) {
         writer.rings().push(
             state.ring,
             ScopeEvent {
-                timestamp_ns: now_monotonic_ns(),
+                timestamp_ns,
                 scope_id: handle,
                 tid: state.tid,
                 kind: kind::SCOPE_STOP,
@@ -175,6 +164,52 @@ pub fn stop(handle: Handle) {
             },
         );
     });
+}
+
+/// Begins a scope on the calling thread. Takes `&str` or `&[u8]`.
+pub fn start(name: impl AsRef<[u8]>) -> Handle {
+    start_at(0, name.as_ref(), now_monotonic_ns())
+}
+
+/// Begins a scope that may be stopped from any thread.
+pub fn start_async(name: impl AsRef<[u8]>) -> Handle {
+    start_at(flags::ASYNC, name.as_ref(), now_monotonic_ns())
+}
+
+/// Records a complete scope whose timestamps the caller supplies, rather than
+/// reading the clock now.
+///
+/// For events that already happened at a time you captured elsewhere: GPU work
+/// whose timestamps you read back after the fact, a trace being replayed, or
+/// events you buffered yourself and flush in a batch. Timestamps must be
+/// [`now_ns`]'s clock -- `CLOCK_MONOTONIC` nanoseconds -- so they line up with
+/// everything else on the timeline.
+///
+/// Nesting depth still comes from the order scopes are emitted, so for nested
+/// imported data, emit parents around their children (outer span, then the
+/// inner spans within it). Flat data needs no such care.
+pub fn span(name: impl AsRef<[u8]>, start_ns: u64, end_ns: u64) {
+    let handle = start_at(0, name.as_ref(), start_ns);
+    stop_at(handle, end_ns);
+}
+
+/// A complete async span at supplied timestamps, drawn on its own track.
+/// The right one for GPU spans: independent of any CPU thread's nesting.
+pub fn span_async(name: impl AsRef<[u8]>, start_ns: u64, end_ns: u64) {
+    let handle = start_at(flags::ASYNC, name.as_ref(), start_ns);
+    stop_at(handle, end_ns);
+}
+
+/// Ends a scope, from any thread. `0` is a no-op.
+pub fn stop(handle: Handle) {
+    stop_at(handle, now_monotonic_ns());
+}
+
+/// `CLOCK_MONOTONIC` in nanoseconds, the clock every timestamp in the segment
+/// uses. Grab it at the real site of an event so a later [`span`] lines up
+/// with scheduling, samples and other scopes.
+pub fn now_ns() -> u64 {
+    now_monotonic_ns()
 }
 
 /// A point in time with a name and no duration.
@@ -316,6 +351,35 @@ pub unsafe extern "C" fn orbit_value(name: *const libc::c_char, name_len: usize,
     value(bytes(name, name_len), v);
 }
 
+/// # Safety
+/// See [`bytes`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_span(
+    name: *const libc::c_char,
+    name_len: usize,
+    start_ns: u64,
+    end_ns: u64,
+) {
+    span(bytes(name, name_len), start_ns, end_ns);
+}
+
+/// # Safety
+/// See [`bytes`].
+#[no_mangle]
+pub unsafe extern "C" fn orbit_span_async(
+    name: *const libc::c_char,
+    name_len: usize,
+    start_ns: u64,
+    end_ns: u64,
+) {
+    span_async(bytes(name, name_len), start_ns, end_ns);
+}
+
+#[no_mangle]
+pub extern "C" fn orbit_now_ns() -> u64 {
+    now_ns()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +478,23 @@ mod tests {
             }
         }
         assert!(names.contains(&(long.clone(), Completeness::Complete)));
+
+        // A pre-timestamped span carries the times given, not the clock now.
+        span(b"replayed", 111, 222);
+        let events2 = all_events();
+        let starts: Vec<&ScopeEvent> = events2
+            .iter()
+            .filter(|e| e.kind == kind::SCOPE_START)
+            .collect();
+        let replay_start = starts
+            .iter()
+            .find(|e| e.timestamp_ns == 111)
+            .expect("the span used the start timestamp given");
+        let replay_stop = events2
+            .iter()
+            .find(|e| e.kind == kind::SCOPE_STOP && e.scope_id == replay_start.scope_id)
+            .expect("and its stop");
+        assert_eq!(replay_stop.timestamp_ns, 222, "and the end timestamp given");
         // Every assembled name is one this test wrote: no handle bytes from
         // the link leaking through as a "name".
         let expected = ["outer", "marker", "job", "hp", long.as_str()];

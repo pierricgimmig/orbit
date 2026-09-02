@@ -52,6 +52,11 @@ def _load():
     lib.orbit_link.restype = None
     lib.orbit_value.argtypes = (ctypes.c_char_p, ctypes.c_size_t, ctypes.c_double)
     lib.orbit_value.restype = None
+    lib.orbit_now_ns.argtypes = ()
+    lib.orbit_now_ns.restype = ctypes.c_uint64
+    for fn in (lib.orbit_span, lib.orbit_span_async):
+        fn.argtypes = (ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64)
+        fn.restype = None
     _lib = lib
     return lib
 
@@ -101,6 +106,22 @@ def value(name, v):
     if _lib:
         b = _name(name)
         _lib.orbit_value(b, len(b), float(v))
+
+
+def now_ns():
+    return _lib.orbit_now_ns() if _lib else 0
+
+
+def span(name, start_ns, end_ns):
+    if _lib:
+        b = _name(name)
+        _lib.orbit_span(b, len(b), int(start_ns), int(end_ns))
+
+
+def span_async(name, start_ns, end_ns):
+    if _lib:
+        b = _name(name)
+        _lib.orbit_span_async(b, len(b), int(start_ns), int(end_ns))
 
 
 class scope:

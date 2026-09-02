@@ -80,6 +80,9 @@ def main():
                     busy(1000)
             with orbit.scope("render"):
                 busy(3000)
+            # A pre-timestamped GPU span: timers read back after the fact.
+            gpu_start = orbit.now_ns() - 4_000_000
+            orbit.span_async("gpu: shadow pass", gpu_start, gpu_start + 2_500_000)
             if frame % 8 == 0:
                 enqueued_at = orbit.instant("enqueue job")
                 async_scope = orbit.start_async("background job")

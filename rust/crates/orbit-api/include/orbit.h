@@ -2,7 +2,7 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-/* Orbit manual instrumentation. Eight functions, one C ABI, no macros in it.
+/* Orbit manual instrumentation. Eleven functions, one C ABI, no macros in it.
  *
  * Link this into the program you want to profile and call orbit_init() once.
  * That creates the program's shared-memory segment; a running orbit-service
@@ -80,6 +80,25 @@ void orbit_link(orbit_scope from, orbit_scope to);
  * something whose purpose is to be plotted. */
 void orbit_value(const char* name, size_t name_len, double value);
 
+/* CLOCK_MONOTONIC in nanoseconds -- the clock every timestamp in the segment
+ * uses. Grab it at the real site of an event, then hand it to orbit_span
+ * later so the span lines up with scheduling, samples and other scopes. */
+uint64_t orbit_now_ns(void);
+
+/* Records a complete scope whose timestamps you supply, rather than reading
+ * the clock now. For events that already happened at a time captured
+ * elsewhere: GPU work whose timestamps are read back after the fact, a trace
+ * being replayed, events buffered and flushed in a batch. Timestamps are
+ * orbit_now_ns()'s clock.
+ *
+ * Nesting depth still comes from emission order, so for nested imported data,
+ * emit a parent span around its children. */
+void orbit_span(const char* name, size_t name_len, uint64_t start_ns, uint64_t end_ns);
+
+/* A complete async span at supplied timestamps, drawn on its own track -- the
+ * right one for GPU spans, independent of any CPU thread's nesting. */
+void orbit_span_async(const char* name, size_t name_len, uint64_t start_ns, uint64_t end_ns);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif
@@ -93,6 +112,7 @@ void orbit_value(const char* name, size_t name_len, double value);
 
 #define ORBIT_INSTANT(lit) ((void)orbit_instant(ORBIT_LIT(lit)))
 #define ORBIT_VALUE(lit, v) orbit_value(ORBIT_LIT(lit), (double)(v))
+#define ORBIT_SPAN(lit, start_ns, end_ns) orbit_span(ORBIT_LIT(lit), (start_ns), (end_ns))
 
 #ifdef __cplusplus
 namespace orbit {

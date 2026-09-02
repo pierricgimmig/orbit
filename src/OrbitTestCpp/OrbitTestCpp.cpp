@@ -96,6 +96,11 @@ int main(int argc, char** argv) {
       busy(1000);
     }
     { ORBIT_SCOPE("render"); busy(3000); }
+    {
+      // A pre-timestamped GPU span: timers read back after the fact.
+      uint64_t gpu_start = orbit_now_ns() - 4000000;
+      orbit_span_async(ORBIT_LIT("gpu: shadow pass"), gpu_start, gpu_start + 2500000);
+    }
     if (frame % 8 == 0) {
       Job job{frame / 8, 0, 0};
       job.enqueued_at = orbit_instant(ORBIT_LIT("enqueue job"));

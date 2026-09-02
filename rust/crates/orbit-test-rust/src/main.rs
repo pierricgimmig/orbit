@@ -108,6 +108,10 @@ fn main() {
             let _render = orbit_api::scope("render");
             busy(3_000);
         }
+        // A GPU span whose real timestamps were captured earlier and are
+        // supplied now, as a driver would after reading back its timers.
+        let gpu_start = orbit_api::now_ns().saturating_sub(4_000_000);
+        orbit_api::span_async("gpu: shadow pass", gpu_start, gpu_start + 2_500_000);
         // Every eighth frame, hand a job to the workers.
         if frame % 8 == 0 {
             let enqueued_at = orbit_api::instant("enqueue job");
