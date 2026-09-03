@@ -319,29 +319,19 @@ fn push_sample_tick(events: &mut Vec<LiveEvent>, t: u64, tick_i: u64) {
 }
 
 pub fn sample_events_for_tick(t: u64, tick_i: u64) -> Vec<LiveEvent> {
-    let mut out = Vec::with_capacity(12);
-    out.push(LiveEvent {
-        start_ns: t,
-        duration_ns: DEMO_TICK_NS,
-        tid: DEMO_SAMPLE_TID,
-        pid: DEMO_PID,
-        kind: kind::THREAD_STATE,
-        depth: 0,
-        extra: thread_state::RUNNING,
-        _pad: 0,
-        name_id: 0,
-    });
+    let mut out = Vec::with_capacity(8);
     let main = DEMO_SAMPLE_BASE;
     let work = DEMO_SAMPLE_BASE + 1;
     let leaf_a = DEMO_SAMPLE_BASE + 2;
     let leaf_b = DEMO_SAMPLE_BASE + 3;
     let other = DEMO_SAMPLE_BASE + 4;
-    let dur = 8_000_000;
+    // Nearly fill the 20 ms tick so calls lanes are as clickable as Demo scopes.
+    let dur = 9_000_000;
     push_sample_stack(&mut out, t + 500_000, dur, &[main, work, leaf_a]);
     if tick_i % 2 == 0 {
-        push_sample_stack(&mut out, t + 9_000_000, dur, &[main, work, leaf_b]);
+        push_sample_stack(&mut out, t + 10_500_000, dur, &[main, work, leaf_b]);
     } else {
-        push_sample_stack(&mut out, t + 9_000_000, dur, &[main, other]);
+        push_sample_stack(&mut out, t + 10_500_000, dur, &[main, other]);
     }
     out
 }
@@ -532,9 +522,7 @@ mod tests {
         assert!(calls.iter().any(|e| e.name_id == DEMO_SAMPLE_BASE));
         assert!(calls.iter().any(|e| e.name_id == DEMO_SAMPLE_BASE + 2));
         assert!(calls.iter().any(|e| e.name_id == DEMO_SAMPLE_BASE + 3));
-        assert!(a
-            .iter()
-            .any(|e| e.kind == kind::THREAD_STATE && e.tid == DEMO_SAMPLE_TID));
+        assert!(a.iter().all(|e| e.kind != kind::THREAD_STATE));
         let mut scopes = Vec::new();
         push_thread_tick(&mut scopes, DEMO_ORIGIN_NS, DEMO_PID, 100, 0);
         assert!(scopes.iter().any(|e| e.kind == kind::API_SCOPE));
