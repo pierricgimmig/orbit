@@ -1091,9 +1091,13 @@ impl OrbitLiveApp {
     /// Recompute packed Ys in the same frame as a collapse / hide click so
     /// the draw path does not paint last frame's lanes for one more tick.
     fn relayout_tracks(&mut self) {
-        let filter = self
-            .selected_pid
-            .filter(|_| self.status.capturing && !self.status.demo);
+        // No narrowing to the selected process: the service decides which
+        // processes get rows (the target and what it spawned, itself, and
+        // every instrumented process), and it only sends those. Narrowing
+        // here hid all but the target until the capture stopped -- other
+        // instrumented processes and orbit-service's own track appeared only
+        // when Stop lifted the filter.
+        let filter: Option<u32> = None;
         self.tracks.tick(0.0, &self.index, filter);
         self.mark_layout_changed();
     }
@@ -2657,9 +2661,13 @@ impl OrbitLiveApp {
     fn timeline(&mut self, ui: &mut Ui, dt: f32, dev: &DevFrame) {
         self.tracks.scale = if self.compact { 0.72 } else { 1.0 };
         self.refresh_search();
-        let filter = self
-            .selected_pid
-            .filter(|_| self.status.capturing && !self.status.demo);
+        // No narrowing to the selected process: the service decides which
+        // processes get rows (the target and what it spawned, itself, and
+        // every instrumented process), and it only sends those. Narrowing
+        // here hid all but the target until the capture stopped -- other
+        // instrumented processes and orbit-service's own track appeared only
+        // when Stop lifted the filter.
+        let filter: Option<u32> = None;
         {
             let _tracks = dev.scope(TID_UI, NAME_TRACKS);
             {
