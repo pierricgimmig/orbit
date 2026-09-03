@@ -1067,7 +1067,6 @@ mod tests {
         // The drop shadow was removed (87680c10b): the 6px quad expansion
         // it needed was pure overdraw on a 72-core scheduler track.
         assert!(!INSTANCE_WGSL.contains("rounded_box_shadow"));
-        assert!(INSTANCE_WGSL.contains("madebyevan.com"));
         assert!(INSTANCE_WGSL.contains("SIBLING_RGB"));
         assert!(INSTANCE_WGSL.contains("SELECTED_RGB"));
         assert!(INSTANCE_WGSL.contains("if sibling"));

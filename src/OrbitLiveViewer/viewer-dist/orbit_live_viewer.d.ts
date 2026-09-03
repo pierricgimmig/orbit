@@ -80,11 +80,11 @@ export interface InitOutput {
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __wbindgen_export_7: WebAssembly.Table;
   readonly _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h2df7efdcd861b242: (a: number, b: number) => void;
-  readonly closure369_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure371_externref_shim: (a: number, b: number, c: any) => void;
   readonly _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__ha3d47ef291732239_multivalue_shim: (a: number, b: number) => [number, number];
   readonly __externref_table_dealloc: (a: number) => void;
-  readonly closure1052_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure2742_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure1054_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure2744_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_thread_destroy: (a?: number, b?: number, c?: number) => void;
   readonly __wbindgen_start: (a: number) => void;
 }
