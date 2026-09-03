@@ -492,9 +492,8 @@ async fn capture_start(
     State(svc): State<Arc<LiveService>>,
     Json(body): Json<StartBody>,
 ) -> Response {
-    if body.pid == 0 {
-        return (StatusCode::BAD_REQUEST, "pid is required").into_response();
-    }
+    // pid 0 is a capture without a target: the scheduler, the service, and
+    // every process instrumenting itself.
     let json = body.to_json();
     match hooks_clone(&svc) {
         Some(h) => {

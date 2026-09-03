@@ -42,6 +42,12 @@ pub struct ResolvedFrame {
 }
 
 impl Symbolizer {
+    /// No modules: resolves every address to its hex form. For a capture
+    /// without a target process.
+    pub fn empty() -> Symbolizer {
+        Symbolizer { modules: Vec::new() }
+    }
+
     /// A symbolizer over hand-built modules, for tests and benchmarks.
     #[cfg(test)]
     pub(crate) fn from_parts(modules: Vec<(u64, u64, u64, String, Vec<(u64, u64, String)>)>) -> Symbolizer {

@@ -464,7 +464,11 @@ fn capture_loop(
     // that address already had. Remember the id per address instead; the
     // symbolizer is fixed for the life of this capture, so the cache is too.
     let mut pc_ids: crate::report::FastMap<u64, u32> = crate::report::FastMap::default();
-    let symbolizer = Symbolizer::for_pid(target_pid);
+    // A capture need not have a target: then it is the scheduler, the
+    // service's own scopes, and every process instrumenting itself. Sampling,
+    // unwinding, symbols and hooks all follow a process, so they are skipped.
+    let has_target = target_pid > 0;
+    let symbolizer = if has_target { Symbolizer::for_pid(target_pid) } else { Symbolizer::empty() };
     if symbolizer.module_count() > 0 {
         eprintln!(
             "orbit-service: symbolizing {} modules, {} symbols",
@@ -476,7 +480,9 @@ fn capture_loop(
     // started later are missed; refreshing the thread list mid-capture is a
     // later refinement.
     let mut sample_rings = Vec::new();
-    if let Ok(tasks) = std::fs::read_dir(format!("/proc/{target_pid}/task")) {
+    if !has_target {
+        // nothing to sample
+    } else if let Ok(tasks) = std::fs::read_dir(format!("/proc/{target_pid}/task")) {
         for entry in tasks.flatten() {
             let Some(tid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
                 continue;
@@ -489,12 +495,13 @@ fn capture_loop(
             }
         }
     }
-    if sample_rings.is_empty() {
+    if has_target && sample_rings.is_empty() {
         eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
     }
-    let mut unwinder = match ProcessUnwinder::for_pid(target_pid) {
-        Ok(unwinder) => Some(unwinder),
-        Err(error) => {
+    let mut unwinder = match (has_target, ProcessUnwinder::for_pid(target_pid)) {
+        (false, _) => None,
+        (true, Ok(unwinder)) => Some(unwinder),
+        (true, Err(error)) => {
             // Not fatal, and worth saying out loud: without an unwinder there
             // are no callstacks, but the sample bar below still works.
             eprintln!("orbit-service: no unwinder for pid {target_pid} ({error}); \
@@ -531,12 +538,21 @@ fn capture_loop(
     // starts -- and drained every pass alongside the perf rings.
     let mut scopes = ScopeSource::new(service.clone());
     if show_all_processes {
-        eprintln!("orbit-service: showing every process on the machine");
-    } else {
+        eprintln!(
+            "orbit-service: every process was requested; rows stay with the target, \
+             orbit-service and instrumented processes (the Scheduler track is machine-wide)"
+        );
+    }
+    if has_target {
         eprintln!(
             "orbit-service: showing pid {target_pid} and {} related process(es); \
              the Scheduler track stays machine-wide",
             visible.len().saturating_sub(1)
+        );
+    } else {
+        eprintln!(
+            "orbit-service: no target process: capturing the scheduler, orbit-service, \
+             and every process with manual instrumentation"
         );
     }
 
@@ -546,7 +562,7 @@ fn capture_loop(
     for hook in &hooks {
         hook_names.insert(hook.function_id, names.id_for(&hook.name));
     }
-    let mut uprobes = if hooks.is_empty() {
+    let mut uprobes = if hooks.is_empty() || !has_target {
         service.set_instrumentation_status("");
         None
     } else {
@@ -574,7 +590,9 @@ fn capture_loop(
             None
         } else {
             // A hooked process is interesting by definition, even while idle.
-            visible.add_instrumented(target_pid.max(0) as u32);
+            if has_target {
+                visible.add_instrumented(target_pid as u32);
+            }
             let mut message = format!(
                 "instrumenting {} of {} functions ({} probes)",
                 report.armed_functions,

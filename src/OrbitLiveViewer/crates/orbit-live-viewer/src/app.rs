@@ -1111,10 +1111,9 @@ impl OrbitLiveApp {
         self.clear_file_trace();
         self.error.clear();
         if self.status.hooks {
-            let Some(pid) = self.selected_pid else {
-                self.error = "Select a process in the capture strip.".into();
-                return;
-            };
+            // No selection is a capture without a target: the scheduler, the
+            // service, and every instrumented process.
+            let pid = self.selected_pid.unwrap_or(0);
             self.recording = true;
             // The capture clock is the target's, and nothing here knows it
             // yet -- `CaptureStarted` brings it. Until then self-profile
@@ -1908,12 +1907,12 @@ impl OrbitLiveApp {
                 self.stop_record();
             }
         } else {
-            let record_ok = !self.status.hooks || self.selected_pid.is_some();
+            let record_ok = true;
             let resp = pill(ui, "Rec", false).on_hover_text(if self.status.hooks {
                 if self.selected_pid.is_some() {
                     "Start a real OrbitService capture of the selected process"
                 } else {
-                    "Select a process in the capture strip first"
+                    "Capture with no target: the scheduler, orbit-service, and every instrumented process"
                 }
             } else {
                 "No OrbitService hooks — Record starts the demo producer"
@@ -2123,12 +2122,12 @@ impl OrbitLiveApp {
                         self.stop_record();
                     }
                 } else {
-                    let record_ok = !self.status.hooks || self.selected_pid.is_some();
+                    let record_ok = true;
                     let resp = pill(ui, "Record", false).on_hover_text(if self.status.hooks {
                         if self.selected_pid.is_some() {
                             "Start a real OrbitService capture of the selected process"
                         } else {
-                            "Select a process in the capture strip first"
+                            "Capture with no target: the scheduler, orbit-service, and every instrumented process"
                         }
                     } else {
                         "No OrbitService hooks — Record starts the demo producer"
@@ -2391,16 +2390,6 @@ impl OrbitLiveApp {
                 .clicked()
             {
                 self.user_space_hooks = false;
-            }
-            if pill(ui, "All procs", self.show_all_processes)
-                .on_hover_text(
-                    "Give every process on the machine its own rows.\n\
-                     Off: only the target, what it spawned, and anything\n\
-                     instrumented. The Scheduler track is machine-wide either way.",
-                )
-                .clicked()
-            {
-                self.show_all_processes = !self.show_all_processes;
             }
             if self.opt_csw {
                 ui.label(

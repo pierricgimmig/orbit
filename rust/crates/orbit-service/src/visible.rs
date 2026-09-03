@@ -19,7 +19,13 @@
 //!   child process and filtering to the exact pid once meant showing nothing;
 //! - any process carrying instrumentation, dynamic or manual, since a span
 //!   somebody asked for is by definition of interest;
-//! - everything, if the capture asked for it.
+//! - the service itself.
+//!
+//! Never the whole machine: on a 72-core box that was hundreds of rows and
+//! the thread-state work to fill them, for processes nobody asked about.
+//! The scheduler track already shows every core's occupant. A capture may
+//! also have no target at all -- then the rows are the service and whatever
+//! is instrumenting itself.
 //!
 //! The viewer's own lanes are untouched: self-profiling and GPU events use
 //! sentinel pids and never come through here.
@@ -32,29 +38,24 @@ use std::collections::HashSet;
 const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub struct VisibleProcesses {
-    /// The capture asked to see the whole machine.
-    all: bool,
+    /// Zero when the capture has no target.
     target: u32,
     allowed: HashSet<u32>,
     last_refresh: std::time::Instant,
 }
 
 impl VisibleProcesses {
-    pub fn new(target_pid: i32, all: bool) -> VisibleProcesses {
+    /// `_all` is the capture's "every process" request, kept for the wire
+    /// format; it no longer widens the rows (see the module doc).
+    pub fn new(target_pid: i32, _all: bool) -> VisibleProcesses {
         let target = target_pid.max(0) as u32;
         let mut visible = VisibleProcesses {
-            all,
             target,
             allowed: HashSet::new(),
             last_refresh: std::time::Instant::now(),
         };
         visible.refresh_now();
         visible
-    }
-
-    #[cfg(test)]
-    pub fn shows_everything(&self) -> bool {
-        self.all
     }
 
     pub fn len(&self) -> usize {
@@ -69,13 +70,11 @@ impl VisibleProcesses {
     }
 
     pub fn contains(&self, pid: u32) -> bool {
-        self.all || self.allowed.contains(&pid)
+        self.allowed.contains(&pid)
     }
 
     /// The processes of interest -- the target, its descendants, and anything
-    /// instrumented -- whatever the row policy. When everything is shown this
-    /// is still the set whose thread *states* are traced; the rest get the
-    /// context-switch projection.
+    /// instrumented. Both the rows and the set whose thread states are traced.
     pub fn pids(&self) -> Vec<u32> {
         let mut pids: Vec<u32> = self.allowed.iter().copied().collect();
         pids.sort_unstable();
@@ -175,10 +174,22 @@ mod tests {
     }
 
     #[test]
-    fn showing_everything_admits_any_pid() {
-        let visible = VisibleProcesses::new(0, true);
-        assert!(visible.shows_everything());
-        assert!(visible.contains(999_999));
+    fn asking_for_everything_does_not_widen_the_rows() {
+        // The request is honoured for the scheduler track, which is always
+        // machine-wide; rows stay with the target set.
+        let visible = VisibleProcesses::new(1, true);
+        assert!(visible.contains(1));
+        assert!(!visible.contains(999_999));
+    }
+
+    #[test]
+    fn a_capture_without_a_target_shows_only_what_instruments_itself() {
+        let mut visible = VisibleProcesses::new(0, false);
+        assert!(visible.pids().is_empty());
+        assert!(!visible.contains(1));
+        visible.add_instrumented(4_242);
+        assert!(visible.contains(4_242));
+        assert_eq!(visible.pids(), vec![4_242]);
     }
 
     #[test]
@@ -198,7 +209,6 @@ mod tests {
         let me = std::process::id();
         let visible = VisibleProcesses::new(me as i32, false);
         assert!(visible.contains(me));
-        assert!(!visible.shows_everything());
         // pid 1 is not a descendant of a test binary.
         assert!(!visible.contains(1), "the machine should not be visible by default");
     }
