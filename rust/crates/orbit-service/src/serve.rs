@@ -456,6 +456,12 @@ fn capture_loop(
     const SAMPLE_HZ: u64 = 1000;
     let period_ns = 1_000_000_000 / SAMPLE_HZ;
     let mut names = FrameNames::new(service.clone(), store.clone());
+    // Sampled pcs repeat: a hot loop is the same few thousand addresses over
+    // and over. Resolving one means two module scans, a symbol search and two
+    // string allocations, then a hash of the name -- all to arrive at an id
+    // that address already had. Remember the id per address instead; the
+    // symbolizer is fixed for the life of this capture, so the cache is too.
+    let mut pc_ids: crate::report::FastMap<u64, u32> = crate::report::FastMap::default();
     let mut symbolizer = Symbolizer::for_pid(target_pid);
     if symbolizer.module_count() > 0 {
         eprintln!(
@@ -729,14 +735,13 @@ fn capture_loop(
                             .frames
                             .iter()
                             .take(depth_count)
-                            .map(|pc| names.id_for_frame(&symbolizer.resolve_frame(*pc)))
+                            .map(|pc| {
+                                *pc_ids.entry(*pc).or_insert_with(|| {
+                                    names.id_for_frame(&symbolizer.resolve_frame(*pc))
+                                })
+                            })
                             .collect()
                     };
-                    store.push(StoredSample {
-                        timestamp_ns: sample.time,
-                        tid: sample.tid,
-                        frames: frame_ids.clone(),
-                    });
                     // One tick on the thread's sample bar, named by the leaf
                     // frame so hovering it says what was running without a
                     // lookup. Drawn as an instant: see LiveEvent::end_ns.
@@ -764,6 +769,11 @@ fn capture_loop(
                             name_id,
                         });
                     }
+                    store.push(StoredSample {
+                        timestamp_ns: sample.time,
+                        tid: sample.tid,
+                        frames: frame_ids,
+                    });
                 }
             }
         }

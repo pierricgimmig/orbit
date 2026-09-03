@@ -18,7 +18,7 @@ use orbit_live_event::dev::{
     NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
 };
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
-use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
+use orbit_live_protocol::{encode_event_batch, encode_frame, LiveFrame, VERSION};
 use orbit_live_render::{TrackIndex, WorkerSpan};
 use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
@@ -418,9 +418,18 @@ impl LiveService {
 
     pub fn push_event(&self, event: LiveEvent) {
         self.ring().push(event);
-        self.broadcast_frame(&LiveFrame::EventBatch {
-            events: vec![event],
-        });
+        self.broadcast_events(std::slice::from_ref(&event));
+    }
+
+    /// Sends a batch to the live viewers, encoding straight from the slice.
+    /// With nobody subscribed there is nothing to send, so nothing is encoded
+    /// either -- a capture with no viewer attached should cost the ring push
+    /// and no more.
+    fn broadcast_events(&self, events: &[LiveEvent]) {
+        if self.live_tx.receiver_count() == 0 {
+            return;
+        }
+        let _ = self.live_tx.send(encode_event_batch(events));
     }
 
     pub fn push_events(&self, events: &[LiveEvent]) {
@@ -445,9 +454,7 @@ impl LiveService {
                 self.note_live_end(end);
             }
         }
-        self.broadcast_frame(&LiveFrame::EventBatch {
-            events: events.to_vec(),
-        });
+        self.broadcast_events(events);
         if let Some(t0) = t0 {
             self.emit_server_scope(NAME_PUSH, t0.elapsed().as_nanos() as u64);
         }

@@ -14,7 +14,48 @@
 //! so recursion cannot inflate it past the sample count.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Mutex;
+
+/// A multiplicative hasher for the integer keys this module lives on. The
+/// default SipHash is built to resist collision attacks from untrusted keys;
+/// frame ids and thread ids are ours, and hashing a million samples' worth of
+/// them through SipHash was most of the report's time.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        // Final avalanche so low bits, which HashMap indexes on, mix in the
+        // high ones.
+        let mut h = self.0;
+        h ^= h >> 32;
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= h >> 29;
+        h
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.write_u64(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut buf = [0u8; 8];
+            buf[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(buf));
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517C_C1B7_2722_0A95);
+    }
+}
+
+pub(crate) type FastState = BuildHasherDefault<FastHasher>;
+pub(crate) type FastMap<K, V> = HashMap<K, V, FastState>;
 
 /// What a frame id stands for. The flat report needs only the name; the call
 /// trees show the module and the address too, because that is what tells two
@@ -79,8 +120,77 @@ pub struct SampleStore {
 
 #[derive(Default)]
 struct StoreInner {
+    /// Kept sorted by timestamp once a report has asked for it, so a
+    /// selection is a binary search rather than a walk over every sample.
     samples: Vec<StoredSample>,
+    /// True when a push landed out of order since the last sort. Samples from
+    /// several perf rings interleave within a pass, so this is common during
+    /// a capture and cheap to fix: the stable sort finds the sorted prefix and
+    /// merges the short tail in near-linear time.
+    dirty: bool,
     names: HashMap<u32, FrameInfo>,
+}
+
+impl StoreInner {
+    fn ensure_sorted(&mut self) {
+        if self.dirty {
+            self.samples.sort_by_key(|s| s.timestamp_ns);
+            self.dirty = false;
+        }
+    }
+
+    /// The index range of samples with `a <= timestamp <= b`. Requires sorted.
+    fn window(&self, a: u64, b: u64) -> std::ops::Range<usize> {
+        let lo = self.samples.partition_point(|s| s.timestamp_ns < a);
+        let hi = self.samples.partition_point(|s| s.timestamp_ns <= b);
+        lo..hi.max(lo)
+    }
+}
+
+/// The selection folded into distinct stacks: `(tid, frames) -> sample count`,
+/// plus the sample total and the span the counted samples actually occupy.
+///
+/// A million samples of a real program are a few thousand distinct stacks
+/// seen over and over, so both aggregations walk the frames of each distinct
+/// stack once and add its count, instead of walking every frame of every
+/// sample. Counts are additive, so nothing about the result changes.
+fn fold_selection<'a>(
+    inner: &'a StoreInner,
+    ranges: &[SampleRange],
+) -> (FastMap<(u32, &'a [u32]), u64>, u64, u64, u64) {
+    let mut stacks: FastMap<(u32, &[u32]), u64> = FastMap::default();
+    let mut total = 0u64;
+    let mut first = u64::MAX;
+    let mut last = 0u64;
+    for (a, b) in merged_windows(ranges) {
+        for sample in &inner.samples[inner.window(a, b)] {
+            if !in_any(ranges, sample) {
+                continue;
+            }
+            total += 1;
+            first = first.min(sample.timestamp_ns);
+            last = last.max(sample.timestamp_ns);
+            *stacks.entry((sample.tid, sample.frames.as_slice())).or_insert(0) += 1;
+        }
+    }
+    (stacks, total, first, last)
+}
+
+/// The time windows to scan for a range set: every range's span, merged where
+/// they overlap so a sample is visited once. The per-range thread filter is
+/// applied afterwards with `in_any`, which keeps the exact semantics of the
+/// old full walk while touching only the samples inside the selection.
+fn merged_windows(ranges: &[SampleRange]) -> Vec<(u64, u64)> {
+    let mut spans: Vec<(u64, u64)> = ranges.iter().map(|r| (r.start_ns, r.end_ns)).collect();
+    spans.sort_unstable();
+    let mut out: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
+    for (a, b) in spans {
+        match out.last_mut() {
+            Some(last) if a <= last.1.saturating_add(1) => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out
 }
 
 impl SampleStore {
@@ -97,12 +207,17 @@ impl SampleStore {
     }
 
     pub fn push(&self, sample: StoredSample) {
-        self.inner.lock().unwrap().samples.push(sample);
+        let mut inner = self.inner.lock().unwrap();
+        if inner.samples.last().is_some_and(|last| last.timestamp_ns > sample.timestamp_ns) {
+            inner.dirty = true;
+        }
+        inner.samples.push(sample);
     }
 
     pub fn clear(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.samples.clear();
+        inner.dirty = false;
     }
 
     pub fn len(&self) -> usize {
@@ -132,35 +247,30 @@ impl SampleStore {
     /// report. A sample counts once no matter how many ranges it falls in, and
     /// each range carries its own optional thread filter.
     pub fn report_json_for_ranges(&self, ranges: &[SampleRange]) -> String {
-        let inner = self.inner.lock().unwrap();
-        let mut self_counts: HashMap<u32, u64> = HashMap::new();
-        let mut inclusive_counts: HashMap<u32, u64> = HashMap::new();
-        let mut total = 0u64;
+        let mut inner = self.inner.lock().unwrap();
+        inner.ensure_sorted();
+        let inner = &*inner;
+        let mut self_counts: FastMap<u32, u64> = FastMap::default();
+        let mut inclusive_counts: FastMap<u32, u64> = FastMap::default();
         // The span the counted samples actually occupy, which is not the span
         // that was asked for: a request for the whole capture gets 0..u64::MAX
         // back otherwise, and the ring's own range covers every capture the
         // service has run, not this one.
-        let mut first_sample_ns = u64::MAX;
-        let mut last_sample_ns = 0u64;
-
-        for sample in inner.samples.iter() {
-            if !in_any(ranges, sample) {
-                continue;
-            }
-            total += 1;
-            first_sample_ns = first_sample_ns.min(sample.timestamp_ns);
-            last_sample_ns = last_sample_ns.max(sample.timestamp_ns);
-            if let Some(leaf) = sample.frames.first() {
-                *self_counts.entry(*leaf).or_insert(0) += 1;
+        let (stacks, total, first_sample_ns, last_sample_ns) = fold_selection(inner, ranges);
+        // Scratch for the per-stack de-duplication, reused across stacks.
+        let mut seen: Vec<u32> = Vec::with_capacity(64);
+        for ((_, frames), count) in &stacks {
+            if let Some(leaf) = frames.first() {
+                *self_counts.entry(*leaf).or_insert(0) += count;
             }
             // Count each function once per sample, so a recursive stack does
             // not report more inclusive samples than were taken.
-            let mut seen: Vec<u32> = Vec::with_capacity(sample.frames.len());
-            for frame in &sample.frames {
-                if !seen.contains(frame) {
-                    seen.push(*frame);
-                    *inclusive_counts.entry(*frame).or_insert(0) += 1;
-                }
+            seen.clear();
+            seen.extend_from_slice(frames);
+            seen.sort_unstable();
+            seen.dedup();
+            for frame in &seen {
+                *inclusive_counts.entry(*frame).or_insert(0) += count;
             }
         }
 
@@ -253,11 +363,11 @@ struct TreeNode {
     /// bottom-up the exclusive time is the root children's inclusive count by
     /// construction, so intermediate nodes have none to report.
     exclusive_count: u64,
-    children: HashMap<u32, TreeNode>,
+    children: FastMap<u32, TreeNode>,
     /// Thread leaves, tid to sample count. Bottom-up only: a chain of callers
     /// ends by naming the thread it ran on, which is the one piece of context
     /// that walking upwards from a leaf otherwise throws away.
-    threads: HashMap<u32, u64>,
+    threads: FastMap<u32, u64>,
 }
 
 impl TreeNode {
@@ -301,98 +411,132 @@ impl SampleStore {
 
     /// As `tree_json_for`, over the union of several selected ranges.
     pub fn tree_json_for_ranges(&self, ranges: &[SampleRange], mode: TreeMode) -> String {
-        let inner = self.inner.lock().unwrap();
-        let mut total = 0u64;
-        let mut threads: HashMap<u32, ThreadNode> = HashMap::new();
+        let mut inner = self.inner.lock().unwrap();
+        inner.ensure_sorted();
+        let inner = &*inner;
+        let mut threads: FastMap<u32, ThreadNode> = FastMap::default();
         // Bottom-up has a single root; top-down has one per thread.
         let mut merged = ThreadNode::default();
 
-        for sample in inner.samples.iter() {
-            if sample.frames.is_empty() {
+        let (stacks, mut total, _, _) = fold_selection(inner, ranges);
+        for ((tid, frames), count) in &stacks {
+            if frames.is_empty() {
+                // Frameless samples are counted in the total by the fold but
+                // build no path; the old walk skipped them before counting.
+                total -= count;
                 continue;
             }
-            if !in_any(ranges, sample) {
-                continue;
-            }
-            total += 1;
             let thread = match mode {
-                TreeMode::TopDown => threads.entry(sample.tid).or_default(),
+                TreeMode::TopDown => threads.entry(*tid).or_default(),
                 TreeMode::BottomUp => &mut merged,
             };
-            thread.sample_count += 1;
+            thread.sample_count += count;
 
             let mut node = &mut thread.root;
             match mode {
                 // Outermost first, so the root's children are entry points.
                 TreeMode::TopDown => {
-                    for frame in sample.frames.iter().rev() {
+                    for frame in frames.iter().rev() {
                         node = node.child(*frame);
-                        node.sample_count += 1;
+                        node.sample_count += count;
                     }
                 }
                 // Innermost first, so the root's children are the leaves --
                 // the functions the samples actually caught running.
                 TreeMode::BottomUp => {
-                    for frame in sample.frames.iter() {
+                    for frame in frames.iter() {
                         node = node.child(*frame);
-                        node.sample_count += 1;
+                        node.sample_count += count;
                     }
                 }
             }
             match mode {
                 // The walk ended on the innermost frame, which is the one that
                 // owns this sample's exclusive time.
-                TreeMode::TopDown => node.exclusive_count += 1,
+                TreeMode::TopDown => node.exclusive_count += count,
                 // The walk ended on the outermost frame, which owns nothing.
                 // Orbit closes the chain with a thread node instead, and that
                 // is where the exclusive events go.
-                TreeMode::BottomUp => *node.threads.entry(sample.tid).or_insert(0) += 1,
+                TreeMode::BottomUp => *node.threads.entry(*tid).or_insert(0) += count,
             }
         }
 
-        let roots: Vec<serde_json::Value> = match mode {
-            TreeMode::TopDown => {
-                let mut ordered: Vec<(u32, ThreadNode)> = threads.into_iter().collect();
-                // Busiest thread first, then by tid so identical captures
-                // serialize identically.
-                ordered.sort_by(|a, b| b.1.sample_count.cmp(&a.1.sample_count).then(a.0.cmp(&b.0)));
-                ordered
-                    .iter()
-                    .map(|(tid, thread)| {
-                        serde_json::json!({
-                            "kind": "thread",
-                            "name": format!("Thread {tid}"),
-                            "module": "",
-                            "address": 0,
-                            "tid": tid,
-                            "inclusive": thread.sample_count,
-                            "exclusive": 0,
-                            "inclusive_percent": percent_of(thread.sample_count, total),
-                            "of_parent_percent": percent_of(thread.sample_count, total),
-                            "children": serialize_children(&thread.root, thread.sample_count, total, &inner, 0),
-                        })
-                    })
-                    .collect()
-            }
-            TreeMode::BottomUp => serialize_children(&merged.root, merged.sample_count, total, &inner, 0),
-        };
-
+        // Written straight into a string. Building a serde_json::Value tree
+        // first cost more than the walk that produced it: every node became a
+        // heap map, and a bottom-up tree over a few thousand samples has tens
+        // of thousands of nodes.
         let (start_ns, end_ns) = union_bounds(ranges);
         let single_tid = match ranges {
             [only] => only.tid,
             _ => None,
         };
-        serde_json::json!({
-            "mode": match mode { TreeMode::TopDown => "top_down", TreeMode::BottomUp => "bottom_up" },
-            "samples": total,
-            "start_ns": start_ns,
-            "end_ns": end_ns,
-            "tid": single_tid,
-            "range_count": ranges.len(),
-            "roots": roots,
-        })
-        .to_string()
+        let mut out = String::with_capacity(4096);
+        out.push_str("{\"mode\":");
+        out.push_str(match mode {
+            TreeMode::TopDown => "\"top_down\"",
+            TreeMode::BottomUp => "\"bottom_up\"",
+        });
+        write_kv_u64(&mut out, "samples", total);
+        write_kv_u64(&mut out, "start_ns", start_ns);
+        write_kv_u64(&mut out, "end_ns", end_ns);
+        out.push_str(",\"tid\":");
+        match single_tid {
+            Some(t) => out.push_str(&t.to_string()),
+            None => out.push_str("null"),
+        }
+        write_kv_u64(&mut out, "range_count", ranges.len() as u64);
+        out.push_str(",\"roots\":[");
+        match mode {
+            TreeMode::TopDown => {
+                let mut ordered: Vec<(u32, ThreadNode)> = threads.into_iter().collect();
+                // Busiest thread first, then by tid so identical captures
+                // serialize identically.
+                ordered.sort_by(|a, b| b.1.sample_count.cmp(&a.1.sample_count).then(a.0.cmp(&b.0)));
+                for (i, (tid, thread)) in ordered.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_thread_node(&mut out, *tid, thread.sample_count, 0, total, total);
+                    out.push_str(",\"children\":[");
+                    write_children(&mut out, &thread.root, thread.sample_count, total, inner, 0);
+                    out.push_str("]}");
+                }
+            }
+            TreeMode::BottomUp => {
+                write_children(&mut out, &merged.root, merged.sample_count, total, inner, 0)
+            }
+        }
+        out.push_str("]}");
+        out
     }
+}
+
+fn write_kv_u64(out: &mut String, key: &str, v: u64) {
+    out.push_str(",\"");
+    out.push_str(key);
+    out.push_str("\":");
+    out.push_str(&v.to_string());
+}
+
+fn write_kv_f64(out: &mut String, key: &str, v: f64) {
+    out.push_str(",\"");
+    out.push_str(key);
+    out.push_str("\":");
+    // `{:?}` is the shortest round-trip form and always carries a `.0` for a
+    // whole number, so a reader typed for floats never sees a bare integer.
+    out.push_str(&format!("{v:?}"));
+}
+
+/// The opening of a thread node, up to but not including `children`.
+fn write_thread_node(out: &mut String, tid: u32, count: u64, exclusive: u64, total: u64, parent: u64) {
+    out.push_str("{\"kind\":\"thread\",\"name\":\"Thread ");
+    out.push_str(&tid.to_string());
+    out.push_str("\",\"module\":\"\",\"address\":0");
+    write_kv_u64(out, "tid", u64::from(tid));
+    write_kv_u64(out, "inclusive", count);
+    write_kv_u64(out, "exclusive", exclusive);
+    write_kv_f64(out, "inclusive_percent", percent_of(count, total));
+    write_kv_f64(out, "of_parent_percent", percent_of(count, parent));
 }
 
 fn percent_of(count: u64, total: u64) -> f64 {
@@ -403,55 +547,55 @@ fn percent_of(count: u64, total: u64) -> f64 {
     }
 }
 
-fn serialize_children(
+fn write_children(
+    out: &mut String,
     node: &TreeNode,
     parent_count: u64,
     total: u64,
     inner: &StoreInner,
     depth: usize,
-) -> Vec<serde_json::Value> {
+) {
     if depth >= MAX_TREE_DEPTH {
-        return Vec::new();
+        return;
     }
     let mut ordered: Vec<(&u32, &TreeNode)> = node.children.iter().collect();
     ordered.sort_by(|a, b| b.1.sample_count.cmp(&a.1.sample_count).then(a.0.cmp(b.0)));
     ordered.truncate(MAX_CHILDREN_PER_NODE);
-    let mut out: Vec<serde_json::Value> = ordered
-        .iter()
-        .map(|(id, child)| {
-            let info = inner.names.get(id).cloned().unwrap_or_default();
-            serde_json::json!({
-                "kind": "function",
-                "name": inner.name_of(**id),
-                "module": info.module,
-                "address": info.address,
-                "inclusive": child.sample_count,
-                "exclusive": child.exclusive_count,
-                "inclusive_percent": percent_of(child.sample_count, total),
-                "of_parent_percent": percent_of(child.sample_count, parent_count),
-                "children": serialize_children(child, child.sample_count, total, inner, depth + 1),
-            })
-        })
-        .collect();
+    let mut first = true;
+    for (id, child) in ordered {
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        let info = inner.names.get(id);
+        out.push_str("{\"kind\":\"function\",\"name\":");
+        out.push_str(&serde_json::to_string(&inner.name_of(*id)).unwrap_or_else(|_| "\"\"".into()));
+        out.push_str(",\"module\":");
+        out.push_str(
+            &serde_json::to_string(info.map(|f| f.module.as_str()).unwrap_or(""))
+                .unwrap_or_else(|_| "\"\"".into()),
+        );
+        write_kv_u64(out, "address", info.map(|f| f.address).unwrap_or(0));
+        write_kv_u64(out, "inclusive", child.sample_count);
+        write_kv_u64(out, "exclusive", child.exclusive_count);
+        write_kv_f64(out, "inclusive_percent", percent_of(child.sample_count, total));
+        write_kv_f64(out, "of_parent_percent", percent_of(child.sample_count, parent_count));
+        out.push_str(",\"children\":[");
+        write_children(out, child, child.sample_count, total, inner, depth + 1);
+        out.push_str("]}");
+    }
     // Thread leaves last, so the functions a reader is scanning for stay at
     // the top of each node's children.
     let mut threads: Vec<(&u32, &u64)> = node.threads.iter().collect();
     threads.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (tid, count) in threads {
-        out.push(serde_json::json!({
-            "kind": "thread",
-            "name": format!("Thread {tid}"),
-            "module": "",
-            "address": 0,
-            "tid": tid,
-            "inclusive": count,
-            "exclusive": count,
-            "inclusive_percent": percent_of(*count, total),
-            "of_parent_percent": percent_of(*count, parent_count),
-            "children": [],
-        }));
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        write_thread_node(out, *tid, *count, *count, total, parent_count);
+        out.push_str(",\"children\":[]}");
     }
-    out
 }
 
 #[cfg(test)]
@@ -862,5 +1006,58 @@ mod tests {
                 .unwrap();
         assert_eq!(value["samples"], 2);
         assert_eq!(value["range_count"], 2);
+    }
+
+    /// Baseline for the aggregation hot path. Run with
+    /// `cargo test --release report_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn report_bench() {
+        let store = SampleStore::new();
+        for id in 0..2_000u32 {
+            store.record_name(id, &format!("fn_{id}"));
+        }
+        // 1M samples across 64 threads. Real stacks are not random: a program
+        // has a few hundred distinct call paths and the samples land on them
+        // over and over. 200 paths, 24 deep, sharing a common 8-frame prefix,
+        // with the leaf drawn from a small hot set.
+        let n = 1_000_000u64;
+        let mut seed = 0x9E37_79B9u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed >> 8
+        };
+        let prefix: Vec<u32> = (0..8).map(|_| next() % 2_000).collect();
+        let paths: Vec<Vec<u32>> = (0..200)
+            .map(|_| {
+                let mut p: Vec<u32> = (0..15).map(|_| next() % 2_000).collect();
+                p.extend_from_slice(&prefix);
+                p
+            })
+            .collect();
+        for i in 0..n {
+            let path = &paths[(next() % 200) as usize];
+            let mut frames = Vec::with_capacity(24);
+            frames.push(next() % 40); // innermost: a hot leaf
+            frames.extend_from_slice(path);
+            store.push(StoredSample { timestamp_ns: i * 1_000, tid: (i % 64) as u32, frames });
+        }
+        let t = std::time::Instant::now();
+        let whole = store.report_json_for(0, u64::MAX, None);
+        let whole_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = std::time::Instant::now();
+        let narrow = store.report_json_for(400_000_000, 401_000_000, None);
+        let narrow_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = std::time::Instant::now();
+        let tree = store.tree_json_for(0, u64::MAX, TreeMode::TopDown, None);
+        let tree_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = std::time::Instant::now();
+        let narrow_tree = store.tree_json_for(400_000_000, 401_000_000, TreeMode::BottomUp, None);
+        let narrow_tree_ms = t.elapsed().as_secs_f64() * 1e3;
+        println!("REPORT_BENCH samples={n}");
+        println!("REPORT_BENCH whole_report_ms={whole_ms:.2} bytes={}", whole.len());
+        println!("REPORT_BENCH narrow_report_ms={narrow_ms:.3} (1ms window, ~1k samples) bytes={}", narrow.len());
+        println!("REPORT_BENCH whole_tree_ms={tree_ms:.2} bytes={}", tree.len());
+        println!("REPORT_BENCH narrow_tree_ms={narrow_tree_ms:.3} bytes={}", narrow_tree.len());
     }
 }

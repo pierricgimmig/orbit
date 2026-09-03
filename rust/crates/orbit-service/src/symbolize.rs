@@ -42,6 +42,17 @@ pub struct ResolvedFrame {
 }
 
 impl Symbolizer {
+    /// A symbolizer over hand-built modules, for tests and benchmarks.
+    #[cfg(test)]
+    pub(crate) fn from_parts(modules: Vec<(u64, u64, u64, String, Vec<(u64, u64, String)>)>) -> Symbolizer {
+        Symbolizer {
+            modules: modules
+                .into_iter()
+                .map(|(start, end, bias, name, symbols)| Module { start, end, bias, name, symbols })
+                .collect(),
+        }
+    }
+
     /// Builds a symbolizer for a process by reading its maps and loading the
     /// symbol table of every executable file mapped into it.
     pub fn for_pid(pid: i32) -> Symbolizer {
@@ -203,5 +214,64 @@ mod tests {
         assert_eq!(frame.address, here);
         assert!(!frame.module.is_empty(), "the running binary is a module");
         assert_eq!(frame.name, symbolizer.resolve(here), "same name either way");
+    }
+
+    /// Baseline for the per-sample frame resolution the capture loop does.
+    /// Run with `cargo test --release symbolize_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn symbolize_bench() {
+        // 120 modules of 4,000 symbols each: a mid-sized C++ process.
+        let mut modules = Vec::new();
+        for m in 0..120u64 {
+            let base = 0x1000_0000 + m * 0x100_0000;
+            let syms: Vec<(u64, u64, String)> = (0..4_000u64)
+                .map(|i| (base + i * 64, 64, format!("_ZN3app6module{m}8function{i}Ev")))
+                .collect();
+            modules.push((base, base + 0x100_0000, base, format!("libmodule{m}.so"), syms));
+        }
+        let sym = Symbolizer::from_parts(modules);
+        // 50k samples x 24 frames, pcs drawn from a 3,000-address hot set:
+        // real stacks repeat the same few thousand addresses over and over.
+        let mut seed = 0x9E37_79B9u64;
+        let mut pcs = Vec::with_capacity(50_000 * 24);
+        for _ in 0..50_000 * 24 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let hot = (seed >> 33) % 3_000;
+            let m = hot % 120;
+            let i = (hot / 120) % 4_000;
+            pcs.push(0x1000_0000 + m * 0x100_0000 + i * 64 + 8);
+        }
+        let t = std::time::Instant::now();
+        let mut total_len = 0usize;
+        for pc in &pcs {
+            total_len += sym.resolve_frame(*pc).name.len();
+        }
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        println!(
+            "SYMBOLIZE_BENCH frames={} resolve_frame_ms={ms:.1} ns_per_frame={:.0} (checksum {total_len})",
+            pcs.len(),
+            ms * 1e6 / pcs.len() as f64
+        );
+        // The capture loop's path now: resolve once per distinct pc, then a
+        // map lookup. Same name-keyed id table as FrameNames behind it.
+        let mut ids: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut pc_ids: crate::report::FastMap<u64, u32> = crate::report::FastMap::default();
+        let t = std::time::Instant::now();
+        let mut sum = 0u64;
+        for pc in &pcs {
+            let id = *pc_ids.entry(*pc).or_insert_with(|| {
+                let f = sym.resolve_frame(*pc);
+                let n = ids.len() as u32;
+                *ids.entry(f.name).or_insert(n)
+            });
+            sum += u64::from(id);
+        }
+        let ms2 = t.elapsed().as_secs_f64() * 1e3;
+        println!(
+            "SYMBOLIZE_BENCH cached_ms={ms2:.1} ns_per_frame={:.0} distinct_pcs={} (checksum {sum})",
+            ms2 * 1e6 / pcs.len() as f64,
+            pc_ids.len()
+        );
     }
 }

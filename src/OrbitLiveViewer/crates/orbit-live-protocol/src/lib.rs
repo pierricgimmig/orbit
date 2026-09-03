@@ -141,6 +141,22 @@ pub fn encode_frame(frame: &LiveFrame) -> Vec<u8> {
     out
 }
 
+/// `encode_frame(&LiveFrame::EventBatch { events })` without building the
+/// enum: the frame is written straight from the slice into one buffer sized
+/// up front. This is what the server sends per pass, so it neither clones the
+/// batch into a Vec nor copies the payload a second time into the frame.
+pub fn encode_event_batch(events: &[LiveEvent]) -> Vec<u8> {
+    let payload_len = 4 + events.len() * LIVE_EVENT_SIZE;
+    let mut out = Vec::with_capacity(5 + payload_len);
+    out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+    out.push(FRAME_EVENT_BATCH);
+    out.extend_from_slice(&(events.len() as u32).to_le_bytes());
+    for ev in events {
+        out.extend_from_slice(&ev.as_bytes());
+    }
+    out
+}
+
 pub fn decode_frame(bytes: &[u8]) -> Result<(LiveFrame, usize), ProtocolError> {
     if bytes.len() < 5 {
         return Err(ProtocolError::Truncated);
@@ -363,5 +379,65 @@ mod tests {
     #[test]
     fn empty_batch_is_valid() {
         roundtrip(LiveFrame::EventBatch { events: vec![] });
+    }
+
+    /// Baseline for what LiveService::push_events pays per batch.
+    /// Run with `cargo test --release -p orbit-live-protocol encode_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn encode_bench() {
+        let events: Vec<LiveEvent> = (0..10_000u64)
+            .map(|i| LiveEvent {
+                start_ns: i * 10,
+                duration_ns: 5,
+                tid: (i % 16) as u32,
+                pid: 1,
+                kind: 1,
+                depth: (i % 8) as u8,
+                extra: 0,
+                _pad: 0,
+                name_id: (i % 100) as u32,
+            })
+            .collect();
+        let iters = 200;
+        let t = std::time::Instant::now();
+        let mut total = 0usize;
+        for _ in 0..iters {
+            // What push_events does today: clone the slice into the enum,
+            // then encode.
+            let bytes = encode_frame(&LiveFrame::EventBatch { events: events.to_vec() });
+            total += bytes.len();
+        }
+        let per_batch_us = t.elapsed().as_secs_f64() * 1e6 / iters as f64;
+        println!("ENCODE_BENCH batch=10000 events clone_then_encode_us={per_batch_us:.1} (checksum {total})");
+        let t = std::time::Instant::now();
+        let mut total2 = 0usize;
+        for _ in 0..iters {
+            total2 += encode_event_batch(&events).len();
+        }
+        let direct_us = t.elapsed().as_secs_f64() * 1e6 / iters as f64;
+        println!("ENCODE_BENCH batch=10000 events encode_event_batch_us={direct_us:.1} (checksum {total2})");
+    }
+
+    #[test]
+    fn encode_event_batch_matches_encode_frame() {
+        let events: Vec<LiveEvent> = (0..37u64)
+            .map(|i| LiveEvent {
+                start_ns: i,
+                duration_ns: 2,
+                tid: 3,
+                pid: 4,
+                kind: 1,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: 9,
+            })
+            .collect();
+        assert_eq!(
+            encode_event_batch(&events),
+            encode_frame(&LiveFrame::EventBatch { events: events.clone() })
+        );
+        assert_eq!(encode_event_batch(&[]), encode_frame(&LiveFrame::EventBatch { events: vec![] }));
     }
 }
