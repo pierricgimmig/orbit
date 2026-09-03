@@ -76,6 +76,8 @@ const VSCROLL_ARROW: f32 = 0.05;
 const VSCROLL_PAGE: f32 = 0.9;
 /// Capture process list: `/api/processes` about once a second, not every frame.
 const PROCESS_POLL_S: f64 = 1.0;
+/// Minimum spacing of sampling-report requests while a selection drag is live.
+const REPORT_DRAG_THROTTLE_S: f64 = 0.2;
 
 /// Native Orbit `ProcessListWidget` filter: case-insensitive substring on
 /// pid / name / path (`QSortFilterProxyModel::setFilterFixedString`).
@@ -598,6 +600,8 @@ pub struct OrbitLiveApp {
     /// windows. Empty means the whole capture. Cached so an unchanged
     /// selection is not refetched each frame.
     sampling_ranges: Vec<(u64, u64, Option<u32>)>,
+    /// When the report was last requested, to throttle requests mid-drag.
+    last_report_request_s: f64,
     /// Set when the selection was made on one thread's sample bar.
     /// Which of the four report views is showing.
     report_tab: ReportTab,
@@ -807,6 +811,7 @@ impl OrbitLiveApp {
             sample_sels: Vec::new(),
             sampling: None,
             sampling_ranges: Vec::new(),
+            last_report_request_s: 0.0,
             report_tab: crate::dev::query_report_tab_from_location()
                 .and_then(|v| ReportTab::from_query(&v))
                 .unwrap_or(ReportTab::Flat),
@@ -4100,11 +4105,20 @@ impl OrbitLiveApp {
             .collect()
     }
 
-    fn refresh_sampling_report(&mut self) {
+    fn refresh_sampling_report(&mut self, now: f64) {
         let ranges = self.sample_ranges();
         if ranges == self.sampling_ranges {
             return;
         }
+        // Mid-drag the selection changes every frame, and each change was a
+        // full report and tree round trip -- the service scanned the capture
+        // and the viewer parsed megabytes of JSON, per frame. Hold requests
+        // to a few a second while the button is down; the release always
+        // sends the final selection at once.
+        if self.measure_dragging && now - self.last_report_request_s < REPORT_DRAG_THROTTLE_S {
+            return;
+        }
+        self.last_report_request_s = now;
         self.sampling_ranges = ranges;
         self.request_reports();
     }
@@ -4638,7 +4652,7 @@ impl eframe::App for OrbitLiveApp {
                     .show(ctx, |_| {});
             }
 
-            self.refresh_sampling_report();
+            self.refresh_sampling_report(ctx.input(|i| i.time));
             self.sampling_panel(ctx);
             self.self_pane(ctx);
 

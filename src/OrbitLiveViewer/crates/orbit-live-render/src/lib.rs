@@ -280,14 +280,33 @@ impl Lane {
 #[derive(Clone, Debug, Default)]
 pub struct TrackIndex {
     lanes: BTreeMap<LaneKey, Lane>,
+    /// Bumped whenever the *set* of lanes changes -- a lane appears, or
+    /// lanes are dropped -- and not on every event. The track strip keys its
+    /// per-thread lane catalogue on this, so a live stream of events into
+    /// existing lanes costs it nothing.
+    lane_gen: u64,
+    /// Running total, so `event_count` is a read rather than a walk over every
+    /// lane (it is consulted several times per frame).
+    events: usize,
 }
 
 impl TrackIndex {
     pub fn insert(&mut self, event: LiveEvent) {
-        self.lanes
-            .entry(event.lane_key())
-            .or_default()
-            .insert(event);
+        use std::collections::btree_map::Entry;
+        let lane = match self.lanes.entry(event.lane_key()) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                self.lane_gen = self.lane_gen.wrapping_add(1);
+                e.insert(Lane::default())
+            }
+        };
+        lane.insert(event);
+        self.events += 1;
+    }
+
+    /// Changes only when a lane is added or removed. See the field.
+    pub fn lane_gen(&self) -> u64 {
+        self.lane_gen
     }
 
     pub fn extend<I: IntoIterator<Item = LiveEvent>>(&mut self, events: I) {
@@ -298,6 +317,8 @@ impl TrackIndex {
 
     pub fn clear(&mut self) {
         self.lanes.clear();
+        self.events = 0;
+        self.lane_gen = self.lane_gen.wrapping_add(1);
     }
 
     /// Drop every event the predicate rejects, and any lane left empty.
@@ -309,7 +330,12 @@ impl TrackIndex {
         for lane in self.lanes.values_mut() {
             lane.retain(&mut f);
         }
+        let before = self.lanes.len();
         self.lanes.retain(|_, lane| !lane.is_empty());
+        if self.lanes.len() != before {
+            self.lane_gen = self.lane_gen.wrapping_add(1);
+        }
+        self.events = self.lanes.values().map(Lane::len).sum();
     }
 
     pub fn lane_count(&self) -> usize {
@@ -317,7 +343,7 @@ impl TrackIndex {
     }
 
     pub fn event_count(&self) -> usize {
-        self.lanes.values().map(Lane::len).sum()
+        self.events
     }
 
     pub fn lanes(&self) -> impl Iterator<Item = (LaneKey, &Lane)> {
@@ -1038,7 +1064,9 @@ mod tests {
         assert!(BLIT_WGSL.contains("textureSampleLevel"));
         assert!(BLIT_RECT_WGSL.contains("uni.dest"));
         assert!(INSTANCE_WGSL.contains("sd_rounded_box"));
-        assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
+        // The drop shadow was removed (87680c10b): the 6px quad expansion
+        // it needed was pure overdraw on a 72-core scheduler track.
+        assert!(!INSTANCE_WGSL.contains("rounded_box_shadow"));
         assert!(INSTANCE_WGSL.contains("madebyevan.com"));
         assert!(INSTANCE_WGSL.contains("SIBLING_RGB"));
         assert!(INSTANCE_WGSL.contains("SELECTED_RGB"));

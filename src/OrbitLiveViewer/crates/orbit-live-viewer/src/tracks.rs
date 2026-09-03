@@ -1,6 +1,55 @@
 //! Machine → process → thread session tree. Leaf lanes sit under a thread.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// A multiplicative hasher for the row and lane keys the layout lives on.
+/// SipHash guards against attacker-chosen keys; these are ours, and hashing a
+/// few thousand rows several times a frame through it was most of the layout's
+/// time on a large capture.
+#[derive(Default, Clone, Copy)]
+pub struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 32;
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= h >> 29;
+        h
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.write_u64(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut buf = [0u8; 8];
+            buf[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(buf));
+        }
+    }
+    fn write_u8(&mut self, v: u8) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u16(&mut self, v: u16) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517C_C1B7_2722_0A95);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+
+pub type FastState = BuildHasherDefault<FastHasher>;
+pub type FastMap<K, V> = HashMap<K, V, FastState>;
+pub type FastSet<K> = HashSet<K, FastState>;
 
 use orbit_live_event::dev::{is_self_pid, MachineId};
 use orbit_live_event::{kind, LaneKey};
@@ -44,9 +93,10 @@ pub struct TrackStrip {
     pub scale: f32,
     collapsed: HashSet<RowId>,
     hidden: HashSet<ThreadId>,
-    y: HashMap<RowId, f32>,
+    y: FastMap<RowId, f32>,
     drag: Option<Drag>,
     header_drag: Option<HeaderDrag>,
+    catalogue: LaneCatalogue,
     cached_rows: Vec<TrackRow>,
     cached_layout: Vec<(LaneKey, f32)>,
     cached_total_h: f32,
@@ -58,6 +108,59 @@ pub struct TrackStrip {
     pub thread_sort: HashMap<(u32, u32), i32>,
     /// User order for whole machine trees, overriding MachineId::sort_key.
     pub machine_sort: HashMap<MachineId, i32>,
+}
+
+/// Everything the layout needs to know about the index, gathered in one pass
+/// and kept until the index's lane set changes.
+///
+/// Before this, every thread in the layout scanned every lane of the index to
+/// find its own -- and did so in the skeleton, again in the Y assignment, and
+/// again per block height -- so a frame cost threads x lanes several times
+/// over, on a rail that is laid out every frame. The catalogue makes each of
+/// those a lookup.
+#[derive(Default)]
+struct LaneCatalogue {
+    /// The `TrackIndex::lane_gen` this was built from; `None` before the first.
+    gen: Option<u64>,
+    /// Non-CPU lanes per (pid, tid), in draw order.
+    leaves: FastMap<(u32, u32), Vec<LaneKey>>,
+    /// Threads in order of first appearance in the index.
+    threads: Vec<ThreadId>,
+    /// Pids that own at least one non-CPU lane.
+    pids_with_lanes: FastSet<u32>,
+    /// The scheduler core lanes, one per core seen.
+    cores: Vec<LaneKey>,
+}
+
+impl LaneCatalogue {
+    fn build(index: &TrackIndex) -> LaneCatalogue {
+        let mut c = LaneCatalogue {
+            gen: Some(index.lane_gen()),
+            ..LaneCatalogue::default()
+        };
+        let mut n_cores = 0u16;
+        let mut seen_threads: FastSet<(u32, u32)> = FastSet::default();
+        for (k, _) in index.lanes() {
+            if is_cpu_lane(k) {
+                n_cores = n_cores.max(u16::from(k.extra) + 1);
+                continue;
+            }
+            c.pids_with_lanes.insert(k.pid);
+            if seen_threads.insert((k.pid, k.tid)) {
+                c.threads.push(ThreadId { pid: k.pid, tid: k.tid });
+            }
+            c.leaves.entry((k.pid, k.tid)).or_default().push(k);
+        }
+        for leaves in c.leaves.values_mut() {
+            sort_thread_leaves(leaves);
+        }
+        c.cores = (0..n_cores).map(|i| LaneKey::scheduler(i as u8)).collect();
+        c
+    }
+
+    fn leaves_of(&self, t: ThreadId) -> &[LaneKey] {
+        self.leaves.get(&(t.pid, t.tid)).map(Vec::as_slice).unwrap_or(&[])
+    }
 }
 
 struct Drag {
@@ -89,9 +192,10 @@ impl Default for TrackStrip {
             scale: 1.0,
             collapsed: HashSet::new(),
             hidden: HashSet::new(),
-            y: HashMap::new(),
+            y: FastMap::default(),
             drag: None,
             header_drag: None,
+            catalogue: LaneCatalogue::default(),
             cached_rows: Vec::new(),
             cached_layout: Vec::new(),
             cached_total_h: 0.0,
@@ -106,32 +210,32 @@ impl Default for TrackStrip {
 }
 
 impl TrackStrip {
+    /// Rebuilds the lane catalogue if the index's lane set changed.
+    fn ensure_catalogue(&mut self, index: &TrackIndex) {
+        if self.catalogue.gen != Some(index.lane_gen()) {
+            self.catalogue = LaneCatalogue::build(index);
+        }
+    }
+
     pub fn sync(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
         self.filter_pid = filter_pid;
+        self.ensure_catalogue(index);
+        // A filter only narrows the rail when the filtered process actually
+        // has lanes; otherwise it would empty the rail before the capture
+        // has produced anything.
+        let narrow = filter_pid.filter(|p| self.catalogue.pids_with_lanes.contains(p));
         let mut pids: Vec<u32> = Vec::new();
-        let mut threads: Vec<ThreadId> = Vec::new();
-        for (key, _) in index.lanes() {
-            if is_cpu_lane(key) {
-                continue;
-            }
-            if let Some(pid) = filter_pid {
-                if key.pid != pid
-                    && !is_self_pid(key.pid)
-                    && index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k))
-                {
+        let mut threads: Vec<ThreadId> = Vec::with_capacity(self.catalogue.threads.len());
+        for &th in &self.catalogue.threads {
+            if let Some(pid) = narrow {
+                if th.pid != pid && !is_self_pid(th.pid) {
                     continue;
                 }
             }
-            if !pids.contains(&key.pid) {
-                pids.push(key.pid);
+            if !pids.contains(&th.pid) {
+                pids.push(th.pid);
             }
-            let th = ThreadId {
-                pid: key.pid,
-                tid: key.tid,
-            };
-            if !threads.contains(&th) {
-                threads.push(th);
-            }
+            threads.push(th);
         }
         pids.sort_unstable();
         pids.sort_by_key(|p| {
@@ -175,7 +279,7 @@ impl TrackStrip {
                 self.thread_order.push(t);
             }
         }
-        let visible: HashSet<RowId> = self
+        let visible: FastSet<RowId> = self
             .skeleton(index, filter_pid)
             .into_iter()
             .map(|(id, _)| id)
@@ -455,12 +559,8 @@ impl TrackStrip {
         if self.collapsed.contains(&RowId::Thread(t)) {
             return h;
         }
-        for (id, _) in self.y.iter() {
-            if let RowId::Lane(k) = *id {
-                if k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(k) {
-                    h += (lane_height(k) + lane_gap(k)) * scale;
-                }
-            }
+        for &k in self.catalogue.leaves_of(t) {
+            h += (lane_height(k) + lane_gap(k)) * scale;
         }
         h
     }
@@ -503,6 +603,7 @@ impl TrackStrip {
 
     fn apply_layout(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
         self.filter_pid = filter_pid;
+        self.ensure_catalogue(index);
         let dest = self.drop_index_in_process();
         if let Some(d) = &mut self.drag {
             d.dest = dest;
@@ -511,7 +612,7 @@ impl TrackStrip {
         let skeleton = self.skeleton_with_threads(index, filter_pid, &rest);
         let items = self.skeleton_with_hole(&skeleton, dest);
         let mut y = 0.0;
-        let mut next = HashMap::with_capacity(skeleton.len() + 8);
+        let mut next: FastMap<RowId, f32> = FastMap::with_capacity_and_hasher(skeleton.len() + 8, FastState::default());
         let mut hole_y = None;
         for item in &items {
             match *item {
@@ -560,7 +661,7 @@ impl TrackStrip {
         }
     }
 
-    fn assign_packed_leaf_ys(&self, index: &TrackIndex, next: &mut HashMap<RowId, f32>) {
+    fn assign_packed_leaf_ys(&self, _index: &TrackIndex, next: &mut FastMap<RowId, f32>) {
         let s = self.scale.max(0.01);
         for t in self.shown_order() {
             if self.collapsed.contains(&RowId::Thread(t)) {
@@ -570,13 +671,10 @@ impl TrackStrip {
                 continue;
             };
             let mut ly = ty + THREAD_H * s;
-            let mut leaves: Vec<LaneKey> = index
-                .lanes()
-                .map(|(k, _)| k)
-                .filter(|k| k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(*k) && !is_rail_lane(*k))
-                .collect();
-            sort_thread_leaves(&mut leaves);
-            for k in leaves {
+            for &k in self.catalogue.leaves_of(t) {
+                if is_rail_lane(k) {
+                    continue;
+                }
                 next.insert(RowId::Lane(k), ly);
                 ly += (lane_height(k) + lane_gap(k)) * s;
             }
@@ -584,22 +682,15 @@ impl TrackStrip {
     }
 
     fn rebuild_rows(&mut self) {
-        let mut ids: Vec<RowId> = self.y.keys().copied().collect();
-        ids.sort_by(|a, b| {
-            self.y
-                .get(a)
-                .unwrap_or(&0.0)
-                .partial_cmp(self.y.get(b).unwrap_or(&0.0))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Sort (id, y) pairs outright: the comparator used to look each side
+        // up in the map, tens of thousands of hashes per frame on a big rail.
+        let mut rows: Vec<(RowId, f32)> = self.y.iter().map(|(id, y)| (*id, *y)).collect();
+        rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         self.cached_rows.clear();
         self.cached_layout.clear();
         let mut bottom = 0.0_f32;
         let mut height_sum = 0.0_f32;
-        for id in ids {
-            let Some(&y) = self.y.get(&id) else {
-                continue;
-            };
+        for (id, y) in rows {
             let height = self.height_of(id);
             bottom = bottom.max(y + height);
             if let RowId::Lane(k) = id {
@@ -777,11 +868,9 @@ impl TrackStrip {
         if self.collapsed.contains(&RowId::Thread(t)) {
             return h;
         }
-        for (id, _) in self.y.iter() {
-            if let RowId::Lane(k) = *id {
-                if k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(k) && !is_rail_lane(k) {
-                    h += (lane_height(k) + lane_gap(k)) * s;
-                }
+        for &k in self.catalogue.leaves_of(t) {
+            if !is_rail_lane(k) {
+                h += (lane_height(k) + lane_gap(k)) * s;
             }
         }
         h
@@ -866,7 +955,8 @@ impl TrackStrip {
     ) -> Vec<(RowId, f32)> {
         let s = self.scale.max(0.01);
         let mut out = Vec::new();
-        let cores = scheduler_cores(index);
+        debug_assert_eq!(self.catalogue.gen, Some(index.lane_gen()), "catalogue is stale");
+        let cores = &self.catalogue.cores;
         // The scheduler describes a machine's cores, so it belongs under that
         // machine rather than beside it. It is emitted inside the machine loop
         // below; `scheduler_machine` says which machine owns it.
@@ -878,13 +968,13 @@ impl TrackStrip {
                 let m = scheduler_machine();
                 out.push((RowId::Machine(m), MACHINE_H * s));
                 if !self.collapsed.contains(&RowId::Machine(m)) {
-                    push_scheduler_rows(&mut out, &cores, self, s);
+                    push_scheduler_rows(&mut out, cores, self, s);
                 }
             }
             return out;
         }
         let has_filter = filter_pid
-            .map(|pid| index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)))
+            .map(|pid| self.catalogue.pids_with_lanes.contains(&pid))
             .unwrap_or(false);
         let mut machines = self.machines_present();
         // A capture may have cores before it has processes on that machine.
@@ -899,7 +989,7 @@ impl TrackStrip {
                 continue;
             }
             if m == scheduler_owner && !cores.is_empty() {
-                push_scheduler_rows(&mut out, &cores, self, s);
+                push_scheduler_rows(&mut out, cores, self, s);
             }
             for &pid in &self.process_order {
                 if MachineId::from_pid(pid) != m {
@@ -908,7 +998,7 @@ impl TrackStrip {
                 if has_filter && filter_pid != Some(pid) && !is_self_pid(pid) {
                     continue;
                 }
-                if !index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)) {
+                if !self.catalogue.pids_with_lanes.contains(&pid) {
                     continue;
                 }
                 let keep_drag_proc = self
@@ -927,15 +1017,10 @@ impl TrackStrip {
                     if th.pid != pid || !self.is_shown(th) {
                         continue;
                     }
-                    let mut leaves: Vec<LaneKey> = index
-                        .lanes()
-                        .map(|(k, _)| k)
-                        .filter(|k| k.pid == th.pid && k.tid == th.tid && !is_cpu_lane(*k))
-                        .collect();
-                    sort_thread_leaves(&mut leaves);
+                    let leaves = self.catalogue.leaves_of(th);
                     let mut stack = THREAD_H * s;
                     if !self.collapsed.contains(&RowId::Thread(th)) {
-                        for k in &leaves {
+                        for k in leaves {
                             if !is_rail_lane(*k) {
                                 stack += (lane_height(*k) + lane_gap(*k)) * s;
                             }
@@ -945,7 +1030,7 @@ impl TrackStrip {
                     if self.collapsed.contains(&RowId::Thread(th)) {
                         continue;
                     }
-                    for k in leaves {
+                    for &k in leaves {
                         if is_rail_lane(k) {
                             out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
                         }
@@ -1806,5 +1891,90 @@ mod tests {
         strip.tick(1.0, &idx, None);
         assert_eq!(strip.hidden_in_process(1), 0);
         assert!(strip.thread_order.contains(&th));
+    }
+
+    /// Per-frame cost of the track layout on a large sampled capture.
+    /// Run with `cargo test --release layout_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn layout_bench() {
+        // 4 processes x 25 threads; each thread carries a 40-deep flame graph
+        // (one lane per depth), a sample bar, and a thread-state bar: the
+        // shape a sampled capture of a busy process has.
+        let mut idx = TrackIndex::default();
+        let mut threads = 0u32;
+        for pid in 10..14u32 {
+            for t in 0..25u32 {
+                let tid = 1000 + pid * 100 + t;
+                threads += 1;
+                for depth in 0..40u8 {
+                    idx.insert(LiveEvent {
+                        start_ns: 0,
+                        duration_ns: 10,
+                        tid,
+                        pid,
+                        kind: kind::FUNCTION_CALL,
+                        depth,
+                        extra: 0,
+                        _pad: 0,
+                        name_id: 1,
+                    });
+                }
+                for k in [kind::SAMPLE, kind::THREAD_STATE] {
+                    idx.insert(LiveEvent {
+                        start_ns: 0,
+                        duration_ns: 10,
+                        tid,
+                        pid,
+                        kind: k,
+                        depth: 0,
+                        extra: 0,
+                        _pad: 0,
+                        name_id: 1,
+                    });
+                }
+            }
+        }
+        let lanes = idx.lane_count();
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let iters = 50;
+        let t = std::time::Instant::now();
+        for _ in 0..iters {
+            strip.sync(&idx, None);
+            strip.tick(0.016, &idx, None);
+        }
+        let frame_ms = t.elapsed().as_secs_f64() * 1e3 / iters as f64;
+        // With a process filter, as a live capture of one process runs.
+        let t = std::time::Instant::now();
+        for _ in 0..iters {
+            strip.sync(&idx, Some(11));
+            strip.tick(0.016, &idx, Some(11));
+        }
+        let filtered_ms = t.elapsed().as_secs_f64() * 1e3 / iters as f64;
+        strip.sync(&idx, None);
+        strip.tick(0.016, &idx, None);
+        let total_h = strip.total_height();
+        let t = std::time::Instant::now();
+        let mut hits = 0usize;
+        for i in 0..iters {
+            let y = total_h * (i as f32 + 0.5) / iters as f32;
+            if strip.hit_at_y(y).is_some() {
+                hits += 1;
+            }
+        }
+        let hit_us = t.elapsed().as_secs_f64() * 1e6 / iters as f64;
+        let t = std::time::Instant::now();
+        let mut n = 0usize;
+        for _ in 0..1_000 {
+            n += idx.event_count();
+        }
+        let count_us = t.elapsed().as_secs_f64() * 1e6 / 1_000.0;
+        println!("LAYOUT_BENCH threads={threads} lanes={lanes} rows={}", strip.rows().len());
+        println!("LAYOUT_BENCH sync_plus_tick_ms_per_frame={frame_ms:.3}");
+        println!("LAYOUT_BENCH sync_plus_tick_filtered_ms_per_frame={filtered_ms:.3}");
+        println!("LAYOUT_BENCH hit_at_y_us={hit_us:.1} (hits {hits})");
+        println!("LAYOUT_BENCH event_count_us={count_us:.2} (checksum {n})");
     }
 }
