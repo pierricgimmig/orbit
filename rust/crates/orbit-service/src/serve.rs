@@ -19,7 +19,7 @@ use crate::functions::FunctionIndex;
 use crate::report::{FrameInfo, SampleRange, SampleStore, StoredSample, TreeMode};
 use crate::scopes::ScopeSource;
 use crate::telemetry::TelemetryHelper;
-use crate::thread_state::ThreadStateTracer;
+use crate::thread_state::{Focus, ThreadStateTracer};
 use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
 use crate::visible::VisibleProcesses;
 use crate::symbolize::Symbolizer;
@@ -370,8 +370,10 @@ fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSl
 /// not. The pid comes from `/proc` because a state slice carries only a tid --
 /// a thread that has already exited resolves to nothing and is dropped, which
 /// is correct: there is no row to draw it on.
-fn thread_state_event(slice: &Slice, visible: &VisibleProcesses) -> Option<LiveEvent> {
-    let pid = pid_of_tid(slice.tid)?;
+fn thread_state_event(slice: &Slice, focus: &Focus, visible: &VisibleProcesses) -> Option<LiveEvent> {
+    // The focus knows every tracked thread's process; the `/proc` read is
+    // only for a capture that tracks everything.
+    let pid = focus.pid_of(slice.tid).or_else(|| pid_of_tid(slice.tid))?;
     if !visible.contains(pid) {
         return None;
     }
@@ -597,12 +599,22 @@ fn capture_loop(
     let capture_start_ns = crate::now_monotonic_ns();
     let (mut thread_states, tracepoint_report) =
         ThreadStateTracer::open(crate::num_cpus_hint());
+    // The service's own pid, so its threads get state bars like anything else.
+    let self_pid = std::process::id();
+    let mut focus_pids: Vec<u32> = visible.pids();
+    focus_pids.push(self_pid);
     match thread_states.as_mut() {
         Some(tracer) => {
-            let seeded = tracer.seed_initial_states(target_pid, capture_start_ns);
+            let mut seeded = 0;
+            for pid in &focus_pids {
+                seeded += tracer.seed_initial_states(*pid as i32, capture_start_ns);
+            }
+            tracer.set_focus(Focus::from_pids(focus_pids.iter().copied()));
             eprintln!(
-                "orbit-service: thread states from {} tracepoint ring(s), {seeded} initial state(s)",
-                tracepoint_report.rings
+                "orbit-service: thread states from {} tracepoint ring(s) for {} thread(s) of {} process(es), {seeded} initial state(s); other processes get RUNNING from context switches",
+                tracepoint_report.rings,
+                tracer.focus().thread_count(),
+                focus_pids.len()
             );
         }
         None => {
@@ -615,9 +627,11 @@ fn capture_loop(
     for failure in &tracepoint_report.failures {
         eprintln!("orbit-service: tracepoint unavailable -- {failure}");
     }
-    let project_running = thread_states.is_none();
-    // The service's own pid, so its threads get the scheduling projection too.
-    let self_pid = std::process::id();
+    // Threads whose real states are traced need no projection; everything
+    // else visible -- the rest of the machine when "all processes" is on, or
+    // every thread when the tracepoints could not be opened -- gets RUNNING
+    // bars projected from context switches.
+    let mut last_focus_refresh = std::time::Instant::now();
 
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
@@ -636,6 +650,17 @@ fn capture_loop(
         batch.clear();
         // Children appear mid-capture; the refresh is rate-limited internally.
         visible.maybe_refresh();
+        // The state focus follows the visible set (new descendants, newly
+        // instrumented processes) once a second; threads born in between are
+        // picked up live from task_newtask.
+        if let Some(tracer) = thread_states.as_mut() {
+            if last_focus_refresh.elapsed() >= std::time::Duration::from_secs(1) {
+                last_focus_refresh = std::time::Instant::now();
+                let mut pids = visible.pids();
+                pids.push(self_pid);
+                tracer.set_focus(Focus::from_pids(pids));
+            }
+        }
         let _switches = orbit_api::scope("read context switches");
         for ring in switch_rings.iter_mut() {
             while let Ok(Some(record)) = ring.read_record() {
@@ -672,9 +697,11 @@ fn capture_loop(
                         // orbit-service gets state bars like anything else.
                         // Only needed when tracepoints are unavailable, which
                         // report real states instead of RUNNING for everything.
-                        if project_running
-                            && (visible.contains(on_thread.pid) || on_thread.pid == self_pid)
-                        {
+                        let shown = visible.contains(on_thread.pid) || on_thread.pid == self_pid;
+                        let traced = thread_states
+                            .as_ref()
+                            .is_some_and(|t| t.focus().contains_tid(on_thread.tid as i32));
+                        if shown && !traced {
                             batch.push(on_thread);
                         }
                     }
@@ -782,7 +809,7 @@ fn capture_loop(
         if let Some(tracer) = thread_states.as_mut() {
             let _states = orbit_api::scope("read thread states");
             for slice in tracer.poll() {
-                if let Some(event) = thread_state_event(&slice, &visible) {
+                if let Some(event) = thread_state_event(&slice, tracer.focus(), &visible) {
                     batch.push(event);
                 }
             }
@@ -790,7 +817,7 @@ fn capture_loop(
 
         {
             let _drain = orbit_api::scope("drain scope rings");
-            scopes.poll(&visible, crate::now_monotonic_ns(), &mut batch);
+            scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut batch);
         }
 
         // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
@@ -860,7 +887,7 @@ fn capture_loop(
         let tail: Vec<LiveEvent> = tracer
             .flush(end_ns)
             .iter()
-            .filter_map(|slice| thread_state_event(slice, &visible))
+            .filter_map(|slice| thread_state_event(slice, tracer.focus(), &visible))
             .collect();
         if !tail.is_empty() {
             service.push_events(&tail);

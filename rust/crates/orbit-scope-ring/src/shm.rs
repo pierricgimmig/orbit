@@ -92,6 +92,21 @@ pub fn sweep_dead_segments() -> usize {
     removed
 }
 
+/// Every Orbit segment in [`SHM_DIR`] whose process is alive: the pids that
+/// are instrumenting themselves right now, whoever they are. The service
+/// opens all of them -- a span somebody asked for is of interest whatever
+/// process it is in -- so this is the discovery a capture runs each pass.
+pub fn live_segment_pids() -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir(SHM_DIR) else { return Vec::new() };
+    let mut pids: Vec<u32> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(pid_from_shm_file_name))
+        .filter(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists())
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
 /// The pid a segment filename belongs to, or `None` if it is not one of ours.
 ///
 /// A service watching the directory sees every POSIX segment on the machine,

@@ -72,8 +72,10 @@ impl VisibleProcesses {
         self.all || self.allowed.contains(&pid)
     }
 
-    /// The processes whose rows are shown -- the target and its descendants.
-    /// Empty when everything is visible, since "everything" is not a list.
+    /// The processes of interest -- the target, its descendants, and anything
+    /// instrumented -- whatever the row policy. When everything is shown this
+    /// is still the set whose thread *states* are traced; the rest get the
+    /// context-switch projection.
     pub fn pids(&self) -> Vec<u32> {
         let mut pids: Vec<u32> = self.allowed.iter().copied().collect();
         pids.sort_unstable();
@@ -83,7 +85,7 @@ impl VisibleProcesses {
     /// Rebuilds the descendant set if enough time has passed. Cheap to call
     /// every loop iteration.
     pub fn maybe_refresh(&mut self) {
-        if self.all || self.last_refresh.elapsed() < REFRESH_INTERVAL {
+        if self.last_refresh.elapsed() < REFRESH_INTERVAL {
             return;
         }
         self.refresh_now();
@@ -91,7 +93,7 @@ impl VisibleProcesses {
 
     fn refresh_now(&mut self) {
         self.last_refresh = std::time::Instant::now();
-        if self.all || self.target == 0 {
+        if self.target == 0 {
             return;
         }
         // Instrumented pids added by hand must survive a refresh; only the

@@ -92,7 +92,14 @@ impl SchedWakeup {
 pub struct TaskNewtask {
     pub tid: i32,
     pub comm: String,
+    /// The `clone(2)` flags; `CLONE_THREAD` set means a thread of the parent's
+    /// process, clear means a new process. Zero when the record is too short
+    /// to carry them.
+    pub clone_flags: u64,
 }
+
+/// `CLONE_THREAD` from `<linux/sched.h>`.
+pub const CLONE_THREAD: u64 = 0x0001_0000;
 
 impl TaskNewtask {
     /// Layout: common(8), pid(4), comm[16], clone_flags(8), oom_score_adj(2),
@@ -103,7 +110,14 @@ impl TaskNewtask {
         if payload.len() < 28 {
             return None;
         }
-        Some(TaskNewtask { tid: i32_at(payload, 8)?, comm: comm_at(payload, 12)? })
+        Some(TaskNewtask {
+            tid: i32_at(payload, 8)?,
+            comm: comm_at(payload, 12)?,
+            clone_flags: payload
+                .get(28..36)
+                .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+                .unwrap_or(0),
+        })
     }
 }
 

@@ -23,6 +23,7 @@
 //! sorted behind a delay window before being fed in -- the same treatment the
 //! uprobe pairing needs, for the same reason.
 
+use std::collections::{HashMap, HashSet};
 use orbit_perf_records::tracepoints::{
     thread_state_from_bits, SchedSwitch, SchedWakeup, TaskNewtask,
 };
@@ -56,7 +57,8 @@ struct Transition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Payload {
-    Switch { prev_tid: i32, prev_state: i32, next_tid: i32 },
+    /// `prev_in` / `next_in`: which halves touch a focused thread.
+    Switch { prev_tid: i32, prev_state: i32, next_tid: i32, prev_in: bool, next_in: bool },
     Wakeup { tid: i32 },
     NewTask { tid: i32 },
 }
@@ -69,11 +71,73 @@ pub struct TracepointReport {
     pub failures: Vec<String>,
 }
 
+/// The threads whose states are tracked. The tracepoints are machine-wide
+/// and cannot be narrowed at the kernel; on a 72-core box that is every
+/// context switch on the machine, and feeding all of them to the state
+/// machine -- then resolving each slice's pid through `/proc` -- was what
+/// slowed the service down. So the narrowing happens here, at the record:
+/// a transition that touches no focused thread is dropped before it is even
+/// buffered. Threads outside the focus still get their RUNNING bars from the
+/// context-switch projection, which costs nothing extra.
+#[derive(Clone, Debug, Default)]
+pub struct Focus {
+    /// Track everything (the tests, and a capture that asks for it).
+    all: bool,
+    /// tid -> pid of every focused thread.
+    tids: HashMap<i32, u32>,
+    pids: HashSet<u32>,
+}
+
+impl Focus {
+    pub fn all() -> Focus {
+        Focus { all: true, ..Focus::default() }
+    }
+
+    /// Every thread of `pids`, read from `/proc/<pid>/task`.
+    pub fn from_pids(pids: impl IntoIterator<Item = u32>) -> Focus {
+        let mut focus = Focus::default();
+        for pid in pids {
+            focus.add_pid(pid);
+        }
+        focus
+    }
+
+    pub fn add_pid(&mut self, pid: u32) {
+        self.pids.insert(pid);
+        if let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/task")) {
+            for entry in entries.flatten() {
+                if let Some(tid) = entry.file_name().to_str().and_then(|t| t.parse::<i32>().ok()) {
+                    self.tids.insert(tid, pid);
+                }
+            }
+        }
+    }
+
+    pub fn contains_tid(&self, tid: i32) -> bool {
+        self.all || self.tids.contains_key(&tid)
+    }
+
+    pub fn contains_pid(&self, pid: u32) -> bool {
+        self.all || self.pids.contains(&pid)
+    }
+
+    /// The process a focused thread belongs to. `None` outside the focus, or
+    /// when everything is tracked and the caller must resolve it itself.
+    pub fn pid_of(&self, tid: i32) -> Option<u32> {
+        self.tids.get(&tid).copied()
+    }
+
+    pub fn thread_count(&self) -> usize {
+        self.tids.len()
+    }
+}
+
 pub struct ThreadStateTracer {
     rings: Vec<(RingBuffer, Kind)>,
     manager: ThreadStateManager,
     pending: Vec<Transition>,
     newest_seen_ns: u64,
+    focus: Focus,
 }
 
 impl ThreadStateTracer {
@@ -133,6 +197,7 @@ impl ThreadStateTracer {
                 manager: ThreadStateManager::new(),
                 pending: Vec::new(),
                 newest_seen_ns: 0,
+                focus: Focus::all(),
             }),
             report,
         )
@@ -161,6 +226,16 @@ impl ThreadStateTracer {
         seeded
     }
 
+    /// Narrows tracking to `focus`. Threads created afterwards inside a
+    /// focused process are picked up from `task_newtask` as they appear.
+    pub fn set_focus(&mut self, focus: Focus) {
+        self.focus = focus;
+    }
+
+    pub fn focus(&self) -> &Focus {
+        &self.focus
+    }
+
     /// Drains the rings and returns the state slices that can now be closed.
     pub fn poll(&mut self) -> Vec<Slice> {
         let flags = SampleFlags {
@@ -176,17 +251,38 @@ impl ThreadStateTracer {
                 let Some(sample) = parse_record_sample(&record, flags, true) else { continue };
                 let Some(raw) = sample.raw_data.as_deref() else { continue };
                 let payload = match kind {
-                    Kind::SchedSwitch => SchedSwitch::parse(raw).map(|s| Payload::Switch {
-                        prev_tid: s.prev_tid,
-                        prev_state: thread_state_from_bits(s.prev_state),
-                        next_tid: s.next_tid,
+                    Kind::SchedSwitch => SchedSwitch::parse(raw).and_then(|s| {
+                        let prev_in = self.focus.contains_tid(s.prev_tid);
+                        let next_in = self.focus.contains_tid(s.next_tid);
+                        (prev_in || next_in).then_some(Payload::Switch {
+                            prev_tid: s.prev_tid,
+                            prev_state: thread_state_from_bits(s.prev_state),
+                            next_tid: s.next_tid,
+                            prev_in,
+                            next_in,
+                        })
                     }),
-                    Kind::SchedWakeup => {
-                        SchedWakeup::parse(raw).map(|w| Payload::Wakeup { tid: w.tid })
-                    }
-                    Kind::TaskNewtask => {
-                        TaskNewtask::parse(raw).map(|t| Payload::NewTask { tid: t.tid })
-                    }
+                    Kind::SchedWakeup => SchedWakeup::parse(raw)
+                        .filter(|w| self.focus.contains_tid(w.tid))
+                        .map(|w| Payload::Wakeup { tid: w.tid }),
+                    Kind::TaskNewtask => TaskNewtask::parse(raw).and_then(|t| {
+                        // A new task inside a focused process joins the
+                        // focus: a thread under the parent process, a forked
+                        // child as a process of its own (its tid is its pid).
+                        let parent = sample.pid;
+                        if !self.focus.contains_pid(parent) {
+                            return None;
+                        }
+                        if !self.focus.all {
+                            if t.clone_flags & orbit_perf_records::tracepoints::CLONE_THREAD != 0 {
+                                self.focus.tids.insert(t.tid, parent);
+                            } else {
+                                self.focus.pids.insert(t.tid as u32);
+                                self.focus.tids.insert(t.tid, t.tid as u32);
+                            }
+                        }
+                        Some(Payload::NewTask { tid: t.tid })
+                    }),
                 };
                 let Some(payload) = payload else { continue };
                 self.newest_seen_ns = self.newest_seen_ns.max(sample.time);
@@ -218,16 +314,21 @@ impl ThreadStateTracer {
         for transition in self.pending.drain(..ready).collect::<Vec<_>>() {
             let at = transition.timestamp_ns;
             match transition.payload {
-                Payload::Switch { prev_tid, prev_state, next_tid } => {
+                Payload::Switch { prev_tid, prev_state, next_tid, prev_in, next_in } => {
                     // Order matters: the outgoing thread's slice closes before
-                    // the incoming one starts running.
-                    if let Some(slice) =
-                        self.manager.on_sched_switch_out(at, prev_tid, prev_state, false).slice
-                    {
-                        out.push(slice);
+                    // the incoming one starts running. Only the focused half
+                    // of a switch is fed; the other thread is not tracked.
+                    if prev_in {
+                        if let Some(slice) =
+                            self.manager.on_sched_switch_out(at, prev_tid, prev_state, false).slice
+                        {
+                            out.push(slice);
+                        }
                     }
-                    if let Some(slice) = self.manager.on_sched_switch_in(at, next_tid).slice {
-                        out.push(slice);
+                    if next_in {
+                        if let Some(slice) = self.manager.on_sched_switch_in(at, next_tid).slice {
+                            out.push(slice);
+                        }
                     }
                 }
                 Payload::Wakeup { tid } => {
@@ -295,6 +396,7 @@ mod tests {
             manager: ThreadStateManager::new(),
             pending: Vec::new(),
             newest_seen_ns: 0,
+            focus: Focus::all(),
         }
     }
 
@@ -303,8 +405,36 @@ mod tests {
             timestamp_ns: at,
             emitting_tid: 0,
             emitting_pid: 0,
-            payload: Payload::Switch { prev_tid, prev_state, next_tid },
+            payload: Payload::Switch { prev_tid, prev_state, next_tid, prev_in: true, next_in: true },
         }
+    }
+
+    #[test]
+    fn a_focus_feeds_only_its_own_threads() {
+        let mut t = tracer();
+        let mut focus = Focus::default();
+        focus.pids.insert(7);
+        focus.tids.insert(70, 7);
+        t.set_focus(focus);
+        // 99 -> 70 then 70 -> 99: 99 is not focused, so only the halves that
+        // touch 70 are fed and only 70 ever produces a slice.
+        let mut first = switch(500, 99, thread_state::RUNNABLE, 70);
+        if let Payload::Switch { prev_in, next_in, .. } = &mut first.payload {
+            *prev_in = t.focus().contains_tid(99);
+            *next_in = t.focus().contains_tid(70);
+        }
+        let mut second = switch(1_000, 70, thread_state::RUNNABLE, 99);
+        if let Payload::Switch { prev_in, next_in, .. } = &mut second.payload {
+            *prev_in = t.focus().contains_tid(70);
+            *next_in = t.focus().contains_tid(99);
+        }
+        t.pending.push(first);
+        t.pending.push(second);
+        let slices = t.drain_up_to(u64::MAX);
+        assert!(!slices.is_empty());
+        assert!(slices.iter().all(|s| s.tid == 70), "{slices:?}");
+        assert_eq!(t.focus().pid_of(70), Some(7));
+        assert_eq!(t.focus().pid_of(99), None);
     }
 
     #[test]

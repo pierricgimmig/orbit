@@ -124,9 +124,16 @@ impl ScopeSource {
     /// same way. It is simply always on the list: whether it shows up in the
     /// viewer should not depend on whether it happens to be a descendant of
     /// the target.
-    fn discover(&mut self, visible: &VisibleProcesses, now_ns: u64) {
-        let mut pids = visible.pids();
+    fn discover(&mut self, visible: &mut VisibleProcesses, now_ns: u64) {
+        // Every process with a segment, whoever it is: manual instrumentation
+        // is of interest by definition, target or not. Plus the visible set,
+        // whose segments may not exist yet (orbit_init after capture start),
+        // and the service itself.
+        let mut pids = orbit_scope_ring::shm::live_segment_pids();
+        pids.extend(visible.pids());
         pids.push(std::process::id());
+        pids.sort_unstable();
+        pids.dedup();
         for pid in pids {
             if self.segments.iter().any(|s| s.pid == pid) {
                 continue;
@@ -151,6 +158,9 @@ impl ScopeSource {
                 // nothing. This is also what turns on the service's own
                 // scopes, since it reads its own segment here like any other.
                 reader.set_capturing(true);
+                // An instrumented process gets rows, and its threads join the
+                // state focus on the next refresh.
+                visible.add_instrumented(pid);
                 self.segments.push(Segment {
                     pid,
                     reader,
@@ -165,7 +175,7 @@ impl ScopeSource {
     }
 
     /// One pass: discover, drain, convert. Appends to `batch`.
-    pub fn poll(&mut self, visible: &VisibleProcesses, now_ns: u64, batch: &mut Vec<LiveEvent>) {
+    pub fn poll(&mut self, visible: &mut VisibleProcesses, now_ns: u64, batch: &mut Vec<LiveEvent>) {
         self.discover(visible, now_ns);
         let mut new_names = Vec::new();
         for index in 0..self.segments.len() {
