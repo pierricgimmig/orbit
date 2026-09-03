@@ -7,9 +7,9 @@
 //! as a sparkline plus the last frame's scopes as a compact per-lane
 //! flamegraph, available whether or not a capture is loaded.
 
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use orbit_live_event::dev::{RelScope, NAME_FRAME, TID_UI};
-use orbit_live_event::{InternTable, THREAD_PALETTE};
+use orbit_live_event::InternTable;
 
 use crate::theme;
 
@@ -73,7 +73,7 @@ impl SelfProfile {
         })
     }
 
-    pub fn push_frame(&mut self, scopes: &[RelScope], stats: FrameStats) {
+    pub fn push_frame(&mut self, scopes: &[RelScope], _origin_ns: u64, stats: FrameStats) {
         let span = Self::frame_span_ns(scopes);
         self.frame_span_ns = span;
         if self.frame_ms.len() >= HISTORY {
@@ -201,7 +201,10 @@ impl SelfProfile {
             .collect()
     }
 
-    pub fn draw(&self, ui: &mut egui::Ui, intern: &InternTable) {
+    /// The stats row and the frame-time sparkline. The timeline below them is
+    /// the app's own `timeline()` drawn on the pane's state -- see
+    /// `OrbitLiveApp::self_pane`.
+    pub fn draw_header(&self, ui: &mut egui::Ui, follow: &mut bool) {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("VIEWER SELF-PROFILE")
@@ -237,24 +240,18 @@ impl SelfProfile {
                     format!("{}", self.worker_kept)
                 },
             );
+            if ui
+                .selectable_label(*follow, egui::RichText::new("Follow").size(10.0))
+                .on_hover_text("Keep the pane on its live edge. Panning or zooming the pane lets go; click to pin again.")
+                .clicked()
+            {
+                *follow = !*follow;
+            }
         });
-
-        let avail = egui::vec2(ui.available_width(), ui.available_height().max(120.0));
-        let (resp, painter) = ui.allocate_painter(avail, egui::Sense::hover());
-        let area = resp.rect;
-        if area.height() < 8.0 {
-            return;
-        }
-
-        // Top strip: the frame-time sparkline. Bottom: the latest frame's lanes.
-        let spark_h = (area.height() * 0.28).clamp(18.0, 60.0);
-        let spark = Rect::from_min_size(area.min, Vec2::new(area.width(), spark_h));
-        let flame = Rect::from_min_max(
-            Pos2::new(area.left(), spark.bottom() + 4.0),
-            area.max,
-        );
-        self.draw_sparkline(&painter, spark);
-        self.draw_flame(&painter, flame, intern, resp.hover_pos());
+        let (resp, painter) =
+            ui.allocate_painter(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+        self.draw_sparkline(&painter, resp.rect);
+        ui.add_space(4.0);
     }
 
     fn draw_sparkline(&self, painter: &egui::Painter, r: Rect) {
@@ -288,89 +285,6 @@ impl SelfProfile {
         }
     }
 
-    fn draw_flame(
-        &self,
-        painter: &egui::Painter,
-        r: Rect,
-        intern: &InternTable,
-        hover: Option<Pos2>,
-    ) {
-        // A touch lighter than the panel so the flamegraph reads as its own
-        // surface rather than blending into the page.
-        painter.rect_filled(r, 2.0, Color32::from_rgb(0x17, 0x1A, 0x21));
-        let lanes = self.lanes();
-        if lanes.is_empty() || self.frame_span_ns == 0 {
-            painter.text(
-                r.center(),
-                Align2::CENTER_CENTER,
-                "no self-profile scopes this frame",
-                FontId::proportional(11.0),
-                theme::MUTED,
-            );
-            return;
-        }
-        let label_w = 78.0_f32.min(r.width() * 0.25);
-        let plot_left = r.left() + label_w;
-        let plot_w = (r.right() - plot_left - 6.0).max(1.0);
-        let span = self.frame_span_ns as f32;
-        let row_h = 12.0_f32;
-        let gap = 4.0_f32;
-
-        let mut y = r.top() + 4.0;
-        for lane in &lanes {
-            let lane_h = (lane.max_depth as f32 + 1.0) * row_h;
-            if y + lane_h > r.bottom() {
-                break;
-            }
-            let label = intern
-                .get(lane.tid)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("{}", lane.tid));
-            painter.text(
-                Pos2::new(r.left() + 4.0, y + row_h * 0.5),
-                Align2::LEFT_CENTER,
-                label,
-                FontId::proportional(10.0),
-                theme::MUTED,
-            );
-            for s in &lane.scopes {
-                let x0 = plot_left + (s.start_rel_ns as f32 / span) * plot_w;
-                let w = ((s.duration_ns as f32 / span) * plot_w).max(1.0);
-                let ry = y + s.depth as f32 * row_h;
-                let bar = Rect::from_min_size(
-                    Pos2::new(x0, ry),
-                    Vec2::new(w.min(plot_left + plot_w - x0), row_h - 1.0),
-                );
-                let argb = 0xFF00_0000
-                    | THREAD_PALETTE[(s.name_id as usize) % THREAD_PALETTE.len()];
-                painter.rect_filled(bar, 1.0, crate::app::c32(theme::display_argb(argb)));
-                if w >= 34.0 {
-                    if let Some(name) = intern.get(s.name_id) {
-                        painter.text(
-                            Pos2::new(bar.left() + 3.0, bar.center().y),
-                            Align2::LEFT_CENTER,
-                            name,
-                            FontId::proportional(9.0),
-                            Color32::from_rgb(0x10, 0x12, 0x16),
-                        );
-                    }
-                }
-                if let Some(h) = hover {
-                    if bar.contains(h) {
-                        let name = intern.get(s.name_id).unwrap_or("?");
-                        painter.text(
-                            Pos2::new(r.left() + label_w, r.bottom() - 2.0),
-                            Align2::LEFT_BOTTOM,
-                            format!("{name}  {:.3} ms", s.duration_ns as f64 / 1e6),
-                            FontId::proportional(10.0),
-                            theme::TEXT,
-                        );
-                    }
-                }
-            }
-            y += lane_h + gap;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -414,7 +328,7 @@ mod tests {
         assert!(sp.is_empty());
         sp.push_frame(
             &[rel(TID_UI, NAME_FRAME, 0, 8_000_000, 0)],
-            FrameStats {
+            0, FrameStats {
                 fps: 120.0,
                 prims: 42,
                 lanes_kept: 7,
@@ -436,7 +350,7 @@ mod tests {
         for i in 0..(HISTORY + 40) {
             sp.push_frame(
                 &[rel(TID_UI, NAME_FRAME, 0, (i as u64 + 1) * 1_000_000, 0)],
-                FrameStats::default(),
+                0, FrameStats::default(),
             );
         }
         assert_eq!(sp.frame_ms.len(), HISTORY);
@@ -453,7 +367,7 @@ mod tests {
                 rel(TID_UI, NAME_FRAME, 0, 5_000_000, 0),
                 rel(TID_UI, NAME_TRACKS, 10, 900_000, 1),
             ],
-            FrameStats::default(),
+            0, FrameStats::default(),
         );
         let lanes = sp.lanes();
         assert_eq!(lanes.len(), 2);

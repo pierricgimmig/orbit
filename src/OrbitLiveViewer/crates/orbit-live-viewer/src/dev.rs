@@ -75,6 +75,13 @@ impl DevFrame {
         }
     }
 
+    /// The clock reading this frame's `start_rel_ns` values are relative to,
+    /// so a consumer can place scopes on an absolute axis. `None` when the
+    /// frame is not instrumented.
+    pub fn origin_ns(&self) -> Option<u64> {
+        self.inner.as_ref().map(|i| i.origin_ns)
+    }
+
     /// (worker spans kept, refused) so far this frame.
     pub fn worker_span_counts(&self) -> (u32, u32) {
         match self.inner.as_ref() {

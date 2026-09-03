@@ -367,20 +367,25 @@ pub enum TimelineLayer {
     Overlay,
 }
 
+/// `slot` picks which of the two GPU timelines this draw targets: 0 is the
+/// capture, 1 is the viewer's self-profile pane. Each keeps its own instance
+/// buffers, so `TimelinePayload::Keep` on one never shows the other's data.
 pub fn paint_callback(
     rect: egui::Rect,
     payload: TimelinePayload,
     view: ViewUniforms,
+    slot: u8,
 ) -> PaintCallback {
-    paint_callback_layer(rect, payload, view, TimelineLayer::Base)
+    paint_callback_layer(rect, payload, view, TimelineLayer::Base, slot)
 }
 
 pub fn paint_overlay_callback(
     rect: egui::Rect,
     payload: TimelinePayload,
     view: ViewUniforms,
+    slot: u8,
 ) -> PaintCallback {
-    paint_callback_layer(rect, payload, view, TimelineLayer::Overlay)
+    paint_callback_layer(rect, payload, view, TimelineLayer::Overlay, slot)
 }
 
 fn paint_callback_layer(
@@ -388,6 +393,7 @@ fn paint_callback_layer(
     payload: TimelinePayload,
     view: ViewUniforms,
     layer: TimelineLayer,
+    slot: u8,
 ) -> PaintCallback {
     Callback::new_paint_callback(
         rect,
@@ -395,6 +401,7 @@ fn paint_callback_layer(
             payload,
             view,
             layer,
+            slot,
         },
     )
 }
@@ -403,6 +410,7 @@ struct TimelineCallback {
     payload: TimelinePayload,
     view: ViewUniforms,
     layer: TimelineLayer,
+    slot: u8,
 }
 
 impl CallbackTrait for TimelineCallback {
@@ -414,7 +422,8 @@ impl CallbackTrait for TimelineCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(gpu) = callback_resources.get_mut::<TimelineGpuSlot>() {
+        if let Some(slots) = callback_resources.get_mut::<TimelineGpuSlot>() {
+            let gpu = slots.get_mut(self.slot);
             if self.layer == TimelineLayer::Base && !matches!(self.payload, TimelinePayload::Keep) {
                 gpu.clear_overlay();
             }
@@ -437,8 +446,8 @@ impl CallbackTrait for TimelineCallback {
         if sw > 0 && sh > 0 {
             render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
         }
-        if let Some(gpu) = callback_resources.get::<TimelineGpuSlot>() {
-            gpu.draw(render_pass, self.layer);
+        if let Some(slots) = callback_resources.get::<TimelineGpuSlot>() {
+            slots.get(self.slot).draw(render_pass, self.layer);
         }
     }
 }
@@ -448,21 +457,26 @@ impl CallbackTrait for TimelineCallback {
 /// wgpu types are `!Send`/`!Sync` on wasm32+atomics, but egui-wgpu's
 /// `CallbackResources` requires `Send + Sync`. GPU objects stay on the UI
 /// thread; rayon workers only run CPU collect/raster.
-pub struct TimelineGpuSlot(pub TimelineGpu);
+pub struct TimelineGpuSlot {
+    /// [capture timeline, self-profile timeline]. Two, so the self-profile
+    /// pane is drawn by the same code with its own buffers.
+    slots: [TimelineGpu; 2],
+}
 
 unsafe impl Send for TimelineGpuSlot {}
 unsafe impl Sync for TimelineGpuSlot {}
 
-impl std::ops::Deref for TimelineGpuSlot {
-    type Target = TimelineGpu;
-    fn deref(&self) -> &TimelineGpu {
-        &self.0
+impl TimelineGpuSlot {
+    pub fn new(capture: TimelineGpu, self_profile: TimelineGpu) -> Self {
+        TimelineGpuSlot { slots: [capture, self_profile] }
     }
-}
 
-impl std::ops::DerefMut for TimelineGpuSlot {
-    fn deref_mut(&mut self) -> &mut TimelineGpu {
-        &mut self.0
+    pub fn get(&self, slot: u8) -> &TimelineGpu {
+        &self.slots[usize::from(slot.min(1))]
+    }
+
+    pub fn get_mut(&mut self, slot: u8) -> &mut TimelineGpu {
+        &mut self.slots[usize::from(slot.min(1))]
     }
 }
 

@@ -78,6 +78,12 @@ const VSCROLL_PAGE: f32 = 0.9;
 const PROCESS_POLL_S: f64 = 1.0;
 /// Minimum spacing of sampling-report requests while a selection drag is live.
 const REPORT_DRAG_THROTTLE_S: f64 = 0.2;
+/// The self-profile pane keeps this much of the viewer's own past.
+const SELF_TIMELINE_RETAIN_NS: u64 = 60_000_000_000;
+/// The self-profile pane's surfaces: a teal-dark canvas and rail, distinct
+/// from the capture's near-black, so the two timelines never read as one.
+const SELF_PANE_CANVAS: Color32 = Color32::from_rgb(0x10, 0x1A, 0x20);
+const SELF_PANE_RAIL: Color32 = Color32::from_rgb(0x14, 0x1E, 0x25);
 
 /// Native Orbit `ProcessListWidget` filter: case-insensitive substring on
 /// pid / name / path (`QSortFilterProxyModel::setFilterFixedString`).
@@ -624,6 +630,15 @@ pub struct OrbitLiveApp {
     last_n_lanes_kept: u32,
     self_profile: crate::self_pane::SelfProfile,
     self_pane_open: bool,
+    /// The self-profile pane's own timeline state. Drawn by the same
+    /// `timeline()` as the capture: its fields are swapped into place for
+    /// the duration of the pane's draw and swapped back after.
+    self_tl: TimelineState,
+    /// Which GPU timeline the current draw targets (0 capture, 1 self).
+    gpu_slot: u8,
+    /// `(canvas, rail)` colours to draw with instead of the theme's, so the
+    /// self-profile pane reads as its own surface.
+    canvas_override: Option<(Color32, Color32)>,
     capture_open: bool,
     process_filter: String,
     opt_api: bool,
@@ -719,6 +734,126 @@ impl ReportTab {
     }
 }
 
+/// Everything `timeline()` reads and writes that belongs to one timeline
+/// rather than to the app: the index, the window, the track strip, the GPU
+/// dirty key, the selection. The capture's lives directly on the app (it
+/// always did); the self-profile pane's lives in one of these and is swapped
+/// into the app's fields while the pane draws, so both are drawn by one
+/// `timeline()` with no second copy of the code.
+pub struct TimelineState {
+    index: TrackIndex,
+    t0: f64,
+    t1: f64,
+    follow: bool,
+    tracks: TrackStrip,
+    selected: Option<ScopePick>,
+    hover: Option<ScopePick>,
+    last_instances: Vec<ScopeInstance>,
+    last_layout: Vec<(LaneKey, f32)>,
+    last_instanced_window: Option<(u64, u64, u32)>,
+    last_dirty: Option<GpuDirtyKey>,
+    last_lod: orbit_live_render::TimelineLod,
+    last_view: Option<ViewUniforms>,
+    clip_labels: ClipLabelCache,
+    live_edge_ns: u64,
+    slider_grab: Option<f32>,
+    visible_count: u32,
+    draw_label: String,
+    visible_cache: Option<(u64, u64, u64, i32, u32)>,
+    lane_scroll: f32,
+    pending_vscroll: Option<f32>,
+    vscroll: VScrollInertia,
+    vscroll_max: f32,
+    measure: Option<TimeMeasure>,
+    sample_sels: Vec<TimeMeasure>,
+    measure_dragging: bool,
+    content_t0: Option<f64>,
+    content_t1: Option<f64>,
+    user_set_view: bool,
+}
+
+impl TimelineState {
+    fn fresh() -> Self {
+        TimelineState {
+            index: TrackIndex::default(),
+            t0: 0.0,
+            t1: FOLLOW_NS,
+            follow: true,
+            tracks: TrackStrip::default(),
+            selected: None,
+            hover: None,
+            last_instances: Vec::new(),
+            last_layout: Vec::new(),
+            last_instanced_window: None,
+            last_dirty: None,
+            last_lod: orbit_live_render::TimelineLod::PixelColumns,
+            last_view: None,
+            clip_labels: ClipLabelCache::default(),
+            live_edge_ns: 0,
+            slider_grab: None,
+            visible_count: 0,
+            draw_label: String::new(),
+            visible_cache: None,
+            lane_scroll: 0.0,
+            pending_vscroll: None,
+            vscroll: VScrollInertia::default(),
+            vscroll_max: 0.0,
+            measure: None,
+            sample_sels: Vec::new(),
+            measure_dragging: false,
+            content_t0: None,
+            content_t1: None,
+            user_set_view: false,
+        }
+    }
+}
+
+impl OrbitLiveApp {
+    /// Exchanges the app's timeline fields with `other`'s. Called twice
+    /// around the self pane's draw: in, then out.
+    fn swap_timeline_state(&mut self, other: &mut TimelineState) {
+        std::mem::swap(&mut self.index, &mut other.index);
+        std::mem::swap(&mut self.t0, &mut other.t0);
+        std::mem::swap(&mut self.t1, &mut other.t1);
+        std::mem::swap(&mut self.follow, &mut other.follow);
+        std::mem::swap(&mut self.tracks, &mut other.tracks);
+        std::mem::swap(&mut self.selected, &mut other.selected);
+        std::mem::swap(&mut self.hover, &mut other.hover);
+        std::mem::swap(&mut self.last_instances, &mut other.last_instances);
+        std::mem::swap(&mut self.last_layout, &mut other.last_layout);
+        std::mem::swap(&mut self.last_instanced_window, &mut other.last_instanced_window);
+        std::mem::swap(&mut self.last_dirty, &mut other.last_dirty);
+        std::mem::swap(&mut self.last_lod, &mut other.last_lod);
+        std::mem::swap(&mut self.last_view, &mut other.last_view);
+        std::mem::swap(&mut self.clip_labels, &mut other.clip_labels);
+        std::mem::swap(&mut self.live_edge_ns, &mut other.live_edge_ns);
+        std::mem::swap(&mut self.slider_grab, &mut other.slider_grab);
+        std::mem::swap(&mut self.visible_count, &mut other.visible_count);
+        std::mem::swap(&mut self.draw_label, &mut other.draw_label);
+        std::mem::swap(&mut self.visible_cache, &mut other.visible_cache);
+        std::mem::swap(&mut self.lane_scroll, &mut other.lane_scroll);
+        std::mem::swap(&mut self.pending_vscroll, &mut other.pending_vscroll);
+        std::mem::swap(&mut self.vscroll, &mut other.vscroll);
+        std::mem::swap(&mut self.vscroll_max, &mut other.vscroll_max);
+        std::mem::swap(&mut self.measure, &mut other.measure);
+        std::mem::swap(&mut self.sample_sels, &mut other.sample_sels);
+        std::mem::swap(&mut self.measure_dragging, &mut other.measure_dragging);
+        std::mem::swap(&mut self.content_t0, &mut other.content_t0);
+        std::mem::swap(&mut self.content_t1, &mut other.content_t1);
+        std::mem::swap(&mut self.user_set_view, &mut other.user_set_view);
+    }
+
+    fn canvas_color(&self) -> Color32 {
+        self.canvas_override
+            .map(|(c, _)| c)
+            .unwrap_or_else(|| theme::timeline_canvas(self.light_canvas))
+    }
+
+    fn rail_color(&self) -> Color32 {
+        self.canvas_override.map(|(_, r)| r).unwrap_or(theme::RAIL)
+    }
+}
+
 impl OrbitLiveApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         fonts::install(&cc.egui_ctx);
@@ -731,12 +866,10 @@ impl OrbitLiveApp {
         let mut has_gpu = false;
         if let Some(rs) = &cc.wgpu_render_state {
             let mut renderer = rs.renderer.write();
-            renderer
-                .callback_resources
-                .insert(TimelineGpuSlot(TimelineGpu::init(
-                    &rs.device,
-                    rs.target_format,
-                )));
+            renderer.callback_resources.insert(TimelineGpuSlot::new(
+                TimelineGpu::init(&rs.device, rs.target_format),
+                TimelineGpu::init(&rs.device, rs.target_format),
+            ));
             has_gpu = true;
         }
         Self {
@@ -827,6 +960,9 @@ impl OrbitLiveApp {
             last_n_lanes_kept: 0,
             self_profile: crate::self_pane::SelfProfile::default(),
             self_pane_open: false,
+            self_tl: TimelineState::fresh(),
+            gpu_slot: 0,
+            canvas_override: None,
             capture_open: true,
             process_filter: String::new(),
             opt_api: true,
@@ -2485,7 +2621,7 @@ impl OrbitLiveApp {
         let header_w = self.header_w;
         let header_cut = time_rect.with_max_x(time_rect.left() + header_w);
         let ruler = time_rect.with_min_x(time_rect.left() + header_w);
-        ui.painter().rect_filled(header_cut, 0.0, theme::RAIL);
+        ui.painter().rect_filled(header_cut, 0.0, self.rail_color());
         ui.painter().text(
             header_cut.left_center() + Vec2::new(12.0, 0.0),
             Align2::LEFT_CENTER,
@@ -2541,14 +2677,14 @@ impl OrbitLiveApp {
             hairline(),
         );
 
-        egui::TopBottomPanel::bottom("orbit_time_slider")
+        egui::TopBottomPanel::bottom(egui::Id::new("orbit_time_slider").with(self.gpu_slot))
             .exact_height(TIME_SLIDER_H)
             .resizable(false)
             .show_separator_line(false)
-            .frame(Frame::new().fill(theme::RAIL).inner_margin(0))
+            .frame(Frame::new().fill(self.rail_color()).inner_margin(0))
             .show_inside(ui, |ui| {
                 let bar = ui.max_rect();
-                ui.painter().rect_filled(bar, 0.0, theme::RAIL);
+                ui.painter().rect_filled(bar, 0.0, self.rail_color());
                 let track = bar.with_min_x(bar.left() + header_w);
                 self.handle_time_slider(ui, track);
             });
@@ -2576,9 +2712,9 @@ impl OrbitLiveApp {
             let head = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + header_w, rect.max.y));
             let body = Rect::from_min_max(Pos2::new(rect.min.x + header_w, rect.min.y), rect.max);
 
-            ui.painter().rect_filled(head, 0.0, theme::RAIL);
+            ui.painter().rect_filled(head, 0.0, self.rail_color());
             ui.painter()
-                .rect_filled(body, 0.0, theme::timeline_canvas(self.light_canvas));
+                .rect_filled(body, 0.0, self.canvas_color());
             paint_quiet_grid(ui, body, self.t0, self.t1, self.light_canvas);
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
@@ -2709,7 +2845,7 @@ impl OrbitLiveApp {
                 self.last_view = Some(view);
                 {
                     let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
-                    ui.painter().add(paint_callback(body, payload, view));
+                    ui.painter().add(paint_callback(body, payload, view, self.gpu_slot));
                 }
                 if self.last_lod == orbit_live_render::TimelineLod::Instanced
                     && !self.skip_clip_labels
@@ -2737,7 +2873,7 @@ impl OrbitLiveApp {
                     if let Some(fg) = overlay {
                         let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
                         ui.painter()
-                            .add(paint_overlay_callback(body, fg, view_body));
+                            .add(paint_overlay_callback(body, fg, view_body, self.gpu_slot));
                     }
                     if self.last_lod == orbit_live_render::TimelineLod::Instanced
                         && !self.skip_clip_labels
@@ -4153,22 +4289,23 @@ impl OrbitLiveApp {
     /// The viewer's own frame timing, in a pane of its own. Independent of the
     /// capture: it draws whatever the last instrumented frame produced, whether
     /// or not a capture is loaded.
-    fn self_pane(&mut self, ctx: &Context) {
+    fn self_pane(&mut self, ctx: &Context, dt: f32, dev: &DevFrame) {
         if !self.self_pane_open {
             return;
         }
         egui::TopBottomPanel::bottom("orbit_self_profile")
             .resizable(true)
-            .default_height(190.0)
-            .min_height(150.0)
+            .default_height(460.0)
+            .min_height(220.0)
             .frame(
                 Frame::new()
-                    .fill(theme::PANEL)
-                    .inner_margin(Margin::symmetric(12, 8))
+                    .fill(SELF_PANE_RAIL)
+                    .inner_margin(Margin::symmetric(12, 6))
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
-                if self.self_profile.is_empty() {
+                self.self_profile.draw_header(ui, &mut self.self_tl.follow);
+                if self.self_tl.index.event_count() == 0 {
                     ui.label(
                         RichText::new("waiting for the first instrumented frame…")
                             .color(theme::MUTED)
@@ -4176,7 +4313,21 @@ impl OrbitLiveApp {
                     );
                     return;
                 }
-                self.self_profile.draw(ui, &self.intern);
+                // The same timeline as the capture, on the pane's own state
+                // and GPU slot, with its own canvas so it reads as another
+                // surface. Swap in, draw, swap out.
+                let mut tl = std::mem::replace(&mut self.self_tl, TimelineState::fresh());
+                self.swap_timeline_state(&mut tl);
+                self.gpu_slot = 1;
+                self.canvas_override = Some((SELF_PANE_CANVAS, SELF_PANE_RAIL));
+                // The main follow tick ran on the capture's state; the pane
+                // follows its own live edge.
+                self.tick_follow(dt, false);
+                self.timeline(ui, dt, dev);
+                self.canvas_override = None;
+                self.gpu_slot = 0;
+                self.swap_timeline_state(&mut tl);
+                self.self_tl = tl;
             });
     }
 
@@ -4660,7 +4811,7 @@ impl eframe::App for OrbitLiveApp {
 
             self.refresh_sampling_report(ctx.input(|i| i.time));
             self.sampling_panel(ctx);
-            self.self_pane(ctx);
+            self.self_pane(ctx, dt, &devf);
 
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
@@ -4674,11 +4825,13 @@ impl eframe::App for OrbitLiveApp {
             }
         }
         let devf_counts = devf.worker_span_counts();
+        let devf_origin = devf.origin_ns().unwrap_or(0);
         let scopes = devf.finish();
         if self.self_pane_open && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
             self.self_profile.push_frame(
                 &scopes,
+                devf_origin,
                 crate::self_pane::FrameStats {
                     fps: self.fps_ema.max(0.0),
                     prims: self.last_n_prims,
@@ -4688,6 +4841,45 @@ impl eframe::App for OrbitLiveApp {
                     worker_dropped: devf_counts.1,
                 },
             );
+            // The pane's timeline: this frame's scopes on their absolute
+            // clock (the frame origin plus each scope's offset), one lane
+            // per viewer thread, plus the fps as a value lane. Kept to the
+            // last minute.
+            let live_edge = &mut self.self_tl.live_edge_ns;
+            for sc in &scopes {
+                let ev = LiveEvent {
+                    start_ns: devf_origin.saturating_add(sc.start_rel_ns),
+                    duration_ns: sc.duration_ns.max(1),
+                    tid: sc.tid,
+                    pid: VIEWER_PID,
+                    kind: kind::API_SCOPE,
+                    depth: sc.depth,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: sc.name_id,
+                };
+                *live_edge = (*live_edge).max(ev.end_ns());
+                self.self_tl.index.insert(ev);
+            }
+            self.self_tl.index.insert(LiveEvent::from_value(
+                devf_origin.max(1),
+                VIEWER_PID,
+                TID_STATS,
+                NAME_FPS,
+                self.fps_ema.max(0.0),
+            ));
+            if self.self_profile.frames_seen() % 600 == 0 {
+                let cutoff = self.self_tl.live_edge_ns.saturating_sub(SELF_TIMELINE_RETAIN_NS);
+                self.self_tl.index.retain(|e| e.end_ns() >= cutoff);
+            }
+            // Content bounds, so fit-to-capture and the follow clamp know the
+            // pane's extent.
+            if let Some((a, b)) = self.self_tl.index.time_bounds() {
+                if b > a {
+                    self.self_tl.content_t0 = Some(a as f64);
+                    self.self_tl.content_t1 = Some(b as f64);
+                }
+            }
             if self.self_profile.frames_seen() % 30 == 0 {
                 self.self_profile.publish(
                     &self.intern,
