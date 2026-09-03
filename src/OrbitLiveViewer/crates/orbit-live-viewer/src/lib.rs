@@ -22,6 +22,7 @@ mod dev;
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;
+mod sampling;
 #[cfg(feature = "egui")]
 mod theme;
 #[cfg(feature = "egui")]

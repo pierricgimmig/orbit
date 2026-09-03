@@ -259,6 +259,9 @@ fn demo_scope_names_are_interned_as_words() {
     assert_eq!(intern.get(600), Some("values"));
     assert_eq!(intern.get(5_100), Some("sine"));
     assert_eq!(intern.get(5_101), Some("cosine"));
+    assert_eq!(intern.get(crate::demo::DEMO_SAMPLE_TID), Some("Samples"));
+    assert_eq!(intern.get(crate::demo::DEMO_SAMPLE_BASE), Some("main"));
+    assert_eq!(intern.get(crate::demo::DEMO_SAMPLE_BASE + 2), Some("LeafA"));
     assert_eq!(
         intern.get(crate::demo::scope_name_id(0, 0, 0)),
         Some("Tick")

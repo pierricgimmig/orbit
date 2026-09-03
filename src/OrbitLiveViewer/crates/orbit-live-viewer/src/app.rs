@@ -45,7 +45,14 @@ use crate::vscroll::{clamp_offset, max_offset, VScrollInertia};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
 const SIDE: f32 = 228.0;
+const SIDE_SAMPLING: f32 = 400.0;
 const HEADER_W_WIDE: f32 = 196.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SideTab {
+    Inspector,
+    Sampling,
+}
 /// iPhone (~390) and iPad portrait (~768–834). A laptop at 1280 stays wide.
 const NARROW_MAX_PX: f32 = 840.0;
 const HEADER_W_NARROW_MIN: f32 = 76.0;
@@ -625,6 +632,13 @@ pub struct OrbitLiveApp {
     compact: bool,
     light_canvas: bool,
     advanced: bool,
+    side_tab: SideTab,
+    sampling_filter: Option<(u32, u32)>,
+    sampling_cache: crate::sampling::SamplingReport,
+    sampling_cache_events: usize,
+    sampling_cache_filter: Option<(u32, u32)>,
+    sampling_focus_name: Option<u32>,
+    sampling_scroll_to: bool,
     dev: bool,
     dev_locked_off: bool,
     recording: bool,
@@ -758,6 +772,13 @@ impl OrbitLiveApp {
             compact: false,
             light_canvas: false,
             advanced: false,
+            side_tab: SideTab::Inspector,
+            sampling_filter: None,
+            sampling_cache: crate::sampling::SamplingReport::default(),
+            sampling_cache_events: usize::MAX,
+            sampling_cache_filter: None,
+            sampling_focus_name: None,
+            sampling_scroll_to: false,
             dev,
             dev_locked_off,
             recording: false,
@@ -1238,6 +1259,8 @@ impl OrbitLiveApp {
         self.header_w = header_w_for(css_w) * scale;
         self.side_w = if is_narrow_width(css_w) {
             (css_w * 0.62).clamp(150.0, 220.0) * scale
+        } else if self.advanced && self.side_tab == SideTab::Sampling {
+            SIDE_SAMPLING
         } else {
             SIDE
         };
@@ -1681,8 +1704,18 @@ impl OrbitLiveApp {
         {
             self.light_canvas = !self.light_canvas;
         }
-        if ui.selectable_label(self.advanced, "Inspector").clicked() {
-            self.advanced = !self.advanced;
+        if ui
+            .selectable_label(self.side_tab_on(SideTab::Inspector), "Inspector")
+            .clicked()
+        {
+            self.toggle_side_tab(SideTab::Inspector);
+            ui.close();
+        }
+        if ui
+            .selectable_label(self.side_tab_on(SideTab::Sampling), "Sampling")
+            .clicked()
+        {
+            self.toggle_side_tab(SideTab::Sampling);
             ui.close();
         }
         if ui
@@ -1870,8 +1903,21 @@ impl OrbitLiveApp {
                 {
                     self.light_canvas = !self.light_canvas;
                 }
-                if shape_pill(ui, self.advanced, "Inspector", paint_inspector_icon).clicked() {
-                    self.advanced = !self.advanced;
+                if shape_pill(
+                    ui,
+                    self.side_tab_on(SideTab::Inspector),
+                    "Inspector",
+                    paint_inspector_icon,
+                )
+                .clicked()
+                {
+                    self.toggle_side_tab(SideTab::Inspector);
+                }
+                if pill(ui, "Sampling", self.side_tab_on(SideTab::Sampling))
+                    .on_hover_text("Callstack sampling report (inclusive / exclusive)")
+                    .clicked()
+                {
+                    self.toggle_side_tab(SideTab::Sampling);
                 }
             });
         });
@@ -2180,16 +2226,53 @@ impl OrbitLiveApp {
         }
     }
 
-    fn chrome(&mut self, ui: &mut Ui) {
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("INSPECTOR")
-                .family(fonts::medium())
-                .size(10.0)
-                .extra_letter_spacing(1.4)
-                .color(theme::MUTED),
-        );
+    fn side_tab_on(&self, tab: SideTab) -> bool {
+        self.advanced && self.side_tab == tab
+    }
 
+    fn toggle_side_tab(&mut self, tab: SideTab) {
+        let (advanced, side_tab) = toggle_side_tab(self.advanced, self.side_tab, tab);
+        self.advanced = advanced;
+        self.side_tab = side_tab;
+    }
+
+    fn focus_sampling_if_call(&mut self, pick: ScopePick) {
+        if let Some(name_id) = sampling_focus_from_pick(pick) {
+            self.advanced = true;
+            self.side_tab = SideTab::Sampling;
+            self.sampling_focus_name = Some(name_id);
+            self.sampling_scroll_to = true;
+        }
+    }
+
+    fn select_sampling_function(&mut self, name_id: u32) {
+        self.sampling_focus_name = Some(name_id);
+        self.selected = Some(crate::sampling::report_row_pick(name_id));
+        self.needs_repaint = true;
+    }
+
+    fn sampling_thread_label(&self, pid: u32, tid: u32) -> String {
+        let name = self
+            .thread_names
+            .get(&(pid, tid))
+            .cloned()
+            .or_else(|| self.intern.get(tid).map(str::to_string))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("tid {tid}"));
+        format!("{name}  [{pid}:{tid}]")
+    }
+
+    fn refresh_sampling_cache(&mut self) {
+        let filter = self.sampling_filter;
+        let n = self.index.event_count();
+        if self.sampling_cache_events != n || self.sampling_cache_filter != filter {
+            self.sampling_cache = crate::sampling::build_report(&self.index, filter);
+            self.sampling_cache_events = n;
+            self.sampling_cache_filter = filter;
+        }
+    }
+
+    fn chrome(&mut self, ui: &mut Ui) {
         section(ui, "PROCESS");
         self.paint_process_picker(ui, "orbit_processes_side");
         ui.add_space(4.0);
@@ -2305,6 +2388,203 @@ impl OrbitLiveApp {
             .size(10.0)
             .color(theme::MUTED),
         );
+    }
+
+    fn sampling_panel(&mut self, ui: &mut Ui) {
+        self.refresh_sampling_cache();
+        let report = self.sampling_cache.clone();
+        let filter = self.sampling_filter;
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Thread").size(11.0).color(muted()));
+            let mut choice = match self.sampling_filter {
+                None => 0usize,
+                Some(pt) => report
+                    .threads
+                    .iter()
+                    .position(|&t| t == pt)
+                    .map(|i| i + 1)
+                    .unwrap_or(0),
+            };
+            let thread_labels: Vec<String> = report
+                .threads
+                .iter()
+                .map(|&(pid, tid)| self.sampling_thread_label(pid, tid))
+                .collect();
+            let current = if choice == 0 {
+                "All".to_string()
+            } else {
+                thread_labels
+                    .get(choice - 1)
+                    .cloned()
+                    .unwrap_or_else(|| "All".into())
+            };
+            egui::ComboBox::from_id_salt("orbit-sampling-thread")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut choice, 0, "All");
+                    for (i, lab) in thread_labels.iter().enumerate() {
+                        ui.selectable_value(&mut choice, i + 1, lab);
+                    }
+                });
+            self.sampling_filter = if choice == 0 || choice > report.threads.len() {
+                None
+            } else {
+                Some(report.threads[choice - 1])
+            };
+        });
+
+        if report.total_samples == 0 {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("No callstack samples in this capture")
+                    .size(13.0)
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new("Enable Sample on Record, or use Demo.")
+                    .size(11.0)
+                    .color(theme::MUTED),
+            );
+            return;
+        }
+
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!("{} samples", report.total_samples))
+                .size(11.0)
+                .color(theme::MUTED),
+        );
+        ui.add_space(4.0);
+
+        let mut scrolled = false;
+        egui::Grid::new("orbit-sampling-fns")
+            .num_columns(4)
+            .striped(true)
+            .spacing([10.0, 3.0])
+            .min_col_width(48.0)
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Name")
+                        .family(fonts::medium())
+                        .size(10.0)
+                        .color(theme::MUTED),
+                );
+                ui.label(
+                    RichText::new("Incl %")
+                        .family(fonts::medium())
+                        .size(10.0)
+                        .color(theme::MUTED),
+                );
+                ui.label(
+                    RichText::new("Excl %")
+                        .family(fonts::medium())
+                        .size(10.0)
+                        .color(theme::MUTED),
+                );
+                ui.label(
+                    RichText::new("Count")
+                        .family(fonts::medium())
+                        .size(10.0)
+                        .color(theme::MUTED),
+                );
+                ui.end_row();
+                for f in &report.functions {
+                    let on = self.sampling_focus_name == Some(f.name_id);
+                    let name = crate::sampling::function_label(&self.intern, f.name_id);
+                    let name_r = ui.selectable_label(on, RichText::new(name).size(12.0));
+                    if self.sampling_scroll_to && on {
+                        name_r.scroll_to_me(Some(Align::Center));
+                        scrolled = true;
+                    }
+                    let incl = crate::sampling::format_percent(f.inclusive, report.total_samples);
+                    let excl = crate::sampling::format_percent(f.exclusive, report.total_samples);
+                    let clicked = name_r.clicked()
+                        || ui.selectable_label(on, incl).clicked()
+                        || ui.selectable_label(on, excl).clicked()
+                        || ui
+                            .selectable_label(on, format!("{}", f.inclusive))
+                            .clicked();
+                    if clicked {
+                        self.select_sampling_function(f.name_id);
+                    }
+                    ui.end_row();
+                }
+            });
+        if scrolled
+            || !report
+                .functions
+                .iter()
+                .any(|f| Some(f.name_id) == self.sampling_focus_name)
+        {
+            self.sampling_scroll_to = false;
+        }
+
+        let Some(nid) = self.sampling_focus_name else {
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new("Select a function to see contributing callstacks.")
+                    .size(11.0)
+                    .color(theme::MUTED),
+            );
+            return;
+        };
+        let (n, stacks) = crate::sampling::stacks_for_function(&self.index, nid, filter);
+        ui.add_space(8.0);
+        section(ui, "CALLSTACKS");
+        if n == 0 {
+            ui.label(
+                RichText::new("No stacks for this function.")
+                    .size(12.0)
+                    .color(theme::MUTED),
+            );
+            return;
+        }
+        ui.label(
+            RichText::new(format!("{n} samples contain this function"))
+                .size(11.0)
+                .color(theme::MUTED),
+        );
+        ui.add_space(4.0);
+        for row in stacks {
+            let lab = crate::sampling::stack_label(&self.intern, &row.name_ids);
+            ui.label(
+                RichText::new(format!(
+                    "{}  ×{}   {lab}",
+                    crate::sampling::format_percent(row.count, n),
+                    row.count
+                ))
+                .font(FontId::monospace(11.0))
+                .color(theme::TEXT),
+            );
+        }
+    }
+
+    fn paint_side_panel(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.side_tab == SideTab::Inspector, "Inspector")
+                .clicked()
+            {
+                self.side_tab = SideTab::Inspector;
+            }
+            if ui
+                .selectable_label(self.side_tab == SideTab::Sampling, "Sampling")
+                .clicked()
+            {
+                self.side_tab = SideTab::Sampling;
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.small_button("✕").on_hover_text("Close panel").clicked() {
+                    self.advanced = false;
+                }
+            });
+        });
+        ui.separator();
+        match self.side_tab {
+            SideTab::Inspector => self.chrome(ui),
+            SideTab::Sampling => self.sampling_panel(ui),
+        }
     }
 
     fn timeline(&mut self, ui: &mut Ui, dt: f32, dev: &DevFrame) {
@@ -3750,10 +4030,13 @@ impl OrbitLiveApp {
             if let Some(pick) = self.hover {
                 self.selected = Some(pick);
                 self.zoom_to_scope(pick);
+                self.focus_sampling_if_call(pick);
             }
         } else if response.clicked() {
             self.selected = self.hover;
-            if self.hover.is_none() {
+            if let Some(pick) = self.hover {
+                self.focus_sampling_if_call(pick);
+            } else {
                 self.measure = None;
             }
         }
@@ -4052,7 +4335,7 @@ impl eframe::App for OrbitLiveApp {
                         .show(ctx, |ui| {
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, false])
-                                .show(ui, |ui| self.chrome(ui));
+                                .show(ui, |ui| self.paint_side_panel(ui));
                         });
                     ui_hairline_sidebar(ctx, self.side_w);
                 }
@@ -4283,6 +4566,22 @@ fn header_w_for(width: f32) -> f32 {
 
 fn chrome_collapsed(immersive: bool, fullscreen: bool, narrow: bool) -> bool {
     immersive || (fullscreen && narrow)
+}
+
+fn toggle_side_tab(advanced: bool, current: SideTab, clicked: SideTab) -> (bool, SideTab) {
+    if advanced && current == clicked {
+        (false, current)
+    } else {
+        (true, clicked)
+    }
+}
+
+fn sampling_focus_from_pick(pick: ScopePick) -> Option<u32> {
+    if pick.kind == kind::FUNCTION_CALL {
+        Some(pick.name_id)
+    } else {
+        None
+    }
 }
 
 fn sat_i8(v: f32) -> i8 {
@@ -5685,6 +5984,50 @@ mod tests {
     #[test]
     fn follow_window_is_two_seconds() {
         assert!((FOLLOW_NS - 2e9).abs() < 1.0);
+    }
+
+    #[test]
+    fn toggle_side_tab_opens_closes_and_switches() {
+        assert_eq!(
+            toggle_side_tab(false, SideTab::Inspector, SideTab::Sampling),
+            (true, SideTab::Sampling)
+        );
+        assert_eq!(
+            toggle_side_tab(true, SideTab::Sampling, SideTab::Sampling),
+            (false, SideTab::Sampling)
+        );
+        assert_eq!(
+            toggle_side_tab(true, SideTab::Sampling, SideTab::Inspector),
+            (true, SideTab::Inspector)
+        );
+    }
+
+    #[test]
+    fn function_call_pick_focuses_sampling_api_scope_does_not() {
+        let call = ScopePick::from_event(LiveEvent {
+            start_ns: 10,
+            duration_ns: 5,
+            tid: 130,
+            pid: 1,
+            kind: kind::FUNCTION_CALL,
+            depth: 2,
+            extra: 0,
+            _pad: 0,
+            name_id: 6_002,
+        });
+        let scope = ScopePick::from_event(LiveEvent {
+            start_ns: 10,
+            duration_ns: 5,
+            tid: 100,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 4_000,
+        });
+        assert_eq!(sampling_focus_from_pick(call), Some(6_002));
+        assert_eq!(sampling_focus_from_pick(scope), None);
     }
 
     #[test]

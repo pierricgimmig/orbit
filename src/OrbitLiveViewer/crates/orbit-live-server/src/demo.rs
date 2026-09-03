@@ -16,6 +16,11 @@ use crate::LiveService;
 /// (10, 100–131) or self-profile ids (1–4, 30_000+).
 pub const DEMO_SCOPE_BASE: u32 = 4_000;
 pub const DEMO_ASYNC_BASE: u32 = 2_000;
+/// Dedicated sampling thread. Not in `demo_sched_threads` (no CPU occupancy).
+pub const DEMO_SAMPLE_TID: u32 = 130;
+/// `main` / `Work` / `LeafA` / `LeafB` / `Other` — well above scope ids.
+pub const DEMO_SAMPLE_BASE: u32 = 6_000;
+pub const DEMO_SAMPLE_NAMES: &[&str] = &["main", "Work", "LeafA", "LeafB", "Other"];
 
 /// Dummy game/engine names interned for hover / search on generated scopes.
 pub const DEMO_SCOPE_NAMES: &[&str] = &[
@@ -49,8 +54,8 @@ pub fn scope_name_id(depth: u8, th: u32, slot: u32) -> u32 {
             _ => 14, // ScriptTick
         },
         1 => match slot {
-            0 => 1, // Simulate
-            1 => 2, // UpdateTransforms
+            0 => 1,                // Simulate
+            1 => 2,                // UpdateTransforms
             _ if th % 2 == 0 => 3, // Cull
             _ => 4,                // Draw
         },
@@ -90,6 +95,10 @@ pub fn intern_demo_names(svc: &LiveService) {
         svc.intern_id(100 + th, &format!("Worker-{th}"));
     }
     svc.intern_id(10, "Async");
+    svc.intern_id(DEMO_SAMPLE_TID, "Samples");
+    for (i, name) in DEMO_SAMPLE_NAMES.iter().enumerate() {
+        svc.intern_id(DEMO_SAMPLE_BASE + i as u32, name);
+    }
     for (tid, name) in [
         (200u32, "Render"),
         (201, "Cull"),
@@ -171,6 +180,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                 push_thread_tick(&mut events, t, REMOTE_RENDER_PID, tid, i as u32 + 4);
             }
             let tick_i = t.saturating_sub(DEMO_ORIGIN_NS) / DEMO_TICK_NS;
+            push_sample_tick(&mut events, t, tick_i);
             push_scheduler_tick(&mut events, t, tick_i);
             let phase = (t as f64) / 200_000_000.0;
             events.push(LiveEvent::from_value(
@@ -180,13 +190,7 @@ pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> 
                 5_100,
                 phase.sin() as f32,
             ));
-            let mut cosine = LiveEvent::from_value(
-                t,
-                DEMO_PID,
-                600,
-                5_101,
-                phase.cos() as f32,
-            );
+            let mut cosine = LiveEvent::from_value(t, DEMO_PID, 600, 5_101, phase.cos() as f32);
             cosine.extra = 1;
             events.push(cosine);
             for (i, _name) in DEMO_ASYNC_NAMES.iter().enumerate() {
@@ -303,6 +307,58 @@ fn push_thread_tick(events: &mut Vec<LiveEvent>, t: u64, pid: u32, tid: u32, th:
                 scope_name_id(2, th, k),
             ));
         }
+    }
+}
+
+/// Repeating nested `FUNCTION_CALL` stacks on `DEMO_SAMPLE_TID` so Demo
+/// alone fills the Sampling Report. Does not emit `API_SCOPE`.
+fn push_sample_tick(events: &mut Vec<LiveEvent>, t: u64, tick_i: u64) {
+    events.extend(sample_events_for_tick(t, tick_i));
+}
+
+pub fn sample_events_for_tick(t: u64, tick_i: u64) -> Vec<LiveEvent> {
+    let mut out = Vec::with_capacity(12);
+    out.push(LiveEvent {
+        start_ns: t,
+        duration_ns: DEMO_TICK_NS,
+        tid: DEMO_SAMPLE_TID,
+        pid: DEMO_PID,
+        kind: kind::THREAD_STATE,
+        depth: 0,
+        extra: thread_state::RUNNING,
+        _pad: 0,
+        name_id: 0,
+    });
+    let main = DEMO_SAMPLE_BASE;
+    let work = DEMO_SAMPLE_BASE + 1;
+    let leaf_a = DEMO_SAMPLE_BASE + 2;
+    let leaf_b = DEMO_SAMPLE_BASE + 3;
+    let other = DEMO_SAMPLE_BASE + 4;
+    let dur = 6_000_000;
+    push_sample_stack(&mut out, t + 1_000_000, dur, &[main, work, leaf_a]);
+    if tick_i % 2 == 0 {
+        push_sample_stack(&mut out, t + 8_000_000, dur, &[main, work, leaf_b]);
+        push_sample_stack(&mut out, t + 15_000_000, dur, &[main, work, leaf_a]);
+    } else {
+        push_sample_stack(&mut out, t + 8_000_000, dur, &[main, other]);
+        push_sample_stack(&mut out, t + 15_000_000, dur, &[main, work, leaf_b]);
+    }
+    out
+}
+
+fn push_sample_stack(out: &mut Vec<LiveEvent>, start_ns: u64, duration_ns: u64, frames: &[u32]) {
+    for (depth, &name_id) in frames.iter().enumerate() {
+        out.push(LiveEvent {
+            start_ns,
+            duration_ns,
+            tid: DEMO_SAMPLE_TID,
+            pid: DEMO_PID,
+            kind: kind::FUNCTION_CALL,
+            depth: depth as u8,
+            extra: 0,
+            _pad: 0,
+            name_id,
+        });
     }
 }
 
@@ -450,19 +506,41 @@ mod tests {
                 "core {core} must hop between threads, got {tids:?}"
             );
         }
-        let core0_t0: std::collections::HashSet<u32> = a
-            .iter()
-            .filter(|e| e.extra == 0)
-            .map(|e| e.tid)
-            .collect();
-        let core0_t1: std::collections::HashSet<u32> = b
-            .iter()
-            .filter(|e| e.extra == 0)
-            .map(|e| e.tid)
-            .collect();
+        let core0_t0: std::collections::HashSet<u32> =
+            a.iter().filter(|e| e.extra == 0).map(|e| e.tid).collect();
+        let core0_t1: std::collections::HashSet<u32> =
+            b.iter().filter(|e| e.extra == 0).map(|e| e.tid).collect();
         assert_ne!(
             core0_t0, core0_t1,
             "the same core must not stay pinned to one thread set"
         );
+    }
+
+    #[test]
+    fn demo_samples_are_function_calls_on_dedicated_tid() {
+        let a = sample_events_for_tick(DEMO_ORIGIN_NS, 0);
+        let b = sample_events_for_tick(DEMO_ORIGIN_NS + DEMO_TICK_NS, 1);
+        let calls: Vec<_> = a
+            .iter()
+            .chain(b.iter())
+            .filter(|e| e.kind == kind::FUNCTION_CALL)
+            .collect();
+        assert!(!calls.is_empty());
+        assert!(calls
+            .iter()
+            .all(|e| e.tid == DEMO_SAMPLE_TID && e.pid == DEMO_PID));
+        assert!(calls.iter().any(|e| e.name_id == DEMO_SAMPLE_BASE));
+        assert!(calls.iter().any(|e| e.name_id == DEMO_SAMPLE_BASE + 2));
+        assert!(calls.iter().any(|e| e.name_id == DEMO_SAMPLE_BASE + 3));
+        assert!(a
+            .iter()
+            .any(|e| e.kind == kind::THREAD_STATE && e.tid == DEMO_SAMPLE_TID));
+        let mut scopes = Vec::new();
+        push_thread_tick(&mut scopes, DEMO_ORIGIN_NS, DEMO_PID, 100, 0);
+        assert!(scopes.iter().any(|e| e.kind == kind::API_SCOPE));
+        assert!(scopes.iter().all(|e| e.kind != kind::FUNCTION_CALL));
+        assert!(demo_sched_threads()
+            .iter()
+            .all(|&(_, tid)| tid != DEMO_SAMPLE_TID));
     }
 }
