@@ -27,6 +27,11 @@ pub struct Lane<'a> {
 
 #[derive(Default)]
 pub struct SelfProfile {
+    /// Per scope name since the pane opened: (total ns, count, max ns). The
+    /// harness reads these through `publish`, and they answer the question the
+    /// sparkline cannot -- which phase the frame actually went to.
+    totals: std::collections::HashMap<u32, (u64, u64, u64)>,
+    frames_seen: u64,
     frame_ms: std::collections::VecDeque<f32>,
     latest: Vec<RelScope>,
     frame_span_ns: u64,
@@ -77,6 +82,13 @@ impl SelfProfile {
         self.frame_ms.push_back(span as f32 / 1_000_000.0);
         self.latest.clear();
         self.latest.extend_from_slice(scopes);
+        self.frames_seen += 1;
+        for sc in scopes {
+            let e = self.totals.entry(sc.name_id).or_insert((0, 0, 0));
+            e.0 += sc.duration_ns;
+            e.1 += 1;
+            e.2 = e.2.max(sc.duration_ns);
+        }
         self.fps = stats.fps;
         self.prims = stats.prims;
         self.lanes_kept = stats.lanes_kept;
@@ -88,6 +100,55 @@ impl SelfProfile {
     pub fn is_empty(&self) -> bool {
         self.frame_ms.is_empty()
     }
+
+    pub fn frames_seen(&self) -> u64 {
+        self.frames_seen
+    }
+
+    /// The per-phase totals as one JSON object: `{"frames":N,"phases":[{"name",
+    /// "total_ms","count","avg_us","max_us"}, ...]}`, heaviest first.
+    pub fn phases_json(&self, intern: &InternTable) -> String {
+        let mut rows: Vec<(&str, u64, u64, u64)> = self
+            .totals
+            .iter()
+            .map(|(id, (sum, n, mx))| (intern.get(*id).unwrap_or("?"), *sum, *n, *mx))
+            .collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut out = format!("{{\"frames\":{},\"phases\":[", self.frames_seen);
+        for (i, (name, sum, n, mx)) in rows.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"name\":\"{}\",\"total_ms\":{:.2},\"count\":{},\"avg_us\":{:.1},\"max_us\":{:.1}}}",
+                name.replace('"', "'"),
+                *sum as f64 / 1e6,
+                n,
+                *sum as f64 / 1e3 / (*n).max(1) as f64,
+                *mx as f64 / 1e3
+            ));
+        }
+        out.push_str("]}");
+        out
+    }
+
+    /// Hands the phase totals to the page as `window.__orbit_self`, so a
+    /// harness driving the viewer headless can read the breakdown that is
+    /// otherwise only painted on the canvas.
+    #[cfg(target_arch = "wasm32")]
+    pub fn publish(&self, intern: &InternTable) {
+        if let Some(win) = web_sys::window() {
+            let json = self.phases_json(intern);
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__orbit_self"),
+                &wasm_bindgen::JsValue::from_str(&json),
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn publish(&self, _intern: &InternTable) {}
 
     pub fn last_ms(&self) -> f32 {
         self.frame_ms.back().copied().unwrap_or(0.0)

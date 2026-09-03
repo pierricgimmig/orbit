@@ -537,7 +537,7 @@ pub struct OrbitLiveApp {
     got_status: bool,
     http_ok: bool,
     ws_ok: bool,
-    ws_queue: Vec<Vec<u8>>,
+    ws_queue: std::collections::VecDeque<Vec<u8>>,
     lod_label: &'static str,
     has_gpu: bool,
     tracks: TrackStrip,
@@ -762,7 +762,7 @@ impl OrbitLiveApp {
             got_status: false,
             http_ok: false,
             ws_ok: false,
-            ws_queue: Vec::new(),
+            ws_queue: std::collections::VecDeque::new(),
             lod_label: "",
             has_gpu,
             tracks: TrackStrip::default(),
@@ -1551,12 +1551,13 @@ impl OrbitLiveApp {
         }
         self.ws_queue.extend(inbox.frames);
         let mut ingested = 0usize;
-        while !self.ws_queue.is_empty() {
-            let next_len = self.ws_queue[0].len();
+        while let Some(next_len) = self.ws_queue.front().map(Vec::len) {
             if ingested > 0 && ingested + next_len > 1024 * 1024 {
                 break;
             }
-            let bytes = self.ws_queue.remove(0);
+            let Some(bytes) = self.ws_queue.pop_front() else {
+                break;
+            };
             ingested = ingested.saturating_add(bytes.len());
             self.ingest(&bytes);
         }
@@ -1564,15 +1565,20 @@ impl OrbitLiveApp {
 
     fn ingest(&mut self, bytes: &[u8]) {
         self.leftover.extend_from_slice(bytes);
+        // Decode by offset and drain once. Draining after every frame moved
+        // the whole remaining buffer each time: a burst of a thousand small
+        // batches in one chunk was a thousand memmoves of the chunk.
+        let mut off = 0usize;
         loop {
-            match decode_frame(&self.leftover) {
+            match decode_frame(&self.leftover[off..]) {
                 Ok((frame, n)) => {
                     self.apply_frame(frame);
-                    self.leftover.drain(..n);
+                    off += n;
                 }
                 Err(_) => break,
             }
         }
+        self.leftover.drain(..off);
     }
 
     fn apply_frame(&mut self, frame: LiveFrame) {
@@ -4682,6 +4688,9 @@ impl eframe::App for OrbitLiveApp {
                     worker_dropped: devf_counts.1,
                 },
             );
+            if self.self_profile.frames_seen() % 30 == 0 {
+                self.self_profile.publish(&self.intern);
+            }
         }
         if self.dev && !scopes.is_empty() {
             intern_self_names(&mut self.intern);

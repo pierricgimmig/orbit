@@ -288,6 +288,42 @@ pub struct TrackIndex {
     /// Running total, so `event_count` is a read rather than a walk over every
     /// lane (it is consulted several times per frame).
     events: usize,
+    /// Running time bounds, maintained on insert, so `time_bounds` is a read.
+    /// It used to walk every event of every lane, and was called once per
+    /// WebSocket batch -- on a busy live capture that was most of the drain.
+    bounds: Bounds,
+}
+
+/// Min/max over all events and over "real" ones -- a zero-width mark at t=0
+/// (Chrome metadata leftovers, missing-`ts` instants) must not stretch the
+/// capture to the origin when a later cluster exists.
+#[derive(Clone, Copy, Debug)]
+struct Bounds {
+    min_all: u64,
+    max_all: u64,
+    min_real: u64,
+    max_real: u64,
+    any_real: bool,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Bounds { min_all: u64::MAX, max_all: 0, min_real: u64::MAX, max_real: 0, any_real: false }
+    }
+}
+
+impl Bounds {
+    fn add(&mut self, e: &LiveEvent) {
+        let start = e.start_ns;
+        let end = e.end_ns();
+        self.min_all = self.min_all.min(start);
+        self.max_all = self.max_all.max(end);
+        if start > 0 || e.duration_ns > 1 {
+            self.any_real = true;
+            self.min_real = self.min_real.min(start);
+            self.max_real = self.max_real.max(end);
+        }
+    }
 }
 
 impl TrackIndex {
@@ -302,6 +338,7 @@ impl TrackIndex {
         };
         lane.insert(event);
         self.events += 1;
+        self.bounds.add(&event);
     }
 
     /// Changes only when a lane is added or removed. See the field.
@@ -318,6 +355,7 @@ impl TrackIndex {
     pub fn clear(&mut self) {
         self.lanes.clear();
         self.events = 0;
+        self.bounds = Bounds::default();
         self.lane_gen = self.lane_gen.wrapping_add(1);
     }
 
@@ -336,6 +374,14 @@ impl TrackIndex {
             self.lane_gen = self.lane_gen.wrapping_add(1);
         }
         self.events = self.lanes.values().map(Lane::len).sum();
+        // Dropping events can move either bound; rescan (retain is rare).
+        let mut b = Bounds::default();
+        for lane in self.lanes.values() {
+            for e in &lane.events {
+                b.add(e);
+            }
+        }
+        self.bounds = b;
     }
 
     pub fn lane_count(&self) -> usize {
@@ -355,33 +401,13 @@ impl TrackIndex {
     }
 
     pub fn time_bounds(&self) -> Option<(u64, u64)> {
-        // Min/max of real timed events. A zero-width mark at t=0 (Chrome
-        // metadata leftovers, missing-`ts` instants) must not stretch the
-        // capture to the origin when a later cluster exists.
-        let mut min_all = u64::MAX;
-        let mut max_all = 0u64;
-        let mut min_real = u64::MAX;
-        let mut max_real = 0u64;
-        let mut any_real = false;
-        for lane in self.lanes.values() {
-            for e in &lane.events {
-                let start = e.start_ns;
-                let end = e.end_ns();
-                min_all = min_all.min(start);
-                max_all = max_all.max(end);
-                if start > 0 || e.duration_ns > 1 {
-                    any_real = true;
-                    min_real = min_real.min(start);
-                    max_real = max_real.max(end);
-                }
-            }
-        }
-        if min_all == u64::MAX {
+        let b = &self.bounds;
+        if b.min_all == u64::MAX {
             None
-        } else if any_real {
-            Some((min_real, max_real.max(min_real + 1)))
+        } else if b.any_real {
+            Some((b.min_real, b.max_real.max(b.min_real + 1)))
         } else {
-            Some((min_all, max_all.max(min_all + 1)))
+            Some((b.min_all, b.max_all.max(b.min_all + 1)))
         }
     }
 
