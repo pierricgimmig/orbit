@@ -1,0 +1,173 @@
+Phase 9: where the frame went -- a performance pass over service and viewer
+
+Measured 2026-09-02/03 on Linux 7.0.0-30-generic, 32 threads, Rust 1.88.0
+(release, lto=thin, codegen-units=1). Every number below was produced by a
+command that is checked in; the benchmarks are `#[ignore]` tests so they never
+run by accident:
+
+  cd rust/crates/orbit-service
+  cargo test --release report_bench    -- --ignored --nocapture
+  cargo test --release symbolize_bench -- --ignored --nocapture
+  cd src/OrbitLiveViewer
+  cargo test --release -p orbit-live-protocol encode_bench -- --ignored --nocapture
+  cd crates/orbit-live-viewer
+  cargo test --release layout_bench    -- --ignored --nocapture
+
+"before" is the tree at de2f55059 (the commit before this pass); "after" is
+a2d78d986. Same machine, same inputs, back to back.
+
+=====================================================================
+SERVICE
+=====================================================================
+
+1. Sampling report and call trees   (report.rs)
+   1,000,000 stored samples, 64 threads, 24 frames deep, 200 distinct call
+   paths sharing an 8-frame prefix, 40 hot leaves -- the shape of a real hot
+   loop. Report = the flat self/inclusive table. Tree = top-down over the
+   whole capture, bottom-up over a 1 ms window.
+
+                                       before      after     x
+   report, whole capture              173.97 ms  111.50 ms   1.6
+   report, 1 ms window (~1k samples)    4.61 ms    1.55 ms   3.0
+   tree, top-down, whole capture     2669.80 ms  359.18 ms   7.4
+   tree, bottom-up, 1 ms window       102.88 ms    5.39 ms  19.1
+
+   What changed, and what each step bought (the 1 ms window is the one the
+   viewer asks for on every drag frame):
+     sorted samples + binary-searched windows:  report 4.61 -> 2.23 ms
+                                                tree  102.9 -> 5.95 ms
+     trees written straight to a string
+       instead of serde_json::Value per node:   (in the step above)
+     multiplicative hasher for u32/u64 maps:    whole report 194 -> 123 ms
+                                                whole tree  2430 -> 1850 ms
+     fold selection into distinct (tid,stack)
+       counts, walk each stack once:            whole report 123 -> 112 ms
+                                                whole tree  1850 -> 359 ms
+   The whole-capture report is now dominated by hashing 1M 24-frame stacks
+   once each; the JSON for 2,000 functions is the rest.
+
+2. Frame symbolization in the capture loop   (serve.rs / symbolize.rs)
+   120 modules x 4,000 symbols; 50,000 samples x 24 frames = 1.2M frames,
+   pcs drawn from a 3,000-address hot set.
+
+                                       before      after     x
+   per frame                           146 ns       3 ns   ~49
+   (1.2M frames)                      175.2 ms     3.6 ms
+
+   Before: every pc went through two linear module scans, a symbol binary
+   search, two String allocations and a name hash, to reach an id that
+   address already had. After: a per-capture pc -> id map; a repeat is one
+   lookup. The symbolizer is fixed for the life of a capture, so the map is
+   too. Also the StoredSample no longer clones its frame vector.
+
+3. Broadcasting a batch to the viewer   (orbit-live-protocol / server)
+   10,000 events per batch, 200 batches.
+
+                                       before      after     x
+   per batch                          226.5 us    44.4 us   5.1
+
+   Before: clone the slice into LiveFrame::EventBatch, encode into a payload
+   Vec, copy the payload into the framed Vec. After: encode_event_batch
+   writes the frame from the slice into one pre-sized buffer (a test asserts
+   it is byte-identical to encode_frame). And nothing is encoded when no
+   viewer is subscribed.
+
+4. Live service, for honesty   (orbit-service --serve, capturing OrbitTestRust)
+   Same machine, 15 s capture of the API test app, no perf privileges (so
+   no sampling; the scope rings, thread states and push path run). From the
+   service's own scopes in the Arrow export:
+
+                                 before                 after
+   capture pass   mean         5219 us               5203 us   (the 5 ms sleep)
+   drain scope rings mean        22.3 us               22.5 us  (untouched)
+   push to viewer  mean           2.5 us                1.4 us
+   The live pass on this workload was never the bottleneck; the wins in 1-3
+   are on the sampling and report paths, which this machine cannot run live
+   (CAP_PERFMON). They are covered by the benchmarks above.
+
+=====================================================================
+VIEWER
+=====================================================================
+
+5. Track layout   (tracks.rs, native benchmark)
+   4 processes x 25 threads = 100 threads; each thread a 40-deep flame graph
+   (one lane per depth) + sample bar + thread-state bar: 4,200 lanes, 105
+   rows. sync()+tick() is what the viewer runs every frame.
+
+                                       before      after      x
+   sync+tick, no filter               10.268 ms   0.396 ms   25.9
+   sync+tick, process filter          (not measured before: the discovery
+                                       loop was O(lanes^2) with a filter)
+                                                  0.085 ms
+   event_count()                        7.18 us    0.00 us
+
+   Steps: per-thread lane catalogue keyed on a new index lane generation
+   (10.27 -> 4.67 ms); multiplicative hasher for the RowId maps + sorting
+   (id, y) pairs instead of map-lookup comparators (4.67 -> 0.556 ms);
+   sync() no longer seeds the row map (0.556 -> 0.396 ms).
+
+6. Live, headless Chrome   (google-chrome --headless=new, SwiftShader,
+   1600x1000, real time; tools/e2e/cdp.py; scratch harness measure_client.py)
+   Frame phases are the viewer's own DevFrame scopes, read through
+   window.__orbit_self, which the self-profile pane now publishes.
+
+   6a. Static view of a synthetic 320-thread Chrome trace (8 processes x 40
+       threads, 6-deep stacks, 296,244 events, 24 MB), mouse over the rail.
+
+                                   before          after
+       rAF interval, mean         127.9 ms       100.0 ms
+       rAF interval, p95          150.0 ms       116.7 ms
+       viewer CPU frame (Frame)    n/a*            0.94 ms
+         Tracks (layout)           n/a*            0.21 ms
+         TimelinePayload           n/a*            0.04 ms  (Skip)
+         PrimitiveListing          n/a*            2 runs / 120 frames
+       layout_gen over 30 frames   +30 (every frame)  +0
+
+       * the old pack had no phase readout. What the readout showed on the
+       new pack before the last fix: layout_gen advanced every frame, so
+       TimelinePayload (2.06 ms) + PrimitiveListing (1.43 ms) ran every
+       frame on a still view -- Frame 3.0 ms. sync() had been evicting the
+       packed lanes apply_layout re-added, so the row map never compared
+       equal. That is old code; it predates this pass.
+
+       The rAF interval here is software-GL rendering of the timeline in
+       SwiftShader, not viewer logic: after the pass the CPU frame is under
+       1 ms of the 100 ms. The 128 -> 100 ms is the removed CPU work; the
+       rest is the environment. On a real GPU the CPU frame is the budget
+       that matters, and it went from (layout alone, from the benchmark
+       scaled to 320 threads) tens of milliseconds to under one.
+
+   6b. Live demo capture (demo producer streaming into the viewer).
+
+                                   before          after       x
+       viewer CPU frame (Frame)     6.44 ms        1.62 ms    4.0
+         DrainNet (WS ingest)       5.10 ms        0.14 ms   36
+         TimelinePayload            0.71 ms        0.80 ms    (data arriving;
+                                                               rebuilt, as it must)
+       rAF interval, mean          57.7 ms        56.5 ms    (env-bound)
+
+       DrainNet: after every event batch the viewer walked every event of
+       every lane to refresh its content bounds (now running bounds on the
+       index), and the frame decoder memmoved the whole leftover buffer per
+       decoded frame (now decodes by offset, drains once). The queue is a
+       VecDeque instead of Vec::remove(0).
+
+7. Report requests while dragging a selection   (app.rs)
+   Not measurable live here (needs a sampled capture). Before: a report and
+   a tree request on every frame the selection changed -- the service ran
+   item 1 per frame and the viewer parsed the JSON per frame (2.2 MB for the
+   1 ms bottom-up tree in the benchmark). After: at most one request per
+   200 ms while the button is down; the release sends the final selection
+   at once.
+
+=====================================================================
+NOT DONE
+=====================================================================
+- Incremental primitive listing during a live capture: with data arriving
+  every frame the timeline still re-lists everything visible (6b,
+  TimelinePayload 0.8 ms on the demo). Only lanes that changed need it.
+- The whole-capture top-down tree at 359 ms is one stall when a big capture
+  stops. The remaining cost is hashing a million stacks; a per-lane stack
+  cache in the capture loop would fold them at ingest instead.
+- Headless numbers are software GL. A run on the user's GPU machine with
+  the self-profile pane open is the measurement that closes this.
