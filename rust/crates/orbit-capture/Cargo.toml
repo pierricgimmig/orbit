@@ -12,7 +12,13 @@ rust-version = "1.88"
 [dependencies]
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
 # Granular arrow crates, no compression features, so the service stays a pure
-# static musl binary with no C toolchain pulled in through lz4/zstd.
+# static musl binary with no C toolchain pulled in through lz4/zstd. The same
+# goes for parquet: only its `arrow` bridge, none of the codec features
+# (snap / brotli / lz4 / zstd / flate2), so a Parquet file is written
+# uncompressed and the dependency graph stays free of C.
 arrow-array = { version = "59", default-features = false }
 arrow-schema = { version = "59", default-features = false }
 arrow-ipc = { version = "59", default-features = false }
+parquet = { version = "59", default-features = false, features = ["arrow"] }
+bytes = "1"
+serde_json = "1"

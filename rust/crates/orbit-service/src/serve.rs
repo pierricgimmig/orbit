@@ -973,14 +973,18 @@ pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), S
         Ok(tree_store.tree_json_for_ranges(&ranges, TreeMode::parse(mode)))
     }));
     let export_service = service.clone();
-    service.set_capture_export(Arc::new(move || {
+    service.set_capture_export(Arc::new(move |format| {
         // The whole ring, with each scope's name resolved from the intern
-        // table, as one Arrow IPC file. Held under the intern lock only for
-        // the encode, which borrows the names by id.
+        // table, as one file in the asked-for format. Held under the intern
+        // lock only for the encode, which borrows the names by id.
         let (_, events) = export_service.ring().snapshot();
         let intern = export_service.intern.lock();
         let resolve = |id: u32| intern.get(id).map(str::to_string).unwrap_or_default();
-        orbit_capture::write_events_ipc_to_vec(&events, resolve).map_err(|e| e.to_string())
+        match format {
+            "parquet" => orbit_capture::write_events_parquet_to_vec(&events, resolve)
+                .map_err(|e| e.to_string()),
+            _ => orbit_capture::write_events_ipc_to_vec(&events, resolve).map_err(|e| e.to_string()),
+        }
     }));
     let modules_state = symbols.clone();
     service.set_modules_json(Arc::new(move |pid| {

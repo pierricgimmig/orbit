@@ -3,16 +3,20 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Open an Orbit capture saved as an Arrow IPC file.
+"""Open an Orbit capture saved as Arrow.
 
 Orbit's live viewer can Save the current capture as ``capture.arrow`` (the Save
-pill, or ``GET /api/capture/export``). The file is a plain Arrow IPC file, so
-there is nothing Orbit-specific to install: pyarrow reads it, and it drops
-straight into pandas.
+pill, or ``GET /api/capture/export``), or as Parquet with
+``?format=parquet``. ``orbit-service --out-arrow <dir>`` writes a dataset
+directory instead: events, samples and frames tables plus a manifest. All are
+plain Arrow / Parquet, so there is nothing Orbit-specific to install: pyarrow
+reads them, and they drop straight into pandas.
 
-    python open_capture.py capture.arrow
+    python open_capture.py capture.arrow       # Arrow IPC file
+    python open_capture.py capture.parquet     # Parquet file
+    python open_capture.py my-capture/         # dataset directory
 
-One table, one row per event, these columns:
+The events table -- one row per event, these columns:
 
     start_ns      u64   event start, nanoseconds on the capture clock
     duration_ns   u64   span length -- but see the two kinds below where it is
@@ -70,10 +74,32 @@ def main(path: str) -> int:
         )
         return 1
 
-    # Read the whole file into one Arrow table. `open_file` is the reader for
-    # the IPC *file* format Orbit writes (as opposed to the IPC *stream*).
-    with pa.memory_map(path, "r") as source:
-        table = ipc.open_file(source).read_all()
+    import os
+
+    def read_ipc(file_path: str) -> "pa.Table":
+        # `open_file` is the reader for the IPC *file* format Orbit writes (as
+        # opposed to the IPC *stream*). The file holds several record batches
+        # of 65,536 rows; `read_all` concatenates them, or use `get_batch(i)`
+        # to stream a big capture one batch at a time.
+        with pa.memory_map(file_path, "r") as source:
+            return ipc.open_file(source).read_all()
+
+    # Three shapes of capture: one Parquet file, one Arrow IPC file, or a
+    # dataset directory with a manifest naming the tables inside it.
+    dataset_dir = path if os.path.isdir(path) else None
+    if dataset_dir:
+        import json
+
+        with open(os.path.join(dataset_dir, "manifest.json")) as fh:
+            manifest = json.load(fh)
+        print(f"{path}: dataset {manifest['format']}, rows {manifest['rows']}")
+        table = read_ipc(os.path.join(dataset_dir, manifest["files"]["events"]))
+    elif path.endswith(".parquet"):
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(path)  # same columns, other container
+    else:
+        table = read_ipc(path)
 
     print(f"{path}: {table.num_rows:,} events, {table.num_columns} columns")
     print("schema:")
@@ -111,6 +137,34 @@ def main(path: str) -> int:
             break
 
     print(f"\ndistinct threads: {len(set(tids))}")
+
+    # --- A dataset also carries the sampled callstacks ---------------------
+    if dataset_dir:
+        samples = read_ipc(os.path.join(dataset_dir, manifest["files"]["samples"]))
+        frames = read_ipc(os.path.join(dataset_dir, manifest["files"]["frames"]))
+        # frames: id -> (name, module, address). The command-line capture path
+        # fills addresses but not names; a name is present when the service
+        # symbolized the frame.
+        by_id = {
+            fid: (name, module, addr)
+            for fid, name, module, addr in zip(
+                frames.column("id").to_pylist(),
+                frames.column("name").to_pylist(),
+                frames.column("module").to_pylist(),
+                frames.column("address").to_pylist(),
+            )
+        }
+        leaves: dict = {}
+        stacks = samples.column("frames").to_pylist()
+        for stack in stacks:
+            if stack:  # frames are innermost first, so [0] is the leaf
+                leaves[stack[0]] = leaves.get(stack[0], 0) + 1
+        print(f"\nsamples: {samples.num_rows:,}  frames: {frames.num_rows:,}")
+        print("hottest leaf frames (self samples):")
+        for fid, count in sorted(leaves.items(), key=lambda kv: -kv[1])[:8]:
+            name, module, addr = by_id.get(fid, ("?", "?", 0))
+            label = name or f"0x{addr:x}"
+            print(f"  {count:6d}   {label}  {module}".rstrip())
 
     # --- pandas, if it is installed ---------------------------------------
     try:

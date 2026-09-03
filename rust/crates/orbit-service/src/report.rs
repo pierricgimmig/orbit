@@ -328,6 +328,25 @@ impl StoreInner {
     }
 }
 
+impl SampleStore {
+    /// A read-only copy of everything the store holds, for export: every
+    /// sample as stored, and every frame the samples can point at, sorted by
+    /// id so a dump is stable across runs. Copies rather than borrows because
+    /// the encoder must not hold this lock while it writes a file.
+    pub fn export_rows(&self) -> (Vec<StoredSample>, Vec<(u32, FrameInfo)>) {
+        let inner = self.inner.lock().unwrap();
+        let samples = inner
+            .samples
+            .iter()
+            .map(|s| StoredSample { timestamp_ns: s.timestamp_ns, tid: s.tid, frames: s.frames.clone() })
+            .collect();
+        let mut frames: Vec<(u32, FrameInfo)> =
+            inner.names.iter().map(|(id, info)| (*id, info.clone())).collect();
+        frames.sort_by_key(|(id, _)| *id);
+        (samples, frames)
+    }
+}
+
 /// Which way a call tree is walked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeMode {

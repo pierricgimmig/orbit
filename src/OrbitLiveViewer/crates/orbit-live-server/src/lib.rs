@@ -104,12 +104,13 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub modules_json:
         Mutex<Option<std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>>>,
-    /// Optional: the whole capture serialized as an Arrow IPC file, for
-    /// download. Set by the service, which owns the encoder (and its arrow
-    /// dependency) so this crate need not.
+    /// Optional: the whole capture serialized for download, in the named
+    /// format (`"ipc"` for an Arrow IPC file, `"parquet"` for Parquet). Set by
+    /// the service, which owns the encoder (and its arrow dependency) so this
+    /// crate need not.
     #[allow(clippy::type_complexity)]
     pub capture_export:
-        Mutex<Option<std::sync::Arc<dyn Fn() -> Result<Vec<u8>, String> + Send + Sync>>>,
+        Mutex<Option<std::sync::Arc<dyn Fn(&str) -> Result<Vec<u8>, String> + Send + Sync>>>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
@@ -369,7 +370,7 @@ impl LiveService {
 
     pub fn set_capture_export(
         &self,
-        export: std::sync::Arc<dyn Fn() -> Result<Vec<u8>, String> + Send + Sync>,
+        export: std::sync::Arc<dyn Fn(&str) -> Result<Vec<u8>, String> + Send + Sync>,
     ) {
         *self.capture_export.lock() = Some(export);
     }

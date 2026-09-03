@@ -340,9 +340,19 @@ async fn sampling_tree(
     }
 }
 
-/// `GET /api/capture/export` -- the whole capture as an Arrow IPC file,
-/// offered as a download. 501 when the service does not provide an encoder.
-async fn capture_export(State(svc): State<Arc<LiveService>>) -> Response {
+/// `GET /api/capture/export?format=ipc|parquet` -- the whole capture as one
+/// file, offered as a download. `ipc` (the default) is an Arrow IPC file,
+/// `parquet` a Parquet file. 501 when the service does not provide an encoder,
+/// 400 for a format it does not know.
+#[derive(Deserialize)]
+struct ExportQuery {
+    format: Option<String>,
+}
+
+async fn capture_export(
+    State(svc): State<Arc<LiveService>>,
+    Query(q): Query<ExportQuery>,
+) -> Response {
     let hook = svc.capture_export.lock().clone();
     let Some(export) = hook else {
         return (
@@ -351,13 +361,25 @@ async fn capture_export(State(svc): State<Arc<LiveService>>) -> Response {
         )
             .into_response();
     };
-    match tokio::task::spawn_blocking(move || export()).await {
+    let format = q.format.unwrap_or_else(|| "ipc".to_string());
+    let (content_type, filename) = match format.as_str() {
+        "ipc" => ("application/vnd.apache.arrow.file", "capture.arrow"),
+        "parquet" => ("application/vnd.apache.parquet", "capture.parquet"),
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("unknown export format {other:?}; use ipc or parquet"),
+            )
+                .into_response();
+        }
+    };
+    match tokio::task::spawn_blocking(move || export(&format)).await {
         Ok(Ok(bytes)) => (
             [
-                (header::CONTENT_TYPE, "application/vnd.apache.arrow.file"),
+                (header::CONTENT_TYPE, content_type),
                 (
                     header::CONTENT_DISPOSITION,
-                    "attachment; filename=\"capture.arrow\"",
+                    &*format!("attachment; filename=\"{filename}\""),
                 ),
             ],
             bytes,
@@ -987,7 +1009,7 @@ mod isolation_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn capture_export_serves_arrow_when_a_hook_is_set() {
         let svc = test_service();
-        svc.set_capture_export(std::sync::Arc::new(|| Ok(b"ARROW1_stub_body".to_vec())));
+        svc.set_capture_export(std::sync::Arc::new(|_fmt| Ok(b"ARROW1_stub_body".to_vec())));
         let base = spawn_router(svc).await;
         let out = curl_si(&format!("{base}/api/capture/export"));
         let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
@@ -1004,6 +1026,36 @@ mod isolation_tests {
             String::from_utf8_lossy(&out.stdout).contains("ARROW1_stub_body"),
             "body missing"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_export_serves_parquet_when_asked() {
+        let svc = test_service();
+        // The hook sees the format the client asked for.
+        svc.set_capture_export(std::sync::Arc::new(|fmt| {
+            Ok(format!("PAR1_stub_{fmt}").into_bytes())
+        }));
+        let base = spawn_router(svc).await;
+        let out = curl_si(&format!("{base}/api/capture/export?format=parquet"));
+        let raw = String::from_utf8_lossy(&out.stdout).to_string();
+        let text = raw.to_ascii_lowercase();
+        assert!(text.contains("200 ok"), "status line: {text}");
+        assert!(text.contains("application/vnd.apache.parquet"), "content-type: {text}");
+        assert!(
+            text.contains("attachment; filename=\"capture.parquet\""),
+            "content-disposition: {text}"
+        );
+        assert!(raw.contains("PAR1_stub_parquet"), "body missing");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_export_rejects_an_unknown_format() {
+        let svc = test_service();
+        svc.set_capture_export(std::sync::Arc::new(|_| Ok(Vec::new())));
+        let base = spawn_router(svc).await;
+        let out = curl_si(&format!("{base}/api/capture/export?format=csv"));
+        let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(text.contains("400"), "expected 400, got: {text}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

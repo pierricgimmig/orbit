@@ -54,6 +54,9 @@ struct Args {
     /// static service over a pipe.
     gpu_helper: Option<String>,
     host: Option<String>,
+    /// `--out-arrow <dir>`: also write the capture as an Arrow dataset
+    /// (events / samples / frames tables + manifest.json) in that directory.
+    out_arrow: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -64,6 +67,7 @@ fn parse_args() -> Args {
         out: None,
         gpu_helper: None,
         host: None,
+        out_arrow: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(flag) = iter.next() {
@@ -80,6 +84,7 @@ fn parse_args() -> Args {
                 }
             }
             "--out" => args.out = iter.next(),
+            "--out-arrow" => args.out_arrow = iter.next(),
             "--gpu-helper" => args.gpu_helper = iter.next(),
             "--host" => args.host = iter.next(),
             "--serve" => {
@@ -241,6 +246,12 @@ fn main() {
     let mut interner = CallstackInterner::new();
     let mut samples = 0u64;
     let mut interned = 0u64;
+    // For --out-arrow: the same capture kept as rows, so the Arrow dataset
+    // is written from what was captured rather than re-read from the pod.
+    let arrow_out = args.out_arrow.clone();
+    let mut arrow_events: Vec<orbit_live_event::LiveEvent> = Vec::new();
+    let mut arrow_samples: Vec<orbit_capture::SampleRow> = Vec::new();
+    let mut arrow_frames: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
 
     // In self mode, spawn a few busy worker threads so the scheduler
     // multiplexes them and produces context switches to capture.
@@ -303,6 +314,19 @@ fn main() {
                             duration_ns: slice.duration_ns,
                             out_timestamp_ns: slice.out_timestamp_ns,
                         });
+                        if arrow_out.is_some() {
+                            arrow_events.push(orbit_live_event::LiveEvent {
+                                start_ns: slice.out_timestamp_ns.saturating_sub(slice.duration_ns),
+                                duration_ns: slice.duration_ns,
+                                tid: slice.tid as u32,
+                                pid: slice.pid as u32,
+                                kind: orbit_live_event::kind::SCHEDULING_SLICE,
+                                depth: 0,
+                                extra: slice.core as u8,
+                                _pad: 0,
+                                name_id: 0,
+                            });
+                        }
                         slices += 1;
                     }
                 } else {
@@ -353,6 +377,23 @@ fn main() {
                 callstack_id: key,
                 timestamp_ns: sample.time,
             });
+            if arrow_out.is_some() {
+                // Frame ids are dense per pc; the frames table maps each back
+                // to its address (names are not symbolized on this path).
+                let frames = outcome
+                    .frames
+                    .iter()
+                    .map(|pc| {
+                        let next = arrow_frames.len() as u32;
+                        *arrow_frames.entry(*pc).or_insert(next)
+                    })
+                    .collect();
+                arrow_samples.push(orbit_capture::SampleRow {
+                    timestamp_ns: sample.time,
+                    tid: sample.tid,
+                    frames,
+                });
+            }
             samples += 1;
         }
     }
@@ -395,6 +436,29 @@ fn main() {
         Err(error) => {
             eprintln!("orbit-service: could not write {out_path}: {error}");
             std::process::exit(2);
+        }
+    }
+
+    if let Some(dir) = arrow_out.as_deref() {
+        let mut frames: Vec<orbit_capture::FrameRow> = arrow_frames
+            .iter()
+            .map(|(pc, id)| orbit_capture::FrameRow {
+                id: *id,
+                name: String::new(),
+                module: String::new(),
+                address: *pc,
+            })
+            .collect();
+        frames.sort_by_key(|f| f.id);
+        match orbit_capture::write_dataset(dir, &arrow_events, |_| String::new(), &arrow_samples, &frames) {
+            Ok(m) => eprintln!(
+                "orbit-service: wrote Arrow dataset to {dir}: {} events, {} samples, {} frames",
+                m.events, m.samples, m.frames
+            ),
+            Err(error) => {
+                eprintln!("orbit-service: could not write Arrow dataset to {dir}: {error}");
+                std::process::exit(2);
+            }
         }
     }
 
