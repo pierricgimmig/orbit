@@ -630,6 +630,12 @@ pub struct OrbitLiveApp {
     /// track strip exists to fold.
     pending_collapse_scheduler: bool,
     measure_dragging: bool,
+    /// A primary-button drag that began on a sample bar: it selects samples
+    /// instead of panning, for as long as the button is down.
+    sample_drag: bool,
+    /// Samples inside the current selection, counted from the viewer's own
+    /// index, so a selection reads back immediately and without a service.
+    local_sample_count: u64,
     idle_skip_chrome: bool,
     last_n_prims: u32,
     last_n_lanes_kept: u32,
@@ -1006,6 +1012,8 @@ impl OrbitLiveApp {
             pending_report_request: crate::dev::query_report_tab_from_location().is_some(),
             pending_collapse_scheduler: crate::dev::query_collapse_scheduler_from_location(),
             measure_dragging: false,
+            sample_drag: false,
+            local_sample_count: 0,
             idle_skip_chrome: false,
             last_n_prims: 0,
             last_n_lanes_kept: 0,
@@ -2721,7 +2729,7 @@ impl OrbitLiveApp {
         paint_timebar(ui, ruler, self.t0, self.t1, self.timeline_origin_ns());
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false, dt);
-        self.handle_measure(&ruler_resp, ruler, false);
+        self.handle_measure(&ruler_resp, ruler, false, PointerButton::Secondary);
         if ruler_resp.double_clicked() {
             self.fit_to_content();
             self.needs_repaint = true;
@@ -2832,10 +2840,29 @@ impl OrbitLiveApp {
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
-                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true, dt);
+                // A left drag that starts on a thread's sample bar selects
+                // those samples -- the white ticks are the thing you drag
+                // across -- and the timeline does not pan underneath it.
+                // Anywhere else, a left drag pans as before.
+                if body_resp.drag_started_by(PointerButton::Primary) {
+                    self.sample_drag = body_resp
+                        .interact_pointer_pos()
+                        .and_then(|p| self.sample_lane_at_y(p.y - body.top()))
+                        .is_some();
+                }
+                if !self.sample_drag {
+                    self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true, dt);
+                }
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y, dt);
                 self.handle_pick(&body_resp, body, t0, t1, width);
-                self.handle_measure(&body_resp, body, true);
+                if self.sample_drag {
+                    self.handle_measure(&body_resp, body, true, PointerButton::Primary);
+                } else {
+                    self.handle_measure(&body_resp, body, true, PointerButton::Secondary);
+                }
+                if body_resp.drag_stopped() {
+                    self.sample_drag = false;
+                }
             }
 
             let dropping = ui.input(|i| !i.raw.hovered_files.is_empty());
@@ -4185,11 +4212,19 @@ impl OrbitLiveApp {
         }
     }
 
-    fn handle_measure(&mut self, response: &egui::Response, rect: Rect, label_here: bool) {
+    /// Selection by drag. `button` is Secondary for the classic right-drag
+    /// measure anywhere, Primary when a left drag began on a sample bar.
+    fn handle_measure(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        label_here: bool,
+        button: PointerButton,
+    ) {
         if !rect.is_positive() {
             return;
         }
-        if response.drag_started_by(PointerButton::Secondary) {
+        if response.drag_started_by(button) {
             if let Some(p) = response.interact_pointer_pos() {
                 let mods = response.ctx.input(|i| i.modifiers);
                 // Shift adds to the selection; Ctrl is the zoom gesture and
@@ -4212,7 +4247,7 @@ impl OrbitLiveApp {
                 self.follow = false;
             }
         }
-        if self.measure_dragging && response.dragged_by(PointerButton::Secondary) {
+        if self.measure_dragging && response.dragged_by(button) {
             if let Some(p) = response.interact_pointer_pos() {
                 if let Some(m) = &mut self.measure {
                     m.stop_ns = time_at_x(p.x, rect, self.t0, self.t1);
@@ -4338,6 +4373,7 @@ impl OrbitLiveApp {
         }
         self.last_report_request_s = now;
         self.sampling_ranges = ranges;
+        self.local_sample_count = count_samples_in(&self.index, &self.sampling_ranges);
         self.request_reports();
     }
 
@@ -4413,7 +4449,8 @@ impl OrbitLiveApp {
         let report = self.sampling.clone();
         // The panel shows for a selection, and also for a finished capture
         // with nothing selected -- that is the aggregate view.
-        if report.is_none() && self.tree.is_none() && self.modules.is_none() {
+        let has_selection = !self.sampling_ranges.is_empty();
+        if report.is_none() && self.tree.is_none() && self.modules.is_none() && !has_selection {
             return;
         }
         egui::TopBottomPanel::bottom("orbit_sampling_report")
@@ -4428,11 +4465,16 @@ impl OrbitLiveApp {
             .show(ctx, |ui| {
                 let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("Sampling report — {samples} samples"))
-                            .color(theme::TEXT)
-                            .size(12.0),
-                    );
+                    let title = match &report {
+                        Some(_) => format!("Sampling report — {samples} samples"),
+                        // No service report (yet, or at all): the viewer can
+                        // still say what the selection holds.
+                        None => format!(
+                            "{} samples selected — no report from the service",
+                            self.local_sample_count
+                        ),
+                    };
+                    ui.label(RichText::new(title).color(theme::TEXT).size(12.0));
                     ui.label(
                         RichText::new(describe_selection(&self.sampling_ranges))
                         .color(theme::MUTED)
@@ -6350,6 +6392,29 @@ fn paint_selection_overlay(
             );
         }
     }
+}
+
+/// Samples in the union of `ranges`, from the viewer's own index: a SAMPLE
+/// tick counts when its time falls inside a window and the window's thread
+/// filter (if any) is its thread. Lanes are sorted by start, so each window
+/// is a binary search plus the run inside it.
+fn count_samples_in(index: &TrackIndex, ranges: &[(u64, u64, Option<u32>)]) -> u64 {
+    let mut n = 0u64;
+    for (key, lane) in index.lanes() {
+        if key.kind != kind::SAMPLE {
+            continue;
+        }
+        let ev = lane.events();
+        for &(a, b, tid) in ranges {
+            if tid.is_some_and(|t| t != key.tid) {
+                continue;
+            }
+            let lo = ev.partition_point(|e| e.start_ns < a);
+            let hi = ev.partition_point(|e| e.start_ns <= b);
+            n += hi.saturating_sub(lo) as u64;
+        }
+    }
+    n
 }
 
 /// The report panel's one-line description of what is selected.
