@@ -198,6 +198,7 @@ impl SampleStore {
         SampleStore::default()
     }
 
+    #[cfg(test)]
     pub fn record_name(&self, id: u32, name: &str) {
         self.record_frame(id, FrameInfo { name: name.to_string(), ..FrameInfo::default() });
     }
@@ -220,17 +221,10 @@ impl SampleStore {
         inner.dirty = false;
     }
 
-    pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().samples.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Aggregates the samples in `[start_ns, end_ns]` into a JSON report:
     /// `{"samples":N,"functions":[{"name":..,"self":N,"inclusive":N,
     /// "self_percent":F,"inclusive_percent":F}, ...]}` sorted by self count.
+    #[cfg(test)]
     pub fn report_json(&self, start_ns: u64, end_ns: u64) -> String {
         self.report_json_for(start_ns, end_ns, None)
     }
@@ -239,6 +233,7 @@ impl SampleStore {
     /// single thread's sample bar means: Orbit's `CallstackThreadBar` selects
     /// the callstack events *of that tid* in the range, and only the
     /// all-threads bar selects across the process.
+    #[cfg(test)]
     pub fn report_json_for(&self, start_ns: u64, end_ns: u64, tid: Option<u32>) -> String {
         self.report_json_for_ranges(&[SampleRange::new(start_ns, end_ns, tid)])
     }
@@ -328,25 +323,6 @@ impl StoreInner {
     }
 }
 
-impl SampleStore {
-    /// A read-only copy of everything the store holds, for export: every
-    /// sample as stored, and every frame the samples can point at, sorted by
-    /// id so a dump is stable across runs. Copies rather than borrows because
-    /// the encoder must not hold this lock while it writes a file.
-    pub fn export_rows(&self) -> (Vec<StoredSample>, Vec<(u32, FrameInfo)>) {
-        let inner = self.inner.lock().unwrap();
-        let samples = inner
-            .samples
-            .iter()
-            .map(|s| StoredSample { timestamp_ns: s.timestamp_ns, tid: s.tid, frames: s.frames.clone() })
-            .collect();
-        let mut frames: Vec<(u32, FrameInfo)> =
-            inner.names.iter().map(|(id, info)| (*id, info.clone())).collect();
-        frames.sort_by_key(|(id, _)| *id);
-        (samples, frames)
-    }
-}
-
 /// Which way a call tree is walked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeMode {
@@ -411,6 +387,7 @@ impl SampleStore {
     /// directions, which is exactly how Orbit's `CallTreeView` builds them:
     /// top-down iterates the frames in reverse (they arrive innermost-first),
     /// bottom-up iterates them forward.
+    #[cfg(test)]
     pub fn tree_json(&self, start_ns: u64, end_ns: u64, mode: TreeMode) -> String {
         self.tree_json_for(start_ns, end_ns, mode, None)
     }
@@ -418,6 +395,7 @@ impl SampleStore {
     /// As `tree_json`, narrowed to one thread. A top-down tree of one thread
     /// still carries its thread root, so the shape does not change with the
     /// filter -- only which samples reach it.
+    #[cfg(test)]
     pub fn tree_json_for(
         &self,
         start_ns: u64,

@@ -15,6 +15,7 @@ use orbit_live_event::LiveEvent;
 
 const PUMP_BUDGET: usize = 48_000;
 /// Same-origin Chrome demo (server caches catapult theverge_trace.json).
+#[cfg(any(target_arch = "wasm32", test))]
 pub const THEVERGE_SAME_ORIGIN: &str = "/traces/theverge_trace.json";
 pub const THEVERGE_FILE_NAME: &str = "theverge_trace.json";
 pub const THEVERGE_LABEL: &str = "theverge";
@@ -539,6 +540,7 @@ pub fn install_query_trace(pending: PendingFile) {
     });
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn same_origin_trace_path(search: &str) -> Option<String> {
     let q = search.strip_prefix('?').unwrap_or(search);
     for part in q.split('&') {
@@ -562,6 +564,7 @@ fn same_origin_trace_path(search: &str) -> Option<String> {
     None
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn percent_decode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let b = s.as_bytes();

@@ -182,19 +182,6 @@ impl ChromeStream {
         self.decode = Decode::Identity;
     }
 
-    fn push_decoded(&mut self, chunk: &[u8]) {
-        match &mut self.decode {
-            Decode::Gzip(_) => self.push_gzip(chunk),
-            Decode::ZipPending | Decode::ZipDeflate { .. } | Decode::ZipStored { .. } => {
-                self.push_zip(chunk)
-            }
-            Decode::Identity => {
-                self.raw.extend_from_slice(chunk);
-                self.bytes_decoded += chunk.len() as u64;
-            }
-        }
-    }
-
     fn push_zip(&mut self, chunk: &[u8]) {
         self.magic_buf.extend_from_slice(chunk);
         loop {

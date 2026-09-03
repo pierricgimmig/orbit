@@ -1,5 +1,9 @@
 //! Browser fetch + WebSocket. Native tests get a no-op stub plus parsers.
 
+// The parsers and JSON mirrors here serve the wasm client; the native build
+// only compiles the stub, so nothing reads them there.
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
 use orbit_live_event::chrome;
 use serde::Deserialize;
 
@@ -79,6 +83,9 @@ pub struct SamplingReport {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+// Mirrors the service's JSON; fields the viewer does not read yet stay so the
+// schema is written down once, here.
+#[allow(dead_code)]
 pub struct SymbolsStatusJson {
     #[serde(default)]
     pub pid: u32,
@@ -93,6 +100,9 @@ pub struct SymbolsStatusJson {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+// Mirrors the service's JSON; fields the viewer does not read yet stay so the
+// schema is written down once, here.
+#[allow(dead_code)]
 pub struct FunctionHit {
     pub function_id: u64,
     #[serde(default)]
@@ -104,6 +114,9 @@ pub struct FunctionHit {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+// Mirrors the service's JSON; fields the viewer does not read yet stay so the
+// schema is written down once, here.
+#[allow(dead_code)]
 pub struct FunctionSearchJson {
     #[serde(default)]
     pub pid: u32,
@@ -116,6 +129,9 @@ pub struct FunctionSearchJson {
 /// One node of a call tree. Recursive, because that is what it is: the JSON
 /// nests children inside parents and the panel walks it the same way.
 #[derive(Clone, Debug, Default, Deserialize)]
+// Mirrors the service's JSON; fields the viewer does not read yet stay so the
+// schema is written down once, here.
+#[allow(dead_code)]
 pub struct TreeNodeJson {
     #[serde(default)]
     pub kind: String,
@@ -138,6 +154,9 @@ pub struct TreeNodeJson {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+// Mirrors the service's JSON; fields the viewer does not read yet stay so the
+// schema is written down once, here.
+#[allow(dead_code)]
 pub struct SamplingTree {
     #[serde(default)]
     pub mode: String,
@@ -166,6 +185,9 @@ pub struct ModuleRow {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+// Mirrors the service's JSON; fields the viewer does not read yet stay so the
+// schema is written down once, here.
+#[allow(dead_code)]
 pub struct ModulesJson {
     #[serde(default)]
     pub pid: u32,

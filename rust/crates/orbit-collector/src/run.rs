@@ -142,7 +142,7 @@ mod tests {
             self.last_timestamp = timestamp_ns;
             self.count += 1;
             let header = orbit_perf_records::PerfEventHeader::parse(record).unwrap();
-            self.kinds_seen.insert({ header.kind });
+            self.kinds_seen.insert(header.kind);
         }
     }
 

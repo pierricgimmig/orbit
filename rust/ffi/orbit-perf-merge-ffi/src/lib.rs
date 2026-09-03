@@ -12,6 +12,7 @@ use orbit_perf_merge::{MergeQueue, PushError, Stream};
 
 /// Stream kinds as the C side spells them. Matches
 /// `PerfEventOrderedStream::OrderType` in value and meaning.
+#[cfg(test)]
 const STREAM_NONE: u8 = 0;
 const STREAM_FILE_DESCRIPTOR: u8 = 1;
 const STREAM_THREAD_ID: u8 = 2;

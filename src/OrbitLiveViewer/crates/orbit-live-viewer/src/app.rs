@@ -290,6 +290,7 @@ fn view_time_at(t0: f64, t1: f64, frac: f64) -> f64 {
 /// stays put. `t0` is allowed to go negative: clamping it to 0 (or recentering
 /// like native `SetMinMax`) expands only one side and walks the lock. Span
 /// clamps keep that same pivot.
+#[cfg(test)]
 fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64) {
     if zoom_delta == 0 {
         return (t0, t1);
@@ -306,6 +307,7 @@ fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64)
 ///
 /// Same rebuild as `zoom_time`: `t_mouse` stays at `frac` so the pointer
 /// time does not walk. `t0` may go negative.
+#[cfg(test)]
 fn zoom_time_by_scale(t0: f64, t1: f64, scale: f64, center_ratio: f64) -> (f64, f64) {
     zoom_time_by_scale_limited(t0, t1, scale, center_ratio, ZOOM_MAX_NS)
 }
@@ -5180,6 +5182,7 @@ fn sat_i8(v: f32) -> i8 {
     v.round().clamp(0.0, 120.0) as i8
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn parse_css_px(s: &str) -> f32 {
     s.trim()
         .trim_end_matches("px")
@@ -6242,18 +6245,6 @@ fn x_at_time(t: u64, rect: Rect, t0: f64, t1: f64) -> f32 {
     rect.left() + (((t as f64 - t0) / span) as f32 * rect.width()).clamp(0.0, rect.width())
 }
 
-/// `CaptureWindow::RenderSelectionOverlay`: dim outside, white edges, duration at drag-end.
-fn paint_measure_overlay(
-    ui: &Ui,
-    rect: Rect,
-    t0: f64,
-    t1: f64,
-    measure: Option<TimeMeasure>,
-    draw_label: bool,
-) {
-    paint_selection_overlay(ui, rect, t0, t1, &[], measure, draw_label);
-}
-
 /// Draws the committed multi-select bands plus any in-progress drag.
 ///
 /// A lone selection keeps the original look -- the area outside it is dimmed
@@ -7060,6 +7051,7 @@ mod tests {
         assert!(!vscroll_from_primary_drag(false, false));
     }
 
+    #[test]
     fn touch_vscroll_follows_the_finger_and_clamps_at_top() {
         // Finger down -> see earlier lanes -> smaller offset.
         assert_eq!(touch_vscroll_target(100.0, 30.0, 1000.0), 70.0);

@@ -462,7 +462,7 @@ fn capture_loop(
     // that address already had. Remember the id per address instead; the
     // symbolizer is fixed for the life of this capture, so the cache is too.
     let mut pc_ids: crate::report::FastMap<u64, u32> = crate::report::FastMap::default();
-    let mut symbolizer = Symbolizer::for_pid(target_pid);
+    let symbolizer = Symbolizer::for_pid(target_pid);
     if symbolizer.module_count() > 0 {
         eprintln!(
             "orbit-service: symbolizing {} modules, {} symbols",

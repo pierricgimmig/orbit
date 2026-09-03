@@ -52,6 +52,7 @@ impl VisibleProcesses {
         visible
     }
 
+    #[cfg(test)]
     pub fn shows_everything(&self) -> bool {
         self.all
     }

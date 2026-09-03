@@ -30,7 +30,7 @@ pub unsafe extern "C" fn orbit_get_executable_region(
 
 use orbit_ptrace::{
     attach_and_stop_process, detach_and_continue_process, read_tracees_memory,
-    write_tracees_memory, MemoryInTracee, MemoryState,
+    write_tracees_memory, MemoryInTracee,
 };
 
 /// Attaches to `pid`, runs the full MemoryInTracee lifecycle (mmap a page,

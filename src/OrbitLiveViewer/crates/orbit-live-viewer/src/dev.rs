@@ -265,6 +265,7 @@ pub fn query_collapse_scheduler_from_location() -> bool {
 
 /// Parses `collapse=` out of a location query string; `scheduler` is the
 /// only value so far.
+#[cfg(any(target_arch = "wasm32", test))]
 pub fn query_collapses_scheduler(search: &str) -> bool {
     search
         .trim_start_matches('?')
@@ -273,6 +274,7 @@ pub fn query_collapses_scheduler(search: &str) -> bool {
 }
 
 /// Parses `report=` out of a location query string.
+#[cfg(any(target_arch = "wasm32", test))]
 pub fn query_report_tab(search: &str) -> Option<String> {
     for pair in search.trim_start_matches('?').split('&') {
         if let Some(value) = pair.strip_prefix("report=") {

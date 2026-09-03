@@ -19,6 +19,7 @@ const HISTORY: usize = 120;
 
 /// One lane's worth of the latest frame: a thread id and its scopes, already
 /// sorted so the flamegraph can stack by depth.
+#[cfg(test)]
 pub struct Lane<'a> {
     pub tid: u32,
     pub scopes: Vec<&'a RelScope>,
@@ -97,23 +98,16 @@ impl SelfProfile {
         self.worker_dropped = stats.worker_dropped;
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.frame_ms.is_empty()
-    }
-
     pub fn frames_seen(&self) -> u64 {
         self.frames_seen
     }
 
-    /// The per-phase totals as one JSON object: `{"frames":N,"phases":[{"name",
-    /// "total_ms","count","avg_us","max_us"}, ...]}`, heaviest first.
-    pub fn phases_json(&self, intern: &InternTable) -> String {
-        self.phases_json_with(intern, 0, 0, 0)
-    }
-
-    /// As `phases_json`, with the index state the dirty key watches, so a
-    /// harness can tell "the data is still arriving" from "we rebuild for no
-    /// reason".
+    /// The per-phase totals as one JSON object, heaviest first:
+    /// `{"frames":N,"events":..,"layout_gen":..,"lane_gen":..,"phases":[{"name",
+    /// "total_ms","count","avg_us","max_us"}, ...]}`. The index state rides
+    /// along so a harness can tell "the data is still arriving" from "we
+    /// rebuild for no reason".
+    #[cfg(any(target_arch = "wasm32", test))]
     pub fn phases_json_with(&self, intern: &InternTable, events: u64, layout_gen: u64, lane_gen: u64) -> String {
         let mut rows: Vec<(&str, u64, u64, u64)> = self
             .totals
@@ -178,6 +172,7 @@ impl SelfProfile {
     /// The latest frame's scopes grouped into per-thread lanes, ordered by tid
     /// so UI (1) sits above render (2) above the workers (10+). Pure, so the
     /// grouping is unit-testable.
+    #[cfg(test)]
     pub fn lanes(&self) -> Vec<Lane<'_>> {
         let mut tids: Vec<u32> = Vec::new();
         for s in &self.latest {
@@ -304,6 +299,25 @@ mod tests {
     }
 
     #[test]
+    fn phases_json_names_the_heaviest_phase_first() {
+        let mut sp = SelfProfile::default();
+        sp.push_frame(
+            &[rel(TID_UI, NAME_FRAME, 0, 5_000_000, 0), rel(TID_UI, NAME_TRACKS, 0, 1_000_000, 1)],
+            0,
+            FrameStats::default(),
+        );
+        let mut intern = InternTable::default();
+        intern.insert_id(NAME_FRAME, "Frame");
+        intern.insert_id(NAME_TRACKS, "Tracks");
+        let json = sp.phases_json_with(&intern, 7, 8, 9);
+        assert!(
+            json.starts_with("{\"frames\":1,\"events\":7,\"layout_gen\":8,\"lane_gen\":9,\"phases\":[{\"name\":\"Frame\""),
+            "{json}"
+        );
+        assert!(json.contains("\"name\":\"Tracks\""));
+    }
+
+    #[test]
     fn frame_span_prefers_the_outer_frame_scope() {
         let scopes = vec![
             rel(TID_UI, NAME_FRAME, 0, 5_000_000, 0),
@@ -325,7 +339,7 @@ mod tests {
     #[test]
     fn push_frame_tracks_history_and_stats() {
         let mut sp = SelfProfile::default();
-        assert!(sp.is_empty());
+        assert_eq!(sp.frames_seen(), 0);
         sp.push_frame(
             &[rel(TID_UI, NAME_FRAME, 0, 8_000_000, 0)],
             0, FrameStats {
@@ -337,7 +351,7 @@ mod tests {
                 worker_dropped: 1,
             },
         );
-        assert!(!sp.is_empty());
+        assert!(sp.frames_seen() > 0);
         assert!((sp.last_ms() - 8.0).abs() < 1e-3);
         assert!((sp.max_ms() - 8.0).abs() < 1e-3);
         assert_eq!(sp.prims, 42);

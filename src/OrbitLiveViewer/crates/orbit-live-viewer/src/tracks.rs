@@ -941,10 +941,6 @@ impl TrackStrip {
         items
     }
 
-    fn skeleton(&self, index: &TrackIndex, filter_pid: Option<u32>) -> Vec<(RowId, f32)> {
-        self.skeleton_with_threads(index, filter_pid, &self.thread_order)
-    }
-
     fn skeleton_with_threads(
         &self,
         index: &TrackIndex,
