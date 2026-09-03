@@ -279,15 +279,13 @@ impl TrackStrip {
                 self.thread_order.push(t);
             }
         }
-        let visible: FastSet<RowId> = self
-            .skeleton(index, filter_pid)
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        self.y.retain(|id, _| visible.contains(id));
-        for id in visible {
-            self.y.entry(id).or_insert(0.0);
-        }
+        // No seeding of `y` here. That used to retain the skeleton's rows and
+        // insert the rest at 0 for the lerp animation rows no longer have --
+        // and the skeleton lists only the rail lanes, so every frame it
+        // evicted the packed flame-graph lanes that apply_layout put straight
+        // back. The map never compared equal to itself, layout_gen bumped
+        // every frame, and the timeline rebuilt its primitives on every
+        // static frame. apply_layout rebuilds the whole map anyway.
         self.apply_layout(index, filter_pid);
     }
 

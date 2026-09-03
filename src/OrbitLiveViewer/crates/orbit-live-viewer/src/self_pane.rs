@@ -108,13 +108,23 @@ impl SelfProfile {
     /// The per-phase totals as one JSON object: `{"frames":N,"phases":[{"name",
     /// "total_ms","count","avg_us","max_us"}, ...]}`, heaviest first.
     pub fn phases_json(&self, intern: &InternTable) -> String {
+        self.phases_json_with(intern, 0, 0, 0)
+    }
+
+    /// As `phases_json`, with the index state the dirty key watches, so a
+    /// harness can tell "the data is still arriving" from "we rebuild for no
+    /// reason".
+    pub fn phases_json_with(&self, intern: &InternTable, events: u64, layout_gen: u64, lane_gen: u64) -> String {
         let mut rows: Vec<(&str, u64, u64, u64)> = self
             .totals
             .iter()
             .map(|(id, (sum, n, mx))| (intern.get(*id).unwrap_or("?"), *sum, *n, *mx))
             .collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut out = format!("{{\"frames\":{},\"phases\":[", self.frames_seen);
+        let mut out = format!(
+            "{{\"frames\":{},\"events\":{events},\"layout_gen\":{layout_gen},\"lane_gen\":{lane_gen},\"phases\":[",
+            self.frames_seen
+        );
         for (i, (name, sum, n, mx)) in rows.iter().enumerate() {
             if i > 0 {
                 out.push(',');
@@ -136,9 +146,9 @@ impl SelfProfile {
     /// harness driving the viewer headless can read the breakdown that is
     /// otherwise only painted on the canvas.
     #[cfg(target_arch = "wasm32")]
-    pub fn publish(&self, intern: &InternTable) {
+    pub fn publish(&self, intern: &InternTable, events: u64, layout_gen: u64, lane_gen: u64) {
         if let Some(win) = web_sys::window() {
-            let json = self.phases_json(intern);
+            let json = self.phases_json_with(intern, events, layout_gen, lane_gen);
             let _ = js_sys::Reflect::set(
                 &win,
                 &wasm_bindgen::JsValue::from_str("__orbit_self"),
@@ -148,7 +158,7 @@ impl SelfProfile {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn publish(&self, _intern: &InternTable) {}
+    pub fn publish(&self, _intern: &InternTable, _events: u64, _layout_gen: u64, _lane_gen: u64) {}
 
     pub fn last_ms(&self) -> f32 {
         self.frame_ms.back().copied().unwrap_or(0.0)

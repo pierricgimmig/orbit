@@ -4689,7 +4689,12 @@ impl eframe::App for OrbitLiveApp {
                 },
             );
             if self.self_profile.frames_seen() % 30 == 0 {
-                self.self_profile.publish(&self.intern);
+                self.self_profile.publish(
+                    &self.intern,
+                    self.index.event_count() as u64,
+                    self.tracks.layout_gen(),
+                    self.index.lane_gen(),
+                );
             }
         }
         if self.dev && !scopes.is_empty() {
