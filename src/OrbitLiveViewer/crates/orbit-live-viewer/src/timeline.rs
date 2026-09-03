@@ -175,6 +175,7 @@ impl TimelinePayload {
                     CollectOpts {
                         y_cull,
                         early_out: true,
+                        inline: false,
                     },
                 );
                 for inst in &mut frame.instances {

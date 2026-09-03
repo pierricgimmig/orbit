@@ -171,3 +171,33 @@ NOT DONE
   cache in the capture loop would fold them at ingest instead.
 - Headless numbers are software GL. A run on the user's GPU machine with
   the self-profile pane open is the measurement that closes this.
+
+=====================================================================
+8. Addendum (2026-09-03): inside PrimitiveListing
+=====================================================================
+The user saw PrimitiveListing take a long time with nothing in the worker
+lanes for that stretch. Three main-thread parts of it were unnamed; they now
+are (PoolDispatch, ListingFlatten, ListingSort, recorded from the collector's
+own clock readings at the depth under PrimitiveListing), plus two value
+lanes, pool_wake_us and pool_tail_us. Headless Chrome, demo running, Self
+pane open, from window.__orbit_self:
+
+                              before     after
+   PrimitiveListing   avg     526.5 us   200.8 us
+                      max    1375 us    2370 us*
+   PoolDispatch       avg     424.9 us   120.0 us
+   CollectLane (worker) avg    15.3 us    23.8 us
+   ListingSort        avg      61.7 us    53.4 us
+   ListingFlatten     avg      25.2 us    18.5 us
+   Frame              avg    1.73 ms     1.43 ms
+
+Finding: 81% of the listing was the pool hand-off and join, for ~15 us of
+work per worker -- the workers finished long before the join returned, which
+is why the worker lanes were empty for most of the scope. Fix: the walk runs
+inline when its own measurements say the pool costs more than it saves --
+each mode keeps a running wall time, every 90 frames the other mode runs
+once to stay measured, the cheaper wins (tune_listing_mode). The remaining
+PoolDispatch is the inline walk plus those probes; *the after max is a probe
+frame that met a slow worker wake. A listing_inline value lane shows the
+mode. On the static 320-thread trace listings ran 10 times in 120 frames
+(the skip path from item 6a), so there was little to change.

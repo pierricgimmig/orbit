@@ -82,6 +82,33 @@ impl DevFrame {
         self.inner.as_ref().map(|i| i.origin_ns)
     }
 
+    /// Records a main-thread span from clock readings taken elsewhere, at the
+    /// depth currently open on `tid` -- so a phase measured inside a library
+    /// call lands as a child of the scope wrapping that call. Ignored when the
+    /// readings predate the frame or are inverted.
+    pub fn record_span(&self, tid: u32, name_id: u32, t0_ns: u64, t1_ns: u64) {
+        let Some(inner) = self.inner.as_ref() else {
+            return;
+        };
+        if t0_ns < inner.origin_ns || t1_ns < t0_ns {
+            return;
+        }
+        let depth = inner
+            .stack
+            .borrow()
+            .iter()
+            .filter(|(t, _, _)| *t == tid)
+            .count() as u8;
+        inner.scopes.borrow_mut().push(RelScope {
+            pid: VIEWER_PID,
+            tid,
+            name_id,
+            start_rel_ns: t0_ns - inner.origin_ns,
+            duration_ns: t1_ns.saturating_sub(t0_ns).max(1),
+            depth,
+        });
+    }
+
     /// (worker spans kept, refused) so far this frame.
     pub fn worker_span_counts(&self) -> (u32, u32) {
         match self.inner.as_ref() {

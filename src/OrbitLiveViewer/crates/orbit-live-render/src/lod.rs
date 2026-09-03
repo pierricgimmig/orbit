@@ -45,6 +45,10 @@ impl YCull {
 pub struct CollectOpts {
     pub y_cull: Option<YCull>,
     pub early_out: bool,
+    /// Walk the lanes on the calling thread instead of the pool. The caller
+    /// decides from its own measurements: on a small window the hand-off to
+    /// the workers and the join cost far more than the walk they parallelise.
+    pub inline: bool,
 }
 
 impl Default for CollectOpts {
@@ -52,6 +56,7 @@ impl Default for CollectOpts {
         Self {
             y_cull: None,
             early_out: true,
+            inline: false,
         }
     }
 }
@@ -61,6 +66,7 @@ impl CollectOpts {
         Self {
             y_cull: None,
             early_out: false,
+            inline: false,
         }
     }
 }
@@ -166,8 +172,22 @@ impl ScopePick {
     }
 }
 
+/// Clock readings around the sequential parts of a listing, so the viewer
+/// can name them in its self-profile. All on `orbit_live_event::dev::now_ns`,
+/// the same clock as the worker spans.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ListingTiming {
+    pub dispatch_t0_ns: u64,
+    pub dispatch_t1_ns: u64,
+    pub flatten_t0_ns: u64,
+    pub flatten_t1_ns: u64,
+    pub sort_t0_ns: u64,
+    pub sort_t1_ns: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct InstanceFrame {
+    pub timing: ListingTiming,
     pub width: f32,
     pub height: f32,
     pub lanes: Vec<LaneKey>,
@@ -523,6 +543,7 @@ mod value_lod_tests {
             CollectOpts {
                 y_cull: Some(YCull::new(y0, y0 + h0)),
                 early_out: true,
+                inline: false,
             },
         );
         assert_eq!(culled.instances.len(), 1);
@@ -546,6 +567,7 @@ mod value_lod_tests {
             CollectOpts {
                 y_cull: None,
                 early_out: true,
+                inline: false,
             },
         );
         assert_eq!(wide.instances.len(), 1);
@@ -602,6 +624,7 @@ mod value_lod_tests {
             CollectOpts {
                 y_cull: Some(YCull::new(80.0, 200.0)),
                 early_out: true,
+                inline: false,
             },
         );
         assert!(inst.instances.iter().all(|i| i.kind != kind::VALUE));
@@ -696,6 +719,7 @@ pub fn collect_instances_layout_opts(
         .unwrap_or(0.0);
     if width <= 0.0 || t1 <= t0 {
         return InstanceFrame {
+            timing: ListingTiming::default(),
             width,
             height,
             lanes: keys,
@@ -705,7 +729,9 @@ pub fn collect_instances_layout_opts(
         };
     }
     let span = (t1 - t0) as f64;
-    let (parts, worker_spans) = par::map_collect_lanes(layout, |&(key, y)| {
+    let now = orbit_live_event::dev::now_ns;
+    let mut timing = ListingTiming { dispatch_t0_ns: now(), ..ListingTiming::default() };
+    let walk = |&(key, y): &(LaneKey, f32)| {
         if key.kind == kind::VALUE {
             return Vec::new();
         }
@@ -731,11 +757,26 @@ pub fn collect_instances_layout_opts(
             );
         }
         row
-    });
+    };
+    let (parts, worker_spans): (Vec<Vec<ScopeInstance>>, Vec<par::WorkerSpan>) = if opts.inline {
+        (layout.iter().map(walk).collect(), Vec::new())
+    } else {
+        par::map_collect_lanes(layout, walk)
+    };
+    timing.dispatch_t1_ns = now();
     let lanes_kept = parts.iter().filter(|p| !p.is_empty()).count() as u32;
-    let mut instances: Vec<ScopeInstance> = parts.into_iter().flatten().collect();
+    timing.flatten_t0_ns = now();
+    let total: usize = parts.iter().map(Vec::len).sum();
+    let mut instances: Vec<ScopeInstance> = Vec::with_capacity(total);
+    for part in parts {
+        instances.extend(part);
+    }
+    timing.flatten_t1_ns = now();
+    timing.sort_t0_ns = now();
     sort_instances_longer_on_top(&mut instances);
+    timing.sort_t1_ns = now();
     InstanceFrame {
+        timing,
         width,
         height,
         lanes: keys,

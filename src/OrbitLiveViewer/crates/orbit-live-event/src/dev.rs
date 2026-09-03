@@ -125,6 +125,20 @@ pub const NAME_WORKER_SPANS: u32 = 30_042;
 pub const NAME_SPANS_DROPPED: u32 = 30_043;
 /// Collect + place the capture-global Scheduler core lanes.
 pub const NAME_SCHEDULER: u32 = 30_044;
+/// Inside `PrimitiveListing`, the three things the worker lanes do not show:
+/// the parallel section as the main thread sees it (dispatch to join --
+/// worker wake-up latency lives in the gap between this and the first
+/// `CollectLane`), the flatten of every lane's pieces into one buffer, and
+/// the sort of all instances.
+pub const NAME_LISTING_DISPATCH: u32 = 30_045;
+pub const NAME_LISTING_FLATTEN: u32 = 30_046;
+pub const NAME_LISTING_SORT: u32 = 30_047;
+/// Pool latency as two values: from dispatch to the first worker starting,
+/// and from the last worker finishing to the join returning.
+pub const NAME_POOL_WAKE_US: u32 = 30_048;
+pub const NAME_POOL_TAIL_US: u32 = 30_049;
+/// 1 while the listing walks lanes inline, 0 while it uses the pool.
+pub const NAME_LISTING_INLINE: u32 = 30_050;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +211,12 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_WORKER_SPANS, "worker_spans");
     intern.insert_id(NAME_SPANS_DROPPED, "spans_dropped");
     intern.insert_id(NAME_SCHEDULER, "Scheduler");
+    intern.insert_id(NAME_LISTING_DISPATCH, "PoolDispatch");
+    intern.insert_id(NAME_LISTING_FLATTEN, "ListingFlatten");
+    intern.insert_id(NAME_LISTING_SORT, "ListingSort");
+    intern.insert_id(NAME_POOL_WAKE_US, "pool_wake_us");
+    intern.insert_id(NAME_POOL_TAIL_US, "pool_tail_us");
+    intern.insert_id(NAME_LISTING_INLINE, "listing_inline");
     intern_render_worker_names(intern);
 }
 

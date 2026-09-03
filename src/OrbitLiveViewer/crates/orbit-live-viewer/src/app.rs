@@ -14,7 +14,8 @@ use orbit_live_event::dev::{
     NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE, NAME_SCALE_PPP,
     NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW,
     NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM,
-    NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
+    NAME_WORKER_SPANS, NAME_LISTING_DISPATCH, NAME_LISTING_FLATTEN, NAME_LISTING_SORT, NAME_POOL_WAKE_US,
+    NAME_POOL_TAIL_US, NAME_LISTING_INLINE, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
     VIEWER_NAME, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
@@ -78,6 +79,8 @@ const VSCROLL_PAGE: f32 = 0.9;
 const PROCESS_POLL_S: f64 = 1.0;
 /// Minimum spacing of sampling-report requests while a selection drag is live.
 const REPORT_DRAG_THROTTLE_S: f64 = 0.2;
+/// How often the primitive listing re-measures the mode it is not using.
+const LISTING_PROBE_FRAMES: u32 = 90;
 /// The self-profile pane keeps this much of the viewer's own past.
 const SELF_TIMELINE_RETAIN_NS: u64 = 60_000_000_000;
 /// The self-profile pane's surfaces: a teal-dark canvas and rail, distinct
@@ -628,6 +631,15 @@ pub struct OrbitLiveApp {
     idle_skip_chrome: bool,
     last_n_prims: u32,
     last_n_lanes_kept: u32,
+    last_pool_wake_us: f32,
+    last_pool_tail_us: f32,
+    /// Whether the primitive listing walks lanes inline or on the pool, and
+    /// the running wall time of each mode (us) that decides it. See
+    /// `tune_listing_mode`.
+    listing_inline: bool,
+    listing_frames: u32,
+    listing_inline_ema_us: Option<f32>,
+    listing_pool_ema_us: Option<f32>,
     self_profile: crate::self_pane::SelfProfile,
     self_pane_open: bool,
     /// The self-profile pane's own timeline state. Drawn by the same
@@ -852,6 +864,43 @@ impl OrbitLiveApp {
     fn rail_color(&self) -> Color32 {
         self.canvas_override.map(|(_, r)| r).unwrap_or(theme::RAIL)
     }
+
+    /// Picks inline vs. pool for the next primitive listing from what each
+    /// actually cost. `wall_us` is this frame's walk, dispatch to join, in the
+    /// mode that was used. Each mode keeps a running average; every
+    /// `LISTING_PROBE_FRAMES` the other mode runs once so its average stays
+    /// current, and the cheaper one wins. On a small window the pool's
+    /// hand-off and join cost many times the walk they parallelise, on a big
+    /// one the workers win by a lot; measuring is the only way to know which
+    /// window this is.
+    fn tune_listing_mode(&mut self, wall_us: f32) {
+        let mix = |ema: &mut Option<f32>| {
+            *ema = Some(match *ema {
+                Some(e) => e * 0.8 + wall_us * 0.2,
+                None => wall_us,
+            })
+        };
+        if self.listing_inline {
+            mix(&mut self.listing_inline_ema_us);
+        } else {
+            mix(&mut self.listing_pool_ema_us);
+        }
+        self.listing_frames = self.listing_frames.wrapping_add(1);
+        let probe = self.listing_frames % LISTING_PROBE_FRAMES == 0;
+        self.listing_inline = match (self.listing_inline_ema_us, self.listing_pool_ema_us) {
+            // Each mode unmeasured until tried once.
+            (None, _) => true,
+            (_, None) => false,
+            (Some(inline), Some(pool)) => {
+                let cheaper_inline = inline < pool;
+                if probe {
+                    !cheaper_inline
+                } else {
+                    cheaper_inline
+                }
+            }
+        };
+    }
 }
 
 impl OrbitLiveApp {
@@ -958,6 +1007,12 @@ impl OrbitLiveApp {
             idle_skip_chrome: false,
             last_n_prims: 0,
             last_n_lanes_kept: 0,
+            last_pool_wake_us: 0.0,
+            last_pool_tail_us: 0.0,
+            listing_inline: false,
+            listing_frames: 0,
+            listing_inline_ema_us: None,
+            listing_pool_ema_us: None,
             self_profile: crate::self_pane::SelfProfile::default(),
             self_pane_open: false,
             self_tl: TimelineState::fresh(),
@@ -3528,9 +3583,26 @@ impl OrbitLiveApp {
                         CollectOpts {
                             y_cull,
                             early_out: true,
+                            inline: self.listing_inline,
                         },
                     );
                     dev.absorb_worker_spans(&frame.worker_spans);
+                    // The parts of the listing the worker lanes do not show.
+                    let tm = frame.timing;
+                    dev.record_span(TID_RENDER, NAME_LISTING_DISPATCH, tm.dispatch_t0_ns, tm.dispatch_t1_ns);
+                    dev.record_span(TID_RENDER, NAME_LISTING_FLATTEN, tm.flatten_t0_ns, tm.flatten_t1_ns);
+                    dev.record_span(TID_RENDER, NAME_LISTING_SORT, tm.sort_t0_ns, tm.sort_t1_ns);
+                    // Pool latency: dispatch to first worker start, last
+                    // worker end to join. Zero when the walk ran inline.
+                    let first = frame.worker_spans.iter().map(|w| w.t0_ns).min();
+                    let last = frame.worker_spans.iter().map(|w| w.t1_ns).max();
+                    self.last_pool_wake_us = first
+                        .map(|f| f.saturating_sub(tm.dispatch_t0_ns) as f32 / 1e3)
+                        .unwrap_or(0.0);
+                    self.last_pool_tail_us = last
+                        .map(|l| tm.dispatch_t1_ns.saturating_sub(l) as f32 / 1e3)
+                        .unwrap_or(0.0);
+                    self.tune_listing_mode(tm.dispatch_t1_ns.saturating_sub(tm.dispatch_t0_ns) as f32 / 1e3);
                     self.last_n_prims = frame.instances.len() as u32;
                     self.last_n_lanes_kept = frame.lanes_kept;
                     for inst in &mut frame.instances {
@@ -3562,6 +3634,7 @@ impl OrbitLiveApp {
                         CollectOpts {
                             y_cull,
                             early_out: true,
+                            inline: false,
                         },
                     );
                     for inst in &mut frame.instances {
@@ -3650,6 +3723,7 @@ impl OrbitLiveApp {
                     CollectOpts {
                         y_cull,
                         early_out: true,
+                        inline: false,
                     },
                 );
                 let d = self.tracks.scale;
@@ -4861,13 +4935,20 @@ impl eframe::App for OrbitLiveApp {
                 *live_edge = (*live_edge).max(ev.end_ns());
                 self.self_tl.index.insert(ev);
             }
-            self.self_tl.index.insert(LiveEvent::from_value(
-                devf_origin.max(1),
-                VIEWER_PID,
-                TID_STATS,
-                NAME_FPS,
-                self.fps_ema.max(0.0),
-            ));
+            for (name, v) in [
+                (NAME_FPS, self.fps_ema.max(0.0)),
+                (NAME_POOL_WAKE_US, self.last_pool_wake_us),
+                (NAME_POOL_TAIL_US, self.last_pool_tail_us),
+                (NAME_LISTING_INLINE, if self.listing_inline { 1.0 } else { 0.0 }),
+            ] {
+                self.self_tl.index.insert(LiveEvent::from_value(
+                    devf_origin.max(1),
+                    VIEWER_PID,
+                    TID_STATS,
+                    name,
+                    v,
+                ));
+            }
             if self.self_profile.frames_seen() % 600 == 0 {
                 let cutoff = self.self_tl.live_edge_ns.saturating_sub(SELF_TIMELINE_RETAIN_NS);
                 self.self_tl.index.retain(|e| e.end_ns() >= cutoff);
