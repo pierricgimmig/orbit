@@ -201,3 +201,22 @@ PoolDispatch is the inline walk plus those probes; *the after max is a probe
 frame that met a slow worker wake. A listing_inline value lane shows the
 mode. On the static 320-thread trace listings ran 10 times in 120 frames
 (the skip path from item 6a), so there was little to change.
+
+9. Addendum (2026-09-03): ListingSort
+   The listing sorted every visible instance of the frame by duration, one
+   global stable sort, so that within a lane the longer scope paints over the
+   shorter. Instances only ever overlap within one lane row, and picking is
+   order-independent (it takes the longest instance under the cursor), so the
+   sort now happens per lane inside the walk -- on the workers when the pool
+   is used, and n log n over a lane's handful of instances rather than over
+   the frame. Headless Chrome, Self pane open:
+
+                                      before      after
+   ListingSort, demo (231 listings)    53.4 us     1.0 us
+   ListingSort, 320-thread trace,
+     zooming continuously (236)        56.0 us     1.5 us
+   PrimitiveListing, demo             200.8 us   183.1 us
+
+   The saving grows with the capture: the global sort was n log n in the
+   number of visible instances, which on a many-core capture is the one
+   number that keeps growing.

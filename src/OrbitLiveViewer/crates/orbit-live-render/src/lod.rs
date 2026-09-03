@@ -756,6 +756,12 @@ pub fn collect_instances_layout_opts(
                 &mut row,
             );
         }
+        // Painter's order is settled here, per lane, on whichever thread
+        // walked the lane. Instances only ever overlap within one lane row,
+        // so a global sort over every instance of the frame -- which was
+        // the listing's single largest sequential step on a big capture --
+        // bought nothing a per-lane sort does not.
+        sort_instances_longer_on_top(&mut row);
         row
     };
     let (parts, worker_spans): (Vec<Vec<ScopeInstance>>, Vec<par::WorkerSpan>) = if opts.inline {
@@ -772,8 +778,9 @@ pub fn collect_instances_layout_opts(
         instances.extend(part);
     }
     timing.flatten_t1_ns = now();
+    // Nothing left to sort globally; the timing stays so the self-profile
+    // shows the step at its new cost.
     timing.sort_t0_ns = now();
-    sort_instances_longer_on_top(&mut instances);
     timing.sort_t1_ns = now();
     InstanceFrame {
         timing,
@@ -833,8 +840,10 @@ pub fn pick_instance_at(instances: &[ScopeInstance], x: f32, y: f32) -> Option<u
 }
 
 /// Painter's algorithm: shorter first so longer scopes cover 1 px ticks.
+/// Applied per lane (see the collect walk); picking does not depend on
+/// order, it takes the longest instance under the cursor.
 fn sort_instances_longer_on_top(instances: &mut [ScopeInstance]) {
-    instances.sort_by(|a, b| a.duration_ns.cmp(&b.duration_ns));
+    instances.sort_unstable_by_key(|i| i.duration_ns);
 }
 
 /// Pixel-column pick: lane under `y`, then the overlapping event at `x`.

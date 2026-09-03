@@ -84,7 +84,7 @@ export interface InitOutput {
   readonly _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__ha3d47ef291732239_multivalue_shim: (a: number, b: number) => [number, number];
   readonly __externref_table_dealloc: (a: number) => void;
   readonly closure1058_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure2748_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure2747_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_thread_destroy: (a?: number, b?: number, c?: number) => void;
   readonly __wbindgen_start: (a: number) => void;
 }

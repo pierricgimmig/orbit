@@ -329,7 +329,7 @@ function __wbg_adapter_49(arg0, arg1, arg2) {
 }
 
 function __wbg_adapter_1491(arg0, arg1, arg2, arg3) {
-    wasm.closure2748_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure2747_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_BinaryType = ["blob", "arraybuffer"];
