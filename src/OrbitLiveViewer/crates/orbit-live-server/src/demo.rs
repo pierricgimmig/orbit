@@ -16,8 +16,10 @@ use crate::LiveService;
 /// (10, 100–131) or self-profile ids (1–4, 30_000+).
 pub const DEMO_SCOPE_BASE: u32 = 4_000;
 pub const DEMO_ASYNC_BASE: u32 = 2_000;
-/// Dedicated sampling thread. Not in `demo_sched_threads` (no CPU occupancy).
-pub const DEMO_SAMPLE_TID: u32 = 130;
+/// Dedicated sampling thread. Tid 99 sorts above Main (100) so Demo
+/// screenshots can find the calls lanes without scrolling past workers.
+/// Not in `demo_sched_threads` (no CPU occupancy).
+pub const DEMO_SAMPLE_TID: u32 = 99;
 /// `main` / `Work` / `LeafA` / `LeafB` / `Other` — well above scope ids.
 pub const DEMO_SAMPLE_BASE: u32 = 6_000;
 pub const DEMO_SAMPLE_NAMES: &[&str] = &["main", "Work", "LeafA", "LeafB", "Other"];
@@ -334,14 +336,12 @@ pub fn sample_events_for_tick(t: u64, tick_i: u64) -> Vec<LiveEvent> {
     let leaf_a = DEMO_SAMPLE_BASE + 2;
     let leaf_b = DEMO_SAMPLE_BASE + 3;
     let other = DEMO_SAMPLE_BASE + 4;
-    let dur = 6_000_000;
-    push_sample_stack(&mut out, t + 1_000_000, dur, &[main, work, leaf_a]);
+    let dur = 8_000_000;
+    push_sample_stack(&mut out, t + 500_000, dur, &[main, work, leaf_a]);
     if tick_i % 2 == 0 {
-        push_sample_stack(&mut out, t + 8_000_000, dur, &[main, work, leaf_b]);
-        push_sample_stack(&mut out, t + 15_000_000, dur, &[main, work, leaf_a]);
+        push_sample_stack(&mut out, t + 9_000_000, dur, &[main, work, leaf_b]);
     } else {
-        push_sample_stack(&mut out, t + 8_000_000, dur, &[main, other]);
-        push_sample_stack(&mut out, t + 15_000_000, dur, &[main, work, leaf_b]);
+        push_sample_stack(&mut out, t + 9_000_000, dur, &[main, other]);
     }
     out
 }
@@ -356,7 +356,7 @@ fn push_sample_stack(out: &mut Vec<LiveEvent>, start_ns: u64, duration_ns: u64, 
             kind: kind::FUNCTION_CALL,
             depth: depth as u8,
             extra: 0,
-            _pad: 0,
+            _pad: color_mode::AUTO_NAME,
             name_id,
         });
     }
