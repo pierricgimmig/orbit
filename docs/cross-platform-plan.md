@@ -1,5 +1,9 @@
 # Cross-platform: status, plan, and what cannot be faked
 
+> Starting on a Windows machine? Read `windows-agent-brief.md` first: it is the
+> cold-start handoff -- the rules, the per-crate `windows-msvc` check results,
+> and the work in order with an acceptance test for each item.
+
 Target platforms: Linux x86-64 (done), Linux aarch64, macOS (x86-64 + Apple
 silicon), Windows x86-64.
 
