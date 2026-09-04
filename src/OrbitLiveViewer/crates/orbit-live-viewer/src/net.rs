@@ -254,6 +254,9 @@ pub struct Inbox {
     pub frame: Option<ServiceFrame>,
     pub http_ok: bool,
     pub ws_ok: bool,
+    /// Bytes received on the event stream since the page opened. Cumulative,
+    /// so a reader differences it against its last reading.
+    pub bytes_in: u64,
     pub symbols: Option<SymbolsStatusJson>,
     pub tree: Option<SamplingTree>,
     pub modules: Option<ModulesJson>,
@@ -496,10 +499,20 @@ mod wasm_impl {
                 frame: inbox.frame.take(),
                 http_ok: inbox.http_ok,
                 ws_ok: inbox.ws_ok,
+                bytes_in: inbox.bytes_in,
                 symbols: inbox.symbols.take(),
                 tree: inbox.tree.take(),
                 modules: inbox.modules.take(),
                 function_hits: inbox.function_hits.take(),
+            }
+        }
+
+        /// Opens a new WebSocket if the last one closed -- a service that was
+        /// restarted comes back without a page reload. Cheap when connected.
+        pub fn reconnect_ws_if_closed(&self) {
+            let closed = self.ws.lock().map(|w| w.is_none()).unwrap_or(true);
+            if closed {
+                start_ws(self.inbox.clone(), self.ws.clone());
             }
         }
 
@@ -525,7 +538,12 @@ mod wasm_impl {
                             g.http_ok = true;
                             g.error = None;
                         }
-                        Err(e) => g.error = Some(e),
+                        // A failed poll is the one way a dead service shows
+                        // over HTTP; without this the flag stayed true forever.
+                        Err(e) => {
+                            g.http_ok = false;
+                            g.error = Some(e);
+                        }
                     }
                 }
                 busy.store(false, Ordering::SeqCst);
@@ -879,6 +897,7 @@ mod wasm_impl {
             Ok(bytes) => {
                 if let Ok(mut g) = inbox_msg.lock() {
                     g.ws_ok = true;
+                    g.bytes_in += bytes.len() as u64;
                     g.frames.push(bytes);
                 }
             }
@@ -980,6 +999,7 @@ mod native_impl {
             Inbox::default()
         }
         pub fn get_status(&self) {}
+        pub fn reconnect_ws_if_closed(&self) {}
         pub fn get_sampling_report(&self, _ranges: &[(u64, u64, Option<u32>)]) {}
         pub fn get_sampling_tree(&self, _ranges: &[(u64, u64, Option<u32>)], _mode: &str) {}
         pub fn get_modules(&self, _pid: u32) {}

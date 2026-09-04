@@ -79,6 +79,19 @@ const VSCROLL_PAGE: f32 = 0.9;
 const PROCESS_POLL_S: f64 = 1.0;
 /// Minimum spacing of sampling-report requests while a selection drag is live.
 const REPORT_DRAG_THROTTLE_S: f64 = 0.2;
+/// How long without a status answer before the link dot turns red. Status is
+/// polled four times a second, so this is many misses, not one.
+const LINK_STALE_S: f64 = 2.0;
+const LINK_GREEN: Color32 = Color32::from_rgb(0x4C, 0xC0, 0x6A);
+const LINK_AMBER: Color32 = Color32::from_rgb(0xD9, 0xA4, 0x3B);
+const LINK_RED: Color32 = Color32::from_rgb(0xE0, 0x4A, 0x3F);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinkState {
+    Connecting,
+    Connected,
+    Lost,
+}
 /// How often the primitive listing re-measures the mode it is not using.
 const LISTING_PROBE_FRAMES: u32 = 90;
 /// The self-profile pane keeps this much of the viewer's own past.
@@ -548,6 +561,20 @@ pub struct OrbitLiveApp {
     got_status: bool,
     http_ok: bool,
     ws_ok: bool,
+    /// egui time at the start of this frame, for anything that needs "now"
+    /// outside a place with a context.
+    now_s: f64,
+    /// Event-stream throughput: the inbox's cumulative byte count at the last
+    /// reading, the bytes gathered in the current window, when the window
+    /// began, and the smoothed rate shown next to the fps.
+    ws_bytes_seen: u64,
+    ws_window_bytes: u64,
+    ws_window_start_s: f64,
+    ws_rate_bps: f32,
+    /// When the last /api/status answer arrived; the link is only "connected"
+    /// while these keep coming.
+    last_status_seen_s: f64,
+    last_ws_retry_s: f64,
     ws_queue: std::collections::VecDeque<Vec<u8>>,
     lod_label: &'static str,
     has_gpu: bool,
@@ -952,6 +979,13 @@ impl OrbitLiveApp {
             got_status: false,
             http_ok: false,
             ws_ok: false,
+            now_s: 0.0,
+            ws_bytes_seen: 0,
+            ws_window_bytes: 0,
+            ws_window_start_s: -1.0,
+            ws_rate_bps: 0.0,
+            last_status_seen_s: -1.0,
+            last_ws_retry_s: -1.0,
             ws_queue: std::collections::VecDeque::new(),
             lod_label: "",
             has_gpu,
@@ -1647,6 +1681,7 @@ impl OrbitLiveApp {
 
     fn apply_status(&mut self, s: StatusJson) {
         self.got_status = true;
+        self.last_status_seen_s = self.now_s;
         self.ring_bytes = s.ring_bytes.to_string();
         if let Some(p) = &s.spill_path {
             self.spill_path = p.clone();
@@ -1701,6 +1736,20 @@ impl OrbitLiveApp {
         let inbox = self.net.take();
         self.http_ok = inbox.http_ok;
         self.ws_ok = inbox.ws_ok;
+        // Throughput over half-second windows, smoothed, so the chip reads
+        // as a rate rather than a flicker of per-frame batch sizes.
+        self.ws_window_bytes += inbox.bytes_in.saturating_sub(self.ws_bytes_seen);
+        self.ws_bytes_seen = inbox.bytes_in;
+        if self.ws_window_start_s < 0.0 {
+            self.ws_window_start_s = self.now_s;
+        }
+        let elapsed = self.now_s - self.ws_window_start_s;
+        if elapsed >= 0.5 {
+            let rate = self.ws_window_bytes as f64 / elapsed;
+            self.ws_rate_bps = self.ws_rate_bps * 0.5 + rate as f32 * 0.5;
+            self.ws_window_bytes = 0;
+            self.ws_window_start_s = self.now_s;
+        }
         if let Some(s) = inbox.status {
             self.apply_status(s);
         }
@@ -2079,6 +2128,7 @@ impl OrbitLiveApp {
     fn transport_narrow_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
+            self.paint_link_dot(ui);
             self.transport_record(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
@@ -2097,6 +2147,48 @@ impl OrbitLiveApp {
         });
     }
 
+    /// Green while the service answers; red once it stops -- the WebSocket
+    /// closed, an HTTP poll failed, or no status has arrived for a while.
+    /// Amber only before the first answer, so a page that is still opening
+    /// does not start out red.
+    fn link_state(&self) -> LinkState {
+        let fresh = self.last_status_seen_s >= 0.0
+            && self.now_s - self.last_status_seen_s < LINK_STALE_S;
+        if self.ws_ok && self.http_ok && fresh {
+            LinkState::Connected
+        } else if !self.got_status && self.now_s < LINK_STALE_S {
+            LinkState::Connecting
+        } else {
+            LinkState::Lost
+        }
+    }
+
+    fn paint_link_dot(&self, ui: &mut Ui) {
+        let state = self.link_state();
+        let (color, what) = match state {
+            LinkState::Connected => (LINK_GREEN, "Connected to the service"),
+            LinkState::Connecting => (LINK_AMBER, "Connecting to the service…"),
+            LinkState::Lost => (LINK_RED, "Lost the service"),
+        };
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 4.0, color);
+        if state == LinkState::Lost {
+            // A ring so the red reads as "broken", not just a colour change.
+            ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.0, color));
+        }
+        let mut detail = String::new();
+        if self.last_status_seen_s >= 0.0 {
+            detail.push_str(&format!(
+                "last status {:.1} s ago",
+                (self.now_s - self.last_status_seen_s).max(0.0)
+            ));
+        } else {
+            detail.push_str("no status yet");
+        }
+        detail.push_str(if self.ws_ok { "; event stream open" } else { "; event stream closed, retrying" });
+        resp.on_hover_text(format!("{what} — {detail}"));
+    }
+
     fn transport(&mut self, ui: &mut Ui) {
         if self.chrome_collapsed() || self.was_narrow {
             self.transport_narrow_bar(ui);
@@ -2111,7 +2203,9 @@ impl OrbitLiveApp {
                     .extra_letter_spacing(1.6)
                     .color(theme::TEXT),
             );
-            ui.add_space(12.0);
+            ui.add_space(2.0);
+            self.paint_link_dot(ui);
+            ui.add_space(8.0);
             {
                 let recording = self.recording || self.status.demo || self.status.capturing;
                 if recording {
@@ -3035,7 +3129,7 @@ impl OrbitLiveApp {
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
         );
-        paint_fps_chip(ui, fps_area, self.fps_ema);
+        paint_fps_chip(ui, fps_area, self.fps_ema, self.ws_rate_bps);
     }
 
     fn paint_headers(
@@ -4756,6 +4850,7 @@ impl OrbitLiveApp {
 
 impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.now_s = ctx.input(|i| i.time);
         // The self-profile pane needs the same scopes the track injection does,
         // so a frame is instrumented when either wants it.
         let devf = DevFrame::begin(self.dev || self.self_pane_open);
@@ -4828,6 +4923,12 @@ impl eframe::App for OrbitLiveApp {
                 if now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
+                }
+                // A closed WebSocket is retried every couple of seconds, so a
+                // restarted service picks the page back up on its own.
+                if !self.ws_ok && now - self.last_ws_retry_s > 2.0 {
+                    self.last_ws_retry_s = now;
+                    self.net.reconnect_ws_if_closed();
                     self.tick_capture_net(now);
                 }
                 if should_poll_processes(
@@ -5364,11 +5465,13 @@ fn set_page_fullscreen(ctx: &Context, on: bool) {
     }
 }
 
-fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32) {
+/// Frame rate and, next to it, what the event stream from the service is
+/// delivering right now.
+fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) {
     if fps <= 0.0 || !area.is_finite() || area.width() < 24.0 {
         return;
     }
-    let label = format!("{:.0} fps", fps);
+    let label = format!("{:.0} fps · {}", fps, format_rate(stream_bps));
     let font = FontId::monospace(11.0);
     let galley = ui.fonts(|f| f.layout_no_wrap(label, font, theme::TEXT));
     let pad = Vec2::new(6.0, 3.0);
@@ -5386,6 +5489,18 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32) {
     ));
     painter.rect_filled(rect, 3.0, Color32::from_black_alpha(140));
     painter.galley(rect.min + pad, galley, theme::TEXT);
+}
+
+/// `1.24 MB/s`, `312 KB/s`, `0 B/s` -- the event stream's rate, MB when it
+/// is worth saying in MB.
+fn format_rate(bps: f32) -> String {
+    if bps >= 1_000_000.0 {
+        format!("{:.2} MB/s", bps / 1_000_000.0)
+    } else if bps >= 1_000.0 {
+        format!("{:.0} KB/s", bps / 1_000.0)
+    } else {
+        format!("{:.0} B/s", bps.max(0.0))
+    }
 }
 
 fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
@@ -7111,6 +7226,13 @@ mod tests {
         assert!(vscroll_from_primary_drag(false, true));
         assert!(vscroll_from_primary_drag(true, true));
         assert!(!vscroll_from_primary_drag(false, false));
+    }
+
+    #[test]
+    fn stream_rate_reads_in_the_right_unit() {
+        assert_eq!(format_rate(0.0), "0 B/s");
+        assert_eq!(format_rate(312_000.0), "312 KB/s");
+        assert_eq!(format_rate(1_240_000.0), "1.24 MB/s");
     }
 
     #[test]
