@@ -3325,28 +3325,20 @@ impl OrbitLiveApp {
                     return;
                 }
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32)) {
+                let (toggled, m_resp, m_reorder) =
+                    draggable_header(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32));
+                if toggled {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
                 }
                 let m_drag = self.tracks.is_dragging_machine(m);
-                let m_chev = Rect::from_center_size(
-                    Pos2::new(r.left() + 8.0, r.center().y),
-                    Vec2::splat(14.0),
-                );
                 paint_handle_dots(
                     ui.painter(),
                     Rect::from_min_size(Pos2::new(r.left() + 2.0, r.top()), Vec2::new(10.0, r.height())),
                     m_drag,
                 );
-                let m_resp =
-                    ui.interact(r, ui.id().with(("mdrag", m.sort_key() as u32, 0u32)), Sense::drag());
-                if m_resp.drag_started() {
-                    if let Some(p) = m_resp.interact_pointer_pos() {
-                        if !m_chev.contains(p) {
-                            self.tracks.begin_machine_drag(m, p.y - head.top());
-                        }
-                    }
+                if let Some(p) = m_reorder {
+                    self.tracks.begin_machine_drag(m, p.y - head.top());
                 }
                 if m_resp.dragged() {
                     if let Some(p) = m_resp.interact_pointer_pos() {
@@ -3376,15 +3368,12 @@ impl OrbitLiveApp {
                     return;
                 }
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
+                let (toggled, p_resp, p_reorder) = draggable_header(ui, r, 16.0, open, ("p", pid, 0u32));
+                if toggled {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
                 }
                 let p_drag = self.tracks.is_dragging_process(pid);
-                let p_chev = Rect::from_center_size(
-                    Pos2::new(r.left() + 16.0, r.center().y),
-                    Vec2::splat(14.0),
-                );
                 if !tight {
                     paint_handle_dots(
                         ui.painter(),
@@ -3392,13 +3381,8 @@ impl OrbitLiveApp {
                         p_drag,
                     );
                 }
-                let p_resp = ui.interact(r, ui.id().with(("pdrag", pid, 0u32)), Sense::drag());
-                if p_resp.drag_started() {
-                    if let Some(p) = p_resp.interact_pointer_pos() {
-                        if !p_chev.contains(p) {
-                            self.tracks.begin_process_drag(pid, p.y - head.top());
-                        }
-                    }
+                if let Some(p) = p_reorder {
+                    self.tracks.begin_process_drag(pid, p.y - head.top());
                 }
                 if p_resp.dragged() {
                     if let Some(p) = p_resp.interact_pointer_pos() {
@@ -5986,6 +5970,43 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool) {
     );
 }
 
+/// A header row that can be dragged to reorder, with a collapse chevron on
+/// it. Returns whether the chevron was clicked, the row's drag response, and
+/// where a reorder drag began this frame -- `None` when nothing started or
+/// when the press landed on the chevron, since egui starts a drag response
+/// on the press itself and a click on the triangle must not lift the row.
+///
+/// The order matters and is the whole point of this function: the row-wide
+/// drag hit is registered first, the chevron second. egui hit-tests
+/// back-to-front, and when the topmost widget under the pointer senses only
+/// drags it swallows the click rather than pass it to a click widget
+/// underneath. With the row registered after the chevron, a click exactly on
+/// the triangle did nothing, and only a click slightly beside it (caught by
+/// the nearest-widget fallback) toggled the row -- which felt like broken
+/// picking. Registered this way round the chevron is on top and takes the
+/// click, and the row still takes a drag from anywhere else on it, which is
+/// the "button on a scroll area" case egui handles as one expects.
+fn draggable_header(
+    ui: &mut Ui,
+    row: Rect,
+    chevron_x: f32,
+    open: bool,
+    id: (&str, u32, u32),
+) -> (bool, egui::Response, Option<Pos2>) {
+    let drag = ui.interact(row, ui.id().with((id, "drag")), Sense::drag());
+    let toggled = chevron(ui, row, chevron_x, open, id);
+    let chev = Rect::from_center_size(
+        Pos2::new(row.left() + chevron_x, row.center().y),
+        Vec2::splat(14.0),
+    );
+    let reorder_from = if drag.drag_started() {
+        drag.interact_pointer_pos().filter(|p| !chev.contains(*p))
+    } else {
+        None
+    };
+    (toggled, drag, reorder_from)
+}
+
 fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> bool {
     let hit = Rect::from_center_size(Pos2::new(row.left() + x, row.center().y), Vec2::splat(14.0));
     let resp = ui.interact(hit, ui.id().with(id), Sense::click());
@@ -7270,6 +7291,73 @@ mod tests {
         assert_eq!(format_rate(0.0), "0 B/s");
         assert_eq!(format_rate(312_000.0), "312 KB/s");
         assert_eq!(format_rate(1_240_000.0), "1.24 MB/s");
+    }
+
+    /// Runs `build` for a few egui frames while a pointer presses and
+    /// releases at `at`, and reports what the widgets saw. Widget rects come
+    /// from the previous frame, so the first frame lays out, the second
+    /// presses, the third releases.
+    fn click_at(at: Pos2, mut build: impl FnMut(&mut Ui) -> (bool, bool)) -> (bool, bool) {
+        use egui::{Event, PointerButton, RawInput};
+        let ctx = egui::Context::default();
+        let mut toggled = false;
+        let mut dragged = false;
+        let frames: [Vec<Event>; 3] = [
+            vec![],
+            vec![
+                Event::PointerMoved(at),
+                Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            vec![Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        ];
+        for events in frames {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (t, d) = build(ui);
+                    toggled |= t;
+                    dragged |= d;
+                });
+            });
+        }
+        (toggled, dragged)
+    }
+
+    #[test]
+    fn a_click_exactly_on_a_draggable_headers_chevron_toggles_it() {
+        let row = Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(200.0, 22.0));
+        let chevron_center = Pos2::new(row.left() + 16.0, row.center().y);
+        let (toggled, reorder) = click_at(chevron_center, |ui| {
+            let (t, _, reorder_from) = draggable_header(ui, row, 16.0, true, ("p", 7, 0));
+            (t, reorder_from.is_some())
+        });
+        assert!(toggled, "the chevron must take a click landing on it");
+        assert!(!reorder, "a click on the chevron must not lift the row");
+    }
+
+    #[test]
+    fn a_click_on_the_rest_of_a_draggable_header_does_not_toggle_it() {
+        let row = Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(200.0, 22.0));
+        let (toggled, reorder) = click_at(Pos2::new(row.left() + 120.0, row.center().y), |ui| {
+            let (t, _, reorder_from) = draggable_header(ui, row, 16.0, true, ("p", 7, 0));
+            (t, reorder_from.is_some())
+        });
+        assert!(!toggled);
+        assert!(reorder, "a press on the row body is where a reorder starts");
     }
 
     #[test]
