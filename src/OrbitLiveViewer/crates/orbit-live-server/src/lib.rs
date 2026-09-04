@@ -154,6 +154,12 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub capture_import:
         Mutex<Option<std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: a scope opened, closed or stamped by an agent over HTTP
+    /// (`POST /api/scope`), on a named track. The service owns the clock
+    /// and the ring, so it handles it. See [`AgentScope`].
+    #[allow(clippy::type_complexity)]
+    pub agent_scope:
+        Mutex<Option<std::sync::Arc<dyn Fn(AgentScope) -> Result<String, String> + Send + Sync>>>,
     /// Optional: what the service does before the ring is emptied by
     /// `/api/capture/clear` -- refuse while capturing, drop its sample
     /// store. The ring, names and viewers are the server's own business.
@@ -208,6 +214,29 @@ pub(crate) struct CachedTimeline {
 // bytes crate - need to add dependency. I'll use Vec<u8> + broadcast instead.
 // Actually I used bytes::Bytes without adding bytes dep. Let me use Arc<[u8]>.
 
+/// One request on the agent scope interface: what to do on which track.
+/// Tracks are named by the caller ("agent", "ci", a tool's name) and each
+/// is one thread of the agents process in the viewer. A missing timestamp
+/// means "now" on the service's clock.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentScope {
+    pub track: String,
+    pub action: AgentAction,
+    pub timestamp_ns: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentAction {
+    /// Opens a scope; nests under the track's open scopes.
+    Start { name: String },
+    /// Closes the track's innermost open scope.
+    Stop,
+    /// A zero-length mark.
+    Instant { name: String },
+    /// A point on a value lane of that name.
+    Value { name: String, value: f64 },
+}
+
 /// Thread and process names of the current capture.
 #[derive(Default)]
 struct CaptureNames {
@@ -241,6 +270,7 @@ impl LiveService {
             capture_import: Mutex::new(None),
             capture_open: Mutex::new(None),
             capture_clear: Mutex::new(None),
+            agent_scope: Mutex::new(None),
             names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
@@ -445,6 +475,10 @@ impl LiveService {
         >,
     ) {
         *self.capture_export.lock() = Some(export);
+    }
+
+    pub fn set_agent_scope(&self, hook: std::sync::Arc<dyn Fn(AgentScope) -> Result<String, String> + Send + Sync>) {
+        *self.agent_scope.lock() = Some(hook);
     }
 
     pub fn set_capture_clear(&self, clear: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>) {

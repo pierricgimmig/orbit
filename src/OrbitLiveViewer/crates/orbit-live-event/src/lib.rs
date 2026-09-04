@@ -40,6 +40,12 @@ pub mod kind {
     pub const SAMPLE: u8 = 7;
 }
 
+/// The process id agent scopes are filed under (TODO item 12): scopes an
+/// agent or a script opens and closes through the service's HTTP interface
+/// rather than in its own process. Far above any real pid. Each track the
+/// callers name becomes one thread of it.
+pub const AGENT_PID: u32 = 0xA6E7_0000;
+
 /// What `extra` means per kind, where it means something. Scheduling
 /// slices carry the core, thread states the state code (see
 /// [`thread_state`]); function calls carry this.

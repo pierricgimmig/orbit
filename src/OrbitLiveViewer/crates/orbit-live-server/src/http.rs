@@ -60,6 +60,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/capture/export", get(capture_export))
         .route("/api/capture/open", post(capture_open))
         .route("/api/capture/clear", post(capture_clear))
+        .route("/api/scope", post(agent_scope))
         .route(
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -443,6 +444,50 @@ async fn capture_export(
         )
             .into_response(),
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// `POST /api/scope` with `{"track": "agent", "action": "start", "name":
+/// "tool call"}` (or `stop`, `instant`, `value` with `"value"`), optional
+/// `"timestamp_ns"`: manual instrumentation for anything that can make an
+/// HTTP request -- an agent shelling out to `orbit-scope`, a CI step, a
+/// script. Scopes nest per track. 501 without the service.
+#[derive(Deserialize)]
+struct ScopeBody {
+    #[serde(default = "default_track")]
+    track: String,
+    action: String,
+    #[serde(default)]
+    name: String,
+    value: Option<f64>,
+    timestamp_ns: Option<u64>,
+}
+
+fn default_track() -> String {
+    "agent".to_string()
+}
+
+async fn agent_scope(State(svc): State<Arc<LiveService>>, Json(body): Json<ScopeBody>) -> Response {
+    let hook = svc.agent_scope.lock().clone();
+    let Some(hook) = hook else {
+        return (StatusCode::NOT_IMPLEMENTED, "this service does not take agent scopes").into_response();
+    };
+    let action = match body.action.as_str() {
+        "start" if !body.name.is_empty() => crate::AgentAction::Start { name: body.name },
+        "stop" => crate::AgentAction::Stop,
+        "instant" if !body.name.is_empty() => crate::AgentAction::Instant { name: body.name },
+        "value" => match (body.name.is_empty(), body.value) {
+            (false, Some(v)) => crate::AgentAction::Value { name: body.name, value: v },
+            _ => return (StatusCode::BAD_REQUEST, "value needs a name and a value").into_response(),
+        },
+        "start" | "instant" => return (StatusCode::BAD_REQUEST, "give the scope a name").into_response(),
+        other => return (StatusCode::BAD_REQUEST, format!("unknown action {other:?}: start, stop, instant or value")).into_response(),
+    };
+    let req = crate::AgentScope { track: body.track, action, timestamp_ns: body.timestamp_ns };
+    match tokio::task::spawn_blocking(move || hook(req)).await {
+        Ok(Ok(summary)) => ([(header::CONTENT_TYPE, "application/json")], summary).into_response(),
+        Ok(Err(error)) => (StatusCode::BAD_REQUEST, error).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
@@ -1284,6 +1329,37 @@ mod isolation_tests {
         let out = curl_si(&format!("{base}/api/status"));
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains(r#""wire":"packed""#), "{text}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_scope_requests_reach_the_hook_typed() {
+        use crate::{AgentAction, AgentScope};
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<AgentScope>::new()));
+        let svc = test_service();
+        let log = seen.clone();
+        svc.set_agent_scope(std::sync::Arc::new(move |req| {
+            log.lock().unwrap().push(req);
+            Ok(r#"{"ok":true}"#.to_string())
+        }));
+        let base = spawn_router(svc).await;
+        let post = |body: &str| {
+            let out = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "5", "-X", "POST", "-H", "content-type: application/json", "-d", body])
+                .arg(format!("{base}/api/scope"))
+                .output()
+                .expect("curl");
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        assert!(post(r#"{"track":"ci","action":"start","name":"build","timestamp_ns":5}"#).contains("200"));
+        assert!(post(r#"{"action":"stop"}"#).contains("200"));
+        assert!(post(r#"{"action":"value","name":"tests","value":42.5}"#).contains("200"));
+        assert!(post(r#"{"action":"start"}"#).contains("400"), "a start needs a name");
+        assert!(post(r#"{"action":"dance","name":"x"}"#).contains("400"));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0], AgentScope { track: "ci".into(), action: AgentAction::Start { name: "build".into() }, timestamp_ns: Some(5) });
+        assert_eq!(seen[1], AgentScope { track: "agent".into(), action: AgentAction::Stop, timestamp_ns: None });
+        assert_eq!(seen[2].action, AgentAction::Value { name: "tests".into(), value: 42.5 });
+        assert_eq!(seen.len(), 3);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

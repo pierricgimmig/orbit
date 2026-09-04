@@ -178,10 +178,16 @@ ever exposed beyond that.
   name. orbit_link connects slow steps across the run.
 - Bootstrapping: service must be running before the agent attaches.
 
-**Status: not started.** The C ABI (`orbit-api`) and the per-process
-scope ring exist and the service already opens every live segment, so a
-`orbit-scope` CLI is a thin binary over them. The HTTP variant would be
-two routes on the service.
+**Status: done for the CLI and the HTTP interface.** `orbit-scope start
+<name> | stop | instant <name> | value <name> <n> | run [--name N] -- cmd`
+(`--track`, `--url`, or ORBIT_TRACK / ORBIT_URL) posts to the service's
+`POST /api/scope`; each track is a thread of an "agents" process in the
+viewer, scopes nest per track, timestamps are CLOCK_MONOTONIC from the
+caller so they line up with the capture. A `run` wraps a command in a
+scope with the command's exit code passed through, which is the wrapper
+process idea in its simplest form. Not done: the MCP layer, and links
+(the viewer does not draw links yet). Note: a capture start empties the
+ring, so agent scopes made before Record are gone once it starts.
 
 ## 13. Capture sharing — S3 store + URL
 
@@ -340,6 +346,7 @@ Capture sharing by pushing capture data to s3.
 
 Add orbit service cpu/mem usage track.
 
-**Status: not started.** The service already emits value lanes for its
-own buffer fill (`events per pass`); CPU and RSS from `/proc/self/stat`
-and `/proc/self/status` once a second are the same mechanism.
+**Status: done.** Once a second during a capture the loop reads
+`/proc/self/stat` and `/proc/self/statm` and writes `service cpu %` and
+`service rss MiB` through the manual instrumentation API; they show as
+value lanes under the service's process (selfstat.rs).

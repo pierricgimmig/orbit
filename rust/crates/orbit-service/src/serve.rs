@@ -430,6 +430,55 @@ fn list_processes_json() -> Result<String, String> {
     serde_json::to_string(&entries).map_err(|error| error.to_string())
 }
 
+/// A name id for an agent scope, in a range of its own. The server's
+/// sequential allocator and a scope ring's are separate tables that both
+/// start low, so an id handed out here would be overwritten by an
+/// instrumented process's next name; a hash of the text in the top half
+/// of the id space keeps clear of both, and of the frame ids at 2^21.
+fn agent_name_id(service: &LiveService, name: &str) -> u32 {
+    let mut h: u32 = 0x811C_9DC5;
+    for b in name.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    let id = 0x8000_0000 | (h & 0x3FFF_FFFF);
+    service.intern_id(id, name);
+    id
+}
+
+/// The agent tracks: each named track is one synthetic thread of the agents
+/// process, named on first use, with a count of its open scopes so a stray
+/// stop is refused rather than unbalancing the pairer.
+#[derive(Default)]
+struct AgentTracks {
+    tids: HashMap<String, u32>,
+    open: HashMap<u32, u32>,
+}
+
+impl AgentTracks {
+    fn tid_for(&mut self, service: &LiveService, track: &str) -> u32 {
+        let tid = match self.tids.get(track) {
+            Some(t) => *t,
+            None => {
+                let tid = orbit_live_event::AGENT_PID + 1 + self.tids.len() as u32;
+                self.tids.insert(track.to_string(), tid);
+                tid
+            }
+        };
+        // Names are per capture on the service (a capture start clears
+        // them), and an agent outlives captures: re-send whenever the
+        // service no longer has them.
+        let (threads, processes) = service.capture_names();
+        if !processes.iter().any(|(p, _)| *p == orbit_live_event::AGENT_PID) {
+            service.set_process_name(orbit_live_event::AGENT_PID, "agents");
+        }
+        if !threads.iter().any(|((_, t), _)| *t == tid) {
+            service.set_thread_name(orbit_live_event::AGENT_PID, tid, track);
+        }
+        tid
+    }
+}
+
 /// Whether a manually instrumented event belongs to a capture that began at
 /// `capture_start_ns`: it must still have been open then. A scope that
 /// closed before the capture started was written into its ring earlier and
@@ -727,6 +776,8 @@ fn capture_loop(
     // labelled live and a saved capture keeps the labels.
     let mut comm_names = crate::names::NameSync::default();
     let mut last_name_refresh: Option<std::time::Instant> = None;
+    // The service's own CPU and memory, once a second, as value lanes.
+    let mut self_stat = crate::selfstat::SelfStat::default();
 
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
@@ -754,6 +805,10 @@ fn capture_loop(
                 |pid, name| svc.set_process_name(pid, name),
                 |pid, tid, name| svc.set_thread_name(pid, tid, name),
             );
+            if let Some((cpu, rss)) = self_stat.sample() {
+                orbit_api::value("service cpu %", cpu);
+                orbit_api::value("service rss MiB", rss);
+            }
         }
         // The state focus follows the visible set (new descendants, newly
         // instrumented processes) once a second; threads born in between are
@@ -1193,6 +1248,43 @@ pub fn run_on(
                 .map_err(|e| e.to_string()),
             _ => orbit_capture::write_events_ipc_to_vec(&events, resolve).map_err(|e| e.to_string()),
         }
+    }));
+
+    // Agent scopes: manual instrumentation over HTTP, filed under a process
+    // of their own with one thread per named track (TODO item 12).
+    let agent_service = service.clone();
+    let agent_tracks = Arc::new(Mutex::new(AgentTracks::default()));
+    service.set_agent_scope(Arc::new(move |req| {
+        let mut tracks = agent_tracks.lock().map_err(|_| "agent tracks poisoned".to_string())?;
+        let ts = req.timestamp_ns.unwrap_or_else(crate::now_monotonic_ns);
+        let tid = tracks.tid_for(&agent_service, &req.track);
+        let pid = orbit_live_event::AGENT_PID;
+        use orbit_live_server::AgentAction;
+        match req.action {
+            AgentAction::Start { name } => {
+                let name_id = agent_name_id(&agent_service, &name);
+                agent_service.ingest_scope_start(pid, tid, ts, 0, name_id);
+                tracks.open.entry(tid).and_modify(|n| *n += 1).or_insert(1);
+            }
+            AgentAction::Stop => {
+                let open = tracks.open.get(&tid).copied().unwrap_or(0);
+                if open == 0 {
+                    return Err(format!("track {:?} has no open scope to stop", req.track));
+                }
+                agent_service.ingest_scope_stop(pid, tid, ts);
+                tracks.open.insert(tid, open - 1);
+            }
+            AgentAction::Instant { name } => {
+                let name_id = agent_name_id(&agent_service, &name);
+                agent_service.ingest_scope_start(pid, tid, ts, 0, name_id);
+                agent_service.ingest_scope_stop(pid, tid, ts);
+            }
+            AgentAction::Value { name, value } => {
+                let name_id = agent_name_id(&agent_service, &name);
+                agent_service.push_event(LiveEvent::from_value(ts, pid, tid, name_id, value as f32));
+            }
+        }
+        Ok(serde_json::json!({"track": req.track, "tid": tid, "timestamp_ns": ts, "open": tracks.open.get(&tid).copied().unwrap_or(0)}).to_string())
     }));
 
     let clear_store = store.clone();

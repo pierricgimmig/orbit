@@ -23,6 +23,7 @@ mod names;
 mod privileges;
 mod report;
 mod scope_index;
+mod selfstat;
 mod scopes;
 mod serve;
 mod symbolize;
