@@ -138,6 +138,12 @@ pub fn remap_rgba8(bytes: &mut [u8]) {
 }
 
 /// Desaturate + drop value for non-matching search hits. Empty cells stay put.
+/// A flat grey of `level` (0..255) keeping the pixel's alpha: the C++
+/// inactive (100) and same-process (140) shades.
+pub fn grey_argb(argb: u32, level: u32) -> u32 {
+    (argb & 0xFF00_0000) | (level << 16) | (level << 8) | level
+}
+
 pub fn dim_argb(argb: u32) -> u32 {
     let r = ((argb >> 16) & 0xFF) as u32;
     let g = ((argb >> 8) & 0xFF) as u32;

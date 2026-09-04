@@ -20,7 +20,7 @@ use orbit_live_event::dev::{
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
-use orbit_live_render::{
+use orbit_live_render::{ThreadFocus, 
     apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
     lane_height, leaf_label, pick_column_event, pick_instance_at, value_lanes_in_view, CollectOpts,
     ScopeInstance, ScopePick, TrackIndex, YCull, FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
@@ -581,6 +581,7 @@ pub struct OrbitLiveApp {
     tracks: TrackStrip,
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
+    selected_thread: Option<(u32, u32)>,
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
@@ -795,6 +796,7 @@ pub struct TimelineState {
     tracks: TrackStrip,
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
+    selected_thread: Option<(u32, u32)>,
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
@@ -829,6 +831,7 @@ impl TimelineState {
             tracks: TrackStrip::default(),
             selected: None,
             hover: None,
+            selected_thread: None,
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
@@ -866,6 +869,7 @@ impl OrbitLiveApp {
         std::mem::swap(&mut self.tracks, &mut other.tracks);
         std::mem::swap(&mut self.selected, &mut other.selected);
         std::mem::swap(&mut self.hover, &mut other.hover);
+        std::mem::swap(&mut self.selected_thread, &mut other.selected_thread);
         std::mem::swap(&mut self.last_instances, &mut other.last_instances);
         std::mem::swap(&mut self.last_layout, &mut other.last_layout);
         std::mem::swap(&mut self.last_instanced_window, &mut other.last_instanced_window);
@@ -894,6 +898,19 @@ impl OrbitLiveApp {
         self.canvas_override
             .map(|(c, _)| c)
             .unwrap_or_else(|| theme::timeline_canvas(self.light_canvas))
+    }
+
+    /// Which threads draw in colour: the selected thread if one is
+    /// selected (by its header, or through a selected scope), else the
+    /// capture's target process, else everything. C++ Orbit's rule.
+    fn thread_focus(&self) -> ThreadFocus {
+        let selected = self
+            .selected_thread
+            .or_else(|| self.selected.map(|s| (s.pid, s.tid)));
+        let target = self
+            .selected_pid
+            .filter(|_| !self.status.demo && self.trace_name.is_none());
+        ThreadFocus { selected, target_pid: target }
     }
 
     fn rail_color(&self) -> Color32 {
@@ -992,6 +1009,7 @@ impl OrbitLiveApp {
             tracks: TrackStrip::default(),
             selected: None,
             hover: None,
+            selected_thread: None,
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
@@ -3476,7 +3494,20 @@ impl OrbitLiveApp {
                     Pos2::new(title.right() - 12.0, title.center().y),
                     Vec2::splat(14.0),
                 );
-                let resp = ui.interact(r, ui.id().with(("th", th.pid, th.tid)), Sense::drag());
+                let resp = ui.interact(r, ui.id().with(("th", th.pid, th.tid)), Sense::click_and_drag());
+                if resp.clicked() {
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        if !chevron_hit.contains(p) && !hide.contains(p) {
+                            // Click the header to select the thread (again to
+                            // release), as clicking a thread track does in
+                            // C++ Orbit.
+                            let me = (th.pid, th.tid);
+                            self.selected_thread =
+                                if self.selected_thread == Some(me) { None } else { Some(me) };
+                            self.selected = None;
+                        }
+                    }
+                }
                 if resp.drag_started() {
                     if let Some(p) = resp.interact_pointer_pos() {
                         if !chevron_hit.contains(p) && !hide.contains(p) {
@@ -3649,6 +3680,8 @@ impl OrbitLiveApp {
             } else {
                 0
             },
+            thread_sel: self.thread_focus().selected,
+            target: self.thread_focus().target_pid,
         };
         let mode = upload_mode(self.last_dirty.as_ref(), &next_key);
         self.last_dirty = Some(next_key);
@@ -3664,7 +3697,7 @@ impl OrbitLiveApp {
             let _up = dev.scope(TID_RENDER, NAME_UPLOAD);
             let mut instances = self.last_instances.clone();
             let search = self.search_active().then_some(&self.search_ids);
-            apply_highlight_flags(&mut instances, self.selected, self.hover, search);
+            apply_highlight_flags(&mut instances, self.selected, self.hover, search, self.thread_focus());
             self.last_instances = instances.clone();
             scale_instances_ppp(&mut instances, ppp);
             return (TimelinePayload::Instanced { instances }, None);
@@ -3734,7 +3767,7 @@ impl OrbitLiveApp {
                 let search = self.search_active().then_some(&self.search_ids);
                 {
                     let _hl = dev.scope(TID_RENDER, NAME_APPLY_HL);
-                    apply_highlight_flags(&mut instances, self.selected, self.hover, search);
+                    apply_highlight_flags(&mut instances, self.selected, self.hover, search, self.thread_focus());
                 }
                 let (mut bg, mut fg) = if dragged.is_some() {
                     let _split = dev.scope(TID_RENDER, NAME_SPLIT_DRAG);
@@ -3760,7 +3793,7 @@ impl OrbitLiveApp {
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
-                    apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search);
+                    apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search, self.thread_focus());
                     fg = frame.instances;
                 }
                 self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
@@ -3822,6 +3855,7 @@ impl OrbitLiveApp {
                     &overlay,
                     self.search_active().then_some(&self.search_ids),
                     None,
+                    self.thread_focus(),
                     Some(&self.intern),
                     self.tracks.scale,
                     y_cull,
@@ -4297,6 +4331,9 @@ impl OrbitLiveApp {
             }
         } else if response.clicked() {
             self.selected = self.hover;
+            // A scope click selects its thread (through `selected`); a click on
+            // nothing releases the thread too.
+            self.selected_thread = None;
             if self.hover.is_none() {
                 self.measure = None;
             }

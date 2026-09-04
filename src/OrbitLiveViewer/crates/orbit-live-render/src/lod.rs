@@ -92,6 +92,48 @@ pub const FLAG_HOVER: f32 = 1.0;
 pub const FLAG_SELECTED: f32 = 2.0;
 pub const FLAG_SIBLING: f32 = 3.0;
 pub const FLAG_DIMMED: f32 = 4.0;
+/// Not the selected thread (or not the target process): the flat grey C++
+/// Orbit paints every timer outside the selection with.
+pub const FLAG_INACTIVE: f32 = 5.0;
+/// A scheduler slice of another thread of the selected thread's process: a
+/// lighter grey, so the process's other threads still read on the cores.
+pub const FLAG_SAME_PID: f32 = 6.0;
+
+/// Which threads are drawn in colour. This is C++ Orbit's rule
+/// (`SchedulerTrack::IsTimerActive`, `ThreadTrack::GetTimerColor`): with a
+/// thread selected only that thread is active; with none, every thread of
+/// the target process is -- or every thread, when the capture has no target.
+/// The viewer's own tracks are always active; they are not part of the
+/// capture.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThreadFocus {
+    /// `(pid, tid)` of the selected thread.
+    pub selected: Option<(u32, u32)>,
+    pub target_pid: Option<u32>,
+}
+
+impl ThreadFocus {
+    pub fn active(&self, pid: u32, tid: u32) -> bool {
+        if orbit_live_event::dev::is_self_pid(pid) {
+            return true;
+        }
+        match self.selected {
+            Some((_, t)) => tid == t,
+            None => self.target_pid.is_none_or(|p| p == pid),
+        }
+    }
+
+    /// Another thread of the selected thread's process.
+    pub fn same_pid(&self, pid: u32) -> bool {
+        self.selected.is_some_and(|(p, _)| p == pid)
+    }
+
+    /// Nothing is narrowed: every thread active, as when no capture target
+    /// and no selection exist.
+    pub fn is_all(&self) -> bool {
+        self.selected.is_none() && self.target_pid.is_none()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScopeInstance {
@@ -881,9 +923,34 @@ pub fn apply_highlight_flags(
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
     search: Option<&std::collections::HashSet<u32>>,
+    focus: ThreadFocus,
 ) {
     for inst in instances.iter_mut() {
+        let active = focus.active(inst.pid, inst.tid);
         let mut f = FLAG_NONE;
+        if inst.kind == kind::SCHEDULING_SLICE {
+            // The scheduler track, as C++ Orbit's SchedulerTrack::GetTimerColor
+            // orders it: hover, then the selected timer, then everything
+            // outside the selection in grey -- a lighter grey for the
+            // selected process's other threads -- then the thread colour.
+            if hover.is_some_and(|h| h.matches_instance(inst)) {
+                f = FLAG_HOVER;
+            } else if selected.is_some_and(|s| s.matches_instance(inst)) {
+                f = FLAG_SELECTED;
+            } else if !active {
+                f = if focus.same_pid(inst.pid) { FLAG_SAME_PID } else { FLAG_INACTIVE };
+            } else if search.is_some_and(|ids| !ids.contains(&inst.name_id)) {
+                f = FLAG_DIMMED;
+            }
+            inst.flags = f;
+            continue;
+        }
+        // Thread tracks: outside the selection is grey before anything else
+        // (ThreadTrack::GetTimerColor checks IsTimerActive first).
+        if !active {
+            inst.flags = FLAG_INACTIVE;
+            continue;
+        }
         if let Some(ids) = search {
             if !ids.contains(&inst.name_id) {
                 f = FLAG_DIMMED;

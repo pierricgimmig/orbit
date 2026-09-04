@@ -92,6 +92,8 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   let selected = v.mark > 1.5 && v.mark < 2.5;
   let sibling = v.mark > 2.5 && v.mark < 3.5;
   let dimmed = v.mark > 3.5 && v.mark < 4.5;
+  let inactive = v.mark > 4.5 && v.mark < 5.5;
+  let same_pid = v.mark > 5.5 && v.mark < 6.5;
   let pulse = select(0.0, selected_pulse(uni.time), selected);
   let d = sd_rounded_box(v.local, v.half_size, v.radius);
   let aa = fwidth(d) * 0.75;
@@ -101,6 +103,13 @@ fn fs_main(v: VsOut) -> @location(0) vec4<f32> {
   if dimmed {
     let luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
     rgb = mix(rgb, vec3(luma), 0.84) * 0.36;
+  }
+  // C++ Orbit's flat greys: (100,100,100) outside the selection,
+  // (140,140,140) for the selected process's other threads on a core.
+  if inactive {
+    rgb = vec3(0.392, 0.392, 0.392);
+  } else if same_pid {
+    rgb = vec3(0.549, 0.549, 0.549);
   }
   if sibling {
     rgb = SIBLING_RGB;

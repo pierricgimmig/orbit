@@ -40,15 +40,14 @@ fn event_span_ns(e: &LiveEvent) -> u64 {
 mod lod;
 mod par;
 mod shaders;
-pub use lod::{
+pub use lod::{ThreadFocus, 
     apply_highlight_flags, choose_lod, choose_lod_first8, choose_lod_hint, collect_instances,
     collect_instances_layout, collect_instances_layout_opts, drop_index_for_y, empty_column_color,
     instance_for_event, lane_gap, lane_height, leaf_label, pick_column_event, pick_instance_at,
     reorder_insert, sample_lod_lanes, sort_thread_leaves, stack_height, stack_height_keys,
     stacked_layout, sync_lane_order, value_lanes_in_view, CollectOpts, InstanceFrame,
     ScopeInstance, ScopePick, TimelineLod, YCull, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE,
-    FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX, Y_CULL_PAD,
-};
+    FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX, Y_CULL_PAD, FLAG_INACTIVE, FLAG_SAME_PID};
 pub use par::{is_parallel, parallelism, set_wasm_pool_threads, WorkerSpan};
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
@@ -734,6 +733,7 @@ pub fn generate_nested_scopes(
 
 #[cfg(test)]
 mod tests {
+    use super::{FLAG_INACTIVE, FLAG_SAME_PID, ThreadFocus};
     use super::*;
     use orbit_live_event::{named_scope_color, thread_scope_color};
     #[cfg(not(debug_assertions))]
@@ -1277,8 +1277,7 @@ mod tests {
                 extra: 0,
             }),
             None,
-            None,
-        );
+            None, ThreadFocus::default());
         assert_eq!(insts[1].flags, FLAG_SELECTED);
         assert_eq!(insts[0].flags, FLAG_SIBLING);
     }
@@ -1307,7 +1306,7 @@ mod tests {
         b.start_ns = 40;
         let mut insts = vec![a, b];
         let ids = std::collections::HashSet::from([7u32]);
-        apply_highlight_flags(&mut insts, None, None, Some(&ids));
+        apply_highlight_flags(&mut insts, None, None, Some(&ids), ThreadFocus::default());
         assert_eq!(insts[0].flags, FLAG_NONE);
         assert_eq!(insts[1].flags, FLAG_DIMMED);
         apply_highlight_flags(
@@ -1323,8 +1322,7 @@ mod tests {
                 extra: 0,
             }),
             None,
-            Some(&ids),
-        );
+            Some(&ids), ThreadFocus::default());
         assert_eq!(insts[0].flags, FLAG_SELECTED);
         assert_eq!(insts[1].flags, FLAG_DIMMED, "other names stay dimmed");
         insts[1].name_id = 7;
@@ -1342,8 +1340,7 @@ mod tests {
                 extra: 0,
             }),
             None,
-            Some(&ids),
-        );
+            Some(&ids), ThreadFocus::default());
         assert_eq!(insts[0].flags, FLAG_SELECTED);
         assert_eq!(insts[1].flags, FLAG_SIBLING);
     }
@@ -1393,4 +1390,35 @@ mod tests {
         assert_eq!(bytes[0], ((p >> 16) & 0xFF) as u8);
         assert_eq!(bytes[3], ((p >> 24) & 0xFF) as u8);
     }
+    #[test]
+    fn a_selected_thread_greys_the_rest_and_lightens_its_process_on_the_scheduler() {
+        let mk = |pid: u32, tid: u32, kind: u8| ScopeInstance {
+            x: 0.0, y: 0.0, w: 10.0, h: 4.0, color: 0xFF80_8080, radius: 1.0,
+            name_id: 1, start_ns: 0, duration_ns: 10, pid, tid, kind, depth: 0, extra: 0,
+            flags: FLAG_NONE,
+        };
+        let mut insts = vec![
+            mk(1, 10, kind::SCHEDULING_SLICE), // selected thread, on a core
+            mk(1, 11, kind::SCHEDULING_SLICE), // same process, other thread
+            mk(5, 50, kind::SCHEDULING_SLICE), // another process (2 and 3 are the viewer's own)
+            mk(1, 11, kind::API_SCOPE),        // another thread's scope
+            mk(1, 10, kind::API_SCOPE),        // the selected thread's scope
+        ];
+        let focus = ThreadFocus { selected: Some((1, 10)), target_pid: Some(1) };
+        apply_highlight_flags(&mut insts, None, None, None, focus);
+        assert_eq!(insts[0].flags, FLAG_NONE, "selected thread keeps its colour");
+        assert_eq!(insts[1].flags, FLAG_SAME_PID);
+        assert_eq!(insts[2].flags, FLAG_INACTIVE);
+        assert_eq!(insts[3].flags, FLAG_INACTIVE, "other threads' scopes go grey");
+        assert_eq!(insts[4].flags, FLAG_NONE);
+        // No selection: the target process is active, others grey.
+        let focus = ThreadFocus { selected: None, target_pid: Some(1) };
+        apply_highlight_flags(&mut insts, None, None, None, focus);
+        assert_eq!(insts[1].flags, FLAG_NONE);
+        assert_eq!(insts[2].flags, FLAG_INACTIVE);
+        // No target either: everything active.
+        apply_highlight_flags(&mut insts, None, None, None, ThreadFocus::default());
+        assert!(insts.iter().all(|i| i.flags == FLAG_NONE));
+    }
+
 }

@@ -42,6 +42,10 @@ pub struct GpuDirtyKey {
     pub selected: Option<(u32, u64)>,
     pub hover: Option<(u32, u64)>,
     pub search: u64,
+    /// The thread focus (selected thread, target process): a flags-only
+    /// change, like hover.
+    pub thread_sel: Option<(u32, u32)>,
+    pub target: Option<u32>,
 }
 
 pub fn quant_px(v: f32) -> i32 {
@@ -80,7 +84,12 @@ pub fn upload_mode(prev: Option<&GpuDirtyKey>, next: &GpuDirtyKey) -> UploadMode
     {
         return UploadMode::Full;
     }
-    if p.selected != next.selected || p.hover != next.hover || p.search != next.search {
+    if p.selected != next.selected
+        || p.hover != next.hover
+        || p.search != next.search
+        || p.thread_sel != next.thread_sel
+        || p.target != next.target
+    {
         return UploadMode::Flags;
     }
     UploadMode::Skip
@@ -151,6 +160,7 @@ impl TimelinePayload {
         overlay: &[ScopeInstance],
         search: Option<&std::collections::HashSet<u32>>,
         punch: Option<(u32, u32)>,
+        focus: orbit_live_render::ThreadFocus,
         intern: Option<&orbit_live_event::InternTable>,
         scale: f32,
         y_cull: Option<YCull>,
@@ -216,6 +226,10 @@ impl TimelinePayload {
                 if let Some(ids) = search {
                     let _dim = dev.scope(TID_RENDER, NAME_DIM_SEARCH);
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
+                }
+                if !focus.is_all() {
+                    let _dim = dev.scope(TID_RENDER, NAME_DIM_SEARCH);
+                    grey_raster_outside_focus(index, &mut raster, t0, t1, focus);
                 }
                 let raster_spans = std::mem::take(&mut raster.worker_spans);
                 let (origin, _) = {
@@ -325,6 +339,57 @@ pub fn snap_instances_to_layout(instances: &mut Vec<ScopeInstance>, layout: &[(L
         let key = ScopePick::from_instance(inst).lane_key();
         if let Some(&y) = ys.get(&key) {
             inst.y = y;
+        }
+    }
+}
+
+/// The pixel-column LOD's version of the thread focus: every pixel whose
+/// event belongs to a thread outside the focus goes the C++ inactive grey,
+/// or the lighter same-process grey on the scheduler rows.
+fn grey_raster_outside_focus(
+    index: &TrackIndex,
+    raster: &mut orbit_live_render::RasterizedFrame,
+    t0: u64,
+    t1: u64,
+    focus: orbit_live_render::ThreadFocus,
+) {
+    if raster.width == 0 || t1 <= t0 {
+        return;
+    }
+    let dt = (t1 - t0) as f64 / raster.width as f64;
+    for (row, key) in raster.lanes.iter().enumerate() {
+        let Some(lane) = index.lane(*key) else {
+            continue;
+        };
+        let scheduler = key.kind == orbit_live_event::kind::SCHEDULING_SLICE;
+        // A thread's own row is one thread: decide once, not per pixel.
+        if !scheduler {
+            if focus.active(key.pid, key.tid) {
+                continue;
+            }
+            let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+            for px in dest.iter_mut() {
+                if *px != orbit_live_event::chrome::TRACK {
+                    *px = crate::theme::grey_argb(*px, 100);
+                }
+            }
+            continue;
+        }
+        let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+        for (x, px) in dest.iter_mut().enumerate() {
+            if *px == orbit_live_event::chrome::TRACK {
+                continue;
+            }
+            let col0 = t0.saturating_add((x as f64 * dt) as u64);
+            let col1 = t0
+                .saturating_add(((x + 1) as f64 * dt) as u64)
+                .max(col0 + 1);
+            if let Some(e) = lane.overlapping(col0, col1) {
+                if !focus.active(e.pid, e.tid) {
+                    let level = if focus.same_pid(e.pid) { 140 } else { 100 };
+                    *px = crate::theme::grey_argb(*px, level);
+                }
+            }
         }
     }
 }
@@ -1013,6 +1078,7 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{kind, named_scope_color, LiveEvent};
     use orbit_live_render::{
@@ -1119,11 +1185,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         let TimelinePayload::Pixel {
             rgba,
             width,
@@ -1178,11 +1244,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
 
@@ -1344,11 +1410,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         let TimelinePayload::Pixel { height, .. } = pixel else {
             panic!("expected pixel payload for the remaining thread");
         };
@@ -1370,11 +1436,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(
             matches!(gone, TimelinePayload::Empty),
             "empty rest layout must not rebuild index lanes and re-paint hidden scopes"
@@ -1412,11 +1478,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(p, TimelinePayload::Empty));
         let (inst, _) = TimelinePayload::from_index(
             &idx,
@@ -1429,11 +1495,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(inst, TimelinePayload::Empty));
     }
 
@@ -1458,6 +1524,8 @@ mod tests {
             selected: None,
             hover: None,
             search: 0,
+            thread_sel: None,
+            target: None,
         };
         assert_eq!(upload_mode(None, &base), UploadMode::Full);
         assert_eq!(upload_mode(Some(&base), &base), UploadMode::Skip);
@@ -1496,6 +1564,8 @@ mod tests {
 
 #[cfg(test)]
 mod blit_align_tests {
+    #[allow(unused_imports)]
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{kind, LiveEvent};
     use orbit_live_render::{lane_height, stacked_layout, TrackIndex};
@@ -1540,11 +1610,11 @@ mod blit_align_tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             scale,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         let TimelinePayload::Pixel { height, place, .. } = p else {
             panic!("expected pixel payload");
         };
@@ -1628,6 +1698,8 @@ fn upload_clock_ns() -> u64 {
 
 #[cfg(test)]
 mod worker_span_tests {
+    #[allow(unused_imports)]
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{kind, LiveEvent};
     use orbit_live_render::{stacked_layout, TrackIndex};
@@ -1668,11 +1740,11 @@ mod worker_span_tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
         assert!(
             !spans.is_empty(),
@@ -1684,6 +1756,8 @@ mod worker_span_tests {
 
 #[cfg(test)]
 mod span_pipeline_tests {
+    #[allow(unused_imports)]
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{dev::is_render_worker_tid, kind, LiveEvent};
     use orbit_live_render::{stacked_layout, TrackIndex};
@@ -1725,11 +1799,11 @@ mod span_pipeline_tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &dev,
-        );
+            &dev);
         assert!(!spans.is_empty(), "the walk produced no spans at all");
         dev.absorb_worker_spans(&spans);
         let scopes = dev.finish();
