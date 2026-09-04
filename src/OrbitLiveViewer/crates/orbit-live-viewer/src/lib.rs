@@ -157,7 +157,11 @@ impl LiveViewer {
             LiveFrame::CaptureStarted { .. } => {
                 self.index.clear();
             }
-            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } | LiveFrame::Status { .. } => {}
+            LiveFrame::CaptureFinished
+            | LiveFrame::Hello { .. }
+            | LiveFrame::Status { .. }
+            | LiveFrame::ThreadName { .. }
+            | LiveFrame::ProcessName { .. } => {}
         }
     }
 }

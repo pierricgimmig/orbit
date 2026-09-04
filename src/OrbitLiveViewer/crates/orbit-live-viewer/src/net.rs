@@ -716,6 +716,36 @@ mod wasm_impl {
             self.send("POST", "/api/self/start", "{}".into());
         }
 
+        /// Posts a `.orbit.zip` to the service, which opens it as the current
+        /// capture and streams it back over the WebSocket.
+        pub fn import_capture(&self, bytes: Vec<u8>) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(e) = send_bytes("/api/capture/import", &bytes, "application/zip").await {
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(format!("open capture: {e}"));
+                }
+            });
+        }
+
+        /// As [`import_capture`](Self::import_capture), reading the browser
+        /// `File` first.
+        pub fn import_capture_file(&self, file: web_sys::File) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = async {
+                    let buf = JsFuture::from(file.array_buffer()).await.map_err(js_err)?;
+                    let arr = js_sys::Uint8Array::new(&buf);
+                    let mut bytes = vec![0u8; arr.length() as usize];
+                    arr.copy_to(&mut bytes);
+                    send_bytes("/api/capture/import", &bytes, "application/zip").await
+                }
+                .await;
+                if let Err(e) = result {
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(format!("open capture: {e}"));
+                }
+            });
+        }
+
         pub fn stop_self(&self) {
             self.send("POST", "/api/self/stop", "{}".into());
         }
@@ -824,6 +854,41 @@ mod wasm_impl {
         let mut out = vec![0u8; arr.length() as usize];
         arr.copy_to(&mut out);
         Ok(out)
+    }
+
+    /// POSTs raw bytes with the given content type; the response text on
+    /// success, the status or error otherwise.
+    async fn send_bytes(url: &str, bytes: &[u8], content_type: &str) -> Result<String, String> {
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        let body = js_sys::Uint8Array::new_with_length(bytes.len() as u32);
+        body.copy_from(bytes);
+        opts.set_body(&body.into());
+        let headers = js_sys::Object::new();
+        js_sys::Reflect::set(
+            &headers,
+            &JsValue::from_str("content-type"),
+            &JsValue::from_str(content_type),
+        )
+        .map_err(js_err)?;
+        opts.set_headers(&headers);
+        let window = web_sys::window().ok_or("no window")?;
+        let resp = JsFuture::from(window.fetch_with_str_and_init(url, &opts))
+            .await
+            .map_err(js_err)?;
+        let resp: Response = resp
+            .dyn_into()
+            .map_err(|_| "fetch: not a Response".to_string())?;
+        let status = resp.status();
+        let text = JsFuture::from(resp.text().map_err(js_err)?)
+            .await
+            .map_err(js_err)?
+            .as_string()
+            .unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(format!("{status}: {text}"));
+        }
+        Ok(text)
     }
 
     async fn send_text(method: &str, url: &str, body: &str) -> Result<String, String> {
@@ -1015,6 +1080,7 @@ mod native_impl {
         pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}
         pub fn start_self(&self) {}
         pub fn stop_self(&self) {}
+        pub fn import_capture(&self, _bytes: Vec<u8>) {}
         pub fn push_self_scopes(&self, _scopes: &[orbit_live_event::dev::RelScope]) {}
     }
 }

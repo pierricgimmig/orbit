@@ -589,3 +589,39 @@ fn function_call_ingest_uses_interned_pretty_name() {
     assert_eq!(snap[0].name_id, name_id);
     assert_eq!(svc.intern.lock().get(snap[0].name_id), Some("HookMe"));
 }
+
+#[test]
+fn thread_and_process_names_are_replayed_to_a_late_subscriber() {
+    use orbit_live_protocol::{decode_frame, LiveFrame};
+    let svc = crate::LiveService::new(crate::ServerConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        ring_buffer_bytes: 1 << 20,
+        spill_path: None,
+        dev_self_profile: false,
+    })
+    .unwrap();
+    svc.set_thread_name(7, 70, "Worker-1");
+    svc.set_process_name(7, "game");
+    let mut seen_thread = false;
+    let mut seen_process = false;
+    for bytes in svc.hello_and_snapshot_frames() {
+        let (frame, _) = decode_frame(&bytes).unwrap();
+        match frame {
+            LiveFrame::ThreadName { pid, tid, name } => {
+                assert_eq!((pid, tid, name.as_str()), (7, 70, "Worker-1"));
+                seen_thread = true;
+            }
+            LiveFrame::ProcessName { pid, name } => {
+                assert_eq!((pid, name.as_str()), (7, "game"));
+                seen_process = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(seen_thread && seen_process);
+    let (threads, processes) = svc.capture_names();
+    assert_eq!(threads, vec![((7, 70), "Worker-1".to_string())]);
+    assert_eq!(processes, vec![(7, "game".to_string())]);
+    svc.clear_names();
+    assert!(svc.capture_names().0.is_empty());
+}

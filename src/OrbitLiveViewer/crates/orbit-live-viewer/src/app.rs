@@ -681,6 +681,20 @@ pub struct OrbitLiveApp {
     listing_pool_ema_us: Option<f32>,
     self_profile: crate::self_pane::SelfProfile,
     self_pane_open: bool,
+    /// A capture bundle was posted to the service; the next CaptureFinished
+    /// is its arrival, and the view fits to it.
+    import_pending: bool,
+    /// The opened capture's CaptureStarted has arrived; the first Status
+    /// saying "not capturing" after it means its data is all here.
+    import_started: bool,
+    /// Hello frames seen: one per socket, plus one per server-side resync.
+    hello_count: u64,
+    /// The report panel is open by the user's hand, not just by a selection.
+    report_open: bool,
+    /// The UI knobs window (row spacing and the like) is open.
+    show_tweaks: bool,
+    ui_tweaks: UiTweaks,
+    live_stats: LiveStats,
     /// The self-profile pane's own timeline state. Drawn by the same
     /// `timeline()` as the capture: its fields are swapped into place for
     /// the duration of the pane's draw and swapped back after.
@@ -753,6 +767,11 @@ enum ReportTab {
     BottomUp,
     /// The modules the target mapped, and how many symbols each gave up.
     Modules,
+    /// Orbit's Live tab: every scope seen so far with count, total, average,
+    /// min, max and standard deviation, plus what the samples are doing --
+    /// updated as the capture runs, computed in the viewer from its own
+    /// index, no request to the service.
+    Live,
 }
 
 impl ReportTab {
@@ -764,6 +783,7 @@ impl ReportTab {
             "top_down" | "topdown" => Some(ReportTab::TopDown),
             "bottom_up" | "bottomup" => Some(ReportTab::BottomUp),
             "modules" => Some(ReportTab::Modules),
+            "live" => Some(ReportTab::Live),
             _ => None,
         }
     }
@@ -774,6 +794,7 @@ impl ReportTab {
             ReportTab::TopDown => "Top-down",
             ReportTab::BottomUp => "Bottom-up",
             ReportTab::Modules => "Modules",
+            ReportTab::Live => "Live",
         }
     }
 
@@ -919,7 +940,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -933,6 +954,18 @@ impl OrbitLiveApp {
                 None => "null".to_string(),
             },
             self.measure.is_some(),
+            self.sample_ranges()
+                .iter()
+                .map(|(a, b, tid)| match tid {
+                    Some(t) => format!("[{a},{b},{t}]"),
+                    None => format!("[{a},{b},null]"),
+                })
+                .collect::<Vec<_>>()
+                .join(","),
+            self.report_open,
+            self.show_tweaks,
+            self.report_tab.label(),
+            self.hello_count,
         );
         if text == self.sel_readout {
             return;
@@ -1121,6 +1154,13 @@ impl OrbitLiveApp {
             listing_pool_ema_us: None,
             self_profile: crate::self_pane::SelfProfile::default(),
             self_pane_open: false,
+            import_pending: false,
+            import_started: false,
+            hello_count: 0,
+            report_open: false,
+            show_tweaks: false,
+            ui_tweaks: UiTweaks::load(),
+            live_stats: LiveStats::default(),
             self_tl: TimelineState::fresh(),
             gpu_slot: 0,
             canvas_override: None,
@@ -1263,6 +1303,15 @@ impl OrbitLiveApp {
     }
 
     fn process_display_name(&self, pid: u32) -> String {
+        // The viewer's and the server's own rows: on a real machine pids 2
+        // and 3 are kthreadd and pool_workqueue_release, and the live
+        // process list would say so.
+        if pid == VIEWER_PID {
+            return orbit_live_event::dev::VIEWER_NAME.to_string();
+        }
+        if pid == orbit_live_event::dev::SERVICE_PID {
+            return orbit_live_event::dev::SERVICE_NAME.to_string();
+        }
         self.processes
             .iter()
             .find(|p| p.pid == pid)
@@ -1470,7 +1519,14 @@ impl OrbitLiveApp {
         {
             let file = self.pending_file.lock().ok().and_then(|mut g| g.take());
             if let Some(file) = file {
-                self.begin_trace_load(chrome_load::start_wasm_file(file));
+                if is_bundle_name(&file.name()) {
+                    // An Orbit capture: the service opens it and streams it
+                    // back like a capture, names and samples included.
+                    self.import_pending = true;
+                    self.net.import_capture_file(file);
+                } else {
+                    self.begin_trace_load(chrome_load::start_wasm_file(file));
+                }
             }
         }
         let evs = {
@@ -1547,6 +1603,16 @@ impl OrbitLiveApp {
         } else {
             f.name.clone()
         };
+        if is_bundle_name(&name) {
+            match &f.bytes {
+                Some(bytes) => {
+                    self.import_pending = true;
+                    self.net.import_capture(bytes.to_vec());
+                }
+                None => self.error = format!("{name}: open captures from the web viewer"),
+            }
+            return;
+        }
         if !chrome_load::is_trace_name(&name) {
             self.error = format!("Not a Chrome trace: {name}");
             return;
@@ -1922,6 +1988,9 @@ impl OrbitLiveApp {
                 self.intern.insert_id(id, &text);
             }
             LiveFrame::CaptureStarted { start_ns, .. } => {
+                if self.import_pending {
+                    self.import_started = true;
+                }
                 self.clear_file_trace();
                 self.index.clear();
                 self.selected = None;
@@ -1978,8 +2047,51 @@ impl OrbitLiveApp {
                     // no control state; keep what /api/status last said.
                     instrumentation: self.status.instrumentation.clone(),
                 });
+                // An opened capture is all here once the service reports it
+                // finished: show the whole of it.
+                if self.import_started && !capturing {
+                    self.import_started = false;
+                    self.import_pending = false;
+                    self.follow = false;
+                    self.fit_to_content();
+                    self.needs_repaint = true;
+                }
             }
-            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
+            // The viewer's own tracks use pids 2 and 3 as sentinels; on a
+            // real machine those are kthreadd and pool_workqueue_release,
+            // whose names must not land on the viewer's rows.
+            LiveFrame::ThreadName { pid, .. } | LiveFrame::ProcessName { pid, .. } if is_self_pid(pid) => {}
+            LiveFrame::ThreadName { pid, tid, name } => {
+                self.thread_names.insert((pid, tid), name);
+            }
+            LiveFrame::ProcessName { pid, name } => {
+                match self.trace_processes.iter_mut().find(|p| p.pid == pid) {
+                    Some(p) => p.name = name,
+                    None => self.trace_processes.push(ProcessJson {
+                        pid,
+                        name,
+                        cpu: 0.0,
+                        path: "capture".into(),
+                    }),
+                }
+            }
+            LiveFrame::CaptureFinished => {}
+            LiveFrame::Hello { .. } => {
+                self.hello_count += 1;
+                // A Hello is the start of a full snapshot -- a fresh socket,
+                // or the server starting a lagging viewer over -- and every
+                // event that follows is the ring entire. Drop what is held so
+                // nothing is counted twice; a loaded file is not the ring's
+                // and stays.
+                if !self.file_trace_active() {
+                    self.index.clear();
+                    self.thread_names.clear();
+                    self.trace_processes.clear();
+                    self.hover = None;
+                    self.refresh_content_bounds();
+                    self.needs_repaint = true;
+                }
+            }
         }
     }
 
@@ -2336,11 +2448,36 @@ impl OrbitLiveApp {
                 self.self_pane_open = !self.self_pane_open;
             }
             if pill(ui, "Save", false)
-                .on_hover_text("Download the capture as an Arrow IPC file (open with pyarrow / pandas)")
+                .on_hover_text("Download the whole capture as a self-contained .orbit.zip (events, samples, names) — drop it back on the viewer to open it")
                 .clicked()
             {
                 ui.ctx()
-                    .open_url(egui::OpenUrl::new_tab("/api/capture/export"));
+                    .open_url(egui::OpenUrl::new_tab("/api/capture/export?format=bundle"));
+            }
+            if let Some((a, b)) = self.selection_span() {
+                if pill(ui, "Save slice", false)
+                    .on_hover_text("Download the selected time slice as a self-contained capture (.orbit.zip)")
+                    .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                        "/api/capture/export?format=bundle&t0={a}&t1={b}"
+                    )));
+                }
+            }
+            if pill(ui, "Report", self.report_open)
+                .on_hover_text("The report panel: Live scope statistics, and the sampling report of a selection")
+                .clicked()
+            {
+                self.report_open = !self.report_open;
+                if self.report_open && self.sampling_ranges.is_empty() && self.sampling.is_none() {
+                    self.report_tab = ReportTab::Live;
+                }
+            }
+            if pill(ui, "UI", self.show_tweaks)
+                .on_hover_text("Knobs for the report rows and the tracks")
+                .clicked()
+            {
+                self.show_tweaks = !self.show_tweaks;
             }
             ui.add_space(6.0);
             self.paint_search(ui);
@@ -4403,9 +4540,18 @@ impl OrbitLiveApp {
                 }
                 let t = time_at_x(p.x, rect, self.t0, self.t1);
                 // Only the lane area knows about threads; a drag on the ruler
-                // is process-wide by construction.
-                let sample_tid =
-                    if label_here { self.sample_lane_at_y(p.y - rect.top()) } else { None };
+                // is process-wide by construction. In the lanes, a drag that
+                // starts on a thread's track -- its header, its sample bar,
+                // any of its lanes -- selects that thread's samples alone;
+                // one that starts on the scheduler or in empty space selects
+                // every thread's. C++ Orbit's SelectCallstacks does the same
+                // with the track under the mouse.
+                let sample_tid = if label_here {
+                    let y = p.y - rect.top();
+                    self.sample_lane_at_y(y).or_else(|| self.thread_at_y(y))
+                } else {
+                    None
+                };
                 self.measure = Some(TimeMeasure {
                     start_ns: t,
                     stop_ns: t,
@@ -4625,7 +4771,12 @@ impl OrbitLiveApp {
         // The panel shows for a selection, and also for a finished capture
         // with nothing selected -- that is the aggregate view.
         let has_selection = !self.sampling_ranges.is_empty();
-        if report.is_none() && self.tree.is_none() && self.modules.is_none() && !has_selection {
+        if report.is_none()
+            && self.tree.is_none()
+            && self.modules.is_none()
+            && !has_selection
+            && !self.report_open
+        {
             return;
         }
         // A vertical panel to the right of the capture, where C++ Orbit docks
@@ -4647,21 +4798,19 @@ impl OrbitLiveApp {
                 // Wrapped, not a single row: the panel is narrow and the tabs
                 // and the selection text must not run off its right edge.
                 ui.horizontal_wrapped(|ui| {
-                    let title = match &report {
-                        Some(_) => format!("Sampling report — {samples} samples"),
+                    let title = match (&report, self.report_tab) {
+                        (_, ReportTab::Live) => self.live_stats.title(),
+                        (Some(_), _) => format!("Sampling report — {samples} samples"),
                         // No service report (yet, or at all): the viewer can
                         // still say what the selection holds.
-                        None => format!(
+                        (None, _) => format!(
                             "{} samples selected — no report from the service",
                             self.local_sample_count
                         ),
                     };
                     ui.label(RichText::new(title).color(theme::TEXT).size(12.0));
-                    ui.label(
-                        RichText::new(describe_selection(&self.sampling_ranges))
-                        .color(theme::MUTED)
-                        .size(11.0),
-                    );
+                    let desc = self.describe_selection_named();
+                    ui.label(RichText::new(desc).color(theme::MUTED).size(11.0));
                     // Expand/collapse all, as the native tree's context menu
                     // offers. Only meaningful on the two tree tabs.
                     if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
@@ -4681,6 +4830,7 @@ impl OrbitLiveApp {
                     }
                     ui.add_space(8.0);
                     for tab in [
+                        ReportTab::Live,
                         ReportTab::Flat,
                         ReportTab::TopDown,
                         ReportTab::BottomUp,
@@ -4713,6 +4863,7 @@ impl OrbitLiveApp {
                         ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
                         ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
                         ReportTab::Modules => self.module_rows(ui),
+                        ReportTab::Live => self.live_rows(ui),
                     }
                 });
             });
@@ -4721,16 +4872,16 @@ impl OrbitLiveApp {
     fn flat_report_rows(&mut self, ui: &mut Ui, report: Option<&crate::net::SamplingReport>) {
         let Some(report) = report else { return };
         if report.samples == 0 {
-            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(11.0));
+            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
             return;
         }
         egui::Grid::new("orbit_sampling_rows")
             .num_columns(4)
-            .spacing([16.0, 2.0])
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
                 for h in ["self", "incl", "function", "module"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
+                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
                 for row in report.rows.iter().take(200) {
@@ -4738,10 +4889,10 @@ impl OrbitLiveApp {
                     // paints them on the call tree's Inclusive column, but
                     // this is the view you scan hardest, and a column of bars
                     // is read faster than a column of numbers.
-                    percent_bar(ui, row.self_percent as f64, true);
-                    percent_bar(ui, row.inclusive_percent as f64, false);
-                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(11.0));
-                    ui.label(RichText::new(&row.module).color(theme::MUTED).size(10.5));
+                    percent_bar(ui, row.self_percent as f64, true, self.ui_tweaks.report_bar_w);
+                    percent_bar(ui, row.inclusive_percent as f64, false, self.ui_tweaks.report_bar_w);
+                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    ui.label(RichText::new(&row.module).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
                 }
             });
@@ -4762,20 +4913,20 @@ impl OrbitLiveApp {
     /// while the tree is read.
     fn call_tree_rows(&mut self, ui: &mut Ui) {
         let Some(tree) = self.tree.clone() else {
-            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(11.0));
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(self.ui_tweaks.report_font));
             return;
         };
         if tree.samples == 0 {
-            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(11.0));
+            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
             return;
         }
         egui::Grid::new("orbit_call_tree_rows")
             .num_columns(5)
-            .spacing([14.0, 2.0])
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
                 for h in ["inclusive", "self", "of parent", "function", "module"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
+                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
                 // Explicit stack rather than recursion: the borrow of the
@@ -4798,7 +4949,7 @@ impl OrbitLiveApp {
                     // Inclusive as a bar, the way the native Inclusive column
                     // paints it: the shape of the hot path is visible down the
                     // column without reading a single number.
-                    percent_bar(ui, node.inclusive_percent, true);
+                    percent_bar(ui, node.inclusive_percent, true, self.ui_tweaks.report_bar_w);
                     ui.label(
                         RichText::new(if node.exclusive > 0 {
                             format!("{}", node.exclusive)
@@ -4807,12 +4958,12 @@ impl OrbitLiveApp {
                         })
                         .color(theme::MUTED)
                         .monospace()
-                        .size(11.0),
+                        .size(self.ui_tweaks.report_font),
                     );
-                    percent_bar(ui, node.of_parent_percent, false);
+                    percent_bar(ui, node.of_parent_percent, false, self.ui_tweaks.report_bar_w);
                     let mut toggle = false;
                     ui.horizontal(|ui| {
-                        ui.add_space(depth as f32 * 12.0);
+                        ui.add_space(depth as f32 * self.ui_tweaks.report_indent);
                         // A painted triangle, not a glyph: the font atlas has
                         // no chevron and renders one as a replacement box.
                         toggle |= inline_chevron(ui, expandable.then_some(expanded));
@@ -4821,7 +4972,7 @@ impl OrbitLiveApp {
                             egui::Label::new(
                                 RichText::new(&node.name)
                                     .color(if is_thread { theme::MUTED } else { theme::TEXT })
-                                    .size(11.0),
+                                    .size(self.ui_tweaks.report_font),
                             )
                             .sense(egui::Sense::click()),
                         );
@@ -4841,7 +4992,7 @@ impl OrbitLiveApp {
                             self.tree_expanded.insert(path.clone());
                         }
                     }
-                    ui.label(RichText::new(&node.module).color(theme::MUTED).size(10.5));
+                    ui.label(RichText::new(&node.module).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
 
                     if expanded {
@@ -4858,17 +5009,17 @@ impl OrbitLiveApp {
             ui.label(
                 RichText::new("No modules loaded — pick a process and load symbols.")
                     .color(theme::MUTED)
-                    .size(11.0),
+                    .size(self.ui_tweaks.report_font),
             );
             return;
         };
         egui::Grid::new("orbit_module_rows")
             .num_columns(3)
-            .spacing([16.0, 2.0])
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
                 for h in ["symbols", "module", "path"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(10.5));
+                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
                 for row in modules.modules.iter() {
@@ -4876,10 +5027,10 @@ impl OrbitLiveApp {
                         RichText::new(row.function_count.to_string())
                             .color(theme::TEXT)
                             .monospace()
-                            .size(11.0),
+                            .size(self.ui_tweaks.report_font),
                     );
-                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(11.0));
-                    ui.label(RichText::new(&row.path).color(theme::MUTED).size(10.5));
+                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    ui.label(RichText::new(&row.path).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
                 }
             });
@@ -4923,6 +5074,164 @@ impl OrbitLiveApp {
         self.selected = Some(ScopePick::from_instance(
             &self.last_instances[lane[next as usize]],
         ));
+    }
+
+    /// The Live tab: scope statistics and sample counts over the selection
+    /// (or the whole capture), refreshed as data arrives.
+    fn live_rows(&mut self, ui: &mut Ui) {
+        self.refresh_live_stats();
+        let font = self.ui_tweaks.report_font;
+        let stats = &self.live_stats;
+        if !stats.sample_threads.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("samples by thread:").color(theme::MUTED).size(font - 0.5));
+                for (tid, n) in stats.sample_threads.iter().take(12) {
+                    let name = self.thread_names.get(&(stats.target_pid, *tid)).cloned()
+                        .or_else(|| self.intern.get(*tid).map(str::to_string))
+                        .unwrap_or_else(|| tid.to_string());
+                    ui.label(RichText::new(format!("{name} {n}")).color(theme::TEXT).size(font - 0.5));
+                }
+            });
+            ui.add_space(4.0);
+        }
+        if stats.rows.is_empty() {
+            ui.label(RichText::new("No scopes yet.").color(theme::MUTED).size(font));
+            return;
+        }
+        let rows = stats.rows.clone();
+        egui::Grid::new("orbit_live_rows")
+            .num_columns(7)
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["function", "count", "total", "avg", "min", "max", "std dev"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
+                }
+                ui.end_row();
+                for r in rows.iter().take(300) {
+                    let name = self.intern.get(r.name_id).unwrap_or("?");
+                    ui.label(RichText::new(name).color(theme::TEXT).size(font));
+                    for v in [
+                        r.count.to_string(),
+                        display_time_ns(r.total_ns),
+                        display_time_ns(r.avg_ns()),
+                        display_time_ns(r.min_ns),
+                        display_time_ns(r.max_ns),
+                        display_time_ns(r.std_dev_ns()),
+                    ] {
+                        ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+
+    /// Recomputes the Live statistics when the data or the selection moved
+    /// on, at most a few times a second while a capture streams.
+    fn refresh_live_stats(&mut self) {
+        let events = self.index.event_count() as u64;
+        let ranges = self.sample_ranges();
+        let now = self.now_s;
+        if self.live_stats.events_seen == events
+            && self.live_stats.ranges == ranges
+            && self.live_stats.selection_keyed
+        {
+            return;
+        }
+        if self.live_stats.events_seen != events && now - self.live_stats.computed_s < LIVE_STATS_MIN_INTERVAL_S {
+            return;
+        }
+        self.live_stats = live_stats_from(
+            self.index.lanes().flat_map(|(_, lane)| lane.events().iter()),
+            &ranges,
+            self.selected_pid.unwrap_or(0),
+        );
+        self.live_stats.events_seen = events;
+        self.live_stats.ranges = ranges;
+        self.live_stats.selection_keyed = true;
+        self.live_stats.computed_s = now;
+        if self.recording {
+            self.needs_repaint = true;
+        }
+    }
+
+    /// `describe_selection`, with the thread named when one is selected.
+    fn describe_selection_named(&self) -> String {
+        let text = describe_selection(&self.sampling_ranges);
+        if let [(_, _, Some(tid))] = self.sampling_ranges.as_slice() {
+            // A range names only its tid; the thread table is keyed by
+            // (pid, tid), and the pid is whichever process owns that tid.
+            let name = self
+                .thread_names
+                .iter()
+                .find(|((_, t), _)| t == tid)
+                .map(|(_, n)| n.clone())
+                .or_else(|| self.intern.get(*tid).map(str::to_string));
+            if let Some(name) = name {
+                return text.replacen(&format!("thread {tid}"), &format!("thread {tid} {name}"), 1);
+            }
+        }
+        text
+    }
+
+    /// The span of the current selection, `(start, end)` in capture
+    /// nanoseconds, over every committed range and the drag in progress.
+    fn selection_span(&self) -> Option<(u64, u64)> {
+        selection_span(&self.sample_ranges())
+    }
+
+    /// The thread whose track (header or any lane) is at `y`, for a
+    /// selection that should cover that thread's samples alone. The
+    /// scheduler, machine and process rows and the empty space give `None`:
+    /// every thread, as C++ Orbit's SelectCallstacks does when the pick is
+    /// not a thread track.
+    fn thread_at_y(&self, y: f32) -> Option<u32> {
+        match self.tracks.hit_at_y(y)? {
+            RowId::Thread(t) => Some(t.tid),
+            RowId::Lane(k) if !k.is_scheduler() && !is_self_pid(k.pid) => Some(k.tid),
+            _ => None,
+        }
+    }
+
+    /// The UI knobs window: what the report rows look like, live.
+    fn tweaks_window(&mut self, ctx: &Context) {
+        if !self.show_tweaks {
+            return;
+        }
+        let before = self.ui_tweaks;
+        let mut open = self.show_tweaks;
+        // Top right, clear of the rail and the transport bar, where the
+        // report it mostly adjusts is.
+        let screen = ctx.screen_rect();
+        egui::Window::new("UI")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(280.0)
+            .default_pos(Pos2::new(screen.right() - 300.0, 130.0))
+            .show(ctx, |ui| {
+                let t = &mut self.ui_tweaks;
+                ui.label(RichText::new("Sampling report").color(theme::MUTED).size(10.5));
+                ui.add(egui::Slider::new(&mut t.report_row_gap, 0.0..=16.0).text("row gap"));
+                ui.add(egui::Slider::new(&mut t.report_col_gap, 4.0..=40.0).text("column gap"));
+                ui.add(egui::Slider::new(&mut t.report_font, 8.0..=18.0).text("font size"));
+                ui.add(egui::Slider::new(&mut t.report_bar_w, 20.0..=160.0).text("bar width"));
+                ui.add(egui::Slider::new(&mut t.report_indent, 4.0..=32.0).text("tree indent"));
+                ui.add_space(6.0);
+                ui.label(RichText::new("Tracks").color(theme::MUTED).size(10.5));
+                let mut scale = self.tracks.scale;
+                if ui.add(egui::Slider::new(&mut scale, 0.5..=2.0).text("track scale")).changed() {
+                    self.tracks.scale = scale;
+                    self.relayout_tracks();
+                }
+                ui.add_space(6.0);
+                if ui.button("Reset").clicked() {
+                    self.ui_tweaks = UiTweaks::default();
+                }
+            });
+        self.show_tweaks = open;
+        if self.ui_tweaks != before {
+            self.ui_tweaks.save();
+        }
     }
 
     fn tick_follow(&mut self, dt: f32, hold_window: bool) {
@@ -5121,6 +5430,7 @@ impl eframe::App for OrbitLiveApp {
 
             self.refresh_sampling_report(ctx.input(|i| i.time));
             self.sampling_panel(ctx);
+            self.tweaks_window(ctx);
             self.self_pane(ctx, dt, &devf);
             self.publish_selection();
 
@@ -6014,8 +6324,8 @@ fn inline_chevron(ui: &mut Ui, open: Option<bool>) -> bool {
 /// UI's `ProgressBarItemDelegate` paints the Inclusive column. Reading down a
 /// column of bars finds the hot path far faster than reading down a column of
 /// numbers.
-fn percent_bar(ui: &mut Ui, percent: f64, strong: bool) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(66.0, 14.0), Sense::hover());
+fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 14.0), Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 2.0, theme::INPUT);
     let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
@@ -6042,6 +6352,237 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool) {
         FontId::monospace(10.5),
         if strong { theme::TEXT } else { theme::MUTED },
     );
+}
+
+/// How often the Live tab recomputes while events stream in.
+const LIVE_STATS_MIN_INTERVAL_S: f64 = 0.25;
+
+/// A file the viewer opens as an Orbit capture rather than a Chrome trace.
+fn is_bundle_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(orbit_capture_suffix())
+}
+
+/// `.orbit.zip`, the suffix `orbit-capture` writes. Spelled here so the
+/// viewer does not depend on the arrow crates for one string.
+fn orbit_capture_suffix() -> &'static str {
+    ".orbit.zip"
+}
+
+/// `(start, end)` over a set of `(start, end, tid)` ranges, or `None` when
+/// there are none.
+fn selection_span(ranges: &[(u64, u64, Option<u32>)]) -> Option<(u64, u64)> {
+    let a = ranges.iter().map(|r| r.0).min()?;
+    let b = ranges.iter().map(|r| r.1).max()?;
+    Some((a, b.max(a)))
+}
+
+/// Knobs for how the report rows are laid out. Adjustable live from the UI
+/// pill, kept in the browser's local storage so they survive a reload.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct UiTweaks {
+    report_row_gap: f32,
+    report_col_gap: f32,
+    report_font: f32,
+    report_bar_w: f32,
+    report_indent: f32,
+}
+
+impl Default for UiTweaks {
+    fn default() -> Self {
+        UiTweaks {
+            report_row_gap: 2.0,
+            report_col_gap: 16.0,
+            report_font: 11.0,
+            report_bar_w: 66.0,
+            report_indent: 12.0,
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const UI_TWEAKS_KEY: &str = "orbit_ui_tweaks";
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl UiTweaks {
+    fn to_json(self) -> String {
+        format!(
+            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{}}}"#,
+            self.report_row_gap, self.report_col_gap, self.report_font, self.report_bar_w, self.report_indent
+        )
+    }
+
+    /// A lenient parse: any key missing keeps its default, so an older
+    /// saved set still loads after a knob is added.
+    fn from_json(text: &str) -> UiTweaks {
+        let mut t = UiTweaks::default();
+        let field = |key: &str| -> Option<f32> {
+            let i = text.find(&format!("\"{key}\":"))? + key.len() + 3;
+            let rest = &text[i..];
+            let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
+            rest[..end].trim().parse().ok()
+        };
+        if let Some(v) = field("report_row_gap") {
+            t.report_row_gap = v.clamp(0.0, 16.0);
+        }
+        if let Some(v) = field("report_col_gap") {
+            t.report_col_gap = v.clamp(4.0, 40.0);
+        }
+        if let Some(v) = field("report_font") {
+            t.report_font = v.clamp(8.0, 18.0);
+        }
+        if let Some(v) = field("report_bar_w") {
+            t.report_bar_w = v.clamp(20.0, 160.0);
+        }
+        if let Some(v) = field("report_indent") {
+            t.report_indent = v.clamp(4.0, 32.0);
+        }
+        t
+    }
+
+    fn load() -> UiTweaks {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(text) = web_sys::window()
+                .and_then(|w| w.local_storage().ok().flatten())
+                .and_then(|s| s.get_item(UI_TWEAKS_KEY).ok().flatten())
+            {
+                return UiTweaks::from_json(&text);
+            }
+        }
+        UiTweaks::default()
+    }
+
+    fn save(self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                let _ = storage.set_item(UI_TWEAKS_KEY, &self.to_json());
+            }
+        }
+    }
+}
+
+/// One function's row in the Live tab, as C++ Orbit's LiveFunctionsDataView
+/// lays it out: count, total, average, min, max, standard deviation.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct LiveRow {
+    name_id: u32,
+    count: u64,
+    total_ns: u64,
+    min_ns: u64,
+    max_ns: u64,
+    /// Sum of squared durations, for the standard deviation.
+    sum_sq: f64,
+}
+
+impl LiveRow {
+    fn avg_ns(&self) -> u64 {
+        if self.count == 0 {
+            0
+        } else {
+            self.total_ns / self.count
+        }
+    }
+
+    /// Population standard deviation of the durations.
+    fn std_dev_ns(&self) -> u64 {
+        if self.count == 0 {
+            return 0;
+        }
+        let n = self.count as f64;
+        let mean = self.total_ns as f64 / n;
+        let var = (self.sum_sq / n - mean * mean).max(0.0);
+        var.sqrt() as u64
+    }
+}
+
+/// What the Live tab shows, and the state that says when to recompute it.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct LiveStats {
+    rows: Vec<LiveRow>,
+    /// Samples counted, and the threads they landed on with their counts,
+    /// most sampled first.
+    samples: u64,
+    sample_threads: Vec<(u32, u64)>,
+    /// The span the statistics cover, for a samples-per-second figure.
+    span_ns: u64,
+    target_pid: u32,
+    events_seen: u64,
+    ranges: Vec<(u64, u64, Option<u32>)>,
+    selection_keyed: bool,
+    computed_s: f64,
+}
+
+impl LiveStats {
+    fn title(&self) -> String {
+        let rate = if self.span_ns > 0 {
+            format!(", {:.0}/s", self.samples as f64 / (self.span_ns as f64 / 1e9))
+        } else {
+            String::new()
+        };
+        format!("Live — {} scopes, {} samples{rate}", self.rows.len(), self.samples)
+    }
+}
+
+/// Aggregates the scopes and samples of `events` inside `ranges` (or all of
+/// them when there are none): the Live tab's numbers. A scope counts when
+/// it starts inside a range; with a range's thread set, only that thread's.
+fn live_stats_from<'a>(
+    events: impl IntoIterator<Item = &'a LiveEvent>,
+    ranges: &[(u64, u64, Option<u32>)],
+    target_pid: u32,
+) -> LiveStats {
+    let inside = |e: &LiveEvent| -> bool {
+        if ranges.is_empty() {
+            return true;
+        }
+        ranges
+            .iter()
+            .any(|(a, b, tid)| e.start_ns >= *a && e.start_ns <= *b && tid.is_none_or(|t| t == e.tid))
+    };
+    let mut by_name: HashMap<u32, LiveRow> = HashMap::new();
+    let mut by_tid: HashMap<u32, u64> = HashMap::new();
+    let mut samples = 0u64;
+    let mut first = u64::MAX;
+    let mut last = 0u64;
+    for e in events {
+        if is_self_pid(e.pid) || !inside(e) {
+            continue;
+        }
+        match e.kind {
+            kind::API_SCOPE | kind::FUNCTION_CALL => {
+                let row = by_name.entry(e.name_id).or_insert_with(|| LiveRow {
+                    name_id: e.name_id,
+                    min_ns: u64::MAX,
+                    ..LiveRow::default()
+                });
+                row.count += 1;
+                row.total_ns += e.duration_ns;
+                row.min_ns = row.min_ns.min(e.duration_ns);
+                row.max_ns = row.max_ns.max(e.duration_ns);
+                row.sum_sq += (e.duration_ns as f64) * (e.duration_ns as f64);
+                first = first.min(e.start_ns);
+                last = last.max(e.end_ns());
+            }
+            kind::SAMPLE => {
+                samples += 1;
+                *by_tid.entry(e.tid).or_insert(0) += 1;
+                first = first.min(e.start_ns);
+                last = last.max(e.start_ns);
+            }
+            _ => {}
+        }
+    }
+    let mut rows: Vec<LiveRow> = by_name.into_values().collect();
+    rows.sort_by(|a, b| b.total_ns.cmp(&a.total_ns).then(a.name_id.cmp(&b.name_id)));
+    let mut sample_threads: Vec<(u32, u64)> = by_tid.into_iter().collect();
+    sample_threads.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let span_ns = match ranges.is_empty() {
+        true if first != u64::MAX => last.saturating_sub(first),
+        true => 0,
+        false => selection_span(ranges).map(|(a, b)| b - a).unwrap_or(0),
+    };
+    LiveStats { rows, samples, sample_threads, span_ns, target_pid, ..LiveStats::default() }
 }
 
 /// Starting width of the sampling report panel. Wide enough for the flat
@@ -7449,6 +7990,72 @@ mod tests {
             depth: 0,
             extra: 0,
         }
+    }
+
+    #[test]
+    fn live_stats_aggregate_scopes_and_samples_inside_the_selection() {
+        let ev = |start: u64, dur: u64, tid: u32, k: u8, name: u32| LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid: 7,
+            kind: k,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        };
+        let events = vec![
+            ev(100, 10, 70, kind::API_SCOPE, 1),
+            ev(200, 30, 70, kind::API_SCOPE, 1),
+            ev(300, 20, 71, kind::FUNCTION_CALL, 2),
+            ev(110, 1, 70, kind::SAMPLE, 9),
+            ev(210, 1, 70, kind::SAMPLE, 9),
+            ev(310, 1, 71, kind::SAMPLE, 9),
+            ev(150, 5, 70, kind::SCHEDULING_SLICE, 3), // not a scope
+        ];
+        // Whole capture.
+        let all = live_stats_from(&events, &[], 7);
+        assert_eq!(all.rows.len(), 2);
+        assert_eq!(all.rows[0].name_id, 1, "sorted by total time");
+        assert_eq!((all.rows[0].count, all.rows[0].total_ns, all.rows[0].min_ns, all.rows[0].max_ns), (2, 40, 10, 30));
+        assert_eq!(all.rows[0].avg_ns(), 20);
+        assert_eq!(all.rows[0].std_dev_ns(), 10);
+        assert_eq!(all.samples, 3);
+        assert_eq!(all.sample_threads, vec![(70, 2), (71, 1)]);
+        assert_eq!(all.span_ns, 320 - 100);
+        // A window on one thread.
+        let one = live_stats_from(&events, &[(0, 250, Some(70))], 7);
+        assert_eq!(one.rows.len(), 1);
+        assert_eq!(one.rows[0].count, 2);
+        assert_eq!(one.samples, 2);
+        assert_eq!(one.span_ns, 250);
+        // A window that misses everything.
+        let none = live_stats_from(&events, &[(1000, 2000, None)], 7);
+        assert!(none.rows.is_empty() && none.samples == 0);
+        assert!(none.title().starts_with("Live — 0 scopes, 0 samples"));
+    }
+
+    #[test]
+    fn ui_tweaks_round_trip_and_tolerate_missing_keys() {
+        let t = UiTweaks { report_row_gap: 6.5, report_col_gap: 20.0, report_font: 12.0, report_bar_w: 80.0, report_indent: 16.0 };
+        assert_eq!(UiTweaks::from_json(&t.to_json()), t);
+        let partial = UiTweaks::from_json(r#"{"report_row_gap":9}"#);
+        assert_eq!(partial.report_row_gap, 9.0);
+        assert_eq!(partial.report_font, UiTweaks::default().report_font);
+        // Out-of-range values are clamped, garbage keeps the defaults.
+        assert_eq!(UiTweaks::from_json(r#"{"report_font":900}"#).report_font, 18.0);
+        assert_eq!(UiTweaks::from_json("nonsense"), UiTweaks::default());
+    }
+
+    #[test]
+    fn a_selection_span_covers_every_range_and_a_bundle_is_told_by_its_suffix() {
+        assert_eq!(selection_span(&[]), None);
+        assert_eq!(selection_span(&[(50, 60, None), (10, 20, Some(3))]), Some((10, 60)));
+        assert!(is_bundle_name("capture-slice.orbit.zip"));
+        assert!(is_bundle_name("Trace.ORBIT.ZIP"));
+        assert!(!is_bundle_name("trace.json.zip"));
+        assert!(!is_bundle_name("trace.json"));
     }
 
     #[test]

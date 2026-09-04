@@ -19,6 +19,7 @@
 mod functions;
 mod interner;
 mod lan;
+mod names;
 mod privileges;
 mod report;
 mod scopes;

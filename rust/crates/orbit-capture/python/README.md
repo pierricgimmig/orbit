@@ -1,18 +1,42 @@
 # Reading an Orbit capture in Python
 
-Orbit's live viewer saves a capture as an Arrow IPC file — the **Save** pill,
-or `GET /api/capture/export`. It is a plain Arrow file, so any Arrow reader
-opens it and it drops straight into pandas; nothing Orbit-specific to install.
-The same endpoint hands out Parquet with `?format=parquet`, and the service's
-command line can write a whole capture as a dataset directory with
-`orbit-service --out-arrow <dir>`.
+Orbit's live viewer saves a capture as `capture.orbit.zip` — the **Save**
+pill, or **Save slice** for the selected time range. That is a store-only
+zip (no compression, so nothing to install) of a dataset directory: the
+events, samples and frames tables as Arrow IPC, plus a `manifest.json` that
+also names every thread and process and records the slice window. Unzip it
+and every Arrow reader opens the tables; they drop straight into pandas. The
+same file drops back onto the viewer (or its **Open** pill) to reopen the
+capture, slice included.
+
+`GET /api/capture/export` also hands out the events table alone, as Arrow
+IPC (`?format=ipc`) or Parquet (`?format=parquet`), with `&t0=..&t1=..` to
+cut a time slice; and the service's command line writes a dataset directory
+with `orbit-service --out-arrow <dir>`.
 
 ```bash
 pip install pyarrow          # pandas is optional, for the DataFrame view
+unzip capture.orbit.zip -d my-capture
+python open_capture.py my-capture/        # a dataset directory, or an unzipped bundle
 python open_capture.py capture.arrow      # an Arrow IPC file
 python open_capture.py capture.parquet    # a Parquet file
-python open_capture.py my-capture/        # a dataset directory
 ```
+
+A bundle's manifest carries one extra section next to the dataset's:
+
+```json
+"bundle": {
+  "target_pid": 4242,
+  "slice_ns": {"start": 398245870474823, "end": 398279975886726},
+  "processes": [{"pid": 4242, "name": "game"}],
+  "threads":   [{"pid": 4242, "tid": 4250, "name": "RenderThread"}]
+}
+```
+
+Events that straddle the slice window are kept whole — a scope that began
+before the window is still a real scope with its real duration — so
+`time_bounds_ns` can reach a little outside `slice_ns`. Samples are cut by
+timestamp, and the frame table keeps only the frames those samples use.
 
 The one thing to know before summing numbers: two event kinds reuse the
 `duration_ns` column for something that is **not** a duration —

@@ -221,6 +221,30 @@ impl SampleStore {
         inner.dirty = false;
     }
 
+    /// Every sample as `(timestamp, tid, frames)` in time order, and the
+    /// frame table as `(id, info)` sorted by id: what a saved capture
+    /// carries.
+    pub fn export_rows(&self) -> (Vec<(u64, u32, Vec<u32>)>, Vec<(u32, FrameInfo)>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.ensure_sorted();
+        let samples = inner
+            .samples
+            .iter()
+            .map(|s| (s.timestamp_ns, s.tid, s.frames.clone()))
+            .collect();
+        let mut frames: Vec<(u32, FrameInfo)> = inner.names.iter().map(|(id, f)| (*id, f.clone())).collect();
+        frames.sort_by_key(|(id, _)| *id);
+        (samples, frames)
+    }
+
+    /// Replaces everything with an opened capture's samples and frames.
+    pub fn replace(&self, samples: Vec<StoredSample>, frames: Vec<(u32, FrameInfo)>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.samples = samples;
+        inner.dirty = true;
+        inner.names = frames.into_iter().collect();
+    }
+
     /// Aggregates the samples in `[start_ns, end_ns]` into a JSON report:
     /// `{"samples":N,"functions":[{"name":..,"self":N,"inclusive":N,
     /// "self_percent":F,"inclusive_percent":F}, ...]}` sorted by self count.

@@ -430,6 +430,70 @@ fn list_processes_json() -> Result<String, String> {
     serde_json::to_string(&entries).map_err(|error| error.to_string())
 }
 
+/// Makes an opened bundle the current capture: the ring is emptied and
+/// refilled with its events, the names and the sample store replaced, and
+/// every viewer sees it as a capture that started and finished at once.
+/// Returns a JSON summary for the caller.
+fn open_bundle(
+    service: &Arc<LiveService>,
+    store: &Arc<SampleStore>,
+    target: &Arc<AtomicI32>,
+    bundle: orbit_capture::CaptureBundle,
+) -> Result<String, String> {
+    service.clear_ring()?;
+    service.clear_names();
+    let bounds = bundle.time_bounds();
+    let start = bundle.slice_ns.map(|(a, _)| a).or(bounds.map(|(a, _)| a)).unwrap_or(0);
+    target.store(bundle.target_pid as i32, Ordering::Relaxed);
+    service.mark_capture_started(bundle.target_pid, start);
+    for (id, name) in bundle.names() {
+        service.intern_id(id, &name);
+    }
+    // Frame ids are intern ids too (the capture loop interns each frame's
+    // name under its id): the report names its
+    // rows through the same table.
+    for f in &bundle.frames {
+        if !f.name.is_empty() {
+            service.intern_id(f.id, &f.name);
+        }
+    }
+    for t in &bundle.threads {
+        service.set_thread_name(t.pid, t.tid, &t.name);
+    }
+    for p in &bundle.processes {
+        service.set_process_name(p.pid, &p.name);
+    }
+    let events: Vec<LiveEvent> = bundle.events.iter().map(|r| r.event).collect();
+    for chunk in events.chunks(4096) {
+        service.push_events(chunk);
+    }
+    store.replace(
+        bundle
+            .samples
+            .iter()
+            .map(|s| StoredSample { timestamp_ns: s.timestamp_ns, tid: s.tid, frames: s.frames.clone() })
+            .collect(),
+        bundle
+            .frames
+            .iter()
+            .map(|f| (f.id, FrameInfo { name: f.name.clone(), module: f.module.clone(), address: f.address }))
+            .collect(),
+    );
+    service.mark_capture_finished();
+    service.broadcast_status();
+    Ok(serde_json::json!({
+        "events": events.len(),
+        "samples": bundle.samples.len(),
+        "frames": bundle.frames.len(),
+        "threads": bundle.threads.len(),
+        "processes": bundle.processes.len(),
+        "target_pid": bundle.target_pid,
+        "slice_ns": bundle.slice_ns.map(|(a, b)| serde_json::json!({"start": a, "end": b})),
+        "time_bounds_ns": bounds.map(|(a, b)| serde_json::json!({"start": a, "end": b})),
+    })
+    .to_string())
+}
+
 /// The capture loop the Record button starts: read per-CPU context-switch
 /// rings, pair them into scheduling slices, and push each slice into the
 /// viewer's ring so it appears on the timeline as it happens.
@@ -650,6 +714,11 @@ fn capture_loop(
     // every thread when the tracepoints could not be opened -- gets RUNNING
     // bars projected from context switches.
     let mut last_focus_refresh = std::time::Instant::now();
+    // Thread and process names, read from /proc once a second for the
+    // processes shown and sent to the viewer as they appear, so tracks are
+    // labelled live and a saved capture keeps the labels.
+    let mut comm_names = crate::names::NameSync::default();
+    let mut last_name_refresh: Option<std::time::Instant> = None;
 
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
@@ -668,6 +737,15 @@ fn capture_loop(
         batch.clear();
         // Children appear mid-capture; the refresh is rate-limited internally.
         visible.maybe_refresh();
+        if last_name_refresh.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
+            last_name_refresh = Some(std::time::Instant::now());
+            let svc = &service;
+            comm_names.refresh(
+                &visible.pids(),
+                |pid, name| svc.set_process_name(pid, name),
+                |pid, tid, name| svc.set_thread_name(pid, tid, name),
+            );
+        }
         // The state focus follows the visible set (new descendants, newly
         // instrumented processes) once a second; threads born in between are
         // picked up live from task_newtask.
@@ -1018,19 +1096,6 @@ pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), S
         Ok(tree_store.tree_json_for_ranges(&ranges, TreeMode::parse(mode)))
     }));
     let export_service = service.clone();
-    service.set_capture_export(Arc::new(move |format| {
-        // The whole ring, with each scope's name resolved from the intern
-        // table, as one file in the asked-for format. Held under the intern
-        // lock only for the encode, which borrows the names by id.
-        let (_, events) = export_service.ring().snapshot();
-        let intern = export_service.intern.lock();
-        let resolve = |id: u32| intern.get(id).map(str::to_string).unwrap_or_default();
-        match format {
-            "parquet" => orbit_capture::write_events_parquet_to_vec(&events, resolve)
-                .map_err(|e| e.to_string()),
-            _ => orbit_capture::write_events_ipc_to_vec(&events, resolve).map_err(|e| e.to_string()),
-        }
-    }));
     let modules_state = symbols.clone();
     service.set_modules_json(Arc::new(move |pid| {
         let state = modules_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
@@ -1053,6 +1118,51 @@ pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), S
         running: Arc::new(AtomicBool::new(false)),
         target_pid: Arc::new(AtomicI32::new(0)),
     };
+
+    let export_store = store.clone();
+    let export_target = capture.target_pid.clone();
+    service.set_capture_export(Arc::new(move |format, window| {
+        // The ring, with each scope's name resolved from the intern table, as
+        // one file in the asked-for format; with a window, only the slice
+        // inside it. `bundle` is the self-contained capture: events, the
+        // sample store, thread and process names. Held under the intern lock
+        // only for the encode, which borrows the names by id.
+        let (_, events) = export_service.ring().snapshot();
+        let intern = export_service.intern.lock();
+        let target_pid = export_target.load(Ordering::Relaxed).max(0) as u32;
+        if format == "bundle" {
+            let (threads, processes) = export_service.capture_names();
+            let bundle =
+                crate::names::capture_bundle(&events, &intern, &export_store, &threads, &processes, target_pid);
+            let bundle = match window {
+                Some((a, b)) => bundle.slice(a, b),
+                None => bundle,
+            };
+            return bundle.to_zip().map_err(|e| e.to_string());
+        }
+        let events: Vec<LiveEvent> = match window {
+            Some((a, b)) => events.into_iter().filter(|e| e.start_ns <= b && e.end_ns() >= a).collect(),
+            None => events,
+        };
+        let resolve = |id: u32| intern.get(id).map(str::to_string).unwrap_or_default();
+        match format {
+            "parquet" => orbit_capture::write_events_parquet_to_vec(&events, resolve)
+                .map_err(|e| e.to_string()),
+            _ => orbit_capture::write_events_ipc_to_vec(&events, resolve).map_err(|e| e.to_string()),
+        }
+    }));
+
+    let import_service = service.clone();
+    let import_store = store.clone();
+    let import_running = capture.running.clone();
+    let import_target = capture.target_pid.clone();
+    service.set_capture_import(Arc::new(move |bytes| {
+        if import_running.load(Ordering::Relaxed) {
+            return Err("busy: stop the capture before opening one".to_string());
+        }
+        let bundle = orbit_capture::CaptureBundle::from_zip(&bytes).map_err(|e| format!("not a capture: {e}"))?;
+        open_bundle(&import_service, &import_store, &import_target, bundle)
+    }));
 
 
     let start_service = service.clone();
@@ -1122,6 +1232,8 @@ pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), S
             // A new capture replaces the previous one's samples, so a report
             // describes the capture you are looking at.
             start_store.clear();
+            // Names belong to a capture; the new one re-learns them.
+            start_service.clear_names();
             let store = start_store.clone();
             let helper = start_helper.clone();
             std::thread::Builder::new()

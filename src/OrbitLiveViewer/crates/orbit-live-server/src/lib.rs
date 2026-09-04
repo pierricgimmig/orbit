@@ -108,9 +108,22 @@ pub struct LiveService {
     /// format (`"ipc"` for an Arrow IPC file, `"parquet"` for Parquet). Set by
     /// the service, which owns the encoder (and its arrow dependency) so this
     /// crate need not.
+    /// The second argument is a time window: `Some((t0, t1))` asks for the
+    /// slice of the capture inside it, `None` for the whole capture.
     #[allow(clippy::type_complexity)]
-    pub capture_export:
-        Mutex<Option<std::sync::Arc<dyn Fn(&str) -> Result<Vec<u8>, String> + Send + Sync>>>,
+    pub capture_export: Mutex<
+        Option<std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<Vec<u8>, String> + Send + Sync>>,
+    >,
+    /// Optional: opens a self-contained capture (`.orbit.zip` bytes) as the
+    /// current capture, replacing what the ring holds. Returns a short JSON
+    /// summary. Set by the service, which owns the decoder.
+    #[allow(clippy::type_complexity)]
+    pub capture_import:
+        Mutex<Option<std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>>>,
+    /// Thread and process names the producer told us, replayed to every
+    /// subscriber after the intern table so a reopened capture labels its
+    /// tracks without the process being alive.
+    names: Mutex<CaptureNames>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
@@ -151,6 +164,13 @@ pub(crate) struct CachedTimeline {
 // bytes crate - need to add dependency. I'll use Vec<u8> + broadcast instead.
 // Actually I used bytes::Bytes without adding bytes dep. Let me use Arc<[u8]>.
 
+/// Thread and process names of the current capture.
+#[derive(Default)]
+struct CaptureNames {
+    threads: std::collections::HashMap<(u32, u32), String>,
+    processes: std::collections::HashMap<u32, String>,
+}
+
 impl LiveService {
     pub fn new(config: ServerConfig) -> Result<Arc<Self>, String> {
         let ring = EventRing::with_bytes(config.ring_buffer_bytes, config.spill_path.as_deref())
@@ -172,6 +192,8 @@ impl LiveService {
             sampling_tree: Mutex::new(None),
             modules_json: Mutex::new(None),
             capture_export: Mutex::new(None),
+            capture_import: Mutex::new(None),
+            names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
@@ -370,9 +392,56 @@ impl LiveService {
 
     pub fn set_capture_export(
         &self,
-        export: std::sync::Arc<dyn Fn(&str) -> Result<Vec<u8>, String> + Send + Sync>,
+        export: std::sync::Arc<
+            dyn Fn(&str, Option<(u64, u64)>) -> Result<Vec<u8>, String> + Send + Sync,
+        >,
     ) {
         *self.capture_export.lock() = Some(export);
+    }
+
+    pub fn set_capture_import(
+        &self,
+        import: std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.capture_import.lock() = Some(import);
+    }
+
+    /// Names a thread for every viewer, now and for late subscribers.
+    pub fn set_thread_name(&self, pid: u32, tid: u32, name: &str) {
+        self.names.lock().threads.insert((pid, tid), name.to_string());
+        self.broadcast_frame(&LiveFrame::ThreadName { pid, tid, name: name.to_string() });
+    }
+
+    /// Names a process for every viewer, now and for late subscribers.
+    pub fn set_process_name(&self, pid: u32, name: &str) {
+        self.names.lock().processes.insert(pid, name.to_string());
+        self.broadcast_frame(&LiveFrame::ProcessName { pid, name: name.to_string() });
+    }
+
+    /// Forgets the names of the previous capture.
+    pub fn clear_names(&self) {
+        *self.names.lock() = CaptureNames::default();
+    }
+
+    /// The names known so far: `((pid, tid), name)` threads and `(pid, name)`
+    /// processes, sorted.
+    pub fn capture_names(&self) -> (Vec<((u32, u32), String)>, Vec<(u32, String)>) {
+        let names = self.names.lock();
+        let mut threads: Vec<_> = names.threads.iter().map(|(k, v)| (*k, v.clone())).collect();
+        threads.sort();
+        let mut processes: Vec<_> = names.processes.iter().map(|(k, v)| (*k, v.clone())).collect();
+        processes.sort();
+        (threads, processes)
+    }
+
+    /// Empties the ring, keeping its size and spill path: what an import does
+    /// before it fills it with the opened capture.
+    pub fn clear_ring(&self) -> Result<(), String> {
+        let (bytes, spill) = {
+            let cfg = self.config.lock();
+            (cfg.ring_buffer_bytes, cfg.spill_path.clone())
+        };
+        self.replace_ring(bytes, spill)
     }
 
     pub fn set_sampling_report(
@@ -521,6 +590,19 @@ impl LiveService {
                     id,
                     text: text.to_string(),
                 }));
+            }
+        }
+        {
+            let names = self.names.lock();
+            for ((pid, tid), name) in names.threads.iter() {
+                frames.push(encode_frame(&LiveFrame::ThreadName {
+                    pid: *pid,
+                    tid: *tid,
+                    name: name.clone(),
+                }));
+            }
+            for (pid, name) in names.processes.iter() {
+                frames.push(encode_frame(&LiveFrame::ProcessName { pid: *pid, name: name.clone() }));
             }
         }
         let stats = self.stats();

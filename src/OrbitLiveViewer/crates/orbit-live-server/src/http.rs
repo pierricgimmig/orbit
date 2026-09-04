@@ -59,6 +59,10 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/symbols/modules", get(symbols_modules))
         .route("/api/capture/export", get(capture_export))
         .route(
+            "/api/capture/import",
+            post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
+        )
+        .route(
             crate::theverge::THEVERGE_HTTP_PATH,
             get(theverge_trace).head(theverge_trace),
         )
@@ -340,13 +344,33 @@ async fn sampling_tree(
     }
 }
 
-/// `GET /api/capture/export?format=ipc|parquet` -- the whole capture as one
-/// file, offered as a download. `ipc` (the default) is an Arrow IPC file,
-/// `parquet` a Parquet file. 501 when the service does not provide an encoder,
-/// 400 for a format it does not know.
+/// The largest capture bundle an import accepts. A slice is rarely more than
+/// a few hundred megabytes; the ring itself is 256 MiB by default.
+const IMPORT_BODY_LIMIT: usize = 4 << 30;
+
+/// `GET /api/capture/export?format=ipc|parquet|bundle&t0=..&t1=..` -- the
+/// capture as one file, offered as a download. `ipc` (the default) is an
+/// Arrow IPC file of the events, `parquet` the same as Parquet, `bundle` a
+/// self-contained `.orbit.zip` (events, samples, frames, thread and process
+/// names) that the viewer can open again. With `t0` and `t1` (capture-clock
+/// nanoseconds) only that time slice is exported. 501 when the service does
+/// not provide an encoder, 400 for a format it does not know.
 #[derive(Deserialize)]
 struct ExportQuery {
     format: Option<String>,
+    t0: Option<u64>,
+    t1: Option<u64>,
+}
+
+/// The file name a download gets: the format's extension, and `-slice`
+/// when a window was asked for.
+fn export_filename(format: &str, sliced: bool) -> String {
+    let stem = if sliced { "capture-slice" } else { "capture" };
+    match format {
+        "parquet" => format!("{stem}.parquet"),
+        "bundle" => format!("{stem}.orbit.zip"),
+        _ => format!("{stem}.arrow"),
+    }
 }
 
 async fn capture_export(
@@ -362,18 +386,27 @@ async fn capture_export(
             .into_response();
     };
     let format = q.format.unwrap_or_else(|| "ipc".to_string());
-    let (content_type, filename) = match format.as_str() {
-        "ipc" => ("application/vnd.apache.arrow.file", "capture.arrow"),
-        "parquet" => ("application/vnd.apache.parquet", "capture.parquet"),
+    let window = match (q.t0, q.t1) {
+        (Some(a), Some(b)) => Some((a.min(b), a.max(b))),
+        (None, None) => None,
+        _ => {
+            return (StatusCode::BAD_REQUEST, "give both t0 and t1, or neither").into_response();
+        }
+    };
+    let content_type = match format.as_str() {
+        "ipc" => "application/vnd.apache.arrow.file",
+        "parquet" => "application/vnd.apache.parquet",
+        "bundle" => "application/zip",
         other => {
             return (
                 StatusCode::BAD_REQUEST,
-                format!("unknown export format {other:?}; use ipc or parquet"),
+                format!("unknown export format {other:?}; use ipc, parquet or bundle"),
             )
                 .into_response();
         }
     };
-    match tokio::task::spawn_blocking(move || export(&format)).await {
+    let filename = export_filename(&format, window.is_some());
+    match tokio::task::spawn_blocking(move || export(&format, window)).await {
         Ok(Ok(bytes)) => (
             [
                 (header::CONTENT_TYPE, content_type),
@@ -386,6 +419,33 @@ async fn capture_export(
         )
             .into_response(),
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// `POST /api/capture/import` with a `.orbit.zip` body: opens that capture
+/// as the current one. 501 when the service cannot, 400 when the bytes are
+/// not a capture, 409 when a capture is running.
+async fn capture_import(State(svc): State<Arc<LiveService>>, body: Bytes) -> Response {
+    let hook = svc.capture_import.lock().clone();
+    let Some(import) = hook else {
+        return (StatusCode::NOT_IMPLEMENTED, "this service does not open captures").into_response();
+    };
+    let bytes = body.to_vec();
+    match tokio::task::spawn_blocking(move || import(bytes)).await {
+        Ok(Ok(summary)) => (
+            [(header::CONTENT_TYPE, "application/json")],
+            summary,
+        )
+            .into_response(),
+        Ok(Err(error)) => {
+            let status = if error.starts_with("busy") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (status, error).into_response()
+        }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
@@ -862,7 +922,20 @@ async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // This viewer fell behind the broadcast and frames
+                        // were dropped -- a burst of names and batches, as
+                        // opening a capture sends. Rather than leave it with
+                        // holes it cannot see, start it over: a fresh Hello
+                        // plus the whole ring, which the viewer takes as a
+                        // reset. Anything broadcast meanwhile follows.
+                        for frame in svc.hello_and_snapshot_frames() {
+                            if sink.send(Message::Binary(frame)).await.is_err() {
+                                return;
+                            }
+                        }
+                        continue;
+                    }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -1008,7 +1081,7 @@ mod isolation_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn capture_export_serves_arrow_when_a_hook_is_set() {
         let svc = test_service();
-        svc.set_capture_export(std::sync::Arc::new(|_fmt| Ok(b"ARROW1_stub_body".to_vec())));
+        svc.set_capture_export(std::sync::Arc::new(|_fmt, _window| Ok(b"ARROW1_stub_body".to_vec())));
         let base = spawn_router(svc).await;
         let out = curl_si(&format!("{base}/api/capture/export"));
         let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
@@ -1031,7 +1104,7 @@ mod isolation_tests {
     async fn capture_export_serves_parquet_when_asked() {
         let svc = test_service();
         // The hook sees the format the client asked for.
-        svc.set_capture_export(std::sync::Arc::new(|fmt| {
+        svc.set_capture_export(std::sync::Arc::new(|fmt, _window| {
             Ok(format!("PAR1_stub_{fmt}").into_bytes())
         }));
         let base = spawn_router(svc).await;
@@ -1050,11 +1123,70 @@ mod isolation_tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn capture_export_rejects_an_unknown_format() {
         let svc = test_service();
-        svc.set_capture_export(std::sync::Arc::new(|_| Ok(Vec::new())));
+        svc.set_capture_export(std::sync::Arc::new(|_, _| Ok(Vec::new())));
         let base = spawn_router(svc).await;
         let out = curl_si(&format!("{base}/api/capture/export?format=csv"));
         let text = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
         assert!(text.contains("400"), "expected 400, got: {text}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_windowed_bundle_export_hands_the_window_to_the_hook_and_names_the_slice() {
+        let svc = test_service();
+        svc.set_capture_export(std::sync::Arc::new(|fmt, window| {
+            Ok(format!("{fmt}:{window:?}").into_bytes())
+        }));
+        let base = spawn_router(svc).await;
+        let out = curl_si(&format!("{base}/api/capture/export?format=bundle&t0=900&t1=100"));
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lower = text.to_ascii_lowercase();
+        assert!(lower.contains("200 ok"), "{text}");
+        assert!(lower.contains("application/zip"), "{text}");
+        assert!(lower.contains("filename=\"capture-slice.orbit.zip\""), "{text}");
+        // The window is ordered before the hook sees it.
+        assert!(text.contains("bundle:Some((100, 900))"), "{text}");
+        // Half a window is a client error, not a whole-capture export.
+        let out = curl_si(&format!("{base}/api/capture/export?t0=5"));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("400"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_import_posts_the_body_to_the_hook() {
+        let svc = test_service();
+        svc.set_capture_import(std::sync::Arc::new(|bytes| {
+            if bytes == b"PK-good" {
+                Ok(r#"{"events":3}"#.to_string())
+            } else if bytes == b"PK-busy" {
+                Err("busy: a capture is running".to_string())
+            } else {
+                Err("not a capture".to_string())
+            }
+        }));
+        let base = spawn_router(svc).await;
+        let post = |body: &str| {
+            let out = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "5", "-X", "POST", "--data-binary", body])
+                .arg(format!("{base}/api/capture/import"))
+                .output()
+                .expect("curl");
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        let ok = post("PK-good");
+        assert!(ok.to_ascii_lowercase().contains("200 ok"), "{ok}");
+        assert!(ok.contains(r#"{"events":3}"#), "{ok}");
+        assert!(post("PK-busy").contains("409"), "busy is a conflict");
+        assert!(post("garbage").contains("400"), "garbage is a bad request");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_import_is_501_without_a_hook() {
+        let base = spawn_router(test_service()).await;
+        let out = std::process::Command::new("curl")
+            .args(["-si", "--max-time", "5", "-X", "POST", "--data-binary", "x"])
+            .arg(format!("{base}/api/capture/import"))
+            .output()
+            .expect("curl");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("501"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

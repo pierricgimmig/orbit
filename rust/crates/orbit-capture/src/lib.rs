@@ -30,6 +30,11 @@
 //! toolchain into it. Arrow IPC is already a tight columnar layout; a capture
 //! that needs more can be re-encoded by any consumer once it is loaded.
 
+pub mod bundle;
+pub mod zipstore;
+
+pub use bundle::{CaptureBundle, ProcessName, ThreadName, BUNDLE_SUFFIX};
+
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -64,6 +69,7 @@ pub enum CaptureError {
     Json(serde_json::Error),
     /// A manifest that does not say what it should.
     Manifest(String),
+    Zip(zipstore::ZipError),
 }
 
 impl std::fmt::Display for CaptureError {
@@ -74,6 +80,7 @@ impl std::fmt::Display for CaptureError {
             CaptureError::Io(e) => write!(f, "io: {e}"),
             CaptureError::Json(e) => write!(f, "json: {e}"),
             CaptureError::Manifest(e) => write!(f, "manifest: {e}"),
+            CaptureError::Zip(e) => write!(f, "zip: {e}"),
         }
     }
 }
@@ -93,6 +100,11 @@ impl From<ParquetError> for CaptureError {
 impl From<std::io::Error> for CaptureError {
     fn from(e: std::io::Error) -> Self {
         CaptureError::Io(e)
+    }
+}
+impl From<zipstore::ZipError> for CaptureError {
+    fn from(e: zipstore::ZipError) -> Self {
+        CaptureError::Zip(e)
     }
 }
 impl From<serde_json::Error> for CaptureError {

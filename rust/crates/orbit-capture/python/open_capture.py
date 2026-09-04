@@ -5,16 +5,21 @@
 
 """Open an Orbit capture saved as Arrow.
 
-Orbit's live viewer can Save the current capture as ``capture.arrow`` (the Save
-pill, or ``GET /api/capture/export``), or as Parquet with
-``?format=parquet``. ``orbit-service --out-arrow <dir>`` writes a dataset
-directory instead: events, samples and frames tables plus a manifest. All are
-plain Arrow / Parquet, so there is nothing Orbit-specific to install: pyarrow
-reads them, and they drop straight into pandas.
+Orbit's live viewer saves a capture as ``capture.orbit.zip`` (the Save pill;
+Save slice does the same for the selected time range). That is a store-only
+zip of a dataset directory -- events, samples and frames tables plus a
+manifest that also names every thread and process -- so ``unzip`` it and
+point this script at the directory. ``GET /api/capture/export`` still hands
+out the events table alone as Arrow IPC (``?format=ipc``) or Parquet
+(``?format=parquet``), and ``orbit-service --out-arrow <dir>`` writes a
+dataset directory straight to disk. All are plain Arrow / Parquet, so there
+is nothing Orbit-specific to install: pyarrow reads them, and they drop
+straight into pandas.
 
+    unzip capture.orbit.zip -d my-capture
+    python open_capture.py my-capture/         # dataset directory (or an unzipped bundle)
     python open_capture.py capture.arrow       # Arrow IPC file
     python open_capture.py capture.parquet     # Parquet file
-    python open_capture.py my-capture/         # dataset directory
 
 The events table -- one row per event, these columns:
 

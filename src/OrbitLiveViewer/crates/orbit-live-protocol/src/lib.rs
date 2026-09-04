@@ -15,6 +15,11 @@ pub const FRAME_INTERNED_STRING: u8 = 3;
 pub const FRAME_CAPTURE_STARTED: u8 = 4;
 pub const FRAME_CAPTURE_FINISHED: u8 = 5;
 pub const FRAME_STATUS: u8 = 6;
+/// A thread's name. Sent when the producer knows it (a loaded capture, a
+/// service that read `/proc`), replayed to late subscribers like the intern
+/// table, so a reopened capture names its tracks without the process alive.
+pub const FRAME_THREAD_NAME: u8 = 7;
+pub const FRAME_PROCESS_NAME: u8 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LiveFrame {
@@ -45,6 +50,15 @@ pub enum LiveFrame {
         oldest_start_ns: u64,
         newest_end_ns: u64,
         ring_bytes: u64,
+    },
+    ThreadName {
+        pid: u32,
+        tid: u32,
+        name: String,
+    },
+    ProcessName {
+        pid: u32,
+        name: String,
     },
 }
 
@@ -133,6 +147,21 @@ pub fn encode_frame(frame: &LiveFrame) -> Vec<u8> {
             }
             FRAME_STATUS
         }
+        LiveFrame::ThreadName { pid, tid, name } => {
+            let bytes = name.as_bytes();
+            payload.extend_from_slice(&pid.to_le_bytes());
+            payload.extend_from_slice(&tid.to_le_bytes());
+            payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            payload.extend_from_slice(bytes);
+            FRAME_THREAD_NAME
+        }
+        LiveFrame::ProcessName { pid, name } => {
+            let bytes = name.as_bytes();
+            payload.extend_from_slice(&pid.to_le_bytes());
+            payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            payload.extend_from_slice(bytes);
+            FRAME_PROCESS_NAME
+        }
     };
     let mut out = Vec::with_capacity(5 + payload.len());
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -155,6 +184,23 @@ pub fn encode_event_batch(events: &[LiveEvent]) -> Vec<u8> {
         out.extend_from_slice(&ev.as_bytes());
     }
     out
+}
+
+/// A `u32` length followed by that many UTF-8 bytes.
+fn utf8_field(bytes: &[u8], what: &'static str) -> Result<String, ProtocolError> {
+    if bytes.len() < 4 {
+        return Err(ProtocolError::Truncated);
+    }
+    let len = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+    if bytes.len() < 4 + len {
+        return Err(ProtocolError::Truncated);
+    }
+    std::str::from_utf8(&bytes[4..4 + len])
+        .map(str::to_string)
+        .map_err(|_| ProtocolError::InvalidPayload(match what {
+            "thread name" => "thread name is not utf-8",
+            _ => "process name is not utf-8",
+        }))
 }
 
 pub fn decode_frame(bytes: &[u8]) -> Result<(LiveFrame, usize), ProtocolError> {
@@ -256,6 +302,23 @@ fn decode_payload(typ: u8, payload: &[u8]) -> Result<LiveFrame, ProtocolError> {
                 ring_bytes: vals[7],
             })
         }
+        FRAME_THREAD_NAME => {
+            if payload.len() < 12 {
+                return Err(ProtocolError::Truncated);
+            }
+            let pid = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+            let tid = u32::from_le_bytes(payload[4..8].try_into().unwrap());
+            let name = utf8_field(&payload[8..], "thread name")?;
+            Ok(LiveFrame::ThreadName { pid, tid, name })
+        }
+        FRAME_PROCESS_NAME => {
+            if payload.len() < 8 {
+                return Err(ProtocolError::Truncated);
+            }
+            let pid = u32::from_le_bytes(payload[0..4].try_into().unwrap());
+            let name = utf8_field(&payload[4..], "process name")?;
+            Ok(LiveFrame::ProcessName { pid, name })
+        }
         other => Err(ProtocolError::UnknownFrame(other)),
     }
 }
@@ -339,6 +402,25 @@ mod tests {
             newest_end_ns: 50,
             ring_bytes: 3200,
         });
+    }
+
+    #[test]
+    fn thread_and_process_names_round_trip() {
+        for frame in [
+            LiveFrame::ThreadName { pid: 7, tid: 70, name: "Worker-1".into() },
+            LiveFrame::ProcessName { pid: 7, name: "game".into() },
+            LiveFrame::ThreadName { pid: 1, tid: 1, name: String::new() },
+        ] {
+            let bytes = encode_frame(&frame);
+            let (back, used) = decode_frame(&bytes).unwrap();
+            assert_eq!(back, frame);
+            assert_eq!(used, bytes.len());
+        }
+        // A name cut short is truncated, not garbage.
+        let bytes = encode_frame(&LiveFrame::ThreadName { pid: 7, tid: 70, name: "Worker-1".into() });
+        let mut short = bytes.clone();
+        short[0] = 10; // payload length claims fewer bytes than the name needs
+        assert_eq!(decode_frame(&short[..15]).unwrap_err(), ProtocolError::Truncated);
     }
 
     #[test]
