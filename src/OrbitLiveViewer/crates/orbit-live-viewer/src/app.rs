@@ -3408,7 +3408,28 @@ impl OrbitLiveApp {
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
         );
-        paint_fps_chip(ui, fps_area, self.fps_ema, self.ws_rate_bps);
+        let fps_w = paint_fps_chip(ui, fps_area, self.fps_ema, self.ws_rate_bps);
+        // What is narrowing the view, and how to undo it, next to the fps:
+        // the grey of a thread selection and the dim of a name filter look
+        // alike, and neither shows anywhere else.
+        let mut right = fps_area.right() - fps_w - 12.0;
+        if self.search_active() || !self.search.is_empty() {
+            let text = format!("filter \u{201c}{}\u{201d}", self.search);
+            let (w, clicked) = paint_focus_chip(ui, fps_area, right, &text, "orbit_filter_chip");
+            if clicked {
+                self.search.clear();
+                self.live_focus = None;
+            }
+            right -= w + 6.0;
+        }
+        if let Some((pid, tid)) = self.thread_focus().selected {
+            let name = self.thread_display_name(pid, tid);
+            let text = format!("thread {tid} {name}");
+            let (_, clicked) = paint_focus_chip(ui, fps_area, right, &text, "orbit_thread_chip");
+            if clicked {
+                self.clear_selection();
+            }
+        }
     }
 
     fn paint_headers(
@@ -4458,11 +4479,13 @@ impl OrbitLiveApp {
             }
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            if self.search_active() || !self.search.is_empty() {
-                self.search.clear();
-            } else {
-                self.clear_selection();
-            }
+            // Everything that narrows the view goes at once: the name
+            // filter (a Live row, a flame bar, "Highlight every instance"
+            // all set it) and the thread or scope selection. Two presses
+            // for the two was a puzzle when the grey looked like one thing.
+            self.search.clear();
+            self.live_focus = None;
+            self.clear_selection();
         }
         let (a, d, left, right, up, down, w, s) = ctx.input(|i| {
             (
@@ -6286,9 +6309,45 @@ fn set_page_fullscreen(ctx: &Context, on: bool) {
 
 /// Frame rate and, next to it, what the event stream from the service is
 /// delivering right now.
-fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) {
+/// A chip at the top of the lanes naming something that narrows the view,
+/// with a cross; returns its width and whether it was clicked. `right` is
+/// the x its right edge sits at, so several line up leftwards.
+fn paint_focus_chip(ui: &Ui, area: Rect, right: f32, text: &str, id: &str) -> (f32, bool) {
+    if !area.is_finite() || area.width() < 24.0 {
+        return (0.0, false);
+    }
+    let font = FontId::monospace(11.0);
+    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), font, theme::TEXT));
+    let pad = Vec2::new(6.0, 3.0);
+    // Room for a painted cross after the text: the WASM font atlas has no
+    // multiplication sign and renders one as a box.
+    const CROSS_W: f32 = 14.0;
+    let size = galley.size() + pad * 2.0 + Vec2::new(CROSS_W, 0.0);
+    let rect = Rect::from_min_size(Pos2::new(right - size.x, area.top() + 6.0), size);
+    if !area.intersects(rect) {
+        return (0.0, false);
+    }
+    let resp = ui.interact(rect, egui::Id::new(id), Sense::click());
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new(id).with("paint"),
+    ));
+    let fill = if resp.hovered() { theme::ACCENT } else { Color32::from_black_alpha(160) };
+    painter.rect_filled(rect, 3.0, fill);
+    painter.rect_stroke(rect, 3.0, Stroke::new(1.0, theme::ACCENT), StrokeKind::Inside);
+    let ink = if resp.hovered() { theme::PANEL } else { theme::TEXT };
+    painter.galley(rect.min + pad, galley, ink);
+    let c = Pos2::new(rect.right() - pad.x - 4.0, rect.center().y);
+    painter.line_segment([Pos2::new(c.x - 3.0, c.y - 3.0), Pos2::new(c.x + 3.0, c.y + 3.0)], Stroke::new(1.3, ink));
+    painter.line_segment([Pos2::new(c.x - 3.0, c.y + 3.0), Pos2::new(c.x + 3.0, c.y - 3.0)], Stroke::new(1.3, ink));
+    let resp = resp.on_hover_text("Click, or press Escape, to show everything again");
+    (size.x, resp.clicked())
+}
+
+/// Paints the fps chip; returns its width so other chips can sit beside it.
+fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) -> f32 {
     if fps <= 0.0 || !area.is_finite() || area.width() < 24.0 {
-        return;
+        return 0.0;
     }
     let label = format!("{:.0} fps · {}", fps, format_rate(stream_bps));
     let font = FontId::monospace(11.0);
@@ -6300,7 +6359,7 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) {
         size,
     );
     if !area.intersects(rect) {
-        return;
+        return 0.0;
     }
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
@@ -6308,6 +6367,7 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) {
     ));
     painter.rect_filled(rect, 3.0, Color32::from_black_alpha(140));
     painter.galley(rect.min + pad, galley, theme::TEXT);
+    size.x
 }
 
 /// `1.24 MB/s`, `312 KB/s`, `0 B/s` -- the event stream's rate, MB when it
