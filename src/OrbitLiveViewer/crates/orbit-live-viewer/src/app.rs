@@ -691,6 +691,13 @@ pub struct OrbitLiveApp {
     hello_count: u64,
     /// The report panel is open by the user's hand, not just by a selection.
     report_open: bool,
+    /// The splitter was dragged to the right edge: the panel is hidden and
+    /// a tab on the edge brings it back.
+    report_collapsed: bool,
+    /// A width to force on the panel next frame (restoring from an edge).
+    report_w_override: Option<f32>,
+    /// The panel's width last frame, for the readout.
+    report_w_last: f32,
     /// The UI knobs window (row spacing and the like) is open.
     show_tweaks: bool,
     ui_tweaks: UiTweaks,
@@ -940,7 +947,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -968,6 +975,8 @@ impl OrbitLiveApp {
             self.hello_count,
             self.status.wire,
             self.ws_rate_bps,
+            self.report_w_last,
+            self.report_collapsed,
         );
         if text == self.sel_readout {
             return;
@@ -1160,6 +1169,9 @@ impl OrbitLiveApp {
             import_started: false,
             hello_count: 0,
             report_open: false,
+            report_collapsed: false,
+            report_w_override: None,
+            report_w_last: 0.0,
             show_tweaks: false,
             ui_tweaks: UiTweaks::load(),
             live_stats: LiveStats::default(),
@@ -2473,6 +2485,10 @@ impl OrbitLiveApp {
                 .clicked()
             {
                 self.report_open = !self.report_open;
+                if self.report_open && (self.report_collapsed || self.report_w_last < REPORT_COLLAPSE_W) {
+                    self.report_collapsed = false;
+                    self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                }
                 if self.report_open && self.sampling_ranges.is_empty() && self.sampling.is_none() {
                     self.report_tab = ReportTab::Live;
                 }
@@ -4787,10 +4803,21 @@ impl OrbitLiveApp {
         // its sampling report: the timeline keeps its full height, and the
         // report reads top to bottom beside it instead of eating rows off
         // the bottom of the track list.
-        egui::SidePanel::right("orbit_sampling_report")
+        if self.report_collapsed {
+            self.paint_report_edge_tab(ctx, EdgeTab::PanelHidden);
+            return;
+        }
+        // No minimum: the splitter goes all the way to the right and the
+        // panel collapses (a tab on the edge brings it back), the way it
+        // already went all the way to the left and hid the timeline.
+        let mut panel = egui::SidePanel::right("orbit_sampling_report")
             .resizable(true)
             .default_width(SAMPLING_PANEL_DEFAULT_W)
-            .min_width(220.0)
+            .min_width(0.0);
+        if let Some(w) = self.report_w_override.take() {
+            panel = panel.exact_width(w);
+        }
+        let inner = panel
             .frame(
                 Frame::new()
                     .fill(theme::PANEL)
@@ -4870,6 +4897,85 @@ impl OrbitLiveApp {
                         ReportTab::Live => self.live_rows(ui),
                     }
                 });
+            });
+        self.after_report_panel(ctx, inner.response.rect);
+    }
+
+    /// Notices the splitter at either edge. Under `REPORT_COLLAPSE_W` the
+    /// panel is hidden and an edge tab shows; with less than that left for
+    /// the timeline, a tab on the panel's left edge offers the timeline
+    /// back. Either way the layout is one click from recovered.
+    fn after_report_panel(&mut self, ctx: &Context, rect: Rect) {
+        let w = rect.width();
+        self.report_w_last = w;
+        // egui will not shrink the panel under its content's minimum (the
+        // wrapped tab row, about 90 px), so "all the way right" ends there
+        // with the splitter still held. Collapse once the button is up at
+        // that width, or at once when the pointer is past the right edge.
+        // The screen edge is read before the input lock: egui's context is
+        // one lock, and taking it again inside the closure is a deadlock
+        // that WASM (which cannot park a thread) turns into a panic.
+        let right = ctx.screen_rect().right();
+        let (down, past_edge) = ctx.input(|i| {
+            let down = i.pointer.primary_down();
+            let past = i.pointer.latest_pos().is_some_and(|p| p.x >= right - 2.0);
+            (down, past)
+        });
+        if w <= REPORT_COLLAPSE_W && (!down || past_edge) {
+            self.report_collapsed = true;
+            self.needs_repaint = true;
+            return;
+        }
+        if ctx.available_rect().width() < REPORT_COLLAPSE_W {
+            self.paint_report_edge_tab(ctx, EdgeTab::TimelineHidden(rect.left()));
+        }
+    }
+
+    /// A slim tab on a screen edge: a chevron pointing the way the panel
+    /// will move, and a click that restores the default split.
+    fn paint_report_edge_tab(&mut self, ctx: &Context, tab: EdgeTab) {
+        let screen = ctx.screen_rect();
+        let (x, points_left, id, hint) = match tab {
+            EdgeTab::PanelHidden => (screen.right() - EDGE_TAB_W, true, "orbit_report_tab_right", "Show the report panel"),
+            EdgeTab::TimelineHidden(left) => (left, false, "orbit_report_tab_left", "Show the timeline"),
+        };
+        let y = screen.center().y - EDGE_TAB_H / 2.0;
+        egui::Area::new(egui::Id::new(id))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::new(x, y))
+            .interactable(true)
+            .show(ctx, |ui| {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(EDGE_TAB_W, EDGE_TAB_H), Sense::click());
+                let painter = ui.painter();
+                let fill = if resp.hovered() { theme::ACCENT } else { theme::INPUT };
+                painter.rect_filled(r, 4.0, fill);
+                painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::ACCENT), StrokeKind::Inside);
+                let c = Pos2::new(r.center().x, r.top() + 14.0);
+                let dir = if points_left { -1.0 } else { 1.0 };
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        Pos2::new(c.x - 3.0 * dir, c.y - 5.0),
+                        Pos2::new(c.x + 3.0 * dir, c.y),
+                        Pos2::new(c.x - 3.0 * dir, c.y + 5.0),
+                    ],
+                    if resp.hovered() { theme::PANEL } else { theme::TEXT },
+                    Stroke::NONE,
+                ));
+                let label = if points_left { "report" } else { "timeline" };
+                let galley = painter.layout_no_wrap(
+                    label.to_string(),
+                    FontId::new(10.5, fonts::medium()),
+                    if resp.hovered() { theme::PANEL } else { theme::TEXT },
+                );
+                // Rotated a quarter turn counter-clockwise: the text reads
+                // bottom to top along the tab.
+                let pos = Pos2::new(r.center().x - galley.size().y / 2.0, r.bottom() - 8.0);
+                painter.add(egui::epaint::TextShape::new(pos, galley, theme::TEXT).with_angle(-std::f32::consts::FRAC_PI_2));
+                if resp.on_hover_text(hint).clicked() {
+                    self.report_collapsed = false;
+                    self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                    self.needs_repaint = true;
+                }
             });
     }
 
@@ -6587,6 +6693,22 @@ fn live_stats_from<'a>(
         false => selection_span(ranges).map(|(a, b)| b - a).unwrap_or(0),
     };
     LiveStats { rows, samples, sample_threads, span_ns, target_pid, ..LiveStats::default() }
+}
+
+/// At or under this width the report panel counts as collapsed (its
+/// content cannot get narrower than about 90 px anyway); with less than
+/// this left beside it, the timeline counts as hidden.
+const REPORT_COLLAPSE_W: f32 = 100.0;
+const EDGE_TAB_W: f32 = 18.0;
+const EDGE_TAB_H: f32 = 96.0;
+
+/// Which edge the report splitter reached.
+#[derive(Clone, Copy)]
+enum EdgeTab {
+    /// The panel is collapsed against the right edge.
+    PanelHidden,
+    /// The panel fills the width; its left edge is at this x.
+    TimelineHidden(f32),
 }
 
 /// Starting width of the sampling report panel. Wide enough for the flat
