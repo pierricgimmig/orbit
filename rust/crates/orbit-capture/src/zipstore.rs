@@ -2,19 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! A store-only zip writer and reader.
+//! A small zip writer and reader: store and deflate.
 //!
 //! A self-contained capture is several Arrow tables and a manifest, and it
 //! has to travel as one file: a browser download, an attachment, a thing you
-//! drop back onto the viewer. Zip is the container everyone can open, and
-//! "store" (method 0, no compression) is the whole of it that is needed:
-//! the tables are already columnar and a capture that wants to be smaller
-//! can be re-zipped by any tool. Writing that by hand is a few dozen lines
-//! and keeps a compression crate, and the C code it would drag in, out of
-//! the static service binary.
+//! drop back onto the viewer. Zip is the container everyone can open.
+//! Writing it by hand is a few dozen lines; deflate comes from
+//! `miniz_oxide`, pure Rust, already in this crate's tree through parquet,
+//! so no C reaches the static service binary. Deflate matters here: an
+//! events table is mostly zero bytes (64-bit timestamps and durations that
+//! rarely need more than four), and on a real capture it packs about five
+//! to one, so a bundle that would be 127 MB stored is 25 MB.
 //!
-//! Reads accept only what this writes: method 0, no data descriptors, sizes
-//! under 4 GiB (no zip64). Anything else is an error, not a guess.
+//! Reads accept methods 0 and 8, no data descriptors, sizes under 4 GiB
+//! (no zip64). Anything else is an error, not a guess.
 
 const LOCAL_SIG: u32 = 0x0403_4b50;
 const CENTRAL_SIG: u32 = 0x0201_4b50;
@@ -81,9 +82,21 @@ fn u32_at(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
 }
 
+/// Deflate level for a bundle's tables. Level 6 is a third smaller than
+/// level 1 on Arrow event tables for about four times the time; a 127 MB
+/// capture takes a couple of seconds, once, at Save.
+pub const BUNDLE_DEFLATE_LEVEL: u8 = 6;
+
 /// Writes `entries` (name, bytes) as a store-only zip. Names are taken as
 /// given; use forward slashes for directories.
 pub fn write_store_zip(entries: &[(&str, &[u8])]) -> Result<Vec<u8>, ZipError> {
+    write_zip(entries, None)
+}
+
+/// Writes `entries` deflated at `level` (1 fastest, 9 smallest); `None`
+/// stores them. An entry that deflate cannot shrink is stored as is, which
+/// is what every zip tool does.
+pub fn write_zip(entries: &[(&str, &[u8])], level: Option<u8>) -> Result<Vec<u8>, ZipError> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     for (name, data) in entries {
@@ -97,32 +110,38 @@ pub fn write_store_zip(entries: &[(&str, &[u8])]) -> Result<Vec<u8>, ZipError> {
         let crc = crc32(data);
         let size = data.len() as u32;
         let name_bytes = name.as_bytes();
+        let deflated = level.map(|l| miniz_oxide::deflate::compress_to_vec(data, l.clamp(1, 10)));
+        let (method, body): (u16, &[u8]) = match &deflated {
+            Some(d) if d.len() < data.len() => (8, d.as_slice()),
+            _ => (0, data),
+        };
+        let csize = body.len() as u32;
 
         // Local file header.
         out.extend_from_slice(&LOCAL_SIG.to_le_bytes());
         out.extend_from_slice(&VERSION.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes()); // flags
-        out.extend_from_slice(&0u16.to_le_bytes()); // method: store
+        out.extend_from_slice(&method.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes()); // time
         out.extend_from_slice(&DOS_DATE.to_le_bytes());
         out.extend_from_slice(&crc.to_le_bytes());
-        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&csize.to_le_bytes());
         out.extend_from_slice(&size.to_le_bytes());
         out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes()); // extra
         out.extend_from_slice(name_bytes);
-        out.extend_from_slice(data);
+        out.extend_from_slice(body);
 
         // Central directory entry.
         central.extend_from_slice(&CENTRAL_SIG.to_le_bytes());
         central.extend_from_slice(&VERSION.to_le_bytes()); // made by
         central.extend_from_slice(&VERSION.to_le_bytes()); // needed
         central.extend_from_slice(&0u16.to_le_bytes()); // flags
-        central.extend_from_slice(&0u16.to_le_bytes()); // method
+        central.extend_from_slice(&method.to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes()); // time
         central.extend_from_slice(&DOS_DATE.to_le_bytes());
         central.extend_from_slice(&crc.to_le_bytes());
-        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&csize.to_le_bytes());
         central.extend_from_slice(&size.to_le_bytes());
         central.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes()); // extra
@@ -150,8 +169,8 @@ pub fn write_store_zip(entries: &[(&str, &[u8])]) -> Result<Vec<u8>, ZipError> {
     Ok(out)
 }
 
-/// Reads a store-only zip back into (name, bytes) pairs, in central
-/// directory order. Every entry's CRC is checked.
+/// Reads a zip of stored and deflated entries back into (name, bytes)
+/// pairs, in central directory order. Every entry's CRC is checked.
 pub fn read_store_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ZipError> {
     // The end record is the last 22 bytes when there is no archive comment,
     // and we write none; but tolerate a comment by scanning back for the
@@ -192,13 +211,13 @@ pub fn read_store_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ZipError> 
         let name = String::from_utf8_lossy(&bytes[pos + 46..pos + 46 + name_len]).into_owned();
         pos += 46 + name_len + extra_len + comment_len;
 
-        if method != 0 {
-            return Err(ZipError::Unsupported("compressed entry"));
+        if method != 0 && method != 8 {
+            return Err(ZipError::Unsupported("compression method other than store or deflate"));
         }
         if flags & 0x0008 != 0 {
             return Err(ZipError::Unsupported("data descriptor"));
         }
-        if csize != usize_ || csize == u32::MAX as usize {
+        if csize == u32::MAX as usize || usize_ == u32::MAX as usize {
             return Err(ZipError::Unsupported("zip64 sizes"));
         }
         // The local header has its own name/extra lengths; the data follows.
@@ -212,8 +231,13 @@ pub fn read_store_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ZipError> 
         if end > bytes.len() {
             return Err(ZipError::Truncated);
         }
-        let data = bytes[start..end].to_vec();
-        if crc32(&data) != crc {
+        let data = if method == 8 {
+            miniz_oxide::inflate::decompress_to_vec_with_limit(&bytes[start..end], usize_)
+                .map_err(|_| ZipError::Corrupt(name.clone()))?
+        } else {
+            bytes[start..end].to_vec()
+        };
+        if data.len() != usize_ || crc32(&data) != crc {
             return Err(ZipError::Corrupt(name));
         }
         out.push((name, data));
@@ -283,11 +307,42 @@ mod tests {
     }
 
     #[test]
-    fn a_compressed_entry_is_refused_rather_than_misread() {
+    fn an_unknown_method_is_refused_rather_than_misread() {
         let mut zip = write_store_zip(&[("a.txt", b"hello")]).unwrap();
         // Central directory method field: locate the central signature.
         let cd = (0..zip.len() - 4).find(|&i| u32_at(&zip, i) == CENTRAL_SIG).unwrap();
-        zip[cd + 10] = 8; // deflate
-        assert_eq!(read_store_zip(&zip), Err(ZipError::Unsupported("compressed entry")));
+        zip[cd + 10] = 12; // bzip2
+        assert!(matches!(read_store_zip(&zip), Err(ZipError::Unsupported(_))));
+    }
+
+    #[test]
+    fn deflated_entries_round_trip_and_shrink_redundant_data() {
+        // Something like an events table: mostly zero bytes.
+        let big: Vec<u8> = (0..200_000u32).flat_map(|i| [(i % 7) as u8, 0, 0, 0, (i % 3) as u8, 0, 0, 0]).collect();
+        // xorshift64: deflate cannot shrink this, so it must be stored.
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let random: Vec<u8> = (0..4096)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 56) as u8
+            })
+            .collect();
+        let zip = write_zip(&[("events.arrow", &big), ("noise.bin", &random), ("empty", b"")], Some(6)).unwrap();
+        assert!(zip.len() < big.len() / 4, "deflate should pack this 4:1 at least, got {}", zip.len());
+        let back = read_store_zip(&zip).unwrap();
+        assert_eq!(back[0].1, big);
+        assert_eq!(back[1].1, random);
+        assert!(back[2].1.is_empty());
+        // The incompressible entry was stored, not grown: method 0 in its header.
+        let cd = (0..zip.len() - 4).find(|&i| u32_at(&zip, i) == CENTRAL_SIG).unwrap();
+        let second = (cd + 46..zip.len() - 4).find(|&i| u32_at(&zip, i) == CENTRAL_SIG).unwrap();
+        assert_eq!(u16_at(&zip, cd + 10), 8, "events deflated");
+        assert_eq!(u16_at(&zip, second + 10), 0, "noise stored");
+        // A corrupted deflate stream is reported, not returned.
+        let mut bad = zip.clone();
+        bad[60] ^= 0xFF; // inside the deflate stream (30-byte header + 12-byte name)
+        assert!(matches!(read_store_zip(&bad), Err(ZipError::Corrupt(_))));
     }
 }

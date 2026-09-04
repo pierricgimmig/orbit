@@ -10,9 +10,9 @@
 //! again -- events with their names, the sample rows and the frame table
 //! they point into, thread and process names, and which process was the
 //! target -- and `to_zip` writes it as one `.orbit.zip`: the three Arrow
-//! tables and a `manifest.json`, store-only, so any zip tool extracts it
-//! into exactly the dataset directory `write_dataset` produces (and the
-//! Python example opens).
+//! tables and a `manifest.json`, deflated, so any zip tool extracts it into
+//! exactly the dataset directory `write_dataset` produces (and the Python
+//! example opens).
 //!
 //! `slice` cuts a bundle down to a time window. Events that overlap the
 //! window are kept whole -- a scope that straddles the edge is still a real
@@ -25,7 +25,9 @@ use std::collections::{HashMap, HashSet};
 
 use orbit_live_event::LiveEvent;
 
-use crate::zipstore::{read_store_zip, write_store_zip};
+use crate::zipstore::read_store_zip;
+#[cfg(test)]
+use crate::zipstore::write_store_zip;
 use crate::{
     read_events_ipc, read_frames_ipc, read_samples_ipc, write_events_ipc, write_frames_ipc,
     write_samples_ipc, CaptureError, EventRow, FrameRow, SampleRow, DATASET_FORMAT, EVENTS_FILE,
@@ -165,8 +167,14 @@ impl CaptureBundle {
         })
     }
 
-    /// The bundle as one `.orbit.zip`.
+    /// The bundle as one `.orbit.zip`, deflated.
     pub fn to_zip(&self) -> Result<Vec<u8>, CaptureError> {
+        self.to_zip_with_level(Some(crate::zipstore::BUNDLE_DEFLATE_LEVEL))
+    }
+
+    /// As [`to_zip`](Self::to_zip) at a chosen deflate level, or stored
+    /// with `None`.
+    pub fn to_zip_with_level(&self, level: Option<u8>) -> Result<Vec<u8>, CaptureError> {
         let names: HashMap<u32, &str> = self.events.iter().map(|r| (r.event.name_id, r.name.as_str())).collect();
         let events: Vec<LiveEvent> = self.events.iter().map(|r| r.event).collect();
         let resolve = |id: u32| names.get(&id).map(|s| s.to_string()).unwrap_or_default();
@@ -179,12 +187,15 @@ impl CaptureBundle {
         write_frames_ipc(std::io::Cursor::new(&mut frames_buf), &self.frames)?;
         let manifest = serde_json::to_string_pretty(&self.manifest_json())?;
 
-        Ok(write_store_zip(&[
-            (MANIFEST_FILE, manifest.as_bytes()),
-            (EVENTS_FILE, &events_buf),
-            (SAMPLES_FILE, &samples_buf),
-            (FRAMES_FILE, &frames_buf),
-        ])?)
+        Ok(crate::zipstore::write_zip(
+            &[
+                (MANIFEST_FILE, manifest.as_bytes()),
+                (EVENTS_FILE, &events_buf),
+                (SAMPLES_FILE, &samples_buf),
+                (FRAMES_FILE, &frames_buf),
+            ],
+            level,
+        )?)
     }
 
     /// A bundle back from its zip. The manifest's `bundle` section is

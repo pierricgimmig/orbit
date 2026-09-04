@@ -29,6 +29,9 @@ pub struct StatusJson {
     /// Demo/capture producer clock. Not ring newest_end (pid 2/3).
     #[serde(default)]
     pub live_end_ns: u64,
+    /// The batch format on the WebSocket, as the server names it.
+    #[serde(default)]
+    pub wire: String,
     #[serde(default)]
     pub ring_bytes: u64,
     pub spill_path: Option<String>,

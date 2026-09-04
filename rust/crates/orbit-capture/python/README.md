@@ -1,13 +1,14 @@
 # Reading an Orbit capture in Python
 
 Orbit's live viewer saves a capture as `capture.orbit.zip` — the **Save**
-pill, or **Save slice** for the selected time range. That is a store-only
-zip (no compression, so nothing to install) of a dataset directory: the
-events, samples and frames tables as Arrow IPC, plus a `manifest.json` that
-also names every thread and process and records the slice window. Unzip it
-and every Arrow reader opens the tables; they drop straight into pandas. The
-same file drops back onto the viewer (or its **Open** pill) to reopen the
-capture, slice included.
+pill, or **Save slice** for the selected time range. That is an ordinary
+deflate zip of a dataset directory: the events, samples and frames tables as
+Arrow IPC, plus a `manifest.json` that also names every thread and process
+and records the slice window. An events table is mostly zero bytes, so the
+zip is about a fifth of the tables' size (a 1M-event slice: 38 MB of tables,
+7.6 MB zipped). Unzip it and every Arrow reader opens the tables; they drop
+straight into pandas. The same file drops back onto the viewer (or its
+**Open** pill) to reopen the capture, slice included.
 
 `GET /api/capture/export` also hands out the events table alone, as Arrow
 IPC (`?format=ipc`) or Parquet (`?format=parquet`), with `&t0=..&t1=..` to

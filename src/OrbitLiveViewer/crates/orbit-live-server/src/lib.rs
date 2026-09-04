@@ -18,7 +18,8 @@ use orbit_live_event::dev::{
     NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
 };
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
-use orbit_live_protocol::{encode_event_batch, encode_frame, LiveFrame, VERSION};
+pub use orbit_live_protocol::{decode_frame, encode_event_batch_with, WireFormat};
+use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
 use orbit_live_render::{TrackIndex, WorkerSpan};
 use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
@@ -44,6 +45,9 @@ pub struct ServerConfig {
     /// `--dev-self-profile` / `ORBIT_LIVE_DEV=1`. Self-profile is on by default;
     /// the viewer Dev pill / `?dev=0` still toggles via `/api/self/*`.
     pub dev_self_profile: bool,
+    /// How event batches go out on the WebSocket. `--wire raw|packed|deflate`
+    /// / `ORBIT_LIVE_WIRE`; packed by default.
+    pub wire: WireFormat,
 }
 
 impl Default for ServerConfig {
@@ -53,8 +57,30 @@ impl Default for ServerConfig {
             ring_buffer_bytes: DEFAULT_RING_BYTES,
             spill_path: None,
             dev_self_profile: false,
+            wire: WireFormat::default(),
         }
     }
+}
+
+/// The kind and size of a decoded frame, for tools that only count.
+pub enum LiveFrameRef {
+    EventBatch(usize),
+    Other,
+}
+
+pub fn frame_len(frame: &LiveFrame) -> LiveFrameRef {
+    match frame {
+        LiveFrame::EventBatch { events } => LiveFrameRef::EventBatch(events.len()),
+        _ => LiveFrameRef::Other,
+    }
+}
+
+/// `ORBIT_LIVE_WIRE`, or the default when unset or unknown.
+pub fn env_wire() -> WireFormat {
+    std::env::var("ORBIT_LIVE_WIRE")
+        .ok()
+        .and_then(|v| WireFormat::parse(&v))
+        .unwrap_or_default()
 }
 
 pub fn env_dev_self() -> bool {
@@ -499,7 +525,12 @@ impl LiveService {
         if self.live_tx.receiver_count() == 0 {
             return;
         }
-        let _ = self.live_tx.send(encode_event_batch(events));
+        let _ = self.live_tx.send(encode_event_batch_with(events, self.wire()));
+    }
+
+    /// The batch format this server sends.
+    pub fn wire(&self) -> WireFormat {
+        self.config.lock().wire
     }
 
     pub fn push_events(&self, events: &[LiveEvent]) {
@@ -610,10 +641,9 @@ impl LiveService {
         let (_, events) = self.ring().snapshot();
         if !events.is_empty() {
             // Chunk so one WS message stays reasonable.
+            let wire = self.wire();
             for chunk in events.chunks(2048) {
-                frames.push(encode_frame(&LiveFrame::EventBatch {
-                    events: chunk.to_vec(),
-                }));
+                frames.push(encode_event_batch_with(chunk, wire));
             }
         }
         frames

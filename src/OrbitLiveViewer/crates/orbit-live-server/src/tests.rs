@@ -598,6 +598,7 @@ fn thread_and_process_names_are_replayed_to_a_late_subscriber() {
         ring_buffer_bytes: 1 << 20,
         spill_path: None,
         dev_self_profile: false,
+        wire: crate::WireFormat::default(),
     })
     .unwrap();
     svc.set_thread_name(7, 70, "Worker-1");

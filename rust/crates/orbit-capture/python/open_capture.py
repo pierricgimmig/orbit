@@ -6,10 +6,10 @@
 """Open an Orbit capture saved as Arrow.
 
 Orbit's live viewer saves a capture as ``capture.orbit.zip`` (the Save pill;
-Save slice does the same for the selected time range). That is a store-only
-zip of a dataset directory -- events, samples and frames tables plus a
-manifest that also names every thread and process -- so ``unzip`` it and
-point this script at the directory. ``GET /api/capture/export`` still hands
+Save slice does the same for the selected time range). That is a deflate zip
+of a dataset directory -- events, samples and frames tables plus a manifest
+that also names every thread and process -- so ``unzip`` it and point this
+script at the directory. ``GET /api/capture/export`` still hands
 out the events table alone as Arrow IPC (``?format=ipc``) or Parquet
 (``?format=parquet``), and ``orbit-service --out-arrow <dir>`` writes a
 dataset directory straight to disk. All are plain Arrow / Parquet, so there

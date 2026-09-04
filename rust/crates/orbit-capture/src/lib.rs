@@ -35,6 +35,11 @@ pub mod zipstore;
 
 pub use bundle::{CaptureBundle, ProcessName, ThreadName, BUNDLE_SUFFIX};
 
+/// [`CaptureBundle::to_zip_with_level`], as a free function for tools.
+pub fn bundle_zip_with_level(bundle: &CaptureBundle, level: Option<u8>) -> Result<Vec<u8>, CaptureError> {
+    bundle.to_zip_with_level(level)
+}
+
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

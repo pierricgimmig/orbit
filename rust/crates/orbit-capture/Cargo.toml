@@ -22,3 +22,6 @@ arrow-ipc = { version = "59", default-features = false }
 parquet = { version = "59", default-features = false, features = ["arrow"] }
 bytes = "1"
 serde_json = "1"
+# Pure-Rust deflate for the bundle zip; already in this tree through parquet,
+# so it adds no crate and no C.
+miniz_oxide = "0.8"

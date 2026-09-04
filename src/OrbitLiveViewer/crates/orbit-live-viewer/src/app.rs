@@ -940,7 +940,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -966,6 +966,8 @@ impl OrbitLiveApp {
             self.show_tweaks,
             self.report_tab.label(),
             self.hello_count,
+            self.status.wire,
+            self.ws_rate_bps,
         );
         if text == self.sel_readout {
             return;
@@ -2046,6 +2048,7 @@ impl OrbitLiveApp {
                     // This frame is the WebSocket's stats push, which carries
                     // no control state; keep what /api/status last said.
                     instrumentation: self.status.instrumentation.clone(),
+                    wire: self.status.wire.clone(),
                 });
                 // An opened capture is all here once the service reports it
                 // finished: show the whole of it.
@@ -2283,9 +2286,10 @@ impl OrbitLiveApp {
             );
         }
         let link = format!(
-            "{}  {}",
+            "{}  {}{}",
             if self.http_ok { "http" } else { "http…" },
-            if self.ws_ok { "ws" } else { "ws…" }
+            if self.ws_ok { "ws" } else { "ws…" },
+            if self.status.wire.is_empty() { String::new() } else { format!(" {}", self.status.wire) }
         );
         ui.label(
             RichText::new(link)

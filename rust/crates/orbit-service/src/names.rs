@@ -284,3 +284,100 @@ mod tests {
         assert_eq!(b.target_pid, 4_000_000);
     }
 }
+
+/// Wire and bundle sizes on a real capture. Point `ORBIT_WIRE_BENCH_BUNDLE`
+/// at an `.orbit.zip` and run
+/// `cargo test --release wire_bench_real -- --ignored --nocapture`.
+#[cfg(test)]
+mod bench {
+    use orbit_live_server::{decode_frame, encode_event_batch_with, WireFormat};
+
+    #[test]
+    #[ignore]
+    fn wire_bench_real() {
+        let Ok(path) = std::env::var("ORBIT_WIRE_BENCH_BUNDLE") else {
+            eprintln!("set ORBIT_WIRE_BENCH_BUNDLE to an .orbit.zip");
+            return;
+        };
+        let bytes = std::fs::read(&path).unwrap();
+        let bundle = orbit_capture::CaptureBundle::from_zip(&bytes).unwrap();
+        let events: Vec<_> = bundle.events.iter().map(|r| r.event).collect();
+        println!("{}: {} events", path, events.len());
+        for wire in [WireFormat::Raw, WireFormat::Packed, WireFormat::Deflate] {
+            let t0 = std::time::Instant::now();
+            let frames: Vec<Vec<u8>> = events.chunks(2048).map(|c| encode_event_batch_with(c, wire)).collect();
+            let enc = t0.elapsed();
+            let total: usize = frames.iter().map(Vec::len).sum();
+            let t0 = std::time::Instant::now();
+            let mut n = 0usize;
+            for f in &frames {
+                let (frame, _) = decode_frame(f).unwrap();
+                if let orbit_live_server::LiveFrameRef::EventBatch(k) = orbit_live_server::frame_len(&frame) {
+                    n += k;
+                }
+            }
+            let dec = t0.elapsed();
+            assert_eq!(n, events.len());
+            println!(
+                "  {:8} {:6.2} B/event  {:7.2} MB   encode {:6.1} us/batch   decode {:6.1} us/batch  (2048/batch)",
+                wire.name(),
+                total as f64 / events.len() as f64,
+                total as f64 / 1e6,
+                enc.as_secs_f64() * 1e6 / frames.len() as f64,
+                dec.as_secs_f64() * 1e6 / frames.len() as f64
+            );
+        }
+        // What a transport-level compressor would do to the raw stream: ssh -C
+        // is zlib level 6 with the whole connection as context; a WebSocket
+        // permessage-deflate is the same per message. Both bounds, on the
+        // raw 32-byte records.
+        let raw_frames: Vec<Vec<u8>> = events.chunks(2048).map(|c| encode_event_batch_with(c, WireFormat::Raw)).collect();
+        let t0 = std::time::Instant::now();
+        let per_batch: usize = raw_frames.iter().map(|f| miniz_oxide::deflate::compress_to_vec(f, 6).len()).sum();
+        let per_batch_t = t0.elapsed();
+        let stream: Vec<u8> = raw_frames.concat();
+        let t0 = std::time::Instant::now();
+        let whole = miniz_oxide::deflate::compress_to_vec(&stream, 6).len();
+        let whole_t = t0.elapsed();
+        println!(
+            "  raw + zlib6 per message  {:6.2} B/event  ({:6.1} us/batch)   -- WebSocket permessage-deflate",
+            per_batch as f64 / events.len() as f64,
+            per_batch_t.as_secs_f64() * 1e6 / raw_frames.len() as f64
+        );
+        println!(
+            "  raw + zlib6 whole stream {:6.2} B/event  ({:6.1} us/batch)   -- ssh -C (stream context)",
+            whole as f64 / events.len() as f64,
+            whole_t.as_secs_f64() * 1e6 / raw_frames.len() as f64
+        );
+        // Transfer time of one 2048-event batch on a link, the latency a
+        // slower format adds before the first event of the batch can show.
+        for wire in [WireFormat::Raw, WireFormat::Packed, WireFormat::Deflate] {
+            let bytes = encode_event_batch_with(&events[..2048], wire).len() as f64;
+            println!(
+                "  {:8} batch of 2048 = {:6.1} KB: {:5.2} ms at 100 Mbit/s, {:5.2} ms at 1 Gbit/s, {:5.3} ms at 10 Gbit/s",
+                wire.name(),
+                bytes / 1e3,
+                bytes * 8.0 / 100e6 * 1e3,
+                bytes * 8.0 / 1e9 * 1e3,
+                bytes * 8.0 / 10e9 * 1e3
+            );
+        }
+        // The bundle itself, stored versus deflated.
+        for (label, level) in [("store", None), ("deflate 1", Some(1u8)), ("deflate 6", Some(6u8))] {
+            let t0 = std::time::Instant::now();
+            let zip = bundle_zip(&bundle, level);
+            println!(
+                "  bundle {:9} {:7.2} MB in {:.2} s",
+                label,
+                zip.len() as f64 / 1e6,
+                t0.elapsed().as_secs_f64()
+            );
+        }
+    }
+
+    fn bundle_zip(bundle: &orbit_capture::CaptureBundle, level: Option<u8>) -> Vec<u8> {
+        let mut b = bundle.clone();
+        b.slice_ns = bundle.slice_ns;
+        orbit_capture::bundle_zip_with_level(&b, level).unwrap()
+    }
+}

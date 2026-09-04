@@ -56,6 +56,7 @@ struct Args {
     /// static service over a pipe.
     gpu_helper: Option<String>,
     host: Option<String>,
+    wire: orbit_live_server::WireFormat,
     /// `--out-arrow <dir>`: also write the capture as an Arrow dataset
     /// (events / samples / frames tables + manifest.json) in that directory.
     out_arrow: Option<String>,
@@ -69,6 +70,7 @@ fn parse_args() -> Args {
         out: None,
         gpu_helper: None,
         host: None,
+        wire: orbit_live_server::env_wire(),
         out_arrow: None,
     };
     let mut iter = std::env::args().skip(1);
@@ -89,6 +91,13 @@ fn parse_args() -> Args {
             "--out-arrow" => args.out_arrow = iter.next(),
             "--gpu-helper" => args.gpu_helper = iter.next(),
             "--host" => args.host = iter.next(),
+            "--wire" => {
+                let v = iter.next().unwrap_or_default();
+                match orbit_live_server::WireFormat::parse(&v) {
+                    Some(w) => args.wire = w,
+                    None => eprintln!("orbit-service: unknown --wire {v:?}; use raw, packed or deflate"),
+                }
+            }
             "--serve" => {
                 let port = iter
                     .next()
@@ -100,7 +109,7 @@ fn parse_args() -> Args {
                 // in front of it; --host 127.0.0.1 keeps it to this machine.
                 let host = args.host.clone().unwrap_or_else(|| "0.0.0.0".to_string());
                 if let Err(error) =
-                    serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper))
+                    serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper), args.wire)
                 {
                     eprintln!("orbit-service: could not start the live viewer: {error}");
                     std::process::exit(2);
@@ -113,6 +122,9 @@ fn parse_args() -> Args {
                      orbit-service --serve [port]        ... on a specific port\n\
                      orbit-service --host <addr> --serve  ... bound to one address \
                      (default 0.0.0.0; 127.0.0.1 keeps it off the network)\n\
+                     orbit-service --wire raw|packed|deflate --serve  event batches on the \
+                     WebSocket as 32-byte records, delta-varint packed (default), or \
+                     packed and deflated\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]"
                 );

@@ -199,6 +199,8 @@ struct StatusBody {
     /// Dynamic-instrumentation outcome for the running capture; empty when
     /// no functions were selected.
     instrumentation: String,
+    /// The event batch format on the WebSocket: raw, packed or deflate.
+    wire: &'static str,
 }
 
 impl StatusBody {
@@ -223,6 +225,9 @@ impl StatusBody {
             self_profile: svc.self_profile_enabled(),
             hooks: svc.has_hooks(),
             instrumentation: svc.instrumentation_status(),
+            // From the guard already held: `svc.wire()` would take the same
+            // lock again and hang the status route.
+            wire: cfg.wire.name(),
         }
     }
 }
@@ -994,6 +999,7 @@ mod isolation_tests {
             ring_buffer_bytes: 1024 * 32,
             spill_path: None,
             dev_self_profile: false,
+            wire: crate::WireFormat::default(),
         })
         .unwrap();
         let app = super::router(svc);
@@ -1074,6 +1080,7 @@ mod isolation_tests {
             ring_buffer_bytes: 1024 * 32,
             spill_path: None,
             dev_self_profile: false,
+            wire: crate::WireFormat::default(),
         })
         .unwrap()
     }
@@ -1176,6 +1183,14 @@ mod isolation_tests {
         assert!(ok.contains(r#"{"events":3}"#), "{ok}");
         assert!(post("PK-busy").contains("409"), "busy is a conflict");
         assert!(post("garbage").contains("400"), "garbage is a bad request");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn status_names_the_wire_format_without_deadlocking() {
+        let base = spawn_router(test_service()).await;
+        let out = curl_si(&format!("{base}/api/status"));
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains(r#""wire":"packed""#), "{text}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -32,6 +32,8 @@ path = "src/main.rs"
 
 [dependencies]
 libc = "0.2"
+# Pure Rust; already in the tree through orbit-capture. Used by the wire bench only.
+miniz_oxide = "0.8"
 orbit-api = { path = "../orbit-api" }
 orbit-capture = { path = "../orbit-capture" }
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }

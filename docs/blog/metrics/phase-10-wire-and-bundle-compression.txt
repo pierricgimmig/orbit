@@ -1,0 +1,134 @@
+Phase 10 -- compressing the wire and the saved capture (2026-09-04)
+===================================================================
+
+Two questions from the project owner: should saved captures be compressed
+(yes, they were 127 MB for a 100 s machine-wide capture), and can a simple
+scheme on the live WebSocket get closer to protobuf's varints, since phase
+7a measured the fixed 32-byte record at 1.69x protobuf's size.
+
+Every number below comes from a checked-in benchmark:
+
+  cd rust/crates/orbit-service
+  ORBIT_WIRE_BENCH_BUNDLE=<an .orbit.zip> \
+    cargo test --release wire_bench_real -- --ignored --nocapture
+  cd src/OrbitLiveViewer
+  cargo test --release -p orbit-live-protocol wire_bench -- --ignored --nocapture
+
+The real-data run is on a 1,034,313-event slice of a no-target capture of
+this machine (32 cores, scheduler + thread states + the service's own
+scopes), saved the day before. Linux 7.0.0-30-generic, Rust 1.88.0,
+release, single thread.
+
+=====================================================================
+1. The wire: bytes per event
+=====================================================================
+Event batches of 2048, as the server sends them.
+
+                                  B/event    MB (1.03M)   encode    decode
+                                                           us/batch  us/batch
+  raw   (32-byte record, as before) 32.00      33.10        22         7
+  packed (delta-varint, no deps)    11.06      11.44        38        19
+  deflate (packed + miniz level 1)   7.01       7.25       115        70
+
+  protobuf-style varints, no delta  27.81      (python estimate: a tag byte
+                                               + varint per field; 64-bit ns
+                                               timestamps defeat varints)
+
+"packed": start as a zigzag varint delta from the previous event in the
+batch, duration and name id as varints, the (pid, tid) as a one-byte index
+into a per-batch thread table, kind/depth/extra as three bytes. 2.9x
+smaller than raw and 2.5x smaller than a protobuf layout, for 16 us more
+encode per batch. "deflate" runs miniz_oxide (pure Rust) over the packed
+bytes for another 37%, at about 100 us per batch each way.
+
+Decoders accept all three; the producer picks: `orbit-service --wire
+raw|packed|deflate` (or ORBIT_LIVE_WIRE). Default: packed. /api/status
+reports "wire", and the viewer's stats line shows it after "ws".
+
+=====================================================================
+2. Would ssh -C (or WebSocket permessage-deflate) do as well?
+=====================================================================
+ssh -C is zlib level 6 over the whole connection; permessage-deflate is
+the same per message. Measured with miniz at level 6 on the raw stream:
+
+  raw + zlib6 per message           8.38 B/event   1324 us/batch
+  raw + zlib6 whole-stream context  8.32 B/event   1958 us/batch
+
+So a transport compressor lands between packed and packed+deflate on size
+(3.8x vs 2.9x and 4.6x), but costs 12-17x the CPU of packed+deflate, on
+both ends, because it is compressing 65 KB of mostly-zero bytes per batch
+at level 6 instead of 23 KB of packed bytes at level 1. It also needs the
+tunnel: the viewer is a browser tab, and the LAN case (yesterday's change)
+has no ssh in the path. Packing first is the cheaper half of the gain.
+
+=====================================================================
+3. Latency
+=====================================================================
+CPU added per 2048-event batch, encode + decode (table 1):
+  packed   ~50 us     deflate  ~185 us
+The service pushes a batch per capture pass (~5 ms), so packing adds about
+1% of a pass; deflate about 4%.
+
+Bytes on the link, one batch, and the time to move it:
+                    KB    100 Mbit/s   1 Gbit/s   10 Gbit/s
+  raw             65.5      5.24 ms     0.52 ms    0.052 ms
+  packed          22.8      1.83 ms     0.18 ms    0.018 ms
+  deflate         14.7      1.18 ms     0.12 ms    0.012 ms
+
+On anything slower than a quiet gigabit link the packed batch arrives
+sooner than the raw one despite the encode: at 100 Mbit/s it saves 3.4 ms
+per batch against 50 us spent. Deflate saves a further 0.65 ms there for
+135 us more CPU; on a 10 Gbit link it is CPU for nothing, which is why the
+default is packed and deflate is the toggle for a slow link.
+
+Live, viewer-side (WebSocket bytes per second reported by the viewer,
+no-target capture of this machine streaming, same load each run):
+  see section 5.
+
+=====================================================================
+4. The saved capture
+=====================================================================
+The .orbit.zip was store-only. The bundle's tables are now deflated by
+miniz_oxide (already in the tree through parquet; no new crate, no C) at
+level 6, once, at Save. Same 1M-event slice:
+
+  store                38.07 MB   0.15 s
+  deflate level 1       8.36 MB   0.20 s
+  deflate level 6       7.62 MB   0.87 s   <- default
+
+Level 6 is 9% smaller than level 1 for 0.7 s more on a 38 MB table; the
+100 s capture that was 127 MB now saves as about 25 MB in roughly three
+seconds. The reader accepts stored and deflated entries, so yesterday's
+files still open.
+
+=====================================================================
+5. Live throughput, viewer-side
+=====================================================================
+Headless Chrome against orbit-service --wire <format>, a no-target capture
+of this machine recording for ~15 s per run, the viewer's own WebSocket
+bytes-per-second (an exponential average it paints next to the fps), read
+four times two seconds apart through window.__orbit_sel. The capture rate
+was not controlled between runs -- it is whatever the machine was doing --
+so these are bytes per second, not bytes per event; the per-event figures
+are in table 1.
+
+                 ws bytes/s, four readings              status "wire"
+  raw            1,221,028  1,687,504  1,301,935  409,715   raw
+  packed           284,835    307,859    313,202  394,372   packed
+  deflate          203,801    190,830    263,591  228,617   deflate
+
+Roughly 4x and 6x less on the link than raw, in the order the bench
+predicts, with the viewer decoding every format through the same
+decode_frame and the stats line naming the format in use.
+
+=====================================================================
+NOT DONE / NOTES
+=====================================================================
+- The whole-stream context of ssh -C or permessage-deflate is not
+  reproduced by the per-batch deflate frame; a stateful deflate across
+  batches would recover the 0.06 B/event between the two zlib6 rows above,
+  which is not worth a stateful decoder in the browser.
+- The service's own ring still stores the 32-byte record; packing is on
+  the wire and in the file only. The ring is memory, not bandwidth.
+- Deflate level for the bundle is fixed at 6; a --save-level knob is easy
+  if a 1 GB capture ever makes the three seconds matter.

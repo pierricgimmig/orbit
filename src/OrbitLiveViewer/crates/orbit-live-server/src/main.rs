@@ -15,6 +15,7 @@ fn parse_args() -> ServerConfig {
         ring_buffer_bytes: DEFAULT_RING_BYTES,
         spill_path: None,
         dev_self_profile: orbit_live_server::env_dev_self(),
+        wire: orbit_live_server::env_wire(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -38,6 +39,11 @@ fn parse_args() -> ServerConfig {
             }
             "--dev-self-profile" | "--dev_self_profile" => {
                 cfg.dev_self_profile = true;
+            }
+            "--wire" => {
+                let v = args.next().expect("missing wire format: raw, packed or deflate");
+                cfg.wire = orbit_live_server::WireFormat::parse(&v)
+                    .unwrap_or_else(|| panic!("unknown wire format {v:?}: use raw, packed or deflate"));
             }
             "--help" | "-h" => {
                 print_help();
