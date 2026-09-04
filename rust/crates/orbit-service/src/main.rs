@@ -18,6 +18,7 @@
 
 mod functions;
 mod interner;
+mod lan;
 mod privileges;
 mod report;
 mod scopes;
@@ -92,9 +93,11 @@ fn parse_args() -> Args {
                     .next()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(serve::DEFAULT_PORT);
-                // --host 0.0.0.0 exposes the viewer on the LAN. Default is
-                // loopback: this has no auth, so opening it wider is a choice.
-                let host = args.host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
+                // The viewer is meant to be opened from another machine on
+                // the network -- that is how a profiler gets used -- so the
+                // default binds every interface. There is no authentication
+                // in front of it; --host 127.0.0.1 keeps it to this machine.
+                let host = args.host.clone().unwrap_or_else(|| "0.0.0.0".to_string());
                 if let Err(error) =
                     serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper))
                 {
@@ -107,6 +110,8 @@ fn parse_args() -> Args {
                 eprintln!(
                     "orbit-service                       serve the live viewer UI\n\
                      orbit-service --serve [port]        ... on a specific port\n\
+                     orbit-service --host <addr> --serve  ... bound to one address \
+                     (default 0.0.0.0; 127.0.0.1 keeps it off the network)\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]"
                 );

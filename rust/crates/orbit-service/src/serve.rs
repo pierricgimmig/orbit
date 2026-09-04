@@ -973,9 +973,9 @@ pub fn run(port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     run_on("127.0.0.1", port, gpu_helper)
 }
 
-/// As [`run`], on a chosen host. `0.0.0.0` exposes the viewer on the LAN;
-/// the default `127.0.0.1` keeps it to this machine, which is the safe
-/// default for something with no authentication in front of it.
+/// As [`run`], on a chosen host. `0.0.0.0` (the command line's default)
+/// exposes the viewer on the LAN; `127.0.0.1` keeps it to this machine,
+/// the choice for something with no authentication in front of it.
 pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), String> {
     let config = ServerConfig {
         bind: format!("{host}:{port}").parse().map_err(|_| "bad bind address".to_string())?,
@@ -1163,7 +1163,9 @@ pub fn run_on(host: &str, port: u16, gpu_helper: Option<String>) -> Result<(), S
     });
 
     println!();
-    println!("  Orbit live viewer:  http://{host}:{port}/");
+    for line in crate::lan::banner_lines(host, port, &crate::lan::lan_interfaces()) {
+        println!("{line}");
+    }
     println!();
     println!("  Pick a process in the Capture strip and press Record.");
     println!("  Ctrl-C to stop the server.");
