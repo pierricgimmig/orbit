@@ -287,6 +287,9 @@ pub struct ReportQuery {
     /// windows. When present it supersedes `start_ns`/`end_ns`/`tid`, and the
     /// report is the union over all of them.
     pub ranges: Option<String>,
+    /// A scope's name id: the report over every sample inside any instance
+    /// of that scope, instead of a time selection.
+    pub scope: Option<u32>,
 }
 
 #[derive(serde::Deserialize)]
@@ -299,6 +302,9 @@ struct TreeQuery {
     tid: Option<u32>,
     /// Multi-select union of windows; see `ReportQuery::ranges`.
     ranges: Option<String>,
+    /// A scope's name id: the tree over every sample inside any instance of
+    /// that scope, instead of a time selection.
+    scope: Option<u32>,
 }
 
 /// Parses `start-end` / `start-end:tid` windows separated by commas into range
@@ -327,11 +333,22 @@ async fn sampling_tree(
     State(svc): State<Arc<LiveService>>,
     Query(q): Query<TreeQuery>,
 ) -> Response {
+    let mode = q.mode.unwrap_or_else(|| "top_down".to_string());
+    if let Some(name_id) = q.scope {
+        let hook = svc.sampling_tree_scope.lock().clone();
+        let Some(tree) = hook else {
+            return (StatusCode::NOT_IMPLEMENTED, "this service does not scope trees").into_response();
+        };
+        return match tokio::task::spawn_blocking(move || tree(name_id, &mode)).await {
+            Ok(Ok(json)) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+            Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
+    }
     let tree = svc.sampling_tree.lock().clone();
     let Some(tree) = tree else {
         return (StatusCode::NOT_FOUND, "no sampling tree available").into_response();
     };
-    let mode = q.mode.unwrap_or_else(|| "top_down".to_string());
     // No range means the whole capture, which is what you want the moment a
     // capture stops and you have not selected anything yet.
     let ranges: Vec<crate::SampleRangeSpec> = match q.ranges.as_deref() {
@@ -473,6 +490,17 @@ async fn sampling_report(
     State(svc): State<Arc<LiveService>>,
     axum::extract::Query(query): axum::extract::Query<ReportQuery>,
 ) -> Response {
+    if let Some(name_id) = query.scope {
+        let hook = svc.sampling_report_scope.lock().clone();
+        let Some(report) = hook else {
+            return (StatusCode::NOT_IMPLEMENTED, "this service does not scope reports").into_response();
+        };
+        return match tokio::task::spawn_blocking(move || report(name_id)).await {
+            Ok(Ok(json)) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+            Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
+    }
     let hook = svc.sampling_report.lock().clone();
     match hook {
         None => (
@@ -1183,6 +1211,22 @@ mod isolation_tests {
         assert!(ok.contains(r#"{"events":3}"#), "{ok}");
         assert!(post("PK-busy").contains("409"), "busy is a conflict");
         assert!(post("garbage").contains("400"), "garbage is a bad request");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_scope_query_goes_to_the_scope_hooks() {
+        let svc = test_service();
+        svc.set_sampling_report_scope(std::sync::Arc::new(|id| Ok(format!(r#"{{"scope_id":{id}}}"#))));
+        svc.set_sampling_tree_scope(std::sync::Arc::new(|id, mode| Ok(format!(r#"{{"scope_id":{id},"mode":"{mode}"}}"#))));
+        let base = spawn_router(svc).await;
+        let out = curl_si(&format!("{base}/api/sampling/report?scope=42"));
+        assert!(String::from_utf8_lossy(&out.stdout).contains(r#"{"scope_id":42}"#));
+        let out = curl_si(&format!("{base}/api/sampling/tree?scope=42&mode=bottom_up"));
+        assert!(String::from_utf8_lossy(&out.stdout).contains(r#"{"scope_id":42,"mode":"bottom_up"}"#));
+        // Without the hooks, 501 -- not a whole-capture report by accident.
+        let base = spawn_router(test_service()).await;
+        let out = curl_si(&format!("{base}/api/sampling/report?scope=42"));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("501"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -355,12 +355,16 @@ fn zoom_time_by_scale_limited(
 fn fit_content_window(min_ns: f64, max_ns: f64) -> (f64, f64) {
     let lo = min_ns.min(max_ns);
     let hi = min_ns.max(max_ns);
-    if hi > lo {
-        (lo, hi)
-    } else {
-        (lo, lo + 1.0)
-    }
+    // Never narrower than a microsecond. Content of one instant (the first
+    // event of a capture still arriving, a single sample) used to fit to a
+    // 1 ns window, and at 10^14 ns a tick step under a nanosecond is below
+    // an f64 ulp: the ruler's `t += step` never advanced and the viewer
+    // spun forever on the next paint.
+    (lo, hi.max(lo + MIN_FIT_SPAN_NS))
 }
+
+/// The narrowest window Home fits to.
+const MIN_FIT_SPAN_NS: f64 = 1_000.0;
 
 /// Zoom-out ceiling: the capture itself. A shorter cluster must not open
 /// out to the 60 s default (or any 1.1× pad) of empty time.
@@ -701,7 +705,24 @@ pub struct OrbitLiveApp {
     /// The UI knobs window (row spacing and the like) is open.
     show_tweaks: bool,
     ui_tweaks: UiTweaks,
-    live_stats: LiveStats,
+    /// The Live table over the whole capture, fed as events arrive.
+    live_all: crate::live::LiveTable,
+    /// The Live table over the current selection, rebuilt from the index
+    /// when the selection or the data changes.
+    live_sel: crate::live::LiveTable,
+    live_sel_ranges: Vec<(u64, u64, Option<u32>)>,
+    live_sel_events_seen: u64,
+    live_sel_computed_s: f64,
+    /// The Live row whose histogram is shown.
+    live_focus: Option<u32>,
+    /// A right-click on a scope: the pick and where the menu goes.
+    scope_menu: Option<(ScopePick, Pos2)>,
+    /// The menu was opened this frame: the click that opened it must not
+    /// count as a click outside it.
+    scope_menu_fresh: bool,
+    /// The report is over every instance of this scope (name id, name)
+    /// rather than a time selection.
+    scope_report: Option<(u32, String)>,
     /// The self-profile pane's own timeline state. Drawn by the same
     /// `timeline()` as the capture: its fields are swapped into place for
     /// the duration of the pane's draw and swapped back after.
@@ -947,7 +968,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -977,6 +998,11 @@ impl OrbitLiveApp {
             self.ws_rate_bps,
             self.report_w_last,
             self.report_collapsed,
+            self.scope_menu.is_some(),
+            match &self.scope_report {
+                Some((id, name)) => format!("[{id},{name:?}]"),
+                None => "null".to_string(),
+            },
         );
         if text == self.sel_readout {
             return;
@@ -998,6 +1024,11 @@ impl OrbitLiveApp {
         self.selected = None;
         self.selected_thread = None;
         self.measure = None;
+        self.scope_menu = None;
+        if self.scope_report.take().is_some() {
+            self.sampling_ranges.clear();
+            self.request_reports();
+        }
     }
 
     fn rail_color(&self) -> Color32 {
@@ -1174,7 +1205,15 @@ impl OrbitLiveApp {
             report_w_last: 0.0,
             show_tweaks: false,
             ui_tweaks: UiTweaks::load(),
-            live_stats: LiveStats::default(),
+            live_all: crate::live::LiveTable::default(),
+            live_sel: crate::live::LiveTable::default(),
+            live_sel_ranges: Vec::new(),
+            live_sel_events_seen: 0,
+            live_sel_computed_s: 0.0,
+            live_focus: None,
+            scope_menu: None,
+            scope_menu_fresh: false,
+            scope_report: None,
             self_tl: TimelineState::fresh(),
             gpu_slot: 0,
             canvas_override: None,
@@ -1480,6 +1519,7 @@ impl OrbitLiveApp {
     fn begin_trace_load(&mut self, load: TraceLoad) {
         self.stop_record();
         self.index.clear();
+        self.live_all.clear();
         self.intern = InternTable::default();
         self.tracks = TrackStrip::default();
         self.selected = None;
@@ -1559,6 +1599,7 @@ impl OrbitLiveApp {
         let n = evs.len();
         for ev in evs {
             self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
+            self.live_all.push(&ev);
             self.index.insert(ev);
         }
         self.merge_trace_metadata();
@@ -1994,6 +2035,7 @@ impl OrbitLiveApp {
                         }
                         self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
                     }
+                    self.live_all.push(&ev);
                     self.index.insert(ev);
                 }
                 self.refresh_content_bounds();
@@ -2007,6 +2049,8 @@ impl OrbitLiveApp {
                 }
                 self.clear_file_trace();
                 self.index.clear();
+                self.live_all.clear();
+        self.live_all.clear();
                 self.selected = None;
                 self.hover = None;
                 self.measure = None;
@@ -2100,6 +2144,9 @@ impl OrbitLiveApp {
                 // and stays.
                 if !self.file_trace_active() {
                     self.index.clear();
+                    self.live_all.clear();
+                self.live_all.clear();
+        self.live_all.clear();
                     self.thread_names.clear();
                     self.trace_processes.clear();
                     self.hover = None;
@@ -4507,6 +4554,27 @@ impl OrbitLiveApp {
     }
 
     fn handle_pick(&mut self, response: &egui::Response, rect: Rect, t0: u64, t1: u64, width: f32) {
+        if response.clicked_by(PointerButton::Secondary) {
+            // A right click on a scope opens its menu; on anything else it
+            // drops the measure and the sample selection, as it always has.
+            // Picked at the pointer, not from `self.hover`: the button was
+            // down between press and release, and egui hides the hover then.
+            let pick = response
+                .interact_pointer_pos()
+                .and_then(|p| self.pick_at(p.x - rect.left(), p.y - rect.top(), t0, t1, width))
+                .filter(|p| pick_selects_thread(*p));
+            match (pick, response.interact_pointer_pos()) {
+                (Some(pick), Some(pos)) => {
+                    self.scope_menu = Some((pick, pos));
+                    self.scope_menu_fresh = true;
+                }
+                _ => {
+                    self.measure = None;
+                    self.sample_sels.clear();
+                    self.measure_dragging = false;
+                }
+            }
+        }
         let Some(pos) = response.hover_pos() else {
             self.hover = None;
             return;
@@ -4615,11 +4683,9 @@ impl OrbitLiveApp {
                 }
             }
         }
-        if response.clicked_by(PointerButton::Secondary) {
-            self.measure = None;
-            self.sample_sels.clear();
-            self.measure_dragging = false;
-        }
+        // The right click itself is handled in `handle_pick`, which can pick
+        // at the pointer: while a button is down egui reports no hover, so
+        // the pick under the release is not `self.hover`.
     }
 
     /// The tid of the sample bar at body-local `y`, if that is what is there.
@@ -4713,6 +4779,9 @@ impl OrbitLiveApp {
             return;
         }
         self.last_report_request_s = now;
+        if !ranges.is_empty() {
+            self.scope_report = None;
+        }
         self.sampling_ranges = ranges;
         self.local_sample_count = count_samples_in(&self.index, &self.sampling_ranges);
         self.request_reports();
@@ -4725,6 +4794,12 @@ impl OrbitLiveApp {
     /// before you have selected anything, the answer you want is about
     /// everything you just recorded.
     fn request_reports(&mut self) {
+        if let Some((name_id, _)) = &self.scope_report {
+            let id = *name_id;
+            self.net.get_sampling_report_scope(id);
+            self.net.get_sampling_tree_scope(id, self.report_tab.mode());
+            return;
+        }
         self.net.get_sampling_report(&self.sampling_ranges);
         self.net
             .get_sampling_tree(&self.sampling_ranges, self.report_tab.mode());
@@ -4830,7 +4905,7 @@ impl OrbitLiveApp {
                 // and the selection text must not run off its right edge.
                 ui.horizontal_wrapped(|ui| {
                     let title = match (&report, self.report_tab) {
-                        (_, ReportTab::Live) => self.live_stats.title(),
+                        (_, ReportTab::Live) => self.live_title(),
                         (Some(_), _) => format!("Sampling report — {samples} samples"),
                         // No service report (yet, or at all): the viewer can
                         // still say what the selection holds.
@@ -4840,7 +4915,11 @@ impl OrbitLiveApp {
                         ),
                     };
                     ui.label(RichText::new(title).color(theme::TEXT).size(12.0));
-                    let desc = self.describe_selection_named();
+                    let desc = if self.report_tab == ReportTab::Live {
+                        describe_selection(&self.sampling_ranges)
+                    } else {
+                        self.describe_selection_named()
+                    };
                     ui.label(RichText::new(desc).color(theme::MUTED).size(11.0));
                     // Expand/collapse all, as the native tree's context menu
                     // offers. Only meaningful on the two tree tabs.
@@ -4876,7 +4955,10 @@ impl OrbitLiveApp {
                             // different tree; switching to or from Flat does not.
                             if tab.mode() != was_tree_mode || self.tree.is_none() {
                                 self.tree_expanded.clear();
-                                self.net.get_sampling_tree(&self.sampling_ranges, tab.mode());
+                                match &self.scope_report {
+                                    Some((id, _)) => self.net.get_sampling_tree_scope(*id, tab.mode()),
+                                    None => self.net.get_sampling_tree(&self.sampling_ranges, tab.mode()),
+                                }
                             }
                             if tab == ReportTab::Modules {
                                 if let Some(pid) = self.selected_pid {
@@ -5186,41 +5268,105 @@ impl OrbitLiveApp {
         ));
     }
 
-    /// The Live tab: scope statistics and sample counts over the selection
-    /// (or the whole capture), refreshed as data arrives.
+    /// The Live table in force: the selection's when there is one, else
+    /// the whole capture's, kept incrementally.
+    fn live_table(&mut self) -> &crate::live::LiveTable {
+        let ranges = self.sample_ranges();
+        if ranges.is_empty() {
+            return &self.live_all;
+        }
+        let events = self.index.event_count() as u64;
+        let now = self.now_s;
+        let stale = self.live_sel_ranges != ranges
+            || (self.live_sel_events_seen != events && now - self.live_sel_computed_s >= LIVE_STATS_MIN_INTERVAL_S);
+        if stale {
+            self.live_sel = crate::live::LiveTable::from_events(
+                self.index.lanes().flat_map(|(_, lane)| lane.events().iter()),
+                &ranges,
+            );
+            self.live_sel_ranges = ranges;
+            self.live_sel_events_seen = events;
+            self.live_sel_computed_s = now;
+        }
+        &self.live_sel
+    }
+
+    fn live_title(&mut self) -> String {
+        let t = self.live_table();
+        let (scopes, samples, span) = (t.scope_count(), t.samples, t.span_ns());
+        let rate = if span > 0 && samples > 0 {
+            format!(", {:.0}/s", samples as f64 / (span as f64 / 1e9))
+        } else {
+            String::new()
+        };
+        format!("Live — {scopes} scopes, {samples} samples{rate}")
+    }
+
+    /// The Live tab: C++ Orbit's live functions table, one row per scope
+    /// name with running statistics, and the histogram of the selected row.
     fn live_rows(&mut self, ui: &mut Ui) {
-        self.refresh_live_stats();
         let font = self.ui_tweaks.report_font;
-        let stats = &self.live_stats;
-        if !stats.sample_threads.is_empty() {
+        let (rows, sample_threads): (Vec<crate::live::LiveRow>, Vec<(u32, u64)>) = {
+            let t = self.live_table();
+            (t.sorted_rows().into_iter().cloned().collect(), t.sample_threads())
+        };
+        if !sample_threads.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("samples by thread:").color(theme::MUTED).size(font - 0.5));
-                for (tid, n) in stats.sample_threads.iter().take(12) {
-                    let name = self.thread_names.get(&(stats.target_pid, *tid)).cloned()
-                        .or_else(|| self.intern.get(*tid).map(str::to_string))
-                        .unwrap_or_else(|| tid.to_string());
+                for (tid, n) in sample_threads.iter().take(12) {
+                    let name = self.thread_label_by_tid(*tid);
                     ui.label(RichText::new(format!("{name} {n}")).color(theme::TEXT).size(font - 0.5));
                 }
             });
             ui.add_space(4.0);
         }
-        if stats.rows.is_empty() {
+        if rows.is_empty() {
             ui.label(RichText::new("No scopes yet.").color(theme::MUTED).size(font));
             return;
         }
-        let rows = stats.rows.clone();
+        if self.recording {
+            self.needs_repaint = true;
+        }
+        // The focused row's histogram sits above the table, where it is in
+        // view whichever row was clicked.
+        if let Some(id) = self.live_focus {
+            let row = { self.live_table().row(id).cloned() };
+            if let Some(row) = row {
+                let name = self.intern.get(id).unwrap_or("?").to_string();
+                ui.label(
+                    RichText::new(format!("{name} — {} calls, duration histogram (log scale)", row.count))
+                        .color(theme::TEXT)
+                        .size(font),
+                );
+                paint_histogram(ui, &row.hist, font);
+                ui.add_space(8.0);
+            }
+        }
+        let mut clicked: Option<u32> = None;
         egui::Grid::new("orbit_live_rows")
-            .num_columns(7)
+            .num_columns(9)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["function", "count", "total", "avg", "min", "max", "std dev"] {
+                for h in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"] {
                     ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
                 }
                 ui.end_row();
                 for r in rows.iter().take(300) {
-                    let name = self.intern.get(r.name_id).unwrap_or("?");
-                    ui.label(RichText::new(name).color(theme::TEXT).size(font));
+                    let focused = self.live_focus == Some(r.name_id);
+                    let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
+                    ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font));
+                    let label = ui.add(
+                        egui::Label::new(
+                            RichText::new(&name)
+                                .color(if focused { theme::ACCENT } else { theme::TEXT })
+                                .size(font),
+                        )
+                        .sense(Sense::click()),
+                    );
+                    if label.on_hover_text("Click for the duration histogram; the timeline highlights this scope").clicked() {
+                        clicked = Some(r.name_id);
+                    }
                     for v in [
                         r.count.to_string(),
                         display_time_ns(r.total_ns),
@@ -5231,42 +5377,94 @@ impl OrbitLiveApp {
                     ] {
                         ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
                     }
+                    ui.label(RichText::new(self.module_of_name(&name)).color(theme::MUTED).size(font - 0.5));
                     ui.end_row();
                 }
             });
+        if let Some(id) = clicked {
+            if self.live_focus == Some(id) {
+                self.live_focus = None;
+                self.search.clear();
+            } else {
+                self.live_focus = Some(id);
+                // Linked to the timeline the way the search box is: every
+                // instance of this scope lights up, the rest dims.
+                self.search = self.intern.get(id).unwrap_or("").to_string();
+            }
+        }
     }
 
-    /// Recomputes the Live statistics when the data or the selection moved
-    /// on, at most a few times a second while a capture streams.
-    fn refresh_live_stats(&mut self) {
-        let events = self.index.event_count() as u64;
-        let ranges = self.sample_ranges();
-        let now = self.now_s;
-        if self.live_stats.events_seen == events
-            && self.live_stats.ranges == ranges
-            && self.live_stats.selection_keyed
-        {
-            return;
-        }
-        if self.live_stats.events_seen != events && now - self.live_stats.computed_s < LIVE_STATS_MIN_INTERVAL_S {
-            return;
-        }
-        self.live_stats = live_stats_from(
-            self.index.lanes().flat_map(|(_, lane)| lane.events().iter()),
-            &ranges,
-            self.selected_pid.unwrap_or(0),
-        );
-        self.live_stats.events_seen = events;
-        self.live_stats.ranges = ranges;
-        self.live_stats.selection_keyed = true;
-        self.live_stats.computed_s = now;
-        if self.recording {
-            self.needs_repaint = true;
+    /// A thread's name by tid alone, for rows that carry no pid.
+    fn thread_label_by_tid(&self, tid: u32) -> String {
+        self.thread_names
+            .iter()
+            .find(|((_, t), _)| *t == tid)
+            .map(|(_, n)| n.clone())
+            .or_else(|| self.intern.get(tid).map(str::to_string))
+            .unwrap_or_else(|| tid.to_string())
+    }
+
+    /// The module a function name belongs to, when a symbol search or a
+    /// report has said; empty for manual scopes.
+    fn module_of_name(&self, name: &str) -> String {
+        self.sampling
+            .as_ref()
+            .and_then(|r| r.rows.iter().find(|row| row.name == name).map(|row| row.module.clone()))
+            .unwrap_or_default()
+    }
+
+    /// The right-click menu on a scope: a sampling report over every
+    /// instance of that scope (TODO item 9).
+    fn paint_scope_menu(&mut self, ctx: &Context) {
+        let Some((pick, pos)) = self.scope_menu else { return };
+        let name = self.intern.get(pick.name_id).unwrap_or("scope").to_string();
+        let mut close = false;
+        let resp = egui::Area::new(egui::Id::new("orbit_scope_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                Frame::popup(ui.style()).fill(theme::PANEL).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.label(RichText::new(&name).color(theme::TEXT).size(11.5));
+                    ui.label(
+                        RichText::new(format!("{} on thread {}", display_time_ns(pick.duration_ns), pick.tid))
+                            .color(theme::MUTED)
+                            .size(10.5),
+                    );
+                    ui.add_space(4.0);
+                    if ui.button("Sampling report for this scope").clicked() {
+                        self.sample_sels.clear();
+                        self.measure = None;
+                        self.sampling_ranges.clear();
+                        self.scope_report = Some((pick.name_id, name.clone()));
+                        self.report_open = true;
+                        if matches!(self.report_tab, ReportTab::Live | ReportTab::Modules) {
+                            self.report_tab = ReportTab::Flat;
+                        }
+                        self.request_reports();
+                        close = true;
+                    }
+                    if ui.button("Highlight every instance").clicked() {
+                        self.search = name.clone();
+                        close = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        let fresh = std::mem::replace(&mut self.scope_menu_fresh, false);
+        if close || (!fresh && resp.response.clicked_elsewhere()) || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.scope_menu = None;
         }
     }
 
     /// `describe_selection`, with the thread named when one is selected.
     fn describe_selection_named(&self) -> String {
+        if let Some((_, name)) = &self.scope_report {
+            let instances = self.sampling.as_ref().map(|r| r.range_count).unwrap_or(0);
+            return format!("scope {name}, {instances} instances");
+        }
         let text = describe_selection(&self.sampling_ranges);
         if let [(_, _, Some(tid))] = self.sampling_ranges.as_slice() {
             // A range names only its tid; the thread table is keyed by
@@ -5541,6 +5739,7 @@ impl eframe::App for OrbitLiveApp {
             self.refresh_sampling_report(ctx.input(|i| i.time));
             self.sampling_panel(ctx);
             self.tweaks_window(ctx);
+            self.paint_scope_menu(ctx);
             self.self_pane(ctx, dt, &devf);
             self.publish_selection();
 
@@ -6572,127 +6771,44 @@ impl UiTweaks {
     }
 }
 
-/// One function's row in the Live tab, as C++ Orbit's LiveFunctionsDataView
-/// lays it out: count, total, average, min, max, standard deviation.
-#[derive(Clone, Debug, Default, PartialEq)]
-struct LiveRow {
-    name_id: u32,
-    count: u64,
-    total_ns: u64,
-    min_ns: u64,
-    max_ns: u64,
-    /// Sum of squared durations, for the standard deviation.
-    sum_sq: f64,
-}
-
-impl LiveRow {
-    fn avg_ns(&self) -> u64 {
-        if self.count == 0 {
-            0
-        } else {
-            self.total_ns / self.count
-        }
-    }
-
-    /// Population standard deviation of the durations.
-    fn std_dev_ns(&self) -> u64 {
-        if self.count == 0 {
-            return 0;
-        }
-        let n = self.count as f64;
-        let mean = self.total_ns as f64 / n;
-        let var = (self.sum_sq / n - mean * mean).max(0.0);
-        var.sqrt() as u64
-    }
-}
-
-/// What the Live tab shows, and the state that says when to recompute it.
-#[derive(Clone, Debug, Default, PartialEq)]
-struct LiveStats {
-    rows: Vec<LiveRow>,
-    /// Samples counted, and the threads they landed on with their counts,
-    /// most sampled first.
-    samples: u64,
-    sample_threads: Vec<(u32, u64)>,
-    /// The span the statistics cover, for a samples-per-second figure.
-    span_ns: u64,
-    target_pid: u32,
-    events_seen: u64,
-    ranges: Vec<(u64, u64, Option<u32>)>,
-    selection_keyed: bool,
-    computed_s: f64,
-}
-
-impl LiveStats {
-    fn title(&self) -> String {
-        let rate = if self.span_ns > 0 {
-            format!(", {:.0}/s", self.samples as f64 / (self.span_ns as f64 / 1e9))
-        } else {
-            String::new()
-        };
-        format!("Live — {} scopes, {} samples{rate}", self.rows.len(), self.samples)
-    }
-}
-
-/// Aggregates the scopes and samples of `events` inside `ranges` (or all of
-/// them when there are none): the Live tab's numbers. A scope counts when
-/// it starts inside a range; with a range's thread set, only that thread's.
-fn live_stats_from<'a>(
-    events: impl IntoIterator<Item = &'a LiveEvent>,
-    ranges: &[(u64, u64, Option<u32>)],
-    target_pid: u32,
-) -> LiveStats {
-    let inside = |e: &LiveEvent| -> bool {
-        if ranges.is_empty() {
-            return true;
-        }
-        ranges
-            .iter()
-            .any(|(a, b, tid)| e.start_ns >= *a && e.start_ns <= *b && tid.is_none_or(|t| t == e.tid))
-    };
-    let mut by_name: HashMap<u32, LiveRow> = HashMap::new();
-    let mut by_tid: HashMap<u32, u64> = HashMap::new();
-    let mut samples = 0u64;
-    let mut first = u64::MAX;
-    let mut last = 0u64;
-    for e in events {
-        if is_self_pid(e.pid) || !inside(e) {
+/// The duration histogram of one Live row: log-scale buckets, tallest bar
+/// full height, with a few tick labels along the bottom.
+fn paint_histogram(ui: &mut Ui, hist: &[u32; crate::live::HIST_BUCKETS], font: f32) {
+    let first = hist.iter().position(|n| *n > 0).unwrap_or(0).saturating_sub(1);
+    let last = hist.iter().rposition(|n| *n > 0).unwrap_or(0) + 1;
+    let last = last.min(crate::live::HIST_BUCKETS - 1);
+    let buckets = &hist[first..=last];
+    let peak = buckets.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let width = ui.available_width().max(120.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 96.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, theme::INPUT);
+    let plot = rect.shrink2(Vec2::new(6.0, 6.0)).with_max_y(rect.bottom() - 18.0);
+    let bw = plot.width() / buckets.len() as f32;
+    for (i, n) in buckets.iter().enumerate() {
+        if *n == 0 {
             continue;
         }
-        match e.kind {
-            kind::API_SCOPE | kind::FUNCTION_CALL => {
-                let row = by_name.entry(e.name_id).or_insert_with(|| LiveRow {
-                    name_id: e.name_id,
-                    min_ns: u64::MAX,
-                    ..LiveRow::default()
-                });
-                row.count += 1;
-                row.total_ns += e.duration_ns;
-                row.min_ns = row.min_ns.min(e.duration_ns);
-                row.max_ns = row.max_ns.max(e.duration_ns);
-                row.sum_sq += (e.duration_ns as f64) * (e.duration_ns as f64);
-                first = first.min(e.start_ns);
-                last = last.max(e.end_ns());
-            }
-            kind::SAMPLE => {
-                samples += 1;
-                *by_tid.entry(e.tid).or_insert(0) += 1;
-                first = first.min(e.start_ns);
-                last = last.max(e.start_ns);
-            }
-            _ => {}
-        }
+        let h = plot.height() * (*n as f32 / peak);
+        let x0 = plot.left() + i as f32 * bw;
+        painter.rect_filled(
+            Rect::from_min_max(Pos2::new(x0 + 1.0, plot.bottom() - h), Pos2::new(x0 + bw - 1.0, plot.bottom())),
+            1.0,
+            theme::ACCENT,
+        );
     }
-    let mut rows: Vec<LiveRow> = by_name.into_values().collect();
-    rows.sort_by(|a, b| b.total_ns.cmp(&a.total_ns).then(a.name_id.cmp(&b.name_id)));
-    let mut sample_threads: Vec<(u32, u64)> = by_tid.into_iter().collect();
-    sample_threads.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let span_ns = match ranges.is_empty() {
-        true if first != u64::MAX => last.saturating_sub(first),
-        true => 0,
-        false => selection_span(ranges).map(|(a, b)| b - a).unwrap_or(0),
-    };
-    LiveStats { rows, samples, sample_threads, span_ns, target_pid, ..LiveStats::default() }
+    // Tick labels: every few buckets, the bucket's lower bound.
+    let step = (buckets.len() / 5).max(1);
+    for i in (0..buckets.len()).step_by(step) {
+        let x = plot.left() + i as f32 * bw;
+        painter.text(
+            Pos2::new(x, rect.bottom() - 4.0),
+            Align2::LEFT_BOTTOM,
+            display_time_ns(crate::live::hist_bucket_floor_ns(first + i)),
+            FontId::new(font - 2.0, fonts::medium()),
+            theme::MUTED,
+        );
+    }
 }
 
 /// At or under this width the report panel counts as collapsed (its
@@ -6854,6 +6970,11 @@ fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64, light: bool) {
     let span = (t1 - t0).max(1.0);
     let (major, _) = tick_steps(span, rect.width());
     let mut t = (t0 / major).floor() * major;
+    // A step under an ulp of `t` would never advance it: bail rather than
+    // spin (see `fit_content_window`).
+    if !(t + major > t) {
+        return;
+    }
     while t <= t1 {
         let x = rect.left() + ((t - t0) / span) as f32 * rect.width();
         if x >= rect.left() && x <= rect.right() {
@@ -7167,6 +7288,9 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64, origin_ns: f64) {
     let span = (t1 - t0).max(1.0);
     let (_major, minor) = tick_steps(span, rect.width());
     let mut t = (t0 / minor).floor() * minor;
+    if !(t + minor > t) {
+        return;
+    }
     let mut step_i = ((t / minor).round() as i64).max(0);
     let font = FontId::new(10.0, FontFamily::Monospace);
     let mut last_label_right = f32::NEG_INFINITY;
@@ -8119,47 +8243,15 @@ mod tests {
     }
 
     #[test]
-    fn live_stats_aggregate_scopes_and_samples_inside_the_selection() {
-        let ev = |start: u64, dur: u64, tid: u32, k: u8, name: u32| LiveEvent {
-            start_ns: start,
-            duration_ns: dur,
-            tid,
-            pid: 7,
-            kind: k,
-            depth: 0,
-            extra: 0,
-            _pad: 0,
-            name_id: name,
-        };
-        let events = vec![
-            ev(100, 10, 70, kind::API_SCOPE, 1),
-            ev(200, 30, 70, kind::API_SCOPE, 1),
-            ev(300, 20, 71, kind::FUNCTION_CALL, 2),
-            ev(110, 1, 70, kind::SAMPLE, 9),
-            ev(210, 1, 70, kind::SAMPLE, 9),
-            ev(310, 1, 71, kind::SAMPLE, 9),
-            ev(150, 5, 70, kind::SCHEDULING_SLICE, 3), // not a scope
-        ];
-        // Whole capture.
-        let all = live_stats_from(&events, &[], 7);
-        assert_eq!(all.rows.len(), 2);
-        assert_eq!(all.rows[0].name_id, 1, "sorted by total time");
-        assert_eq!((all.rows[0].count, all.rows[0].total_ns, all.rows[0].min_ns, all.rows[0].max_ns), (2, 40, 10, 30));
-        assert_eq!(all.rows[0].avg_ns(), 20);
-        assert_eq!(all.rows[0].std_dev_ns(), 10);
-        assert_eq!(all.samples, 3);
-        assert_eq!(all.sample_threads, vec![(70, 2), (71, 1)]);
-        assert_eq!(all.span_ns, 320 - 100);
-        // A window on one thread.
-        let one = live_stats_from(&events, &[(0, 250, Some(70))], 7);
-        assert_eq!(one.rows.len(), 1);
-        assert_eq!(one.rows[0].count, 2);
-        assert_eq!(one.samples, 2);
-        assert_eq!(one.span_ns, 250);
-        // A window that misses everything.
-        let none = live_stats_from(&events, &[(1000, 2000, None)], 7);
-        assert!(none.rows.is_empty() && none.samples == 0);
-        assert!(none.title().starts_with("Live — 0 scopes, 0 samples"));
+    fn fitting_to_an_instant_gives_a_window_whose_ticks_can_advance() {
+        // 10^14 ns since boot, as CLOCK_MONOTONIC on a machine up for a day.
+        let t = 4.0e14;
+        let (a, b) = fit_content_window(t, t);
+        assert!(b - a >= MIN_FIT_SPAN_NS);
+        let (major, minor) = tick_steps(b - a, 1400.0);
+        assert!(a + major > a && a + minor > a, "ticks must move t at {t}: {major} {minor}");
+        // A real span is untouched.
+        assert_eq!(fit_content_window(100.0, 5_000_000.0), (100.0, 5_000_000.0));
     }
 
     #[test]

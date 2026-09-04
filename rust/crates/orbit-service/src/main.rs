@@ -22,6 +22,7 @@ mod lan;
 mod names;
 mod privileges;
 mod report;
+mod scope_index;
 mod scopes;
 mod serve;
 mod symbolize;

@@ -126,6 +126,14 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub sampling_tree:
         Mutex<Option<std::sync::Arc<dyn Fn(&[SampleRangeSpec], &str) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the report and tree over every sample inside any instance of
+    /// one scope (by name id). Set by the service, which has the ring.
+    #[allow(clippy::type_complexity)]
+    pub sampling_report_scope:
+        Mutex<Option<std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>>>,
+    #[allow(clippy::type_complexity)]
+    pub sampling_tree_scope:
+        Mutex<Option<std::sync::Arc<dyn Fn(u32, &str) -> Result<String, String> + Send + Sync>>>,
     /// Optional: the modules of the selected process and their symbol counts.
     #[allow(clippy::type_complexity)]
     pub modules_json:
@@ -216,6 +224,8 @@ impl LiveService {
             instrumentation_status: Mutex::new(String::new()),
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
+            sampling_report_scope: Mutex::new(None),
+            sampling_tree_scope: Mutex::new(None),
             modules_json: Mutex::new(None),
             capture_export: Mutex::new(None),
             capture_import: Mutex::new(None),
@@ -468,6 +478,20 @@ impl LiveService {
             (cfg.ring_buffer_bytes, cfg.spill_path.clone())
         };
         self.replace_ring(bytes, spill)
+    }
+
+    pub fn set_sampling_report_scope(
+        &self,
+        report: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_report_scope.lock() = Some(report);
+    }
+
+    pub fn set_sampling_tree_scope(
+        &self,
+        tree: std::sync::Arc<dyn Fn(u32, &str) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_tree_scope.lock() = Some(tree);
     }
 
     pub fn set_sampling_report(

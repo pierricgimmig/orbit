@@ -112,6 +112,91 @@ fn union_bounds(ranges: &[SampleRange]) -> (u64, u64) {
     (start, end)
 }
 
+/// Every instance of one scope, per thread, as the time ranges a sample must
+/// fall in to count for that scope's report (TODO item 9). A sample counts
+/// when its own thread was inside an instance at that moment -- the same
+/// scope running on another thread does not claim it.
+///
+/// Instances of one name on one thread nest only through recursion, so
+/// `contains` is a binary search for the last instance that started before
+/// the sample plus a short walk back for recursive enclosers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScopeRanges {
+    by_tid: FastMap<u32, Vec<(u64, u64)>>,
+    instances: usize,
+}
+
+/// How far back to look for a recursive encloser once the nearest instance
+/// has ended before the sample. Deeper recursion of the same name is rare
+/// enough that a bounded walk is the right trade.
+const RECURSION_LOOKBACK: usize = 8;
+
+impl ScopeRanges {
+    /// From `(tid, start, end)` instances in any order.
+    pub fn from_instances(instances: impl IntoIterator<Item = (u32, u64, u64)>) -> ScopeRanges {
+        let mut by_tid: FastMap<u32, Vec<(u64, u64)>> = FastMap::default();
+        let mut n = 0usize;
+        for (tid, start, end) in instances {
+            by_tid.entry(tid).or_default().push((start, end.max(start)));
+            n += 1;
+        }
+        for v in by_tid.values_mut() {
+            v.sort_unstable();
+        }
+        ScopeRanges { by_tid, instances: n }
+    }
+
+    pub fn instances(&self) -> usize {
+        self.instances
+    }
+
+    /// True when thread `tid` was inside an instance at `t`.
+    pub fn contains(&self, tid: u32, t: u64) -> bool {
+        let Some(v) = self.by_tid.get(&tid) else { return false };
+        let i = v.partition_point(|(start, _)| *start <= t);
+        v[i.saturating_sub(RECURSION_LOOKBACK)..i].iter().rev().any(|(_, end)| *end >= t)
+    }
+
+    /// The time windows to scan: every instance across every thread, merged
+    /// where they overlap.
+    pub fn windows(&self) -> Vec<(u64, u64)> {
+        let mut spans: Vec<(u64, u64)> = self.by_tid.values().flatten().copied().collect();
+        spans.sort_unstable();
+        merge_spans(spans)
+    }
+
+    /// Earliest start and latest end over every instance.
+    pub fn bounds(&self) -> (u64, u64) {
+        let start = self.by_tid.values().flatten().map(|(s, _)| *s).min().unwrap_or(0);
+        let end = self.by_tid.values().flatten().map(|(_, e)| *e).max().unwrap_or(0);
+        (start, end)
+    }
+}
+
+/// What a report is over: the timeline selection (ranges with optional
+/// thread filters), or every instance of one scope.
+#[derive(Clone, Copy)]
+pub enum Selection<'a> {
+    Ranges(&'a [SampleRange]),
+    Scope(&'a ScopeRanges),
+}
+
+impl Selection<'_> {
+    fn windows(&self) -> Vec<(u64, u64)> {
+        match self {
+            Selection::Ranges(r) => merged_windows(r),
+            Selection::Scope(s) => s.windows(),
+        }
+    }
+
+    fn keep(&self, sample: &StoredSample) -> bool {
+        match self {
+            Selection::Ranges(r) => in_any(r, sample),
+            Selection::Scope(s) => s.contains(sample.tid, sample.timestamp_ns),
+        }
+    }
+}
+
 /// The samples of a capture, plus the name table their frame ids point into.
 #[derive(Default)]
 pub struct SampleStore {
@@ -156,15 +241,15 @@ impl StoreInner {
 /// sample. Counts are additive, so nothing about the result changes.
 fn fold_selection<'a>(
     inner: &'a StoreInner,
-    ranges: &[SampleRange],
+    selection: Selection<'_>,
 ) -> (FastMap<(u32, &'a [u32]), u64>, u64, u64, u64) {
     let mut stacks: FastMap<(u32, &[u32]), u64> = FastMap::default();
     let mut total = 0u64;
     let mut first = u64::MAX;
     let mut last = 0u64;
-    for (a, b) in merged_windows(ranges) {
+    for (a, b) in selection.windows() {
         for sample in &inner.samples[inner.window(a, b)] {
-            if !in_any(ranges, sample) {
+            if !selection.keep(sample) {
                 continue;
             }
             total += 1;
@@ -183,6 +268,11 @@ fn fold_selection<'a>(
 fn merged_windows(ranges: &[SampleRange]) -> Vec<(u64, u64)> {
     let mut spans: Vec<(u64, u64)> = ranges.iter().map(|r| (r.start_ns, r.end_ns)).collect();
     spans.sort_unstable();
+    merge_spans(spans)
+}
+
+/// Merges sorted `(start, end)` spans where they touch or overlap.
+fn merge_spans(spans: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     let mut out: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
     for (a, b) in spans {
         match out.last_mut() {
@@ -266,6 +356,40 @@ impl SampleStore {
     /// report. A sample counts once no matter how many ranges it falls in, and
     /// each range carries its own optional thread filter.
     pub fn report_json_for_ranges(&self, ranges: &[SampleRange]) -> String {
+        let (start_ns, end_ns) = union_bounds(ranges);
+        let single_tid = match ranges {
+            [only] => only.tid,
+            _ => None,
+        };
+        self.report_json_for_selection(
+            Selection::Ranges(ranges),
+            serde_json::json!({
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+                "tid": single_tid,
+                "range_count": ranges.len(),
+            }),
+        )
+    }
+
+    /// The report over every sample taken while `scope` was running on the
+    /// sample's thread -- "what does this function spend its time on", for a
+    /// scope picked on the timeline (TODO item 9).
+    pub fn report_json_for_scope(&self, scope: &ScopeRanges, name: &str) -> String {
+        let (start_ns, end_ns) = scope.bounds();
+        self.report_json_for_selection(
+            Selection::Scope(scope),
+            serde_json::json!({
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+                "tid": null,
+                "range_count": scope.instances(),
+                "scope": name,
+            }),
+        )
+    }
+
+    fn report_json_for_selection(&self, selection: Selection<'_>, mut meta: serde_json::Value) -> String {
         let mut inner = self.inner.lock().unwrap();
         inner.ensure_sorted();
         let inner = &*inner;
@@ -275,7 +399,7 @@ impl SampleStore {
         // that was asked for: a request for the whole capture gets 0..u64::MAX
         // back otherwise, and the ring's own range covers every capture the
         // service has run, not this one.
-        let (stacks, total, first_sample_ns, last_sample_ns) = fold_selection(inner, ranges);
+        let (stacks, total, first_sample_ns, last_sample_ns) = fold_selection(inner, selection);
         // Scratch for the per-stack de-duplication, reused across stacks.
         let mut seen: Vec<u32> = Vec::with_capacity(64);
         for ((_, frames), count) in &stacks {
@@ -321,22 +445,18 @@ impl SampleStore {
                 })
             })
             .collect();
-        let (start_ns, end_ns) = union_bounds(ranges);
-        let single_tid = match ranges {
-            [only] => only.tid,
-            _ => None,
-        };
-        serde_json::json!({
+        let extra = serde_json::json!({
             "samples": total,
-            "start_ns": start_ns,
-            "end_ns": end_ns,
-            "tid": single_tid,
-            "range_count": ranges.len(),
             "first_sample_ns": if total == 0 { 0 } else { first_sample_ns },
             "last_sample_ns": last_sample_ns,
             "functions": functions,
-        })
-        .to_string()
+        });
+        if let (Some(m), Some(e)) = (meta.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+        meta.to_string()
     }
 }
 
@@ -432,6 +552,15 @@ impl SampleStore {
 
     /// As `tree_json_for`, over the union of several selected ranges.
     pub fn tree_json_for_ranges(&self, ranges: &[SampleRange], mode: TreeMode) -> String {
+        self.tree_json_for_selection(Selection::Ranges(ranges), mode)
+    }
+
+    /// The call tree over every sample inside any instance of `scope`.
+    pub fn tree_json_for_scope(&self, scope: &ScopeRanges, mode: TreeMode) -> String {
+        self.tree_json_for_selection(Selection::Scope(scope), mode)
+    }
+
+    fn tree_json_for_selection(&self, selection: Selection<'_>, mode: TreeMode) -> String {
         let mut inner = self.inner.lock().unwrap();
         inner.ensure_sorted();
         let inner = &*inner;
@@ -439,7 +568,7 @@ impl SampleStore {
         // Bottom-up has a single root; top-down has one per thread.
         let mut merged = ThreadNode::default();
 
-        let (stacks, mut total, _, _) = fold_selection(inner, ranges);
+        let (stacks, mut total, _, _) = fold_selection(inner, selection);
         for ((tid, frames), count) in &stacks {
             if frames.is_empty() {
                 // Frameless samples are counted in the total by the fold but
@@ -486,10 +615,19 @@ impl SampleStore {
         // first cost more than the walk that produced it: every node became a
         // heap map, and a bottom-up tree over a few thousand samples has tens
         // of thousands of nodes.
-        let (start_ns, end_ns) = union_bounds(ranges);
-        let single_tid = match ranges {
-            [only] => only.tid,
-            _ => None,
+        let (start_ns, end_ns, single_tid, range_count) = match selection {
+            Selection::Ranges(ranges) => {
+                let (a, b) = union_bounds(ranges);
+                let tid = match ranges {
+                    [only] => only.tid,
+                    _ => None,
+                };
+                (a, b, tid, ranges.len())
+            }
+            Selection::Scope(scope) => {
+                let (a, b) = scope.bounds();
+                (a, b, None, scope.instances())
+            }
         };
         let mut out = String::with_capacity(4096);
         out.push_str("{\"mode\":");
@@ -505,7 +643,7 @@ impl SampleStore {
             Some(t) => out.push_str(&t.to_string()),
             None => out.push_str("null"),
         }
-        write_kv_u64(&mut out, "range_count", ranges.len() as u64);
+        write_kv_u64(&mut out, "range_count", range_count as u64);
         out.push_str(",\"roots\":[");
         match mode {
             TreeMode::TopDown => {
@@ -931,6 +1069,51 @@ mod tests {
         assert_eq!(roots.len(), 1, "one thread selected, one thread root");
         assert_eq!(roots[0]["name"], "Thread 9");
         assert_eq!(tree["samples"], 1);
+    }
+
+    #[test]
+    fn scope_ranges_match_samples_on_the_instances_thread_only() {
+        let scope = ScopeRanges::from_instances([
+            (7, 100, 200),   // thread 7: two instances
+            (7, 300, 400),
+            (7, 320, 350),   // recursive inner instance
+            (9, 150, 160),   // thread 9: one short instance
+        ]);
+        assert_eq!(scope.instances(), 4);
+        assert!(scope.contains(7, 100) && scope.contains(7, 200) && scope.contains(7, 399));
+        assert!(!scope.contains(7, 250) && !scope.contains(7, 99));
+        assert!(scope.contains(7, 360), "still inside the outer instance after the inner one ended");
+        assert!(scope.contains(9, 155) && !scope.contains(9, 170));
+        assert!(!scope.contains(8, 150), "another thread at the same time does not count");
+        assert_eq!(scope.windows(), vec![(100, 200), (300, 400)]);
+        assert_eq!(scope.bounds(), (100, 400));
+        assert!(ScopeRanges::default().windows().is_empty());
+    }
+
+    #[test]
+    fn a_scope_report_counts_only_samples_inside_that_scope_on_that_thread() {
+        let store = SampleStore::new();
+        store.record_name(1, "inside");
+        store.record_name(2, "outside");
+        store.record_name(3, "other_thread");
+        for (t, tid, frame) in [(110, 7, 1), (150, 7, 1), (250, 7, 2), (155, 9, 3), (155, 8, 3)] {
+            store.push(StoredSample { timestamp_ns: t, tid, frames: vec![frame] });
+        }
+        let scope = ScopeRanges::from_instances([(7, 100, 200), (9, 150, 160)]);
+        let json = store.report_json_for_scope(&scope, "Tick");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["samples"], 3, "{json}");
+        assert_eq!(v["scope"], "Tick");
+        assert_eq!(v["range_count"], 2);
+        let names: Vec<&str> = v["functions"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"inside") && names.contains(&"other_thread") && !names.contains(&"outside"), "{names:?}");
+        let tree = store.tree_json_for_scope(&scope, TreeMode::TopDown);
+        let t: serde_json::Value = serde_json::from_str(&tree).unwrap();
+        assert_eq!(t["samples"], 3);
+        assert_eq!(t["range_count"], 2);
+        // An empty scope is an empty report, not an error.
+        let empty = store.report_json_for_scope(&ScopeRanges::default(), "Never");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&empty).unwrap()["samples"], 0);
     }
 
     #[test]

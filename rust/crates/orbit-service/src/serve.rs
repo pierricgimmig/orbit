@@ -887,7 +887,7 @@ fn capture_loop(
                             pid: target_pid as u32,
                             kind: kind::FUNCTION_CALL,
                             depth: index as u8,
-                            extra: 0,
+                            extra: orbit_live_event::extra::SAMPLED_FRAME,
                             _pad: 0,
                             name_id,
                         });
@@ -1100,6 +1100,26 @@ pub fn run_on(
             .map(|&(start_ns, end_ns, tid)| SampleRange::new(start_ns, end_ns, tid))
             .collect();
         Ok(tree_store.tree_json_for_ranges(&ranges, TreeMode::parse(mode)))
+    }));
+    // Scope-scoped reports: every sample taken while the named scope was
+    // running on the sample's thread. The instances come from the ring
+    // through an index built once per ring generation.
+    let scope_index = Arc::new(crate::scope_index::ScopeIndex::default());
+    let scope_store = store.clone();
+    let scope_service = service.clone();
+    let scope_idx = scope_index.clone();
+    service.set_sampling_report_scope(Arc::new(move |name_id| {
+        let gen = scope_service.data_gen();
+        let ranges = scope_idx.ranges_for(name_id, gen, || scope_service.ring().snapshot().1);
+        let name = scope_service.intern.lock().get(name_id).unwrap_or("?").to_string();
+        Ok(scope_store.report_json_for_scope(&ranges, &name))
+    }));
+    let scope_store = store.clone();
+    let scope_service = service.clone();
+    service.set_sampling_tree_scope(Arc::new(move |name_id, mode| {
+        let gen = scope_service.data_gen();
+        let ranges = scope_index.ranges_for(name_id, gen, || scope_service.ring().snapshot().1);
+        Ok(scope_store.tree_json_for_scope(&ranges, TreeMode::parse(mode)))
     }));
     let export_service = service.clone();
     let modules_state = symbols.clone();

@@ -82,6 +82,11 @@ pub struct SamplingReport {
     pub samples: u64,
     pub start_ns: u64,
     pub end_ns: u64,
+    /// Ranges in the selection, or instances of the scope for a
+    /// scope-scoped report.
+    pub range_count: u64,
+    /// The scope's name for a scope-scoped report; empty otherwise.
+    pub scope: String,
     pub rows: Vec<SamplingRow>,
 }
 
@@ -322,34 +327,58 @@ pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> 
         samples: number_after(text, "\"samples\":").unwrap_or(0.0) as u64,
         start_ns: number_after(text, "\"start_ns\":").unwrap_or(0.0) as u64,
         end_ns: number_after(text, "\"end_ns\":").unwrap_or(0.0) as u64,
+        range_count: number_after(text, "\"range_count\":").unwrap_or(0.0) as u64,
+        scope: string_after(text, "\"scope\":\"").unwrap_or_default(),
         rows: Vec::new(),
     };
-    // Each row begins at a "name" key; slice to the next one so a function
-    // name containing braces cannot swallow the rest of the list.
-    let mut rest = match text.find("\"functions\"") {
-        Some(at) => &text[at..],
-        None => return Ok(report),
-    };
-    while let Some(at) = rest.find("{\"name\":\"") {
-        let row_start = at + "{\"name\":\"".len();
-        let after = &rest[row_start..];
-        let Some(name_end) = after.find('"') else { break };
-        let name = after[..name_end].to_string();
-        let tail = &after[name_end..];
-        let row_text = match tail.find("{\"name\":\"") {
-            Some(next) => &tail[..next],
-            None => tail,
-        };
-        report.rows.push(SamplingRow {
-            name,
-            module: string_after(row_text, "\"module\":\"").unwrap_or_default(),
-            self_count: number_after(row_text, "\"self\":").unwrap_or(0.0) as u64,
-            inclusive_count: number_after(row_text, "\"inclusive\":").unwrap_or(0.0) as u64,
-            self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0) as f32,
-            inclusive_percent: number_after(row_text, "\"inclusive_percent\":").unwrap_or(0.0)
-                as f32,
-        });
-        rest = &tail[row_text.len().max(1)..];
+    // The rows are the objects of the "functions" array. Each is cut out by
+    // brace depth, skipping over strings, so neither the key order (the
+    // service writes keys sorted) nor a brace in a function name matters.
+    let Some(at) = text.find("\"functions\":[") else { return Ok(report) };
+    let list = &text[at + "\"functions\":[".len()..];
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut start = None;
+    for (i, ch) in list.char_indices() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_str = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(s0) = start.take() {
+                        let row_text = &list[s0..=i];
+                        report.rows.push(SamplingRow {
+                            name: string_after(row_text, "\"name\":\"").unwrap_or_default(),
+                            module: string_after(row_text, "\"module\":\"").unwrap_or_default(),
+                            self_count: number_after(row_text, "\"self\":").unwrap_or(0.0) as u64,
+                            inclusive_count: number_after(row_text, "\"inclusive\":").unwrap_or(0.0) as u64,
+                            self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0) as f32,
+                            inclusive_percent: number_after(row_text, "\"inclusive_percent\":").unwrap_or(0.0)
+                                as f32,
+                        });
+                    }
+                }
+            }
+            ']' if depth == 0 => break,
+            _ => {}
+        }
     }
     Ok(report)
 }
@@ -651,6 +680,28 @@ mod wasm_impl {
                     // error worth showing the user on every selection.
                     Err(_) => g.sampling = None,
                 }
+            });
+        }
+
+        /// The report over every sample inside any instance of the scope.
+        pub fn get_sampling_report_scope(&self, name_id: u32) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&format!("/api/sampling/report?scope={name_id}"))
+                    .await
+                    .and_then(|t| parse_sampling_report_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.sampling = result.ok();
+            });
+        }
+
+        pub fn get_sampling_tree_scope(&self, name_id: u32, mode: &str) {
+            let query = format!("/api/sampling/tree?scope={name_id}&mode={mode}");
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&query).await.and_then(|t| parse_sampling_tree_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.tree = result.ok();
             });
         }
 
@@ -1069,6 +1120,8 @@ mod native_impl {
         pub fn get_status(&self) {}
         pub fn reconnect_ws_if_closed(&self) {}
         pub fn get_sampling_report(&self, _ranges: &[(u64, u64, Option<u32>)]) {}
+        pub fn get_sampling_report_scope(&self, _name_id: u32) {}
+        pub fn get_sampling_tree_scope(&self, _name_id: u32, _mode: &str) {}
         pub fn get_sampling_tree(&self, _ranges: &[(u64, u64, Option<u32>)], _mode: &str) {}
         pub fn get_modules(&self, _pid: u32) {}
         pub fn get_processes(&self) {}
@@ -1093,6 +1146,30 @@ pub use native_impl::Net;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_report_with_sorted_keys_parses_its_rows() {
+        // Exactly what the service writes: serde_json's sorted keys, so a
+        // row starts with "inclusive", not "name"; plus a scope report's
+        // extra keys.
+        let text = r#"{"end_ns":441288689745100,"first_sample_ns":441285747520712,"functions":[{"inclusive":1217,"inclusive_percent":64.35,"module":"","name":"0x789be0844a09","self":1217,"self_percent":64.35},{"inclusive":1754,"inclusive_percent":92.75,"module":"libc.so.6","name":"__clock_gettime","self":63,"self_percent":3.33}],"last_sample_ns":441288689000000,"range_count":1877,"samples":1891,"scope":"physics-0","start_ns":441285747000000,"tid":null}"#;
+        let r = super::parse_sampling_report_json(text).unwrap();
+        assert_eq!(r.samples, 1891);
+        assert_eq!(r.range_count, 1877);
+        assert_eq!(r.scope, "physics-0");
+        assert_eq!(r.rows.len(), 2);
+        assert_eq!(r.rows[0].name, "0x789be0844a09");
+        assert_eq!(r.rows[0].self_count, 1217);
+        assert_eq!(r.rows[1].name, "__clock_gettime");
+        assert_eq!(r.rows[1].module, "libc.so.6");
+        assert_eq!(r.rows[1].inclusive_count, 1754);
+        assert!((r.rows[1].self_percent - 3.33).abs() < 0.01);
+        // A brace inside a name does not end the row.
+        let odd = r#"{"functions":[{"inclusive":1,"module":"m","name":"operator{}","self":1}],"samples":1}"#;
+        let r = super::parse_sampling_report_json(odd).unwrap();
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows[0].name, "operator{}");
+    }
+
     use super::{parse_sampling_report_json, ranges_query, SamplingReport};
 
     #[test]

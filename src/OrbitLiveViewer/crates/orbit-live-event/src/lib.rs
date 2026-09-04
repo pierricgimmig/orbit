@@ -40,6 +40,17 @@ pub mod kind {
     pub const SAMPLE: u8 = 7;
 }
 
+/// What `extra` means per kind, where it means something. Scheduling
+/// slices carry the core, thread states the state code (see
+/// [`thread_state`]); function calls carry this.
+pub mod extra {
+    /// A `FUNCTION_CALL` that is one frame of a sampled callstack, drawn
+    /// under the sample tick so the stack reads on the thread track. It is
+    /// not a measured call: its duration is the sampling period, and the
+    /// Live functions table leaves it out.
+    pub const SAMPLED_FRAME: u8 = 1;
+}
+
 /// `ThreadStateSlice::ThreadState` values from `capture.proto`.
 pub mod thread_state {
     pub const RUNNING: u8 = 0;

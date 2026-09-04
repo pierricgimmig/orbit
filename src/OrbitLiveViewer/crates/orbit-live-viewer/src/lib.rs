@@ -18,6 +18,7 @@ mod app;
 mod chrome_load;
 #[cfg(feature = "egui")]
 mod dev;
+mod live;
 #[cfg(feature = "egui")]
 mod fonts;
 #[cfg(feature = "egui")]

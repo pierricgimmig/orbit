@@ -282,3 +282,50 @@ Wedge: "we catch what your APM misses" — native code, startup cost,
 the stuff that never shows up in a dashboard.
 
 **Status: not an engineering item yet; depends on 13 and 14.**
+
+## 23. Python sample keeps working
+
+Make sure the python sample code to read a capture from disk still works
+with latest changes.
+
+**Status: to verify after every format change.** `open_capture.py` reads
+the manifest and picks a reader by extension (Parquet for bundles, Arrow
+for `--out-arrow` directories); it was run against a fresh bundle on
+2026-09-04. Worth an automated check in the e2e suite (item 24).
+
+## 24. E2E suite that measures, documents and screenshots
+
+Have a solid e2e testing suite that will gather perf data, will generate
+orbit manual listing and explaining all features and producing screenshots
+from the freshly compiled app. Maybe part of this will be an md file to
+feed to an agent to generate the manual content.
+
+**Status: not started; the pieces exist.** `tools/e2e/cdp.py` drives
+headless Chrome, the viewer publishes `window.__orbit_self` (frame phases)
+and `window.__orbit_sel` (selection and panel state), and the sessions of
+2026-09-03/04 used a command-file driver for click/drag/eval/screenshot
+sequences. Turning that into a checked-in suite with a feature list in
+Markdown is the next step.
+
+## 25. Project website with an embedded interactive capture
+
+Website for the project with embedded interactive capture, that's
+something I've always wanted. It will also host the dev blog.
+
+**Status: not started.** The viewer is a static WASM pack plus a service;
+an embedded capture needs the viewer to open a bundle without a service
+(item 4's mmap/zero-copy note) or a hosted read-only service.
+
+## 26. Capture sharing to S3
+
+Capture sharing by pushing capture data to s3.
+
+**Status: not started; same as item 13.**
+
+## 27. Service CPU and memory track
+
+Add orbit service cpu/mem usage track.
+
+**Status: not started.** The service already emits value lanes for its
+own buffer fill (`events per pass`); CPU and RSS from `/proc/self/stat`
+and `/proc/self/status` once a second are the same mechanism.
