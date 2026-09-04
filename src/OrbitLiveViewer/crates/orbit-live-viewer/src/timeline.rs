@@ -364,7 +364,7 @@ fn grey_raster_outside_focus(
         let scheduler = key.kind == orbit_live_event::kind::SCHEDULING_SLICE;
         // A thread's own row is one thread: decide once, not per pixel.
         if !scheduler {
-            if focus.active(key.pid, key.tid) {
+            if focus.active_on_track(key.pid, key.tid) {
                 continue;
             }
             let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
@@ -385,7 +385,7 @@ fn grey_raster_outside_focus(
                 .saturating_add(((x + 1) as f64 * dt) as u64)
                 .max(col0 + 1);
             if let Some(e) = lane.overlapping(col0, col1) {
-                if !focus.active(e.pid, e.tid) {
+                if !focus.active_on_scheduler(e.pid, e.tid) {
                     let level = if focus.same_pid(e.pid) { 140 } else { 100 };
                     *px = crate::theme::grey_argb(*px, level);
                 }

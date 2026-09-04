@@ -113,7 +113,24 @@ pub struct ThreadFocus {
 }
 
 impl ThreadFocus {
-    pub fn active(&self, pid: u32, tid: u32) -> bool {
+    /// Whether a thread track's scopes draw in colour: only the selected
+    /// thread's when one is selected, everyone's otherwise. The target
+    /// process plays no part here -- C++ Orbit shows only the target's
+    /// threads, so its "active" test never met another process's track;
+    /// this viewer shows the service and every instrumented process too,
+    /// and greying them whenever a capture has a target left most of the
+    /// screen grey with nothing selected.
+    pub fn active_on_track(&self, pid: u32, tid: u32) -> bool {
+        if orbit_live_event::dev::is_self_pid(pid) {
+            return true;
+        }
+        self.selected.is_none_or(|(_, t)| t == tid)
+    }
+
+    /// Whether a scheduler slice draws in colour: `SchedulerTrack::IsTimerActive`
+    /// -- the selected thread's slices, or with none selected the target
+    /// process's (every process's when the capture has no target).
+    pub fn active_on_scheduler(&self, pid: u32, tid: u32) -> bool {
         if orbit_live_event::dev::is_self_pid(pid) {
             return true;
         }
@@ -926,9 +943,9 @@ pub fn apply_highlight_flags(
     focus: ThreadFocus,
 ) {
     for inst in instances.iter_mut() {
-        let active = focus.active(inst.pid, inst.tid);
         let mut f = FLAG_NONE;
         if inst.kind == kind::SCHEDULING_SLICE {
+            let active = focus.active_on_scheduler(inst.pid, inst.tid);
             // The scheduler track, as C++ Orbit's SchedulerTrack::GetTimerColor
             // orders it: hover, then the selected timer, then everything
             // outside the selection in grey -- a lighter grey for the
@@ -947,7 +964,7 @@ pub fn apply_highlight_flags(
         }
         // Thread tracks: outside the selection is grey before anything else
         // (ThreadTrack::GetTimerColor checks IsTimerActive first).
-        if !active {
+        if !focus.active_on_track(inst.pid, inst.tid) {
             inst.flags = FLAG_INACTIVE;
             continue;
         }
@@ -1237,5 +1254,30 @@ mod sparse_lod_tests {
             1,
             "pixel-column pick must also prefer the longer scope"
         );
+    }
+}
+
+#[cfg(test)]
+mod thread_focus_tests {
+    use super::ThreadFocus;
+
+    #[test]
+    fn the_target_greys_the_scheduler_but_not_other_processes_thread_tracks() {
+        // A capture of pid 7 with nothing selected: every thread track is
+        // in colour, the scheduler shows only pid 7's slices in colour.
+        let f = ThreadFocus { selected: None, target_pid: Some(7) };
+        assert!(f.active_on_track(7, 70) && f.active_on_track(9, 90));
+        assert!(f.active_on_scheduler(7, 70) && !f.active_on_scheduler(9, 90));
+        // A thread selected: only it, on both.
+        let f = ThreadFocus { selected: Some((9, 90)), target_pid: Some(7) };
+        assert!(f.active_on_track(9, 90) && !f.active_on_track(7, 70) && !f.active_on_track(9, 91));
+        assert!(f.active_on_scheduler(9, 90) && !f.active_on_scheduler(7, 70));
+        assert!(f.same_pid(9) && !f.same_pid(7));
+        // No target, nothing selected: everything.
+        let f = ThreadFocus::default();
+        assert!(f.active_on_track(9, 90) && f.active_on_scheduler(9, 90) && f.is_all());
+        // The viewer's own rows never grey.
+        let f = ThreadFocus { selected: Some((9, 90)), target_pid: Some(7) };
+        assert!(f.active_on_track(orbit_live_event::dev::VIEWER_PID, 1));
     }
 }
