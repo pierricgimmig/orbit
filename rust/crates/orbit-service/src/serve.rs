@@ -430,6 +430,14 @@ fn list_processes_json() -> Result<String, String> {
     serde_json::to_string(&entries).map_err(|error| error.to_string())
 }
 
+/// Whether a manually instrumented event belongs to a capture that began at
+/// `capture_start_ns`: it must still have been open then. A scope that
+/// closed before the capture started was written into its ring earlier and
+/// merely drained now.
+fn started_in_capture(e: &LiveEvent, capture_start_ns: u64) -> bool {
+    e.end_ns() >= capture_start_ns
+}
+
 /// Makes an opened bundle the current capture: the ring is emptied and
 /// refilled with its events, the names and the sample store replaced, and
 /// every viewer sees it as a capture that started and finished at once.
@@ -726,6 +734,7 @@ fn capture_loop(
     let mut samples_parsed: u64 = 0;
     let mut samples_short_regs: u64 = 0;
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
+    let mut scope_batch: Vec<LiveEvent> = Vec::with_capacity(256);
     // Buffer fullness is graphed as values on the service's own lanes. Read
     // every pass, pushed twenty times a second: enough to see a ring climbing
     // towards a lap, few enough not to be the busiest lane in the capture.
@@ -913,7 +922,15 @@ fn capture_loop(
 
         {
             let _drain = orbit_api::scope("drain scope rings");
-            scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut batch);
+            // A process's scope ring holds whatever it wrote since the last
+            // drain -- including, for the service's own ring and any app
+            // instrumented before Record was pressed, scopes from before
+            // this capture began. Those are not this capture's; letting
+            // them through put the first events seconds before the start
+            // and stretched the timeline back into the previous session.
+            scope_batch.clear();
+            scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut scope_batch);
+            batch.extend(scope_batch.iter().copied().filter(|e| started_in_capture(e, capture_start_ns)));
         }
 
         // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
@@ -1178,6 +1195,16 @@ pub fn run_on(
         }
     }));
 
+    let clear_store = store.clone();
+    let clear_running = capture.running.clone();
+    service.set_capture_clear(Arc::new(move || {
+        if clear_running.load(Ordering::Relaxed) {
+            return Err("busy: stop the capture before clearing".to_string());
+        }
+        clear_store.clear();
+        Ok(())
+    }));
+
     let open_service = service.clone();
     let open_store = store.clone();
     let open_running = capture.running.clone();
@@ -1280,6 +1307,12 @@ pub fn run_on(
             start_store.clear();
             // Names belong to a capture; the new one re-learns them.
             start_service.clear_names();
+            // And so do the events: a capture replaces the previous one, as
+            // in C++ Orbit. Leaving the old ring behind let the view pan
+            // into the previous session's time.
+            if let Err(error) = start_service.clear_ring() {
+                eprintln!("orbit-service: could not clear the ring: {error}");
+            }
             let store = start_store.clone();
             let helper = start_helper.clone();
             std::thread::Builder::new()
@@ -1340,6 +1373,18 @@ pub fn run_on(
 mod tests {
     use super::*;
     use orbit_tracing_state::context_switches::SchedulingSlice;
+
+    #[test]
+    fn scopes_drained_from_before_the_capture_are_dropped() {
+        let ev = |start: u64, dur: u64| LiveEvent {
+            start_ns: start, duration_ns: dur, tid: 1, pid: 1, kind: kind::API_SCOPE, depth: 0, extra: 0, _pad: 0, name_id: 1,
+        };
+        let start = 1_000_000;
+        assert!(!started_in_capture(&ev(900_000, 50_000), start), "closed before the capture");
+        assert!(started_in_capture(&ev(990_000, 20_000), start), "still open when it started");
+        assert!(started_in_capture(&ev(1_000_000, 0), start));
+        assert!(started_in_capture(&ev(2_000_000, 10), start));
+    }
 
     #[test]
     fn a_slice_lands_on_both_the_core_and_its_thread() {

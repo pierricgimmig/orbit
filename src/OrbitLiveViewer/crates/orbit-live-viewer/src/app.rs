@@ -975,7 +975,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1010,6 +1010,13 @@ impl OrbitLiveApp {
                 Some((id, name)) => format!("[{id},{name:?}]"),
                 None => "null".to_string(),
             },
+            self.t0,
+            self.t1,
+            match self.content_span() {
+                Some((a, b)) => format!("[{a:.0},{b:.0}]"),
+                None => "null".to_string(),
+            },
+            self.index.event_count(),
         );
         if text == self.sel_readout {
             return;
@@ -1352,6 +1359,29 @@ impl OrbitLiveApp {
             self.net.start_self();
         }
         self.follow = true;
+    }
+
+    /// The Clear pill: a view with nothing in it, here and on the service.
+    fn clear_everything(&mut self) {
+        if self.recording {
+            self.stop_record();
+        }
+        self.clear_file_trace();
+        self.index.clear();
+        self.live_all.clear();
+        self.live_sel.clear();
+        self.intern = InternTable::default();
+        self.clear_selection();
+        self.sample_sels.clear();
+        self.sampling_ranges.clear();
+        self.sampling = None;
+        self.tree = None;
+        self.live_edge_ns = 0;
+        self.t0 = 0.0;
+        self.t1 = FOLLOW_NS;
+        self.user_set_view = false;
+        self.net.clear_capture();
+        self.needs_repaint = true;
     }
 
     fn stop_record(&mut self) {
@@ -2054,6 +2084,7 @@ impl OrbitLiveApp {
                 if self.import_pending {
                     self.import_started = true;
                 }
+                self.user_set_view = false;
                 self.clear_file_trace();
                 self.index.clear();
                 self.live_all.clear();
@@ -2141,7 +2172,18 @@ impl OrbitLiveApp {
                     }),
                 }
             }
-            LiveFrame::CaptureFinished => {}
+            LiveFrame::CaptureFinished => {
+                // A capture that just stopped fits the view to what it
+                // holds, as C++ Orbit does when recording ends -- unless
+                // the user had already taken the view somewhere. An opened
+                // bundle fits on its Status, and an empty ring has nothing
+                // to fit.
+                if !self.user_set_view && !self.import_pending && self.index.event_count() > 0 {
+                    self.follow = false;
+                    self.fit_to_content();
+                    self.needs_repaint = true;
+                }
+            }
             LiveFrame::Hello { .. } => {
                 self.hello_count += 1;
                 // A Hello is the start of a full snapshot -- a fresh socket,
@@ -2221,7 +2263,7 @@ impl OrbitLiveApp {
 
     fn transport_open(&mut self, ui: &mut Ui) {
         if pill(ui, "Open", false)
-            .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+            .on_hover_text("Open a saved Orbit capture (.orbit.zip) or a Chrome trace (.json / .json.gz) — or drop the file on the page")
             .clicked()
         {
             #[cfg(target_arch = "wasm32")]
@@ -2251,7 +2293,7 @@ impl OrbitLiveApp {
         }
         if ui
             .button("Open…")
-            .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+            .on_hover_text("Open a saved Orbit capture (.orbit.zip) or a Chrome trace (.json / .json.gz) — or drop the file on the page")
             .clicked()
         {
             #[cfg(target_arch = "wasm32")]
@@ -2516,6 +2558,12 @@ impl OrbitLiveApp {
                 .clicked()
             {
                 self.self_pane_open = !self.self_pane_open;
+            }
+            if pill(ui, "Clear", false)
+                .on_hover_text("Empty the capture: every event, on the service and here")
+                .clicked()
+            {
+                self.clear_everything();
             }
             if pill(ui, "Save", false)
                 .on_hover_text("Download the whole capture as a self-contained .orbit.zip (events, samples, names) — drop it back on the viewer to open it")
@@ -4915,9 +4963,12 @@ impl OrbitLiveApp {
         // No minimum: the splitter goes all the way to the right and the
         // panel collapses (a tab on the edge brings it back), the way it
         // already went all the way to the left and hid the timeline.
+        // A share of the screen, so a laptop keeps most of its width for the
+        // timeline and a wide monitor gets the report's columns in view.
+        let default_w = (ctx.screen_rect().width() * SAMPLING_PANEL_SHARE).clamp(320.0, SAMPLING_PANEL_DEFAULT_W);
         let mut panel = egui::SidePanel::right("orbit_sampling_report")
             .resizable(true)
-            .default_width(SAMPLING_PANEL_DEFAULT_W)
+            .default_width(default_w)
             .min_width(0.0);
         if let Some(w) = self.report_w_override.take() {
             panel = panel.exact_width(w);
@@ -7075,6 +7126,9 @@ enum EdgeTab {
 /// Starting width of the sampling report panel. Wide enough for the flat
 /// report's two bars, a function name and a module; the user can drag it.
 const SAMPLING_PANEL_DEFAULT_W: f32 = 600.0;
+/// The report panel opens at this share of the screen width, between
+/// 320 px and the default above.
+const SAMPLING_PANEL_SHARE: f32 = 0.34;
 
 /// Whether clicking this pick selects its thread for the scheduler's
 /// colouring: only a scope on a thread track does. A scheduler slice, a
@@ -8097,16 +8151,15 @@ mod tests {
         idx.insert(real(capture0, 1_000_000));
         idx.insert(real(capture0 + 4_000_000, 2_000_000));
 
-        // Both axes in one index: fit spans a day and a half, so the capture
-        // is a handful of pixels on the right and the self scopes a smear on
-        // the left -- with every ruler label reading the same.
+        // Both axes in one index. The bounds already leave the viewer's own
+        // rows out (they used to span a day and a half here, the capture a
+        // handful of pixels on the right and the self scopes a smear on the
+        // left), so the fit is the capture's before the purge as well; the
+        // purge is still what removes the rows themselves.
         let (a, b) = idx.time_bounds().expect("mixed bounds");
-        assert_eq!(a, DEMO_ORIGIN_NS);
+        assert_eq!(a, capture0, "self rows at {DEMO_ORIGIN_NS} must not set the start");
         let (m0, m1) = fit_content_window(a as f64, b as f64);
-        assert!(
-            (m1 - m0) > 1e14,
-            "the mixed fit must be the pathological one this test is about"
-        );
+        assert!((m1 - m0 - 6e6).abs() < 1.0, "fit is the capture even with self rows present");
 
         idx.retain(|e| !is_self_pid(e.pid));
 

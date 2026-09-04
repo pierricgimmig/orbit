@@ -154,6 +154,11 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub capture_import:
         Mutex<Option<std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: what the service does before the ring is emptied by
+    /// `/api/capture/clear` -- refuse while capturing, drop its sample
+    /// store. The ring, names and viewers are the server's own business.
+    #[allow(clippy::type_complexity)]
+    pub capture_clear: Mutex<Option<std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>>>,
     /// Optional: opens a bundle from a path on the service's machine,
     /// whole or cut to a window by the file's own row-group statistics.
     #[allow(clippy::type_complexity)]
@@ -235,6 +240,7 @@ impl LiveService {
             capture_export: Mutex::new(None),
             capture_import: Mutex::new(None),
             capture_open: Mutex::new(None),
+            capture_clear: Mutex::new(None),
             names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
@@ -439,6 +445,24 @@ impl LiveService {
         >,
     ) {
         *self.capture_export.lock() = Some(export);
+    }
+
+    pub fn set_capture_clear(&self, clear: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>) {
+        *self.capture_clear.lock() = Some(clear);
+    }
+
+    /// Empties the capture: ring and names gone, every viewer told to start
+    /// from nothing (a capture that started and finished at once, with no
+    /// clock), and the status pushed.
+    pub fn clear_capture(&self) -> Result<(), String> {
+        self.clear_ring()?;
+        self.clear_names();
+        self.capturing.store(false, Ordering::Relaxed);
+        self.live_end_ns.store(0, Ordering::Relaxed);
+        self.broadcast_frame(&LiveFrame::CaptureStarted { pid: 0, start_ns: 0 });
+        self.broadcast_frame(&LiveFrame::CaptureFinished);
+        self.broadcast_status();
+        Ok(())
     }
 
     pub fn set_capture_open(

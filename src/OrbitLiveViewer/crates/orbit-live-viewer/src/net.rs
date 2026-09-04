@@ -770,6 +770,12 @@ mod wasm_impl {
             self.send("POST", "/api/self/start", "{}".into());
         }
 
+        /// Empties the capture on the service; the ring's reset comes back
+        /// over the WebSocket.
+        pub fn clear_capture(&self) {
+            self.send("POST", "/api/capture/clear", "{}".into());
+        }
+
         /// Posts a `.orbit.zip` to the service, which opens it as the current
         /// capture and streams it back over the WebSocket.
         pub fn import_capture(&self, bytes: Vec<u8>) {
@@ -1137,6 +1143,7 @@ mod native_impl {
         pub fn start_self(&self) {}
         pub fn stop_self(&self) {}
         pub fn import_capture(&self, _bytes: Vec<u8>) {}
+        pub fn clear_capture(&self) {}
         pub fn push_self_scopes(&self, _scopes: &[orbit_live_event::dev::RelScope]) {}
     }
 }

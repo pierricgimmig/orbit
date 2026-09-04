@@ -59,6 +59,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/symbols/modules", get(symbols_modules))
         .route("/api/capture/export", get(capture_export))
         .route("/api/capture/open", post(capture_open))
+        .route("/api/capture/clear", post(capture_clear))
         .route(
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -443,6 +444,22 @@ async fn capture_export(
             .into_response(),
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// `POST /api/capture/clear`: empties the capture -- the ring, the names,
+/// and (through the service's hook) its samples -- so the view starts from
+/// nothing. 409 while a capture is running.
+async fn capture_clear(State(svc): State<Arc<LiveService>>) -> Response {
+    if let Some(hook) = svc.capture_clear.lock().clone() {
+        if let Err(error) = hook() {
+            let status = if error.starts_with("busy") { StatusCode::CONFLICT } else { StatusCode::INTERNAL_SERVER_ERROR };
+            return (status, error).into_response();
+        }
+    }
+    match svc.clear_capture() {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
     }
 }
 
@@ -1267,6 +1284,53 @@ mod isolation_tests {
         let out = curl_si(&format!("{base}/api/status"));
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains(r#""wire":"packed""#), "{text}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn clearing_empties_the_ring_and_tells_viewers_to_start_over() {
+        use orbit_live_protocol::{decode_frame, LiveFrame};
+        let svc = test_service();
+        // The server profiles itself by default and would push its own
+        // scopes into the ring under test; count only what this test pushes.
+        svc.disable_self_profile();
+        svc.push_events(&[orbit_live_event::LiveEvent {
+            start_ns: 10, duration_ns: 5, tid: 1, pid: 1, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 1,
+        }]);
+        svc.set_thread_name(1, 1, "main");
+        let mut rx = svc.subscribe();
+        let base = spawn_router(svc.clone()).await;
+        let out = std::process::Command::new("curl")
+            .args(["-si", "--max-time", "5", "-X", "POST"])
+            .arg(format!("{base}/api/capture/clear"))
+            .output()
+            .expect("curl");
+        assert!(String::from_utf8_lossy(&out.stdout).to_ascii_lowercase().contains("200 ok"));
+        assert_eq!(svc.ring().snapshot().1.len(), 0);
+        assert!(svc.capture_names().0.is_empty());
+        let mut seen = Vec::new();
+        while let Ok(bytes) = rx.try_recv() {
+            if let Ok((f, _)) = decode_frame(&bytes) {
+                seen.push(match f {
+                    LiveFrame::CaptureStarted { pid, start_ns } => format!("started {pid} {start_ns}"),
+                    LiveFrame::CaptureFinished => "finished".into(),
+                    LiveFrame::Status { .. } => "status".into(),
+                    _ => "other".into(),
+                });
+            }
+        }
+        assert!(seen.contains(&"started 0 0".to_string()) && seen.contains(&"finished".to_string()), "{seen:?}");
+        // With a hook that says busy, nothing is cleared.
+        svc.set_capture_clear(std::sync::Arc::new(|| Err("busy: capturing".into())));
+        svc.push_events(&[orbit_live_event::LiveEvent {
+            start_ns: 20, duration_ns: 5, tid: 1, pid: 1, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 1,
+        }]);
+        let out = std::process::Command::new("curl")
+            .args(["-si", "--max-time", "5", "-X", "POST"])
+            .arg(format!("{base}/api/capture/clear"))
+            .output()
+            .expect("curl");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("409"));
+        assert_eq!(svc.ring().snapshot().1.len(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -317,7 +317,13 @@ impl Bounds {
         let end = e.end_ns();
         self.min_all = self.min_all.min(start);
         self.max_all = self.max_all.max(end);
-        if start > 0 || e.duration_ns > 1 {
+        // The viewer's own rows (its self-profile, the server's) are placed
+        // on the capture clock wherever the live edge happens to be, and
+        // they keep arriving between captures. They are not the capture:
+        // letting them into the real bounds stretched the navigable range
+        // seconds before a capture's first event.
+        let own = orbit_live_event::dev::is_self_pid(e.pid);
+        if !own && (start > 0 || e.duration_ns > 1) {
             self.any_real = true;
             self.min_real = self.min_real.min(start);
             self.max_real = self.max_real.max(end);
@@ -1421,4 +1427,26 @@ mod tests {
         assert!(insts.iter().all(|i| i.flags == FLAG_NONE));
     }
 
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn the_viewers_own_rows_do_not_define_the_captures_bounds() {
+        let mut index = TrackIndex::default();
+        let mut own = LiveEvent { start_ns: 1_000, duration_ns: 500, tid: 1, pid: orbit_live_event::dev::VIEWER_PID, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 1 };
+        index.insert(own);
+        // Only the viewer's rows: they are the fallback bounds.
+        assert_eq!(index.time_bounds(), Some((1_000, 1_500)));
+        let real = LiveEvent { start_ns: 5_000_000, duration_ns: 100, tid: 7, pid: 7, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 2 };
+        index.insert(real);
+        // A real event: the bounds are the capture's, whatever the viewer's
+        // rows say, before or after.
+        assert_eq!(index.time_bounds(), Some((5_000_000, 5_000_100)));
+        own.start_ns = 9_000_000;
+        index.insert(own);
+        assert_eq!(index.time_bounds(), Some((5_000_000, 5_000_100)));
+    }
 }
