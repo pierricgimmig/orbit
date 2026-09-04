@@ -166,6 +166,8 @@ class Run:
         self.chrome = chrome
         self.shots_dir = shots_dir
         self.shots = []
+        # Numbers a scenario measured, written to the report at the end.
+        self.perf = {}
 
     def shot(self, name, settle=1.5):
         # --no-shots runs the assertions without a browser, for CI machines
@@ -196,6 +198,55 @@ class Run:
     def stop_capture(self):
         self.service.post("/api/capture/stop")
         time.sleep(1.0)
+
+    # ---- the viewer's readouts -------------------------------------------
+    #
+    # egui paints to a canvas, so nothing on the page has a DOM node. The
+    # viewer hands the harness what it needs instead: `window.__orbit_sel`
+    # (selection, tab, view, event count...), `window.__orbit_ui` (the
+    # rectangle of every pill, report tab, menu item, Live row and track
+    # header painted this frame, by label) and `window.__orbit_self` (its own
+    # frame-time breakdown). A scenario clicks "Clear" or the header of
+    # thread 1234 by name, and the layout can move without breaking it.
+
+    def sel(self):
+        text = self.chrome.eval("window.__orbit_sel || null")
+        return json.loads(text) if text else {}
+
+    def ui(self):
+        text = self.chrome.eval("window.__orbit_ui || '[]'")
+        rects = {}
+        for label, x, y, w, h in json.loads(text):
+            rects[label] = (x, y, w, h)  # the last one painted wins
+        return rects
+
+    def self_phases(self):
+        text = self.chrome.eval("window.__orbit_self || null")
+        return json.loads(text) if text else {}
+
+    def wait_for(self, predicate, what, timeout=10.0, every=0.25):
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            last = predicate()
+            if last:
+                return last
+            time.sleep(every)
+        raise Failure(f"timed out waiting for {what}")
+
+    def rect(self, label, timeout=10.0):
+        """The rectangle painted under `label`, waiting for it to appear."""
+        return self.wait_for(lambda: self.ui().get(label), f"the {label!r} rectangle", timeout)
+
+    def rects_matching(self, prefix):
+        return {k: v for k, v in self.ui().items() if k.startswith(prefix)}
+
+    def click(self, label, button="left", dx=0.5, dy=0.5):
+        """Clicks inside the rectangle painted under `label`, at the fraction
+        (dx, dy) of its width and height."""
+        x, y, w, h = self.rect(label)
+        self.chrome.click(x + w * dx, y + h * dy, button=button)
+        time.sleep(0.4)
 
     def load_symbols(self, timeout=40.0):
         self.service.post("/api/symbols/load", {"pid": self.target.pid})
@@ -538,6 +589,401 @@ def instrumentation(run):
 # ------------------------------------------------------------------------ run
 
 
+
+
+# ------------------------------------------------ this week's viewer features
+#
+# These drive the viewer the way a person does -- click a thread header,
+# right-click a scope, press Escape -- and assert on the readouts. They share
+# one OrbitTestRust capture, taken once by `_week_capture` and kept on the
+# service between scenarios, so each scenario is a few seconds, not a fresh
+# capture. `_week_capture` re-takes it if a previous scenario cleared it.
+
+AGENT_PID = 0xA6E70000
+KIND_API_SCOPE, KIND_VALUE = 1, 6
+SCRATCH = os.environ.get("ORBIT_E2E_SCRATCH", "/tmp/orbit-e2e")
+ORBIT_SCOPE = os.path.join(REPO, "rust/target/release/orbit-scope")
+PYARROW_PYTHON = os.environ.get("ORBIT_E2E_PYARROW_PYTHON", sys.executable)
+
+
+class WeekCapture:
+    """One OrbitTestRust capture the feature scenarios share."""
+
+    pid = None
+    taken = False
+    service_pid = None
+
+
+def _week_capture(run, seconds=4.0):
+    if WeekCapture.taken and run.service.get("/api/status")["events_live"] > 0:
+        return
+    app = Target(_build_app("rust"))
+    try:
+        # A scope on the agent track and two values, so the capture also
+        # carries what the agent scenarios look for.
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(1.0)
+        _orbit_scope(run, "run", "--name", "tool: sleep", "--", "sleep", "0.3")
+        _orbit_scope(run, "value", "files changed", "3")
+        _orbit_scope(run, "instant", "commit")
+        # Symbols, so the reports name functions rather than addresses.
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        time.sleep(seconds - 1.0)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if run.service.get(f"/api/symbols/status?pid={app.pid}").get("status") in ("ready", "error"):
+                break
+            time.sleep(0.4)
+        run.service.post("/api/capture/stop")
+        time.sleep(1.5)
+    finally:
+        app.stop()
+    WeekCapture.pid = app.pid
+    WeekCapture.service_pid = run.service.proc.pid
+    WeekCapture.taken = True
+
+
+def _orbit_scope(run, *args):
+    if not os.path.exists(ORBIT_SCOPE):
+        subprocess.run(["cargo", "build", "--release", "-p", "orbit-api", "--bin", "orbit-scope"],
+                       cwd=os.path.join(REPO, "rust"), check=True)
+    result = subprocess.run(
+        [ORBIT_SCOPE, "--url", run.service.base, *args],
+        capture_output=True, text=True, timeout=30,
+    )
+    check(result.returncode == 0, f"orbit-scope {' '.join(args)} failed: {result.stderr[-300:]}")
+    return result.stdout
+
+
+def _rows(run):
+    return sorted(k for k in run.ui() if k.startswith("row:"))
+
+
+def _thread_rows(run, pid):
+    rows = run.wait_for(lambda: run.rects_matching(f"row:thread:{pid}:") or None,
+                        f"a thread header of pid {pid} (rows: {_rows(run)[:12]})")
+    return rows
+
+
+@scenario("thread-focus", "Clicking a thread header focuses it; Escape or an empty click clears")
+def thread_focus(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    pid = WeekCapture.pid
+    rows = _thread_rows(run, pid)
+    label = sorted(rows)[0]
+    tid = int(label.split(":")[3])
+    run.click(label, dx=0.3)
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("thread") else None, "a thread selection")
+    check(sel["thread"] == [pid, tid], f"expected thread [{pid},{tid}] selected, got {sel['thread']}")
+    check(sel["focus"] == [pid, tid], "the thread focus (what greys the rest) follows the selection")
+    run.shot("12-thread-focus", settle=1.0)
+    # Escape clears everything: the thread, the scope pick, the measure.
+    run.chrome.key("Escape")
+    sel = run.wait_for(lambda: run.sel() if not run.sel().get("thread") else None, "Escape to clear")
+    check(sel["focus"] is None, "focus cleared with the selection")
+    # A click on the canvas where there is nothing also clears. Select
+    # again, then click the far right of the header column's empty space.
+    run.click(label, dx=0.3)
+    run.wait_for(lambda: run.sel().get("thread"), "the second selection")
+    x, y, w, h = run.rect("row:scheduler")
+    run.chrome.click(x + w * 0.5, y + h * 0.5)
+    run.wait_for(lambda: not run.sel().get("thread"), "the empty click to clear")
+    return f"thread {tid} of pid {pid}"
+
+
+@scenario("scope-report", "Right-clicking a scope offers a sampling report over its instances")
+def scope_report(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    pid = WeekCapture.pid
+    # A thread's scopes are drawn in its own row, below the header line.
+    lanes = _thread_rows(run, pid)
+    x, y, w, h = run.rect("row:scheduler")
+    head_right = x + w  # the header column's right edge: the canvas starts here
+    canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+    opened = False
+    # Zoom in first (W held, pointer over the first thread) so the scopes
+    # are a few pixels wide rather than sub-pixel columns, then sweep the
+    # thread rows until the right-click lands on a manual scope (kind 1):
+    # the menu opens and `scope_menu` in the readout says what was picked.
+    # A sampled frame opens the menu too; keep going past those.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    first = sorted(lanes.items())[0][1]
+    run.chrome.move(head_right + (canvas_right - head_right) * 0.5, first[1] + first[3] * 0.5)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(1.5)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(0.5)
+    for _, (lx, ly, lw, lh) in sorted(lanes.items()):
+        if ly > canvas_h:
+            continue  # below the fold
+        for dy in (0.3, 0.4, 0.5, 0.2, 0.6, 0.7, 0.8, 0.15, 0.9):
+            if ly + lh * dy > canvas_h:
+                continue
+            for frac in (0.5, 0.3, 0.7):
+                px = head_right + (canvas_right - head_right) * frac
+                run.chrome.click(px, ly + lh * dy, button="right")
+                time.sleep(0.5)
+                menu = run.sel().get("scope_menu")
+                if menu and menu[2] == KIND_API_SCOPE:
+                    opened = True
+                    break
+                if menu:
+                    run.chrome.key("Escape")
+                    time.sleep(0.3)
+            if opened:
+                break
+        if opened:
+            break
+    check(opened, "no right-click on the thread rows landed on a manual scope")
+    run.shot("13-scope-menu", settle=0.5)
+    run.click("menu:report")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("scope_report") else None, "the scoped report")
+    name_id, name = sel["scope_report"]
+    # The viewer asked the service for the report over this scope's
+    # instances; ask the same question and check it has substance.
+    report = run.service.get(f"/api/sampling/report?scope={name_id}")
+    check_at_least(report.get("range_count", 0), 1, f"instances of {name!r} the report is scoped to")
+    check_at_least(report.get("samples", 0), 1, f"samples inside {name!r}")
+    run.shot("14-scope-report", settle=2.0)
+    run.chrome.key("Escape")
+    run.wait_for(lambda: not run.sel().get("scope_report"), "Escape to drop the scoped report")
+    return f"{name!r}: {report['samples']} samples over {report['range_count']} instances"
+
+
+@scenario("live-tab", "The Live tab keeps per-scope statistics and a duration histogram")
+def live_tab(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler&report=live")
+    run.wait_for(lambda: run.sel().get("tab") == "Live", "the Live tab")
+    rows = run.wait_for(lambda: run.rects_matching("live:") or None, "Live rows", timeout=20)
+    check_at_least(len(rows), 3, "Live rows (scope names)")
+    # Click the hottest row: the histogram is drawn for the selected row.
+    first = sorted(rows.items(), key=lambda kv: kv[1][1])[0][0]
+    run.click(first)
+    run.shot("15-live-tab", settle=1.0)
+    return f"{len(rows)} rows, histogram for {first[5:]!r}"
+
+
+@scenario("flame-tab", "The Flame tab draws the sampling report as a flame graph")
+def flame_tab(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler&report=flame")
+    run.wait_for(lambda: run.sel().get("tab") == "Flame", "the Flame tab")
+    run.shot("16-flame-tab", settle=2.5)
+    return "ok"
+
+
+def _export_bundle(run, name, query=""):
+    body = run.service.get(f"/api/capture/export?format=bundle{query}")
+    check(isinstance(body, bytes) and body[:2] == b"PK", "the export is not a zip")
+    os.makedirs(SCRATCH, exist_ok=True)
+    path = os.path.join(SCRATCH, name)
+    with open(path, "wb") as handle:
+        handle.write(body)
+    return path
+
+
+def _bundle_manifest(path):
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        manifest = [n for n in names if n.endswith("manifest.json")]
+        check(manifest, f"no manifest in {path}: {names}")
+        return json.loads(z.read(manifest[0])), names
+
+
+@scenario("save-slice-open", "Save and Save slice export a bundle the service opens again")
+def save_slice_open(run):
+    _week_capture(run)
+    status = run.service.get("/api/status")
+    t0, t1 = status["oldest_start_ns"], status["newest_end_ns"]
+    check(t1 > t0, "the capture has a span")
+    whole = _export_bundle(run, "capture.orbit.zip")
+    mid = (t0 + t1) // 2
+    sliced = _export_bundle(run, "capture-slice.orbit.zip", f"&t0={mid}&t1={mid + (t1 - t0) // 10}")
+    manifest, names = _bundle_manifest(whole)
+    parquet = [n for n in names if n.endswith(".parquet")]
+    check_at_least(len(parquet), 3, "Parquet tables in the bundle (events, samples, frames)")
+    bundle = manifest.get("bundle", manifest)
+    check(bundle.get("target_pid") == WeekCapture.pid, f"manifest target_pid: {bundle.get('target_pid')}")
+    check_at_least(len(bundle.get("threads", [])), 2, "thread names in the manifest")
+    slice_manifest, _ = _bundle_manifest(sliced)
+    slice_bundle = slice_manifest.get("bundle", slice_manifest)
+    check(slice_bundle.get("slice_ns"), "the slice records its window")
+    check(os.path.getsize(sliced) < os.path.getsize(whole), "a tenth of the capture is smaller than the whole")
+    # Open the slice by path (the Open pill's route) after clearing.
+    reply = run.service.post("/api/capture/clear")
+    check(not reply.startswith("HTTP"), f"clear refused: {reply}")
+    check(run.service.get("/api/status")["events_live"] == 0, "the ring is empty after Clear")
+    reply = run.service.post("/api/capture/open", {"path": sliced})
+    check(not reply.startswith("HTTP"), f"open refused: {reply}")
+    opened = run.wait_for(
+        lambda: run.service.get("/api/status")["events_live"] or None, "the slice to load", timeout=15,
+    )
+    if run.chrome is not None:
+        run.open_viewer("?collapse=scheduler")
+        run.wait_for(lambda: run.sel().get("events"), "the opened slice in the viewer", timeout=20)
+        run.shot("17-opened-slice", settle=2.0)
+    WeekCapture.taken = False  # the ring now holds the slice, not the capture
+    run.perf["bundle_bytes"] = os.path.getsize(whole)
+    run.perf["slice_bytes"] = os.path.getsize(sliced)
+    return f"{os.path.getsize(whole)//1024} KB bundle, {os.path.getsize(sliced)//1024} KB slice, {opened} events reopened"
+
+
+@scenario("python-reader", "open_capture.py reads an exported bundle with pyarrow (TODO 23)")
+def python_reader(run):
+    probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+    if probe.returncode != 0:
+        return f"skipped: {PYARROW_PYTHON} has no pyarrow (set ORBIT_E2E_PYARROW_PYTHON)"
+    path = os.path.join(SCRATCH, "capture.orbit.zip")
+    if not os.path.exists(path):
+        _week_capture(run)
+        _export_bundle(run, "capture.orbit.zip")
+    folder = os.path.join(SCRATCH, "capture-unzipped")
+    shutil.rmtree(folder, ignore_errors=True)
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        z.extractall(folder)
+    script = os.path.join(REPO, "rust/crates/orbit-capture/python/open_capture.py")
+    result = subprocess.run([PYARROW_PYTHON, script, folder], capture_output=True, text=True, timeout=120)
+    check(result.returncode == 0, f"open_capture.py failed: {result.stderr[-400:]}")
+    out = result.stdout
+    events = re.search(r"(\d[\d,]*) events", out)
+    check(events, f"the reader printed no event count: {out[:300]}")
+    n = int(events.group(1).replace(",", ""))
+    check_at_least(n, 100, "events read back by pyarrow")
+    # The agent track and the service's own values are in the table too.
+    agent = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import pyarrow.parquet as pq,sys;t=pq.read_table(sys.argv[1]+'/events.parquet').to_pandas() "
+         "if False else pq.read_table(sys.argv[1]+'/events.parquet');"
+         "pid=t.column('pid').to_pylist();kind=t.column('kind').to_pylist();"
+         f"print(sum(1 for p in pid if p=={AGENT_PID}), sum(1 for k in kind if k=={KIND_VALUE}))",
+         folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(agent.returncode == 0, f"pyarrow query failed: {agent.stderr[-300:]}")
+    agent_rows, value_rows = (int(v) for v in agent.stdout.split())
+    check_at_least(agent_rows, 2, "agent-track rows (orbit-scope run/value/instant)")
+    check_at_least(value_rows, 2, "value rows (service cpu %, rss MiB, agent value)")
+    return f"{n} events; {agent_rows} agent rows, {value_rows} value rows"
+
+
+@scenario("agent-scopes", "orbit-scope puts an agent's tool calls on their own track")
+def agent_scopes(run):
+    _week_capture(run)
+    path = _export_bundle(run, "agent.orbit.zip")
+    manifest, _ = _bundle_manifest(path)
+    bundle = manifest.get("bundle", manifest)
+    threads = bundle.get("threads", [])
+    agent_threads = [t for t in threads if int(t.get("pid", 0)) == AGENT_PID]
+    check(agent_threads, f"no agent track in the manifest threads: {threads[:6]}")
+    names = {t.get("name") for t in agent_threads}
+    check("agent" in names, f"the default track is named 'agent': {names}")
+    # A stop with nothing open is refused, so a bad script cannot corrupt the track.
+    reply = run.service.post("/api/scope", {"track": "e2e-empty", "action": "stop"})
+    check(reply.startswith("HTTP 4"), f"stop on an empty track should be refused, got {reply[:80]}")
+    if run.chrome is not None:
+        run.open_viewer("?collapse=scheduler")
+        run.wait_for(lambda: run.rects_matching(f"row:process:{AGENT_PID}") or None,
+                     f"the agent process row (rows: {_rows(run)[:16]})", timeout=15)
+        # The agent's process sorts last; fold every other process (the
+        # chevron sits 16 px into the row) so it comes into view.
+        for label in sorted(run.rects_matching("row:process:")):
+            if label.endswith(f":{AGENT_PID}"):
+                continue
+            x, y, w, h = run.rect(label)
+            run.chrome.click(x + 16, y + h * 0.5)
+            time.sleep(0.5)
+        canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+        ax, ay, aw, ah = run.rect(f"row:process:{AGENT_PID}")
+        check(ay < canvas_h, f"the agent row is still below the fold (y {ay} of {canvas_h})")
+        # Home fits the whole capture, so the scope near its start is in view.
+        run.chrome.key("Home")
+        run.wait_for(lambda: run.sel().get("events"), "the fitted view to show events")
+        run.shot("18-agent-track", settle=2.0)
+    return f"tracks {sorted(names)}"
+
+
+@scenario("service-lanes", "The service's own cpu % and rss MiB are value lanes in every capture")
+def service_lanes(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    service_pid = WeekCapture.service_pid
+    lanes = run.wait_for(
+        lambda: {k: v for k, v in run.rects_matching(f"row:lane:{service_pid}:").items()
+                 if k.endswith(f":{KIND_VALUE}")} or None,
+        f"value lanes of the service (pid {service_pid})",
+    )
+    check_at_least(len(lanes), 1, "value lanes under the service process")
+    run.shot("19-service-lanes", settle=1.0)
+    return f"{len(lanes)} value lane(s) under pid {service_pid}"
+
+
+@scenario("clear", "The Clear pill empties the timeline, and the service's ring with it")
+def clear(run):
+    if run.chrome is None:
+        reply = run.service.post("/api/capture/clear")
+        check(not reply.startswith("HTTP"), f"clear refused: {reply}")
+        return "cleared over HTTP (no browser)"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    run.wait_for(lambda: run.sel().get("events"), "events before Clear")
+    run.click("Clear")
+    run.wait_for(lambda: run.sel().get("events") == 0, "the timeline to empty")
+    check(run.service.get("/api/status")["events_live"] == 0, "the service's ring is empty too")
+    run.shot("20-cleared", settle=1.0)
+    WeekCapture.taken = False
+    return "ok"
+
+
+@scenario("wire-and-perf", "Wire format is reported, and the viewer's frame budget is recorded")
+def wire_and_perf(run):
+    status = run.service.get("/api/status")
+    check(status.get("wire") in ("raw", "packed", "deflate"), f"status wire: {status.get('wire')}")
+    run.perf["wire"] = status["wire"]
+    if run.chrome is None:
+        return f"wire {status['wire']} (no browser: no frame numbers)"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("events") else None, "the capture in the viewer")
+    check(sel["wire"] == status["wire"], "the viewer shows the same wire format the service reports")
+    # A live stream, for the rate: start a capture of the service itself.
+    run.service.post("/api/capture/start", {"pid": run.target.pid})
+    time.sleep(3.0)
+    rate = run.wait_for(lambda: run.sel().get("ws_bps") or None, "bytes on the WebSocket", timeout=15)
+    run.service.post("/api/capture/stop")
+    time.sleep(2.0)
+    # The frame breakdown is published while the Self pane is open.
+    run.click("Self")
+    phases = run.wait_for(lambda: run.self_phases() or None, "the self-profile readout", timeout=20)
+    run.shot("21-self-pane", settle=2.0)
+    run.perf["ws_bps_during_capture"] = rate
+    run.perf["events"] = run.sel().get("events")
+    run.perf["self"] = phases
+    after = run.service.get("/api/status")  # the ring after the capture, not before it
+    run.perf["status"] = {k: after[k] for k in ("events_live", "events_capacity", "ring_bytes", "produced", "dropped")}
+    frame = next((p for p in phases.get("phases", []) if p.get("name") in ("frame", "update")), None)
+    note = f"wire {status['wire']}, {rate/1024:.0f} KB/s on the socket"
+    if frame:
+        note += f", frame avg {frame['avg_us']/1000:.1f} ms"
+    return note
+
+
+# --------------------------------------------------------------------- main
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=44810)
@@ -547,6 +993,8 @@ def main():
     parser.add_argument("--keep-going", action="store_true",
                         help="run every scenario even after one fails")
     parser.add_argument("--no-shots", action="store_true", help="skip screenshots")
+    parser.add_argument("--report", default=os.path.join(REPO, "docs/e2e/report.md"),
+                        help="where the results, perf numbers and screenshot index go")
     args = parser.parse_args()
 
     wanted = [s for s in SCENARIOS if not args.only or s[0] in args.only]
@@ -595,7 +1043,45 @@ def main():
     if not args.no_shots:
         shots = sorted(os.listdir(args.shots))
         print(f"{len(shots)} screenshots in {args.shots}")
+    write_report(args.report, results, run.perf if 'run' in locals() else {}, args.shots)
+    print(f"report in {args.report}")
     return 0 if passed == len(results) else 1
+
+
+def write_report(path, results, perf, shots_dir):
+    """The run as a Markdown page: results, the numbers the scenarios
+    measured, and every screenshot with the scenario that took it. This and
+    docs/manual/features.md are what an agent reads to write the manual."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO,
+                          capture_output=True, text=True).stdout.strip()
+    lines = [f"# Orbit e2e report", "", f"Run {stamp} at commit `{head}` on `{os.uname().nodename}`.", "",
+             "| Scenario | Result | Time | Note |", "|---|---|---|---|"]
+    for name, verdict, note, seconds in results:
+        lines.append(f"| {name} | {verdict} | {seconds:.1f}s | {(note or '').replace('|', '/')} |")
+    lines += ["", "## Numbers", ""]
+    if perf:
+        for key in ("wire", "events", "ws_bps_during_capture", "bundle_bytes", "slice_bytes"):
+            if key in perf:
+                lines.append(f"- {key}: {perf[key]}")
+        if "status" in perf:
+            lines.append(f"- service status: {json.dumps(perf['status'])}")
+        phases = perf.get("self", {}).get("phases", [])
+        if phases:
+            lines += ["", "Viewer self-profile (headless Chrome, SwiftShader: slower than a GPU):", "",
+                      "| Phase | Total ms | Count | Avg us | Max us |", "|---|---|---|---|---|"]
+            for p in phases:
+                lines.append(f"| {p['name']} | {p['total_ms']} | {p['count']} | {p['avg_us']} | {p['max_us']} |")
+    else:
+        lines.append("(no numbers: the perf scenario did not run)")
+    lines += ["", "## Screenshots", ""]
+    if os.path.isdir(shots_dir):
+        for shot in sorted(os.listdir(shots_dir)):
+            if shot.endswith(".png"):
+                lines.append(f"- `{shot}` -- ![]({os.path.relpath(os.path.join(shots_dir, shot), os.path.dirname(path))})")
+    with open(path, "w") as handle:
+        handle.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

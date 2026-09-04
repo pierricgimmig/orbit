@@ -21,7 +21,8 @@ use orbit_live_event::dev::{
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{ThreadFocus, 
-    apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
+    apply_highlight_flags, choose_lod_hint, collect_instances_cached, collect_instances_layout_opts,
+    instance_for_event,
     lane_height, leaf_label, pick_column_event, pick_instance_at, value_lanes_in_view, CollectOpts,
     ScopeInstance, ScopePick, TrackIndex, YCull, FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
     Y_CULL_PAD,
@@ -586,6 +587,14 @@ pub struct OrbitLiveApp {
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
     selected_thread: Option<(u32, u32)>,
+    /// True while the self pane's timeline is drawing, so its rows stay out
+    /// of the `__orbit_ui` readout.
+    in_self_pane: bool,
+    /// Last frame's per-lane listing rows (TODO item 21); swapped with the
+    /// self pane's like the rest of the timeline state.
+    listing_cache: orbit_live_render::ListingCache,
+    /// What `window.__orbit_ui` last said.
+    ui_readout: String,
     /// What `window.__orbit_sel` last said, so it is only rewritten when the
     /// selection actually changes.
     sel_readout: String,
@@ -674,6 +683,7 @@ pub struct OrbitLiveApp {
     idle_skip_chrome: bool,
     last_n_prims: u32,
     last_n_lanes_kept: u32,
+    last_n_lanes_reused: u32,
     last_pool_wake_us: f32,
     last_pool_tail_us: f32,
     /// Whether the primitive listing walks lanes inline or on the pool, and
@@ -878,6 +888,9 @@ pub struct TimelineState {
     content_t0: Option<f64>,
     content_t1: Option<f64>,
     user_set_view: bool,
+    /// Last frame's per-lane listing rows, reused for the lanes that did
+    /// not change (TODO item 21).
+    listing_cache: orbit_live_render::ListingCache,
 }
 
 impl TimelineState {
@@ -913,6 +926,7 @@ impl TimelineState {
             content_t0: None,
             content_t1: None,
             user_set_view: false,
+            listing_cache: orbit_live_render::ListingCache::default(),
         }
     }
 }
@@ -943,6 +957,7 @@ impl OrbitLiveApp {
         std::mem::swap(&mut self.visible_cache, &mut other.visible_cache);
         std::mem::swap(&mut self.lane_scroll, &mut other.lane_scroll);
         std::mem::swap(&mut self.pending_vscroll, &mut other.pending_vscroll);
+        std::mem::swap(&mut self.listing_cache, &mut other.listing_cache);
         std::mem::swap(&mut self.vscroll, &mut other.vscroll);
         std::mem::swap(&mut self.vscroll_max, &mut other.vscroll_max);
         std::mem::swap(&mut self.measure, &mut other.measure);
@@ -1005,7 +1020,10 @@ impl OrbitLiveApp {
             self.ws_rate_bps,
             self.report_w_last,
             self.report_collapsed,
-            self.scope_menu.is_some(),
+            match &self.scope_menu {
+                Some((pick, _)) => format!("[{},{},{}]", pick.pid, pick.tid, pick.kind),
+                None => "null".to_string(),
+            },
             match &self.scope_report {
                 Some((id, name)) => format!("[{id},{name:?}]"),
                 None => "null".to_string(),
@@ -1028,6 +1046,24 @@ impl OrbitLiveApp {
                 &win,
                 &wasm_bindgen::JsValue::from_str("__orbit_sel"),
                 &wasm_bindgen::JsValue::from_str(&self.sel_readout),
+            );
+        }
+    }
+
+    /// Hands this frame's pill and track-row rectangles to the page as
+    /// `window.__orbit_ui`, a JSON list of `[label, x, y, w, h]`.
+    fn publish_ui_rects(&mut self) {
+        let text = take_ui_rects_json();
+        if text == self.ui_readout {
+            return;
+        }
+        self.ui_readout = text;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__orbit_ui"),
+                &wasm_bindgen::JsValue::from_str(&self.ui_readout),
             );
         }
     }
@@ -1202,6 +1238,7 @@ impl OrbitLiveApp {
             idle_skip_chrome: false,
             last_n_prims: 0,
             last_n_lanes_kept: 0,
+            last_n_lanes_reused: 0,
             last_pool_wake_us: 0.0,
             last_pool_tail_us: 0.0,
             listing_inline: false,
@@ -1253,6 +1290,9 @@ impl OrbitLiveApp {
             content_t0: None,
             content_t1: None,
             user_set_view: false,
+            in_self_pane: false,
+            listing_cache: orbit_live_render::ListingCache::default(),
+            ui_readout: String::new(),
             trace_args: HashMap::new(),
             trace_flows: Vec::new(),
             thread_names: HashMap::new(),
@@ -3506,6 +3546,19 @@ impl OrbitLiveApp {
                 Pos2::new(head.left(), head.top() + row.y),
                 Vec2::new(head.width(), row.height.max(1.0)),
             );
+            // Every row goes in the readout, on screen or not, so a harness
+            // sees the whole layout; a row below the fold has a y past the
+            // canvas, which is its cue to scroll or collapse something.
+            if !self.in_self_pane {
+                let label = match row.id {
+                    RowId::Scheduler => "row:scheduler".to_string(),
+                    RowId::Machine(_) => "row:machine".to_string(),
+                    RowId::Process(p) => format!("row:process:{p}"),
+                    RowId::Thread(t) => format!("row:thread:{}:{}", t.pid, t.tid),
+                    RowId::Lane(l) => format!("row:lane:{}:{}:{}", l.pid, l.tid, l.kind),
+                };
+                note_ui_rect(&label, r);
+            }
             if !header_row_intersects_clip(r.min.y, r.height(), clip.min.y, clip.max.y) {
                 continue;
             }
@@ -4040,7 +4093,7 @@ impl OrbitLiveApp {
                     // measurement of their own; splitting them needs scopes
                     // inside collect_instances_layout_opts, not out here.
                     let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
-                    let mut frame = collect_instances_layout_opts(
+                    let mut frame = collect_instances_cached(
                         &self.index,
                         t0,
                         t1,
@@ -4052,6 +4105,7 @@ impl OrbitLiveApp {
                             early_out: true,
                             inline: self.listing_inline,
                         },
+                        Some(&mut self.listing_cache),
                     );
                     dev.absorb_worker_spans(&frame.worker_spans);
                     // The parts of the listing the worker lanes do not show.
@@ -4072,6 +4126,7 @@ impl OrbitLiveApp {
                     self.tune_listing_mode(tm.dispatch_t1_ns.saturating_sub(tm.dispatch_t0_ns) as f32 / 1e3);
                     self.last_n_prims = frame.instances.len() as u32;
                     self.last_n_lanes_kept = frame.lanes_kept;
+                    self.last_n_lanes_reused = frame.lanes_reused;
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
@@ -4110,7 +4165,11 @@ impl OrbitLiveApp {
                     apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search, self.thread_focus());
                     fg = frame.instances;
                 }
-                self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
+                // Keeps its allocation from frame to frame; collecting anew
+                // faulted in a fresh buffer the size of the frame every time.
+                self.last_instances.clear();
+                self.last_instances.extend_from_slice(&bg);
+                self.last_instances.extend_from_slice(&fg);
                 self.last_layout = rest_layout;
                 self.last_instanced_window = Some(window);
                 {
@@ -4924,6 +4983,7 @@ impl OrbitLiveApp {
                 // surface. Swap in, draw, swap out.
                 let mut tl = std::mem::replace(&mut self.self_tl, TimelineState::fresh());
                 self.swap_timeline_state(&mut tl);
+                self.in_self_pane = true;
                 self.gpu_slot = 1;
                 self.canvas_override = Some((SELF_PANE_CANVAS, SELF_PANE_RAIL));
                 // The main follow tick ran on the capture's state; the pane
@@ -4933,6 +4993,7 @@ impl OrbitLiveApp {
                 self.canvas_override = None;
                 self.gpu_slot = 0;
                 self.swap_timeline_state(&mut tl);
+                self.in_self_pane = false;
                 self.self_tl = tl;
             });
     }
@@ -5454,6 +5515,7 @@ impl OrbitLiveApp {
                         )
                         .sense(Sense::click()),
                     );
+                    note_ui_rect(&format!("live:{name}"), label.rect);
                     if label.on_hover_text("Click for the duration histogram; the timeline highlights this scope").clicked() {
                         clicked = Some(r.name_id);
                     }
@@ -5611,7 +5673,9 @@ impl OrbitLiveApp {
                             .size(10.5),
                     );
                     ui.add_space(4.0);
-                    if ui.button("Sampling report for this scope").clicked() {
+                    let report_item = ui.button("Sampling report for this scope");
+                    note_ui_rect("menu:report", report_item.rect);
+                    if report_item.clicked() {
                         self.sample_sels.clear();
                         self.measure = None;
                         self.sampling_ranges.clear();
@@ -5623,7 +5687,9 @@ impl OrbitLiveApp {
                         self.request_reports();
                         close = true;
                     }
-                    if ui.button("Highlight every instance").clicked() {
+                    let highlight_item = ui.button("Highlight every instance");
+                    note_ui_rect("menu:highlight", highlight_item.rect);
+                    if highlight_item.clicked() {
                         self.search = name.clone();
                         close = true;
                     }
@@ -5925,6 +5991,7 @@ impl eframe::App for OrbitLiveApp {
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
                 .show(ctx, |ui| self.timeline(ui, dt, &devf));
+            self.publish_ui_rects();
 
             if self.wants_live_repaint() || self.needs_repaint {
                 self.needs_repaint = false;
@@ -5945,6 +6012,7 @@ impl eframe::App for OrbitLiveApp {
                     fps: self.fps_ema.max(0.0),
                     prims: self.last_n_prims,
                     lanes_kept: self.last_n_lanes_kept,
+                    lanes_reused: self.last_n_lanes_reused,
                     pool_threads: orbit_live_render::parallelism() as u32,
                     worker_kept: devf_counts.0,
                     worker_dropped: devf_counts.1,
@@ -6152,7 +6220,7 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         theme::TRACK
     };
     let text = if selected { theme::CANVAS } else { theme::TEXT };
-    ui.add(
+    let resp = ui.add(
         egui::Button::new(
             RichText::new(label)
                 .family(fonts::medium())
@@ -6167,7 +6235,42 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         })
         .min_size(Vec2::new(0.0, 22.0))
         .corner_radius(4),
-    )
+    );
+    note_ui_rect(label, resp.rect);
+    resp
+}
+
+thread_local! {
+    /// The pills and track rows painted this frame, by label, for the
+    /// `window.__orbit_ui` readout: the headless harness clicks a button or
+    /// a thread header by name instead of by a pixel position that moves
+    /// whenever the layout does.
+    static UI_RECTS: std::cell::RefCell<Vec<(String, Rect)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn note_ui_rect(label: &str, rect: Rect) {
+    UI_RECTS.with(|v| v.borrow_mut().push((label.to_string(), rect)));
+}
+
+/// Empties this frame's rectangles into a JSON text.
+fn take_ui_rects_json() -> String {
+    let rects = UI_RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()));
+    let mut out = String::from("[");
+    for (i, (label, r)) in rects.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "[{:?},{:.0},{:.0},{:.0},{:.0}]",
+            label,
+            r.left(),
+            r.top(),
+            r.width(),
+            r.height()
+        ));
+    }
+    out.push(']');
+    out
 }
 
 /// CSS px (visual viewport). egui `screen_rect` is points and follows

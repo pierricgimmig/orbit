@@ -191,6 +191,29 @@ class Chrome:
         )
         return result.get("result", {}).get("value")
 
+    def click(self, x, y, button="left", hold=0.05):
+        """A press and release at a canvas position. Right-clicks must be
+        quick: the viewer opens its scope menu on release and treats a
+        press held longer than a beat as a drag."""
+        buttons = {"left": 1, "right": 2}[button]
+        self.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+        self.call("Input.dispatchMouseEvent", type="mousePressed", x=x, y=y,
+                  button=button, buttons=buttons, clickCount=1)
+        time.sleep(hold)
+        self.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y,
+                  button=button, buttons=0, clickCount=1)
+
+    def move(self, x, y):
+        self.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+
+    def key(self, name, code=None, vk=None):
+        """A key press and release, by DOM key name ("Escape", "Home")."""
+        codes = {"Escape": ("Escape", 27), "Home": ("Home", 36), "Enter": ("Enter", 13)}
+        code, vk = codes.get(name, (code or name, vk or 0))
+        for kind in ("keyDown", "keyUp"):
+            self.call("Input.dispatchKeyEvent", type=kind, key=name, code=code,
+                      windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk)
+
     def screenshot(self, path):
         data = self.call("Page.captureScreenshot", format="png", captureBeyondViewport=False)
         raw = base64.b64decode(data["data"])

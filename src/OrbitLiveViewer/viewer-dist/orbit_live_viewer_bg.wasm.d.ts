@@ -28,10 +28,10 @@ export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) =>
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_export_7: WebAssembly.Table;
 export const _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__hb2b383a27ecc2ec5: (a: number, b: number) => void;
-export const closure385_externref_shim: (a: number, b: number, c: any) => void;
+export const closure387_externref_shim: (a: number, b: number, c: any) => void;
 export const _dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__ha3d47ef291732239_multivalue_shim: (a: number, b: number) => [number, number];
 export const __externref_table_dealloc: (a: number) => void;
-export const closure1068_externref_shim: (a: number, b: number, c: any) => void;
-export const closure2791_externref_shim: (a: number, b: number, c: any, d: any) => void;
+export const closure1070_externref_shim: (a: number, b: number, c: any) => void;
+export const closure2794_externref_shim: (a: number, b: number, c: any, d: any) => void;
 export const __wbindgen_thread_destroy: (a?: number, b?: number, c?: number) => void;
 export const __wbindgen_start: (a: number) => void;

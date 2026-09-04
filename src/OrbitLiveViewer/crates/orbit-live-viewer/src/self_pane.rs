@@ -39,6 +39,7 @@ pub struct SelfProfile {
     fps: f32,
     prims: u32,
     lanes_kept: u32,
+    lanes_reused: u32,
     pool_threads: u32,
     worker_kept: u32,
     worker_dropped: u32,
@@ -50,6 +51,7 @@ pub struct FrameStats {
     pub fps: f32,
     pub prims: u32,
     pub lanes_kept: u32,
+    pub lanes_reused: u32,
     pub pool_threads: u32,
     pub worker_kept: u32,
     pub worker_dropped: u32,
@@ -93,6 +95,7 @@ impl SelfProfile {
         self.fps = stats.fps;
         self.prims = stats.prims;
         self.lanes_kept = stats.lanes_kept;
+        self.lanes_reused = stats.lanes_reused;
         self.pool_threads = stats.pool_threads;
         self.worker_kept = stats.worker_kept;
         self.worker_dropped = stats.worker_dropped;
@@ -116,8 +119,12 @@ impl SelfProfile {
             .collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1));
         let mut out = format!(
-            "{{\"frames\":{},\"events\":{events},\"layout_gen\":{layout_gen},\"lane_gen\":{lane_gen},\"phases\":[",
-            self.frames_seen
+            "{{\"frames\":{},\"events\":{events},\"layout_gen\":{layout_gen},\"lane_gen\":{lane_gen},\"fps\":{:.1},\"prims\":{},\"lanes\":{},\"reused\":{},\"phases\":[",
+            self.frames_seen,
+            self.fps,
+            self.prims,
+            self.lanes_kept,
+            self.lanes_reused
         );
         for (i, (name, sum, n, mx)) in rows.iter().enumerate() {
             if i > 0 {
@@ -225,6 +232,7 @@ impl SelfProfile {
             );
             stat(ui, "prims", format!("{}", self.prims));
             stat(ui, "lanes", format!("{}", self.lanes_kept));
+            stat(ui, "reused", format!("{}", self.lanes_reused));
             stat(ui, "pool", format!("{}", self.pool_threads));
             stat(
                 ui,
@@ -311,7 +319,7 @@ mod tests {
         intern.insert_id(NAME_TRACKS, "Tracks");
         let json = sp.phases_json_with(&intern, 7, 8, 9);
         assert!(
-            json.starts_with("{\"frames\":1,\"events\":7,\"layout_gen\":8,\"lane_gen\":9,\"phases\":[{\"name\":\"Frame\""),
+            json.starts_with("{\"frames\":1,\"events\":7,\"layout_gen\":8,\"lane_gen\":9,\"fps\":0.0,\"prims\":0,\"lanes\":0,\"reused\":0,\"phases\":[{\"name\":\"Frame\""),
             "{json}"
         );
         assert!(json.contains("\"name\":\"Tracks\""));
@@ -346,6 +354,7 @@ mod tests {
                 fps: 120.0,
                 prims: 42,
                 lanes_kept: 7,
+                lanes_reused: 0,
                 pool_threads: 4,
                 worker_kept: 12,
                 worker_dropped: 1,

@@ -40,7 +40,8 @@ fn event_span_ns(e: &LiveEvent) -> u64 {
 mod lod;
 mod par;
 mod shaders;
-pub use lod::{ThreadFocus, 
+pub use lod::{
+    collect_instances_cached, ListingCache,ThreadFocus, 
     apply_highlight_flags, choose_lod, choose_lod_first8, choose_lod_hint, collect_instances,
     collect_instances_layout, collect_instances_layout_opts, drop_index_for_y, empty_column_color,
     instance_for_event, lane_gap, lane_height, leaf_label, pick_column_event, pick_instance_at,
@@ -62,6 +63,9 @@ pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 pub struct Lane {
     events: Vec<LiveEvent>,
     ends_sorted: bool,
+    /// Bumped by every insert and every retain that removed something: the
+    /// listing cache's way to know a lane is exactly what it listed before.
+    version: u64,
 }
 
 impl Default for Lane {
@@ -69,6 +73,7 @@ impl Default for Lane {
         Self {
             events: Vec::new(),
             ends_sorted: true,
+            version: 0,
         }
     }
 }
@@ -86,7 +91,13 @@ impl Lane {
         self.events.is_empty()
     }
 
+    /// Changes whenever the events do.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
     pub fn insert(&mut self, event: LiveEvent) {
+        self.version = self.version.wrapping_add(1);
         let i = if self
             .events
             .last()
@@ -122,6 +133,7 @@ impl Lane {
         let before = self.events.len();
         self.events.retain(|e| f(e));
         if self.events.len() != before {
+            self.version = self.version.wrapping_add(1);
             // Removing events can only restore end order, never break it, but
             // a lane that was already unsorted may now be sorted -- recheck so
             // it does not stay on the linear fallback forever.
