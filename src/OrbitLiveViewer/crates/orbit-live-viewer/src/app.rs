@@ -582,6 +582,9 @@ pub struct OrbitLiveApp {
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
     selected_thread: Option<(u32, u32)>,
+    /// What `window.__orbit_sel` last said, so it is only rewritten when the
+    /// selection actually changes.
+    sel_readout: String,
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
@@ -904,13 +907,53 @@ impl OrbitLiveApp {
     /// selected (by its header, or through a selected scope), else the
     /// capture's target process, else everything. C++ Orbit's rule.
     fn thread_focus(&self) -> ThreadFocus {
-        let selected = self
-            .selected_thread
-            .or_else(|| self.selected.map(|s| (s.pid, s.tid)));
         let target = self
             .selected_pid
             .filter(|_| !self.status.demo && self.trace_name.is_none());
-        ThreadFocus { selected, target_pid: target }
+        thread_focus_from(self.selected_thread, self.selected, target)
+    }
+
+    /// Hands the selection to the page as `window.__orbit_sel`, so a harness
+    /// driving the viewer headless can check what a click selected without
+    /// reading pixels. Written only when it changes.
+    fn publish_selection(&mut self) {
+        let focus = self.thread_focus();
+        let text = format!(
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{}}}",
+            match self.selected_thread {
+                Some((p, t)) => format!("[{p},{t}]"),
+                None => "null".to_string(),
+            },
+            match self.selected {
+                Some(s) => format!("[{},{},{}]", s.pid, s.tid, s.kind),
+                None => "null".to_string(),
+            },
+            match focus.selected {
+                Some((p, t)) => format!("[{p},{t}]"),
+                None => "null".to_string(),
+            },
+            self.measure.is_some(),
+        );
+        if text == self.sel_readout {
+            return;
+        }
+        self.sel_readout = text;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__orbit_sel"),
+                &wasm_bindgen::JsValue::from_str(&self.sel_readout),
+            );
+        }
+    }
+
+    /// Drops the scope pick, the selected thread and the measure: what
+    /// Escape and a click on nothing do.
+    fn clear_selection(&mut self) {
+        self.selected = None;
+        self.selected_thread = None;
+        self.measure = None;
     }
 
     fn rail_color(&self) -> Color32 {
@@ -1010,6 +1053,7 @@ impl OrbitLiveApp {
             selected: None,
             hover: None,
             selected_thread: None,
+            sel_readout: String::new(),
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
@@ -2887,6 +2931,12 @@ impl OrbitLiveApp {
             let body = Rect::from_min_max(Pos2::new(rect.min.x + header_w, rect.min.y), rect.max);
 
             ui.painter().rect_filled(head, 0.0, self.rail_color());
+            // Registered before the header rows, so every header widget sits
+            // on top of it: a click that reaches this hit no header, and a
+            // click on nothing cancels the selection.
+            if ui.interact(head, ui.id().with("orbit_rail_empty"), Sense::click()).clicked() {
+                self.clear_selection();
+            }
             ui.painter()
                 .rect_filled(body, 0.0, self.canvas_color());
             paint_quiet_grid(ui, body, self.t0, self.t1, self.light_canvas);
@@ -4200,7 +4250,7 @@ impl OrbitLiveApp {
             if self.search_active() || !self.search.is_empty() {
                 self.search.clear();
             } else {
-                self.selected = None;
+                self.clear_selection();
             }
         }
         let (a, d, left, right, up, down, w, s) = ctx.input(|i| {
@@ -4314,12 +4364,19 @@ impl OrbitLiveApp {
                 self.zoom_to_scope(pick);
             }
         } else if response.clicked() {
-            self.selected = self.hover;
-            // A scope click selects its thread (through `selected`); a click on
-            // nothing releases the thread too.
-            self.selected_thread = None;
-            if self.hover.is_none() {
-                self.measure = None;
+            match self.hover {
+                // A click on nothing releases everything.
+                None => self.clear_selection(),
+                Some(pick) => {
+                    self.selected = Some(pick);
+                    // A thread scope selects its thread (through
+                    // `selected`), so a header-selected thread steps aside.
+                    // Anything else -- a scheduler slice, a thread state, a
+                    // sample tick -- is inspected without moving the focus.
+                    if pick_selects_thread(pick) {
+                        self.selected_thread = None;
+                    }
+                }
             }
         }
     }
@@ -4435,9 +4492,15 @@ impl OrbitLiveApp {
             return pick_instance_at(&self.last_instances, x, y)
                 .map(|i| ScopePick::from_instance(&self.last_instances[i]));
         }
+        // The live layout, not `last_layout`: that one is only refreshed by
+        // the instanced path, so at the column level it still described the
+        // rows as they were the last time the view was zoomed in. After a
+        // collapse or a scroll the thread rows had moved and every click on
+        // a scope band picked nothing; the scheduler, at the top and
+        // unmoved, still worked, which hid it.
         pick_column_event(
             &self.index,
-            &self.last_layout,
+            self.tracks.layout(),
             t0,
             t1,
             width,
@@ -4565,9 +4628,14 @@ impl OrbitLiveApp {
         if report.is_none() && self.tree.is_none() && self.modules.is_none() && !has_selection {
             return;
         }
-        egui::TopBottomPanel::bottom("orbit_sampling_report")
+        // A vertical panel to the right of the capture, where C++ Orbit docks
+        // its sampling report: the timeline keeps its full height, and the
+        // report reads top to bottom beside it instead of eating rows off
+        // the bottom of the track list.
+        egui::SidePanel::right("orbit_sampling_report")
             .resizable(true)
-            .default_height(180.0)
+            .default_width(SAMPLING_PANEL_DEFAULT_W)
+            .min_width(220.0)
             .frame(
                 Frame::new()
                     .fill(theme::PANEL)
@@ -4576,7 +4644,9 @@ impl OrbitLiveApp {
             )
             .show(ctx, |ui| {
                 let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
-                ui.horizontal(|ui| {
+                // Wrapped, not a single row: the panel is narrow and the tabs
+                // and the selection text must not run off its right edge.
+                ui.horizontal_wrapped(|ui| {
                     let title = match &report {
                         Some(_) => format!("Sampling report — {samples} samples"),
                         // No service report (yet, or at all): the viewer can
@@ -4635,7 +4705,10 @@ impl OrbitLiveApp {
                         }
                     }
                 });
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                // Both axes: a call tree or a long function name is wider than
+                // the panel, and the rows are the thing to scroll, not the
+                // panel to widen.
+                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                     match self.report_tab {
                         ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
                         ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
@@ -5049,6 +5122,7 @@ impl eframe::App for OrbitLiveApp {
             self.refresh_sampling_report(ctx.input(|i| i.time));
             self.sampling_panel(ctx);
             self.self_pane(ctx, dt, &devf);
+            self.publish_selection();
 
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
@@ -5968,6 +6042,33 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool) {
         FontId::monospace(10.5),
         if strong { theme::TEXT } else { theme::MUTED },
     );
+}
+
+/// Starting width of the sampling report panel. Wide enough for the flat
+/// report's two bars, a function name and a module; the user can drag it.
+const SAMPLING_PANEL_DEFAULT_W: f32 = 440.0;
+
+/// Whether clicking this pick selects its thread for the scheduler's
+/// colouring: only a scope on a thread track does. A scheduler slice, a
+/// thread-state bar, a sample tick or a value point can be selected and
+/// inspected, but they leave the thread focus where it was.
+fn pick_selects_thread(pick: ScopePick) -> bool {
+    matches!(pick.kind, kind::API_SCOPE | kind::FUNCTION_CALL)
+}
+
+/// The thread focus from the two ways a thread gets selected: its header
+/// (`selected_thread`) or one of its scopes (`selected`). A header
+/// selection wins, and a selected pick that is not a thread scope does not
+/// count.
+fn thread_focus_from(
+    selected_thread: Option<(u32, u32)>,
+    selected: Option<ScopePick>,
+    target_pid: Option<u32>,
+) -> ThreadFocus {
+    let selected = selected_thread.or_else(|| {
+        selected.filter(|p| pick_selects_thread(*p)).map(|p| (p.pid, p.tid))
+    });
+    ThreadFocus { selected, target_pid }
 }
 
 /// A header row that can be dragged to reorder, with a collapse chevron on
@@ -7335,6 +7436,40 @@ mod tests {
             });
         }
         (toggled, dragged)
+    }
+
+    fn pick_of_kind(kind: u8, pid: u32, tid: u32) -> ScopePick {
+        ScopePick {
+            name_id: 1,
+            start_ns: 10,
+            duration_ns: 5,
+            pid,
+            tid,
+            kind,
+            depth: 0,
+            extra: 0,
+        }
+    }
+
+    #[test]
+    fn only_a_thread_scope_or_its_header_selects_the_thread() {
+        let target = Some(7);
+        // A scope on a thread track selects that thread.
+        let scope = Some(pick_of_kind(kind::API_SCOPE, 7, 70));
+        assert_eq!(thread_focus_from(None, scope, target).selected, Some((7, 70)));
+        let call = Some(pick_of_kind(kind::FUNCTION_CALL, 7, 71));
+        assert_eq!(thread_focus_from(None, call, target).selected, Some((7, 71)));
+        // A scheduler slice, a thread state, a sample tick or a value do not.
+        for k in [kind::SCHEDULING_SLICE, kind::THREAD_STATE, kind::SAMPLE, kind::VALUE] {
+            let pick = Some(pick_of_kind(k, 7, 72));
+            let focus = thread_focus_from(None, pick, target);
+            assert_eq!(focus.selected, None, "kind {k}");
+            assert_eq!(focus.target_pid, target);
+        }
+        // The header wins over a scope pick, and survives a slice pick.
+        let slice = Some(pick_of_kind(kind::SCHEDULING_SLICE, 7, 72));
+        assert_eq!(thread_focus_from(Some((7, 73)), slice, target).selected, Some((7, 73)));
+        assert_eq!(thread_focus_from(Some((7, 73)), scope, target).selected, Some((7, 73)));
     }
 
     #[test]
