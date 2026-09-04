@@ -86,20 +86,55 @@ no-target capture of this machine streaming, same load each run):
   see section 5.
 
 =====================================================================
-4. The saved capture
+4. The saved capture, first pass: deflate the Arrow IPC tables
 =====================================================================
-The .orbit.zip was store-only. The bundle's tables are now deflated by
-miniz_oxide (already in the tree through parquet; no new crate, no C) at
-level 6, once, at Save. Same 1M-event slice:
+The .orbit.zip was store-only. First fix, the same morning: deflate the
+bundle's entries with miniz_oxide (already in the tree through parquet;
+no new crate, no C) at level 6, once, at Save. Same 1M-event slice:
 
   store                38.07 MB   0.15 s
   deflate level 1       8.36 MB   0.20 s
-  deflate level 6       7.62 MB   0.87 s   <- default
+  deflate level 6       7.62 MB   0.87 s
 
-Level 6 is 9% smaller than level 1 for 0.7 s more on a 38 MB table; the
-100 s capture that was 127 MB now saves as about 25 MB in roughly three
-seconds. The reader accepts stored and deflated entries, so yesterday's
-files still open.
+Superseded the same day by section 6, kept because it is the number the
+Parquet result is measured against.
+
+=====================================================================
+6. The saved capture, second pass: Parquet's own encodings, no codec
+=====================================================================
+The question was whether Parquet would compress well. Measured first with
+pyarrow on the same 1M-event table (write/read on this machine):
+
+  parquet plain, no dictionary, no codec   46.2 MB  0.03 s  0.15 s   (what ?format=parquet wrote)
+  parquet dictionary, no codec             18.0 MB  0.05 s  0.01 s
+  parquet delta int64 + dictionary         7.9 MB   0.04 s  0.01 s   <- chosen
+  ... + snappy                             7.3 MB   0.04 s  0.01 s
+  ... + gzip                               7.0 MB   0.16 s  0.01 s
+  dictionary + zstd                        7.7 MB   0.09 s  0.01 s
+  (arrow ipc 38.0 MB; ipc in deflate zip 7.6 MB, section 4)
+
+DELTA_BINARY_PACKED on the two nanosecond columns and RLE_DICTIONARY on
+the rest is the wire's "packed" idea done per column by the file format:
+the same size as deflating the IPC file, with no compressor, written
+twenty times faster and read without inflating anything. A codec on top
+is 5-10%, and the only one that is not pure Rust in the parquet crate is
+zstd; none is used.
+
+Done in Rust (orbit-capture `parquet_properties`, PARQUET_2_0, no codec),
+the bundle is Parquet tables in a *stored* zip, so nothing is compressed
+twice. wire_bench_real, same slice:
+
+  bundle, parquet, stored zip        7.91 MB   0.14 s   <- default
+  bundle, parquet + deflate 6 zip    6.97 MB   0.28 s   (12% for double work; not default)
+  bundle, ipc + deflate 6 zip        7.62 MB   0.87 s   (section 4)
+
+The plain ?format=parquet export uses the same properties now (it was the
+46.2 MB row). Verified end to end on a fresh 15,878-event capture: the
+exported zip holds events.parquet with DELTA_BINARY_PACKED on start_ns and
+duration_ns and RLE_DICTIONARY on the other seven columns, UNCOMPRESSED,
+as read back by pyarrow's metadata; POST /api/capture/import took the
+same file back with the same 15,878 events. Bundles from the first pass
+(.arrow tables, deflated entries) still open: the reader takes both.
 
 =====================================================================
 5. Live throughput, viewer-side

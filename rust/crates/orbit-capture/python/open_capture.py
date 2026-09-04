@@ -6,10 +6,10 @@
 """Open an Orbit capture saved as Arrow.
 
 Orbit's live viewer saves a capture as ``capture.orbit.zip`` (the Save pill;
-Save slice does the same for the selected time range). That is a deflate zip
-of a dataset directory -- events, samples and frames tables plus a manifest
-that also names every thread and process -- so ``unzip`` it and point this
-script at the directory. ``GET /api/capture/export`` still hands
+Save slice does the same for the selected time range). That is a stored zip
+of a directory -- events, samples and frames tables as Parquet, plus a
+manifest that also names every thread and process -- so ``unzip`` it and
+point this script at the directory. ``GET /api/capture/export`` still hands
 out the events table alone as Arrow IPC (``?format=ipc``) or Parquet
 (``?format=parquet``), and ``orbit-service --out-arrow <dir>`` writes a
 dataset directory straight to disk. All are plain Arrow / Parquet, so there
@@ -89,6 +89,15 @@ def main(path: str) -> int:
         with pa.memory_map(file_path, "r") as source:
             return ipc.open_file(source).read_all()
 
+    def read_table(file_path: str) -> "pa.Table":
+        # A bundle's tables are Parquet; `--out-arrow` writes Arrow IPC. The
+        # manifest names the files, and the extension says which reader.
+        if file_path.endswith(".parquet"):
+            import pyarrow.parquet as pq
+
+            return pq.read_table(file_path)
+        return read_ipc(file_path)
+
     # Three shapes of capture: one Parquet file, one Arrow IPC file, or a
     # dataset directory with a manifest naming the tables inside it.
     dataset_dir = path if os.path.isdir(path) else None
@@ -98,7 +107,7 @@ def main(path: str) -> int:
         with open(os.path.join(dataset_dir, "manifest.json")) as fh:
             manifest = json.load(fh)
         print(f"{path}: dataset {manifest['format']}, rows {manifest['rows']}")
-        table = read_ipc(os.path.join(dataset_dir, manifest["files"]["events"]))
+        table = read_table(os.path.join(dataset_dir, manifest["files"]["events"]))
     elif path.endswith(".parquet"):
         import pyarrow.parquet as pq
 
@@ -145,8 +154,8 @@ def main(path: str) -> int:
 
     # --- A dataset also carries the sampled callstacks ---------------------
     if dataset_dir:
-        samples = read_ipc(os.path.join(dataset_dir, manifest["files"]["samples"]))
-        frames = read_ipc(os.path.join(dataset_dir, manifest["files"]["frames"]))
+        samples = read_table(os.path.join(dataset_dir, manifest["files"]["samples"]))
+        frames = read_table(os.path.join(dataset_dir, manifest["files"]["frames"]))
         # frames: id -> (name, module, address). The command-line capture path
         # fills addresses but not names; a name is present when the service
         # symbolized the frame.

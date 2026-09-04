@@ -363,7 +363,7 @@ mod bench {
             );
         }
         // The bundle itself, stored versus deflated.
-        for (label, level) in [("store", None), ("deflate 1", Some(1u8)), ("deflate 6", Some(6u8))] {
+        for (label, level) in [("parquet, stored", None), ("parquet + deflate 6", Some(6u8))] {
             let t0 = std::time::Instant::now();
             let zip = bundle_zip(&bundle, level);
             println!(

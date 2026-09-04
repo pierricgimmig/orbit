@@ -2,13 +2,14 @@
 
 Orbit's live viewer saves a capture as `capture.orbit.zip` — the **Save**
 pill, or **Save slice** for the selected time range. That is an ordinary
-deflate zip of a dataset directory: the events, samples and frames tables as
-Arrow IPC, plus a `manifest.json` that also names every thread and process
-and records the slice window. An events table is mostly zero bytes, so the
-zip is about a fifth of the tables' size (a 1M-event slice: 38 MB of tables,
-7.6 MB zipped). Unzip it and every Arrow reader opens the tables; they drop
-straight into pandas. The same file drops back onto the viewer (or its
-**Open** pill) to reopen the capture, slice included.
+zip of a directory: the events, samples and frames tables as **Parquet**,
+plus a `manifest.json` that also names every thread and process and records
+the slice window. The tables use Parquet's own encodings (delta on the
+nanosecond columns, dictionaries on the rest) and no codec, which makes a
+1M-event table about 8 MB where the raw rows are 33 MB, so the zip itself
+is stored, not compressed. Unzip it and pandas, pyarrow or DuckDB read the
+tables directly, with column pruning. The same file drops back onto the
+viewer (or its **Open** pill) to reopen the capture, slice included.
 
 `GET /api/capture/export` also hands out the events table alone, as Arrow
 IPC (`?format=ipc`) or Parquet (`?format=parquet`), with `&t0=..&t1=..` to
@@ -18,7 +19,7 @@ with `orbit-service --out-arrow <dir>`.
 ```bash
 pip install pyarrow          # pandas is optional, for the DataFrame view
 unzip capture.orbit.zip -d my-capture
-python open_capture.py my-capture/        # a dataset directory, or an unzipped bundle
+python open_capture.py my-capture/        # an unzipped bundle (Parquet) or a dataset directory (Arrow)
 python open_capture.py capture.arrow      # an Arrow IPC file
 python open_capture.py capture.parquet    # a Parquet file
 ```

@@ -9,10 +9,14 @@
 //! A [`CaptureBundle`] is everything the viewer needs to show a capture
 //! again -- events with their names, the sample rows and the frame table
 //! they point into, thread and process names, and which process was the
-//! target -- and `to_zip` writes it as one `.orbit.zip`: the three Arrow
-//! tables and a `manifest.json`, deflated, so any zip tool extracts it into
-//! exactly the dataset directory `write_dataset` produces (and the Python
-//! example opens).
+//! target -- and `to_zip` writes it as one `.orbit.zip`: three Parquet
+//! tables and a `manifest.json`, in a stored zip, so any zip tool extracts
+//! it into a directory the Python example opens. Parquet rather than Arrow
+//! IPC because its own encodings (delta on the timestamps, dictionaries on
+//! the rest; see `parquet_properties`) make the events table a fifth of
+//! its size with no compressor at all, so the zip needs none -- see the
+//! phase 10 metrics. A bundle written before this change, with `.arrow`
+//! tables in a deflated zip, still opens.
 //!
 //! `slice` cuts a bundle down to a time window. Events that overlap the
 //! window are kept whole -- a scope that straddles the edge is still a real
@@ -29,9 +33,10 @@ use crate::zipstore::read_store_zip;
 #[cfg(test)]
 use crate::zipstore::write_store_zip;
 use crate::{
-    read_events_ipc, read_frames_ipc, read_samples_ipc, write_events_ipc, write_frames_ipc,
-    write_samples_ipc, CaptureError, EventRow, FrameRow, SampleRow, DATASET_FORMAT, EVENTS_FILE,
-    FRAMES_FILE, MANIFEST_FILE, SAMPLES_FILE,
+    read_events_ipc, read_events_parquet, read_frames_ipc, read_frames_parquet, read_samples_ipc,
+    read_samples_parquet, write_events_parquet, write_frames_parquet, write_samples_parquet,
+    CaptureError, EventRow, FrameRow, SampleRow, DATASET_FORMAT, EVENTS_FILE, EVENTS_PARQUET,
+    FRAMES_FILE, FRAMES_PARQUET, MANIFEST_FILE, SAMPLES_FILE, SAMPLES_PARQUET,
 };
 
 /// A thread's name, as `/proc/<pid>/task/<tid>/comm` or the producer gave it.
@@ -154,9 +159,9 @@ impl CaptureBundle {
             },
             "time_bounds_ns": bounds.map(|(a, b)| serde_json::json!({"start": a, "end": b})),
             "files": {
-                "events": EVENTS_FILE,
-                "samples": SAMPLES_FILE,
-                "frames": FRAMES_FILE,
+                "events": EVENTS_PARQUET,
+                "samples": SAMPLES_PARQUET,
+                "frames": FRAMES_PARQUET,
             },
             "bundle": {
                 "target_pid": self.target_pid,
@@ -167,32 +172,33 @@ impl CaptureBundle {
         })
     }
 
-    /// The bundle as one `.orbit.zip`, deflated.
+    /// The bundle as one `.orbit.zip`: Parquet tables, stored.
     pub fn to_zip(&self) -> Result<Vec<u8>, CaptureError> {
-        self.to_zip_with_level(Some(crate::zipstore::BUNDLE_DEFLATE_LEVEL))
+        self.to_zip_with_level(None)
     }
 
-    /// As [`to_zip`](Self::to_zip) at a chosen deflate level, or stored
-    /// with `None`.
+    /// As [`to_zip`](Self::to_zip) with the zip entries deflated at
+    /// `level`, for measuring what a second compressor is worth (little:
+    /// the tables are already encoded). `None` stores them, the default.
     pub fn to_zip_with_level(&self, level: Option<u8>) -> Result<Vec<u8>, CaptureError> {
         let names: HashMap<u32, &str> = self.events.iter().map(|r| (r.event.name_id, r.name.as_str())).collect();
         let events: Vec<LiveEvent> = self.events.iter().map(|r| r.event).collect();
         let resolve = |id: u32| names.get(&id).map(|s| s.to_string()).unwrap_or_default();
 
         let mut events_buf = Vec::new();
-        write_events_ipc(std::io::Cursor::new(&mut events_buf), &events, resolve)?;
+        write_events_parquet(&mut events_buf, &events, resolve)?;
         let mut samples_buf = Vec::new();
-        write_samples_ipc(std::io::Cursor::new(&mut samples_buf), &self.samples)?;
+        write_samples_parquet(&mut samples_buf, &self.samples)?;
         let mut frames_buf = Vec::new();
-        write_frames_ipc(std::io::Cursor::new(&mut frames_buf), &self.frames)?;
+        write_frames_parquet(&mut frames_buf, &self.frames)?;
         let manifest = serde_json::to_string_pretty(&self.manifest_json())?;
 
         Ok(crate::zipstore::write_zip(
             &[
                 (MANIFEST_FILE, manifest.as_bytes()),
-                (EVENTS_FILE, &events_buf),
-                (SAMPLES_FILE, &samples_buf),
-                (FRAMES_FILE, &frames_buf),
+                (EVENTS_PARQUET, &events_buf),
+                (SAMPLES_PARQUET, &samples_buf),
+                (FRAMES_PARQUET, &frames_buf),
             ],
             level,
         )?)
@@ -215,14 +221,21 @@ impl CaptureBundle {
         if !format.starts_with("orbit-capture/") {
             return Err(CaptureError::Manifest(format!("not an Orbit capture: format {format:?}")));
         }
-        let events = read_events_ipc(std::io::Cursor::new(find(EVENTS_FILE)?))?;
-        let samples = match find(SAMPLES_FILE) {
-            Ok(b) => read_samples_ipc(std::io::Cursor::new(b))?,
-            Err(_) => Vec::new(),
+        // Parquet tables, or the Arrow IPC ones an earlier bundle carried.
+        let owned = |b: &[u8]| bytes::Bytes::copy_from_slice(b);
+        let events = match find(EVENTS_PARQUET) {
+            Ok(b) => read_events_parquet(owned(b))?,
+            Err(_) => read_events_ipc(std::io::Cursor::new(find(EVENTS_FILE)?))?,
         };
-        let frames = match find(FRAMES_FILE) {
-            Ok(b) => read_frames_ipc(std::io::Cursor::new(b))?,
-            Err(_) => Vec::new(),
+        let samples = match (find(SAMPLES_PARQUET), find(SAMPLES_FILE)) {
+            (Ok(b), _) => read_samples_parquet(owned(b))?,
+            (_, Ok(b)) => read_samples_ipc(std::io::Cursor::new(b))?,
+            _ => Vec::new(),
+        };
+        let frames = match (find(FRAMES_PARQUET), find(FRAMES_FILE)) {
+            (Ok(b), _) => read_frames_parquet(owned(b))?,
+            (_, Ok(b)) => read_frames_ipc(std::io::Cursor::new(b))?,
+            _ => Vec::new(),
         };
         let b = &manifest["bundle"];
         let slice_ns = match (&b["slice_ns"]["start"], &b["slice_ns"]["end"]) {
@@ -378,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn the_zip_extracts_to_a_dataset_directory_the_manifest_reader_accepts() {
+    fn the_zip_extracts_to_a_directory_the_manifest_reader_accepts() {
         let dir = std::env::temp_dir().join(format!("orbit-bundle-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -390,9 +403,33 @@ mod tests {
         assert_eq!(m.samples, 3);
         assert_eq!(m.frames, 4);
         assert_eq!(m.time_bounds_ns, Some((100, 510)));
-        let rows = read_events_ipc(std::fs::File::open(dir.join(EVENTS_FILE)).unwrap()).unwrap();
+        assert_eq!(m.files, vec!["events.parquet", "frames.parquet", "samples.parquet"]);
+        let rows = read_events_parquet(std::fs::File::open(dir.join(EVENTS_PARQUET)).unwrap()).unwrap();
         assert_eq!(rows.len(), 4);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bundle_saved_with_arrow_tables_in_a_deflated_zip_still_opens() {
+        // The layout of the first day's bundles: IPC tables, deflate entries.
+        let b = sample_bundle();
+        let names: HashMap<u32, &str> = b.events.iter().map(|r| (r.event.name_id, r.name.as_str())).collect();
+        let events: Vec<LiveEvent> = b.events.iter().map(|r| r.event).collect();
+        let mut ev = Vec::new();
+        crate::write_events_ipc(std::io::Cursor::new(&mut ev), &events, |id| names[&id].to_string()).unwrap();
+        let mut sa = Vec::new();
+        crate::write_samples_ipc(std::io::Cursor::new(&mut sa), &b.samples).unwrap();
+        let mut fr = Vec::new();
+        crate::write_frames_ipc(std::io::Cursor::new(&mut fr), &b.frames).unwrap();
+        let mut manifest = b.manifest_json();
+        manifest["files"] = serde_json::json!({"events": EVENTS_FILE, "samples": SAMPLES_FILE, "frames": FRAMES_FILE});
+        let manifest = serde_json::to_string(&manifest).unwrap();
+        let zip = crate::zipstore::write_zip(
+            &[(MANIFEST_FILE, manifest.as_bytes()), (EVENTS_FILE, &ev), (SAMPLES_FILE, &sa), (FRAMES_FILE, &fr)],
+            Some(6),
+        )
+        .unwrap();
+        assert_eq!(CaptureBundle::from_zip(&zip).unwrap(), b);
     }
 
     #[test]
