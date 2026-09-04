@@ -58,6 +58,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/sampling/tree", get(sampling_tree))
         .route("/api/symbols/modules", get(symbols_modules))
         .route("/api/capture/export", get(capture_export))
+        .route("/api/capture/open", post(capture_open))
         .route(
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -441,6 +442,37 @@ async fn capture_export(
         )
             .into_response(),
         Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// `POST /api/capture/open` with `{"path": "...", "t0": .., "t1": ..}`:
+/// opens the bundle at that path on the service's machine as the current
+/// capture -- the whole file, or just the window, which the file's
+/// row-group statistics let the service cut without reading the rest.
+#[derive(Deserialize)]
+struct OpenBody {
+    path: String,
+    t0: Option<u64>,
+    t1: Option<u64>,
+}
+
+async fn capture_open(State(svc): State<Arc<LiveService>>, Json(body): Json<OpenBody>) -> Response {
+    let hook = svc.capture_open.lock().clone();
+    let Some(open) = hook else {
+        return (StatusCode::NOT_IMPLEMENTED, "this service does not open capture files").into_response();
+    };
+    let window = match (body.t0, body.t1) {
+        (Some(a), Some(b)) => Some((a.min(b), a.max(b))),
+        (None, None) => None,
+        _ => return (StatusCode::BAD_REQUEST, "give both t0 and t1, or neither").into_response(),
+    };
+    match tokio::task::spawn_blocking(move || open(&body.path, window)).await {
+        Ok(Ok(summary)) => ([(header::CONTENT_TYPE, "application/json")], summary).into_response(),
+        Ok(Err(error)) => {
+            let status = if error.starts_with("busy") { StatusCode::CONFLICT } else { StatusCode::BAD_REQUEST };
+            (status, error).into_response()
+        }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
@@ -1235,6 +1267,26 @@ mod isolation_tests {
         let out = curl_si(&format!("{base}/api/status"));
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.contains(r#""wire":"packed""#), "{text}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capture_open_posts_the_path_and_window_to_the_hook() {
+        let svc = test_service();
+        svc.set_capture_open(std::sync::Arc::new(|path, window| Ok(format!("{path}:{window:?}"))));
+        let base = spawn_router(svc).await;
+        let post = |body: &str| {
+            let out = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "5", "-X", "POST", "-H", "content-type: application/json", "-d", body])
+                .arg(format!("{base}/api/capture/open"))
+                .output()
+                .expect("curl");
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        let ok = post(r#"{"path":"/tmp/x.orbit.zip","t0":900,"t1":100}"#);
+        assert!(ok.contains("/tmp/x.orbit.zip:Some((100, 900))"), "{ok}");
+        let whole = post(r#"{"path":"/tmp/x.orbit.zip"}"#);
+        assert!(whole.contains("/tmp/x.orbit.zip:None"), "{whole}");
+        assert!(post(r#"{"path":"/tmp/x.orbit.zip","t0":5}"#).contains("400"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

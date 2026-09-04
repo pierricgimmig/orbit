@@ -62,12 +62,15 @@ self-contained capture. Metadata stays untouched; scope data is
 pruned and re-serialized. With Parquet, row groups outside the range
 are skipped via footer stats — multi-GB capture slices in milliseconds.
 
-**Status: done for the live ring; not for files.** Save slice exports the
-selected range from the running service (events overlapping the window
-kept whole, samples by timestamp, frames those samples reference, names of
-what remains). Slicing an existing bundle on disk by row-group statistics,
-without loading it, is not written yet; it is the natural next step now
-that the tables are Parquet.
+**Status: done.** Save slice exports the selected range from the running
+service. On disk, `orbit-service --slice in.orbit.zip out.orbit.zip t0 t1`
+and `POST /api/capture/open {"path","t0","t1"}` cut a saved bundle by its
+Parquet row-group statistics: the tables are written in row groups of
+65,536 rows, the footer's min/max of the start and duration columns say
+which groups can overlap the window, and only those are decoded. 20M
+synthetic events: a 1% window reads 4 of 306 groups in 28 ms, against
+907 ms loading the file (`slice_bench` in orbit-capture). Bundles from
+before the row-group sizing have one group and are read whole.
 
 ## 6. Blog redesign
 
@@ -119,11 +122,13 @@ later if reports feel noisy). Implementation: binary-search each
 scope instance's time range into the sample list, union the hits,
 feed to the existing report builder. No new data structures.
 
-**Status: not started; unblocked.** The sample store is already sorted
-with binary-searched windows and a multi-range report builder
-(`report_json_for_ranges`), so this is the union of one range per scope
-instance fed to what exists. Sampling runs unprivileged on this machine
-(`perf_event_paranoid = -1`).
+**Status: done.** Right-click a scope, "Sampling report for this scope":
+every sample taken while that scope was running on the sample's own
+thread (a per-thread binary search into the instances, with a short walk
+back for recursion), through the same report and tree builders as a time
+selection. `/api/sampling/{report,tree}?scope=<name id>`. Verified on a
+sampled capture of OrbitTestRust: 1,254 of 7,035 samples over 209
+instances of "frame".
 
 ## 10. Hash function names at intern time
 
@@ -133,9 +138,12 @@ timestamps. Lookup is one binary search, then a linear walk over just
 that scope's occurrences. Build lazily on first right-click to keep
 startup fast.
 
-**Status: not started.** Names are interned to a `u32` id already; the
-inverted index (name id → sorted starts) is what 9 needs to find a scope's
-instances without walking the ring, and the Live tab would use it too.
+**Status: done, on the service.** `scope_index.rs` walks the ring once per
+ring generation and keeps every instance of every scope name, so a
+scope-scoped report is a hash lookup plus the sorted per-thread instance
+lists; it is built on the first request, not at capture time. The
+interned `u32` id is the key; a 64-bit hash was not needed since the
+intern table already makes the id stable for the capture.
 
 ## 11. Live Functions pane (parity with original Orbit)
 
@@ -145,12 +153,14 @@ min, max, std dev, module, address. Use Welford's online algorithm
 for running mean and variance in constant time per sample. Also
 feeds a histogram view of the timing distribution.
 
-**Status: half done.** The report panel's Live tab has one row per scope
-with count, total, avg, min, max and std dev over the selection or the
-whole capture, plus sample counts by thread, refreshed as data streams.
-Missing: the type column, module and address, the histogram, and Welford —
-the tab recomputes from the index every 250 ms, which is fine at a million
-events and will not be at ten.
+**Status: done, except the address column.** The Live tab folds every
+event into its row once with Welford's running mean and variance, keeps a
+log-scale duration histogram per row (drawn above the table for the
+clicked row, which also highlights the scope on the timeline), and shows
+type (D/MS/MA), count, total, avg, min, max, std dev and module. Sampled
+callstack frames, which share the function-call kind, are marked and left
+out. Addresses are not shown: manual scopes have none and dynamic
+instrumentation reports by function id.
 
 ## 12. Agent-native profiling interface
 
@@ -219,8 +229,12 @@ changes, LTO can make the same logical function look different.
 Alongside the timeline, linked so clicking a bar in one highlights
 the other. The one thing every engineer instinctively reaches for.
 
-**Status: not started.** The service's top-down tree over a selection is
-the data; the view is a viewer-side widget.
+**Status: done.** A Flame tab in the report panel draws the top-down tree
+over the current selection (or scope, or whole capture) as nested bars,
+width by inclusive samples, coloured by name like the timeline. Hover
+names a bar with its samples and share; a click highlights every instance
+of that function on the timeline through the search (again to clear); the
+scope selected on the timeline outlines its bars.
 
 ## 18. Regression detector
 

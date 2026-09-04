@@ -31,9 +31,11 @@
 //! that needs more can be re-encoded by any consumer once it is loaded.
 
 pub mod bundle;
+pub mod slice;
 pub mod zipstore;
 
 pub use bundle::{CaptureBundle, ProcessName, ThreadName, BUNDLE_SUFFIX};
+pub use slice::{slice_bundle_bytes, slice_bundle_file, SliceStats};
 
 /// [`CaptureBundle::to_zip_with_level`], as a free function for tools.
 pub fn bundle_zip_with_level(bundle: &CaptureBundle, level: Option<u8>) -> Result<Vec<u8>, CaptureError> {
@@ -252,9 +254,12 @@ pub fn write_events_ipc_to_vec(
 /// inflating anything. A codec on top would buy five to ten percent for
 /// C code (zstd) or a slower Save, so there is none.
 pub fn parquet_properties(delta: &[&str]) -> WriterProperties {
+    // Row groups of CHUNK_ROWS, each with min/max statistics in the footer,
+    // so a slice of the file can skip the groups outside its window.
     let mut b = WriterProperties::builder()
         .set_writer_version(WriterVersion::PARQUET_2_0)
         .set_compression(Compression::UNCOMPRESSED)
+        .set_max_row_group_row_count(Some(CHUNK_ROWS))
         .set_dictionary_enabled(true);
     for col in delta {
         let path = ColumnPath::from(*col);
@@ -301,7 +306,7 @@ fn column<'a, T: 'static>(batch: &'a RecordBatch, i: usize, what: &str) -> Resul
 }
 
 /// Decodes one events batch, whichever container it came from.
-fn event_rows_from_batch(batch: &RecordBatch, out: &mut Vec<EventRow>) -> Result<(), ArrowError> {
+pub(crate) fn event_rows_from_batch(batch: &RecordBatch, out: &mut Vec<EventRow>) -> Result<(), ArrowError> {
     let start: &UInt64Array = column(batch, 0, "u64")?;
     let dur: &UInt64Array = column(batch, 1, "u64")?;
     let pid: &UInt32Array = column(batch, 2, "u32")?;
@@ -405,7 +410,7 @@ pub fn write_samples_ipc<W: Write>(writer: W, samples: &[SampleRow]) -> Result<(
     Ok(())
 }
 
-fn sample_rows_from_batch(batch: &RecordBatch, out: &mut Vec<SampleRow>) -> Result<(), ArrowError> {
+pub(crate) fn sample_rows_from_batch(batch: &RecordBatch, out: &mut Vec<SampleRow>) -> Result<(), ArrowError> {
     let ts: &UInt64Array = column(batch, 0, "u64")?;
     let tid: &UInt32Array = column(batch, 1, "u32")?;
     let frames: &ListArray = column(batch, 2, "list")?;
@@ -655,6 +660,41 @@ pub fn read_manifest(dir: impl AsRef<Path>) -> Result<Manifest, CaptureError> {
         time_bounds_ns,
         files,
     })
+}
+
+/// The names a bundle's manifest carries: target pid, processes, threads.
+/// The `bundle` section is optional, so a zipped dataset directory reads as
+/// a capture with no names.
+pub fn read_manifest_names(manifest: &[u8]) -> Result<(u32, Vec<ProcessName>, Vec<ThreadName>), CaptureError> {
+    let manifest: serde_json::Value = serde_json::from_slice(manifest)?;
+    let format = manifest["format"].as_str().unwrap_or_default();
+    if !format.starts_with("orbit-capture/") {
+        return Err(CaptureError::Manifest(format!("not an Orbit capture: format {format:?}")));
+    }
+    let b = &manifest["bundle"];
+    let processes = b["processes"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| Some(ProcessName { pid: p["pid"].as_u64()? as u32, name: p["name"].as_str()?.to_string() }))
+                .collect()
+        })
+        .unwrap_or_default();
+    let threads = b["threads"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| {
+                    Some(ThreadName {
+                        pid: t["pid"].as_u64()? as u32,
+                        tid: t["tid"].as_u64()? as u32,
+                        name: t["name"].as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((b["target_pid"].as_u64().unwrap_or(0) as u32, processes, threads))
 }
 
 /// The path of one of a dataset's tables.

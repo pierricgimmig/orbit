@@ -169,6 +169,57 @@ pub fn write_zip(entries: &[(&str, &[u8])], level: Option<u8>) -> Result<Vec<u8>
     Ok(out)
 }
 
+/// The byte range of every entry of a stored zip, in central directory
+/// order, so a reader can work on the file's bytes in place. A deflated
+/// entry is `Unsupported`: it has no in-place bytes to give. Nothing is
+/// checked against its CRC here; that is the reader's call when it
+/// decodes the entry.
+pub fn stored_entry_ranges(bytes: &[u8]) -> Result<Vec<(String, std::ops::Range<usize>)>, ZipError> {
+    if bytes.len() < 22 {
+        return Err(ZipError::NotAZip);
+    }
+    let floor = bytes.len().saturating_sub(22 + u16::MAX as usize);
+    let eocd = (floor..=bytes.len() - 22)
+        .rev()
+        .find(|&i| u32_at(bytes, i) == EOCD_SIG)
+        .ok_or(ZipError::NotAZip)?;
+    let entries = u16_at(bytes, eocd + 10) as usize;
+    let cd_offset = u32_at(bytes, eocd + 16) as usize;
+    let mut out = Vec::with_capacity(entries);
+    let mut pos = cd_offset;
+    for _ in 0..entries {
+        if pos + 46 > bytes.len() || u32_at(bytes, pos) != CENTRAL_SIG {
+            return Err(ZipError::Truncated);
+        }
+        let method = u16_at(bytes, pos + 10);
+        let csize = u32_at(bytes, pos + 20) as usize;
+        let name_len = u16_at(bytes, pos + 28) as usize;
+        let extra_len = u16_at(bytes, pos + 30) as usize;
+        let comment_len = u16_at(bytes, pos + 32) as usize;
+        let local = u32_at(bytes, pos + 42) as usize;
+        if pos + 46 + name_len > bytes.len() {
+            return Err(ZipError::Truncated);
+        }
+        let name = String::from_utf8_lossy(&bytes[pos + 46..pos + 46 + name_len]).into_owned();
+        pos += 46 + name_len + extra_len + comment_len;
+        if method != 0 {
+            return Err(ZipError::Unsupported("compressed entry cannot be read in place"));
+        }
+        if local + 30 > bytes.len() || u32_at(bytes, local) != LOCAL_SIG {
+            return Err(ZipError::Truncated);
+        }
+        let l_name = u16_at(bytes, local + 26) as usize;
+        let l_extra = u16_at(bytes, local + 28) as usize;
+        let start = local + 30 + l_name + l_extra;
+        let end = start.checked_add(csize).ok_or(ZipError::Truncated)?;
+        if end > bytes.len() {
+            return Err(ZipError::Truncated);
+        }
+        out.push((name, start..end));
+    }
+    Ok(out)
+}
+
 /// Reads a zip of stored and deflated entries back into (name, bytes)
 /// pairs, in central directory order. Every entry's CRC is checked.
 pub fn read_store_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ZipError> {
@@ -273,6 +324,19 @@ mod tests {
         assert_eq!(back[1].1, big);
         assert_eq!(back[2].0, "empty");
         assert!(back[2].1.is_empty());
+    }
+
+    #[test]
+    fn stored_entries_can_be_read_in_place_and_deflated_ones_cannot() {
+        let zip = write_store_zip(&[("a", b"hello"), ("dir/b", b"world!")]).unwrap();
+        let ranges = stored_entry_ranges(&zip).unwrap();
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(&zip[ranges[0].1.clone()], b"hello");
+        assert_eq!(ranges[1].0, "dir/b");
+        assert_eq!(&zip[ranges[1].1.clone()], b"world!");
+        let big: Vec<u8> = vec![0; 100_000];
+        let deflated = write_zip(&[("a", &big)], Some(6)).unwrap();
+        assert!(matches!(stored_entry_ranges(&deflated), Err(ZipError::Unsupported(_))));
     }
 
     #[test]

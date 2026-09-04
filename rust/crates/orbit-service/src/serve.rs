@@ -1178,6 +1178,26 @@ pub fn run_on(
         }
     }));
 
+    let open_service = service.clone();
+    let open_store = store.clone();
+    let open_running = capture.running.clone();
+    let open_target = capture.target_pid.clone();
+    service.set_capture_open(Arc::new(move |path, window| {
+        if open_running.load(Ordering::Relaxed) {
+            return Err("busy: stop the capture before opening one".to_string());
+        }
+        let bundle = match window {
+            // The file's row-group statistics decide what is read; a slice
+            // of a large capture touches a few groups and the footer.
+            Some((a, b)) => orbit_capture::slice_bundle_file(path, a, b).map(|(b, _)| b),
+            None => std::fs::read(path)
+                .map_err(|e| orbit_capture::CaptureError::Io(e))
+                .and_then(|bytes| orbit_capture::CaptureBundle::from_zip(&bytes)),
+        }
+        .map_err(|e| format!("{path}: {e}"))?;
+        open_bundle(&open_service, &open_store, &open_target, bundle)
+    }));
+
     let import_service = service.clone();
     let import_store = store.clone();
     let import_running = capture.running.clone();

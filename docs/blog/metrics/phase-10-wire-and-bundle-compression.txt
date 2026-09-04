@@ -167,3 +167,28 @@ NOT DONE / NOTES
   the wire and in the file only. The ring is memory, not bandwidth.
 - Deflate level for the bundle is fixed at 6; a --save-level knob is easy
   if a 1 GB capture ever makes the three seconds matter.
+
+=====================================================================
+7. Slicing a bundle on disk by row-group statistics (2026-09-04)
+=====================================================================
+Tables are now written in row groups of 65,536 rows (parquet's
+max_row_group_row_count), each with min/max statistics in the footer.
+`slice_bundle_file` keeps a group when min(start) <= t1 and
+max(start) + max(duration) >= t0, decodes only those, and filters rows
+exactly. The zip is stored, so each table is a byte range of the file:
+one read, no copies.
+
+  cd rust/crates/orbit-capture
+  ORBIT_SLICE_BENCH_EVENTS=20000000 cargo test --release slice_bench -- --ignored --nocapture
+
+  events      bundle    1% window: by footer stats          by loading it all
+  5,000,000    5.0 MB   50,001 events, 1 of 77 groups, 10 ms       223 ms
+  20,000,000  20.1 MB   200,001 events, 4 of 306 groups, 28 ms     907 ms
+
+  (synthetic events a microsecond apart: they pack to ~1 B/event, so the
+  file is small; the group count is what scales.)
+
+Real bundle (363,295 events, written before the row-group sizing so one
+group): `orbit-service --slice` cut a 2% window to 7,604 events in 15 ms
+wall; `POST /api/capture/open` with the same window opened it into the
+ring in 99 ms end to end.

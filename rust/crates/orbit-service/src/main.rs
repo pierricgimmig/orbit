@@ -92,6 +92,42 @@ fn parse_args() -> Args {
             "--out-arrow" => args.out_arrow = iter.next(),
             "--gpu-helper" => args.gpu_helper = iter.next(),
             "--host" => args.host = iter.next(),
+            "--slice" => {
+                // orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>
+                let input = iter.next().unwrap_or_default();
+                let output = iter.next().unwrap_or_default();
+                let t0: u64 = iter.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                let t1: u64 = iter.next().and_then(|v| v.parse().ok()).unwrap_or(u64::MAX);
+                if input.is_empty() || output.is_empty() {
+                    eprintln!("orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>");
+                    std::process::exit(2);
+                }
+                let started = std::time::Instant::now();
+                match orbit_capture::slice_bundle_file(&input, t0, t1) {
+                    Ok((bundle, stats)) => match bundle.to_zip().and_then(|zip| std::fs::write(&output, zip).map_err(Into::into)) {
+                        Ok(()) => {
+                            eprintln!(
+                                "orbit-service: {output}: {} events, {} samples, {} frames from {} of {} event row groups in {:.3} s",
+                                bundle.events.len(),
+                                bundle.samples.len(),
+                                bundle.frames.len(),
+                                stats.event_row_groups_read,
+                                stats.event_row_groups,
+                                started.elapsed().as_secs_f64()
+                            );
+                            std::process::exit(0);
+                        }
+                        Err(error) => {
+                            eprintln!("orbit-service: could not write {output}: {error}");
+                            std::process::exit(2);
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("orbit-service: could not slice {input}: {error}");
+                        std::process::exit(2);
+                    }
+                }
+            }
             "--wire" => {
                 let v = iter.next().unwrap_or_default();
                 match orbit_live_server::WireFormat::parse(&v) {
@@ -126,6 +162,8 @@ fn parse_args() -> Args {
                      orbit-service --wire raw|packed|deflate --serve  event batches on the \
                      WebSocket as 32-byte records, delta-varint packed (default), or \
                      packed and deflated\n\
+                     orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>  cut a \
+                     saved capture to a window, reading only the row groups inside it\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]"
                 );

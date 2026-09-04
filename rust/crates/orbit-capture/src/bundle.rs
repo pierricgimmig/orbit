@@ -216,11 +216,9 @@ impl CaptureBundle {
                 .map(|(_, d)| d.as_slice())
                 .ok_or_else(|| CaptureError::Manifest(format!("bundle has no {name}")))
         };
-        let manifest: serde_json::Value = serde_json::from_slice(find(MANIFEST_FILE)?)?;
-        let format = manifest["format"].as_str().unwrap_or_default();
-        if !format.starts_with("orbit-capture/") {
-            return Err(CaptureError::Manifest(format!("not an Orbit capture: format {format:?}")));
-        }
+        let manifest_bytes = find(MANIFEST_FILE)?;
+        let (target_pid, processes, threads) = crate::read_manifest_names(manifest_bytes)?;
+        let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)?;
         // Parquet tables, or the Arrow IPC ones an earlier bundle carried.
         let owned = |b: &[u8]| bytes::Bytes::copy_from_slice(b);
         let events = match find(EVENTS_PARQUET) {
@@ -244,35 +242,8 @@ impl CaptureBundle {
             }
             _ => None,
         };
-        let processes = b["processes"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|p| {
-                        Some(ProcessName {
-                            pid: p["pid"].as_u64()? as u32,
-                            name: p["name"].as_str()?.to_string(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let threads = b["threads"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|t| {
-                        Some(ThreadName {
-                            pid: t["pid"].as_u64()? as u32,
-                            tid: t["tid"].as_u64()? as u32,
-                            name: t["name"].as_str()?.to_string(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         Ok(CaptureBundle {
-            target_pid: b["target_pid"].as_u64().unwrap_or(0) as u32,
+            target_pid,
             slice_ns,
             processes,
             threads,

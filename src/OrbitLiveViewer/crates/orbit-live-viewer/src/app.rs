@@ -795,6 +795,11 @@ enum ReportTab {
     BottomUp,
     /// The modules the target mapped, and how many symbols each gave up.
     Modules,
+    /// The top-down tree as a flame graph: width is inclusive samples,
+    /// nesting is the call path. Linked to the timeline both ways: a bar
+    /// click highlights every instance of that function, the selected
+    /// scope on the timeline outlines its bars (TODO item 17).
+    Flame,
     /// Orbit's Live tab: every scope seen so far with count, total, average,
     /// min, max and standard deviation, plus what the samples are doing --
     /// updated as the capture runs, computed in the viewer from its own
@@ -812,6 +817,7 @@ impl ReportTab {
             "bottom_up" | "bottomup" => Some(ReportTab::BottomUp),
             "modules" => Some(ReportTab::Modules),
             "live" => Some(ReportTab::Live),
+            "flame" => Some(ReportTab::Flame),
             _ => None,
         }
     }
@@ -823,6 +829,7 @@ impl ReportTab {
             ReportTab::BottomUp => "Bottom-up",
             ReportTab::Modules => "Modules",
             ReportTab::Live => "Live",
+            ReportTab::Flame => "Flame",
         }
     }
 
@@ -4907,6 +4914,13 @@ impl OrbitLiveApp {
                     let title = match (&report, self.report_tab) {
                         (_, ReportTab::Live) => self.live_title(),
                         (Some(_), _) => format!("Sampling report — {samples} samples"),
+                        // The tree tabs have their own sample count even
+                        // before (or without) a flat report.
+                        (None, ReportTab::Flame | ReportTab::TopDown | ReportTab::BottomUp)
+                            if self.tree.is_some() =>
+                        {
+                            format!("Call tree — {} samples", self.tree.as_ref().map(|t| t.samples).unwrap_or(0))
+                        }
                         // No service report (yet, or at all): the viewer can
                         // still say what the selection holds.
                         (None, _) => format!(
@@ -4942,6 +4956,7 @@ impl OrbitLiveApp {
                     for tab in [
                         ReportTab::Live,
                         ReportTab::Flat,
+                        ReportTab::Flame,
                         ReportTab::TopDown,
                         ReportTab::BottomUp,
                         ReportTab::Modules,
@@ -4977,6 +4992,7 @@ impl OrbitLiveApp {
                         ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
                         ReportTab::Modules => self.module_rows(ui),
                         ReportTab::Live => self.live_rows(ui),
+                        ReportTab::Flame => self.flame_rows(ui),
                     }
                 });
             });
@@ -5390,6 +5406,95 @@ impl OrbitLiveApp {
                 // Linked to the timeline the way the search box is: every
                 // instance of this scope lights up, the rest dims.
                 self.search = self.intern.get(id).unwrap_or("").to_string();
+            }
+        }
+    }
+
+    /// The Flame tab: the top-down tree drawn as nested bars, width
+    /// proportional to inclusive samples. Hover names a bar with its
+    /// samples and share; a click highlights that function's instances on
+    /// the timeline (and again to clear); the timeline's selected scope
+    /// outlines the bars with its name.
+    #[allow(deprecated)] // show_tooltip_at_pointer: the bars are painted, not widgets
+    fn flame_rows(&mut self, ui: &mut Ui) {
+        let font = self.ui_tweaks.report_font;
+        let Some(tree) = self.tree.clone() else {
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(font));
+            return;
+        };
+        if tree.mode != "top_down" || tree.samples == 0 {
+            if tree.samples == 0 {
+                ui.label(RichText::new("No samples here.").color(theme::MUTED).size(font));
+            } else {
+                ui.label(RichText::new("Fetching the top-down tree…").color(theme::MUTED).size(font));
+            }
+            return;
+        }
+        let width = ui.available_width().max(200.0);
+        let bars = flame_layout(&tree.roots, width);
+        let depth = bars.iter().map(|b| b.depth).max().unwrap_or(0) + 1;
+        let row_h = (font + 7.0).max(16.0);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, depth as f32 * row_h), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let pointer = ui.ctx().pointer_hover_pos();
+        let selected_name = self.selected.and_then(|p| self.intern.get(p.name_id)).map(str::to_string);
+        let mut hovered: Option<&FlameBar> = None;
+        let mut clicked: Option<String> = None;
+        let click = ui.input(|i| i.pointer.primary_clicked());
+        for bar in &bars {
+            let r = Rect::from_min_size(
+                Pos2::new(rect.left() + bar.x, rect.top() + bar.depth as f32 * row_h),
+                Vec2::new(bar.w.max(1.0), row_h - 1.0),
+            );
+            let base = if bar.is_thread {
+                theme::INPUT
+            } else {
+                let c = theme::display_argb(orbit_live_event::named_scope_color(bar.name.as_bytes(), bar.depth as u8));
+                Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+            };
+            let is_hover = pointer.is_some_and(|p| r.contains(p));
+            let dim = self.search_active() && !bar.name.contains(self.search.as_str());
+            let fill = if is_hover {
+                theme::ACCENT
+            } else if dim {
+                Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 60)
+            } else {
+                base
+            };
+            painter.rect_filled(r, 2.0, fill);
+            if selected_name.as_deref() == Some(bar.name.as_str()) {
+                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT), StrokeKind::Inside);
+            }
+            if bar.w > 24.0 {
+                let text = truncate_to_width(&bar.name, bar.w - 6.0, font - 1.0);
+                painter.text(
+                    Pos2::new(r.left() + 3.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    text,
+                    FontId::new(font - 1.0, fonts::medium()),
+                    if is_hover || bar.is_thread { theme::TEXT } else { theme::PANEL },
+                );
+            }
+            if is_hover {
+                hovered = Some(bar);
+                if click {
+                    clicked = Some(bar.name.clone());
+                }
+            }
+        }
+        if let Some(bar) = hovered {
+            let text = format!("{}\n{} samples, {:.1}% of the selection", bar.name, bar.samples, bar.percent);
+            egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), egui::Id::new("orbit_flame_tip"), |ui| {
+                ui.label(RichText::new(text).size(font));
+            });
+        }
+        if let Some(name) = clicked {
+            if !name.is_empty() {
+                if self.search == name {
+                    self.search.clear();
+                } else {
+                    self.search = name;
+                }
             }
         }
     }
@@ -6771,6 +6876,86 @@ impl UiTweaks {
     }
 }
 
+/// One bar of the flame graph, in panel pixels.
+#[derive(Clone, Debug, PartialEq)]
+struct FlameBar {
+    x: f32,
+    w: f32,
+    depth: usize,
+    name: String,
+    samples: u64,
+    percent: f64,
+    /// A thread root: drawn plain and labelled, never coloured by name.
+    is_thread: bool,
+}
+
+/// Lays the top-down tree out as flame bars across `width` pixels: the
+/// roots share the top row by inclusive samples, each node's children sit
+/// under it in the tree's order. Bars under half a pixel are dropped, so a
+/// million-node tree is a few thousand bars.
+fn flame_layout(roots: &[crate::net::TreeNodeJson], width: f32) -> Vec<FlameBar> {
+    let total: u64 = roots.iter().map(|r| r.inclusive).sum();
+    if total == 0 {
+        return Vec::new();
+    }
+    let scale = width as f64 / total as f64;
+    let mut out = Vec::new();
+    let mut stack: Vec<(&crate::net::TreeNodeJson, f64, usize)> = Vec::new();
+    let mut x = 0.0f64;
+    for r in roots.iter().rev() {
+        stack.push((r, x, 0));
+        x += r.inclusive as f64 * scale;
+    }
+    // Reversed so the first root pops first; children likewise.
+    let mut order: Vec<(&crate::net::TreeNodeJson, f64, usize)> = Vec::new();
+    let mut x = 0.0f64;
+    for r in roots {
+        order.push((r, x, 0));
+        x += r.inclusive as f64 * scale;
+    }
+    stack.clear();
+    stack.extend(order.into_iter().rev());
+    while let Some((node, x, depth)) = stack.pop() {
+        let w = node.inclusive as f64 * scale;
+        if w < 0.5 {
+            continue;
+        }
+        out.push(FlameBar {
+            x: x as f32,
+            w: w as f32,
+            depth,
+            name: node.name.clone(),
+            samples: node.inclusive,
+            percent: 100.0 * node.inclusive as f64 / total as f64,
+            is_thread: node.kind == "thread",
+        });
+        let mut cx = x;
+        let mut children: Vec<(&crate::net::TreeNodeJson, f64, usize)> = Vec::new();
+        for c in &node.children {
+            children.push((c, cx, depth + 1));
+            cx += c.inclusive as f64 * scale;
+        }
+        stack.extend(children.into_iter().rev());
+    }
+    out
+}
+
+/// `name` cut to what fits in `width` pixels at `font` size, with an
+/// ellipsis; a rough per-character width is enough for a bar label.
+fn truncate_to_width(name: &str, width: f32, font: f32) -> String {
+    let per_char = font * 0.58;
+    let fits = (width / per_char).floor().max(0.0) as usize;
+    if name.chars().count() <= fits {
+        return name.to_string();
+    }
+    if fits < 2 {
+        return String::new();
+    }
+    let mut s: String = name.chars().take(fits - 1).collect();
+    s.push('…');
+    s
+}
+
 /// The duration histogram of one Live row: log-scale buckets, tallest bar
 /// full height, with a few tick labels along the bottom.
 fn paint_histogram(ui: &mut Ui, hist: &[u32; crate::live::HIST_BUCKETS], font: f32) {
@@ -6829,7 +7014,7 @@ enum EdgeTab {
 
 /// Starting width of the sampling report panel. Wide enough for the flat
 /// report's two bars, a function name and a module; the user can drag it.
-const SAMPLING_PANEL_DEFAULT_W: f32 = 440.0;
+const SAMPLING_PANEL_DEFAULT_W: f32 = 600.0;
 
 /// Whether clicking this pick selects its thread for the scheduler's
 /// colouring: only a scope on a thread track does. A scheduler slice, a
@@ -8252,6 +8437,40 @@ mod tests {
         assert!(a + major > a && a + minor > a, "ticks must move t at {t}: {major} {minor}");
         // A real span is untouched.
         assert_eq!(fit_content_window(100.0, 5_000_000.0), (100.0, 5_000_000.0));
+    }
+
+    #[test]
+    fn a_flame_layout_shares_the_width_by_inclusive_samples_and_nests_children() {
+        use crate::net::TreeNodeJson;
+        let leaf = |name: &str, n: u64| TreeNodeJson { name: name.into(), inclusive: n, ..Default::default() };
+        let roots = vec![
+            TreeNodeJson {
+                kind: "thread".into(),
+                name: "main".into(),
+                inclusive: 75,
+                children: vec![
+                    TreeNodeJson { name: "a".into(), inclusive: 50, children: vec![leaf("b", 25)], ..Default::default() },
+                    leaf("c", 20),
+                ],
+                ..Default::default()
+            },
+            TreeNodeJson { kind: "thread".into(), name: "worker".into(), inclusive: 25, ..Default::default() },
+        ];
+        let bars = flame_layout(&roots, 1000.0);
+        let find = |n: &str| bars.iter().find(|b| b.name == n).unwrap();
+        assert_eq!((find("main").x, find("main").w, find("main").depth), (0.0, 750.0, 0));
+        assert!(find("main").is_thread);
+        assert_eq!((find("worker").x, find("worker").w), (750.0, 250.0));
+        assert_eq!((find("a").x, find("a").w, find("a").depth), (0.0, 500.0, 1));
+        assert_eq!((find("c").x, find("c").w, find("c").depth), (500.0, 200.0, 1));
+        assert_eq!((find("b").x, find("b").w, find("b").depth), (0.0, 250.0, 2));
+        assert!((find("b").percent - 25.0).abs() < 1e-9);
+        // Sub-pixel bars are dropped; an empty tree is no bars.
+        let tiny = vec![TreeNodeJson { name: "t".into(), inclusive: 1_000_000, children: vec![leaf("x", 1)], ..Default::default() }];
+        assert_eq!(flame_layout(&tiny, 1000.0).len(), 1);
+        assert!(flame_layout(&[], 1000.0).is_empty());
+        assert_eq!(truncate_to_width("UpdateTransforms", 40.0, 10.0), "Updat…");
+        assert_eq!(truncate_to_width("Tick", 400.0, 10.0), "Tick");
     }
 
     #[test]

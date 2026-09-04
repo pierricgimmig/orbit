@@ -154,6 +154,11 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub capture_import:
         Mutex<Option<std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: opens a bundle from a path on the service's machine,
+    /// whole or cut to a window by the file's own row-group statistics.
+    #[allow(clippy::type_complexity)]
+    pub capture_open:
+        Mutex<Option<std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<String, String> + Send + Sync>>>,
     /// Thread and process names the producer told us, replayed to every
     /// subscriber after the intern table so a reopened capture labels its
     /// tracks without the process being alive.
@@ -229,6 +234,7 @@ impl LiveService {
             modules_json: Mutex::new(None),
             capture_export: Mutex::new(None),
             capture_import: Mutex::new(None),
+            capture_open: Mutex::new(None),
             names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
             self_names: AtomicBool::new(false),
@@ -433,6 +439,13 @@ impl LiveService {
         >,
     ) {
         *self.capture_export.lock() = Some(export);
+    }
+
+    pub fn set_capture_open(
+        &self,
+        open: std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.capture_open.lock() = Some(open);
     }
 
     pub fn set_capture_import(
