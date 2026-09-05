@@ -141,11 +141,12 @@ def page(title, body, root=".", nav=True):
             .replace("{{nav}}", NAV.replace("{{root}}", root) if nav else ""))
 
 
-NAV = ('<nav class="site"><a href="{{root}}/index.html">Orbit</a>'
+NAV = ('<nav class="site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
        '<a href="{{root}}/manual/index.html">Manual</a>'
        '<a href="{{root}}/blog/index.html">Blog</a>'
        '<a href="{{root}}/e2e/report.html">Test report</a>'
-       '<a href="{{root}}/viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a></nav>')
+       '<span class="spacer"></span>'
+       '<a class="cta" href="{{root}}/viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a></nav>')
 
 
 # ------------------------------------------------------------------- capture
@@ -191,7 +192,8 @@ def build(out, stream_path, bundle, name, port):
     os.makedirs(out, exist_ok=True)
     # The viewer pack, as built (build_wasm.sh).
     shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
-    shutil.copy(os.path.join(HERE, "site.css"), os.path.join(out, "site.css"))
+    for asset in ("site.css", "logo.png", "favicon.png"):
+        shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
     # The front-page capture.
     captures = os.path.join(out, "captures")
     os.makedirs(captures, exist_ok=True)

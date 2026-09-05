@@ -1126,6 +1126,36 @@ def hook_from_report(run):
     return f"hooked {name!r}: {message}"
 
 
+
+@scenario("report-filter", "The report's filter box narrows the rows to the functions that match")
+def report_filter(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=flat")
+    before = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    run.click("report_filter")
+    run.chrome.call("Input.insertText", text="b3Mul")
+    after = run.wait_for(
+        lambda: (lambda r: r if r and all("b3mul" in k.lower() for k in r) and len(r) < len(before) else None)(
+            run.rects_matching("report:")),
+        "only the rows containing the filter", timeout=10,
+    )
+    check(run.sel().get("report_filter") == "b3Mul", "the readout shows the filter")
+    run.shot("25-report-filter", settle=0.5)
+    # The trees open along the paths to the matches.
+    run.click("Top-down")
+    run.wait_for(lambda: any("b3mul" in k.lower() for k in run.rects_matching("tree:")), "a matching tree node", timeout=20)
+    # Escape in the box clears it, and every row is back.
+    run.click("report_filter")
+    run.chrome.key("Escape")
+    run.click("Flat")
+    run.wait_for(lambda: len(run.rects_matching("report:")) >= len(before), "the rows back after Escape", timeout=10)
+    return f"{len(after)} of {len(before)} rows match 'b3Mul'"
+
+
 # --------------------------------------------------------------------- main
 
 def main():

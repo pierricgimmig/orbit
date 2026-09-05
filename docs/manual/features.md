@@ -142,6 +142,13 @@ is resizable with the splitter; dragged fully to one side it collapses to a
 slim edge tab that brings it back. `?report=flat|top_down|bottom_up|modules|live|flame`
 in the URL opens a tab on load.
 
+- **Filter box.** "filter functions", next to the tabs: rows whose name or
+  module does not contain the text are not shown, with a "N of M functions
+  match" line above the Flat report; a call tree shows only the paths to
+  matching nodes and opens them; Modules and Live filter the same way.
+  Escape in the box, or its ×, clears it. C++ Orbit's filter over the
+  sampling report. Screenshot: `25-report-filter.png`.
+
 - **Flat** self and inclusive percentages per function, with module.
   Names come from the module's detached debug file when the distribution's
   `-dbg` package is installed, else its symbol tables; the `[vdso]` is a
@@ -266,3 +273,4 @@ in the URL opens a tab on load.
 | `22-website.png` | website | The site's front page with the embedded capture |
 | `23-static-viewer.png` | website | The viewer alone on a stream file, no service |
 | `24-hook-from-report.png` | hook-from-report | The hook menu on a report row |
+| `25-report-filter.png` | report-filter | The Flat report narrowed by the filter box |

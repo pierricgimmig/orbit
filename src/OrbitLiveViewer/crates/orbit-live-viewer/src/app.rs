@@ -590,6 +590,10 @@ pub struct OrbitLiveApp {
     /// True while the self pane's timeline is drawing, so its rows stay out
     /// of the `__orbit_ui` readout.
     in_self_pane: bool,
+    /// The report panel's function filter: rows whose name or module does
+    /// not contain it are not shown, and a tree opens along the paths to
+    /// the rows that do. C++ Orbit's filter box over the sampling report.
+    report_filter: String,
     /// When the capture began, from `CaptureStarted`; 0 until the service
     /// says. Published so a harness can check nothing precedes it.
     capture_start_ns: u64,
@@ -719,6 +723,12 @@ pub struct OrbitLiveApp {
     report_w_override: Option<f32>,
     /// The panel's width last frame, for the readout.
     report_w_last: f32,
+    /// The report panel's width as the user dragged it; None until then
+    /// (a share of the screen). The panel is sized exactly to this and
+    /// resized by the viewer's own handle, on the panel's side of the edge:
+    /// egui's resize grab straddles the edge and sat over the timeline's
+    /// scrollbar, and the two took turns owning the hover.
+    report_w_user: Option<f32>,
     /// The UI knobs window (row spacing and the like) is open.
     show_tweaks: bool,
     ui_tweaks: UiTweaks,
@@ -997,7 +1007,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1048,6 +1058,7 @@ impl OrbitLiveApp {
                 .collect::<Vec<_>>()
                 .join(","),
             self.capture_start_ns,
+            self.report_filter,
         );
         if text == self.sel_readout {
             return;
@@ -1271,6 +1282,7 @@ impl OrbitLiveApp {
             report_collapsed: false,
             report_w_override: None,
             report_w_last: 0.0,
+            report_w_user: None,
             show_tweaks: false,
             ui_tweaks: UiTweaks::load(),
             live_all: crate::live::LiveTable::default(),
@@ -1310,6 +1322,7 @@ impl OrbitLiveApp {
             in_self_pane: false,
             static_capture: static_capture.clone(),
             capture_start_ns: 0,
+            report_filter: String::new(),
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
             trace_args: HashMap::new(),
@@ -5057,14 +5070,19 @@ impl OrbitLiveApp {
         // already went all the way to the left and hid the timeline.
         // A share of the screen, so a laptop keeps most of its width for the
         // timeline and a wide monitor gets the report's columns in view.
-        let default_w = (ctx.screen_rect().width() * SAMPLING_PANEL_SHARE).clamp(320.0, SAMPLING_PANEL_DEFAULT_W);
-        let mut panel = egui::SidePanel::right("orbit_sampling_report")
-            .resizable(true)
-            .default_width(default_w)
-            .min_width(0.0);
+        let screen_w = ctx.screen_rect().width();
+        let default_w = (screen_w * SAMPLING_PANEL_SHARE).clamp(320.0, SAMPLING_PANEL_DEFAULT_W);
         if let Some(w) = self.report_w_override.take() {
-            panel = panel.exact_width(w);
+            self.report_w_user = Some(w);
         }
+        let width = self.report_w_user.unwrap_or(default_w).clamp(0.0, screen_w);
+        // Not egui's resizable panel: its grab zone straddles the edge and
+        // fought the timeline's scrollbar for the hover. The handle below is
+        // the viewer's own, inside the panel's margin.
+        let panel = egui::SidePanel::right("orbit_sampling_report")
+            .resizable(false)
+            .exact_width(width)
+            .min_width(0.0);
         let inner = panel
             .frame(
                 Frame::new()
@@ -5073,6 +5091,7 @@ impl OrbitLiveApp {
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
+                self.report_splitter(ui, width, screen_w);
                 let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
                 // Wrapped, not a single row: the panel is narrow and the tabs
                 // and the selection text must not run off its right edge.
@@ -5148,6 +5167,24 @@ impl OrbitLiveApp {
                             }
                         }
                     }
+                    ui.add_space(8.0);
+                    let filter = ui.add(
+                        egui::TextEdit::singleline(&mut self.report_filter)
+                            .id_salt("orbit_report_filter")
+                            .desired_width(150.0)
+                            .hint_text("filter functions")
+                            .font(FontId::monospace(11.0))
+                            .background_color(theme::INPUT),
+                    );
+                    note_ui_rect("report_filter", filter.rect);
+                    // Escape makes the box surrender focus in the same frame, so
+                    // the key is seen on the frame focus is lost.
+                    if (filter.has_focus() || filter.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape)) {
+                        self.report_filter.clear();
+                    }
+                    if !self.report_filter.is_empty() && icon_pill(ui, "×", "Clear the filter").clicked() {
+                        self.report_filter.clear();
+                    }
                 });
                 // Both axes: a call tree or a long function name is wider than
                 // the panel, and the rows are the thing to scroll, not the
@@ -5163,6 +5200,34 @@ impl OrbitLiveApp {
                 });
             });
         self.after_report_panel(ctx, inner.response.rect);
+    }
+
+    /// The report panel's resize handle: a strip on the panel's side of its
+    /// left edge, in the frame's margin, so it never overlaps the timeline's
+    /// scrollbar. Dragging it sets the width; the cursor says so on hover.
+    fn report_splitter(&mut self, ui: &mut Ui, width: f32, screen_w: f32) {
+        let content = ui.max_rect();
+        // The frame's inner margin is 12 px: the handle takes 8 of them,
+        // starting 2 px in so the timeline's edge pixel column stays the
+        // timeline's.
+        let handle = Rect::from_min_max(
+            Pos2::new(content.left() - 10.0, content.top() - 8.0),
+            Pos2::new(content.left() - 2.0, content.bottom() + 8.0),
+        );
+        let resp = ui
+            .interact(handle, ui.id().with("orbit_report_splitter"), Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        if resp.dragged() {
+            let next = (width - resp.drag_delta().x).clamp(0.0, screen_w);
+            self.report_w_user = Some(next);
+            self.needs_repaint = true;
+        }
+        let active = resp.hovered() || resp.dragged();
+        ui.painter().line_segment(
+            [handle.center_top(), handle.center_bottom()],
+            Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
+        );
+        note_ui_rect("report_splitter", handle);
     }
 
     /// Notices the splitter at either edge. Under `REPORT_COLLAPSE_W` the
@@ -5250,6 +5315,19 @@ impl OrbitLiveApp {
             return;
         }
         self.hooked_hint(ui);
+        let filter = self.report_filter.trim().to_lowercase();
+        let rows: Vec<&crate::net::SamplingRow> = report
+            .rows
+            .iter()
+            .filter(|row| filter.is_empty() || contains_ci(&row.name, &filter) || contains_ci(&row.module, &filter))
+            .collect();
+        if !filter.is_empty() {
+            ui.label(
+                RichText::new(format!("{} of {} functions match", rows.len(), report.rows.len()))
+                    .color(theme::MUTED)
+                    .size(self.ui_tweaks.report_font - 0.5),
+            );
+        }
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         egui::Grid::new("orbit_sampling_rows")
             .num_columns(4)
@@ -5260,7 +5338,7 @@ impl OrbitLiveApp {
                     ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
-                for row in report.rows.iter().take(200) {
+                for row in rows.iter().take(200) {
                     // Bars here as well as in the trees. The native UI only
                     // paints them on the call tree's Inclusive column, but
                     // this is the view you scan hardest, and a column of bars
@@ -5372,13 +5450,19 @@ impl OrbitLiveApp {
                     .map(|(i, n)| (n.clone(), 0usize, i.to_string()))
                     .collect();
                 let mut drawn = 0usize;
+                let filter = self.report_filter.trim().to_lowercase();
                 while let Some((node, depth, path)) = stack.pop() {
                     if drawn >= 500 {
                         break;
                     }
+                    // With a filter, only the paths to matching nodes are
+                    // drawn, and they are drawn open.
+                    if !filter.is_empty() && !tree_node_matches(&node, &filter) {
+                        continue;
+                    }
                     drawn += 1;
                     let expandable = !node.children.is_empty();
-                    let expanded = self.tree_expanded.contains(&path);
+                    let expanded = self.tree_expanded.contains(&path) || !filter.is_empty();
                     // Inclusive as a bar, the way the native Inclusive column
                     // paints it: the shape of the hot path is visible down the
                     // column without reading a single number.
@@ -5465,7 +5549,12 @@ impl OrbitLiveApp {
                     ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
-                for row in modules.modules.iter() {
+                let filter = self.report_filter.trim().to_lowercase();
+                for row in modules
+                    .modules
+                    .iter()
+                    .filter(|m| filter.is_empty() || contains_ci(&m.name, &filter) || contains_ci(&m.path, &filter))
+                {
                     ui.label(
                         RichText::new(row.function_count.to_string())
                             .color(theme::TEXT)
@@ -5603,7 +5692,12 @@ impl OrbitLiveApp {
                     ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
                 }
                 ui.end_row();
-                for r in rows.iter().take(300) {
+                let filter = self.report_filter.trim().to_lowercase();
+                for r in rows
+                    .iter()
+                    .filter(|r| filter.is_empty() || self.intern.get(r.name_id).is_some_and(|n| contains_ci(n, &filter)))
+                    .take(300)
+                {
                     let focused = self.live_focus == Some(r.name_id);
                     let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
                     ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font));
@@ -6314,6 +6408,18 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
         RowId::Lane(key) if key.is_scheduler() => theme::TRACK,
         RowId::Lane(key) => theme::process_track_wash_role(key.pid, theme::WashRole::Leaf),
     }
+}
+
+/// Case-insensitive substring test; `needle` is already lower-case.
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    hay.to_lowercase().contains(needle)
+}
+
+/// Whether a call-tree node, or anything under it, matches the filter.
+fn tree_node_matches(node: &crate::net::TreeNodeJson, needle: &str) -> bool {
+    contains_ci(&node.name, needle)
+        || contains_ci(&node.module, needle)
+        || node.children.iter().any(|c| tree_node_matches(c, needle))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
