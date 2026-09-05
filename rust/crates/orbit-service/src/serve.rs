@@ -32,7 +32,7 @@ use orbit_unwind::ProcessUnwinder;
 use std::collections::HashMap;
 use orbit_live_server::{http, ControlHooks, LiveService, ServerConfig};
 use orbit_perf_records::reader::parse_context_switch;
-use orbit_perf_records::{record_type, PerfEventHeader};
+use orbit_perf_records::{record_type, ForkExit, PerfEventHeader};
 use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -566,6 +566,14 @@ fn open_bundle(
 /// The capture loop the Record button starts: read per-CPU context-switch
 /// rings, pair them into scheduling slices, and push each slice into the
 /// viewer's ring so it appears on the timeline as it happens.
+/// One thread of the target under sampling: its sampling ring and, when
+/// it could be opened, its task-event ring (fork and exit records).
+struct SampledThread {
+    tid: i32,
+    sample: orbit_perf_ring::RingBuffer,
+    task: Option<orbit_perf_ring::RingBuffer>,
+}
+
 fn capture_loop(
     service: Arc<LiveService>,
     running: Arc<AtomicBool>,
@@ -610,29 +618,41 @@ fn capture_loop(
             symbolizer.symbol_count()
         );
     }
-    // One sampling ring per thread of the target, opened up front and then
-    // for every thread that appears while the capture runs: the thread list
-    // is re-read from /proc four times a second (`THREAD_SCAN_EVERY_NS`),
-    // so a thread born mid-capture is sampled from its first quarter
-    // second on. A per-task event with `inherit` would follow children on
-    // its own, but the kernel refuses to mmap one (cpu -1 + inherit), and
-    // per-CPU inherited events cost threads x CPUs rings.
-    let mut sample_rings = Vec::new();
-    let mut sample_tids: Vec<i32> = Vec::new();
-    let open_sample_rings_for_new_threads = |rings: &mut Vec<orbit_perf_ring::RingBuffer>, tids: &mut Vec<i32>| {
+    // One sampled thread = two per-task rings: the sampling ring, and a
+    // task-event ring (`mmap_task`: PERF_RECORD_FORK / EXIT / MMAP for that
+    // task) that says when the thread clones another. A fork record names
+    // the new tid and it is sampled from that pass on, the way C++ Orbit's
+    // tracer reacts to PERF_RECORD_FORK, rather than found by polling
+    // /proc. A per-task event with `inherit` would follow children by
+    // itself, but the kernel refuses to mmap one (cpu -1 + inherit), and
+    // per-CPU inherited events cost threads x CPUs rings. A slow /proc
+    // scan stays as the safety net for a clone that lands between a
+    // thread's birth and its own task ring being armed; it logs when it
+    // finds anything, so a gap would show.
+    let mut threads: Vec<SampledThread> = Vec::new();
+    let sample_thread = |threads: &mut Vec<SampledThread>, tid: i32| -> bool {
+        if threads.iter().any(|t| t.tid == tid) {
+            return false;
+        }
+        let Ok(sample) = orbit_perf_ring::ring::open_stack_sample(period_ns, 64_000, tid, -1, 4096) else {
+            return false;
+        };
+        if sample.enable().is_err() {
+            return false;
+        }
+        let task = orbit_perf_ring::ring::open_mmap_task(tid, -1, 64).ok();
+        if let Some(task) = &task {
+            let _ = task.enable();
+        }
+        threads.push(SampledThread { tid, sample, task });
+        true
+    };
+    let scan_threads = |threads: &mut Vec<SampledThread>| -> usize {
         let Ok(tasks) = std::fs::read_dir(format!("/proc/{target_pid}/task")) else { return 0 };
         let mut opened = 0;
         for entry in tasks.flatten() {
-            let Some(tid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
-                continue;
-            };
-            if tids.contains(&tid) {
-                continue;
-            }
-            if let Ok(ring) = orbit_perf_ring::ring::open_stack_sample(period_ns, 64_000, tid, -1, 4096) {
-                if ring.enable().is_ok() {
-                    rings.push(ring);
-                    tids.push(tid);
+            if let Some(tid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) {
+                if sample_thread(threads, tid) {
                     opened += 1;
                 }
             }
@@ -640,12 +660,12 @@ fn capture_loop(
         opened
     };
     if has_target {
-        open_sample_rings_for_new_threads(&mut sample_rings, &mut sample_tids);
+        scan_threads(&mut threads);
     }
-    const THREAD_SCAN_EVERY_NS: u64 = 250_000_000;
+    const THREAD_SCAN_EVERY_NS: u64 = 2_000_000_000;
     let mut last_thread_scan_ns: u64 = crate::now_monotonic_ns();
-    let sampling_works = !sample_rings.is_empty();
-    if has_target && sample_rings.is_empty() {
+    let sampling_works = !threads.is_empty();
+    if has_target && threads.is_empty() {
         eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
     }
     let mut unwinder = match (has_target, ProcessUnwinder::for_pid(target_pid)) {
@@ -661,7 +681,7 @@ fn capture_loop(
     };
     eprintln!(
         "orbit-service: {} sampling ring(s) at {SAMPLE_HZ} Hz, unwinder {}",
-        sample_rings.len(),
+        threads.len(),
         if unwinder.is_some() { "ready" } else { "unavailable" }
     );
     let sample_flags = SampleFlags::stack_sample();
@@ -914,19 +934,57 @@ fn capture_loop(
         // graph rather than a picket fence.
         drop(_switches);
         if sampling_works {
+            // Thread births and deaths, from every sampled thread's task
+            // ring: a fork is sampled from this pass, an exit frees its
+            // rings.
+            let _task = orbit_api::scope("read task events");
+            let mut born: Vec<i32> = Vec::new();
+            let mut died: Vec<i32> = Vec::new();
+            for thread in threads.iter_mut() {
+                let Some(task) = thread.task.as_mut() else { continue };
+                while let Ok(Some(record)) = task.read_record() {
+                    let Some(header) = PerfEventHeader::parse(&record) else { continue };
+                    let kind = { header.kind };
+                    if kind != record_type::FORK && kind != record_type::EXIT {
+                        continue;
+                    }
+                    let Some(fe) = ForkExit::parse(&record) else { continue };
+                    if { fe.pid } as i32 != target_pid {
+                        continue;
+                    }
+                    let tid = { fe.tid } as i32;
+                    if kind == record_type::FORK {
+                        born.push(tid);
+                    } else if tid == thread.tid {
+                        died.push(tid);
+                    }
+                }
+            }
+            for tid in born {
+                if sample_thread(&mut threads, tid) {
+                    eprintln!("orbit-service: thread {tid} born, sampling it ({} threads)", threads.len());
+                }
+            }
+            if !died.is_empty() {
+                threads.retain(|t| !died.contains(&t.tid));
+            }
             let now = crate::now_monotonic_ns();
             if now.saturating_sub(last_thread_scan_ns) >= THREAD_SCAN_EVERY_NS {
                 last_thread_scan_ns = now;
                 let _scan = orbit_api::scope("scan threads");
-                let opened = open_sample_rings_for_new_threads(&mut sample_rings, &mut sample_tids);
+                let opened = scan_threads(&mut threads);
                 if opened > 0 {
-                    eprintln!("orbit-service: sampling {opened} new thread(s), {} in all", sample_rings.len());
+                    eprintln!(
+                        "orbit-service: the /proc scan found {opened} thread(s) no fork record announced ({} threads)",
+                        threads.len()
+                    );
                 }
             }
         }
         let _samples = orbit_api::scope("read samples");
         if let Some(unwinder) = unwinder.as_mut() {
-            for ring in sample_rings.iter_mut() {
+            for thread in threads.iter_mut() {
+                let ring = &mut thread.sample;
                 while let Ok(Some(record)) = ring.read_record() {
                     let Some(header) = PerfEventHeader::parse(&record) else { continue };
                     if { header.kind } != record_type::SAMPLE {
@@ -1070,7 +1128,10 @@ fn capture_loop(
                 rings.iter().map(|r| r.fill_fraction()).fold(0.0f32, f32::max)
             };
             orbit_api::value("perf switch rings fill %", f64::from(worst(&switch_rings)) * 100.0);
-            orbit_api::value("perf sample rings fill %", f64::from(worst(&sample_rings)) * 100.0);
+            orbit_api::value(
+                "perf sample rings fill %",
+                f64::from(threads.iter().map(|t| t.sample.fill_fraction()).fold(0.0f32, f32::max)) * 100.0,
+            );
             orbit_api::value("scope rings fill %", f64::from(scopes.fill_fraction()) * 100.0);
             let stats = service.stats();
             let viewer_fill = if stats.events_capacity > 0 {

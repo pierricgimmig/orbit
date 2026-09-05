@@ -87,8 +87,11 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   **States** thread state slices, **API** manual `orbit.h` scopes,
   **Sample** callstack sampling with the period in ms next to it. Every
   thread of the target is sampled, including threads born during the
-  capture: the service re-reads the thread list four times a second and
-  opens a sampling ring for each new one.
+  capture: each sampled thread also carries a task-event ring, and the
+  fork record a clone produces names the new thread, which is sampled
+  from that pass on, as C++ Orbit reacts to PERF_RECORD_FORK. A slow
+  scan of the thread list is the safety net and logs if it ever finds
+  a thread no fork record announced.
 - **UNWIND** is a two-way switch, DWARF or FP. **HOOKS** is another:
   **Uprobes** (the default) arms kernel uprobes on the hooked functions and
   needs `CAP_PERFMON`; **User-space** is the trampoline mechanism, not

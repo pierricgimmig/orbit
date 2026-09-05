@@ -460,5 +460,5 @@ stress test for dynamic instrumentation: OrbitTestRust takes a thread count and 
 
 five viewer notes (2026-09-05): sampling misses threads created during the capture; expand/collapse all shift the report's title row; graphs zoomed out omit the points outside the window; the Self pane should open the viewer's rows and name its graphs, with a value readout where the cursor crosses every graph; a vertical cursor line across the tracks like C++ Orbit
 
-  DONE 2026-09-05: the service re-reads /proc/<pid>/task every 250 ms and opens rings for new threads; the tree pills sit on the filter row under the tabs; graphs include the sample before and after the window; every value name is its own lane, the Self pane's rows lead and open; the cursor line and per-graph readouts follow the pointer.
+  DONE 2026-09-05: new threads are announced by PERF_RECORD_FORK on per-thread task rings and sampled from that pass (a 2 s /proc scan is the safety net, and logs if it finds anything); the tree pills sit on the filter row under the tabs; graphs include the sample before and after the window; every value name is its own lane, the Self pane's rows lead and open; the cursor line and per-graph readouts follow the pointer.
 
