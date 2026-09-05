@@ -24,10 +24,11 @@ viewer decodes it with the code path it already has for the socket, so the
 static mode added no format and no dependency.
 
 What works with no service: the timeline, focus and selection, the scope
-menu's highlight, the Live tab and its histogram, the Self pane. What needs
-a service and is hidden or inert on the site: Record, Demo, Open, Clear,
-Save, the process row, and the sampling report tabs (Flat, Top-down,
-Bottom-up, Modules, Flame), which the service computes.
+menu, the Live tab and its histogram, the Self pane, and the sampling
+report -- Flat, Top-down, Bottom-up, Flame and the scope-scoped report
+are computed in the viewer from the sampled frames the stream carries.
+What needs a service and is hidden or inert on the site: Record, Demo,
+Open, Clear, Save, the process row, Modules, and hooking.
 
 ## Hosting
 

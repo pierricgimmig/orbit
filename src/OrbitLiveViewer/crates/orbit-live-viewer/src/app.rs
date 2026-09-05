@@ -593,6 +593,23 @@ pub struct OrbitLiveApp {
     /// not contain it are not shown, and a tree opens along the paths to
     /// the rows that do. C++ Orbit's filter box over the sampling report.
     report_filter: String,
+    /// Frames still to repaint after a layout-changing event with no input
+    /// behind it -- a stream file's end, which opens the report panel. The
+    /// frame that uploads the instances in the new geometry must also be
+    /// presented, and an idle page presents nothing more on its own.
+    settle_frames: u8,
+    /// The largest instance count uploaded so far, and whether the next
+    /// frame must upload again. The first upload that grows the GPU buffer
+    /// is not what the frame draws (a fresh buffer's first write, on the web
+    /// backend, shows up one submit late): the page sat blank after a stream
+    /// loaded until something else re-uploaded. Uploading once more the
+    /// frame after growth is the fix, and costs a cached re-list.
+    uploaded_prims_max: usize,
+    reupload_next_frame: bool,
+    /// What the last timeline payload decided, for `window.__orbit_sel`:
+    /// a harness can see the LOD, the counts, the dest rect and the upload
+    /// mode without reading pixels.
+    draw_readout: String,
     /// When the capture began, from `CaptureStarted`; 0 until the service
     /// says. Published so a harness can check nothing precedes it.
     capture_start_ns: u64,
@@ -1013,7 +1030,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"draw\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1065,6 +1082,8 @@ impl OrbitLiveApp {
                 .join(","),
             self.capture_start_ns,
             self.report_filter,
+            self.last_n_prims,
+            if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
         );
         if text == self.sel_readout {
             return;
@@ -1328,6 +1347,10 @@ impl OrbitLiveApp {
             in_self_pane: false,
             static_capture: static_capture.clone(),
             capture_start_ns: 0,
+            settle_frames: 0,
+            uploaded_prims_max: 0,
+            reupload_next_frame: false,
+            draw_readout: String::new(),
             report_filter: String::new(),
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
@@ -2245,6 +2268,14 @@ impl OrbitLiveApp {
                     self.follow = false;
                     self.fit_to_content();
                     self.needs_repaint = true;
+                }
+                // A stream file ends with this frame and no status ever
+                // comes: this is where its report is computed, and where a
+                // `?report=` deep link is honoured.
+                if self.static_capture.is_some() {
+                    self.pending_report_request = false;
+                    self.show_whole_capture_report();
+                    self.settle_frames = 6;
                 }
             }
             LiveFrame::Hello { .. } => {
@@ -4105,7 +4136,27 @@ impl OrbitLiveApp {
             thread_sel: self.thread_focus().selected,
             target: self.thread_focus().target_pid,
         };
+        if std::mem::take(&mut self.reupload_next_frame) {
+            self.last_dirty = None;
+        }
         let mode = upload_mode(self.last_dirty.as_ref(), &next_key);
+        self.draw_readout = format!(
+            "{{\"lod\":{},\"mode\":\"{:?}\",\"t0\":{},\"t1\":{},\"width\":{:.0},\"dest\":[{},{},{},{}],\"cull\":[{},{}],\"scroll\":{},\"events\":{},\"layout_gen\":{}}}",
+            next_key.lod,
+            mode,
+            next_key.t0,
+            next_key.t1,
+            width,
+            next_key.dest_x_q,
+            next_key.dest_y_q,
+            next_key.dest_w_q,
+            next_key.dest_h_q,
+            next_key.cull_y0_q,
+            next_key.cull_y1_q,
+            next_key.scroll_q,
+            next_key.events,
+            next_key.layout_gen
+        );
         self.last_dirty = Some(next_key);
         if mode == UploadMode::Skip && dragged.is_none() {
             let _up = dev.scope(TID_RENDER, NAME_UPLOAD);
@@ -4180,6 +4231,11 @@ impl OrbitLiveApp {
                         .unwrap_or(0.0);
                     self.tune_listing_mode(tm.dispatch_t1_ns.saturating_sub(tm.dispatch_t0_ns) as f32 / 1e3);
                     self.last_n_prims = frame.instances.len() as u32;
+                    if frame.instances.len() > self.uploaded_prims_max {
+                        self.uploaded_prims_max = frame.instances.len();
+                        self.reupload_next_frame = true;
+                        self.needs_repaint = true;
+                    }
                     self.last_n_lanes_kept = frame.lanes_kept;
                     self.last_n_lanes_reused = frame.lanes_reused;
                     for inst in &mut frame.instances {
@@ -5036,6 +5092,10 @@ impl OrbitLiveApp {
     /// before you have selected anything, the answer you want is about
     /// everything you just recorded.
     fn request_reports(&mut self) {
+        if self.static_capture.is_some() {
+            self.compute_local_reports();
+            return;
+        }
         if let Some((name_id, _)) = &self.scope_report {
             let id = *name_id;
             self.net.get_sampling_report_scope(id);
@@ -5045,6 +5105,19 @@ impl OrbitLiveApp {
         self.net.get_sampling_report(&self.sampling_ranges);
         self.net
             .get_sampling_tree(&self.sampling_ranges, self.report_tab.mode());
+    }
+
+    /// With no service, the report the service would have sent, from the
+    /// sampled frames the index holds.
+    fn compute_local_reports(&mut self) {
+        let (ranges, scope): (Vec<(u64, u64, Option<u32>)>, String) = match &self.scope_report {
+            Some((id, name)) => (crate::local_report::scope_ranges(&self.index, *id), name.clone()),
+            None => (self.sampling_ranges.clone(), String::new()),
+        };
+        self.sampling = Some(crate::local_report::flat_report(&self.index, &self.intern, &ranges, &scope));
+        self.tree = Some(crate::local_report::call_tree(&self.index, &self.intern, &ranges, self.report_tab.mode()));
+        self.needs_repaint = true;
+        self.settle_frames = self.settle_frames.max(3);
     }
 
     /// The whole-capture aggregate, shown when a capture stops.
@@ -5221,9 +5294,13 @@ impl OrbitLiveApp {
                             // different tree; switching to or from Flat does not.
                             if tab.mode() != was_tree_mode || self.tree.is_none() {
                                 self.tree_expanded.clear();
-                                match &self.scope_report {
-                                    Some((id, _)) => self.net.get_sampling_tree_scope(*id, tab.mode()),
-                                    None => self.net.get_sampling_tree(&self.sampling_ranges, tab.mode()),
+                                if self.static_capture.is_some() {
+                                    self.compute_local_reports();
+                                } else {
+                                    match &self.scope_report {
+                                        Some((id, _)) => self.net.get_sampling_tree_scope(*id, tab.mode()),
+                                        None => self.net.get_sampling_tree(&self.sampling_ranges, tab.mode()),
+                                    }
                                 }
                             }
                             if tab == ReportTab::Modules {
@@ -6259,6 +6336,10 @@ impl eframe::App for OrbitLiveApp {
                 .show(ctx, |ui| self.timeline(ui, dt, &devf));
             self.publish_ui_rects();
 
+            if self.settle_frames > 0 {
+                self.settle_frames -= 1;
+                ctx.request_repaint();
+            }
             if self.wants_live_repaint() || self.needs_repaint {
                 self.needs_repaint = false;
                 ctx.request_repaint();

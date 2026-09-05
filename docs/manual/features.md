@@ -202,9 +202,12 @@ in the URL opens a tab on load.
 - **Stream export.** `GET /api/capture/export?format=stream` writes the
   frames a connecting viewer receives as one `.orbit.stream` file. The
   viewer opens it with `viewer/index.html?capture=<url>` and no service:
-  the pills and tabs that need a service are hidden, the file name shows
-  next to the link dot, and the timeline, focus, scope highlight, Live tab
-  and Self pane work. This is how the web site embeds a capture.
+  the pills that need a service are hidden and the file name shows next to
+  the link dot. Everything else works, the sampling report included: with
+  no service the viewer folds the sampled frames it holds into the Flat
+  report, the call trees, the flame graph and the scope-scoped report
+  itself (modules and hooking stay the service's). This is how the web
+  site embeds a capture.
   Screenshot: `23-static-viewer.png`.
 - **Python.** `rust/crates/orbit-capture/python/open_capture.py <unzipped dir>`
   reads the tables with pyarrow and prints the columns and counts; its

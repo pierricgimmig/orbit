@@ -353,9 +353,10 @@ opens with no service (`?capture=<url>` on a `.orbit.stream`, the new
 manual rendered from `docs/manual`, the blog, the screenshots and the e2e
 report. `tools/site/serve.py` serves it on the LAN with the isolation
 headers. The `website` e2e scenario builds and opens it every run. Numbers
-in `phase-13-website.txt`. Not done: a viewer-side sampling report for the
-static page (the report tabs need the service), and hosting it somewhere
-public.
+in `phase-13-website.txt`. Since 2026-09-05 the static page has the
+sampling report too: the viewer folds the sampled frames it holds into
+the Flat report, the trees, the flame graph and the scope-scoped report
+(`local_report.rs`). Not done: hosting it somewhere public.
 
 ## 26. Capture sharing to S3
 
