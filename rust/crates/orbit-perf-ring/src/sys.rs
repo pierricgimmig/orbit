@@ -41,6 +41,27 @@ pub fn perf_event_enable(fd: i32) -> io::Result<()> {
     Ok(())
 }
 
+/// `PERF_EVENT_IOC_SET_OUTPUT`, `_IO('$', 5)`: this event writes its
+/// records into `leader_fd`'s ring instead of needing one of its own.
+pub fn perf_event_set_output(fd: i32, leader_fd: i32) -> io::Result<()> {
+    // SAFETY: plain ioctl on a perf fd.
+    if unsafe { libc::ioctl(fd, 0x2405, leader_fd as libc::c_ulong) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// `PERF_EVENT_IOC_ID`, `_IOR('$', 7, u64)`: the id the event's records
+/// carry as their stream id, so records sharing one ring can be told apart.
+pub fn perf_event_id(fd: i32) -> io::Result<u64> {
+    let mut id: u64 = 0;
+    // SAFETY: the kernel writes one u64 through the pointer.
+    if unsafe { libc::ioctl(fd, 0x8008_2407, &mut id as *mut u64) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(id)
+}
+
 pub fn page_size() -> u64 {
     // SAFETY: sysconf is always safe to call.
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 }

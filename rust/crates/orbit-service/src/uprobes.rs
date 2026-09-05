@@ -26,6 +26,8 @@
 //! delayed-ordering trick the collector's `OrderedProcessor` uses, in
 //! miniature.
 
+use std::collections::HashMap;
+
 use orbit_perf_records::reader::{parse_record_sample, sample_bits, SampleFlags};
 use orbit_perf_records::{record_type, PerfEventHeader};
 use orbit_perf_ring::attr::UprobeAttr;
@@ -61,10 +63,19 @@ pub struct CompletedCall {
     pub depth: u8,
 }
 
-struct Probe {
+/// One CPU's ring: the leader event owns it, every other probe of that CPU
+/// writes into it (`PERF_EVENT_IOC_SET_OUTPUT`).
+struct CpuRing {
     ring: RingBuffer,
-    function_id: u64,
-    is_return: bool,
+    attached_fds: Vec<i32>,
+}
+
+impl Drop for CpuRing {
+    fn drop(&mut self) {
+        for fd in self.attached_fds.drain(..) {
+            orbit_perf_ring::ring::close_fd(fd);
+        }
+    }
 }
 
 /// What arming produced, so the service can say it plainly rather than going
@@ -78,7 +89,12 @@ pub struct ArmReport {
 }
 
 pub struct UprobeSession {
-    probes: Vec<Probe>,
+    /// The process whose hits count. The probes are per CPU for every
+    /// process mapping the file, so records carry other pids too.
+    target_pid: i32,
+    rings: Vec<CpuRing>,
+    /// Record stream id -> (function id, is_return): which probe fired.
+    by_stream: HashMap<u64, (u64, bool)>,
     calls: FunctionCallManager,
     pending: Vec<ProbeHit>,
     newest_seen_ns: u64,
@@ -94,20 +110,27 @@ pub struct HookSpec {
 }
 
 impl UprobeSession {
-    /// Arms entry and return probes for each hook on every current thread of
-    /// `pid`. Threads created later are covered by `PERF_ATTR.inherit`.
+    /// Arms entry and return probes for each hook, one event per CPU for
+    /// every process (pid -1): a uprobe is on the file's inode, so this is
+    /// what covers every thread of the target, born before or after, and
+    /// the records are filtered to `pid` when read. All probes of one CPU
+    /// share one ring.
     ///
     /// A hook that cannot be armed is reported, not fatal: instrumenting nine
     /// of ten requested functions is worth more than instrumenting none.
     pub fn arm(pid: i32, hooks: &[HookSpec]) -> (UprobeSession, ArmReport) {
         let mut session = UprobeSession {
-            probes: Vec::new(),
+            target_pid: pid,
+            rings: Vec::new(),
+            by_stream: HashMap::new(),
             calls: FunctionCallManager::new(),
             pending: Vec::new(),
             newest_seen_ns: 0,
         };
         let mut report = ArmReport::default();
-        let tids = thread_ids(pid);
+        let cpus = online_cpus();
+        // cpu index -> position in `session.rings`, once a leader exists.
+        let mut ring_of_cpu: HashMap<i32, usize> = HashMap::new();
         for hook in hooks.iter().take(MAX_HOOKS) {
             let mut armed_here = 0usize;
             // The *first* real reason, not the last. Thread lists are read
@@ -130,28 +153,50 @@ impl UprobeSession {
                             continue;
                         }
                     };
-                for tid in &tids {
-                    match orbit_perf_ring::ring::open_uprobe(&uprobe, *tid, -1, 64) {
-                        Ok(ring) => {
-                            if let Err(error) = ring.enable() {
-                                note(error.to_string());
-                                continue;
+                for cpu in &cpus {
+                    match ring_of_cpu.get(cpu).copied() {
+                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, 256) {
+                            Ok(ring) => {
+                                let id = match orbit_perf_ring::ring::event_id(&ring) {
+                                    Ok(id) => id,
+                                    Err(error) => {
+                                        note(format!("event id: {error}"));
+                                        continue;
+                                    }
+                                };
+                                if let Err(error) = ring.enable() {
+                                    note(format!("enable: {error}"));
+                                    continue;
+                                }
+                                session.by_stream.insert(id, (hook.function_id, is_return));
+                                ring_of_cpu.insert(*cpu, session.rings.len());
+                                session.rings.push(CpuRing { ring, attached_fds: Vec::new() });
+                                armed_here += 1;
                             }
-                            session.probes.push(Probe {
-                                ring,
-                                function_id: hook.function_id,
-                                is_return,
-                            });
-                            armed_here += 1;
+                            Err(error) => note(format!("open on cpu {cpu}: {error}")),
+                        },
+                        Some(i) => {
+                            let leader = &session.rings[i].ring;
+                            match orbit_perf_ring::ring::open_uprobe_attached(&uprobe, -1, *cpu, leader) {
+                                Ok((fd, id)) => {
+                                    if let Err(error) = orbit_perf_ring::ring::enable_fd(fd) {
+                                        note(format!("enable: {error}"));
+                                        orbit_perf_ring::ring::close_fd(fd);
+                                        continue;
+                                    }
+                                    session.by_stream.insert(id, (hook.function_id, is_return));
+                                    session.rings[i].attached_fds.push(fd);
+                                    armed_here += 1;
+                                }
+                                Err(error) => note(format!("attach on cpu {cpu}: {error}")),
+                            }
                         }
-                        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {}
-                        Err(error) => note(error.to_string()),
                     }
                 }
             }
             if armed_here == 0 {
                 if reason.is_empty() {
-                    reason = "every thread of the target exited before it could be probed".into();
+                    reason = "no cpu accepted the probe".into();
                 }
                 report.failures.push(format!("{}: {reason}", hook.name));
             } else {
@@ -162,21 +207,27 @@ impl UprobeSession {
         (session, report)
     }
 
-    /// Drains every probe ring and returns the calls that can now be closed.
+    /// Drains every CPU's ring and returns the calls that can now be closed.
     pub fn poll(&mut self) -> Vec<CompletedCall> {
         let flags = uprobe_sample_flags();
-        for probe in self.probes.iter_mut() {
-            while let Ok(Some(record)) = probe.ring.read_record() {
+        for cpu in self.rings.iter_mut() {
+            while let Ok(Some(record)) = cpu.ring.read_record() {
                 let Some(header) = PerfEventHeader::parse(&record) else { continue };
                 if { header.kind } != record_type::SAMPLE {
                     continue;
                 }
                 let Some(sample) = parse_record_sample(&record, flags, false) else { continue };
+                // Every process mapping the file fires the probe; only the
+                // target's hits are this capture's.
+                if sample.pid as i32 != self.target_pid {
+                    continue;
+                }
+                let Some(&(function_id, is_return)) = self.by_stream.get(&sample.stream_id) else { continue };
                 let hit = ProbeHit {
                     timestamp_ns: sample.time,
                     tid: sample.tid as i32,
-                    function_id: probe.function_id,
-                    is_return: probe.is_return,
+                    function_id,
+                    is_return,
                 };
                 self.newest_seen_ns = self.newest_seen_ns.max(hit.timestamp_ns);
                 self.pending.push(hit);
@@ -230,6 +281,14 @@ fn uprobe_sample_flags() -> SampleFlags {
     SampleFlags { sample_type: sample_bits::TID_TIME_STREAMID_CPU, regs_user_count: 0 }
 }
 
+/// The CPUs a per-CPU event can be opened on: 0 to the online count.
+fn online_cpus() -> Vec<i32> {
+    // SAFETY: sysconf is always safe to call.
+    let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
+    (0..n.max(1) as i32).collect()
+}
+
+#[allow(dead_code)]
 fn thread_ids(pid: i32) -> Vec<i32> {
     let mut tids = Vec::new();
     if let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/task")) {
@@ -248,7 +307,9 @@ mod tests {
 
     fn empty_session() -> UprobeSession {
         UprobeSession {
-            probes: Vec::new(),
+            target_pid: 0,
+            rings: Vec::new(),
+            by_stream: HashMap::new(),
             calls: FunctionCallManager::new(),
             pending: Vec::new(),
             newest_seen_ns: 0,
@@ -357,7 +418,7 @@ mod tests {
         if report.probe_count > 0 {
             // Running privileged: the probes armed, which is the stronger
             // outcome and equally fine.
-            assert!(session.probes.iter().any(|probe| probe.is_return));
+            assert!(session.by_stream.values().any(|(_, is_return)| *is_return));
             return;
         }
         let failure = report.failures.first().expect("a refusal, with a reason");

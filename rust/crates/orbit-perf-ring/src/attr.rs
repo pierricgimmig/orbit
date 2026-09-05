@@ -219,10 +219,11 @@ impl UprobeAttr {
         // config1 is uprobe_path, config2 is uprobe_offset.
         attr.config1 = path.as_ptr() as u64;
         attr.config2 = file_offset;
-        // New threads of the target inherit the probe. Existing threads are
-        // opened explicitly by the caller; between the two, every thread of
-        // the process is covered.
-        attr.flags |= flag::INHERIT;
+        // No `inherit`: the probe is opened per CPU for every process
+        // (pid -1), which covers threads born later on its own. An inherited
+        // per-task event cannot mmap a ring at all -- perf_mmap refuses
+        // `cpu == -1 && inherit` with EINVAL, which is what the first
+        // privileged run of this code found.
         Ok(UprobeAttr { _path: path, attr })
     }
 

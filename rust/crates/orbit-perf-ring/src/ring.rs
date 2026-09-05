@@ -205,6 +205,43 @@ pub fn open_uprobe(
     RingBuffer::open(uprobe.attr(), pid, cpu, size_kb)
 }
 
+/// Opens a uprobe event that writes into `leader`'s ring
+/// (`PERF_EVENT_IOC_SET_OUTPUT`) instead of getting a ring of its own: one
+/// ring per CPU carries every probe. Returns the fd and the event id its
+/// records carry as `stream_id`. Enabled by the caller.
+pub fn open_uprobe_attached(
+    uprobe: &crate::attr::UprobeAttr,
+    pid: i32,
+    cpu: i32,
+    leader: &RingBuffer,
+) -> io::Result<(i32, u64)> {
+    let fd = sys::perf_event_open(uprobe.attr(), pid, cpu, -1)?;
+    if let Err(error) = sys::perf_event_set_output(fd, leader.fd()) {
+        sys::close(fd);
+        return Err(error);
+    }
+    match sys::perf_event_id(fd) {
+        Ok(id) => Ok((fd, id)),
+        Err(error) => {
+            sys::close(fd);
+            Err(error)
+        }
+    }
+}
+
+/// The id a ring's own event stamps on its records.
+pub fn event_id(ring: &RingBuffer) -> io::Result<u64> {
+    sys::perf_event_id(ring.fd())
+}
+
+pub fn enable_fd(fd: i32) -> io::Result<()> {
+    sys::perf_event_enable(fd)
+}
+
+pub fn close_fd(fd: i32) {
+    sys::close(fd)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
