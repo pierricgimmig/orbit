@@ -762,6 +762,12 @@ pub struct OrbitLiveApp {
     /// egui's resize grab straddles the edge and sat over the timeline's
     /// scrollbar, and the two took turns owning the hover.
     report_w_user: Option<f32>,
+    /// A splitter drag in progress: where inside the handle the press
+    /// landed, so the panel edge tracks the pointer without a jump.
+    report_splitter_grab: Option<f32>,
+    /// egui's pointer state as JSON, for the harness: what a synthetic drag
+    /// actually reached.
+    pointer_readout: String,
     /// The UI knobs window (row spacing and the like) is open.
     show_tweaks: bool,
     ui_tweaks: UiTweaks,
@@ -1076,7 +1082,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"draw\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"draw\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1132,6 +1138,7 @@ impl OrbitLiveApp {
             self.flame_zoom.len(),
             match self.selected_pid { Some(p) => p.to_string(), None => "null".to_string() },
             self.recording || self.status.capturing,
+            self.pointer_readout.clone(),
             if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
         );
         if text == self.sel_readout {
@@ -1360,6 +1367,8 @@ impl OrbitLiveApp {
             report_w_override: None,
             report_w_last: 0.0,
             report_w_user: None,
+            report_splitter_grab: None,
+            pointer_readout: "null".to_string(),
             show_tweaks: false,
             ui_tweaks: UiTweaks::load(),
             live_all: crate::live::LiveTable::default(),
@@ -5421,10 +5430,14 @@ impl OrbitLiveApp {
         // Not egui's resizable panel: its grab zone straddles the edge and
         // fought the timeline's scrollbar for the hover. The handle below is
         // the viewer's own, inside the panel's margin.
+        // `exact_width` pins the panel to `width`; a `min_width(0.0)` after
+        // it used to widen the allowed range back down to zero, and the
+        // panel then kept whatever width egui remembered whenever the
+        // splitter asked for a wider one -- narrowing worked, widening
+        // never did.
         let panel = egui::SidePanel::right("orbit_sampling_report")
             .resizable(false)
-            .exact_width(width)
-            .min_width(0.0);
+            .exact_width(width);
         let inner = panel
             .frame(
                 Frame::new()
@@ -5540,7 +5553,7 @@ impl OrbitLiveApp {
                 // Both axes: a call tree or a long function name is wider than
                 // the panel, and the rows are the thing to scroll, not the
                 // panel to widen.
-                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                egui::ScrollArea::both().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
                     match self.report_tab {
                         ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
                         ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
@@ -5551,39 +5564,62 @@ impl OrbitLiveApp {
                     }
                 });
             });
-        self.paint_report_splitter(ctx, inner.response.rect, width, screen_w);
+        self.paint_report_splitter(ctx, inner.response.rect, screen_w);
         self.after_report_panel(ctx, inner.response.rect);
     }
 
     /// The report panel's resize handle: a strip on the panel's side of its
     /// left edge, in a layer of its own above both panels, so neither
     /// panel's clip nor the timeline's widgets can take the drag from it.
-    fn paint_report_splitter(&mut self, ctx: &Context, panel: Rect, width: f32, screen_w: f32) {
+    /// The handle between the timeline and the report, on the panel's left
+    /// edge, read straight from the pointer like the lane scrollbar: a
+    /// press that lands on it starts the drag, and while the button is
+    /// held the panel's edge follows the pointer. No egui widget, so
+    /// nothing else can claim the press -- the widget version lost it more
+    /// often than it kept it.
+    fn paint_report_splitter(&mut self, ctx: &Context, panel: Rect, screen_w: f32) {
+        const HANDLE_W: f32 = 10.0;
         let handle = Rect::from_min_max(
-            Pos2::new(panel.left() + 1.0, panel.top()),
-            Pos2::new(panel.left() + 9.0, panel.bottom()),
+            Pos2::new(panel.left(), panel.top()),
+            Pos2::new(panel.left() + HANDLE_W, panel.bottom()),
         );
-        let resp = egui::Area::new(egui::Id::new("orbit_report_splitter_area"))
-            .order(egui::Order::Middle)
-            .fixed_pos(handle.min)
-            .interactable(true)
-            .show(ctx, |ui| {
-                let (rect, resp) = ui.allocate_exact_size(handle.size(), Sense::drag());
-                let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-                let active = resp.hovered() || resp.dragged();
-                ui.painter().line_segment(
-                    [rect.center_top(), rect.center_bottom()],
-                    Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
-                );
-                note_ui_rect("report_splitter", rect);
-                resp
-            })
-            .inner;
-        if resp.dragged() {
-            let next = (width - resp.drag_delta().x).clamp(0.0, screen_w);
-            self.report_w_user = Some(next);
-            self.needs_repaint = true;
+        let (down, origin, pos, any_pressed) = ctx.input(|i| {
+            (
+                i.pointer.primary_down(),
+                i.pointer.press_origin(),
+                i.pointer.latest_pos(),
+                i.pointer.primary_pressed(),
+            )
+        });
+        if any_pressed && origin.is_some_and(|p| handle.contains(p)) {
+            self.report_splitter_grab = origin.map(|p| p.x - panel.left());
         }
+        if !down {
+            self.report_splitter_grab = None;
+        }
+        let dragging = self.report_splitter_grab.is_some();
+        if let (Some(grab), Some(p)) = (self.report_splitter_grab, pos) {
+            // The panel's right edge is the screen's: its width is what is
+            // left of the screen right of the pointer, less the grab offset.
+            let right = ctx.screen_rect().right();
+            let next = (right - (p.x - grab)).clamp(0.0, screen_w);
+            if (next - panel.width()).abs() >= 0.5 {
+                self.report_w_user = Some(next);
+                self.needs_repaint = true;
+            }
+        }
+        let hovering = pos.is_some_and(|p| handle.contains(p));
+        if hovering || dragging {
+            ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        let active = hovering || dragging;
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("orbit_report_splitter")));
+        let x = handle.left() + 4.0;
+        painter.line_segment(
+            [Pos2::new(x, handle.top()), Pos2::new(x, handle.bottom())],
+            Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
+        );
+        note_ui_rect("report_splitter", handle);
     }
 
     /// Notices the splitter at either edge. Under `REPORT_COLLAPSE_W` the
@@ -6527,6 +6563,19 @@ impl OrbitLiveApp {
 impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.now_s = ctx.input(|i| i.time);
+        self.pointer_readout = ctx.input(|i| {
+            let p = &i.pointer;
+            format!(
+                "{{\"down\":{},\"pressed\":{},\"pos\":{},\"origin\":{},\"dragging\":{},\"grab\":{},\"w_user\":{}}}",
+                p.primary_down(),
+                p.primary_pressed(),
+                p.latest_pos().map(|q| format!("[{:.0},{:.0}]", q.x, q.y)).unwrap_or("null".into()),
+                p.press_origin().map(|q| format!("[{:.0},{:.0}]", q.x, q.y)).unwrap_or("null".into()),
+                p.is_decidedly_dragging(),
+                self.report_splitter_grab.map(|g| (g as i32).to_string()).unwrap_or("null".into()),
+                self.report_w_user.map(|w| (w as i32).to_string()).unwrap_or("null".into())
+            )
+        });
         // The self-profile pane needs the same scopes the track injection does,
         // so a frame is instrumented when either wants it.
         let devf = DevFrame::begin(self.self_pane_open);
