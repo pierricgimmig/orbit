@@ -5715,13 +5715,12 @@ impl OrbitLiveApp {
         // The screen edge is read before the input lock: egui's context is
         // one lock, and taking it again inside the closure is a deadlock
         // that WASM (which cannot park a thread) turns into a panic.
-        let right = ctx.screen_rect().right();
-        let (down, past_edge) = ctx.input(|i| {
-            let down = i.pointer.primary_down();
-            let past = i.pointer.latest_pos().is_some_and(|p| p.x >= right - 2.0);
-            (down, past)
-        });
-        if w <= REPORT_COLLAPSE_W && (!down || past_edge) {
+        // Only on release: while the button is held the panel sits at its
+        // minimum and a pointer that comes back left widens it again. A
+        // collapse mid-drag left the panel gone and the drag with it, and
+        // the edge tab was the only way back.
+        let down = ctx.input(|i| i.pointer.primary_down());
+        if w <= REPORT_COLLAPSE_W && !down && self.report_splitter_grab.is_none() {
             self.report_collapsed = true;
             self.needs_repaint = true;
             return;
@@ -5969,16 +5968,17 @@ impl OrbitLiveApp {
     /// The line above a report that says what is hooked and what to do
     /// about it: hooks arm on the next Record, not on the capture in view.
     fn hooked_hint(&self, ui: &mut Ui) {
+        // Always one line, so hooking a row does not shift the rows under
+        // it: with nothing hooked the line says so, in the muted colour.
         let n = self.selected_hooks.len();
-        if n == 0 {
-            return;
-        }
-        let text = if self.status.capturing {
-            format!("{n} function(s) hooked — they arm on the next Record")
+        let (text, color) = if n == 0 {
+            ("no functions hooked — tick a row to instrument it on the next Record".to_string(), theme::MUTED)
+        } else if self.status.capturing {
+            (format!("{n} function(s) hooked — they arm on the next Record"), theme::ACCENT)
         } else {
-            format!("{n} function(s) hooked — press Record to instrument them")
+            (format!("{n} function(s) hooked — press Record to instrument them"), theme::ACCENT)
         };
-        ui.label(RichText::new(text).color(theme::ACCENT).size(self.ui_tweaks.report_font - 0.5));
+        ui.label(RichText::new(text).color(color).size(self.ui_tweaks.report_font - 0.5));
     }
 
     /// Marks every node of the current tree expanded.
