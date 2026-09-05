@@ -1,0 +1,39 @@
+#!/bin/bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+#
+# Runs an orbit-service binary as root: any build, any checkout, as long
+# as the file is named orbit-service and belongs to the user asking.
+# Installed by tools/sudo/install.sh as /usr/local/bin/orbit-service-sudo
+# with a NOPASSWD sudoers rule on exactly this path; the name check is
+# what keeps the rule from being "run anything as root".
+#
+#   sudo -n orbit-service-sudo /abs/path/to/orbit-service --serve 44766
+set -eu
+if [ "$#" -lt 1 ]; then
+  echo "usage: orbit-service-sudo /absolute/path/to/orbit-service [args...]" >&2
+  exit 64
+fi
+bin=$1
+shift
+case "$bin" in
+  /*) ;;
+  *) echo "orbit-service-sudo: refused: $bin is not an absolute path" >&2; exit 126 ;;
+esac
+case "$(basename -- "$bin")" in
+  orbit-service|orbit-service-*) ;;
+  *) echo "orbit-service-sudo: refused: $bin is not named orbit-service" >&2; exit 126 ;;
+esac
+if [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
+  echo "orbit-service-sudo: refused: $bin is not an executable file" >&2
+  exit 126
+fi
+# The binary must belong to whoever invoked sudo, or to root: a file
+# someone else planted under the right name does not qualify.
+owner=$(stat -c %u -- "$bin")
+if [ "$owner" != "${SUDO_UID:-0}" ] && [ "$owner" != 0 ]; then
+  echo "orbit-service-sudo: refused: $bin is owned by uid $owner, not you" >&2
+  exit 126
+fi
+exec "$bin" "$@"

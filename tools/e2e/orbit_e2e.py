@@ -128,7 +128,14 @@ class Service:
         self.base = f"http://127.0.0.1:{port}"
         self.log = open(f"/tmp/orbit-e2e-service-{port}.log", "w")
         self.sudo = SUDO if sudo is None else sudo
-        prefix = ["sudo", "-n", "--"] if self.sudo else []
+        # Through the wrapper tools/sudo/install.sh installs, when it is
+        # there: its sudoers rule needs no password and is tied to the
+        # binary's name, so a rebuilt or relocated service still qualifies.
+        wrapper = "/usr/local/bin/orbit-service-sudo"
+        prefix = []
+        if self.sudo:
+            prefix = ["sudo", "-n", "--"] + ([wrapper] if os.path.exists(wrapper) else [])
+            binary = os.path.abspath(binary)
         # sudo relays the SIGTERM `stop` sends, so the service exits either way.
         self.proc = subprocess.Popen(
             prefix + [binary, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
