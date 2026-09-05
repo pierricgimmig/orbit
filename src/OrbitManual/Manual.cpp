@@ -25,88 +25,249 @@ namespace {
 constexpr std::string_view kStyleSheet = R"CSS(:root {
   color-scheme: light dark;
   --page: #ffffff;
-  --panel: #f6f7f9;
-  --ink: #1c2024;
-  --ink-soft: #5c6570;
-  --line: #dfe3e8;
-  --accent: #2f6fb5;
-  --shadow: rgba(20, 26, 33, 0.12);
+  --chrome: #ffffff;
+  --ink: #202124;
+  --ink-soft: #5f6368;
+  --line: #dadce0;
+  --hover: #f8f9fa;
+  --accent: #1a73e8;
+  --accent-strong: #174ea6;
+  --accent-soft: #e8f0fe;
+  --shadow: 0 1px 2px rgba(60, 64, 67, 0.18), 0 2px 8px rgba(60, 64, 67, 0.1);
+  --shadow-soft: 0 1px 2px rgba(60, 64, 67, 0.08);
+  --prose: 46rem;
+  --wide: 54rem;
+  --gutter: 1.5rem;
+  --nav-height: 3.5rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #16191d;
-    --panel: #1e2228;
-    --ink: #e6e9ed;
-    --ink-soft: #9aa4b0;
-    --line: #2c323a;
-    --accent: #74a9e2;
-    --shadow: rgba(0, 0, 0, 0.5);
+    --page: #202124;
+    --chrome: #292a2d;
+    --ink: #e8eaed;
+    --ink-soft: #9aa0a6;
+    --line: #3c4043;
+    --hover: #303134;
+    --accent: #8ab4f8;
+    --accent-strong: #aecbfa;
+    --accent-soft: #174ea6;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.28);
+    --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.28);
   }
 }
 
 * { box-sizing: border-box; }
 
+html {
+  scroll-padding-top: calc(var(--nav-height) + 1rem);
+}
+
 body {
   margin: 0;
-  padding: 0 1.5rem 5rem;
+  min-height: 100vh;
   background: var(--page);
   color: var(--ink);
-  font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-      sans-serif;
+  font: 16px/1.7 "Roboto", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
+      "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: 0.01em;
+  text-rendering: optimizeLegibility;
 }
 
-main { max-width: 60rem; margin: 0 auto; }
-
-header.masthead {
-  max-width: 60rem;
-  margin: 0 auto;
-  padding: 3rem 0 2rem;
-  border-bottom: 1px solid var(--line);
-}
-
-header.masthead h1 { margin: 0; font-size: 2.1rem; letter-spacing: -0.02em; }
-header.masthead p { margin: 0.6rem 0 0; color: var(--ink-soft); }
-
-a { color: var(--accent); }
-
-nav.breadcrumb { padding: 1.5rem 0 0; font-size: 0.9rem; color: var(--ink-soft); }
-nav.breadcrumb a { text-decoration: none; }
-nav.breadcrumb a:hover { text-decoration: underline; }
-
-ol.contents { list-style: none; margin: 2rem 0 0; padding: 0; }
-
-ol.contents li { margin: 0 0 0.75rem; }
-
-ol.contents a {
-  display: flex;
-  gap: 1rem;
-  align-items: baseline;
-  padding: 1rem 1.25rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+a {
+  color: var(--accent);
   text-decoration: none;
-  color: inherit;
 }
 
-ol.contents a:hover { border-color: var(--accent); }
+a:hover { text-decoration: underline; }
 
-ol.contents .number {
-  flex: none;
-  width: 2rem;
-  font-variant-numeric: tabular-nums;
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: var(--nav-height);
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  max-width: var(--wide);
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  color: var(--ink);
+  font-size: 1.125rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.brand:hover { color: var(--ink); text-decoration: none; }
+
+.brand span {
+  font-weight: 400;
   color: var(--ink-soft);
 }
 
-ol.contents .title { font-weight: 600; }
-ol.contents .summary { display: block; font-weight: 400; color: var(--ink-soft); margin-top: 0.2rem; }
+main {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 0 var(--gutter) 5rem;
+}
 
-article h2 { margin: 2.5rem 0 0.5rem; font-size: 1.7rem; letter-spacing: -0.01em; }
-article .summary { margin: 0 0 1.5rem; color: var(--ink-soft); font-size: 1.05rem; }
+.hero {
+  max-width: var(--prose);
+  padding: 4.5rem 0 2.25rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 2.75rem;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.lede {
+  margin: 1rem 0 0;
+  max-width: 40rem;
+  color: var(--ink-soft);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+}
+
+.toc { padding-top: 0.5rem; }
+
+.toc > h2,
+.section-label {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+ol.contents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--chrome);
+  overflow: hidden;
+}
+
+ol.contents li { margin: 0; }
+
+ol.contents li + li { border-top: 1px solid var(--line); }
+
+ol.contents a {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  align-items: start;
+  padding: 1rem 1.25rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+ol.contents a:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+
+ol.contents a:hover .title { color: var(--accent); }
+
+ol.contents .number {
+  grid-row: 1 / span 2;
+  padding-top: 0.1rem;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+ol.contents .title {
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+ol.contents .summary {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-soft);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+nav.breadcrumb {
+  padding: 1.75rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+}
+
+nav.breadcrumb a { font-weight: 500; }
+
+nav.breadcrumb a:hover { text-decoration: underline; }
+
+article { padding-top: 0.35rem; }
+
+article h2 {
+  max-width: var(--prose);
+  margin: 0.35rem 0 0.65rem;
+  font-size: 2.125rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+article > p,
+article .summary {
+  max-width: var(--prose);
+}
+
+article .summary {
+  margin: 0 0 1.75rem;
+  color: var(--ink-soft);
+  font-size: 1.125rem;
+  line-height: 1.55;
+}
+
+article p {
+  margin: 0 0 1.15rem;
+}
+
+article p:last-of-type { margin-bottom: 0; }
 
 figure {
-  margin: 2rem 0;
+  margin: 2.25rem 0 0;
   padding: 0;
 }
 
@@ -114,28 +275,80 @@ figure img {
   display: block;
   width: 100%;
   height: auto;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
-  box-shadow: 0 2px 12px var(--shadow);
-  background: var(--panel);
+  background: var(--hover);
+  box-shadow: var(--shadow);
 }
 
-figcaption { margin-top: 0.75rem; color: var(--ink-soft); font-size: 0.92rem; }
+figcaption {
+  max-width: var(--prose);
+  margin-top: 0.85rem;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
 
 footer.pager {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
-  margin-top: 3rem;
+  gap: 1.5rem;
+  max-width: var(--prose);
+  margin-top: 3.5rem;
   padding-top: 1.5rem;
   border-top: 1px solid var(--line);
-  font-size: 0.95rem;
 }
 
-footer.pager a { text-decoration: none; }
-footer.pager a:hover { text-decoration: underline; }
+footer.pager a {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 48%;
+  font-weight: 500;
+  text-decoration: none;
+}
 
-p.generated { margin-top: 3rem; color: var(--ink-soft); font-size: 0.85rem; }
+footer.pager a:hover { text-decoration: none; }
+
+footer.pager a:hover .pager-title { text-decoration: underline; }
+
+footer.pager .next { align-items: flex-end; text-align: right; }
+
+footer.pager .dir {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+footer.pager .pager-title { color: var(--accent); }
+
+p.generated {
+  margin-top: 3rem;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 40rem) {
+  :root { --gutter: 1.15rem; }
+
+  .hero { padding: 2.75rem 0 1.5rem; }
+
+  .hero h1 { font-size: 2.1rem; }
+
+  article h2 { font-size: 1.75rem; }
+
+  ol.contents a {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    padding: 0.9rem 1rem;
+  }
+
+  footer.pager { flex-direction: column; }
+
+  footer.pager a,
+  footer.pager .next { max-width: 100%; align-items: flex-start; text-align: left; }
+}
 )CSS";
 
 [[nodiscard]] std::string PageHead(std::string_view title, std::string_view style_sheet_path) {
@@ -148,7 +361,12 @@ p.generated { margin-top: 3rem; color: var(--ink-soft); font-size: 0.85rem; }
       "<title>%s</title>\n"
       "<link rel=\"stylesheet\" href=\"%s\">\n"
       "</head>\n"
-      "<body>\n",
+      "<body>\n"
+      "<header class=\"topbar\">\n"
+      "<div class=\"topbar-inner\">\n"
+      "<a class=\"brand\" href=\"index.html\">Orbit<span>Manual</span></a>\n"
+      "</div>\n"
+      "</header>\n",
       EscapeHtml(title), style_sheet_path);
 }
 
@@ -199,8 +417,11 @@ ErrorMessageOr<void> Manual::WriteStyleSheet() const {
 ErrorMessageOr<void> Manual::WriteIndex() const {
   std::string page = PageHead("Orbit Manual", "style.css");
   absl::StrAppend(&page,
-                  "<header class=\"masthead\">\n<h1>Orbit Manual</h1>\n<p>",
-                  EscapeHtml(subtitle_), "</p>\n</header>\n<main>\n<ol class=\"contents\">\n");
+                  "<main>\n<header class=\"hero\">\n<p class=\"eyebrow\">Documentation</p>\n"
+                  "<h1>Orbit Manual</h1>\n<p class=\"lede\">",
+                  EscapeHtml(subtitle_),
+                  "</p>\n</header>\n<section class=\"toc\" aria-labelledby=\"contents-heading\">\n"
+                  "<h2 id=\"contents-heading\">Contents</h2>\n<ol class=\"contents\">\n");
 
   for (size_t index = 0; index < chapters_.size(); ++index) {
     const Chapter& chapter = chapters_[index];
@@ -211,7 +432,7 @@ ErrorMessageOr<void> Manual::WriteIndex() const {
                           EscapeHtml(chapter.summary));
   }
 
-  absl::StrAppend(&page, "</ol>\n</main>\n</body>\n</html>\n");
+  absl::StrAppend(&page, "</ol>\n</section>\n</main>\n</body>\n</html>\n");
   return WriteFile(output_directory_ / "index.html", page);
 }
 
@@ -239,14 +460,18 @@ ErrorMessageOr<void> Manual::WriteChapter(size_t index) const {
 
   absl::StrAppend(&page, "</article>\n<footer class=\"pager\">\n");
   if (index > 0) {
-    absl::StrAppendFormat(&page, "<a href=\"%s\">&larr; %s</a>\n",
+    absl::StrAppendFormat(&page,
+                          "<a class=\"prev\" href=\"%s\"><span class=\"dir\">Previous</span>"
+                          "<span class=\"pager-title\">%s</span></a>\n",
                           ChapterFileName(chapters_[index - 1]),
                           EscapeHtml(chapters_[index - 1].title));
   } else {
     absl::StrAppend(&page, "<span></span>\n");
   }
   if (index + 1 < chapters_.size()) {
-    absl::StrAppendFormat(&page, "<a href=\"%s\">%s &rarr;</a>\n",
+    absl::StrAppendFormat(&page,
+                          "<a class=\"next\" href=\"%s\"><span class=\"dir\">Next</span>"
+                          "<span class=\"pager-title\">%s</span></a>\n",
                           ChapterFileName(chapters_[index + 1]),
                           EscapeHtml(chapters_[index + 1].title));
   } else {
