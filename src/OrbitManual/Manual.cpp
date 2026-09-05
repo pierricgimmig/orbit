@@ -33,7 +33,7 @@ constexpr std::string_view kStyleSheet = R"CSS(:root {
   --accent: #1a73e8;
   --accent-strong: #174ea6;
   --accent-soft: #e8f0fe;
-  --shadow: 0 1px 2px rgba(60, 64, 67, 0.18), 0 2px 8px rgba(60, 64, 67, 0.1);
+  --shadow: 0 1px 3px rgba(60, 64, 67, 0.2), 0 4px 16px rgba(60, 64, 67, 0.12);
   --shadow-soft: 0 1px 2px rgba(60, 64, 67, 0.08);
   --prose: 46rem;
   --wide: 54rem;
@@ -51,7 +51,7 @@ constexpr std::string_view kStyleSheet = R"CSS(:root {
     --hover: #303134;
     --accent: #8ab4f8;
     --accent-strong: #aecbfa;
-    --accent-soft: #174ea6;
+    --accent-soft: #2b3848;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.28);
     --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.28);
   }
@@ -132,7 +132,7 @@ main {
 
 .hero {
   max-width: var(--prose);
-  padding: 4.5rem 0 2.25rem;
+  padding: 3.25rem 0 2rem;
 }
 
 .eyebrow {
@@ -197,7 +197,7 @@ ol.contents a {
 }
 
 ol.contents a:hover {
-  background: var(--hover);
+  background: var(--accent-soft);
   text-decoration: none;
 }
 
