@@ -12,6 +12,21 @@
 //! across records.
 //!
 //!     OrbitTestRust [--seconds N]     default 8; 0 runs until killed
+//!
+//! And a second mode, for stressing dynamic instrumentation: no manual
+//! scopes at all, a known tree of three plain functions called a known
+//! number of times at a known rate on a known number of threads, so a
+//! capture that hooks them can be checked call for call.
+//!
+//!     OrbitTestRust --stress-threads N --stress-hz F --stress-calls K [--wait-go]
+//!
+//! Each thread calls `orbit_stress_outer` K times, F times a second; every
+//! outer calls `orbit_stress_middle` twice and every middle calls
+//! `orbit_stress_inner` three times, so a capture must hold N*K outer at
+//! depth 0, 2*N*K middle at depth 1 and 6*N*K inner at depth 2. With
+//! `--wait-go` the program announces its pid, waits for a line on stdin,
+//! and only then starts: the capture can be armed first. The last line of
+//! output says what was made.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -59,7 +74,94 @@ fn physics_worker(index: u32, stop: Arc<AtomicBool>, jobs: Arc<std::sync::Mutex<
     }
 }
 
+/// The stress tree: three functions the kernel can hook by name, kept out
+/// of line and out of tail position so every call is a real entry and a
+/// real return at its own stack frame.
+#[inline(never)]
+#[no_mangle]
+pub extern "C" fn orbit_stress_inner(x: u64) -> u64 {
+    let mut v = x;
+    for _ in 0..8 {
+        v = v.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    }
+    std::hint::black_box(v)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub extern "C" fn orbit_stress_middle(x: u64) -> u64 {
+    let a = orbit_stress_inner(x);
+    let b = orbit_stress_inner(a);
+    let c = orbit_stress_inner(b);
+    std::hint::black_box(c ^ 1)
+}
+
+#[inline(never)]
+#[no_mangle]
+pub extern "C" fn orbit_stress_outer(x: u64) -> u64 {
+    let a = orbit_stress_middle(x);
+    let b = orbit_stress_middle(a);
+    std::hint::black_box(b ^ 2)
+}
+
+fn arg_u64(name: &str) -> Option<u64> {
+    std::env::args().skip_while(|a| a != name).nth(1).and_then(|s| s.parse().ok())
+}
+
+/// One stress thread: `calls` outer calls at `hz`, paced by a spin-wait so
+/// the rate holds at frequencies a sleep could not.
+fn stress_thread(index: u64, calls: u64, hz: u64) -> u64 {
+    let period = Duration::from_nanos(if hz > 0 { 1_000_000_000 / hz } else { 0 });
+    let mut next = Instant::now();
+    let mut acc = index;
+    for i in 0..calls {
+        acc = orbit_stress_outer(acc.wrapping_add(i));
+        if hz > 0 {
+            next += period;
+            while Instant::now() < next {
+                std::hint::spin_loop();
+            }
+        }
+    }
+    acc
+}
+
+fn stress_main(threads: u64, hz: u64, calls: u64, wait_go: bool) {
+    println!("OrbitTestRust pid={} stress threads={threads} hz={hz} calls={calls}", std::process::id());
+    if wait_go {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+    }
+    let started = Instant::now();
+    let workers: Vec<_> = (0..threads)
+        .map(|i| {
+            std::thread::Builder::new()
+                .name(format!("stress-{i}"))
+                .spawn(move || stress_thread(i, calls, hz))
+                .expect("spawn")
+        })
+        .collect();
+    let mut acc = 0u64;
+    for w in workers {
+        acc ^= w.join().unwrap_or(0);
+    }
+    let outer = threads * calls;
+    println!(
+        "OrbitTestRust stress done: threads={threads} calls={calls} outer={outer} middle={} inner={} in {:.2}s (acc {acc:x})",
+        outer * 2,
+        outer * 6,
+        started.elapsed().as_secs_f64()
+    );
+}
+
 fn main() {
+    if let Some(threads) = arg_u64("--stress-threads") {
+        let hz = arg_u64("--stress-hz").unwrap_or(1000);
+        let calls = arg_u64("--stress-calls").unwrap_or(1000);
+        let wait_go = std::env::args().any(|a| a == "--wait-go");
+        stress_main(threads.max(1), hz, calls, wait_go);
+        return;
+    }
     let seconds: u64 = std::env::args()
         .skip_while(|a| a != "--seconds")
         .nth(1)

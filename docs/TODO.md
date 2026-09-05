@@ -449,3 +449,8 @@ we need a solution to aggregate many machines' services to a single viewer, so t
 
 make the record icon a 
 make a website that will be the official website, with landing page, manual, but also that will serve the presigned urls that a user can upload their data to. I have an s3 bucket, ask me for credentials once you get to the implementation/testing phase.
+
+stress test for dynamic instrumentation: OrbitTestRust takes a thread count and a call rate, an e2e scenario hooks its three functions and checks the capture call for call (counts, depths, containment, the healing equation), blog post of its own
+
+  DONE 2026-09-05, unprivileged path only: `dyn-instr-stress` (skips with the CAP_PERFMON refusal here; `--sudo` runs the service as root), `tools/e2e/check_stress.py`, blog post 19 "Call for Call", metrics/phase-16-dynamic-instrumentation-stress.txt awaiting the first privileged run.
+

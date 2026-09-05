@@ -1,0 +1,25 @@
+Phase 16: the dynamic-instrumentation stress test
+=================================================
+
+Scenario dyn-instr-stress (tools/e2e/orbit_e2e.py), program
+OrbitTestRust --stress-threads N --stress-hz F --stress-calls K --wait-go,
+checker tools/e2e/check_stress.py. Blog post 19, "Call for Call".
+
+Tree: outer -> 2 x middle -> 3 x inner. Expected scopes: N*K outer at
+depth 0, 2*N*K middle at depth 1, 6*N*K inner at depth 2.
+
+Run 0, 2026-09-05, unprivileged (no CAP_PERFMON in this session):
+  python3 tools/e2e/orbit_e2e.py --only dyn-instr-stress --no-shots
+  -> PASS in 0.6 s, "skipped: no hooks armed: uprobes need CAP_PERFMON
+     (run with --sudo)". The program alone (4 x 5 kHz x 5000) makes
+     20,000 outer / 40,000 middle / 120,000 inner in 1.00 s; the checker's
+     self-test (--self-test) passes.
+
+Privileged runs go below, one block each, pasted from the run's note and
+the report's perf table ("stress"):
+
+  date, machine, kernel, ORBIT_E2E_STRESS
+  expected / observed per function, missing, extra
+  duplicates dropped, unclosed discarded, orphan returns, records lost
+  scopes at wrong depth, outside parent
+  loss %, durations (min / p50 / max) per function

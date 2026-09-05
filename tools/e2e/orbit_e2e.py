@@ -75,11 +75,13 @@ def build_target(box3d_root, out_path):
 
 class Target:
     """The profiled process. `command` is a full argv; the process must print
-    `pid=<n>` on its first line of stdout."""
+    `pid=<n>` on its first line of stdout. With `stdin=True` the process gets
+    a pipe, for programs that wait for a line before starting (`--wait-go`)."""
 
-    def __init__(self, command):
+    def __init__(self, command, stdin=False):
         self.proc = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            stdin=subprocess.PIPE if stdin else None,
         )
         line = self.proc.stdout.readline()
         match = re.search(r"pid=(\d+)", line)
@@ -87,7 +89,19 @@ class Target:
             raise Failure(f"target did not announce its pid: {line!r}")
         self.pid = int(match.group(1))
 
+    def go(self):
+        """Sends the line a `--wait-go` program is waiting for."""
+        self.proc.stdin.write("go\n")
+        self.proc.stdin.flush()
+
+    def wait(self, timeout=120.0):
+        """Waits for the process to exit; returns the rest of its stdout."""
+        out, _ = self.proc.communicate(timeout=timeout)
+        return out or ""
+
     def stop(self):
+        if self.proc.poll() is not None:
+            return
         self.proc.terminate()
         try:
             self.proc.wait(timeout=10)
@@ -98,8 +112,13 @@ class Target:
 # -------------------------------------------------------------------- service
 
 
+# Set by --sudo: the service runs as root (`sudo -n`, so a password prompt
+# fails fast instead of hanging), which is what arming uprobes needs.
+SUDO = False
+
+
 class Service:
-    def __init__(self, port, binary=SERVICE):
+    def __init__(self, port, binary=SERVICE, sudo=None):
         if not os.path.exists(binary):
             raise Failure(
                 f"{binary} is missing.\nBuild it:  cargo build --release "
@@ -108,8 +127,11 @@ class Service:
         self.port = port
         self.base = f"http://127.0.0.1:{port}"
         self.log = open(f"/tmp/orbit-e2e-service-{port}.log", "w")
+        self.sudo = SUDO if sudo is None else sudo
+        prefix = ["sudo", "-n", "--"] if self.sudo else []
+        # sudo relays the SIGTERM `stop` sends, so the service exits either way.
         self.proc = subprocess.Popen(
-            [binary, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
+            prefix + [binary, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
         )
         self._wait_ready()
 
@@ -1175,6 +1197,122 @@ def hook_from_report(run):
 
 
 
+# Threads, calls per second per thread, calls per thread. 8 x 5 kHz x 5000
+# is 40,000 outer calls in a second, 360,000 scopes, 720,000 probe hits.
+STRESS = tuple(int(v) for v in os.environ.get("ORBIT_E2E_STRESS", "8,5000,5000").split(","))
+
+
+@scenario("dyn-instr-stress",
+          "OrbitTestRust --stress: every hooked call accounted for, at its depth, inside its parent")
+def dyn_instr_stress(run):
+    """The stress test for dynamic instrumentation. A known tree of three
+    functions (outer -> 2 middle -> 3 inner each) called a known number of
+    times on a known number of threads, hooked with uprobes; the exported
+    bundle is then checked call for call by check_stress.py. Needs the
+    service to run as root (--sudo); unprivileged it records the refusal."""
+    threads, hz, calls = STRESS
+    binary = _build_app("rust")[0]
+    app = Target([binary, "--stress-threads", str(threads), "--stress-hz", str(hz),
+                  "--stress-calls", str(calls), "--wait-go"], stdin=True)
+    try:
+        # Symbols and the three function ids, by name.
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            status = run.service.get(f"/api/symbols/status?pid={app.pid}")
+            if status.get("status") == "ready":
+                break
+            check(status.get("status") != "error", f"symbols: {status.get('error')}")
+            time.sleep(0.3)
+        ids = {}
+        for name in ("orbit_stress_outer", "orbit_stress_middle", "orbit_stress_inner"):
+            hits = run.service.get(f"/api/functions/search?pid={app.pid}&q={name}&limit=8")["functions"]
+            exact = [h for h in hits if h["name"] == name]
+            check(exact, f"{name} is not in the function index: {hits[:3]}")
+            ids[name] = exact[0]["function_id"]
+        # Arm, then let the program run: nothing happens before the probes.
+        run.service.post("/api/capture/start", {
+            "pid": app.pid, "sampling": False, "context_switches": True, "thread_states": True,
+            "dynamic_instrumentation_method": "kernel_uprobes",
+            "instrumented_functions": [{"function_id": i} for i in ids.values()],
+        })
+        message = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            message = run.service.get("/api/status").get("instrumentation", "")
+            if message:
+                break
+            time.sleep(0.2)
+        check(message, "the service said nothing about arming the hooks")
+        if "no hooks armed" in message:
+            run.service.post("/api/capture/stop")
+            check("CAP_PERFMON" in message, f"refusal does not name the capability: {message}")
+            return f"skipped: {message.split('.')[0]} (run with --sudo)"
+        check("instrumenting 3 of 3" in message, f"not every function armed: {message}")
+        app.go()
+        out = app.wait(timeout=180)
+        done = re.search(r"stress done: threads=(\d+) calls=(\d+) outer=(\d+) middle=(\d+) inner=(\d+) in ([\d.]+)s", out)
+        check(done, f"the program did not report what it made: {out[-300:]!r}")
+        # The reorder window is 100 ms; give the last hits time to pair.
+        time.sleep(0.8)
+        run.stop_capture()
+        status = run.service.get("/api/status")
+        line = status.get("instrumentation", "")
+        counts = re.search(r"(\d+) calls; (\d+) duplicate entries dropped, (\d+) entries with no return discarded, (\d+) returns with no entry dropped", line)
+        check(counts, f"no pairing counts on the status line: {line!r}")
+        calls_seen, dup, discarded, orphans = (int(v) for v in counts.groups())
+        lost_records = int(m.group(1)) if (m := re.search(r"(\d+) records lost by the kernel", line)) else 0
+        healed = dup + discarded + orphans
+        # The bundle, call for call.
+        probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+        check(probe.returncode == 0, f"{PYARROW_PYTHON} has no pyarrow; set ORBIT_E2E_PYARROW_PYTHON")
+        path = _export_bundle(run, "stress.orbit.zip")
+        result = subprocess.run(
+            [PYARROW_PYTHON, os.path.join(HERE, "check_stress.py"), path,
+             "--pid", str(app.pid), "--threads", str(threads), "--calls", str(calls)],
+            capture_output=True, text=True, timeout=600,
+        )
+        check(result.returncode == 0, f"check_stress failed: {result.stderr[-400:]}")
+        verdict = json.loads(result.stdout)
+        expected_total = sum(verdict["expected"].values())
+        run.perf["stress"] = {
+            "threads": threads, "hz": hz, "calls": calls, "seconds": float(done.group(6)),
+            "expected": verdict["expected"], "observed": verdict["observed"],
+            "missing": verdict["missing"], "calls_on_status_line": calls_seen,
+            "duplicates_dropped": dup, "unclosed_discarded": discarded, "orphan_returns": orphans,
+            "records_lost": lost_records, "depth_wrong": verdict["depth_wrong_total"],
+            "not_contained": verdict["not_contained_total"], "durations": verdict["durations"],
+            "status_line": line,
+        }
+        # What must hold whatever the kernel lost.
+        check(verdict["threads_seen"] == threads, f"{verdict['threads_seen']} of {threads} threads have scopes")
+        check(verdict["extra_total"] == 0, f"more scopes than calls: {verdict['extra']}")
+        check(verdict["outer_inside_something"] == 0,
+              f"{verdict['outer_inside_something']} outer scopes nested inside another scope")
+        check(calls_seen == sum(verdict["observed"].values()),
+              f"status line says {calls_seen} calls, the bundle holds {sum(verdict['observed'].values())}")
+        # Every hit the kernel lost is one scope missing and one count on the
+        # status line: the two must agree, or the pairing is inventing or
+        # hiding something.
+        check(verdict["missing_total"] == healed,
+              f"{verdict['missing_total']} scopes missing but the pairing healed {healed} "
+              f"({dup} dup, {discarded} unclosed, {orphans} orphan)")
+        # A lost hit can put the scopes under it one level off until it is
+        # healed: at most 8 (an outer's 2 middles and 6 inners) per loss.
+        check(verdict["depth_wrong_total"] <= 8 * healed,
+              f"{verdict['depth_wrong_total']} scopes at the wrong depth for {healed} lost hits")
+        check(verdict["not_contained_total"] <= 8 * healed,
+              f"{verdict['not_contained_total']} scopes outside their parent for {healed} lost hits")
+        check(verdict["missing_total"] * 100 <= expected_total,
+              f"{verdict['missing_total']} of {expected_total} scopes lost, over 1%")
+        loss = 100.0 * verdict["missing_total"] / max(1, expected_total)
+        return (f"{sum(verdict['observed'].values())} of {expected_total} scopes, {loss:.3f}% lost "
+                f"({healed} healed: {dup} dup, {discarded} unclosed, {orphans} orphan; "
+                f"{verdict['depth_wrong_total']} at wrong depth), {threads} threads x {hz} Hz x {calls}")
+    finally:
+        app.stop()
+
+
 @scenario("report-filter", "The report's filter box narrows the rows to the functions that match")
 def report_filter(run):
     if run.chrome is None:
@@ -1217,7 +1355,11 @@ def main():
     parser.add_argument("--no-shots", action="store_true", help="skip screenshots")
     parser.add_argument("--report", default=os.path.join(REPO, "docs/e2e/report.md"),
                         help="where the results, perf numbers and screenshot index go")
+    parser.add_argument("--sudo", action="store_true",
+                        help="run the service as root (sudo -n): dynamic instrumentation arms")
     args = parser.parse_args()
+    global SUDO
+    SUDO = args.sudo
 
     wanted = [s for s in SCENARIOS if not args.only or s[0] in args.only]
     if not wanted:
