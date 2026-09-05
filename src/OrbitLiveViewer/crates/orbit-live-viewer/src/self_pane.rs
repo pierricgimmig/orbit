@@ -43,6 +43,8 @@ pub struct SelfProfile {
     pool_threads: u32,
     worker_kept: u32,
     worker_dropped: u32,
+    /// The last `window.__orbit_self` text, so the page is written only on change.
+    last_published: String,
 }
 
 /// Frame-level counters that ride alongside the scopes.
@@ -147,9 +149,17 @@ impl SelfProfile {
     /// harness driving the viewer headless can read the breakdown that is
     /// otherwise only painted on the canvas.
     #[cfg(target_arch = "wasm32")]
-    pub fn publish(&self, intern: &InternTable, events: u64, layout_gen: u64, lane_gen: u64) {
+    pub fn publish(&mut self, intern: &InternTable, events: u64, layout_gen: u64, lane_gen: u64) {
         if let Some(win) = web_sys::window() {
             let json = self.phases_json_with(intern, events, layout_gen, lane_gen);
+            // Called every frame the pane is open; the page is only touched
+            // when the text changed. A frame-count gate here left a still
+            // viewer (nothing repaints after a capture stops) never reaching
+            // the next multiple, and the readout never appearing.
+            if json == self.last_published {
+                return;
+            }
+            self.last_published = json.clone();
             let _ = js_sys::Reflect::set(
                 &win,
                 &wasm_bindgen::JsValue::from_str("__orbit_self"),
@@ -159,7 +169,7 @@ impl SelfProfile {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn publish(&self, _intern: &InternTable, _events: u64, _layout_gen: u64, _lane_gen: u64) {}
+    pub fn publish(&mut self, _intern: &InternTable, _events: u64, _layout_gen: u64, _lane_gen: u64) {}
 
     pub fn last_ms(&self) -> f32 {
         self.frame_ms.back().copied().unwrap_or(0.0)

@@ -204,6 +204,10 @@ struct StatusBody {
     instrumentation: String,
     /// The event batch format on the WebSocket: raw, packed or deflate.
     wire: &'static str,
+    /// When the capture began on the capture clock; 0 until the loop says.
+    capture_start_ns: u64,
+    /// Events refused for starting before that, this capture.
+    dropped_before_start: u64,
 }
 
 impl StatusBody {
@@ -231,6 +235,8 @@ impl StatusBody {
             // From the guard already held: `svc.wire()` would take the same
             // lock again and hang the status route.
             wire: cfg.wire.name(),
+            capture_start_ns: svc.capture_start_ns(),
+            dropped_before_start: svc.dropped_before_start(),
         }
     }
 }

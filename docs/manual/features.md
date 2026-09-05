@@ -33,6 +33,13 @@ Instructions for the manual writer:
   `instrumentation` scenario reports the refusal by name.
 - **No target needed.** A capture can run with no process selected: the
   scheduler track, the service's own lanes and the agent track still fill.
+- **Nothing before the start.** The capture's clock starts when the loop
+  does, and the service refuses every event that starts before it: scopes
+  an instrumented app wrote into its ring before Record, a scope that was
+  open across the start, an agent's back-dated timestamp. The count of
+  refused events is in the service log at stop and in `/api/status` as
+  `dropped_before_start`; the e2e suite checks the ring's oldest event
+  against `capture_start_ns` after every capture.
 
 ## 2. The top bar
 

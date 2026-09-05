@@ -1,6 +1,6 @@
 # Orbit e2e report
 
-Run 2026-09-04 17:51 at commit `7495227f3` on `rixbox`.
+Run 2026-09-04 19:55 at commit `552aaff8a` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
@@ -10,69 +10,63 @@ Run 2026-09-04 17:51 at commit `7495227f3` on `rixbox`.
 | function-search | pass | 0.0s |  |
 | capture-scheduling | pass | 20.0s |  |
 | sampling-report | pass | 9.1s |  |
-| call-trees | pass | 9.1s |  |
+| call-trees | pass | 9.2s |  |
 | selection-report | pass | 9.1s |  |
-| report-tabs | pass | 61.4s |  |
-| api-rust | pass | 19.0s | 230007 events, 153 links |
-| api-c | pass | 19.0s | 234744 events, 154 links |
-| api-cpp | pass | 19.0s | 238158 events, 154 links |
-| api-python | pass | 19.0s | 127037 events, 113 links |
-| self-instrumentation | pass | 18.0s | 2 segment(s), 234619 events, 145 links (not drawn yet) |
+| report-tabs | pass | 61.2s |  |
+| api-rust | pass | 19.2s | 228178 events, 155 links, 1056 pre-start refused |
+| api-c | pass | 19.0s | 229121 events, 153 links, 1351 pre-start refused |
+| api-cpp | pass | 18.9s | 233739 events, 153 links, 1397 pre-start refused |
+| api-python | pass | 18.9s | 123122 events, 110 links, 1054 pre-start refused |
+| self-instrumentation | pass | 18.0s | 2 segment(s), 229953 events, 145 links (not drawn yet) |
 | thread-states | pass | 7.1s | skipped: no scheduling tracepoints (needs CAP_PERFMON) |
 | instrumentation | pass | 6.1s | skipped: no hooks armed: uprobes need CAP_PERFMON |
-| thread-focus | pass | 20.6s | thread 1123092 of pid 1123092 |
-| scope-report | pass | 27.9s | 'render': 903 samples over 301 instances |
-| live-tab | pass | 11.1s | 300 rows, histogram for 'solve contacts' |
-| flame-tab | pass | 11.4s | ok |
-| save-slice-open | pass | 10.7s | 2109 KB bundle, 217 KB slice, 18838 events reopened |
-| python-reader | pass | 1.0s | 196499 events; 3 agent rows, 1011 value rows |
-| agent-scopes | pass | 18.5s | tracks ['agent'] |
-| service-lanes | pass | 9.3s | 1 value lane(s) under pid 1121725 |
+| thread-focus | pass | 21.4s | thread 1140654 of pid 1140654 |
+| scope-report | pass | 25.7s | 'update': 902 samples over 300 instances |
+| live-tab | pass | 11.0s | 300 rows, histogram for 'solve contacts' |
+| flame-tab | pass | 11.3s | ok |
+| save-slice-open | pass | 10.6s | 2106 KB bundle, 215 KB slice, 18346 events reopened |
+| python-reader | pass | 0.8s | 197634 events; 3 agent rows, 1004 value rows |
+| agent-scopes | pass | 18.3s | tracks ['agent'] |
+| service-lanes | pass | 9.5s | 1 value lane(s) under pid 1139179 |
 | clear | pass | 10.1s | ok |
-| wire-and-perf | pass | 32.0s | wire packed, 508 KB/s on the socket |
-| website | pass | 21.0s | 258154 events from a 2935 KB stream, 6.3 s to first events |
-| hook-from-report | pass | 30.3s | hooked 'b3MulW'; arming skipped: no hooks armed: uprobes need CAP_PERFMON |
+| wire-and-perf | pass | 24.0s | wire packed, 457 KB/s on the socket |
+| website | pass | 19.4s | 215875 events from a 2549 KB stream, 6.4 s to first events |
+| hook-from-report | pass | 29.7s | hooked 'b3MulW'; arming skipped: no hooks armed: uprobes need CAP_PERFMON |
 
 ## Numbers
 
 - wire: packed
-- events: 258154
-- ws_bps_during_capture: 520577
-- bundle_bytes: 2159705
-- slice_bytes: 222795
-- stream_bytes: 3006051
-- site_first_events_s: 6.3
-- service status: {"events_live": 258154, "events_capacity": 8388608, "ring_bytes": 268435456, "produced": 258154, "dropped": 0}
+- events: 215875
+- ws_bps_during_capture: 467501
+- bundle_bytes: 2157496
+- slice_bytes: 220715
+- stream_bytes: 2610561
+- site_first_events_s: 6.4
+- service status: {"events_live": 215875, "events_capacity": 8388608, "ring_bytes": 268435456, "produced": 215875, "dropped": 0}
 
 Viewer self-profile (headless Chrome, SwiftShader: slower than a GPU):
 
 | Phase | Total ms | Count | Avg us | Max us |
 |---|---|---|---|---|
-| Frame | 64.06 | 30 | 2135.3 | 8875.0 |
-| TimelinePayload | 12.15 | 59 | 205.8 | 5660.0 |
-| ClipLabels | 5.78 | 43 | 134.3 | 230.0 |
-| ChooseLod | 4.55 | 59 | 77.0 | 220.0 |
-| PrimitiveListing | 3.92 | 15 | 261.7 | 2155.0 |
-| Chrome | 3.83 | 30 | 127.8 | 180.0 |
-| PoolDispatch | 2.87 | 15 | 191.3 | 1650.0 |
-| Rasterize | 2.25 | 16 | 140.3 | 190.0 |
-| Tracks | 1.67 | 59 | 28.2 | 60.0 |
-| ToRgba8 | 1.2 | 16 | 75.3 | 95.0 |
-| Scheduler | 1.08 | 59 | 18.2 | 35.0 |
-| PaintHeaders | 0.92 | 59 | 15.5 | 25.0 |
-| Net | 0.77 | 30 | 25.8 | 220.0 |
-| ListingFlatten | 0.67 | 15 | 44.7 | 395.0 |
-| HandleInput | 0.63 | 59 | 10.6 | 505.0 |
-| RemapTheme | 0.6 | 16 | 37.5 | 50.0 |
-| DrainNet | 0.47 | 30 | 15.7 | 210.0 |
-| RasterWalk | 0.29 | 16 | 18.1 | 75.0 |
-| ApplyHighlights | 0.27 | 15 | 18.0 | 130.0 |
-| ScalePpp | 0.24 | 15 | 15.7 | 115.0 |
-| PaintCallback | 0.09 | 59 | 1.4 | 10.0 |
-| TickFollow | 0.08 | 30 | 2.5 | 10.0 |
-| PlaceExtent | 0.05 | 16 | 3.1 | 5.0 |
-| Upload | 0.04 | 28 | 1.3 | 5.0 |
-| ListingSort | 0.01 | 15 | 0.7 | 5.0 |
+| Frame | 5.3 | 1 | 5295.0 | 5295.0 |
+| TimelinePayload | 3.31 | 1 | 3315.0 | 3315.0 |
+| PrimitiveListing | 1.36 | 1 | 1355.0 | 1355.0 |
+| PoolDispatch | 0.97 | 1 | 965.0 | 965.0 |
+| Net | 0.4 | 1 | 400.0 | 400.0 |
+| DrainNet | 0.39 | 1 | 385.0 | 385.0 |
+| ListingFlatten | 0.22 | 1 | 220.0 | 220.0 |
+| ClipLabels | 0.18 | 1 | 180.0 | 180.0 |
+| ChooseLod | 0.15 | 1 | 150.0 | 150.0 |
+| Chrome | 0.13 | 1 | 130.0 | 130.0 |
+| ApplyHighlights | 0.11 | 1 | 110.0 | 110.0 |
+| ScalePpp | 0.09 | 1 | 95.0 | 95.0 |
+| Tracks | 0.05 | 1 | 45.0 | 45.0 |
+| Scheduler | 0.03 | 1 | 30.0 | 30.0 |
+| PaintHeaders | 0.03 | 1 | 25.0 | 25.0 |
+| PaintCallback | 0.01 | 1 | 5.0 | 5.0 |
+| ListingSort | 0.0 | 1 | 0.0 | 0.0 |
+| TickFollow | 0.0 | 1 | 0.0 | 0.0 |
+| HandleInput | 0.0 | 1 | 0.0 | 0.0 |
 
 ## Screenshots
 

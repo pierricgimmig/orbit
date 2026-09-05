@@ -182,6 +182,13 @@ pub struct LiveService {
     self_gen: AtomicU64,
     /// Capture/demo clock, ignoring self-profile events on the ring.
     live_end_ns: AtomicU64,
+    /// When the current capture began on the capture clock, 0 until the
+    /// capture loop says. Every event pushed while it is set must start at
+    /// or after it; the ones that do not are dropped and counted, so a
+    /// scope drained from an app's ring that was open before Record, or an
+    /// agent's back-dated timestamp, cannot put anything left of the start.
+    capture_start_ns: AtomicU64,
+    dropped_before_start: AtomicU64,
     /// Next free ns on the self-profile axis. Only moves forward.
     self_cursor_ns: AtomicU64,
     /// `live_edge` at the last self-scope placement, so a frozen producer clock
@@ -277,6 +284,8 @@ impl LiveService {
             data_gen: AtomicU64::new(0),
             self_gen: AtomicU64::new(0),
             live_end_ns: AtomicU64::new(0),
+            capture_start_ns: AtomicU64::new(0),
+            dropped_before_start: AtomicU64::new(0),
             self_cursor_ns: AtomicU64::new(0),
             self_edge_ns: AtomicU64::new(0),
             index_cache: Mutex::new(None),
@@ -492,6 +501,8 @@ impl LiveService {
         self.clear_ring()?;
         self.clear_names();
         self.capturing.store(false, Ordering::Relaxed);
+        self.capture_start_ns.store(0, Ordering::Relaxed);
+        self.dropped_before_start.store(0, Ordering::Relaxed);
         self.live_end_ns.store(0, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid: 0, start_ns: 0 });
         self.broadcast_frame(&LiveFrame::CaptureFinished);
@@ -608,8 +619,28 @@ impl LiveService {
     }
 
     pub fn push_event(&self, event: LiveEvent) {
+        if self.before_capture_start(&event) {
+            self.dropped_before_start.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.ring().push(event);
         self.broadcast_events(std::slice::from_ref(&event));
+    }
+
+    /// True for an event that starts before the current capture did.
+    fn before_capture_start(&self, event: &LiveEvent) -> bool {
+        let start = self.capture_start_ns.load(Ordering::Relaxed);
+        start > 0 && event.start_ns < start
+    }
+
+    /// When the current capture began, 0 when unknown.
+    pub fn capture_start_ns(&self) -> u64 {
+        self.capture_start_ns.load(Ordering::Relaxed)
+    }
+
+    /// Events refused for starting before the capture, since it began.
+    pub fn dropped_before_start(&self) -> u64 {
+        self.dropped_before_start.load(Ordering::Relaxed)
     }
 
     /// Sends a batch to the live viewers, encoding straight from the slice.
@@ -632,6 +663,18 @@ impl LiveService {
         if events.is_empty() {
             return;
         }
+        let kept: Vec<LiveEvent>;
+        let events = if events.iter().any(|e| self.before_capture_start(e)) {
+            kept = events.iter().copied().filter(|e| !self.before_capture_start(e)).collect();
+            self.dropped_before_start
+                .fetch_add((events.len() - kept.len()) as u64, Ordering::Relaxed);
+            if kept.is_empty() {
+                return;
+            }
+            kept.as_slice()
+        } else {
+            events
+        };
         let in_self = IN_SELF.with(Cell::get);
         let profile = self.self_profile.load(Ordering::Relaxed) && !in_self;
         let t0 = profile.then(Instant::now);
@@ -676,6 +719,13 @@ impl LiveService {
         color_rgba: u32,
         name_id: u32,
     ) {
+        // A start from before the capture would pair with a stop inside it
+        // into a scope straddling the start; it is not this capture's.
+        let start = self.capture_start_ns.load(Ordering::Relaxed);
+        if start > 0 && timestamp_ns < start {
+            self.dropped_before_start.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.pairer
             .lock()
             .on_scope_start(pid, tid, timestamp_ns, color_rgba, name_id);
@@ -687,8 +737,16 @@ impl LiveService {
         }
     }
 
+    /// A capture began. The HTTP handler calls this with `start_ns` 0 the
+    /// moment the request is accepted; the capture loop calls it again with
+    /// the real clock once it has one, and that is the value the guard on
+    /// every push uses. A 0 never overwrites a real start.
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         self.capturing.store(true, Ordering::Relaxed);
+        if start_ns > 0 {
+            self.capture_start_ns.store(start_ns, Ordering::Relaxed);
+            self.dropped_before_start.store(0, Ordering::Relaxed);
+        }
         self.self_cursor_ns.store(start_ns, Ordering::Relaxed);
         self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });

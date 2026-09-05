@@ -482,11 +482,12 @@ impl AgentTracks {
 }
 
 /// Whether a manually instrumented event belongs to a capture that began at
-/// `capture_start_ns`: it must still have been open then. A scope that
-/// closed before the capture started was written into its ring earlier and
-/// merely drained now.
+/// `capture_start_ns`: it must have started inside it. An app's ring holds
+/// scopes from before Record; draining them now does not make them this
+/// capture's, and a scope that was open across the start would put its
+/// start left of the capture's, which nothing may.
 fn started_in_capture(e: &LiveEvent, capture_start_ns: u64) -> bool {
-    e.end_ns() >= capture_start_ns
+    e.start_ns >= capture_start_ns
 }
 
 /// Makes an opened bundle the current capture: the ring is emptied and
@@ -738,6 +739,9 @@ fn capture_loop(
     // states on the wrong epoch would make every one of them look older than
     // every transition by several decades.
     let capture_start_ns = crate::now_monotonic_ns();
+    // The real clock, for the viewers' axis and for the server's guard: from
+    // here on nothing that starts before this instant enters the ring.
+    service.mark_capture_started(target_pid as u32, capture_start_ns);
     let (mut thread_states, tracepoint_report) =
         ThreadStateTracer::open(crate::num_cpus_hint());
     // The service's own pid, so its threads get state bars like anything else.
@@ -1079,6 +1083,10 @@ fn capture_loop(
                 scopes.events_pushed,
                 scopes.links_seen
             );
+        }
+        let refused = service.dropped_before_start();
+        if refused > 0 {
+            eprintln!("orbit-service: {refused} event(s) started before the capture and were dropped");
         }
     }
 
@@ -1475,7 +1483,7 @@ mod tests {
         };
         let start = 1_000_000;
         assert!(!started_in_capture(&ev(900_000, 50_000), start), "closed before the capture");
-        assert!(started_in_capture(&ev(990_000, 20_000), start), "still open when it started");
+        assert!(!started_in_capture(&ev(990_000, 20_000), start), "open across the start: not this capture's");
         assert!(started_in_capture(&ev(1_000_000, 0), start));
         assert!(started_in_capture(&ev(2_000_000, 10), start));
     }

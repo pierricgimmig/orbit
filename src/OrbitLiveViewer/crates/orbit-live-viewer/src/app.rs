@@ -590,6 +590,9 @@ pub struct OrbitLiveApp {
     /// True while the self pane's timeline is drawing, so its rows stay out
     /// of the `__orbit_ui` readout.
     in_self_pane: bool,
+    /// When the capture began, from `CaptureStarted`; 0 until the service
+    /// says. Published so a harness can check nothing precedes it.
+    capture_start_ns: u64,
     /// The page opened a capture file (`?capture=<url>`) and has no
     /// service: nothing is polled, and the pills that need one are not
     /// shown. The static web site's mode.
@@ -994,7 +997,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}]}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1044,6 +1047,7 @@ impl OrbitLiveApp {
                 .map(|h| h.function_id.to_string())
                 .collect::<Vec<_>>()
                 .join(","),
+            self.capture_start_ns,
         );
         if text == self.sel_readout {
             return;
@@ -1305,6 +1309,7 @@ impl OrbitLiveApp {
             user_set_view: false,
             in_self_pane: false,
             static_capture: static_capture.clone(),
+            capture_start_ns: 0,
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
             trace_args: HashMap::new(),
@@ -2142,7 +2147,6 @@ impl OrbitLiveApp {
                 self.clear_file_trace();
                 self.index.clear();
                 self.live_all.clear();
-        self.live_all.clear();
                 self.selected = None;
                 self.hover = None;
                 self.measure = None;
@@ -2157,6 +2161,7 @@ impl OrbitLiveApp {
                 // since boot. Flag the axis so the first real event can throw
                 // those away instead of leaving a cluster hours to the left.
                 self.self_axis_provisional = start_ns == 0;
+                self.capture_start_ns = start_ns;
                 let origin = if start_ns > 0 {
                     start_ns
                 } else {
@@ -6162,7 +6167,7 @@ impl eframe::App for OrbitLiveApp {
                     self.self_tl.content_t1 = Some(b as f64);
                 }
             }
-            if self.self_profile.frames_seen() % 30 == 0 {
+            {
                 self.self_profile.publish(
                     &self.intern,
                     self.index.event_count() as u64,

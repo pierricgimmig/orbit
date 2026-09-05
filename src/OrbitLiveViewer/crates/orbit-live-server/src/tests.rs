@@ -626,3 +626,36 @@ fn thread_and_process_names_are_replayed_to_a_late_subscriber() {
     svc.clear_names();
     assert!(svc.capture_names().0.is_empty());
 }
+
+#[test]
+fn nothing_from_before_the_capture_start_reaches_the_ring() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
+    // The handler's provisional start, then the loop's real one.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.mark_capture_started(7, 1_000);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    // A later provisional 0 (a second Record) does not forget the clock.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    svc.push_event(ev(50)); // start 500: before
+    svc.push_events(&[ev(90), ev(100), ev(200)]); // 900 before, 1000 and 2000 in
+    assert_eq!(svc.stats().events_live, 2);
+    assert_eq!(svc.dropped_before_start(), 2);
+    assert_eq!(svc.stats().oldest_start_ns, 1_000);
+    // A scope opened before the capture and closed inside it is not paired.
+    svc.ingest_scope_start(7, 1, 900, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 2, "the straddling scope was refused");
+    assert_eq!(svc.dropped_before_start(), 3);
+    svc.ingest_scope_start(7, 1, 1_100, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 3, "a scope inside the capture lands");
+    // Clear forgets the clock; a capture with no known start guards nothing.
+    svc.clear_capture().unwrap();
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.push_event(ev(50));
+    assert_eq!(svc.stats().events_live, 1);
+    assert_eq!(svc.dropped_before_start(), 0);
+}

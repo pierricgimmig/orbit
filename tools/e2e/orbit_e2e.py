@@ -157,6 +157,17 @@ class Service:
 # ------------------------------------------------------------------- fixtures
 
 
+def check_capture_clock(service):
+    """Nothing in the ring may start before the capture did. Every stop
+    goes through here, so every scenario's capture is checked."""
+    status = service.get("/api/status")
+    start = status.get("capture_start_ns", 0)
+    if start and status.get("events_live", 0):
+        oldest = status["oldest_start_ns"]
+        check(oldest >= start, f"an event starts {start - oldest} ns before the capture start")
+    return status.get("dropped_before_start", 0)
+
+
 class Run:
     """Everything a scenario needs, plus where its screenshots go."""
 
@@ -198,6 +209,7 @@ class Run:
     def stop_capture(self):
         self.service.post("/api/capture/stop")
         time.sleep(1.0)
+        check_capture_clock(self.service)
 
     # ---- the viewer's readouts -------------------------------------------
     #
@@ -465,6 +477,8 @@ def _instrumented_app(run, lang, shot_index):
         run.shot(f"{shot_index:02d}-api-{lang}", settle=3.0)
         run.service.post("/api/capture/stop")
         time.sleep(1.5)
+        # The app's ring held scopes from before Record: none may show.
+        refused = check_capture_clock(run.service)
         log = run.service.stderr_text()
         check(
             f"opened segment of pid {app.pid}" in log,
@@ -477,7 +491,7 @@ def _instrumented_app(run, lang, shot_index):
         check_at_least(events, 500, f"{lang}: scope events pushed to the timeline")
         links = int(re.search(r"(\d+) links", summary[-1]).group(1))
         check_at_least(links, 1, f"{lang}: async job links seen")
-        return f"{events} events, {links} links"
+        return f"{events} events, {links} links, {refused} pre-start refused"
     finally:
         app.stop()
 
@@ -636,6 +650,7 @@ def _week_capture(run, seconds=4.0):
             time.sleep(0.4)
         run.service.post("/api/capture/stop")
         time.sleep(1.5)
+        check_capture_clock(run.service)
     finally:
         app.stop()
     WeekCapture.pid = app.pid
