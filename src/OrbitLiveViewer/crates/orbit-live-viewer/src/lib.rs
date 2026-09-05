@@ -232,9 +232,9 @@ pub fn mark_wasm_pool_ready(n: u32) {
 pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
     install_wasm_clock();
-        // Warnings and errors only: eframe's own info lines ("event handlers
-        // installed.") are noise in a user's console.
-        eframe::WebLogger::init(log::LevelFilter::Warn).ok();
+    // Warnings and errors only: eframe's own info lines ("event handlers
+    // installed.") are noise in a user's console.
+    eframe::WebLogger::init(log::LevelFilter::Warn).ok();
     eframe::WebRunner::new()
         .start(
             canvas,
