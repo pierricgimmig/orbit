@@ -110,10 +110,13 @@ pub struct TrackStrip {
     /// The tier each process was last sorted into (see `process_tier`), so
     /// a header drag stays within its tier.
     process_tier: FastMap<u32, u8>,
-    /// Processes that have been through `sync` once: the auto rows (the
-    /// service, the viewer) arrive collapsed, and only the first time, so
-    /// an expand by hand is not undone next frame.
-    seen_pids: FastSet<u32>,
+    /// Processes already folded for being auto rows (the service, the
+    /// viewer), so it happens once; and rows the user toggled by hand,
+    /// which the fold never touches. Judged every sync, not on first
+    /// sight: the service's pid reaches the app with the first status
+    /// message, which can come after its rows do.
+    auto_folded: FastSet<u32>,
+    user_toggled: FastSet<RowId>,
     /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
     pub process_sort: HashMap<u32, i32>,
     pub thread_sort: HashMap<(u32, u32), i32>,
@@ -236,7 +239,8 @@ impl Default for TrackStrip {
             layout_gen: 0,
             order_hints: OrderHints::default(),
             process_tier: FastMap::default(),
-            seen_pids: FastSet::default(),
+            auto_folded: FastSet::default(),
+            user_toggled: FastSet::default(),
             process_sort: HashMap::new(),
             thread_sort: HashMap::new(),
             machine_sort: HashMap::new(),
@@ -339,7 +343,10 @@ impl TrackStrip {
             if !self.process_order.contains(&p) {
                 self.process_order.push(p);
             }
-            if self.seen_pids.insert(p) && process_tier(p, hints) == TIER_AUTO {
+            if process_tier(p, hints) == TIER_AUTO
+                && !self.user_toggled.contains(&RowId::Process(p))
+                && self.auto_folded.insert(p)
+            {
                 self.collapsed.insert(RowId::Process(p));
             }
         }
@@ -374,6 +381,7 @@ impl TrackStrip {
         if !self.collapsed.insert(id) {
             self.collapsed.remove(&id);
         }
+        self.user_toggled.insert(id);
         self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 

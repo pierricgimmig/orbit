@@ -2421,8 +2421,8 @@ impl OrbitLiveApp {
             ui.close();
         }
         if ui
-            .selectable_label(self.capture_open, "Capture")
-            .on_hover_text("Process, sampling, and hooks")
+            .selectable_label(self.capture_open, "Settings")
+            .on_hover_text("The process, what to collect, unwinding, hooks, the interface")
             .clicked()
         {
             self.capture_open = !self.capture_open;
@@ -2434,11 +2434,13 @@ impl OrbitLiveApp {
         }
         ui.separator();
         if ui
-            .selectable_label(self.show_tweaks, "UI knobs")
-            .on_hover_text("Row spacing, track density and the like")
+            .selectable_label(self.capture_open, "UI knobs")
+            .on_hover_text("Row spacing, track density and the like: in the settings")
             .clicked()
         {
-            self.show_tweaks = !self.show_tweaks;
+            self.capture_open = true;
+            self.capture_user = true;
+            ui.close();
         }
         ui.separator();
         ui.label(
@@ -2643,20 +2645,34 @@ impl OrbitLiveApp {
                 if icon_button(ui, "Clear", "Empty the capture: every event, on the service and here", paint_clear_icon).clicked() {
                     self.clear_everything();
                 }
+                if icon_button(ui, "Settings", "Settings: the process, what to collect, unwinding, hooks, the interface", paint_gear_icon)
+                    .clicked()
+                {
+                    self.capture_open = !self.capture_open;
+                    self.capture_user = true;
+                }
+                if let Some(pid) = self.selected_pid.filter(|p| *p > 0) {
+                    let name = self.process_display_name(pid);
+                    if ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(format!("{pid} {name}")).font(FontId::monospace(10.5)).color(theme::MUTED),
+                            )
+                            .sense(Sense::click()),
+                        )
+                        .on_hover_text("The target process; click for the settings")
+                        .clicked()
+                    {
+                        self.capture_open = true;
+                        self.capture_user = true;
+                    }
+                }
             } else if let Some(url) = &self.static_capture {
                 let name = url.rsplit('/').next().unwrap_or(url);
                 ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED))
                     .on_hover_text("This page shows a saved capture; there is no service behind it");
             }
             vsep(ui);
-            if has_service
-                && pill(ui, "Capture", self.capture_open)
-                    .on_hover_text("Process, sampling, and hooks")
-                    .clicked()
-            {
-                self.capture_open = !self.capture_open;
-                self.capture_user = true;
-            }
             if pill(ui, "Report", self.report_open)
                 .on_hover_text("The report panel: Live scope statistics, the sampling report, the functions")
                 .clicked()
@@ -6573,21 +6589,31 @@ impl OrbitLiveApp {
     }
 
     /// The UI knobs window: what the report rows look like, live.
+    /// The settings, one window behind the gear: the process and its
+    /// symbols, what to collect, unwinding, hooks and what is hooked, then
+    /// the interface knobs. What used to be a strip across the top and a
+    /// second window for the knobs.
     fn tweaks_window(&mut self, ctx: &Context) {
-        if !self.show_tweaks {
+        if !self.capture_open || self.static_capture.is_some() {
             return;
         }
         let before = self.ui_tweaks;
-        let mut open = self.show_tweaks;
-        // Top right, clear of the rail and the transport bar, where the
-        // report it mostly adjusts is.
-        let screen = ctx.screen_rect();
-        egui::Window::new("UI")
+        let mut open = self.capture_open;
+        egui::Window::new("Settings")
             .open(&mut open)
-            .resizable(false)
-            .default_width(280.0)
-            .default_pos(Pos2::new(screen.right() - 300.0, 130.0))
+            .resizable(true)
+            .default_width(760.0)
+            .default_pos(Pos2::new(12.0, 48.0))
+            .frame(Frame::window(&ctx.style()).fill(theme::RAIL))
             .show(ctx, |ui| {
+                self.capture_strip(ui);
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    section_label(ui, "INTERFACE");
+                });
                 let t = &mut self.ui_tweaks;
                 ui.label(RichText::new("Sampling report").color(theme::MUTED).size(10.5));
                 ui.add(egui::Slider::new(&mut t.report_row_gap, 0.0..=16.0).text("row gap"));
@@ -6607,7 +6633,10 @@ impl OrbitLiveApp {
                     self.ui_tweaks = UiTweaks::default();
                 }
             });
-        self.show_tweaks = open;
+        if !open {
+            self.capture_user = true;
+        }
+        self.capture_open = open;
         if self.ui_tweaks != before {
             self.ui_tweaks.save();
         }
@@ -6801,17 +6830,6 @@ impl eframe::App for OrbitLiveApp {
                     )
                     .show(ctx, |ui| self.transport(ui));
 
-                if self.capture_open && !self.chrome_collapsed() {
-                    egui::TopBottomPanel::top("orbit_capture_strip")
-                        .exact_height(114.0)
-                        .frame(
-                            Frame::new()
-                                .fill(theme::RAIL)
-                                .inner_margin(Margin::symmetric(4, 6))
-                                .stroke(Stroke::NONE),
-                        )
-                        .show(ctx, |ui| self.capture_strip(ui));
-                }
 
                 if self.advanced {
                     egui::SidePanel::left("orbit_chrome")
@@ -7136,6 +7154,22 @@ fn paint_save_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
     painter.line_segment([Pos2::new(c.x - 6.0, c.y + 2.0), Pos2::new(c.x - 6.0, c.y + 6.0)], s);
     painter.line_segment([Pos2::new(c.x - 6.0, c.y + 6.0), Pos2::new(c.x + 6.0, c.y + 6.0)], s);
     painter.line_segment([Pos2::new(c.x + 6.0, c.y + 6.0), Pos2::new(c.x + 6.0, c.y + 2.0)], s);
+}
+
+/// A gear: a ring with eight teeth and a hub.
+fn paint_gear_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = Stroke::new(1.5, color);
+    painter.circle_stroke(c, 4.2, s);
+    painter.circle_filled(c, 1.4, color);
+    for i in 0..8 {
+        let a = i as f32 * std::f32::consts::FRAC_PI_4;
+        let (sin, cos) = a.sin_cos();
+        painter.line_segment(
+            [Pos2::new(c.x + cos * 4.6, c.y + sin * 4.6), Pos2::new(c.x + cos * 6.8, c.y + sin * 6.8)],
+            s,
+        );
+    }
 }
 
 /// A bin: lid, body, two slats.

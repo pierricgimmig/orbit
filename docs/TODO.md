@@ -466,3 +466,34 @@ three viewer notes (2026-09-05): the report splitter only moved one way; threads
 
   DONE 2026-09-05: exact_width was undone by a min_width(0.0) and the panel could only narrow (6ce65285f); threads earn a row only by explicit data (scopes, samples, values, calls), thread-state slices alone do not; the tree tabs carry the slider (nodes over N% of the samples arrive open, 0 = all, the default) with Expand/Collapse all; a click on a sample tick copies its callstack.
 
+## What is next (as of 2026-09-05, evening)
+
+Every note from 2026-09-05 is done. What remains, by readiness:
+
+- Waiting on a privileged run: `python3 tools/e2e/orbit_e2e.py --only
+  dyn-instr-stress --sudo --no-shots`, whose numbers go into blog post 19
+  and metrics/phase-16, and which confirms the frame pairing on a real
+  capture.
+- Deferred by the owner for now: the official website with presigned S3
+  upload URLs (items 13, 25, 26; needs the bucket credentials); 14, the
+  GitHub Action, which depends on it; 15, annotations with deep links; 16,
+  diff mode, and 18, the regression detector on it; 19, agent-driven
+  continuous analysis (needs 12, 13, 18); 20, the consumer diagnostic
+  daemon.
+- Done with leftovers: rendering (the transport strip 0.15 ms and the
+  report's visible rows 0.17 ms per frame; the browser side, which only a
+  real GPU can measure); 12, the MCP layer and links for agent scopes; 21,
+  per-lane GPU buffers, compute-shader rasterization, the level pyramid
+  and per-bucket palette; 28, C++ demangling in the Rust service; 29,
+  hooking from the Flame tab and from the timeline's sampled frames, and
+  the user-space trampolines.
+- Deferred, other machines: 7 and 8, the Windows and macOS capture
+  backends and shared-memory ring (docs/windows-agent-brief.md).
+
+Recommendation: annotations (15) is small and self-contained and makes a
+shared capture a conversation once the website exists; diff mode (16) is
+the largest piece of user-facing value still unbuilt; the website with S3
+sharing unblocks the most (13, 14, 19, 25).
+
+settings widget (2026-09-05): the capture/app settings moved out of the top strip into one window behind a gear icon next to the bin (process, collect, unwind, hooks, hooked, interface knobs); the Capture pill is gone, the target process reads next to the gear. DONE.
+

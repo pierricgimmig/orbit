@@ -58,7 +58,8 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
 - **Clear** (the bin icon) empties the capture everywhere: every event on
   the service and in the page. Refused while a capture is running.
   Screenshot: `20-cleared.png`.
-- **Capture** shows or hides the capture strip (section 3). **Report**
+- **Settings**, the gear next to the bin, opens the settings window
+  (section 3); the target process reads next to it. **Report**
   opens the report panel on the right (section 6). **Self** opens the
   viewer's own profile in a second pane: frame phases as a live timeline of
   the viewer itself, independent of any capture. Screenshots:
@@ -75,11 +76,15 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   (`http`, `ws packed`) and, during a capture, the socket's MB/s next to the
   frame rate.
 - **More** holds what is used rarely: Demo (synthetic scopes with no
-  service attach), the UI knobs window (report row spacing, track
-  density), Paper (a light canvas), the Inspector, compact tracks. The
+  service attach), UI knobs (the interface part of the settings), Paper (a light canvas), the Inspector, compact tracks. The
   last pill is fullscreen.
 
-## 3. The process row
+## 3. Settings (the gear)
+
+One window behind the gear next to the bin, also from the More menu: the
+process and its symbols, what to collect, unwinding, hooks and what is
+hooked, then the interface knobs (report spacing, font, track scale). It
+opens on first load with a service and closes with its ×. Its rows:
 
 - **Process picker** lists every process the service sees, live; the
   Refresh pill re-reads `/proc`. The **Symbols** pill next to it shows the
