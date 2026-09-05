@@ -4,17 +4,60 @@
 <meta charset="utf-8">
 <title>{{title}}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a73e8">
 <link rel="icon" type="image/png" href="{{root}}/favicon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="{{root}}/site.css">
 </head>
 <body>
+<a class="skip" href="#content">Skip to content</a>
 {{nav}}
-<main class="doc">
+<div class="doc-wrap">
+{{sidebar}}
+<main id="content" class="doc">
 {{body}}
 </main>
-<footer class="site"><span>Orbit &middot; the Rust port</span><a href="{{root}}/index.html">Home</a></footer>
+</div>
+<footer class="site">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <img src="{{root}}/logo.png" alt="">
+      <div>
+        <strong>Orbit</strong>
+        <p>the Rust port</p>
+      </div>
+    </div>
+    <div class="foot-links">
+      <a href="{{root}}/index.html">Home</a>
+      <a href="{{root}}/manual/index.html">Manual</a>
+      <a href="{{root}}/blog/index.html">Dev blog</a>
+      <a href="{{root}}/e2e/report.html">Test report</a>
+      <a href="{{root}}/todo.html">Roadmap</a>
+    </div>
+  </div>
+</footer>
+<script>
+(function () {
+  var links = document.querySelectorAll("aside.toc a[href^='#']");
+  if (!links.length) return;
+  var heads = [];
+  for (var i = 0; i < links.length; i++) {
+    var id = links[i].getAttribute("href").slice(1);
+    var el = document.getElementById(id);
+    if (el) heads.push({ el: el, link: links[i] });
+  }
+  function sync() {
+    var y = window.scrollY + 88;
+    var cur = heads[0];
+    for (var i = 0; i < heads.length; i++) {
+      if (heads[i].el.offsetTop <= y) cur = heads[i];
+    }
+    for (var j = 0; j < heads.length; j++) {
+      heads[j].link.classList.toggle("is-current", heads[j] === cur);
+    }
+  }
+  document.addEventListener("scroll", sync, { passive: true });
+  sync();
+})();
+</script>
 </body>
 </html>

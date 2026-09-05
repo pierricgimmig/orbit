@@ -5,23 +5,25 @@
 <title>Orbit</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Orbit: dynamic instrumentation coupled with sampling profiling, for native applications, across processes, machines and platforms. A real capture, right here in the page.">
+<meta name="theme-color" content="#1a73e8">
 <link rel="icon" type="image/png" href="favicon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
+<a class="skip" href="#content">Skip to content</a>
 <nav class="site">
   <a class="brand" href="index.html"><img src="logo.png" alt="Orbit"></a>
-  <a href="manual/index.html">Manual</a>
-  <a href="blog/index.html">Blog</a>
-  <a href="e2e/report.html">Test report</a>
+  <div class="nav-links">
+    <a href="manual/index.html">Manual</a>
+    <a href="blog/index.html">Blog</a>
+    <a href="e2e/report.html">Test report</a>
+  </div>
   <span class="spacer"></span>
   <a class="cta" href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a>
 </nav>
-<main class="wide">
+<main id="content" class="wide">
   <div class="hero">
+    <p class="eyebrow">Profiler for native applications</p>
     <h1>Dynamic instrumentation, <em>coupled with sampling.</em></h1>
     <p class="lede">Orbit is a profiler for native applications. Hook the functions you care about on a running
       process, without recompiling, and see every call as a scope on a timeline that draws a million of them at the
@@ -32,9 +34,15 @@
     </div>
   </div>
 
-  <div class="embed">
-    <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit viewer"
-            allow="fullscreen"></iframe>
+  <div class="embed-frame">
+    <div class="embed-bar">
+      <span class="live"><span class="dot" aria-hidden="true"></span> Live capture in the page</span>
+      <a href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open full page</a>
+    </div>
+    <div class="embed">
+      <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit viewer"
+              allow="fullscreen"></iframe>
+    </div>
   </div>
   <p class="caption">
     <span>A real capture: Box3D, three physics threads, sampled at 1 kHz with scheduling and the service's own lanes.
@@ -42,7 +50,7 @@
     <span>Drag to pan &middot; wheel over the ruler to zoom &middot; click a thread &middot; right-click a scope
       &middot; Home to fit</span>
   </p>
-  <p class="facts">{{facts}}</p>
+  <p class="facts"><span class="chip">{{facts}}</span></p>
 
   <section class="section">
     <h2>What it does</h2>
@@ -104,10 +112,20 @@
     frames a connecting viewer would receive, saved as a file.</p>
 </main>
 <footer class="site">
-  <span>Orbit &middot; the Rust port</span>
-  <a href="blog/index.html">Dev blog</a>
-  <a href="e2e/report.html">Latest test report</a>
-  <a href="todo.html">Roadmap</a>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <img src="logo.png" alt="">
+      <div>
+        <strong>Orbit</strong>
+        <p>the Rust port &middot; dynamic instrumentation coupled with sampling</p>
+      </div>
+    </div>
+    <div class="foot-links">
+      <a href="blog/index.html">Dev blog</a>
+      <a href="e2e/report.html">Latest test report</a>
+      <a href="todo.html">Roadmap</a>
+    </div>
+  </div>
 </footer>
 </body>
 </html>

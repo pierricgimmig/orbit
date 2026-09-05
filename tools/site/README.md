@@ -6,11 +6,31 @@ the front page opens with no service behind it, the manual (rendered from
 `serve.py` serves it with the cross-origin isolation headers the viewer's
 worker pool needs. Standard library only.
 
+The chrome is a light Material / Google-docs surface: system fonts (Roboto
+when the OS has it), `#1a73e8` accent, a sticky product nav, and a contents
+rail on long manual and blog pages. No webfont CDN, so the pages stay
+readable offline. Dark surfaces follow `prefers-color-scheme` with the
+same tokens.
+
+Blog HTML under `docs/blog/` stays as authored (including the old
+editorial skins). At build time each `*.html` body is extracted and
+wrapped in `page.html`, so the published `/blog/` pages share the site
+nav, footer and `site.css`. `metrics/` and other non-HTML files are
+copied unchanged.
+
 ```
 python3 tools/site/build_site.py                       # captures Box3D for the front page
 python3 tools/site/build_site.py --bundle my.orbit.zip # or a saved capture
 python3 tools/site/build_site.py --stream my.orbit.stream
 python3 tools/site/serve.py --dir site --port 8081     # http://<lan address>:8081/
+```
+
+A machine without the WASM pack or a capture service can still emit the
+HTML/CSS chrome. The landing iframe stays wired to `?capture=...`; it will
+404 until a real viewer pack and stream are present.
+
+```
+python3 tools/site/build_site.py --skip-viewer --empty-stream
 ```
 
 ## The embedded capture
@@ -22,6 +42,10 @@ Hello, every interned name, thread and process names, the status, the
 events in packed batches, and a `CaptureFinished` so the view fits. The
 viewer decodes it with the code path it already has for the socket, so the
 static mode added no format and no dependency.
+
+The landing page keeps that viewer in an iframe (`div.embed > iframe`).
+Build substitutions `{{capture}}`, `{{facts}}`, `{{date}}` and `{{commit}}`
+are unchanged.
 
 What works with no service: the timeline, focus and selection, the scope
 menu, the Live tab and its histogram, the Self pane, and the sampling
