@@ -103,6 +103,17 @@ pub struct TrackStrip {
     filter_pid: Option<u32>,
     cached_insert_y: Option<f32>,
     layout_gen: u64,
+    /// Which process is the target and which is the service: the rail's
+    /// default order is target, then instrumented processes by event
+    /// count, then the service and the viewer's own rows.
+    pub order_hints: OrderHints,
+    /// The tier each process was last sorted into (see `process_tier`), so
+    /// a header drag stays within its tier.
+    process_tier: FastMap<u32, u8>,
+    /// Processes that have been through `sync` once: the auto rows (the
+    /// service, the viewer) arrive collapsed, and only the first time, so
+    /// an expand by hand is not undone next frame.
+    seen_pids: FastSet<u32>,
     /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
     pub process_sort: HashMap<u32, i32>,
     pub thread_sort: HashMap<(u32, u32), i32>,
@@ -209,12 +220,30 @@ impl Default for TrackStrip {
             filter_pid: None,
             cached_insert_y: None,
             layout_gen: 0,
+            order_hints: OrderHints::default(),
+            process_tier: FastMap::default(),
+            seen_pids: FastSet::default(),
             process_sort: HashMap::new(),
             thread_sort: HashMap::new(),
             machine_sort: HashMap::new(),
         }
     }
 }
+
+/// What the app knows about the processes on the rail that the index does
+/// not say: which one the capture targets and which one is the service.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OrderHints {
+    pub target: Option<u32>,
+    pub service: Option<u32>,
+}
+
+/// The rail's tiers, top to bottom: the target, every other process by
+/// what it said, the service and the viewer last. Header drags reorder
+/// within a tier; the tiers themselves do not move.
+const TIER_TARGET: u8 = 0;
+const TIER_INSTRUMENTED: u8 = 1;
+const TIER_AUTO: u8 = 2;
 
 impl TrackStrip {
     /// Rebuilds the lane catalogue if the index's lane set changed.
@@ -245,10 +274,34 @@ impl TrackStrip {
             threads.push(th);
         }
         pids.sort_unstable();
+        // Tier and, within the instrumented tier, how much each process
+        // said: events per pid, on a log scale so two processes only swap
+        // places when one has twice the other's events, not on every batch.
+        let hints = self.order_hints;
+        let mut events_per_pid: FastMap<u32, u64> = FastMap::default();
+        for (k, lane) in index.lanes() {
+            if !is_cpu_lane(k) {
+                *events_per_pid.entry(k.pid).or_default() += lane.len() as u64;
+            }
+        }
+        self.process_tier.clear();
+        for &p in &pids {
+            self.process_tier.insert(p, process_tier(p, hints));
+        }
+        let rank = |p: u32| -> (u8, i64) {
+            let tier = process_tier(p, hints);
+            let bucket = if tier == TIER_INSTRUMENTED {
+                // Bigger first: the bucket is negated.
+                -((events_per_pid.get(&p).copied().unwrap_or(0) + 1).ilog2() as i64)
+            } else {
+                0
+            };
+            (tier, bucket)
+        };
         pids.sort_by_key(|p| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
-                process_rank(*p),
+                rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
             )
@@ -256,7 +309,7 @@ impl TrackStrip {
         threads.sort_by_key(|t| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(t.pid)),
-                process_rank(t.pid),
+                rank(t.pid),
                 self.process_sort.get(&t.pid).copied().unwrap_or(0),
                 t.pid,
                 self.thread_sort.get(&(t.pid, t.tid)).copied().unwrap_or(0),
@@ -264,18 +317,22 @@ impl TrackStrip {
             )
         });
         self.process_order.retain(|p| pids.contains(p));
-        // Processes arrive expanded. Collapsing is a deliberate act, not a
-        // state a track shows up in -- a collapsed track hides the very thing
-        // the viewer is for.
+        // Processes arrive expanded -- collapsing is a deliberate act, and a
+        // collapsed track hides the very thing the viewer is for -- except
+        // the service's and the viewer's own rows, which are there for when
+        // they are wanted and folded until then.
         for p in pids {
             if !self.process_order.contains(&p) {
                 self.process_order.push(p);
+            }
+            if self.seen_pids.insert(p) && process_tier(p, hints) == TIER_AUTO {
+                self.collapsed.insert(RowId::Process(p));
             }
         }
         self.process_order.sort_by_key(|p| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
-                process_rank(*p),
+                rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
             )
@@ -389,7 +446,7 @@ impl TrackStrip {
         match item {
             HeaderItem::Process(pid) => {
                 let machine = MachineId::from_pid(pid);
-                let tier = process_rank(pid);
+                let tier = self.process_tier.get(&pid).copied().unwrap_or(TIER_INSTRUMENTED);
                 let dest = self
                     .process_order
                     .iter()
@@ -397,7 +454,7 @@ impl TrackStrip {
                     .filter(|p| {
                         *p != pid
                             && MachineId::from_pid(*p) == machine
-                            && process_rank(*p) == tier
+                            && self.process_tier.get(p).copied().unwrap_or(TIER_INSTRUMENTED) == tier
                     })
                     .filter(|p| {
                         self.y
@@ -810,15 +867,16 @@ impl TrackStrip {
     /// Move `pid` to slot `dest` among the processes sharing its machine, then
     /// renumber `process_sort` densely so the order survives the next rebuild
     /// (which re-sorts `process_order` by that map). Reorder acts within a
-    /// `process_rank` tier: the viewer and the service stay pinned to the top
-    /// of their machine, and the general processes reorder among themselves.
+    /// `process_tier`: the target stays first and the service and the
+    /// viewer stay last, and the general processes reorder among themselves.
     pub fn reorder_process(&mut self, pid: u32, dest: usize) {
         let machine = MachineId::from_pid(pid);
+        let tier_of = |p: u32| self.process_tier.get(&p).copied().unwrap_or(TIER_INSTRUMENTED);
         let mut same: Vec<u32> = self
             .process_order
             .iter()
             .copied()
-            .filter(|p| MachineId::from_pid(*p) == machine && process_rank(*p) == process_rank(pid))
+            .filter(|p| MachineId::from_pid(*p) == machine && tier_of(*p) == tier_of(pid))
             .collect();
         let Some(cur) = same.iter().position(|p| *p == pid) else {
             return;
@@ -829,10 +887,11 @@ impl TrackStrip {
         for (i, p) in same.iter().enumerate() {
             self.process_sort.insert(*p, i as i32);
         }
+        let tiers = self.process_tier.clone();
         self.process_order.sort_by_key(|p| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
-                process_rank(*p),
+                tiers.get(p).copied().unwrap_or(TIER_INSTRUMENTED),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
             )
@@ -1102,11 +1161,15 @@ fn machine_rank(machine_sort: &HashMap<MachineId, i32>, m: MachineId) -> i64 {
         .unwrap_or(1_000 + m.sort_key() as i64)
 }
 
-fn process_rank(pid: u32) -> u8 {
-    if pid == orbit_live_event::dev::VIEWER_PID {
-        0
+/// The tier a process sorts into: the target, then everything
+/// instrumented, then the service and the viewer's own rows.
+fn process_tier(pid: u32, hints: OrderHints) -> u8 {
+    if hints.target == Some(pid) {
+        TIER_TARGET
+    } else if hints.service == Some(pid) || is_self_pid(pid) {
+        TIER_AUTO
     } else {
-        2
+        TIER_INSTRUMENTED
     }
 }
 
@@ -1176,7 +1239,9 @@ mod tests {
         assert!(!strip.collapsed(RowId::Process(1)));
         assert!(!strip.collapsed(RowId::Process(10)));
         assert!(!strip.collapsed(RowId::Process(11)));
-        assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
+        // The viewer's own rows arrive folded, and last.
+        assert!(strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
+        assert_eq!(*strip.process_order.last().unwrap(), orbit_live_event::dev::VIEWER_PID);
         assert!(
             strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))),
             "expanded processes must show their threads"
@@ -1227,7 +1292,7 @@ mod tests {
         assert!(local_i < remote_i, "local machine stays above remote");
         assert!(!strip.collapsed(RowId::Process(1)));
         assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::REMOTE_DEMO_PID)));
-        assert!(!strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
+        assert!(strip.collapsed(RowId::Process(orbit_live_event::dev::VIEWER_PID)));
         let viewer_i = ids
             .iter()
             .position(|id| *id == RowId::Process(orbit_live_event::dev::VIEWER_PID))
@@ -1261,9 +1326,9 @@ mod tests {
         strip.sync(&idx, Some(1));
         assert!(strip.process_order.contains(&1));
         assert_eq!(
-            strip.process_order[0],
+            *strip.process_order.last().unwrap(),
             orbit_live_event::dev::VIEWER_PID,
-            "self-profile processes stay at the top of the rail"
+            "self-profile processes stay at the bottom of the rail"
         );
         assert!(strip
             .process_order
@@ -1332,16 +1397,44 @@ mod tests {
         idx.insert(scope(11, 1, 3));
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
-        assert_eq!(strip.process_order[0], orbit_live_event::dev::VIEWER_PID);
-        // Asking a general process to slot 0 cannot displace the pinned viewer.
+        assert_eq!(*strip.process_order.last().unwrap(), orbit_live_event::dev::VIEWER_PID);
+        // Asking a general process to the last slot cannot displace the pinned viewer.
         strip.reorder_process(11, 0);
+        assert_eq!(strip.process_order[0], 11);
+        assert_eq!(strip.process_order[1], 10);
         assert_eq!(
-            strip.process_order[0],
+            strip.process_order[2],
             orbit_live_event::dev::VIEWER_PID,
-            "viewer stays pinned above general processes"
+            "viewer stays pinned below general processes"
         );
-        assert_eq!(strip.process_order[1], 11);
+    }
+
+    #[test]
+    fn the_target_leads_the_instrumented_follow_by_events_and_the_service_folds_last() {
+        let mut idx = TrackIndex::default();
+        // pid 30 is the target with one scope; 10 said little, 11 a lot;
+        // 40 is the service; the viewer's own rows are there too.
+        idx.insert(scope(30, 1, 1));
+        idx.insert(scope(10, 2, 1));
+        for i in 0..8 {
+            idx.insert(scope(11, 3, i + 1));
+        }
+        idx.insert(scope(40, 4, 1));
+        idx.insert(scope(orbit_live_event::dev::VIEWER_PID, 1, 30_000));
+        let mut strip = TrackStrip::default();
+        strip.order_hints = OrderHints { target: Some(30), service: Some(40) };
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order[0], 30, "the target first");
+        assert_eq!(strip.process_order[1], 11, "then the process that said the most");
         assert_eq!(strip.process_order[2], 10);
+        assert_eq!(&strip.process_order[3..], &[40, orbit_live_event::dev::VIEWER_PID][..]);
+        assert!(strip.collapsed(RowId::Process(40)), "the service arrives folded");
+        assert!(!strip.collapsed(RowId::Process(30)));
+        assert!(!strip.collapsed(RowId::Process(11)));
+        // An expand by hand is not undone by the next sync.
+        strip.toggle(RowId::Process(40));
+        strip.sync(&idx, None);
+        assert!(!strip.collapsed(RowId::Process(40)));
     }
 
     #[test]

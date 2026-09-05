@@ -40,6 +40,9 @@ pub struct StatusJson {
     /// The pid the running or last capture targets; 0 when none.
     #[serde(default)]
     pub target_pid: u32,
+    /// The service's own pid; 0 from an older service.
+    #[serde(default)]
+    pub service_pid: u32,
     /// OrbitService registered control hooks (real capture).
     #[serde(default)]
     pub hooks: bool,

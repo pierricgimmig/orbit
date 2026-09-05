@@ -153,6 +153,8 @@ struct StatusBody {
     dropped_before_start: u64,
     /// The pid the capture targets; 0 when none was started.
     target_pid: u32,
+    /// The service's own pid, so the viewer can put its rows last.
+    service_pid: u32,
 }
 
 impl StatusBody {
@@ -182,6 +184,7 @@ impl StatusBody {
             capture_start_ns: svc.capture_start_ns(),
             dropped_before_start: svc.dropped_before_start(),
             target_pid: svc.capture_pid(),
+            service_pid: std::process::id(),
         }
     }
 }

@@ -2189,6 +2189,7 @@ impl OrbitLiveApp {
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
                     target_pid: self.status.target_pid,
+                    service_pid: self.status.service_pid,
                     hooks: self.status.hooks,
                     // This frame is the WebSocket's stats push, which carries
                     // no control state; keep what /api/status last said.
@@ -3303,6 +3304,13 @@ impl OrbitLiveApp {
         let filter: Option<u32> = None;
         {
             let _tracks = dev.scope(TID_UI, NAME_TRACKS);
+            // Who goes where: the target first, then the instrumented
+            // processes by how much they said, then the service and the
+            // viewer's own rows last and folded.
+            self.tracks.order_hints = crate::tracks::OrderHints {
+                target: self.selected_pid.filter(|p| *p > 0).or((self.status.target_pid > 0).then_some(self.status.target_pid)),
+                service: (self.status.service_pid > 0).then_some(self.status.service_pid),
+            };
             {
                 let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
                 self.tracks.sync(&self.index, filter);
