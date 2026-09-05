@@ -2651,22 +2651,6 @@ impl OrbitLiveApp {
                     self.capture_open = !self.capture_open;
                     self.capture_user = true;
                 }
-                if let Some(pid) = self.selected_pid.filter(|p| *p > 0) {
-                    let name = self.process_display_name(pid);
-                    if ui
-                        .add(
-                            egui::Label::new(
-                                RichText::new(format!("{pid} {name}")).font(FontId::monospace(10.5)).color(theme::MUTED),
-                            )
-                            .sense(Sense::click()),
-                        )
-                        .on_hover_text("The target process; click for the settings")
-                        .clicked()
-                    {
-                        self.capture_open = true;
-                        self.capture_user = true;
-                    }
-                }
             } else if let Some(url) = &self.static_capture {
                 let name = url.rsplit('/').next().unwrap_or(url);
                 ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED))
@@ -2874,7 +2858,9 @@ impl OrbitLiveApp {
         });
     }
 
-    fn capture_strip(&mut self, ui: &mut Ui) {
+    /// The process row, always in the main UI under the transport: which
+    /// process the capture is about is not a setting to go looking for.
+    fn process_row(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             section_label(ui, "PROCESS");
@@ -2894,7 +2880,11 @@ impl OrbitLiveApp {
                 );
             }
         });
-        ui.add_space(4.0);
+    }
+
+    /// The capture settings: what to collect, how to unwind, hooks and
+    /// what is hooked. Inside the Settings window.
+    fn capture_strip(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             section_label(ui, "COLLECT");
@@ -6830,6 +6820,18 @@ impl eframe::App for OrbitLiveApp {
                     )
                     .show(ctx, |ui| self.transport(ui));
 
+
+                if self.static_capture.is_none() && !self.chrome_collapsed() {
+                    egui::TopBottomPanel::top("orbit_process_row")
+                        .exact_height(30.0)
+                        .frame(
+                            Frame::new()
+                                .fill(theme::RAIL)
+                                .inner_margin(Margin::symmetric(4, 3))
+                                .stroke(Stroke::NONE),
+                        )
+                        .show(ctx, |ui| self.process_row(ui));
+                }
 
                 if self.advanced {
                     egui::SidePanel::left("orbit_chrome")

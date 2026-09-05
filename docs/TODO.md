@@ -497,3 +497,18 @@ sharing unblocks the most (13, 14, 19, 25).
 
 settings widget (2026-09-05): the capture/app settings moved out of the top strip into one window behind a gear icon next to the bin (process, collect, unwind, hooks, hooked, interface knobs); the Capture pill is gone, the target process reads next to the gear. DONE.
 
+## 30. Code views: source, disassembly, and the two intertwined
+
+A performant code viewer with syntax highlighting (Rust, C, C++), a
+disassembly view with highlighting, and a view where source and
+disassembly are interleaved, as Visual Studio does and as the C++ Orbit
+app does (src/CodeViewer: the annotating source code dialog, the code
+report with per-line sample counts, Capstone disassembly). This is what
+makes the tool feel premium. For debugging the views, example Rust and
+C++ code from this repo and a disassembly of a function of an Orbit
+binary must be loadable on demand from the viewer.
+
+**Status: in progress (2026-09-05).** The process picker stays in the main
+UI (a slim row under the transport); everything else is in the Settings
+window behind the gear.
+
