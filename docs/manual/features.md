@@ -30,7 +30,18 @@ Instructions for the manual writer:
 - **Privileges.** Sampling and scheduling need `perf_event_paranoid` at -1
   or `CAP_PERFMON`; the process row says "CSW needs root" otherwise.
   Uprobe-based dynamic instrumentation always needs `CAP_PERFMON`; the
-  `instrumentation` scenario reports the refusal by name.
+  `instrumentation` scenario reports the refusal by name. To run the
+  service with `CAP_PERFMON` and no password prompt, once: `sudo
+  tools/sudo/install.sh`. It installs `/usr/local/bin/orbit-service-sudo`
+  and a sudoers rule on that one path; the wrapper runs any executable
+  named `orbit-service` that you own (any build, any checkout) as you,
+  with that one capability in the ambient set, and refuses everything
+  else. Root lasts for the wrapper alone, so a file planted under the
+  right name gains `CAP_PERFMON`, never root: worth knowing, since any
+  passwordless rule on a file you can write extends to any code running
+  as you. Then `sudo -n orbit-service-sudo
+  "$PWD/rust/crates/orbit-service/target/release/orbit-service" --serve
+  44766`, and `tools/e2e/orbit_e2e.py --sudo` uses it by itself.
 - **No target needed.** A capture can run with no process selected: the
   scheduler track, the service's own lanes and the agent track still fill.
 - **Nothing before the start.** The capture's clock starts when the loop

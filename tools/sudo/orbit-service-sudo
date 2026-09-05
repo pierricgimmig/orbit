@@ -1,0 +1,52 @@
+#!/bin/bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+#
+# Runs an orbit-service binary with CAP_PERFMON, as the user who asked:
+# any build, any checkout, as long as the file is named orbit-service and
+# belongs to that user. Installed by tools/sudo/install.sh as
+# /usr/local/bin/orbit-service-sudo with a NOPASSWD sudoers rule on
+# exactly this path.
+#
+# Root lasts for the wrapper alone. The service itself runs under the
+# caller's uid with one capability raised in the ambient set (what
+# uprobes need; sampling and scheduling are governed by
+# perf_event_paranoid), so a file someone planted under the right name
+# gains CAP_PERFMON, never root.
+#
+#   sudo -n orbit-service-sudo /abs/path/to/orbit-service --serve 44766
+set -eu
+if [ "$#" -lt 1 ]; then
+  echo "usage: orbit-service-sudo /absolute/path/to/orbit-service [args...]" >&2
+  exit 64
+fi
+bin=$1
+shift
+case "$bin" in
+  /*) ;;
+  *) echo "orbit-service-sudo: refused: $bin is not an absolute path" >&2; exit 126 ;;
+esac
+case "$(basename -- "$bin")" in
+  orbit-service|orbit-service-*) ;;
+  *) echo "orbit-service-sudo: refused: $bin is not named orbit-service" >&2; exit 126 ;;
+esac
+if [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
+  echo "orbit-service-sudo: refused: $bin is not an executable file" >&2
+  exit 126
+fi
+user=${SUDO_USER:-}
+uid=${SUDO_UID:-}
+if [ -z "$user" ] || [ -z "$uid" ] || [ "$uid" = 0 ]; then
+  echo "orbit-service-sudo: refused: run it through sudo, as a user" >&2
+  exit 126
+fi
+owner=$(stat -c %u -- "$bin")
+if [ "$owner" != "$uid" ]; then
+  echo "orbit-service-sudo: refused: $bin is owned by uid $owner, not you" >&2
+  exit 126
+fi
+# Back to the caller's uid and groups, keeping CAP_PERFMON through the
+# change, then into the ambient set so it survives the exec.
+exec capsh --keep=1 --user="$user" --inh=cap_perfmon --addamb=cap_perfmon -- \
+  -c 'exec "$0" "$@"' "$bin" "$@"
