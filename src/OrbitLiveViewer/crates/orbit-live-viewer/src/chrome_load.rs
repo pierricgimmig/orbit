@@ -14,14 +14,6 @@ use orbit_live_chrome::{ChromeIngestor, ChromeStream};
 use orbit_live_event::LiveEvent;
 
 const PUMP_BUDGET: usize = 48_000;
-/// Same-origin Chrome demo (server caches catapult theverge_trace.json).
-#[cfg(any(target_arch = "wasm32", test))]
-pub const THEVERGE_SAME_ORIGIN: &str = "/traces/theverge_trace.json";
-pub const THEVERGE_FILE_NAME: &str = "theverge_trace.json";
-pub const THEVERGE_LABEL: &str = "theverge";
-#[cfg(not(target_arch = "wasm32"))]
-const THEVERGE_UPSTREAM: &str = "https://raw.githubusercontent.com/catapult-project/catapult/main/tracing/test_data/theverge_trace.json";
-const THEVERGE_BYTES: u64 = 54_370_856;
 /// Cap compressed/raw bytes drained per frame so a multi-GB gzip is inflated
 /// into the scanner incrementally instead of all at once.
 const INPUT_BUDGET: usize = 2 << 20;
@@ -180,20 +172,6 @@ pub fn new_pending_file() -> PendingFile {
     std::sync::Arc::new(std::sync::Mutex::new(None))
 }
 
-/// Load the hosted catapult theverge fixture (same ingest as Open/drop).
-/// WASM fetches the same-origin URL as a ReadableStream. Native uses
-/// `ORBIT_LIVE_THEVERGE_PATH`, the temp cache, or downloads that cache.
-pub fn start_theverge() -> TraceLoad {
-    #[cfg(target_arch = "wasm32")]
-    {
-        start_wasm_same_origin_url(THEVERGE_SAME_ORIGIN, THEVERGE_FILE_NAME)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        start_native_theverge()
-    }
-}
-
 /// Open a file picker. WASM streams the File; native reads the path in a thread.
 pub fn start_open_dialog(
     #[cfg(target_arch = "wasm32")] pending: &PendingFile,
@@ -207,62 +185,6 @@ pub fn start_open_dialog(
     {
         native_open_dialog()
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn start_native_theverge() -> TraceLoad {
-    match ensure_theverge_local() {
-        Ok(path) => {
-            let size = std::fs::metadata(&path).ok().map(|m| m.len());
-            spawn_path_read(THEVERGE_FILE_NAME.into(), path, size)
-        }
-        Err(e) => {
-            let (tx, rx) = mpsc::channel();
-            let _ = tx.send(ByteMsg::Error(e));
-            TraceLoad::new(THEVERGE_FILE_NAME.into(), None, rx)
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn ensure_theverge_local() -> Result<std::path::PathBuf, String> {
-    if let Some(p) = std::env::var_os("ORBIT_LIVE_THEVERGE_PATH") {
-        if !p.is_empty() {
-            let path = std::path::PathBuf::from(p);
-            if path.is_file() {
-                return Ok(path);
-            }
-            return Err(format!(
-                "ORBIT_LIVE_THEVERGE_PATH is not a file: {}",
-                path.display()
-            ));
-        }
-    }
-    let cache = std::env::temp_dir()
-        .join("orbit-live-traces")
-        .join(THEVERGE_FILE_NAME);
-    if cache.is_file() {
-        let len = cache.metadata().map(|m| m.len()).unwrap_or(0);
-        if len == THEVERGE_BYTES || len > 1_000_000 {
-            return Ok(cache);
-        }
-    }
-    if let Some(parent) = cache.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = cache.with_extension("json.part");
-    let status = std::process::Command::new("curl")
-        .args(["-fsSL", "--retry", "3", "-o"])
-        .arg(&tmp)
-        .arg(THEVERGE_UPSTREAM)
-        .status()
-        .map_err(|e| format!("curl: {e}"))?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("download theverge failed ({status})"));
-    }
-    std::fs::rename(&tmp, &cache).map_err(|e| e.to_string())?;
-    Ok(cache)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -439,7 +361,7 @@ fn start_wasm_same_origin_url(url: &str, name: &str) -> TraceLoad {
         };
         pump_readable_stream(reader, tx).await;
     });
-    TraceLoad::new(name.to_string(), Some(THEVERGE_BYTES), rx)
+    TraceLoad::new(name.to_string(), None, rx)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -603,17 +525,6 @@ mod tests {
         assert!(same_origin_trace_path("?trace=//evil/x.json").is_none());
         assert!(same_origin_trace_path("?trace=/traces/../secret.json").is_none());
         assert!(same_origin_trace_path("?trace=/tmp/x.txt").is_none());
-        assert_eq!(
-            same_origin_trace_path(&format!("?trace={THEVERGE_SAME_ORIGIN}")),
-            Some(THEVERGE_SAME_ORIGIN.into())
-        );
     }
 
-    #[test]
-    fn theverge_button_is_not_the_demo_producer() {
-        assert_eq!(THEVERGE_LABEL, "theverge");
-        assert_ne!(THEVERGE_LABEL, "Demo");
-        assert_eq!(THEVERGE_SAME_ORIGIN, "/traces/theverge_trace.json");
-        assert_eq!(THEVERGE_FILE_NAME, "theverge_trace.json");
-    }
 }

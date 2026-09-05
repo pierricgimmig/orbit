@@ -44,6 +44,7 @@ pub struct SelfProfile {
     worker_kept: u32,
     worker_dropped: u32,
     /// The last `window.__orbit_self` text, so the page is written only on change.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     last_published: String,
 }
 

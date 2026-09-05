@@ -15,8 +15,7 @@ use orbit_live_event::dev::{
     NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW,
     NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM,
     NAME_WORKER_SPANS, NAME_LISTING_DISPATCH, NAME_LISTING_FLATTEN, NAME_LISTING_SORT, NAME_POOL_WAKE_US,
-    NAME_POOL_TAIL_US, NAME_LISTING_INLINE, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
-    VIEWER_NAME, VIEWER_PID,
+    NAME_POOL_TAIL_US, NAME_LISTING_INLINE, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
@@ -1942,23 +1941,6 @@ impl OrbitLiveApp {
         };
     }
 
-    fn merge_self_processes(&mut self) {
-        if !self.dev && !self.status.self_profile {
-            return;
-        }
-        for (pid, name) in [(VIEWER_PID, VIEWER_NAME), (SERVICE_PID, SERVICE_NAME)] {
-            if !self.processes.iter().any(|p| p.pid == pid) {
-                self.processes.push(ProcessJson {
-                    pid,
-                    name: name.into(),
-                    cpu: 0.0,
-                    path: String::new(),
-                });
-            }
-        }
-        self.merge_trace_processes();
-    }
-
     fn merge_trace_processes(&mut self) {
         for p in &self.trace_processes {
             if let Some(exist) = self.processes.iter_mut().find(|x| x.pid == p.pid) {
@@ -2083,7 +2065,7 @@ impl OrbitLiveApp {
                 self.selected_pid = Some(1);
             }
         }
-        self.merge_self_processes();
+        self.merge_trace_processes();
         if let Some(tl) = inbox.timeline {
             self.service_timeline = Some(tl);
             self.service_frame = None;
@@ -2374,17 +2356,6 @@ impl OrbitLiveApp {
             }
             ui.close();
         }
-        let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
-        if ui
-            .selectable_label(theverge_on, chrome_load::THEVERGE_LABEL)
-            .on_hover_text(
-                "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
-            )
-            .clicked()
-        {
-            self.begin_trace_load(chrome_load::start_theverge());
-            ui.close();
-        }
         if ui
             .selectable_label(self.capture_open, "Capture")
             .on_hover_text("Process, sampling, and hooks")
@@ -2612,15 +2583,6 @@ impl OrbitLiveApp {
             }
             if has_service {
                 self.transport_open(ui);
-                let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
-                if pill(ui, chrome_load::THEVERGE_LABEL, theverge_on)
-                    .on_hover_text(
-                        "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
-                    )
-                    .clicked()
-                {
-                    self.begin_trace_load(chrome_load::start_theverge());
-                }
                 if pill(ui, "Capture", self.capture_open)
                     .on_hover_text("Process, sampling, and hooks")
                     .clicked()
@@ -3260,9 +3222,13 @@ impl OrbitLiveApp {
         // scroll; the body claims primary drag for time + touch Y.
         let mut scroll_source = ScrollSource::ALL;
         scroll_source.mouse_wheel = false;
+        // egui's own bar is hidden and the viewer draws its own below: a
+        // bar whose look follows the pointer's position, not the hit test,
+        // so the report splitter next to it can never take turns with it.
         let mut scroll = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .id_salt("orbit_lanes")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .scroll_source(scroll_source);
         if let Some(y) = self.pending_vscroll.take() {
             scroll = scroll.vertical_scroll_offset(y);
@@ -3526,6 +3492,7 @@ impl OrbitLiveApp {
         if self.pending_vscroll.is_none() {
             self.lane_scroll = out.state.offset.y;
         }
+        self.paint_lane_scrollbar(ui, lanes_rect, height, avail.y);
         self.skip_clip_labels = false;
 
         // Deferred on purpose. A right-drag inside the lane area updates
@@ -4452,6 +4419,56 @@ impl OrbitLiveApp {
 
     /// Wheel Y + leftover flick coast. Time zoom / time pan stay in
     /// `handle_time_nav`; this only moves the track list.
+    /// The track list's vertical scrollbar, drawn by the viewer. Its
+    /// colour follows the pointer's position and its own drag, never
+    /// egui's hover state: egui's bar and the report splitter beside it
+    /// each claimed the hover on alternate frames, and the bar flickered.
+    fn paint_lane_scrollbar(&mut self, ui: &mut Ui, lanes: Rect, content_h: f32, view_h: f32) {
+        const BAR_W: f32 = 6.0;
+        if content_h <= view_h + 0.5 || view_h <= 0.0 {
+            return;
+        }
+        let track = Rect::from_min_max(
+            Pos2::new(lanes.right() - BAR_W, lanes.top()),
+            Pos2::new(lanes.right(), lanes.bottom()),
+        );
+        let handle_h = (track.height() * (view_h / content_h)).clamp(20.0, track.height());
+        let travel = (track.height() - handle_h).max(0.0);
+        let max_off = (content_h - view_h).max(1.0);
+        let top = track.top() + travel * (self.lane_scroll / max_off).clamp(0.0, 1.0);
+        let handle = Rect::from_min_size(
+            Pos2::new(track.left() + 1.0, top),
+            Vec2::new(BAR_W - 2.0, handle_h),
+        );
+        let resp = ui.interact(track, ui.id().with("orbit_lane_scrollbar"), Sense::click_and_drag());
+        if resp.dragged() && travel > 0.0 {
+            let next = self.lane_scroll + resp.drag_delta().y * max_off / travel;
+            self.pending_vscroll = Some(clamp_offset(next, self.vscroll_max));
+            self.needs_repaint = true;
+        } else if resp.clicked() {
+            if let Some(p) = resp.interact_pointer_pos() {
+                if !handle.contains(p) {
+                    let page = if p.y < handle.top() { -view_h } else { view_h };
+                    self.pending_vscroll = Some(clamp_offset(self.lane_scroll + page, self.vscroll_max));
+                    self.needs_repaint = true;
+                }
+            }
+        }
+        let over = ui
+            .input(|i| i.pointer.latest_pos())
+            .is_some_and(|p| track.contains(p));
+        let painter = ui.painter();
+        painter.rect_filled(track, 0.0, theme::RAIL);
+        let color = if resp.dragged() {
+            theme::ACCENT
+        } else if over {
+            theme::TEXT
+        } else {
+            theme::MUTED
+        };
+        painter.rect_filled(handle, 2.0, color);
+    }
+
     fn handle_vscroll_gestures(&mut self, ctx: &Context, lanes: Rect, ruler: Rect, dt: f32) {
         let (pressed, press_pos, scroll, zoom, ctrl_like, pinch, steal_keys) = ctx.input(|i| {
             (
@@ -7596,7 +7613,7 @@ fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
     painter.text(
         rect.center() + Vec2::new(0.0, 12.0),
         Align2::CENTER_CENTER,
-        "Open, theverge, or drop a Chrome .json  ·  or Record a process",
+        "Open or drop a Chrome .json  ·  or Record a process",
         FontId::new(12.0, FontFamily::Proportional),
         muted(),
     );
@@ -9464,143 +9481,6 @@ mod tests {
         let (c0, c1) = clamp_window_contain(z0, z1, cap0, cap1);
         assert!(c1 <= cap1 + 1e-9, "right edge must pin, not go after last");
         assert!((c1 - c0 - (z1 - z0)).abs() < 1e-6);
-    }
-
-    #[test]
-    fn theverge_first_paint_and_one_zoom_if_present() {
-        let path = "/tmp/chrome-traces/theverge_trace.json";
-        let Ok(bytes) = std::fs::read(path) else {
-            return;
-        };
-        let (ing, evs) = orbit_live_chrome::ingest_collect(&bytes).expect("theverge");
-        let (ca, cb) = ing.content_time_bounds().expect("content");
-        let mut idx = TrackIndex::default();
-        for e in evs {
-            idx.insert(e);
-        }
-        let (ia, ib) = idx.time_bounds().expect("index");
-        assert_eq!(ia, ca);
-        assert_eq!(ib, cb);
-        let span_s = (cb - ca) as f64 / 1e9;
-        assert!(
-            (8.2..8.3).contains(&span_s),
-            "theverge cluster {ca}..{cb} = {span_s} s"
-        );
-        let (t0, t1) = fit_content_window(ia as f64, ib as f64);
-        assert!((t0 - ia as f64).abs() < 1.0 && (t1 - ib as f64).abs() < 1.0);
-        assert!(t0 > 1e14);
-        let (z0, z1) = zoom_time_by_scale_limited(
-            t0,
-            t1,
-            1.0 + ZOOM_TIME_RATIO,
-            0.5,
-            zoom_max_for_capture((ib - ia) as f64),
-        );
-        assert_cursor_time_locked(t0, t1, z0, z1, 0.5);
-        assert!(
-            z0 < ib as f64 && z1 > ia as f64,
-            "zoom-in keeps the cluster"
-        );
-        let (o0, o1) = zoom_time_by_scale_limited(
-            z0,
-            z1,
-            1.0 / (1.0 + ZOOM_TIME_RATIO),
-            0.5,
-            zoom_max_for_capture((ib - ia) as f64),
-        );
-        assert_cursor_time_locked(z0, z1, o0, o1, 0.5);
-        let (o0, o1) = clamp_window_contain(o0, o1, ia as f64, ib as f64);
-        assert!((o0 - ia as f64).abs() < 1.0 && (o1 - ib as f64).abs() < 1.0);
-        let (h0, h1) = fit_content_window(ia as f64, ib as f64);
-        assert!((h0 - ia as f64).abs() < 1.0 && (h1 - ib as f64).abs() < 1.0);
-        eprintln!(
-            "theverge after load t0={t0} t1={t1} span_s={:.6} content={ca}..{cb}",
-            (t1 - t0) / 1e9
-        );
-        eprintln!(
-            "theverge after one zoom-in t0={z0} t1={z1} span_s={:.6}",
-            (z1 - z0) / 1e9
-        );
-        eprintln!(
-            "theverge after Home/fit t0={h0} t1={h1} span_s={:.6}",
-            (h1 - h0) / 1e9
-        );
-
-        let one_ns = idx
-            .lanes()
-            .flat_map(|(_, lane)| lane.events().iter())
-            .filter(|e| e.kind == kind::API_SCOPE && e.duration_ns == 1)
-            .count();
-        let mut shared_lanes = 0u32;
-        for (_, lane) in idx.lanes() {
-            let mut ones = 0u32;
-            let mut longer = 0u32;
-            for e in lane.events() {
-                if e.kind != kind::API_SCOPE {
-                    continue;
-                }
-                if e.duration_ns == 1 {
-                    ones += 1;
-                } else {
-                    longer += 1;
-                }
-            }
-            if ones > 0 && longer > 0 {
-                shared_lanes += 1;
-            }
-        }
-        let width = 1280.0f32;
-        let frame = collect_instances(&idx, t0 as u64, t1 as u64, width, 0.0, None);
-        let mut one_ns_w_max = 0.0f32;
-        let mut one_ns_inst = 0u32;
-        let mut one_ns_w_gt1 = 0u32;
-        for inst in &frame.instances {
-            if inst.kind == kind::API_SCOPE && inst.duration_ns == 1 {
-                one_ns_inst += 1;
-                one_ns_w_max = one_ns_w_max.max(inst.w);
-                if inst.w > 1.0 + 0.01 {
-                    one_ns_w_gt1 += 1;
-                }
-            }
-        }
-        let ns_per_px = (t1 - t0) / width as f64;
-        eprintln!(
-            "theverge fit window {t0}..{t1} width={width} ns/px={ns_per_px:.0} \
-             API_SCOPE duration_ns==1 events={one_ns} instances={one_ns_inst} \
-             max instance.w={one_ns_w_max} w>1px={one_ns_w_gt1} \
-             shared 1ns+longer lanes={shared_lanes}"
-        );
-        assert!(one_ns > 0);
-        assert!(shared_lanes > 0);
-        assert_eq!(
-            one_ns_w_gt1, 0,
-            "1 ns instances must stay 1 px ticks at the default fit, max w={one_ns_w_max}"
-        );
-
-        let mut stolen = 0u32;
-        for inst in &frame.instances {
-            if inst.duration_ns <= 1 {
-                continue;
-            }
-            let cx = inst.x + inst.w * 0.5;
-            let cy = inst.y + inst.h * 0.5;
-            let Some(i) = pick_instance_at(&frame.instances, cx, cy) else {
-                continue;
-            };
-            let hit = &frame.instances[i];
-            if hit.duration_ns == 1
-                && hit.pid == inst.pid
-                && hit.tid == inst.tid
-                && hit.kind == inst.kind
-                && hit.depth == inst.depth
-            {
-                stolen += 1;
-            }
-        }
-        assert_eq!(
-            stolen, 0,
-            "a 1 ns tick must not win pick at the center of a longer same-lane scope"
-        );
     }
 
     #[test]

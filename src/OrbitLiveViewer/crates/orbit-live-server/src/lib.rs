@@ -2,7 +2,6 @@
 
 pub mod demo;
 pub mod http;
-pub mod theverge;
 
 use std::cell::Cell;
 use std::net::SocketAddr;

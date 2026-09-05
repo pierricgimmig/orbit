@@ -62,9 +62,6 @@ first (legacy `[…]` array or `{ "traceEvents": […] }` plus
 `displayTimeUnit` / `stackFrames` / `samples`).
 
 * **Open** in the transport bar, or **drop** a file on the canvas / window
-* **theverge** pill: same-origin `GET /traces/theverge_trace.json` (cached
-  catapult fixture). Not the **Demo** producer. `ORBIT_LIVE_THEVERGE_PATH`
-  overrides with a local file. Not committed / not embedded in the WASM pack.
 * `.json`, `.json.gz`, `.gz`; `.zip` with one JSON if the local header has sizes
 * Same-origin `/?trace=/path.json` (no `..`, no absolute URLs)
 * Does **not** start Demo. Replaces the current session with processes/threads

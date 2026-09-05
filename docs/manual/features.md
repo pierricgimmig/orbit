@@ -104,6 +104,10 @@ Pills, left to right. A filled pill is on.
   drag pans, W/S zoom and A/D pan while held, Home or a double-click on the
   ruler fits the capture. The window cannot pan before the first event or
   past the last, and Home never fits narrower than a few microseconds.
+- **Scrolling the tracks.** Wheel over the tracks scrolls them with inertia;
+  the vertical scrollbar at the timeline's right edge is the viewer's own:
+  drag its handle, or click the track above or below it to page. The
+  report splitter sits just right of it and only that resizes the panel.
 - **Hover.** A scope shows its name and duration in a tooltip. The sample
   bar under each thread shows one tick per sample.
 - **Colour.** Scopes are coloured by thread; when a thread is focused

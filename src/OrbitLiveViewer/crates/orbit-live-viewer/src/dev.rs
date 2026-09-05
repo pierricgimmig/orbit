@@ -261,6 +261,7 @@ pub fn query_capture_url_from_location() -> Option<String> {
     }
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub fn query_capture_url(search: &str) -> Option<String> {
     let value = search
         .trim_start_matches('?')
@@ -273,6 +274,7 @@ pub fn query_capture_url(search: &str) -> Option<String> {
 }
 
 /// Enough of percent-decoding for a path: `%2F`, `%3A` and friends.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

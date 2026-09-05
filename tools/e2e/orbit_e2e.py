@@ -677,7 +677,23 @@ def _rows(run):
 def _thread_rows(run, pid):
     rows = run.wait_for(lambda: run.rects_matching(f"row:thread:{pid}:") or None,
                         f"a thread header of pid {pid} (rows: {_rows(run)[:12]})")
-    return rows
+    # The process's first thread must be on screen to be clicked. Other
+    # processes above it (the service's, with its many threads) are folded
+    # by their chevron, 16 px into the row, until it is.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    for _ in range(6):
+        rows = run.rects_matching(f"row:thread:{pid}:")
+        first_y = min(v[1] for v in rows.values())
+        if first_y + 40 < canvas_h:
+            break
+        above = [(v[1], k) for k, v in run.rects_matching("row:process:").items()
+                 if not k.endswith(f":{pid}") and v[1] < first_y]
+        if not above:
+            break
+        x, y, w, h = run.rect(sorted(above)[0][1])
+        run.chrome.click(x + 16, y + h * 0.5)
+        time.sleep(0.6)
+    return run.rects_matching(f"row:thread:{pid}:")
 
 
 @scenario("thread-focus", "Clicking a thread header focuses it; Escape or an empty click clears")
@@ -990,9 +1006,18 @@ def wire_and_perf(run):
     rate = run.wait_for(lambda: run.sel().get("ws_bps") or None, "bytes on the WebSocket", timeout=15)
     run.service.post("/api/capture/stop")
     time.sleep(2.0)
-    # The frame breakdown is published while the Self pane is open.
-    run.click("Self")
-    phases = run.wait_for(lambda: run.self_phases() or None, "the self-profile readout", timeout=20)
+    # The frame breakdown is published while the Self pane is open. A click
+    # that lands during a long frame (the whole-capture report after Stop)
+    # can be lost, so the pane is asked for again if nothing shows.
+    phases = None
+    for _ in range(3):
+        run.click("Self")
+        try:
+            phases = run.wait_for(lambda: run.self_phases() or None, "the self-profile readout", timeout=7)
+            break
+        except Failure:
+            continue
+    check(phases, "the self-profile readout never appeared after three clicks on Self")
     run.shot("21-self-pane", settle=2.0)
     run.perf["ws_bps_during_capture"] = rate
     run.perf["events"] = run.sel().get("events")
