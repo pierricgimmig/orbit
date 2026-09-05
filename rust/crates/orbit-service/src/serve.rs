@@ -610,25 +610,41 @@ fn capture_loop(
             symbolizer.symbol_count()
         );
     }
-    // One sampling ring per thread of the target, opened up front. Threads
-    // started later are missed; refreshing the thread list mid-capture is a
-    // later refinement.
+    // One sampling ring per thread of the target, opened up front and then
+    // for every thread that appears while the capture runs: the thread list
+    // is re-read from /proc four times a second (`THREAD_SCAN_EVERY_NS`),
+    // so a thread born mid-capture is sampled from its first quarter
+    // second on. A per-task event with `inherit` would follow children on
+    // its own, but the kernel refuses to mmap one (cpu -1 + inherit), and
+    // per-CPU inherited events cost threads x CPUs rings.
     let mut sample_rings = Vec::new();
-    if !has_target {
-        // nothing to sample
-    } else if let Ok(tasks) = std::fs::read_dir(format!("/proc/{target_pid}/task")) {
+    let mut sample_tids: Vec<i32> = Vec::new();
+    let open_sample_rings_for_new_threads = |rings: &mut Vec<orbit_perf_ring::RingBuffer>, tids: &mut Vec<i32>| {
+        let Ok(tasks) = std::fs::read_dir(format!("/proc/{target_pid}/task")) else { return 0 };
+        let mut opened = 0;
         for entry in tasks.flatten() {
             let Some(tid) = entry.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
                 continue;
             };
-            if let Ok(ring) = orbit_perf_ring::ring::open_stack_sample(period_ns, 64_000, tid, -1, 4096)
-            {
+            if tids.contains(&tid) {
+                continue;
+            }
+            if let Ok(ring) = orbit_perf_ring::ring::open_stack_sample(period_ns, 64_000, tid, -1, 4096) {
                 if ring.enable().is_ok() {
-                    sample_rings.push(ring);
+                    rings.push(ring);
+                    tids.push(tid);
+                    opened += 1;
                 }
             }
         }
+        opened
+    };
+    if has_target {
+        open_sample_rings_for_new_threads(&mut sample_rings, &mut sample_tids);
     }
+    const THREAD_SCAN_EVERY_NS: u64 = 250_000_000;
+    let mut last_thread_scan_ns: u64 = crate::now_monotonic_ns();
+    let sampling_works = !sample_rings.is_empty();
     if has_target && sample_rings.is_empty() {
         eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
     }
@@ -897,6 +913,17 @@ fn capture_loop(
         // samples in the same function abut, so the timeline reads as a flame
         // graph rather than a picket fence.
         drop(_switches);
+        if sampling_works {
+            let now = crate::now_monotonic_ns();
+            if now.saturating_sub(last_thread_scan_ns) >= THREAD_SCAN_EVERY_NS {
+                last_thread_scan_ns = now;
+                let _scan = orbit_api::scope("scan threads");
+                let opened = open_sample_rings_for_new_threads(&mut sample_rings, &mut sample_tids);
+                if opened > 0 {
+                    eprintln!("orbit-service: sampling {opened} new thread(s), {} in all", sample_rings.len());
+                }
+            }
+        }
         let _samples = orbit_api::scope("read samples");
         if let Some(unwinder) = unwinder.as_mut() {
             for ring in sample_rings.iter_mut() {

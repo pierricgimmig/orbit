@@ -85,7 +85,10 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   when a capture starts with hooks and none are loaded yet.
 - **COLLECT** toggles: **CSW** context switches (the scheduler track),
   **States** thread state slices, **API** manual `orbit.h` scopes,
-  **Sample** callstack sampling with the period in ms next to it.
+  **Sample** callstack sampling with the period in ms next to it. Every
+  thread of the target is sampled, including threads born during the
+  capture: the service re-reads the thread list four times a second and
+  opens a sampling ring for each new one.
 - **UNWIND** is a two-way switch, DWARF or FP. **HOOKS** is another:
   **Uprobes** (the default) arms kernel uprobes on the hooked functions and
   needs `CAP_PERFMON`; **User-space** is the trampoline mechanism, not
@@ -129,6 +132,14 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   dark bar, and nothing else stands for a sample on the timeline: the
   sampled frames stay in the report, not on the thread track, as in C++
   Orbit. Hovering a tick shows that sample's callstack, leaf first.
+- **Cursor line.** A vertical line follows the pointer across every track,
+  as in C++ Orbit, so a scope on one thread can be lined up with the
+  others. Where it crosses a graph lane a dot marks the curve and the
+  value at that time is written beside it, for every graph in view.
+- **Graph lanes.** Every value name a thread reports is a lane of its own,
+  labelled by the name with its latest value, scaled to what is in view.
+  The curve enters the window at the value it held before it and leaves
+  at the value after, so a graph zoomed out reads whole.
 - **Colour.** Scopes are coloured by thread. When a thread is focused
   (section 5) the scheduler greys every other thread's slices and keeps
   the focused one in colour; the thread tracks keep their colours, so the
@@ -185,6 +196,8 @@ in the URL opens a tab on load.
   module too; Rust names are demangled. What has no name shows as
   `module+0xoffset`. Screenshot: `03-report-flat.png`.
 - **Top-down / Bottom-up** call trees, expandable, with "expand all" and
+  "collapse all" pills on the filter row under the tabs (the title row
+  above the tabs never moves), with
   "collapse all". Screenshots: `04-report-topdown.png`,
   `05-report-bottomup.png`.
 - **Modules** the loaded modules and their function counts. Screenshot:

@@ -642,6 +642,9 @@ pub struct OrbitLiveApp {
     /// How far into the listing window the view's left edge sits, in
     /// points; 0 when the listing is the view.
     listing_pan_pts: f32,
+    /// The pointer's x over the timeline body this frame, in body points:
+    /// the cursor line and the value readouts follow it.
+    hover_body_x: Option<f32>,
     /// The view span of the previous frame: overscan is only worth listing
     /// once the span holds still (a zoom changes it every frame).
     last_view_span: Option<u64>,
@@ -938,6 +941,9 @@ pub struct TimelineState {
     /// How far into the listing window the view's left edge sits, in
     /// points; 0 when the listing is the view.
     listing_pan_pts: f32,
+    /// The pointer's x over the timeline body this frame, in body points:
+    /// the cursor line and the value readouts follow it.
+    hover_body_x: Option<f32>,
     /// The view span of the previous frame: overscan is only worth listing
     /// once the span holds still (a zoom changes it every frame).
     last_view_span: Option<u64>,
@@ -981,6 +987,7 @@ impl TimelineState {
             last_instanced_window: None,
             overscan_window: None,
             listing_pan_pts: 0.0,
+            hover_body_x: None,
             last_view_span: None,
             last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
@@ -1023,6 +1030,7 @@ impl OrbitLiveApp {
         std::mem::swap(&mut self.last_instanced_window, &mut other.last_instanced_window);
         std::mem::swap(&mut self.overscan_window, &mut other.overscan_window);
         std::mem::swap(&mut self.listing_pan_pts, &mut other.listing_pan_pts);
+        std::mem::swap(&mut self.hover_body_x, &mut other.hover_body_x);
         std::mem::swap(&mut self.last_view_span, &mut other.last_view_span);
         std::mem::swap(&mut self.last_dirty, &mut other.last_dirty);
         std::mem::swap(&mut self.last_lod, &mut other.last_lod);
@@ -1278,6 +1286,7 @@ impl OrbitLiveApp {
             last_instanced_window: None,
             overscan_window: None,
             listing_pan_pts: 0.0,
+            hover_body_x: None,
             last_view_span: None,
             last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
@@ -3336,9 +3345,15 @@ impl OrbitLiveApp {
             // Who goes where: the target first, then the instrumented
             // processes by how much they said, then the service and the
             // viewer's own rows last and folded.
-            self.tracks.order_hints = crate::tracks::OrderHints {
-                target: self.selected_pid.filter(|p| *p > 0).or((self.status.target_pid > 0).then_some(self.status.target_pid)),
-                service: (self.status.service_pid > 0).then_some(self.status.service_pid),
+            self.tracks.order_hints = if self.in_self_pane {
+                // The Self pane's timeline is about the viewer: its rows lead
+                // and arrive open.
+                crate::tracks::OrderHints { target: Some(VIEWER_PID), service: None }
+            } else {
+                crate::tracks::OrderHints {
+                    target: self.selected_pid.filter(|p| *p > 0).or((self.status.target_pid > 0).then_some(self.status.target_pid)),
+                    service: (self.status.service_pid > 0).then_some(self.status.service_pid),
+                }
             };
             {
                 let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
@@ -3661,7 +3676,11 @@ impl OrbitLiveApp {
                     &self.intern,
                     self.tracks.scale,
                     Some(y_cull),
+                    self.hover_body_x,
                 );
+                if let Some(x) = self.hover_body_x {
+                    paint_cursor_line(ui, body, x);
+                }
                 paint_playhead(
                     ui,
                     body,
@@ -5059,10 +5078,12 @@ impl OrbitLiveApp {
         }
         let Some(pos) = response.hover_pos() else {
             self.hover = None;
+            self.hover_body_x = None;
             return;
         };
         let x = pos.x - rect.left();
         let y = pos.y - rect.top();
+        self.hover_body_x = Some(x);
         self.hover = self.pick_at(x, y, t0, t1, width);
         if response.double_clicked() {
             // CaptureWindow::SelectTimer + TimeGraph::Zoom (1.1 × duration).
@@ -5440,23 +5461,6 @@ impl OrbitLiveApp {
                         self.describe_selection_named()
                     };
                     ui.label(RichText::new(desc).color(theme::MUTED).size(11.0));
-                    // Expand/collapse all, as the native tree's context menu
-                    // offers. Only meaningful on the two tree tabs.
-                    if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
-                        ui.add_space(8.0);
-                        if pill(ui, "Expand all", false)
-                            .on_hover_text("Expand every node of this tree")
-                            .clicked()
-                        {
-                            self.expand_all_tree_nodes();
-                        }
-                        if pill(ui, "Collapse all", false)
-                            .on_hover_text("Collapse every node back to its roots")
-                            .clicked()
-                        {
-                            self.tree_expanded.clear();
-                        }
-                    }
                 });
                 ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
@@ -5513,6 +5517,24 @@ impl OrbitLiveApp {
                     }
                     if !self.report_filter.is_empty() && icon_pill(ui, "×", "Clear the filter").clicked() {
                         self.report_filter.clear();
+                    }
+                    // Expand/collapse all, as the native tree's context menu
+                    // offers. Only on the two tree tabs, and here, under the
+                    // tabs, so the title row above them never shifts.
+                    if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
+                        ui.add_space(8.0);
+                        if pill(ui, "Expand all", false)
+                            .on_hover_text("Expand every node of this tree")
+                            .clicked()
+                        {
+                            self.expand_all_tree_nodes();
+                        }
+                        if pill(ui, "Collapse all", false)
+                            .on_hover_text("Collapse every node back to its roots")
+                            .clicked()
+                        {
+                            self.tree_expanded.clear();
+                        }
                     }
                 });
                 // Both axes: a call tree or a long function name is wider than
@@ -7639,6 +7661,20 @@ fn value_extent(samples: &[(f32, f32)]) -> (f32, f32) {
     (min_v, max_v)
 }
 
+/// The vertical line under the pointer, across every track, as C++ Orbit
+/// draws it: what lines a scope on one thread up with the others.
+fn paint_cursor_line(ui: &Ui, body: Rect, x: f32) {
+    let x = body.left() + x;
+    if x < body.left() || x > body.right() {
+        return;
+    }
+    ui.painter_at(body).line_segment(
+        [Pos2::new(x, body.top()), Pos2::new(x, body.bottom())],
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xEC, 0xEF, 0xF1, 110)),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_value_graphs(
     ui: &Ui,
     body: Rect,
@@ -7649,6 +7685,7 @@ fn paint_value_graphs(
     intern: &InternTable,
     scale: f32,
     y_cull: Option<YCull>,
+    hover_x: Option<f32>,
 ) {
     if t1 <= t0 {
         return;
@@ -7656,26 +7693,37 @@ fn paint_value_graphs(
     let span = (t1 - t0) as f64;
     let painter = ui.painter_at(body);
     let ppp = ui.pixels_per_point();
+    let hover_t = hover_x.map(|x| t0.saturating_add((x.max(0.0) as f64 / body.width().max(1.0) as f64 * span) as u64));
     for &(key, y, h) in &value_lanes_in_view(layout, scale, y_cull) {
         let Some(lane) = index.lane(key) else {
             continue;
         };
+        let events = lane.events();
         let mut samples: Vec<(f32, f32)> = Vec::new();
-        let mut i = lane.first_ending_after(t0);
-        while let Some(e) = lane.events().get(i) {
-            if e.start_ns >= t1 {
-                break;
-            }
+        // From the last sample before the window to the first one after
+        // it: a step graph holds its value until the next sample, so the
+        // curve must enter the window at the value it had, not start at
+        // the first sample inside it -- zoomed out, that was most of a
+        // lane drawn empty.
+        let mut i = lane.first_ending_after(t0).saturating_sub(1);
+        while let Some(e) = events.get(i) {
             if let Some(v) = e.value_f32() {
-                let x =
-                    ((e.start_ns.saturating_sub(t0) as f64 / span) * body.width() as f64) as f32;
+                let x = ((e.start_ns as f64 - t0 as f64) / span * body.width() as f64) as f32;
                 samples.push((x, v));
             }
             i += 1;
+            if e.start_ns >= t1 {
+                break;
+            }
         }
         if samples.is_empty() {
             continue;
         }
+        // The value under the pointer: the last sample at or before it.
+        let hovered = hover_t.and_then(|t| {
+            let at = events.partition_point(|e| e.start_ns <= t);
+            (at > 0).then(|| events[at - 1])
+        });
         let (min_v, max_v) = value_extent(&samples);
         let bucketed = bucket_last_per_device_px(&samples, ppp);
         let color = c32(theme::display_argb(orbit_live_event::named_scope_color(
@@ -7701,6 +7749,36 @@ fn paint_value_graphs(
             let pts: Vec<Pos2> = stepped.iter().map(|&(px, py)| Pos2::new(px, py)).collect();
             painter.add(Shape::line(pts, Stroke::new(VALUE_STROKE_PX, color)));
         }
+        // The readout at the pointer: a dot on the curve where the cursor
+        // line crosses it and the name and value beside it, for every
+        // graph in view.
+        if let (Some(x), Some(e), Some(v)) = (hover_x, hovered, hovered.and_then(|e| e.value_f32())) {
+            let t = (v - min_v) / span_v;
+            let py = body.top() + y + h - pad - t.clamp(0.0, 1.0) * inner_h;
+            let px = body.left() + x;
+            let name = intern.get(e.name_id).unwrap_or("value");
+            let text = format!("{name} {}", format_value(intern, e.name_id, v));
+            let font = FontId::monospace(10.5);
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), theme::TEXT));
+            let w = galley.size().x + 8.0;
+            // Right of the line unless that runs off the body.
+            let left = if px + 8.0 + w > body.right() { px - 8.0 - w } else { px + 8.0 };
+            let top = (py - galley.size().y - 4.0).max(body.top() + y);
+            let bg = Rect::from_min_size(Pos2::new(left, top), Vec2::new(w, galley.size().y + 4.0));
+            painter.rect_filled(bg, 3.0, Color32::from_rgba_unmultiplied(0x12, 0x14, 0x18, 220));
+            painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, theme::TEXT);
+            painter.circle_filled(Pos2::new(px, py), 3.0, color);
+        }
+    }
+}
+
+/// A value as the graph's tooltip and readout show it: bytes for memory
+/// lanes, one decimal for rates, two otherwise.
+fn format_value(intern: &InternTable, name_id: u32, v: f32) -> String {
+    match intern.get(name_id) {
+        Some("wasm_mem") => fmt_bytes(v),
+        Some("fps") => format!("{v:.1}"),
+        _ => format!("{v:.2}"),
     }
 }
 
@@ -8308,13 +8386,7 @@ fn format_value_pick(intern: &InternTable, pick: ScopePick) -> Option<String> {
         return None;
     }
     let v = f32::from_bits(pick.duration_ns as u32);
-    if intern.get(pick.name_id) == Some("wasm_mem") {
-        return Some(fmt_bytes(v));
-    }
-    if intern.get(pick.name_id) == Some("fps") {
-        return Some(format!("{v:.1}"));
-    }
-    Some(format!("{v:.2}"))
+    Some(format_value(intern, pick.name_id, v))
 }
 
 fn pick_value_at(

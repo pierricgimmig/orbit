@@ -146,6 +146,19 @@ impl LiveEvent {
         if self.kind == kind::SCHEDULING_SLICE {
             return LaneKey::scheduler(self.extra);
         }
+        if self.kind == kind::VALUE {
+            // One graph per value name, not one per thread: a thread that
+            // reports fps, memory and a queue depth gets three lanes, each
+            // labelled and scaled on its own, instead of three curves on
+            // one axis. The name id is folded into the two spare bytes.
+            return LaneKey {
+                pid: self.pid,
+                tid: self.tid,
+                kind: self.kind,
+                depth: (self.name_id & 0xFF) as u8,
+                extra: ((self.name_id >> 8) & 0xFF) as u8,
+            };
+        }
         LaneKey {
             pid: self.pid,
             tid: self.tid,
