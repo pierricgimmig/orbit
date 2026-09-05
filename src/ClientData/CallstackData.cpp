@@ -125,6 +125,7 @@ bool CallstackData::HasCallstack(uint64_t callstack_id) const {
 }
 
 std::shared_ptr<CallstackInfo> CallstackData::GetCallstackPtr(uint64_t callstack_id) const {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
   auto it = unique_callstacks_.find(callstack_id);
   if (it != unique_callstacks_.end()) {
     return unique_callstacks_.at(callstack_id);

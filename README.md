@@ -121,6 +121,21 @@ cache. See [docs/building_with_bazel.md](docs/building_with_bazel.md) for the
 available configurations, where each dependency comes from, and how to keep
 builds fast.
 
+### The manual
+
+[docs/manual](docs/manual/index.html) is a screenshot tour of every feature, and it is generated
+rather than written:
+
+```
+bazel run //src/OrbitManual:GenerateManual
+```
+
+That starts OrbitTest, starts OrbitService, connects Orbit to it, takes a capture and
+screenshots its way through the UI, then writes the pages out. Because every picture comes from
+the program as it is now, regenerating the manual is also an end-to-end test: a chapter that comes
+out empty is a feature that broke. See
+[docs/generating_the_manual.md](docs/generating_the_manual.md).
+
 #### How long it takes, and how much disk it needs
 
 Measure it on your own machine rather than taking anyone's word for it:

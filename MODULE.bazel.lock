@@ -468,7 +468,7 @@
     },
     "//bazel/deps:extensions.bzl%opengl": {
       "general": {
-        "bzlTransitiveDigest": "W0SYp7A2fHkKQWgq+eyBxrbGMldUbI5Z199Z/LXprdo=",
+        "bzlTransitiveDigest": "+zrVcKlIZmFkjSrTbIax48A8UBRgWekzIjZ5NrqRXKY=",
         "usagesDigest": "0Q2SE3xbnAfRsjMuerD24f7xTq3CKlOzu6kkqtYmlGk=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -497,7 +497,7 @@
     },
     "//bazel/deps:extensions.bzl%qt5": {
       "general": {
-        "bzlTransitiveDigest": "W0SYp7A2fHkKQWgq+eyBxrbGMldUbI5Z199Z/LXprdo=",
+        "bzlTransitiveDigest": "+zrVcKlIZmFkjSrTbIax48A8UBRgWekzIjZ5NrqRXKY=",
         "usagesDigest": "45rkbeC2xhJHZ2Qz/bwTe7CbM/ZEaExLiyM/K2SEU20=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -519,7 +519,16 @@
                 "libqt5printsupport5t64|https://archive.ubuntu.com/ubuntu/pool/universe/q/qtbase-opensource-src/libqt5printsupport5t64_5.15.18%2bdfsg-1ubuntu1_amd64.deb|c6f802a5042b842c35422643042aa3b00fc601611461f2b1987b111ee8f83bf6",
                 "libdouble-conversion3|https://archive.ubuntu.com/ubuntu/pool/universe/d/double-conversion/libdouble-conversion3_3.4.0-1_amd64.deb|b178176ba18a499a35dc1cc3b5258e16da0791872fc96c16934cd747425ae892",
                 "libpcre2-16-0|https://archive.ubuntu.com/ubuntu/pool/main/p/pcre2/libpcre2-16-0_10.46-1build1_amd64.deb|76b4096fd9476d8d2eec24c6bca8fdfcab108a72e33f0fbcb47aa5cb7ef8de87",
-                "libmd4c0|https://archive.ubuntu.com/ubuntu/pool/universe/m/md4c/libmd4c0_0.5.2-2build1_amd64.deb|ad96a6753d3c8dbfdfba9e6fde56b2c61554daeb5ee7fe58599cfe797a2edb23"
+                "libmd4c0|https://archive.ubuntu.com/ubuntu/pool/universe/m/md4c/libmd4c0_0.5.2-2build1_amd64.deb|ad96a6753d3c8dbfdfba9e6fde56b2c61554daeb5ee7fe58599cfe797a2edb23",
+                "libxcb-icccm4|https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-wm/libxcb-icccm4_0.4.2-1build1_amd64.deb|4a3ad09974233ecf1fe0fc220fb53261e8de617a2b1ee03b35d93279ea7ca6ef",
+                "libxcb-image0|https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-image/libxcb-image0_0.4.0-2build2_amd64.deb|075b7eabd209f8a80a55668d1b623e7ea19951e56c89a5544c4d186055c6e261",
+                "libxcb-keysyms1|https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-keysyms/libxcb-keysyms1_0.4.1-1build1_amd64.deb|de24aefed6890d3ffa936aa8cbe64a7c118452c4287d2a465d4813c620490fd4",
+                "libxcb-render-util0|https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-renderutil/libxcb-render-util0_0.3.10-1build1_amd64.deb|33ea371d2cf31c577c628c7d980555f83c1f43b7d02e88c329b311d2b1303c44",
+                "libxcb-util1|https://archive.ubuntu.com/ubuntu/pool/main/x/xcb-util/libxcb-util1_0.4.1-1build1_amd64.deb|cf20c1093b223f82dc970cf38c3907ba0f4b70607820ff1c13d64ef51c0d1656",
+                "libxcb-xinerama0|https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcb/libxcb-xinerama0_1.17.0-2ubuntu1_amd64.deb|6f589281c628cd6f4649ac0e8fc25db0c94653033869e1a8931611bd42b8a869",
+                "libxcb-xinput0|https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcb/libxcb-xinput0_1.17.0-2ubuntu1_amd64.deb|42b192a43804c679c95fc1183275b9d5c8dcee062fa9b42cdffa4b0c75e81fe3",
+                "libxcb-xkb1|https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcb/libxcb-xkb1_1.17.0-2ubuntu1_amd64.deb|ff8866651bd3ef8af42b97fe58f37fccefbe7fd54179128ed9fcc63009e23d26",
+                "libxkbcommon-x11-0|https://archive.ubuntu.com/ubuntu/pool/main/libx/libxkbcommon/libxkbcommon-x11-0_1.13.1-1_amd64.deb|231f44bf451c6263bbd69c23620018aad94297581391f9094b924912ca77a8a8"
               ],
               "build_file": "@@//bazel/qt:qt5.BUILD.tpl",
               "substitutions": {

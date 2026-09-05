@@ -95,6 +95,60 @@ QT5_DEBS = [
         url = "https://archive.ubuntu.com/ubuntu/pool/universe/m/md4c/libmd4c0_0.5.2-2build1_amd64.deb",
         sha256 = "ad96a6753d3c8dbfdfba9e6fde56b2c61554daeb5ee7fe58599cfe797a2edb23",
     ),
+    struct(
+        name = "libxcb-icccm4",
+        version = "0.4.2-1build1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-wm/libxcb-icccm4_0.4.2-1build1_amd64.deb",
+        sha256 = "4a3ad09974233ecf1fe0fc220fb53261e8de617a2b1ee03b35d93279ea7ca6ef",
+    ),
+    struct(
+        name = "libxcb-image0",
+        version = "0.4.0-2build2",
+        url = "https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-image/libxcb-image0_0.4.0-2build2_amd64.deb",
+        sha256 = "075b7eabd209f8a80a55668d1b623e7ea19951e56c89a5544c4d186055c6e261",
+    ),
+    struct(
+        name = "libxcb-keysyms1",
+        version = "0.4.1-1build1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-keysyms/libxcb-keysyms1_0.4.1-1build1_amd64.deb",
+        sha256 = "de24aefed6890d3ffa936aa8cbe64a7c118452c4287d2a465d4813c620490fd4",
+    ),
+    struct(
+        name = "libxcb-render-util0",
+        version = "0.3.10-1build1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/universe/x/xcb-util-renderutil/libxcb-render-util0_0.3.10-1build1_amd64.deb",
+        sha256 = "33ea371d2cf31c577c628c7d980555f83c1f43b7d02e88c329b311d2b1303c44",
+    ),
+    struct(
+        name = "libxcb-util1",
+        version = "0.4.1-1build1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/main/x/xcb-util/libxcb-util1_0.4.1-1build1_amd64.deb",
+        sha256 = "cf20c1093b223f82dc970cf38c3907ba0f4b70607820ff1c13d64ef51c0d1656",
+    ),
+    struct(
+        name = "libxcb-xinerama0",
+        version = "1.17.0-2ubuntu1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcb/libxcb-xinerama0_1.17.0-2ubuntu1_amd64.deb",
+        sha256 = "6f589281c628cd6f4649ac0e8fc25db0c94653033869e1a8931611bd42b8a869",
+    ),
+    struct(
+        name = "libxcb-xinput0",
+        version = "1.17.0-2ubuntu1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcb/libxcb-xinput0_1.17.0-2ubuntu1_amd64.deb",
+        sha256 = "42b192a43804c679c95fc1183275b9d5c8dcee062fa9b42cdffa4b0c75e81fe3",
+    ),
+    struct(
+        name = "libxcb-xkb1",
+        version = "1.17.0-2ubuntu1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcb/libxcb-xkb1_1.17.0-2ubuntu1_amd64.deb",
+        sha256 = "ff8866651bd3ef8af42b97fe58f37fccefbe7fd54179128ed9fcc63009e23d26",
+    ),
+    struct(
+        name = "libxkbcommon-x11-0",
+        version = "1.13.1-1",
+        url = "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxkbcommon/libxkbcommon-x11-0_1.13.1-1_amd64.deb",
+        sha256 = "231f44bf451c6263bbd69c23620018aad94297581391f9094b924912ca77a8a8",
+    ),
 ]
 
 OPENGL_DEBS = [

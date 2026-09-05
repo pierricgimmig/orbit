@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bottom-up - Orbit Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+<div class="topbar-inner">
+<a class="brand" href="index.html">Orbit<span>Manual</span></a>
+</div>
+</header>
+<main>
+<nav class="breadcrumb"><a href="index.html">Orbit Manual</a></nav>
+<article>
+<h2>Bottom-up</h2>
+<p class="summary">The same callstacks merged from the leaves, to find who calls a hot function.</p>
+<p>The bottom-up view starts from the functions samples landed in and walks back towards the callers. Where the top-down view answers what a thread is doing, this one answers why a particular function is being called so much, and from where.</p>
+<figure>
+<img src="images/bottom-up.png" alt="The bottom-up view, expanded from the most sampled functions towards their callers." loading="lazy">
+<figcaption>The bottom-up view, expanded from the most sampled functions towards their callers.</figcaption>
+</figure>
+</article>
+<footer class="pager">
+<a class="prev" href="top-down.html"><span class="dir">Previous</span><span class="pager-title">Top-down</span></a>
+<a class="next" href="capture-log.html"><span class="dir">Next</span><span class="pager-title">The capture log</span></a>
+</footer>
+</main>
+</body>
+</html>

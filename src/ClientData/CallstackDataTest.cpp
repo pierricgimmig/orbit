@@ -10,10 +10,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <thread>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -339,6 +341,45 @@ INSTANTIATE_TEST_SUITE_P(
         {"OnePixel", kExpectAny, kStartNs, kEndNs, /*resolution=*/1, {0, 2}},
     }),
     kGetTestName);
+
+// A capture writes callstack events from the thread that processes them while the capture window
+// reads them to draw. Every accessor therefore has to take the mutex, and the two that once did
+// not crashed Orbit mid-capture: reading a btree while another thread rebalances it, or a hash map
+// while another thread rehashes it, does not merely return the wrong answer.
+//
+// This does not prove the accessors are safe -- no amount of hammering can -- but with abseil's
+// container hardening on, which is the default for a fastbuild, it does catch the two that were
+// unguarded.
+TEST(CallstackData, AccessorsAreSafeWhileEventsArrive) {
+  static constexpr uint64_t kEventCount = 2000;
+  static constexpr uint32_t kThreadCount = 8;
+
+  CallstackData callstack_data;
+  std::atomic<bool> writer_done = false;
+
+  std::thread writer{[&]() {
+    for (uint64_t i = 0; i < kEventCount; ++i) {
+      callstack_data.AddUniqueCallstack(
+          /*callstack_id=*/i, CallstackInfo{{0x10 + i, 0x20 + i}, CallstackType::kComplete});
+      callstack_data.AddCallstackEvent(
+          CallstackEvent{/*timestamp_ns=*/i + 1, /*callstack_id=*/i,
+                         /*thread_id=*/static_cast<uint32_t>(i % kThreadCount)});
+    }
+    writer_done = true;
+  }};
+
+  // Both of these used to read the containers the writer is mutating without holding the mutex.
+  while (!writer_done) {
+    callstack_data.ForEachCallstackEventInTimeRangeDiscretized(
+        0, std::numeric_limits<uint64_t>::max(), /*resolution=*/100,
+        [&](const CallstackEvent& event) {
+          EXPECT_NE(callstack_data.GetCallstack(event.callstack_id()), nullptr);
+        });
+  }
+
+  writer.join();
+  EXPECT_EQ(callstack_data.GetCallstackEventsCount(), kEventCount);
+}
 
 }  // namespace
 
