@@ -462,3 +462,7 @@ five viewer notes (2026-09-05): sampling misses threads created during the captu
 
   DONE 2026-09-05: new threads are announced by PERF_RECORD_FORK on per-thread task rings and sampled from that pass (a 2 s /proc scan is the safety net, and logs if it finds anything); the tree pills sit on the filter row under the tabs; graphs include the sample before and after the window; every value name is its own lane, the Self pane's rows lead and open; the cursor line and per-graph readouts follow the pointer.
 
+three viewer notes (2026-09-05): the report splitter only moved one way; threads with no data of their own fill the rail after a capture; the C++ call tree's expansion slider, and trees auto-expanded; a click on a callstack sample should copy it
+
+  DONE 2026-09-05: exact_width was undone by a min_width(0.0) and the panel could only narrow (6ce65285f); threads earn a row only by explicit data (scopes, samples, values, calls), thread-state slices alone do not; the tree tabs carry the slider (nodes over N% of the samples arrive open, 0 = all, the default) with Expand/Collapse all; a click on a sample tick copies its callstack.
+

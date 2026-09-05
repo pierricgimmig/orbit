@@ -134,7 +134,8 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   bar under each thread shows one tick per sample, a white line on the
   dark bar, and nothing else stands for a sample on the timeline: the
   sampled frames stay in the report, not on the thread track, as in C++
-  Orbit. Hovering a tick shows that sample's callstack, leaf first.
+  Orbit. Hovering a tick shows that sample's callstack, leaf first, and
+  a click puts it on the clipboard, one frame a line.
 - **Cursor line.** A vertical line follows the pointer across every track,
   as in C++ Orbit, so a scope on one thread can be lined up with the
   others. Where it crosses a graph lane a dot marks the curve and the
@@ -143,6 +144,10 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   labelled by the name with its latest value, scaled to what is in view.
   The curve enters the window at the value it held before it and leaves
   at the value after, so a graph zoomed out reads whole.
+- **Rows.** A thread has a row once it has said something: a scope, a
+  sample, a value, a hooked call. The scheduler's thread-state slices
+  alone do not earn one, so a capture of a busy process is not a wall of
+  rows for threads that only ever slept.
 - **Colour.** Scopes are coloured by thread. When a thread is focused
   (section 5) the scheduler greys every other thread's slices and keeps
   the focused one in colour; the thread tracks keep their colours, so the
@@ -199,8 +204,11 @@ in the URL opens a tab on load.
   module too; Rust names are demangled. What has no name shows as
   `module+0xoffset`. Screenshot: `03-report-flat.png`.
 - **Top-down / Bottom-up** call trees, expandable, with "expand all" and
-  "collapse all" pills on the filter row under the tabs, so the title row
-  above the tabs never moves. Screenshots: `04-report-topdown.png`,
+  "collapse all" pills and the expansion slider of C++ Orbit's call tree
+  on the filter row under the tabs, so the title row above the tabs never
+  moves. A tree arrives open along every node over the slider's share of
+  the samples; at the left end ("open all", the default) the whole tree
+  is open, towards the right only the hottest path. Screenshots: `04-report-topdown.png`,
   `05-report-bottomup.png`.
 - **Modules** the loaded modules and their function counts. Screenshot:
   `06-report-modules.png`.

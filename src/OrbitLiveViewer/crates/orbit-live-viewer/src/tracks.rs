@@ -151,6 +151,17 @@ impl LaneCatalogue {
         };
         let mut n_cores = 0u16;
         let mut seen_threads: FastSet<(u32, u32)> = FastSet::default();
+        // A thread earns a row by saying something: a scope, a sample, a
+        // value, a call. Thread-state slices alone -- what every thread of
+        // the target gets from the scheduler just for being scheduled --
+        // do not, or a capture of a busy process ends as a wall of empty
+        // rows for threads that were only ever asleep.
+        let mut explicit: FastSet<(u32, u32)> = FastSet::default();
+        for (k, lane) in index.lanes() {
+            if !is_cpu_lane(k) && k.kind != kind::THREAD_STATE && !is_sampled_frame_lane(k, lane) {
+                explicit.insert((k.pid, k.tid));
+            }
+        }
         for (k, lane) in index.lanes() {
             if is_cpu_lane(k) {
                 n_cores = n_cores.max(u16::from(k.extra) + 1);
@@ -161,6 +172,9 @@ impl LaneCatalogue {
             // they are not drawn: a sample is a tick on the sample bar, as
             // in C++ Orbit, not a flame of guessed spans on the thread.
             if is_sampled_frame_lane(k, lane) {
+                continue;
+            }
+            if !explicit.contains(&(k.pid, k.tid)) {
                 continue;
             }
             c.pids_with_lanes.insert(k.pid);

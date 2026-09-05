@@ -704,6 +704,11 @@ pub struct OrbitLiveApp {
     /// tab so switching top-down/bottom-up does not carry one view's
     /// expansion into the other's very different shape.
     tree_expanded: std::collections::HashSet<String>,
+    /// The tree tabs' slider, as C++ Orbit's CallTreeWidget has it: nodes
+    /// over this share of the samples arrive expanded. 0 opens everything.
+    tree_expand_threshold: f32,
+    /// When a sample's callstack was last copied, for the "copied" note.
+    callstack_copied_at: f64,
     modules: Option<crate::net::ModulesJson>,
     /// Previous frame's capturing flag, to catch the moment a capture stops.
     was_capturing: bool,
@@ -1337,6 +1342,8 @@ impl OrbitLiveApp {
                 .unwrap_or(ReportTab::Flat),
             tree: None,
             tree_expanded: std::collections::HashSet::new(),
+            tree_expand_threshold: 0.0,
+            callstack_copied_at: -10.0,
             modules: None,
             was_capturing: false,
             pending_report_request: crate::dev::query_report_tab_from_location().is_some(),
@@ -2089,6 +2096,9 @@ impl OrbitLiveApp {
             self.sampling = Some(r);
         }
         if let Some(t) = inbox.tree {
+            // Open along the hot path, the way C++ Orbit's tree arrives:
+            // every node over the slider's share of the samples.
+            self.tree_expanded = expandable_paths_over(&t.roots, self.tree_expand_threshold);
             self.tree = Some(t);
             self.flame_zoom.clear();
         }
@@ -3714,7 +3724,8 @@ impl OrbitLiveApp {
                     } else {
                         Vec::new()
                     };
-                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h, &stack);
+                    let copied = self.now_s - self.callstack_copied_at < 1.5;
+                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h, &stack, copied);
                 }
             } else {
                 ui.painter().text(
@@ -5113,6 +5124,15 @@ impl OrbitLiveApp {
                     if pick_selects_thread(pick) {
                         self.selected_thread = None;
                     }
+                    // A click on a sample tick puts its callstack on the
+                    // clipboard, leaf first, one frame a line.
+                    if pick.kind == kind::SAMPLE {
+                        let stack = sample_callstack(&self.index, &self.intern, pick);
+                        if !stack.is_empty() {
+                            response.ctx.copy_text(stack.join("\n"));
+                            self.callstack_copied_at = self.now_s;
+                        }
+                    }
                 }
             }
         }
@@ -5329,7 +5349,9 @@ impl OrbitLiveApp {
             None => (self.sampling_ranges.clone(), String::new()),
         };
         self.sampling = Some(crate::local_report::flat_report(&self.index, &self.intern, &ranges, &scope));
-        self.tree = Some(crate::local_report::call_tree(&self.index, &self.intern, &ranges, self.report_tab.mode()));
+        let tree = crate::local_report::call_tree(&self.index, &self.intern, &ranges, self.report_tab.mode());
+        self.tree_expanded = expandable_paths_over(&tree.roots, self.tree_expand_threshold);
+        self.tree = Some(tree);
         self.needs_repaint = true;
         self.settle_frames = self.settle_frames.max(3);
     }
@@ -5540,20 +5562,52 @@ impl OrbitLiveApp {
                             .on_hover_text("Expand every node of this tree")
                             .clicked()
                         {
+                            self.tree_expand_threshold = 0.0;
                             self.expand_all_tree_nodes();
                         }
                         if pill(ui, "Collapse all", false)
                             .on_hover_text("Collapse every node back to its roots")
                             .clicked()
                         {
+                            self.tree_expand_threshold = 100.0;
                             self.tree_expanded.clear();
+                        }
+                        // The expansion slider of C++ Orbit's call tree: how
+                        // large a node's share of the samples must be for it
+                        // to arrive open. Left, everything; right, only the
+                        // hottest path.
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(if self.tree_expand_threshold <= 0.0 {
+                                "open all".to_string()
+                            } else {
+                                format!("open > {:.0}%", self.tree_expand_threshold)
+                            })
+                            .color(theme::MUTED)
+                            .size(self.ui_tweaks.report_font - 0.5),
+                        );
+                        let mut threshold = self.tree_expand_threshold;
+                        let slider = ui.add(
+                            egui::Slider::new(&mut threshold, 0.0..=100.0)
+                                .show_value(false)
+                                .step_by(1.0),
+                        );
+                        note_ui_rect("tree_expand_slider", slider.rect);
+                        if slider.changed() {
+                            self.tree_expand_threshold = threshold;
+                            if let Some(tree) = &self.tree {
+                                self.tree_expanded = expandable_paths_over(&tree.roots, threshold);
+                            }
                         }
                     }
                 });
                 // Both axes: a call tree or a long function name is wider than
                 // the panel, and the rows are the thing to scroll, not the
                 // panel to widen.
-                egui::ScrollArea::both().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
+                    .show(ui, |ui| {
                     match self.report_tab {
                         ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
                         ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
@@ -7914,11 +7968,19 @@ fn fmt_int(n: u64) -> String {
 /// serialization caps: the service already truncated at 24 levels and 24
 /// children per node, and there is nothing below that to open.
 fn all_expandable_paths(roots: &[crate::net::TreeNodeJson]) -> std::collections::HashSet<String> {
+    expandable_paths_over(roots, -1.0)
+}
+
+/// The paths of every node with children whose inclusive share of the
+/// samples is over `threshold` percent, and whose ancestors all are too:
+/// `ExpandRecursivelyWithThreshold` in C++ Orbit's CallTreeWidget, where
+/// the slider sets the threshold and 0 opens the whole tree.
+fn expandable_paths_over(roots: &[crate::net::TreeNodeJson], threshold: f32) -> std::collections::HashSet<String> {
     let mut paths = std::collections::HashSet::new();
     let mut stack: Vec<(&crate::net::TreeNodeJson, String)> =
         roots.iter().enumerate().map(|(i, n)| (n, i.to_string())).collect();
     while let Some((node, path)) = stack.pop() {
-        if node.children.is_empty() {
+        if node.children.is_empty() || node.inclusive_percent as f32 <= threshold {
             continue;
         }
         for (i, child) in node.children.iter().enumerate() {
@@ -8569,6 +8631,7 @@ fn show_scope_tooltip(
     args: &HashMap<ArgKey, u32>,
     pick: ScopePick,
     callstack: &[String],
+    callstack_copied: bool,
 ) {
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
@@ -8631,6 +8694,11 @@ fn show_scope_tooltip(
                 RichText::new(format!("Thread: {tname} [{}]", pick.tid))
                     .font(FontId::monospace(11.0))
                     .color(theme::MUTED),
+            );
+            ui.label(
+                RichText::new(if callstack_copied { "copied to the clipboard" } else { "click to copy" })
+                    .font(FontId::monospace(10.5))
+                    .color(if callstack_copied { theme::ACCENT } else { theme::MUTED }),
             );
             if callstack.is_empty() {
                 ui.label(
