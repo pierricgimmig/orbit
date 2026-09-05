@@ -407,3 +407,14 @@ pills in the capture row; uprobes are the default method. A unit test
 binary's own function and checks the paired calls; unprivileged it prints
 UPROBE TEST SKIPPED, with CAP_PERFMON it asserts. Not done: hooking from
 the Flame tab and from the timeline's sampled frames.
+
+
+
+there is something that is introducing ghost scopes with dynamic instrumentation, it makes me think a lot of the workaround we had to do in c++ because of what appears like a bug in the kernel, duplicated end or start events that we work around by inspecting the instruction pointer. Can you find that fix in the c++ version, and reimplement in rust. Do this as a single commit, maybe add an option to toggle on/off the fix so we can see its effect.
+
+make a website that will be the official website, with landing page, manual, but also that will serve the presigned urls that a user can upload their data to. I have an s3 bucket, ask me for credentials once you get to the implementation/testing phase.
+
+make sure py-spy still works
+
+more detailed instrumentation of rendering, this needs to be blazing fast, we need to find other optimization opportunities
+
