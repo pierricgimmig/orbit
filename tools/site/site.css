@@ -251,9 +251,8 @@ aside.toc a.is-current {
 }
 .doc-tabs a:hover { color: var(--ink); text-decoration: none; background: #fff; }
 .doc-tabs a.is-current {
-  background: #fff;
-  color: var(--accent);
-  box-shadow: var(--shadow);
+  background: var(--accent-wash);
+  color: var(--accent-deep);
 }
 
 footer.site {
@@ -298,7 +297,7 @@ footer.site {
   text-align: center;
   max-width: 46rem;
   margin: 0 auto;
-  padding: 4.25rem 0 2.4rem;
+  padding: 2.75rem 0 1.75rem;
 }
 .hero .eyebrow {
   display: inline-block;
@@ -313,11 +312,11 @@ footer.site {
   text-transform: uppercase;
 }
 .hero h1 {
-  font-size: 3rem;
+  font-size: 2.75rem;
   font-weight: 400;
-  margin: 0 0 1.05rem;
+  margin: 0 0 0.85rem;
   letter-spacing: -0.025em;
-  line-height: 1.15;
+  line-height: 1.18;
 }
 .hero h1 em { font-style: normal; color: var(--accent); }
 .hero .lede {
