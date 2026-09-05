@@ -1,0 +1,41 @@
+Phase 6f -- the trampoline builder (2026-08-31)
+===============================================
+
+What: CreateTrampoline (minus the tracee write), ported to
+orbit-trampoline::builder. This is where the ported pieces compose into one
+buffer: the register-save/entry-payload-call/restore blocks (codegen, 6e),
+then the prologue relocated instruction by instruction (relocate, 6d) until
+five bytes are moved -- with a relocation map so a forward jump into a later
+prologue instruction is repointed at its moved copy -- then the jump back
+into the function past the overwritten prologue. Includes the
+CheckForRelativeJumpIntoFirstFiveBytes guard (a function that jumps into its
+own first five bytes cannot be safely hooked) and AppendRelocatedPrologueCode
+with its absolute-address fixup.
+
+How it is verified
+------------------
+trampoline_builder_differential.cpp disassembles the binary's own .text with
+capstone to find real instruction starts, treats each as a function to hook
+(with the following bytes as its body), and builds a WHOLE trampoline both
+ways -- the C++ CreateTrampoline steps (exposed as BuildTrampolineForDiff
+erential, same TU) and the Rust build_trampoline -- at the same trampoline
+address, comparing the emitted bytes AND the address-after-prologue exactly.
+Errors (harmful jump, undisassemblable prologue) must match on both sides.
+
+Results (x86_64, every 5th instruction start over 2 MB of .text)
+----------------------------------------------------------------
+built           93,696   whole trampolines byte-for-byte identical
+both_rejected   11,025   harmful-jump / undisassemblable, rejected by both
+mismatches           0
+verdict: IDENTICAL
+
+Sabotage: adding 1 to the jump-back target address -> DIVERGENT. Restored ->
+IDENTICAL.
+
+This composes 6d and 6e into the complete trampoline byte production. The
+C++ additions are the two differential wrappers only; CreateTrampoline
+itself is unchanged. What remains for Phase 6 is InstrumentProcess -- the
+live installation (allocate the trampolines in the tracee, write them,
+overwrite the function prologues with jumps, keep the instrumented-function
+registry) built on the 6a/6b plumbing -- best verified end-to-end against a
+payload library.

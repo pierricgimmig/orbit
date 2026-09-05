@@ -1,0 +1,64 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Service-side Rust for Orbit. Separate from src/OrbitLiveViewer on purpose:
+# these crates parse binaries and kernel data and must not share a lockfile
+# with the viewer's eframe/wgpu/tokio tree.
+#
+# See docs/rust-port-plan.html for the staging, and docs/blog/ for the
+# running write-up of what each step cost.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/orbit-api",
+    "crates/orbit-test-rust",
+    "crates/orbit-collector",
+    "crates/orbit-maps",
+    "crates/orbit-object",
+    "crates/orbit-perf-merge",
+    "crates/orbit-perf-records",
+    "crates/orbit-perf-ring",
+    "crates/orbit-pod-dump",
+    "crates/orbit-gpu-helper",
+    "crates/orbit-ptrace",
+    "crates/orbit-scope-ring",
+    "crates/orbit-thread-states",
+    "crates/orbit-tracing-state",
+    "crates/orbit-trampoline",
+    "crates/orbit-unwind",
+    "crates/orbit-wire",
+    "ffi/orbit-maps-ffi",
+    "ffi/orbit-object-ffi",
+    "ffi/orbit-perf-merge-ffi",
+    "ffi/orbit-perf-records-ffi",
+    "ffi/orbit-perf-ring-ffi",
+    "ffi/orbit-ptrace-ffi",
+    "ffi/orbit-thread-states-ffi",
+    "ffi/orbit-tracing-state-ffi",
+    "ffi/orbit-trampoline-ffi",
+    "ffi/orbit-unwind-ffi",
+    "ffi/orbit-wire-ffi",
+]
+# orbit-service is its own workspace: it depends on the live-viewer server
+# crates (axum/tokio) to serve the UI, and those paths point outside this
+# directory. crate_universe splices this workspace into a temp dir to generate
+# @orbit_crates, where such a path cannot resolve -- so keeping it here breaks
+# every Bazel build. Same reasoning as orbit-live-viewer next door.
+exclude = ["crates/orbit-service", "crates/orbit-capture"]
+
+[workspace.package]
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+# Debug info goes, the symbol table stays: a profiler's own binaries -- the
+# service, the test apps -- must symbolize. Costs a few percent of size.
+strip = "debuginfo"

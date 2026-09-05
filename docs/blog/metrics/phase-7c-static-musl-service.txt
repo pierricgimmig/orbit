@@ -1,0 +1,52 @@
+Phase 7c -- the service binary, fully static via musl (2026-08-31)
+==================================================================
+
+What: orbit-service, the all-Rust capture service entry point, and a fully
+static self-contained executable built for x86_64-unknown-linux-musl. This
+also completes the sample -> unwind -> intern -> CallstackSample path that
+was outstanding from Phase 7: the binary opens a stack-sampling perf ring,
+unwinds every sample with the framehop-based orbit-unwind, interns
+callstacks (FNV-1a of the pcs, emit InternedCallstack once, reference by key
+from CallstackSample), and writes a pod capture stream. Kernel bytes to pod
+bytes, all Rust, no FFI on the path.
+
+The static build
+----------------
+The crates on the service path are pure Rust plus libc, so rustc's
+self-contained musl target links a fully static binary with NO system musl
+toolchain (no musl-gcc needed). rust-toolchain.toml pins the musl target so
+rustup fetches std automatically; build-service-musl.sh is the one-command
+reproducible build.
+
+Result:
+  file: ELF 64-bit ... static-pie linked, stripped
+  ldd:  statically linked
+  size: 756 KB (stripped; release profile has strip = true)
+
+static-pie means fully self-contained AND position-independent (ASLR): no
+dynamic loader, no shared libraries, runs on any x86-64 Linux with zero
+runtime dependencies. Contrast the C++ OrbitService, which dynamically links
+libstdc++, libc, and its transitive tree.
+
+How it is verified
+------------------
+- The stripped static binary runs a self-capture (no root needed at
+  perf_event_paranoid <= 1): 200 samples, 34 distinct callstacks, 1 module,
+  6636 pod bytes.
+- The pod output decodes back cleanly through orbit-wire: 200 CallstackSample
+  + 34 InternedCallstack, clean EOF -- the capture is valid, round-tripped
+  end to end.
+- orbit-service unit tests cover the callstack interner (same stack interns
+  once, distinct stacks get distinct keys).
+
+Why this matters for the port
+-----------------------------
+"Shrinking dependencies" was one of the four original goals. A 756 KB static
+binary with a single external crate family on its path (libc, plus the pure-
+Rust object/gimli/framehop/iced) is the strongest possible statement of it:
+the deployable artifact needs nothing on the target machine at all.
+
+Not on this path yet: the sched pipeline (root-gated tracepoints), function
+tracing (needs InstrumentProcess), and the full service shell that would
+drive a real multi-source capture. This binary is the sampling capture and
+the proof that the all-Rust service links static and self-contained.

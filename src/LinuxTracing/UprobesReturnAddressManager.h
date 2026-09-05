@@ -13,9 +13,14 @@
 #include <stack>
 #include <vector>
 
+#include <cstring>
+#include <memory>
+
 #include "LibunwindstackMaps.h"
 #include "LinuxTracing/UserSpaceInstrumentationAddresses.h"
 #include "OrbitBase/Logging.h"
+#include "TracingStateBackend.h"
+#include "orbit_tracing_state_ffi.h"
 
 namespace orbit_linux_tracing {
 
@@ -23,25 +28,25 @@ namespace orbit_linux_tracing {
 // instrumented functions are entered (e.g., when uprobes are hit), before they are hijacked to
 // record the exits (e.g., by uretprobes). Patches them into samples so that unwinding can continue
 // past dynamically instrumented functions.
-class UprobesReturnAddressManager {
+class UprobesReturnAddressManagerCpp {
  public:
-  explicit UprobesReturnAddressManager(
+  explicit UprobesReturnAddressManagerCpp(
       UserSpaceInstrumentationAddresses* user_space_instrumentation_addresses)
       : user_space_instrumentation_addresses_{user_space_instrumentation_addresses} {}
-  virtual ~UprobesReturnAddressManager() = default;
+  ~UprobesReturnAddressManagerCpp() = default;
 
-  UprobesReturnAddressManager(const UprobesReturnAddressManager&) = delete;
-  UprobesReturnAddressManager& operator=(const UprobesReturnAddressManager&) = delete;
+  UprobesReturnAddressManagerCpp(const UprobesReturnAddressManagerCpp&) = delete;
+  UprobesReturnAddressManagerCpp& operator=(const UprobesReturnAddressManagerCpp&) = delete;
 
-  UprobesReturnAddressManager(UprobesReturnAddressManager&&) = default;
-  UprobesReturnAddressManager& operator=(UprobesReturnAddressManager&&) = default;
+  UprobesReturnAddressManagerCpp(UprobesReturnAddressManagerCpp&&) = default;
+  UprobesReturnAddressManagerCpp& operator=(UprobesReturnAddressManagerCpp&&) = default;
 
-  virtual void ProcessFunctionEntry(pid_t tid, uint64_t stack_pointer, uint64_t return_address) {
+  void ProcessFunctionEntry(pid_t tid, uint64_t stack_pointer, uint64_t return_address) {
     std::vector<OpenFunction>& stack_of_open_functions = tid_to_stack_of_open_functions_[tid];
     stack_of_open_functions.emplace_back(stack_pointer, return_address);
   }
 
-  virtual void ProcessFunctionExit(pid_t tid) {
+  void ProcessFunctionExit(pid_t tid) {
     if (!tid_to_stack_of_open_functions_.contains(tid)) {
       return;
     }
@@ -54,7 +59,7 @@ class UprobesReturnAddressManager {
     }
   }
 
-  virtual void PatchSample(pid_t tid, uint64_t stack_pointer, void* stack_data,
+  void PatchSample(pid_t tid, uint64_t stack_pointer, void* stack_data,
                            uint64_t stack_size) {
     if (!tid_to_stack_of_open_functions_.contains(tid)) {
       return;
@@ -89,7 +94,7 @@ class UprobesReturnAddressManager {
   // pointers of uretprobe code and using user_space_instrumentation_addresses_ to identify a user
   // space instrumentation return trampoline. The affected frames are replaced with the return
   // addresses saved by uprobes or user space instrumentation on function entry.
-  virtual bool PatchCallchain(pid_t tid, uint64_t* callchain, uint64_t callchain_size,
+  bool PatchCallchain(pid_t tid, uint64_t* callchain, uint64_t callchain_size,
                               LibunwindstackMaps* maps) {
     ORBIT_CHECK(callchain_size > 0);
     ORBIT_CHECK(callchain != nullptr);
@@ -219,6 +224,125 @@ class UprobesReturnAddressManager {
 
   absl::flat_hash_map<pid_t, std::vector<OpenFunction>> tid_to_stack_of_open_functions_{};
 
+  UserSpaceInstrumentationAddresses* user_space_instrumentation_addresses_;
+};
+
+
+// The manager TracerImpl and the visitors use. Dispatches on
+// ORBIT_TRACING_STATE_BACKEND; see TracingStateBackend.h. The maps lookup
+// and the trampoline check stay on this side and reach the Rust backend as
+// a predicate, so tests and mocks work unchanged against either backend.
+class UprobesReturnAddressManager {
+ public:
+  explicit UprobesReturnAddressManager(
+      UserSpaceInstrumentationAddresses* user_space_instrumentation_addresses)
+      : backend_{SelectedTracingStateBackend()},
+        cpp_{user_space_instrumentation_addresses},
+        user_space_instrumentation_addresses_{user_space_instrumentation_addresses} {}
+  virtual ~UprobesReturnAddressManager() = default;
+
+  UprobesReturnAddressManager(const UprobesReturnAddressManager&) = delete;
+  UprobesReturnAddressManager& operator=(const UprobesReturnAddressManager&) = delete;
+  UprobesReturnAddressManager(UprobesReturnAddressManager&&) = default;
+  UprobesReturnAddressManager& operator=(UprobesReturnAddressManager&&) = default;
+
+  virtual void ProcessFunctionEntry(pid_t tid, uint64_t stack_pointer, uint64_t return_address) {
+    if (backend_ != TracingStateBackend::kRust) {
+      cpp_.ProcessFunctionEntry(tid, stack_pointer, return_address);
+    }
+    if (backend_ != TracingStateBackend::kCpp) {
+      orbit_return_addresses_entry(rust_.get(), tid, stack_pointer, return_address);
+    }
+  }
+
+  virtual void ProcessFunctionExit(pid_t tid) {
+    if (backend_ != TracingStateBackend::kRust) {
+      cpp_.ProcessFunctionExit(tid);
+    }
+    if (backend_ != TracingStateBackend::kCpp) {
+      orbit_return_addresses_exit(rust_.get(), tid);
+    }
+  }
+
+  virtual void PatchSample(pid_t tid, uint64_t stack_pointer, void* stack_data,
+                           uint64_t stack_size) {
+    switch (backend_) {
+      case TracingStateBackend::kCpp:
+        cpp_.PatchSample(tid, stack_pointer, stack_data, stack_size);
+        return;
+      case TracingStateBackend::kRust:
+        orbit_return_addresses_patch_sample(rust_.get(), tid, stack_pointer,
+                                            static_cast<uint8_t*>(stack_data), stack_size);
+        return;
+      case TracingStateBackend::kBoth: {
+        std::vector<uint8_t> rust_copy(static_cast<uint8_t*>(stack_data),
+                                       static_cast<uint8_t*>(stack_data) + stack_size);
+        cpp_.PatchSample(tid, stack_pointer, stack_data, stack_size);
+        orbit_return_addresses_patch_sample(rust_.get(), tid, stack_pointer, rust_copy.data(),
+                                            stack_size);
+        if (memcmp(stack_data, rust_copy.data(), stack_size) != 0) {
+          ORBIT_FATAL("PatchSample: C++ and Rust backends disagree");
+        }
+        return;
+      }
+    }
+  }
+
+  virtual bool PatchCallchain(pid_t tid, uint64_t* callchain, uint64_t callchain_size,
+                              LibunwindstackMaps* maps) {
+    switch (backend_) {
+      case TracingStateBackend::kCpp:
+        return cpp_.PatchCallchain(tid, callchain, callchain_size, maps);
+      case TracingStateBackend::kRust:
+        return PatchCallchainRust(tid, callchain, callchain_size, maps);
+      case TracingStateBackend::kBoth: {
+        std::vector<uint64_t> rust_copy(callchain, callchain + callchain_size);
+        bool cpp_result = cpp_.PatchCallchain(tid, callchain, callchain_size, maps);
+        bool rust_result = PatchCallchainRust(tid, rust_copy.data(), callchain_size, maps);
+        if (cpp_result != rust_result ||
+            memcmp(callchain, rust_copy.data(), callchain_size * sizeof(uint64_t)) != 0) {
+          ORBIT_FATAL("PatchCallchain: C++ and Rust backends disagree");
+        }
+        return cpp_result;
+      }
+    }
+    return false;
+  }
+
+ private:
+  struct FramePredicateContext {
+    LibunwindstackMaps* maps;
+    UserSpaceInstrumentationAddresses* addresses;
+  };
+
+  static bool IsPatchableFrame(void* ctx, uint64_t ip) {
+    auto* context = static_cast<FramePredicateContext*>(ctx);
+    if (context->addresses != nullptr && context->addresses->IsInReturnTrampoline(ip)) {
+      return true;
+    }
+    std::shared_ptr<unwindstack::MapInfo> map_info = context->maps->Find(ip);
+    return map_info != nullptr && map_info->name() == "[uprobes]";
+  }
+
+  bool PatchCallchainRust(pid_t tid, uint64_t* callchain, uint64_t callchain_size,
+                          LibunwindstackMaps* maps) {
+    ORBIT_CHECK(callchain_size > 0);
+    ORBIT_CHECK(callchain != nullptr);
+    ORBIT_CHECK(maps != nullptr);
+    FramePredicateContext context{maps, user_space_instrumentation_addresses_};
+    return orbit_return_addresses_patch_callchain(rust_.get(), tid, callchain, callchain_size,
+                                                  &IsPatchableFrame, &context);
+  }
+
+  struct ManagerDeleter {
+    void operator()(OrbitReturnAddressManager* manager) const {
+      orbit_return_addresses_free(manager);
+    }
+  };
+
+  TracingStateBackend backend_;
+  UprobesReturnAddressManagerCpp cpp_;
+  std::unique_ptr<OrbitReturnAddressManager, ManagerDeleter> rust_{orbit_return_addresses_new()};
   UserSpaceInstrumentationAddresses* user_space_instrumentation_addresses_;
 };
 

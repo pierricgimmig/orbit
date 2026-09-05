@@ -1,0 +1,70 @@
+Phase 11 -- per-lane listing cache for a live capture (TODO item 21)
+=====================================================================
+Date: 2026-09-04.  Machine: the dev box (32 cores), headless Chrome with
+SwiftShader for the viewer numbers, native release build for the bench.
+
+What changed
+------------
+orbit-live-render: `Lane` carries a version bumped on every insert and
+every retain that removed something. `collect_instances_cached` keeps, per
+lane, the row it listed last frame under a key of (index lane generation,
+lane version, t0, t1, width, y, early-out, intern length). A lane whose key
+matches hands back its row (an Arc clone) instead of being walked; every
+other lane is walked as before, on the pool. The cache lives in the
+viewer's TimelineState and is swapped with the self pane's like the rest.
+The self pane shows "reused" next to "lanes", and `window.__orbit_self`
+carries fps, prims, lanes and reused.
+
+The viewer also stops re-collecting `last_instances` into a fresh Vec each
+frame (clear + extend into the buffer it already has).
+
+Bench (native, release)
+-----------------------
+cd src/OrbitLiveViewer && cargo test --release -p orbit-live-render \
+    listing_cache_bench -- --ignored --nocapture
+
+200 lanes x 5,000 scopes, two hot lanes receiving 50 events between frames,
+100 frames, window fixed:
+
+  500 events/lane in view (110,000 instances per frame; the instanced LOD's
+  kind of frame):
+    plain   2.531 ms/frame  (walk 0.690 ms)
+    cached  2.500 ms/frame  (walk 0.507 ms, 196 of 200 lanes reused)
+
+  every event in view (1,020,000 instances; the viewer would use the
+  column LOD here, this is the listing's worst case):
+    plain  21.725 ms/frame  (walk 3.044 ms)
+    cached 20.352 ms/frame  (walk 1.150 ms, 196 of 200 lanes reused)
+
+Read honestly: the cache removes most of the *walk* (0.69 -> 0.51 ms,
+3.04 -> 1.15 ms) and none of the *flatten*, which copies every instance
+into the frame's buffer for the GPU upload and is the larger share once
+the frame holds 100k+ instances. Cutting that needs per-lane GPU buffers
+(upload only the changed lanes), which is the item's compute-shader half
+and is not done.
+
+Viewer (headless Chrome, SwiftShader; Box3D target, 3 threads, live)
+--------------------------------------------------------------------
+python3 tools/e2e/measure_live_listing.py
+
+8 s per mode, Self pane open, `?collapse=scheduler`:
+
+  mode                       frames  fps  lanes  reused  listing ms/frame  frame ms/frame
+  follow on (window moves)       30    4     22       0             0.801            3.57
+  follow off (window still)      90   14     22       5             0.389            3.02
+
+With the window still, 5 of the 22 kept lanes came from the cache each
+frame (the other 17 received events -- the service's own threads and the
+target's three all emit continuously) and the listing halved. With Follow
+on the window moves every frame, nothing is reused, and the cost is one
+hash probe per lane, not measurable here. The fps difference between the
+modes is mostly SwiftShader re-rasterising a moving view, not the listing.
+
+Not done
+--------
+- Time-space rows that survive a moving window (Follow on), re-projected
+  instead of re-walked. The walk is cheap enough per lane that the
+  flatten and upload would still dominate.
+- Per-lane GPU buffers, so a still frame uploads only the changed lanes.
+- Compute-shader rasterization, the pyramid and per-bucket palette from
+  the item's list.

@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Where the Frame Went</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 17</p>
+    <h1>Where the Frame Went</h1>
+    <p class="dek">A performance pass over the service and the viewer, done the only way that ever works: measure first, fix the thing the measurement names, measure again. Two of the largest costs were not in the code anyone suspected. One of them had been there since before this port began.</p>
+    <p class="byline">Every number here is in <a href="metrics/phase-9-perf.txt">metrics/phase-9-perf.txt</a>, with the command that produced it</p>
+
+    <div class="stats">
+      <div class="stat"><b>19&times;</b><span>Report tree, 1 ms window</span></div>
+      <div class="stat"><b>49&times;</b><span>Frame symbolization</span></div>
+      <div class="stat"><b>26&times;</b><span>Track layout, per frame</span></div>
+      <div class="stat"><b>36&times;</b><span>WebSocket ingest</span></div>
+      <div class="stat"><b>0.94 ms</b><span>Viewer CPU frame, 320 threads</span></div>
+      <div class="stat"><b>1</b><span>Bug older than the port</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">The user's note was one line: <em>I feel we can be much faster.</em> That feeling is usually right and almost never about the thing you would guess, so this pass began by refusing to guess. Every hot path got a benchmark that prints its cost before a single line changed, and the viewer got a way to say, from inside a headless browser, which phase of its frame the time actually went to. What follows is what the numbers said, in the order they said it.</p>
+
+  <h2 id="service">The service: a million samples per request</h2>
+
+  <p>A sampling report is the answer to "what was running in this selection". The service stored every sample in a flat vector and, for each request, walked all of it, testing each sample against the window. That is fine once. But the viewer asked for a report <em>and</em> a call tree on every frame of a selection drag, and each request walked a million samples to find the thousand inside a one-millisecond window.</p>
+
+  <p>The fix is the obvious one and the interesting part is why it was not there: samples from several perf rings interleave within a pass, so the vector is not naturally sorted, and a sort on every push would have been worse than the walk. Now the store marks itself dirty when a push lands out of order and sorts lazily at the first request after &mdash; the stable sort finds the sorted prefix and merges the short tail in near-linear time &mdash; and a window becomes two binary searches.</p>
+
+  <p>Three more things fell out once the walk was gone. The trees were built as a <code>serde_json::Value</code> per node before being printed, and a bottom-up tree over a thousand samples is tens of thousands of nodes; they are written straight into a string now. The maps were keyed by frame id through SipHash, which guards against attacker-chosen keys that frame ids are not; a multiplicative hasher replaced it. And a million samples of a real program are a few thousand distinct stacks seen over and over, so the selection is folded into <code>(thread, stack) &rarr; count</code> first and each stack walked once.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>1M samples, 200 call paths</th><th>before</th><th>after</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>report, 1 ms window</td><td class="v">4.61 ms</td><td class="v bump">1.55 ms</td><td>what a drag frame asked for</td></tr>
+        <tr><td>tree, bottom-up, 1 ms window</td><td class="v">102.9 ms</td><td class="v bump">5.39 ms</td><td>19&times;</td></tr>
+        <tr><td>report, whole capture</td><td class="v">174.0 ms</td><td class="v bump">111.5 ms</td><td></td></tr>
+        <tr><td>tree, top-down, whole capture</td><td class="v">2670 ms</td><td class="v bump">359 ms</td><td>the stall when a capture stops</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Then the request itself. The viewer now holds report requests to one per 200&nbsp;ms while the mouse button is down and sends the final selection the moment it is released. The service did item one per frame before; the viewer parsed the JSON per frame. Neither needed to.</p>
+
+  <h2 id="symbolize">Resolving an address it had already resolved</h2>
+
+  <p>In the capture loop, every program counter of every sample was symbolized: two linear scans over the module list, a binary search for the symbol, two string allocations, then a hash of the name to find the id the viewer draws. Sampled addresses repeat &mdash; a hot loop is the same few thousand addresses forever &mdash; and every one of those repeats paid the full price to arrive at an id it already had. A per-capture map from address to id makes a repeat one lookup. The symbolizer is fixed for the life of a capture, so the map is too.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>1.2M frames, 3,000 distinct addresses</th><th>before</th><th>after</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>per frame</td><td class="v">146 ns</td><td class="v bump">3 ns</td><td>49&times;</td></tr>
+        <tr><td>broadcast, 10,000-event batch</td><td class="v">226 &micro;s</td><td class="v bump">44 &micro;s</td><td>one copy instead of three; none without a viewer</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>For honesty: a live capture on this machine cannot sample (no <code>CAP_PERFMON</code>), so the live pass I could run &mdash; the API test app, scope rings and thread states only &mdash; was already dominated by its own 5&nbsp;ms sleep, with the work at a few tens of microseconds. The service's wins are on the paths the benchmarks exercise. The benchmarks are checked in as ignored tests and run with one command.</p>
+
+  <h2 id="layout">The viewer: threads times lanes, three times a frame</h2>
+
+  <p>The viewer lays out its track rail every frame. On a large capture that was where the frame went, and the shape of the cost was the classic one: for each thread, scan every lane of the index to find that thread's own. It did this in the skeleton, again when assigning Y positions, and again per block height. With a process filter set &mdash; the normal live-capture case &mdash; the discovery loop ran an <code>any()</code> over all lanes for each lane: quadratic.</p>
+
+  <p>A sampled capture of one busy process is 100 threads with a 40-deep flame graph each, so 4,200 lanes. The benchmark for that shape said 10.3&nbsp;ms per frame for the layout alone, before anything was drawn. The index now carries a lane generation, bumped only when a lane appears or disappears &mdash; not on every event &mdash; and the strip keeps a catalogue keyed on it: per-thread leaves in draw order, the pids that own lanes, the scheduler cores. Each former scan is a lookup. Then the row maps got the same multiplicative hasher as the service, and the row sort stopped looking both sides up in a map inside its comparator.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>100 threads, 4,200 lanes</th><th>before</th><th>after</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>layout per frame</td><td class="v">10.27 ms</td><td class="v bump">0.40 ms</td><td>26&times;</td></tr>
+        <tr><td>layout per frame, with a process filter</td><td class="v">quadratic</td><td class="v bump">0.09 ms</td><td></td></tr>
+        <tr><td><code>event_count()</code></td><td class="v">7.2 &micro;s</td><td class="v bump">0.0 &micro;s</td><td>a counter, not a sum over lanes</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="readout">Asking the browser where the time went</h2>
+
+  <p>Native benchmarks say what a function costs. They do not say whether the function is the frame. For that the viewer's self-profile pane, added earlier in this series, now publishes its per-phase totals to the page as <code>window.__orbit_self</code>, so a harness driving headless Chrome can read the breakdown that is otherwise only painted on a canvas. This is the tool that found the two costs below, neither of which was on the list.</p>
+
+  <p>The first was in the WebSocket drain. After every batch of events the viewer refreshed its content bounds by walking every event of every lane &mdash; a cost proportional to how much had already arrived, paid per batch. And the frame decoder drained its leftover buffer after each decoded frame, which is a memmove of everything still queued: a burst of a thousand small batches in one chunk was a thousand copies of the chunk. Running bounds on the index and decoding by offset took the drain on the demo flood from 5.1&nbsp;ms to 0.14&nbsp;ms per frame.</p>
+
+  <p>The second was older than the port. On a perfectly still view of a 320-thread trace, the timeline re-listed every visible primitive every frame. The dirty key that should have skipped it watches a layout generation, and the generation advanced by one every frame. The reason took a diagnostic field in the readout to see: <code>sync()</code> seeded the row map from the skeleton, which lists only the rail lanes, so each frame it evicted the packed flame-graph lanes that <code>apply_layout</code> put straight back. The map never compared equal to itself. That seeding was for a lerp animation the rows no longer have; it had been marking every frame dirty for as long as the code existed.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>headless Chrome, viewer CPU frame</th><th>before</th><th>after</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>live demo, whole frame</td><td class="v">6.44 ms</td><td class="v bump">1.62 ms</td><td>4&times;</td></tr>
+        <tr><td>&nbsp;&nbsp;of which WebSocket ingest</td><td class="v">5.10 ms</td><td class="v bump">0.14 ms</td><td>36&times;</td></tr>
+        <tr><td>320-thread trace, still, whole frame</td><td class="v">3.0 ms*</td><td class="v bump">0.94 ms</td><td>*with the every-frame rebuild; layout already fixed</td></tr>
+        <tr><td>&nbsp;&nbsp;primitive rebuilds in 120 frames</td><td class="v">120</td><td class="v bump">2</td><td></td></tr>
+        <tr><td>&nbsp;&nbsp;layout generation over 30 frames</td><td class="v">+30</td><td class="v bump">+0</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>One number I am deliberately not selling: the headless frame interval on that trace went from 128&nbsp;ms to 100&nbsp;ms. The CPU frame is under a millisecond of that hundred; the rest is SwiftShader rendering the timeline in software, which is the environment and not the viewer. On a real GPU the CPU frame is the budget that matters, and it went from tens of milliseconds to under one. The run that closes this is on the user's machine with the pane open.</p>
+
+  <h2 id="left">What is left</h2>
+
+  <p>During a live capture the timeline still re-lists everything visible each frame, because data is arriving and it must; only the lanes that changed need it, and that is an incremental listing nobody has written yet. The whole-capture top-down tree is still a 359&nbsp;ms stall when a large capture stops; the cost that remains is hashing a million stacks, and folding them at ingest would remove it. Both are named in the metrics file, next to the numbers that say how much they are worth.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 17 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="16-how-orbit-draws-a-million-scopes.html">&larr; Post 16</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+</body>
+</html>

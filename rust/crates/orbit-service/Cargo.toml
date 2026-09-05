@@ -1,0 +1,54 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Its own workspace, excluded from ../../Cargo.toml: this crate depends on the
+# live-viewer server crates to serve the UI, whose paths leave rust/. Bazel's
+# crate_universe splices rust/ into a temp directory, where those paths break.
+[workspace]
+
+# Its own workspace means it inherits nothing from ../../Cargo.toml, release
+# profile included. Keep this in sync with the profile there: without it the
+# binary ships unstripped, unwinding and without cross-crate LTO, which cost
+# 1.7 MB when the split first happened.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+# Symbols stay (a profiler must symbolize itself); only debug info goes.
+strip = "debuginfo"
+
+[package]
+name = "orbit-service"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+repository = "https://github.com/pierricgimmig/orbit"
+rust-version = "1.88"
+
+[[bin]]
+name = "orbit-service"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+# Pure Rust; already in the tree through orbit-capture. Used by the wire bench only.
+miniz_oxide = "0.8"
+orbit-api = { path = "../orbit-api" }
+orbit-capture = { path = "../orbit-capture" }
+orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }
+orbit-live-server = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-server" }
+# Rust's own demangler: std-only, one crate, no deps. C++ names stay mangled here (blog post 02).
+rustc-demangle = "0.1"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+orbit-maps = { path = "../orbit-maps" }
+orbit-object = { path = "../orbit-object" }
+orbit-perf-records = { path = "../orbit-perf-records" }
+orbit-perf-ring = { path = "../orbit-perf-ring" }
+orbit-scope-ring = { path = "../orbit-scope-ring" }
+orbit-thread-states = { path = "../orbit-thread-states" }
+orbit-tracing-state = { path = "../orbit-tracing-state" }
+orbit-unwind = { path = "../orbit-unwind" }
+orbit-wire = { path = "../orbit-wire" }

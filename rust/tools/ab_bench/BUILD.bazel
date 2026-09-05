@@ -1,0 +1,69 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "elf_metadata_bench",
+    srcs = ["elf_metadata_bench.cpp"],
+    copts = ORBIT_COPTS,
+    data = ["//src/ObjectUtils:testdata"],
+    deps = [
+        "//rust:orbit_object_ffi",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_binary(
+    name = "context_switches_bench",
+    srcs = ["context_switches_bench.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/LinuxTracing",
+    ],
+)
+
+cc_binary(
+    name = "thread_states_bench",
+    srcs = ["thread_states_bench.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/LinuxTracing",
+    ],
+)
+
+cc_binary(
+    name = "perf_merge_bench",
+    srcs = ["perf_merge_bench.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//src/LinuxTracing",
+    ],
+)
+
+cc_binary(
+    name = "parse_maps_bench",
+    srcs = ["parse_maps_bench.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//src/ModuleUtils",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:str_format",
+    ],
+)

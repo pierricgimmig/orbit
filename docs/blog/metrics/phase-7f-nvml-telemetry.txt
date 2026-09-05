@@ -1,0 +1,60 @@
+Phase 7f -- NVML GPU telemetry (2026-08-31)
+===========================================
+
+What: NVIDIA GPU telemetry through NVML, the management library behind
+nvidia-smi. NVML is a POLLING api, not a tracing one, so it is the
+counterpart to the CUPTI path added in 7e:
+  CUPTI -> per-kernel spans      -> pod GpuJob     (GPU track)
+  NVML  -> periodic device gauges -> pod GpuMetrics (value-over-time tracks)
+The same relationship Orbit already has between its tracing events and its
+periodic SystemMemoryUsage sampling.
+
+Added
+-----
+- A pod GpuMetrics event (orbit-wire tag 7): timestamp, device index, GPU and
+  memory utilization %, memory used/total, memory attributed to the profiled
+  process, temperature, power, SM and memory clocks.
+- orbit-tracing-state::nvml, the sampling logic:
+  * to_metrics: a raw device reading -> the pod field set, summing the target
+    process's GPU memory across its contexts.
+  * Unsupported metrics (NVML answers NOT_SUPPORTED for e.g. power on many
+    consumer cards) become explicit u32::MAX / u64::MAX sentinels, NOT zero,
+    so a reader draws a gap instead of a false reading. A metric that
+    genuinely reads zero stays zero.
+  * NvmlSampler: the poll cadence (is_due / mark_sampled), computed from the
+    previous deadline so poll latency does not make the cadence drift, but
+    resyncing after a long stall instead of bursting to replay missed slots.
+  * Energy integration: instantaneous power (mW) integrated over the interval
+    into accumulated energy (mJ), per device. Power answers "how hot is it
+    now"; energy answers "what did this capture cost".
+
+How it is verified
+------------------
+Eight unit tests: field mapping, multi-context memory attribution, a target
+with no GPU memory reporting 0 (not unknown), sentinels for unsupported
+metrics, cadence without drift, resync after a stall, energy integration, no
+energy for a device without power reporting, and independent per-device
+accumulation. The pod GpuMetrics event round-trips through orbit-wire.
+
+A bug the tests caught
+----------------------
+The energy integrator first used 0 as the "no previous reading" sentinel,
+which is ambiguous with a genuine timestamp of 0 -- it silently swallowed the
+first interval. The test that integrates from t=0 failed, and the sentinel
+became an Option. Worth recording: this is exactly the class of bug that
+survives review and dies to a test.
+
+What is NOT built here (honestly)
+---------------------------------
+The live libnvidia-ml binding, which needs an NVIDIA GPU to exercise. Static
+musl cannot dlopen it -- but that does not keep it out of the capture: it
+lives in the HELPER PROCESS added in 7g, which is dynamically linked, calls
+nvmlDeviceGetUtilizationRates / GetMemoryInfo / GetTemperature /
+GetPowerUsage / GetClockInfo / GetComputeRunningProcesses into a
+DeviceSample, hands it to NvmlSampler::ingest, and streams the resulting pod
+events to the static service over a pipe. (An earlier version of this file
+concluded the static binary could not have NVML support; that was too strong
+and is corrected in 7g.)
+
+The static musl service is unchanged: 776 KB, statically linked. NVIDIA
+support (7e CUPTI + nouveau, 7f NVML) added zero runtime dependencies to it.

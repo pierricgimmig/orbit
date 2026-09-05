@@ -4,11 +4,12 @@
 
 #include "PdbFileDia.h"
 
+#include "Demangle.h"
+
 #include <absl/container/flat_hash_set.h>
 #include <absl/memory/memory.h>
 #include <cvconst.h>
 #include <diacreate.h>
-#include <llvm/Demangle/Demangle.h>
 #include <winerror.h>
 
 #include "Introspection/Introspection.h"

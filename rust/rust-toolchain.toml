@@ -1,0 +1,7 @@
+# Local `cargo` use only. Bazel downloads its own toolchain through
+# rules_rust; this file exists so `cargo test` in rust/ matches it.
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]
+# The service ships as a fully static musl binary; see build-service-musl.sh.
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-gnu"]

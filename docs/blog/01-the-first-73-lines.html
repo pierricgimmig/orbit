@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The First 73 Lines</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 01</p>
+    <h1>The First 73 Lines</h1>
+    <p class="dek">Porting the smallest real function in the tree, to find out whether the machinery works before betting anything on it. It did — and it found two bugs, one of them mine.</p>
+    <p class="byline">Branch <code>rust-port-object-utils</code> &middot; <code>orbit_module_utils::ParseMaps</code> &middot; all numbers from <a href="metrics/phase-1-parse-maps.json">metrics/phase-1-parse-maps.json</a></p>
+
+    <div class="stats">
+      <div class="stat"><b>1.75&times;</b><span>Faster, median of 5</span></div>
+      <div class="stat"><b>11</b><span>New Rust tests</span></div>
+      <div class="stat"><b>4/4</b><span>C++ tests, both backends</span></div>
+      <div class="stat"><b>0</b><span>Dependencies added</span></div>
+      <div class="stat"><b>0</b><span>Test lines edited</span></div>
+      <div class="stat"><b>8</b><span>Hurdles worth writing down</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Orbit's capture backend is 34,377 lines of C++. The plan for moving the parts of it that benefit from Rust is <a href="../rust-port-plan.html">written up separately</a>; this is the first step actually taken. It is deliberately tiny — one pure function, 38 lines of implementation — because the point of step one is not to port anything valuable. It is to find out whether three C++ test targets can run against a Rust implementation, and whether a deliberately broken Rust implementation makes them fail.</p>
+
+  <h2 id="what">What got ported</h2>
+
+  <p><code>orbit_module_utils::ParseMaps</code> reads the text of <code>/proc/[pid]/maps</code> and returns one struct per mapping. Orbit calls it for every process in the process list, and the process list is polled, so it is genuinely on a hot path while also being trivially testable: text in, five integers and a path out, no I/O, no failure mode.</p>
+
+  <pre><code><span class="c">// src/ModuleUtils/include/ModuleUtils/ReadLinuxMaps.h — unchanged</span>
+[[nodiscard]] std::vector&lt;LinuxMemoryMapping&gt; <span class="k">ParseMaps</span>(std::string_view proc_pid_maps_content);</code></pre>
+
+  <p>That signature does not change, and neither does any of its callers. What changes is that the definition now lives in a new <code>Backend.cpp</code> that dispatches on <code>ORBIT_MAPS_BACKEND</code> to one of three paths: the original C++, the new Rust, or <strong>both, comparing the results and aborting if they differ</strong>. The original C++ is renamed <code>ParseMapsCpp</code> and otherwise untouched.</p>
+
+  <h2 id="proof">The gate, and proving it is real</h2>
+
+  <p>Three <code>cc_test</code> targets are generated from one set of attributes by a small Starlark macro. They share <code>srcs</code>, <code>deps</code> and <code>data</code> by construction and differ only in one entry of <code>env</code>, so a suite cannot drift between backends.</p>
+
+  <pre><code><span class="c">$</span> bazel test //src/ModuleUtils:all //rust:all
+<span class="k">//src/ModuleUtils:ReadLinuxMapsTests</span>            PASSED
+<span class="k">//src/ModuleUtils:ReadLinuxMapsTestsRust</span>        PASSED
+<span class="k">//src/ModuleUtils:ReadLinuxMapsTestsBoth</span>        PASSED
+<span class="k">//src/ModuleUtils:ModuleUtilsTests</span>             PASSED
+<span class="k">//rust:orbit_maps_test</span>                         PASSED
+<span class="k">//rust:orbit_maps_ffi_test</span>                     PASSED
+Executed 6 out of 6 tests: 6 tests pass.</code></pre>
+
+  <p>A green test suite proves nothing on its own. If the environment variable were not reaching the code, or the comparison never ran, all three would pass exactly like this. So before believing any of it, I broke the Rust on purpose — a one-character change, <code>inode</code> becoming <code>inode + 1</code>, the kind of difference no type system catches:</p>
+
+  <pre><code><span class="c">$</span> sed -i 's/^            inode,$/            inode: inode + 1,/' rust/crates/orbit-maps/src/lib.rs
+<span class="c">$</span> bazel test //src/ModuleUtils:ReadLinuxMapsTests{,Rust,Both}
+
+<span class="k">//src/ModuleUtils:ReadLinuxMapsTests</span>            PASSED in 0.3s
+<span class="k">//src/ModuleUtils:ReadLinuxMapsTestsRust</span>        FAILED in 0.3s
+<span class="k">//src/ModuleUtils:ReadLinuxMapsTestsBoth</span>        FAILED in 0.9s
+
+Fatal: ParseMaps backends disagree at entry 0:
+  cpp:  0x400000-0x452000 perms=0x5 offset=0 inode=173521 path="/usr/bin/dbus-daemon"
+  rust: 0x400000-0x452000 perms=0x5 offset=0 inode=173522 path="/usr/bin/dbus-daemon"</code></pre>
+
+  <p>That is the result I wanted: the C++ target is <em>unaffected</em>, proving the original path is genuinely untouched; the Rust target fails on the assertion; and the comparing target aborts with both values printed. The gate works. Everything after this rests on that one experiment, so it is worth re-running whenever the machinery changes.</p>
+
+  <h2 id="speed">Why it is 1.75&times; faster</h2>
+
+  <p>I did not expect a speedup from a string parser and was ready to report a regression. The measured result, median of five alternating rounds so a warming CPU cannot favour whichever runs first:</p>
+
+  <pre><code><span class="c">$</span> scripts/bench_parse_maps.sh 30000 5
+iterations   30000, 5 rounds
+cpp          8.222 us/parse (median)
+rust         4.700 us/parse (median)
+<span class="k">speedup      1.75x</span></code></pre>
+
+  <p>The reason is not that Rust is fast. It is that the two versions have completely different allocation profiles, and that is visible in the source rather than inferred from the number.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 268" role="img" aria-label="The C++ version copies the whole input into a vector of heap strings, then copies each line again into up to six more heap strings, then copies the address field into two more, allocating roughly nine strings per line. The Rust version borrows subslices of the caller's buffer throughout and allocates only the output vector and one path per entry.">
+        <defs>
+          <marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="p1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <text x="8" y="16" font-size="10.5" font-family="monospace" fill="var(--hold)">C++ — absl::StrSplit returns owning strings</text>
+
+        <rect x="8" y="26" width="128" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="72" y="47" font-size="10.5" text-anchor="middle" fill="currentColor">string_view in</text>
+
+        <line x1="138" y1="43" x2="174" y2="43" stroke="currentColor" stroke-width="1.2" marker-end="url(#p1)"/>
+
+        <rect x="178" y="22" width="164" height="42" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.3"/>
+        <text x="260" y="40" font-size="10" text-anchor="middle" fill="var(--hold)">vector&lt;string&gt; of lines</text>
+        <text x="260" y="55" font-size="9.5" text-anchor="middle" fill="currentColor">whole input copied, 1 alloc/line</text>
+
+        <line x1="344" y1="43" x2="380" y2="43" stroke="currentColor" stroke-width="1.2" marker-end="url(#p1)"/>
+
+        <rect x="384" y="22" width="176" height="42" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.3"/>
+        <text x="472" y="40" font-size="10" text-anchor="middle" fill="var(--hold)">vector&lt;string&gt; of 6 tokens</text>
+        <text x="472" y="55" font-size="9.5" text-anchor="middle" fill="currentColor">each line copied again</text>
+
+        <line x1="562" y1="43" x2="598" y2="43" stroke="currentColor" stroke-width="1.2" marker-end="url(#p1)"/>
+
+        <rect x="602" y="22" width="170" height="42" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.3"/>
+        <text x="687" y="40" font-size="10" text-anchor="middle" fill="var(--hold)">vector&lt;string&gt; start/end</text>
+        <text x="687" y="55" font-size="9.5" text-anchor="middle" fill="currentColor">address field copied again</text>
+
+        <text x="8" y="86" font-size="10.5" fill="currentColor">Roughly <tspan font-weight="600">9 heap allocations per line</tspan>, none of which outlive the loop iteration. For a typical 42-entry maps file that is</text>
+        <text x="8" y="101" font-size="10.5" fill="currentColor">several hundred allocate-copy-free cycles per call, to produce 42 structs.</text>
+
+        <line x1="8" y1="120" x2="772" y2="120" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+
+        <text x="8" y="146" font-size="10.5" font-family="monospace" fill="var(--accent)">RUST — every split borrows</text>
+
+        <rect x="8" y="156" width="128" height="34" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="72" y="177" font-size="10.5" text-anchor="middle" fill="currentColor">&amp;[u8] in</text>
+
+        <line x1="138" y1="173" x2="174" y2="173" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#p1a)"/>
+
+        <rect x="178" y="152" width="164" height="42" fill="none" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="260" y="170" font-size="10" text-anchor="middle" fill="var(--accent)">split() over &amp;[u8]</text>
+        <text x="260" y="185" font-size="9.5" text-anchor="middle" fill="currentColor">subslices — 0 allocations</text>
+
+        <line x1="344" y1="173" x2="380" y2="173" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#p1a)"/>
+
+        <rect x="384" y="152" width="176" height="42" fill="none" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="472" y="170" font-size="10" text-anchor="middle" fill="var(--accent)">Vec&lt;&amp;[u8]&gt; of 6 tokens</text>
+        <text x="472" y="185" font-size="9.5" text-anchor="middle" fill="currentColor">1 small vec, pointers only</text>
+
+        <line x1="562" y1="173" x2="598" y2="173" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#p1a)"/>
+
+        <rect x="602" y="152" width="170" height="42" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="687" y="170" font-size="10" text-anchor="middle" fill="var(--accent)">output Vec + 1 path each</text>
+        <text x="687" y="185" font-size="9.5" text-anchor="middle" fill="currentColor">the only lasting allocations</text>
+
+        <text x="8" y="216" font-size="10.5" fill="currentColor">The borrow checker is what makes this the <tspan font-style="italic">easy</tspan> way to write it. Returning a slice of the caller's buffer is safe by</text>
+        <text x="8" y="231" font-size="10.5" fill="currentColor">construction, so there is no temptation to copy defensively — which is exactly the temptation <code>absl::StrSplit</code> into</text>
+        <text x="8" y="246" font-size="10.5" fill="currentColor"><tspan font-family="monospace" font-size="9.5">vector&lt;string&gt;</tspan> is giving in to. <tspan font-weight="600">The speedup is a lifetime-safety feature showing up as a performance number.</tspan></text>
+      </svg>
+    </div>
+    <figcaption><b>Same algorithm, different memory behaviour.</b> <code>absl::StrSplit</code> can produce <code>string_view</code>s too — the C++ could be rewritten to borrow. The point is not that it is impossible in C++; it is that the safe-by-default version in Rust is also the fast one, so the fast version is what gets written without anyone deciding to optimise.</figcaption>
+  </figure>
+
+  <h2 id="evidence">The evidence, including what got worse</h2>
+
+  <p>Two of these numbers move in the wrong direction. That is expected at this stage and worth showing rather than hiding: the plan deliberately keeps both implementations in the tree until a whole phase is proven, so mid-port the tree is strictly bigger.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead>
+        <tr><th>Measure</th><th>Before</th><th>After</th><th>Reading</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>ParseMaps speed</td>
+          <td class="v">8.222 &micro;s</td>
+          <td class="v down">4.700 &micro;s</td>
+          <td>1.75&times;, median of 5 alternating rounds</td>
+        </tr>
+        <tr>
+          <td>External dependencies of the new code</td>
+          <td class="v">4 Abseil targets</td>
+          <td class="v down">0</td>
+          <td><code>ascii</code>, <code>numbers</code>, <code>str_format</code>, <code>str_split</code> &rarr; <code>orbit-maps</code> has an empty <code>[dependencies]</code></td>
+        </tr>
+        <tr>
+          <td>Error handling</td>
+          <td class="v">n/a here, <code>ErrorMessageOr</code> elsewhere</td>
+          <td class="v down"><code>Option</code></td>
+          <td>The two new parse helpers return <code>Option&lt;u64&gt;</code>. Nothing was written to express "might not have a value"</td>
+        </tr>
+        <tr>
+          <td>Test lines edited</td>
+          <td class="v">&mdash;</td>
+          <td class="v down">0</td>
+          <td><code>ReadLinuxMapsTest.cpp</code> is byte-identical. This is the rule that makes the gate mean anything</td>
+        </tr>
+        <tr>
+          <td>Tests covering ParseMaps</td>
+          <td class="v">4</td>
+          <td class="v down">4 C++ &times; 2 backends + 11 Rust</td>
+          <td>The Rust tests mirror the C++ assertions one for one, then add cases the C++ never had</td>
+        </tr>
+        <tr>
+          <td><code>deps(//src/ModuleUtils)</code></td>
+          <td class="v">5,850</td>
+          <td class="v up">5,906</td>
+          <td><strong>Worse by 56.</strong> The Rust toolchain is now in the graph. This does not pay off until LLVM leaves in Phase 2</td>
+        </tr>
+        <tr>
+          <td><code>ModuleUtils</code> implementation lines</td>
+          <td class="v">557</td>
+          <td class="v up">694</td>
+          <td><strong>Worse by 137.</strong> Both implementations plus a dispatcher, on purpose. The C++ is deleted at the end of a phase, not the start</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The honest summary of the dependency line: a port that keeps the old code cannot show a dependency win until it stops keeping the old code. What it can show now is that the <em>new</em> code has no dependencies at all, which is the thing that will eventually make the graph smaller.</p>
+
+  <h2 id="hurdles">Eight hurdles</h2>
+
+  <div class="hurdle wide">
+    <span class="num">01 · env</span>
+    <h3><code>cargo</code> existed but was not on <code>PATH</code></h3>
+    <p><code>which cargo</code> returned nothing, which looked like "no Rust toolchain" and nearly sent me down the path of doing every iteration through Bazel. <code>~/.cargo/bin</code> was there the whole time and simply not exported. Thirty seconds lost, but worth recording because the failure looks identical to a much bigger problem.</p>
+  </div>
+
+  <div class="hurdle wide">
+    <span class="num">02 · semantics</span>
+    <h3><code>/proc</code> paths are not guaranteed UTF-8</h3>
+    <p>The obvious signature is <code>parse_maps(&amp;str)</code>. It is wrong. The C++ takes a <code>std::string_view</code> — bytes — and a path in <code>/proc/[pid]/maps</code> is whatever the kernel recorded, which need not be valid UTF-8. Taking <code>&amp;str</code> would have added a failure mode the original does not have, on input Orbit does not control.</p>
+    <p>So the crate works on <code>&amp;[u8]</code> throughout and <code>pathname</code> is a <code>Vec&lt;u8&gt;</code>. There is a test for it. This is the kind of thing that would have shipped silently and then failed on one user's machine.</p>
+  </div>
+
+  <div class="hurdle warn wide">
+    <span class="num">03 · my bug</span>
+    <h3><code>Vec::with_capacity(usize::MAX + 1)</code></h3>
+    <p>My split helper reserved <code>max_splits + 1</code>, and I called it with <code>usize::MAX</code> to mean "unbounded" when splitting the address range. Every test panicked instantly with <code>attempt to add with overflow</code>.</p>
+    <p>The fix was to stop abusing the helper and use a plain <code>split()</code> iterator for the address field, plus a saturating, capped reservation so a caller-supplied bound can never overflow. Worth noting what happened here: <strong>the bug was in the new code, and Rust's debug overflow check found it in the first test run, in 0.00 seconds.</strong> In C++ this is <code>reserve(SIZE_MAX)</code>, which is a <code>bad_alloc</code> at best and a silent wrap at worst.</p>
+  </div>
+
+  <div class="hurdle warn wide">
+    <span class="num">04 · my other bug</span>
+    <h3>The overflow test did not test overflow</h3>
+    <p>I wrote <code>parse_maps(b"00000000000000017-1 …")</code> expecting a rejected line, on the theory that 17 hex digits cannot fit in a <code>u64</code>. Seventeen <em>zeros</em> are worth zero. The test failed, correctly, and the code was right all along.</p>
+    <p>A small embarrassment, but the useful lesson is that it was the <em>test</em> that was wrong and the test suite said so. Had I written the assertion loosely enough to pass, I would have shipped an untested overflow path.</p>
+  </div>
+
+  <div class="hurdle solved wide">
+    <span class="num">05 · divergence</span>
+    <h3><code>std::stoull</code> throws; the Rust skips the line</h3>
+    <p>The C++ parses addresses with <code>std::stoull(s, nullptr, 16)</code>, which <em>throws</em> <code>std::invalid_argument</code> on a string with no leading hex digits, and silently ignores trailing garbage. No test covers either case, because a real <code>/proc/maps</code> never contains malformed hex.</p>
+    <p>The Rust returns <code>None</code> and skips the line, consistent with how every other malformed field in the same function is already handled. This is a deliberate, documented behaviour change, and it is the one place in this commit where the two backends are not equivalent on all possible inputs — they are equivalent on all inputs the kernel produces. A parser reading kernel-supplied text should not be able to terminate the process, and the C++ currently can.</p>
+  </div>
+
+  <div class="hurdle solved wide">
+    <span class="num">06 · fidelity</span>
+    <h3><code>absl::MaxSplits</code> does not collapse repeated separators</h3>
+    <p><code>absl::StrSplit(line, absl::MaxSplits(' ', 5))</code> yields at most six fields, and the sixth keeps every remaining space — which is exactly why the C++ then calls <code>StripLeadingAsciiWhitespace</code> on it. Getting this wrong in either direction breaks paths that contain spaces, which the test suite specifically checks with <code>/path with spaces</code>.</p>
+    <p>Rust's <code>splitn</code> is close but not identical in the edge cases, so the crate has its own <code>split_max</code> with a test pinning the behaviour, including <code>b"a  b"</code> producing an empty middle field. Reproducing a library's exact semantics is most of the work in a port like this, and it is invisible in the diff.</p>
+  </div>
+
+  <div class="hurdle wide">
+    <span class="num">07 · build</span>
+    <h3>The obvious dependency edge is a cycle</h3>
+    <p>The Rust shim implements <code>ParseMapsRust</code> and therefore needs <code>LinuxMemoryMapping</code> from <code>ModuleUtils</code>'s headers. <code>ModuleUtils</code> needs the shim to dispatch to it. Bazel, correctly, refuses.</p>
+    <p>The fix is a headers-only <code>ModuleUtilsHeaders</code> target that both depend on. It is a two-minute change here and worth knowing about now, because the same split is needed for <code>ObjectUtils</code> in the next phase, where the header set is much larger.</p>
+  </div>
+
+  <div class="hurdle wide">
+    <span class="num">08 · api</span>
+    <h3><code>ORBIT_CHECK_MSG</code> does not exist</h3>
+    <p>I wrote the comparison using a check-with-message macro that every codebase seems to have. Orbit has <code>ORBIT_CHECK(assertion)</code> and <code>ORBIT_FATAL(format, ...)</code> and nothing that combines them, so the comparison is an explicit <code>if</code> plus <code>ORBIT_FATAL</code>. Trivial, but a reminder that a port touches the host codebase's conventions as much as the language.</p>
+  </div>
+
+  <h2 id="next">What this does and does not prove</h2>
+
+  <p>It proves the machinery: a Rust static library links into Orbit's Bazel build, three test targets run one suite against two implementations, the comparing mode genuinely compares, and a broken Rust implementation fails loudly and specifically. It also gives the first real data point on speed, with a mechanism behind it rather than a vibe.</p>
+
+  <p>It does not prove anything about the parts that matter. <code>ParseMaps</code> is 38 lines with no error type, no lifetime that outlives a call, and no dependency on anything. The next step is <code>ObjectUtils</code> — ELF, DWARF, COFF and PDB parsing, 66 existing test cases, and the only thing in the tree that depends on LLVM. That is where the port either pays for itself or does not.</p>
+
+  <p>Everything here is reproducible: <code>scripts/port_metrics.sh --bazel</code> regenerates the JSON, <code>scripts/bench_parse_maps.sh</code> regenerates the timings, and the sabotage experiment is one <code>sed</code> away.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 01 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a> &middot; Analysis: <a href="../rust-service-port.html">Should OrbitService Be Rust?</a>
+  </div>
+</footer>
+
+</body>
+</html>

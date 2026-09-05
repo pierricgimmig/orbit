@@ -1,0 +1,555 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# Service-side Rust for Orbit. See docs/rust-port-plan.html.
+#
+# External crates resolve through @orbit_crates, declared in MODULE.bazel from
+# rust/Cargo.lock. orbit-maps still has no dependencies at all; orbit-object
+# pulls `object`, whose entire transitive tree is one crate (memchr).
+
+load("@orbit_crates//:defs.bzl", "all_crate_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+])
+
+ORBIT_RUST_EDITION = "2021"
+
+# ------------------------------------------------------------- orbit-maps
+
+rust_library(
+    name = "orbit_maps",
+    srcs = glob(["crates/orbit-maps/src/**/*.rs"]),
+    crate_root = "crates/orbit-maps/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_maps_test",
+    size = "small",
+    crate = ":orbit_maps",
+    edition = ORBIT_RUST_EDITION,
+)
+
+# ------------------------------------------------------------ orbit-object
+
+rust_library(
+    name = "orbit_object",
+    srcs = glob(["crates/orbit-object/src/**/*.rs"]),
+    crate_root = "crates/orbit-object/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = all_crate_deps(package_name = "rust/crates/orbit-object"),
+)
+
+# Shares testdata with the C++ suite rather than duplicating it, so both
+# implementations are judged against the same bytes.
+rust_test(
+    name = "orbit_object_test",
+    size = "small",
+    crate = ":orbit_object",
+    data = ["//src/ObjectUtils:testdata"],
+    edition = ORBIT_RUST_EDITION,
+    env = {"ORBIT_TESTDATA": "src/ObjectUtils/testdata"},
+)
+
+# --------------------------------------------------------- orbit-maps-ffi
+
+rust_static_library(
+    name = "orbit_maps_ffi_rust",
+    srcs = glob(["ffi/orbit-maps-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-maps-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_maps"],
+)
+
+# The same sources as a rust_library, so the crate's own #[test]s can run.
+# rust_static_library produces no test-runnable target on its own.
+rust_library(
+    name = "orbit_maps_ffi_lib",
+    srcs = glob(["ffi/orbit-maps-ffi/src/**/*.rs"]),
+    crate_name = "orbit_maps_ffi",
+    crate_root = "ffi/orbit-maps-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_maps"],
+)
+
+rust_test(
+    name = "orbit_maps_ffi_test",
+    size = "small",
+    crate = ":orbit_maps_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+# ------------------------------------------------------- orbit-perf-merge
+
+rust_library(
+    name = "orbit_perf_merge",
+    srcs = glob(["crates/orbit-perf-merge/src/**/*.rs"]),
+    crate_root = "crates/orbit-perf-merge/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_perf_merge_test",
+    size = "small",
+    crate = ":orbit_perf_merge",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_perf_merge_ffi_rust",
+    srcs = glob(["ffi/orbit-perf-merge-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-perf-merge-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_merge"],
+)
+
+rust_library(
+    name = "orbit_perf_merge_ffi_lib",
+    srcs = glob(["ffi/orbit-perf-merge-ffi/src/**/*.rs"]),
+    crate_name = "orbit_perf_merge_ffi",
+    crate_root = "ffi/orbit-perf-merge-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_merge"],
+)
+
+rust_test(
+    name = "orbit_perf_merge_ffi_test",
+    size = "small",
+    crate = ":orbit_perf_merge_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_perf_merge_ffi",
+    hdrs = ["ffi/orbit-perf-merge-ffi/include/orbit_perf_merge_ffi.h"],
+    includes = ["ffi/orbit-perf-merge-ffi/include"],
+    deps = [":orbit_perf_merge_ffi_rust"],
+)
+
+# ---------------------------------------------------- orbit-thread-states
+
+rust_library(
+    name = "orbit_thread_states",
+    srcs = glob(["crates/orbit-thread-states/src/**/*.rs"]),
+    crate_root = "crates/orbit-thread-states/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_thread_states_test",
+    size = "small",
+    crate = ":orbit_thread_states",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_thread_states_ffi_rust",
+    srcs = glob(["ffi/orbit-thread-states-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-thread-states-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_thread_states"],
+)
+
+rust_library(
+    name = "orbit_thread_states_ffi_lib",
+    srcs = glob(["ffi/orbit-thread-states-ffi/src/**/*.rs"]),
+    crate_name = "orbit_thread_states_ffi",
+    crate_root = "ffi/orbit-thread-states-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_thread_states"],
+)
+
+rust_test(
+    name = "orbit_thread_states_ffi_test",
+    size = "small",
+    crate = ":orbit_thread_states_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_thread_states_ffi",
+    hdrs = ["ffi/orbit-thread-states-ffi/include/orbit_thread_states_ffi.h"],
+    includes = ["ffi/orbit-thread-states-ffi/include"],
+    deps = [":orbit_thread_states_ffi_rust"],
+)
+
+# ---------------------------------------------------- orbit-perf-records
+
+rust_library(
+    name = "orbit_perf_records",
+    srcs = glob(["crates/orbit-perf-records/src/**/*.rs"]),
+    crate_root = "crates/orbit-perf-records/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_perf_records_test",
+    size = "small",
+    crate = ":orbit_perf_records",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_perf_records_ffi_rust",
+    srcs = glob(["ffi/orbit-perf-records-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-perf-records-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_records"],
+)
+
+rust_library(
+    name = "orbit_perf_records_ffi_lib",
+    srcs = glob(["ffi/orbit-perf-records-ffi/src/**/*.rs"]),
+    crate_name = "orbit_perf_records_ffi",
+    crate_root = "ffi/orbit-perf-records-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_perf_records"],
+)
+
+rust_test(
+    name = "orbit_perf_records_ffi_test",
+    size = "small",
+    crate = ":orbit_perf_records_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_perf_records_ffi",
+    hdrs = ["ffi/orbit-perf-records-ffi/include/orbit_perf_records_ffi.h"],
+    includes = ["ffi/orbit-perf-records-ffi/include"],
+    deps = [":orbit_perf_records_ffi_rust"],
+)
+
+# ------------------------------------------------------ orbit-collector
+
+rust_library(
+    name = "orbit_collector",
+    srcs = glob(["crates/orbit-collector/src/**/*.rs"]),
+    crate_root = "crates/orbit-collector/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_perf_merge",
+        ":orbit_perf_records",
+        ":orbit_perf_ring",
+        ":orbit_tracing_state",
+        ":orbit_wire",
+    ] + all_crate_deps(package_name = "rust/crates/orbit-collector"),
+)
+
+rust_test(
+    name = "orbit_collector_test",
+    size = "small",
+    crate = ":orbit_collector",
+    edition = ORBIT_RUST_EDITION,
+)
+
+# ------------------------------------------------------ orbit-perf-ring
+
+rust_library(
+    name = "orbit_perf_ring",
+    srcs = glob(["crates/orbit-perf-ring/src/**/*.rs"]),
+    crate_root = "crates/orbit-perf-ring/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_perf_records"] + all_crate_deps(package_name = "rust/crates/orbit-perf-ring"),
+)
+
+rust_test(
+    name = "orbit_perf_ring_test",
+    size = "small",
+    crate = ":orbit_perf_ring",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_perf_ring_ffi_rust",
+    srcs = glob(["ffi/orbit-perf-ring-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-perf-ring-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_perf_records_ffi_lib",
+        ":orbit_perf_ring",
+    ],
+)
+
+cc_library(
+    name = "orbit_perf_ring_ffi",
+    hdrs = [
+        "ffi/orbit-perf-records-ffi/include/orbit_perf_records_ffi.h",
+        "ffi/orbit-perf-ring-ffi/include/orbit_perf_ring_ffi.h",
+    ],
+    includes = [
+        "ffi/orbit-perf-records-ffi/include",
+        "ffi/orbit-perf-ring-ffi/include",
+    ],
+    deps = [":orbit_perf_ring_ffi_rust"],
+)
+
+# ------------------------------------------------------ orbit-trampoline
+
+rust_library(
+    name = "orbit_trampoline",
+    srcs = glob(["crates/orbit-trampoline/src/**/*.rs"]),
+    crate_root = "crates/orbit-trampoline/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_maps",
+        ":orbit_ptrace",
+    ] + all_crate_deps(package_name = "rust/crates/orbit-trampoline"),
+)
+
+rust_test(
+    name = "orbit_trampoline_test",
+    size = "small",
+    crate = ":orbit_trampoline",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_trampoline_ffi_rust",
+    srcs = glob(["ffi/orbit-trampoline-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-trampoline-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_trampoline"],
+)
+
+cc_library(
+    name = "orbit_trampoline_ffi",
+    hdrs = ["ffi/orbit-trampoline-ffi/include/orbit_trampoline_ffi.h"],
+    includes = ["ffi/orbit-trampoline-ffi/include"],
+    deps = [":orbit_trampoline_ffi_rust"],
+)
+
+# --------------------------------------------------------- orbit-ptrace
+
+rust_library(
+    name = "orbit_ptrace",
+    srcs = glob(["crates/orbit-ptrace/src/**/*.rs"]),
+    crate_root = "crates/orbit-ptrace/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_maps"] + all_crate_deps(package_name = "rust/crates/orbit-ptrace"),
+)
+
+rust_test(
+    name = "orbit_ptrace_test",
+    size = "small",
+    crate = ":orbit_ptrace",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_ptrace_ffi_rust",
+    srcs = glob(["ffi/orbit-ptrace-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-ptrace-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":orbit_ptrace"],
+)
+
+cc_library(
+    name = "orbit_ptrace_ffi",
+    hdrs = ["ffi/orbit-ptrace-ffi/include/orbit_ptrace_ffi.h"],
+    includes = ["ffi/orbit-ptrace-ffi/include"],
+    deps = [":orbit_ptrace_ffi_rust"],
+)
+
+# --------------------------------------------------------- orbit-pod-dump
+
+rust_binary(
+    name = "orbit_pod_dump",
+    srcs = glob(["crates/orbit-pod-dump/src/**/*.rs"]),
+    crate_root = "crates/orbit-pod-dump/src/main.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_wire"],
+)
+
+# -------------------------------------------------------- orbit-gpu-helper
+
+# Dynamically linked on purpose: it dlopens libnvidia-ml, which the fully
+# static service cannot. It streams pod events to the service over a pipe.
+rust_binary(
+    name = "orbit_gpu_helper",
+    srcs = glob(["crates/orbit-gpu-helper/src/**/*.rs"]),
+    crate_root = "crates/orbit-gpu-helper/src/main.rs",
+    edition = ORBIT_RUST_EDITION,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":orbit_tracing_state",
+        ":orbit_wire",
+    ] + all_crate_deps(package_name = "rust/crates/orbit-gpu-helper"),
+)
+
+# orbit-service is built with cargo, not Bazel: it depends on the live-viewer
+# server crates (axum/tokio) whose paths leave rust/, which crate_universe
+# cannot splice. See rust/crates/orbit-service/Cargo.toml and rust.sh.
+
+# ------------------------------------------------------------ orbit-wire
+
+rust_library(
+    name = "orbit_wire",
+    srcs = glob(["crates/orbit-wire/src/**/*.rs"]),
+    crate_root = "crates/orbit-wire/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_wire_test",
+    size = "small",
+    crate = ":orbit_wire",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_wire_ffi_rust",
+    srcs = glob(["ffi/orbit-wire-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-wire-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_wire"],
+)
+
+cc_library(
+    name = "orbit_wire_ffi",
+    hdrs = ["ffi/orbit-wire-ffi/include/orbit_wire_ffi.h"],
+    includes = ["ffi/orbit-wire-ffi/include"],
+    deps = [":orbit_wire_ffi_rust"],
+)
+
+# ---------------------------------------------------------- orbit-unwind
+
+rust_library(
+    name = "orbit_unwind",
+    srcs = glob(["crates/orbit-unwind/src/**/*.rs"]),
+    crate_root = "crates/orbit-unwind/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_maps"] + all_crate_deps(package_name = "rust/crates/orbit-unwind"),
+)
+
+rust_test(
+    name = "orbit_unwind_test",
+    size = "small",
+    crate = ":orbit_unwind",
+    edition = ORBIT_RUST_EDITION,
+    deps = [
+        ":orbit_perf_records",
+        ":orbit_perf_ring",
+    ] + all_crate_deps(
+        package_name = "rust/crates/orbit-unwind",
+        normal_dev = True,
+    ),
+)
+
+rust_static_library(
+    name = "orbit_unwind_ffi_rust",
+    srcs = glob(["ffi/orbit-unwind-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-unwind-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_unwind"],
+)
+
+cc_library(
+    name = "orbit_unwind_ffi",
+    hdrs = ["ffi/orbit-unwind-ffi/include/orbit_unwind_ffi.h"],
+    includes = ["ffi/orbit-unwind-ffi/include"],
+    deps = [":orbit_unwind_ffi_rust"],
+)
+
+# ---------------------------------------------------- orbit-tracing-state
+
+rust_library(
+    name = "orbit_tracing_state",
+    srcs = glob(["crates/orbit-tracing-state/src/**/*.rs"]),
+    crate_root = "crates/orbit-tracing-state/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_test(
+    name = "orbit_tracing_state_test",
+    size = "small",
+    crate = ":orbit_tracing_state",
+    edition = ORBIT_RUST_EDITION,
+)
+
+rust_static_library(
+    name = "orbit_tracing_state_ffi_rust",
+    srcs = glob(["ffi/orbit-tracing-state-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-tracing-state-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_tracing_state"],
+)
+
+rust_library(
+    name = "orbit_tracing_state_ffi_lib",
+    srcs = glob(["ffi/orbit-tracing-state-ffi/src/**/*.rs"]),
+    crate_name = "orbit_tracing_state_ffi",
+    crate_root = "ffi/orbit-tracing-state-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_tracing_state"],
+)
+
+rust_test(
+    name = "orbit_tracing_state_ffi_test",
+    size = "small",
+    crate = ":orbit_tracing_state_ffi_lib",
+    edition = ORBIT_RUST_EDITION,
+)
+
+cc_library(
+    name = "orbit_tracing_state_ffi",
+    hdrs = ["ffi/orbit-tracing-state-ffi/include/orbit_tracing_state_ffi.h"],
+    includes = ["ffi/orbit-tracing-state-ffi/include"],
+    deps = [":orbit_tracing_state_ffi_rust"],
+)
+
+# ----------------------------------------------------- orbit-object-ffi
+
+rust_static_library(
+    name = "orbit_object_ffi_rust",
+    srcs = glob(["ffi/orbit-object-ffi/src/**/*.rs"]),
+    crate_root = "ffi/orbit-object-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_object"],
+)
+
+rust_library(
+    name = "orbit_object_ffi_lib",
+    srcs = glob(["ffi/orbit-object-ffi/src/**/*.rs"]),
+    crate_name = "orbit_object_ffi",
+    crate_root = "ffi/orbit-object-ffi/src/lib.rs",
+    edition = ORBIT_RUST_EDITION,
+    deps = [":orbit_object"],
+)
+
+rust_test(
+    name = "orbit_object_ffi_test",
+    size = "small",
+    crate = ":orbit_object_ffi_lib",
+    data = ["//src/ObjectUtils:testdata"],
+    edition = ORBIT_RUST_EDITION,
+    env = {"ORBIT_TESTDATA": "src/ObjectUtils/testdata"},
+)
+
+cc_library(
+    name = "orbit_object_ffi",
+    hdrs = ["ffi/orbit-object-ffi/include/orbit_object_ffi.h"],
+    includes = ["ffi/orbit-object-ffi/include"],
+    deps = [":orbit_object_ffi_rust"],
+)
+
+cc_library(
+    name = "orbit_maps_ffi",
+    hdrs = ["ffi/orbit-maps-ffi/include/orbit_maps_ffi.h"],
+    includes = ["ffi/orbit-maps-ffi/include"],
+    deps = [":orbit_maps_ffi_rust"],
+)

@@ -1,0 +1,39 @@
+Phase 5c -- LeafFunctionCallManager on Rust (2026-08-31)
+========================================================
+
+What: the second welded class. Its libunwindstack dependency is richer than
+5b's -- a CFI query (HasFramePointerSet), one unwinding step, and an
+executable-map check -- but the DECISION TREE around them (the (1)/(2a)/(2b)
+frame-pointer analysis, the too-small-vs-error distinction, the caller
+patch-in) is pure logic. The Rust twin
+(orbit-tracing-state::leaf_functions) takes the three engine queries as
+closures; the facade wires them to libunwindstack (mocks included) today,
+and the Rust collector will wire them to orbit-unwind, whose frames are
+already differentially proven (phase-5a).
+
+The Rust twin never mutates: it returns the patched ips and the caller
+applies them, which is also what makes both-mode comparable without double
+mutation.
+
+How it is verified
+------------------
+- The unedited C++ suite runs as dual-backend targets on
+  ORBIT_TRACING_STATE_BACKEND (rust default): LeafFunctionCallManagerTests
+  / Cpp / Both -- all green.
+- Sabotage: flipping the new-frame-pointer direction check fails exactly
+  the rust-exercising targets.
+- Eight Rust unit tests pin the tree natively.
+
+Hurdle worth its ink: the tests mock the unwinder with strict
+one-call-per-query expectations, and both-mode runs the tree twice --
+over-saturating the mocks through no fault of either implementation. The
+facade's both-mode now runs both backends against small memoizing proxies
+(unwinder and maps), so each unique engine query reaches the collaborator
+exactly once and both backends see identical answers. That is not a
+workaround for the tests' benefit only: it is what makes both-mode a valid
+experiment (same inputs to both trees) even in production.
+
+Phase 5 status: both formerly-welded classes now run their logic on Rust by
+default. libunwindstack itself remains linked as the engine behind the C++
+facade until the Rust collector (with orbit-unwind) owns the pipeline;
+deleting it is Phase 8 work by design.

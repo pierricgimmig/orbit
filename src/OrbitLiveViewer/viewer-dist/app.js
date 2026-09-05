@@ -313,8 +313,14 @@ async function tryWasm() {
     await mod.default();
     if (typeof SharedArrayBuffer !== "undefined" && typeof mod.initThreadPool === "function") {
       try {
+        // Per-lane collect/raster scales with the number of lanes, which on
+        // a many-core box is the core count -- a 72-core machine has 72
+        // scheduler lanes. Cap at 16 so a big box gets real parallelism
+        // without unbounded worker spin-up; ?threads=N overrides either way.
         const hw = Number(navigator.hardwareConcurrency) || 4;
-        const n = Math.max(1, Math.min(hw, 32));
+        const forced = Number(new URLSearchParams(location.search).get("threads"));
+        const want = Number.isFinite(forced) && forced > 0 ? forced : Math.min(hw, 16);
+        const n = Math.max(1, Math.min(want, 32));
         await mod.initThreadPool(n);
         if (typeof mod.markWasmPoolReady === "function") {
           mod.markWasmPoolReady(n);

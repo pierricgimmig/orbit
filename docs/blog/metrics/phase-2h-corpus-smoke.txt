@@ -1,0 +1,15 @@
+Corpus smoke test after the LLVM deletion.
+
+With no second implementation there is nothing to compare against, so
+this is now a smoke test: nothing may crash and the counts should not
+move without explanation. The numbers match the last comparison run.
+
+elf files seen   4719
+pe files seen    7
+pe loaded        7
+pdb files seen   2
+pdb loaded       2
+loaded           4709
+rejected         10
+symbols read     16324792
+line lookups     503

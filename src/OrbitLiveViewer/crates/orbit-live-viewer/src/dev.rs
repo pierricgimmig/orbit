@@ -75,6 +75,40 @@ impl DevFrame {
         }
     }
 
+    /// The clock reading this frame's `start_rel_ns` values are relative to,
+    /// so a consumer can place scopes on an absolute axis. `None` when the
+    /// frame is not instrumented.
+    pub fn origin_ns(&self) -> Option<u64> {
+        self.inner.as_ref().map(|i| i.origin_ns)
+    }
+
+    /// Records a main-thread span from clock readings taken elsewhere, at the
+    /// depth currently open on `tid` -- so a phase measured inside a library
+    /// call lands as a child of the scope wrapping that call. Ignored when the
+    /// readings predate the frame or are inverted.
+    pub fn record_span(&self, tid: u32, name_id: u32, t0_ns: u64, t1_ns: u64) {
+        let Some(inner) = self.inner.as_ref() else {
+            return;
+        };
+        if t0_ns < inner.origin_ns || t1_ns < t0_ns {
+            return;
+        }
+        let depth = inner
+            .stack
+            .borrow()
+            .iter()
+            .filter(|(t, _, _)| *t == tid)
+            .count() as u8;
+        inner.scopes.borrow_mut().push(RelScope {
+            pid: VIEWER_PID,
+            tid,
+            name_id,
+            start_rel_ns: t0_ns - inner.origin_ns,
+            duration_ns: t1_ns.saturating_sub(t0_ns).max(1),
+            depth,
+        });
+    }
+
     /// (worker spans kept, refused) so far this frame.
     pub fn worker_span_counts(&self) -> (u32, u32) {
         match self.inner.as_ref() {
@@ -188,6 +222,116 @@ pub fn query_dev_locked_off_from_location() -> bool {
     {
         query_disables_dev("")
     }
+}
+
+/// `?report=flat|top_down|bottom_up|modules` — open the report panel on a
+/// given tab.
+///
+/// A deep link is worth having on its own, and it is what makes the
+/// screenshot suite deterministic: egui paints to a canvas, so there is no
+/// DOM node for a tab pill to click. Automating the UI otherwise means
+/// synthesising mouse events at hard-coded coordinates, which breaks the
+/// first time a pill moves.
+pub fn query_report_tab_from_location() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|s| query_report_tab(&s))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+/// `?capture=<url>` -- open a capture stream file (the `stream` export)
+/// instead of connecting to a service: the static web page's mode. The
+/// URL is relative to the page.
+pub fn query_capture_url_from_location() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|s| query_capture_url(&s))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn query_capture_url(search: &str) -> Option<String> {
+    let value = search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("capture="))?;
+    if value.is_empty() {
+        return None;
+    }
+    Some(percent_decode(value))
+}
+
+/// Enough of percent-decoding for a path: `%2F`, `%3A` and friends.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `?collapse=scheduler` -- start with the machine-wide scheduler track
+/// folded, so a process's own lanes are in view without scrolling. On a
+/// 32-core box the scheduler alone is taller than a screenshot, and the
+/// screenshot suite exists to show the process, not the cores.
+pub fn query_collapse_scheduler_from_location() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .map(|s| query_collapses_scheduler(&s))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+/// Parses `collapse=` out of a location query string; `scheduler` is the
+/// only value so far.
+#[cfg(any(target_arch = "wasm32", test))]
+pub fn query_collapses_scheduler(search: &str) -> bool {
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .any(|pair| pair == "collapse=scheduler")
+}
+
+/// Parses `report=` out of a location query string.
+#[cfg(any(target_arch = "wasm32", test))]
+pub fn query_report_tab(search: &str) -> Option<String> {
+    for pair in search.trim_start_matches('?').split('&') {
+        if let Some(value) = pair.strip_prefix("report=") {
+            if !value.is_empty() {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
 }
 
 fn now_ns() -> u64 {
@@ -336,5 +480,41 @@ mod absorb_guard_tests {
             f.finish().is_empty(),
             "pre-origin spans must not be clamped onto rel 0"
         );
+    }
+
+    #[test]
+    fn a_report_tab_is_read_from_the_query_string() {
+        assert_eq!(query_report_tab("?report=bottom_up").as_deref(), Some("bottom_up"));
+        assert_eq!(query_report_tab("?dev=0&report=Modules").as_deref(), Some("modules"));
+        assert_eq!(query_report_tab("?report="), None);
+        assert_eq!(query_report_tab("?dev=0"), None);
+        // A different parameter ending in the same letters must not match.
+        assert_eq!(query_report_tab("?myreport=flat"), None);
+    }
+
+    #[test]
+    fn collapse_scheduler_is_read_from_the_query_string() {
+        assert!(query_collapses_scheduler("?collapse=scheduler"));
+        assert!(query_collapses_scheduler("?report=flat&collapse=scheduler"));
+        assert!(!query_collapses_scheduler("?collapse=machine"));
+        assert!(!query_collapses_scheduler("?xcollapse=scheduler"));
+        assert!(!query_collapses_scheduler(""));
+    }
+}
+
+#[cfg(test)]
+mod capture_url_tests {
+    use super::query_capture_url;
+
+    #[test]
+    fn the_capture_query_is_read_and_decoded() {
+        assert_eq!(query_capture_url("?capture=captures/box3d.orbit.stream"), Some("captures/box3d.orbit.stream".into()));
+        assert_eq!(
+            query_capture_url("?collapse=scheduler&capture=..%2Fcaptures%2Fa%20b.orbit.stream"),
+            Some("../captures/a b.orbit.stream".into())
+        );
+        assert_eq!(query_capture_url("?capture="), None);
+        assert_eq!(query_capture_url("?report=live"), None);
+        assert_eq!(query_capture_url("?capture=x%2"), Some("x%2".into()));
     }
 }

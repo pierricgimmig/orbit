@@ -2079,6 +2079,7 @@ dependencies = [
 name = "orbit-live-protocol"
 version = "0.1.0"
 dependencies = [
+ "miniz_oxide",
  "orbit-live-event",
  "serde",
 ]

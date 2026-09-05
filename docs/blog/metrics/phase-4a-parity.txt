@@ -1,0 +1,34 @@
+Phase 4a -- record layouts, cross-language parity (2026-08-31)
+==============================================================
+
+What: the packed perf ring-buffer record structs from
+src/LinuxTracing/PerfEventRecords.h, ported to rust/crates/orbit-perf-records.
+This is the wire layer of the Phase 4 collector: the kernel's perf ABI is the
+spec, and layout IS the contract for a wire parser.
+
+How it is verified
+------------------
+1. One macro (`record!`) generates each struct, its byte parser, and its
+   field-offset table from a single field list -- struct and parser cannot
+   drift from each other by construction.
+2. src/LinuxTracing/PerfEventRecordsLayoutParityTest.cpp compares sizeof and
+   offsetof of EVERY field of EVERY struct (19 structs, both x86_64 and
+   aarch64 field lists) against the values the Rust crate exports through
+   orbit-perf-records-ffi. A field-count check makes a field added on only
+   one side fail the test instead of going uncompared.
+3. Sabotage check: inserting a bogus u64 field into the Rust ForkExit made
+   the C++ test fail (offset and count mismatches); reverting restored green.
+
+Results
+-------
+bazel test //rust:orbit_perf_records_test //rust:orbit_perf_records_ffi_test
+           //src/LinuxTracing:LinuxTracingTests        -> 3/3 pass
+Crate has zero dependencies; parsing is safe Rust (#![deny(unsafe_code)]),
+field-by-field from_le_bytes for now. If the 4c event loop needs zero-copy
+views instead, that is a measured decision for 4c, not a default.
+
+Not covered yet (later milestones)
+----------------------------------
+- The dynamic tails (stack data, callchains, tracepoint raw data, mmap
+  filename) -- milestone 4b, the reader.
+- perf_event_open / mmap ring buffers and the event loop -- milestone 4c.

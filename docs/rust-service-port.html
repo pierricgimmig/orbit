@@ -1,0 +1,1321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Should OrbitService Be Rust?</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #14685a;
+    --accent-deep: #0d4c41;
+    --accent-wash: #dfece7;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #52c4a8;
+      --accent-deep: #7ed8c0;
+      --accent-wash: #12302a;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #52c4a8;
+    --accent-deep: #7ed8c0;
+    --accent-wash: #12302a;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Architecture &middot; The capture backend</p>
+    <h1>Should OrbitService Be Rust?</h1>
+    <p class="dek">The viewer is moving. The collector is a different question — eight components, three different answers, one of which is <em>never</em> — and the most useful answer turns out not to be about the language at all.</p>
+    <p class="byline">Measured on <code>cursor/wasm-live-viewer-217f</code> @ 92aa0cc7e &middot; counts from the working tree</p>
+
+    <div class="stats">
+      <div class="stat"><b>34,377</b><span>Service C++, non-test</span></div>
+      <div class="stat"><b>63,325</b><span>Lines of C++ tests</span></div>
+      <div class="stat"><b>68,431</b><span>Rust already in tree</span></div>
+      <div class="stat"><b>2</b><span>Rust libs in the service</span></div>
+      <div class="stat"><b>14</b><span>Symbols at today's seam</span></div>
+      <div class="stat"><b>55 / 12</b><span>Mutexes / annotated</span></div>
+      <div class="stat"><b>39</b><span>Capture event variants</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Short answer: <strong>yes, but not as "port OrbitService"</strong>. That framing produces a two-year rewrite of code that already works. The useful framing is that OrbitService is eight loosely-coupled things wearing one binary's name, Rust's advantage over each of them ranges from <em>large</em> to <em>actively negative</em>, and two of them should stay C++ permanently. The order matters more than the decision.</p>
+
+  <nav class="toc wide" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#already">The port already started</a></li>
+      <li><a href="#anatomy">What the service actually is</a></li>
+      <li><a href="#ledger">The case, both ways</a></li>
+      <li><a href="#honest">Where the safety pitch is weaker than advertised</a></li>
+      <li><a href="#seam">The seam is the whole cost</a></li>
+      <li><a href="#deps">What Rust deletes from the build</a></li>
+      <li><a href="#never">The parts that should stay C++</a></li>
+      <li><a href="#matrix">Ranking the eight</a></li>
+      <li><a href="#plan">A sequence that ships</a></li>
+      <li><a href="#wire">The wire format is the real boundary</a></li>
+      <li><a href="#wrong">What would make this wrong</a></li>
+    </ol>
+  </nav>
+
+  <div class="verdict">
+    <dt>Verdict</dt>
+    <dd>Continue, in this order: finish the viewer, then <strong>ObjectUtils/Symbols</strong>, then <strong>CaptureFile</strong>, then the <strong>LinuxTracing event pipeline</strong>. Leave the unwinder, the trampolines, and everything injected into the target process in C++.</dd>
+    <dt>Gate</dt>
+    <dd>Do not start the service port while the Qt client still consumes <code>ObjectUtils</code>, <code>CaptureFile</code> and <code>OrbitBase</code>. The client is what makes a partial port expensive.</dd>
+    <dt>First move</dt>
+    <dd>Not a port at all. Settle the <a href="#wire">wire format</a>: extend <code>orbit-live-protocol</code>'s POD framing to cover the whole capture stream, sorted into three lanes by frequency. Everything else gets easier once the boundary is a protocol rather than an ABI.</dd>
+  </div>
+
+  <!-- ==================================================== already -->
+
+  <h2 id="already">The port already started</h2>
+
+  <p>The interesting fact about this question is that it is not hypothetical. <strong>OrbitService already links two Rust static libraries and ships them.</strong></p>
+
+  <p><code>third_party/py-spy-ffi</code> is a <code>rust_static_library</code> in <code>LinuxTracing</code>'s dependency list. When Orbit samples a Python call stack, that stack is walked by Rust reading another process's memory through <code>ptrace</code>. It has been there long enough to be unremarkable.</p>
+
+  <p><code>src/OrbitLiveViewer</code> is newer and more consequential. It is a six-crate Cargo workspace — <code>orbit-live-event</code>, <code>-ring</code>, <code>-protocol</code>, <code>-render</code>, <code>-server</code>, <code>-ffi</code> — compiled by Bazel into <code>liborbit_live_ffi.a</code> and linked into <code>OrbitService</code>. It runs the HTTP and WebSocket server, owns the event ring buffer, and defines the event vocabulary the browser viewer consumes.</p>
+
+  <p>So the questions people usually spend six months answering are already answered here:</p>
+
+  <ul>
+    <li><code>rules_rust</code> 0.73 is in <code>MODULE.bazel</code>, with two independent <code>crate_universe</code> repositories resolved from checked-in <code>Cargo.lock</code> files.</li>
+    <li>Bazel downloads the Rust toolchain itself. A contributor still needs nothing installed — that was the whole point of the Bazel port.</li>
+    <li>Rust and C++ objects link into one binary, on Linux, in CI, today.</li>
+    <li>There are already 68,431 lines of Rust in the tree.</li>
+  </ul>
+
+  <p>The remaining question is not <em>can we</em>. It is <em>which parts, in what order, and what does the boundary cost while we are mid-way</em>.</p>
+
+  <!-- ==================================================== anatomy -->
+
+  <h2 id="anatomy">What the service actually is</h2>
+
+  <p>"OrbitService" is a convenient name for a binary that does eight barely-related jobs. They have wildly different portability profiles, and lumping them together is what makes the question look intimidating.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 430" role="img" aria-label="Orbit's runtime, coloured by language. Inside the target process sit liborbit.so, the user space instrumentation payload and the Vulkan layer, all C plus plus. The kernel exposes perf ring buffers, uprobes and tracepoints. OrbitService contains LinuxTracing, UserSpaceInstrumentation, ObjectUtils and Symbols, MemoryTracing, ProducerEventProcessor, the gRPC services, and two Rust libraries: py-spy-ffi and the orbit-live crates. Two consumers: the Qt UI in C plus plus, and the browser viewer in Rust and WebAssembly.">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="a1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- legend -->
+        <rect x="560" y="6" width="14" height="10" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="580" y="15" font-size="10.5" fill="currentColor">C++</text>
+        <rect x="618" y="6" width="14" height="10" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="638" y="15" font-size="10.5" fill="var(--accent)">Rust today</text>
+
+        <!-- target process -->
+        <rect x="8" y="26" width="500" height="74" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.4" stroke-dasharray="5 3"/>
+        <text x="22" y="44" font-size="12" font-weight="600" fill="var(--hold)">The target process — not ours</text>
+        <rect x="22" y="52" width="146" height="36" fill="none" stroke="currentColor" stroke-width="1.1"/>
+        <text x="95" y="68" font-size="10.5" text-anchor="middle" fill="currentColor">liborbit.so</text>
+        <text x="95" y="81" font-size="9.5" text-anchor="middle" fill="currentColor">503 lines · manual API</text>
+        <rect x="176" y="52" width="146" height="36" fill="none" stroke="currentColor" stroke-width="1.1"/>
+        <text x="249" y="68" font-size="10.5" text-anchor="middle" fill="currentColor">USI payload .so</text>
+        <text x="249" y="81" font-size="9.5" text-anchor="middle" fill="currentColor">dlmopen(LM_ID_NEWLM)</text>
+        <rect x="330" y="52" width="164" height="36" fill="none" stroke="currentColor" stroke-width="1.1"/>
+        <text x="412" y="68" font-size="10.5" text-anchor="middle" fill="currentColor">OrbitVulkanLayer</text>
+        <text x="412" y="81" font-size="9.5" text-anchor="middle" fill="currentColor">3,661 lines · loaded by the driver</text>
+
+        <text x="520" y="60" font-size="10.5" fill="var(--hold)">Runs inside someone</text>
+        <text x="520" y="74" font-size="10.5" fill="var(--hold)">else's address space.</text>
+        <text x="520" y="88" font-size="10.5" fill="var(--hold)">Must stay small and inert.</text>
+
+        <!-- kernel -->
+        <rect x="8" y="112" width="500" height="42" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="22" y="130" font-size="12" font-weight="600" fill="currentColor">Kernel</text>
+        <text x="22" y="146" font-size="10.5" fill="currentColor">perf_event_open ring buffers (one per CPU) · uprobes · tracepoints · /proc</text>
+
+        <line x1="258" y1="100" x2="258" y2="110" stroke="currentColor" stroke-width="1.2" marker-end="url(#a1)"/>
+        <line x1="258" y1="156" x2="258" y2="170" stroke="currentColor" stroke-width="1.2" marker-end="url(#a1)"/>
+
+        <!-- OrbitService -->
+        <rect x="8" y="172" width="764" height="176" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <text x="22" y="192" font-size="13" font-weight="600" fill="currentColor">OrbitService</text>
+        <text x="122" y="192" font-size="10.5" fill="var(--muted)">34,377 lines of C++ · plus the two Rust libraries below</text>
+
+        <!-- row A -->
+        <rect x="22" y="202" width="176" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="110" y="221" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">LinuxTracing</text>
+        <text x="110" y="235" font-size="9.5" text-anchor="middle" fill="currentColor">10,017 · ring buffers, decode,</text>
+        <text x="110" y="247" font-size="9.5" text-anchor="middle" fill="currentColor">ordered merge, unwinding</text>
+        <text x="110" y="258" font-size="9" text-anchor="middle" fill="var(--muted)">+ libunwindstack (AOSP C++)</text>
+
+        <rect x="206" y="202" width="176" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="294" y="221" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">UserSpaceInstrumentation</text>
+        <text x="294" y="235" font-size="9.5" text-anchor="middle" fill="currentColor">4,704 · ptrace, injection,</text>
+        <text x="294" y="247" font-size="9.5" text-anchor="middle" fill="currentColor">trampoline codegen</text>
+        <text x="294" y="258" font-size="9" text-anchor="middle" fill="var(--muted)">+ capstone</text>
+
+        <rect x="390" y="202" width="176" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="478" y="221" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">ObjectUtils + Symbols</text>
+        <text x="478" y="235" font-size="9.5" text-anchor="middle" fill="currentColor">4,344 · ELF, DWARF,</text>
+        <text x="478" y="247" font-size="9.5" text-anchor="middle" fill="currentColor">COFF, PDB parsing</text>
+        <text x="478" y="258" font-size="9" text-anchor="middle" fill="var(--muted)">+ LLVM ×6, DIA SDK</text>
+
+        <rect x="574" y="202" width="184" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="666" y="221" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">MemoryTracing</text>
+        <text x="666" y="235" font-size="9.5" text-anchor="middle" fill="currentColor">773 · /proc sampling,</text>
+        <text x="666" y="247" font-size="9.5" text-anchor="middle" fill="currentColor">cgroup + page-fault counters</text>
+
+        <!-- row B -->
+        <rect x="22" y="272" width="176" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="110" y="291" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">Event pipeline</text>
+        <text x="110" y="305" font-size="9.5" text-anchor="middle" fill="currentColor">ProducerEventProcessor,</text>
+        <text x="110" y="317" font-size="9.5" text-anchor="middle" fill="currentColor">CaptureServiceBase · 1,673</text>
+
+        <rect x="206" y="272" width="176" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="294" y="291" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">gRPC surface</text>
+        <text x="294" y="305" font-size="9.5" text-anchor="middle" fill="currentColor">Capture · Process · Tracepoint</text>
+        <text x="294" y="317" font-size="9.5" text-anchor="middle" fill="currentColor">ProducerSide · Crash · 2,884</text>
+
+        <rect x="390" y="272" width="176" height="60" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="478" y="291" font-size="11" font-weight="600" text-anchor="middle" fill="var(--accent)">py-spy-ffi</text>
+        <text x="478" y="305" font-size="9.5" text-anchor="middle" fill="currentColor">Rust · Python stack walking</text>
+        <text x="478" y="317" font-size="9.5" text-anchor="middle" fill="currentColor">linked into LinuxTracing</text>
+
+        <rect x="574" y="272" width="184" height="60" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="666" y="291" font-size="11" font-weight="600" text-anchor="middle" fill="var(--accent)">orbit-live-* (6 crates)</text>
+        <text x="666" y="305" font-size="9.5" text-anchor="middle" fill="currentColor">Rust · HTTP + WebSocket,</text>
+        <text x="666" y="317" font-size="9.5" text-anchor="middle" fill="currentColor">ring buffer, event vocabulary</text>
+
+        <!-- consumers -->
+        <line x1="200" y1="350" x2="200" y2="374" stroke="currentColor" stroke-width="1.2" marker-end="url(#a1)"/>
+        <text x="208" y="366" font-size="9.5" fill="currentColor">gRPC + protobuf</text>
+        <line x1="600" y1="350" x2="600" y2="374" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a1a)"/>
+        <text x="608" y="366" font-size="9.5" fill="var(--accent)">WebSocket</text>
+
+        <rect x="60" y="376" width="280" height="44" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="200" y="395" font-size="11.5" font-weight="600" text-anchor="middle" fill="currentColor">Orbit — the Qt desktop UI</text>
+        <text x="200" y="410" font-size="9.5" text-anchor="middle" fill="currentColor">~58,000 lines of C++ · OrbitGl, OrbitQt, ClientData, DataViews</text>
+
+        <rect x="440" y="376" width="280" height="44" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="580" y="395" font-size="11.5" font-weight="600" text-anchor="middle" fill="var(--accent)">The live viewer in a browser</text>
+        <text x="580" y="410" font-size="9.5" text-anchor="middle" fill="currentColor">Rust + wasm32 · eframe / wgpu</text>
+      </svg>
+    </div>
+    <figcaption><b>Two of the eight boxes are already Rust, and they are the two nobody argued about.</b> The dashed band at the top is the constraint that decides the hardest cases: three of Orbit's components do not run in Orbit's process at all. What they can safely be made of is a different question from everything below them.</figcaption>
+  </figure>
+
+  <!-- ==================================================== ledger -->
+
+  <h2 id="ledger">The case, both ways</h2>
+
+  <div class="ledger wide">
+    <section class="for">
+      <h3>For the port</h3>
+      <ol>
+        <li><b>The event vocabulary is already Rust, and C++ is translating into it</b>
+          <code>LiveViewerBridge</code> is a C++ gRPC client that receives protobuf <code>ClientCaptureEvent</code>s and re-emits them as calls into <code>orbit_live_ingest_*</code>. That translation exists only because the producer is C++ and the consumer is Rust. Porting the producer deletes it rather than moving it.</li>
+
+        <li><b>~3,000 lines of OrbitBase stop existing</b>
+          <code>Result.h</code>, <code>Future.h</code>, <code>Promise.h</code>, <code>Executor.h</code>, <code>ThreadPool.h</code>, <code>TaskGroup.h</code>, <code>StopSource/StopToken.h</code>, <code>WhenAll/WhenAny.h</code>, <code>AnyInvocable.h</code>, <code>Typedef.h</code>, <code>UniqueResource.h</code>, <code>NotFoundOr/CanceledOr.h</code>, <code>Overloaded.h</code>, <code>Chunk/Sort/Align.h</code>. Every one is a hand-built version of something in <code>std</code>, <code>tokio</code> or <code>rayon</code>. <code>ErrorMessageOr</code> alone appears 1,342 times and drags in Outcome as a dependency.</li>
+
+        <li><b>The parsers face hostile input, and the team already knows it</b>
+          <code>ObjectUtils</code> parses ELF, DWARF, COFF and PDB out of whatever binary the user points at. <code>LinuxTracing</code> decodes variable-length kernel records out of an mmap'd ring buffer with hand-computed offsets. There is already an <code>ElfFileLoadSymbolsFuzzer</code> and libprotobuf-mutator in <code>third_party</code> — the tree treats this as an attack surface. This is the code where bounds-checked slices pay for themselves.</li>
+
+        <li><b>The heaviest build dependencies go away</b>
+          Six LLVM libraries, two of which needed patches during the Bazel port, plus libunwindstack and its AOSP satellites (libbase, liblog, libprocinfo, LZMA), plus capstone. The Rust replacements are pure-Rust crates that <code>crate_universe</code> resolves without a patch directory.</li>
+
+        <li><b>One language across the product</b>
+          The viewer, the wire protocol, the ring buffer and the renderer are Rust. Anyone who can work on the timeline could then work on the collector. Right now those are two disjoint skill sets separated by a C ABI.</li>
+
+        <li><b>Cross-targets get cheaper</b>
+          <code>docs/building_arm64.md</code> exists because building this C++ tree for aarch64 is a project. Rust's cross story is <code>--target</code> plus a linker.</li>
+      </ol>
+    </section>
+
+    <section class="against">
+      <h3>Against the port</h3>
+      <ol>
+        <li><b>Two components are rewrites, not ports</b>
+          The DWARF unwinder is not portable code — it is fifteen years of accumulated Android edge cases. Replacing libunwindstack with <code>framehop</code> changes capture <em>output</em>, not just implementation. Same for capstone-driven instruction relocation. These are risky projects that happen to involve Rust; they are not Rust projects.</li>
+
+        <li><b>The Qt client still owns the shared layer</b>
+          <code>OrbitBase</code> has 58 dependents, <code>GrpcProtos</code> 35, <code>ObjectUtils</code> 16 — and the client is most of them. Port <code>ObjectUtils</code> now and you either keep two symbol parsers or FFI a Rust one back into C++. Both are worse than today. The service port's value is <em>gated</em> on the viewer port finishing.</li>
+
+        <li><b>A half-ported service has a much worse seam than today's</b>
+          The current boundary is fourteen C functions with POD arguments and events flowing one direction. Split the pipeline and the seam carries protobuf messages, errors, cancellation and object lifetimes both ways — a region with neither language's guarantees, on the hot path.</li>
+
+        <li><b>Two protobuf type universes</b>
+          <code>prost</code> generates different types from the same <code>.proto</code>. Mid-port, every event crossing the boundary is marshalled or re-serialised. At millions of perf events per capture that is a real copy you did not have.</li>
+
+        <li><b>63,325 lines of tests are the only specification</b>
+          294 test files, 20 in <code>LinuxTracing</code> alone, plus a 4,143-line integration suite with a puppet process. Nothing about the subtle behaviour — leaf-function fixups, uprobe return-address stitching, timestamp ordering across CPUs — is written down anywhere else. Tests do not port automatically, and a rewrite without them loses the net exactly where the ice is thinnest.</li>
+
+        <li><b>Toolchain skew is already a live cost</b>
+          <code>src/OrbitLiveViewer/Cargo.toml</code> carries the comment "This workspace is newer than Orbit's C++ rustc pin", and the wasm viewer had to be excluded from the Bazel workspace entirely to keep the wgpu tree out of the dependency graph. Two toolchains, two lockfile regimes, two upgrade cadences — for years.</li>
+
+        <li><b>The collector works</b>
+          There is no user-visible feature at the end of this. The open bug in this tree is in the viewer, not the service.</li>
+      </ol>
+    </section>
+  </div>
+
+  <!-- ==================================================== honest -->
+
+  <h2 id="honest">Where the safety pitch is weaker than advertised</h2>
+
+  <p>The standard argument for porting a C++ backend is data races. It is worth checking whether it applies here before leaning on it, because in this codebase it mostly does not.</p>
+
+  <p>The capture pipeline is not a thread soup. <code>TracerImpl</code> runs <strong>two</strong> threads: <code>Tracer::Run</code>, which polls every per-CPU ring buffer in one loop, and <code>Proc.Def.Events</code>, which drains deferred events. There is exactly one <code>absl::Mutex</code> between them, and it is annotated. <code>GrpcClientCaptureEventCollector</code> adds a sender thread behind one fully-annotated mutex. The design is a pipeline of single-threaded stages with explicit handoffs — which is to say, it is already the shape Rust would push you toward.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Area</th><th><code>absl::Mutex</code></th><th><code>GUARDED_BY</code></th><th>Reading</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Service side, all modules</td><td class="v">55</td><td class="v">12</td><td>Few locks, mostly at stage boundaries; a fifth carry checked ownership</td></tr>
+        <tr><td>ClientData (UI)</td><td class="v">99</td><td class="v">27</td><td>Where the shared mutable state actually lives</td></tr>
+        <tr><td>OrbitVulkanLayer</td><td class="v">26</td><td class="v">0</td><td>In the target process — and not a port candidate</td></tr>
+        <tr><td>CaptureClient</td><td class="v">9</td><td class="v">0</td><td>Client side</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>So the honest version is: <strong>Rust would make 43 unannotated service-side mutexes compiler-checked, and that is a modest win, not a dramatic one.</strong> Anyone selling this port on fearless concurrency is selling the wrong feature.</p>
+
+  <p>The safety argument that <em>does</em> hold is narrower and stronger: this service parses untrusted, externally-shaped binary data in two hot places — kernel ring-buffer records and arbitrary object files. That is exactly the workload where a bounds-checked slice is worth more than a code review, and it is why <code>ObjectUtils</code> ranks first below rather than <code>LinuxTracing</code>.</p>
+
+  <div class="note warn">
+    <span class="note-label">One real race, already known</span>
+    <p><code>InstrumentProcessTest.Instrument</code> is tagged <code>known_flaky</code> with the comment "race between the injected thread exiting and gRPC's event-engine thread pool being created." It is worth noting that this race lives at the boundary between Orbit's injected payload and gRPC's runtime — a place a Rust port would not have touched, and arguably would have made harder to reason about.</p>
+  </div>
+
+  <!-- ==================================================== seam -->
+
+  <h2 id="seam">The seam is the whole cost</h2>
+
+  <p>Every incremental port is really a bet about the boundary. The reason the live viewer landed cleanly is not that Rust is good; it is that the boundary was chosen where the data flow was already narrow, one-directional and made of plain integers.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 316" role="img" aria-label="Two boundary shapes compared. Today's seam is fourteen C functions carrying only integers in one direction, from C plus plus into Rust. A seam through the middle of the capture pipeline would carry protobuf messages, error propagation, cancellation and object lifetimes in both directions.">
+        <defs>
+          <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="s1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+          <marker id="s1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--hold)"/>
+          </marker>
+        </defs>
+
+        <!-- panel 1 -->
+        <text x="8" y="18" font-size="11" font-family="monospace" fill="var(--accent)">TODAY — works</text>
+        <rect x="8" y="28" width="200" height="82" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="108" y="50" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor">C++ capture side</text>
+        <text x="108" y="68" font-size="10" text-anchor="middle" fill="currentColor">LinuxTracing → protobuf</text>
+        <text x="108" y="83" font-size="10" text-anchor="middle" fill="currentColor">→ LiveViewerBridge</text>
+        <text x="108" y="99" font-size="10" text-anchor="middle" fill="var(--muted)">owns everything above the line</text>
+
+        <line x1="212" y1="69" x2="330" y2="69" stroke="var(--accent)" stroke-width="2" marker-end="url(#s1a)"/>
+        <rect x="238" y="34" width="66" height="26" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="271" y="51" font-size="10" text-anchor="middle" fill="var(--accent)">14 fns</text>
+        <text x="271" y="86" font-size="9.5" text-anchor="middle" fill="currentColor">u32 · u64 · i32 · const char*</text>
+        <text x="271" y="99" font-size="9.5" text-anchor="middle" fill="currentColor">no ownership crosses</text>
+
+        <rect x="334" y="28" width="200" height="82" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="434" y="50" font-size="12" font-weight="600" text-anchor="middle" fill="var(--accent)">Rust live side</text>
+        <text x="434" y="68" font-size="10" text-anchor="middle" fill="currentColor">ring buffer · HTTP · WebSocket</text>
+        <text x="434" y="83" font-size="10" text-anchor="middle" fill="currentColor">orbit-live-event vocabulary</text>
+        <text x="434" y="99" font-size="10" text-anchor="middle" fill="var(--muted)">owns everything below it</text>
+
+        <text x="552" y="52" font-size="10.5" fill="currentColor">One direction. Values, not</text>
+        <text x="552" y="66" font-size="10.5" fill="currentColor">objects. Nothing to free on</text>
+        <text x="552" y="80" font-size="10.5" fill="currentColor">the far side. Three callbacks</text>
+        <text x="552" y="94" font-size="10.5" fill="currentColor">back, all returning int.</text>
+
+        <line x1="8" y1="134" x2="772" y2="134" stroke="currentColor" stroke-width="1" opacity="0.35"/>
+
+        <!-- panel 2 -->
+        <text x="8" y="158" font-size="11" font-family="monospace" fill="var(--hold)">MID-PORT — the thing to avoid</text>
+        <rect x="8" y="170" width="200" height="112" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="108" y="192" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor">C++ half</text>
+        <text x="108" y="210" font-size="10" text-anchor="middle" fill="currentColor">ring buffer reader</text>
+        <text x="108" y="224" font-size="10" text-anchor="middle" fill="currentColor">libunwindstack</text>
+        <text x="108" y="238" font-size="10" text-anchor="middle" fill="currentColor">uprobe stitching</text>
+        <text x="108" y="252" font-size="10" text-anchor="middle" fill="currentColor">ErrorMessageOr&lt;T&gt;</text>
+        <text x="108" y="270" font-size="10" text-anchor="middle" fill="var(--muted)">still owns half the state</text>
+
+        <line x1="212" y1="204" x2="330" y2="204" stroke="var(--hold)" stroke-width="2" marker-end="url(#s1h)"/>
+        <line x1="330" y1="248" x2="212" y2="248" stroke="var(--hold)" stroke-width="2" marker-end="url(#s1h)"/>
+        <text x="271" y="196" font-size="9.5" text-anchor="middle" fill="var(--hold)">events, callstacks, maps</text>
+        <text x="271" y="222" font-size="9.5" text-anchor="middle" fill="var(--hold)">serialise or hand-marshal</text>
+        <text x="271" y="240" font-size="9.5" text-anchor="middle" fill="var(--hold)">errors, cancellation,</text>
+        <text x="271" y="266" font-size="9.5" text-anchor="middle" fill="var(--hold)">symbol requests, lifetimes</text>
+
+        <rect x="334" y="170" width="200" height="112" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="434" y="192" font-size="12" font-weight="600" text-anchor="middle" fill="var(--accent)">Rust half</text>
+        <text x="434" y="210" font-size="10" text-anchor="middle" fill="currentColor">visitors · ordered merge</text>
+        <text x="434" y="224" font-size="10" text-anchor="middle" fill="currentColor">prost types</text>
+        <text x="434" y="238" font-size="10" text-anchor="middle" fill="currentColor">Result&lt;T, E&gt;</text>
+        <text x="434" y="252" font-size="10" text-anchor="middle" fill="currentColor">tokio runtime</text>
+        <text x="434" y="270" font-size="10" text-anchor="middle" fill="var(--muted)">owns the other half</text>
+
+        <text x="552" y="194" font-size="10.5" fill="var(--hold)">Both directions. Objects with</text>
+        <text x="552" y="208" font-size="10.5" fill="var(--hold)">lifetimes. Two error types.</text>
+        <text x="552" y="222" font-size="10.5" fill="var(--hold)">Two protobuf universes. A copy</text>
+        <text x="552" y="236" font-size="10.5" fill="var(--hold)">per event on the hot path.</text>
+        <text x="552" y="256" font-size="10.5" fill="currentColor">Neither language's guarantees</text>
+        <text x="552" y="270" font-size="10.5" fill="currentColor">hold across this line.</text>
+      </svg>
+    </div>
+    <figcaption><b>The rule that falls out: only port along a line that is already narrow and one-directional.</b> Whole modules with a data-shaped interface qualify — a symbol file in, a symbol table out; a capture file in, events out. A slice through the middle of the perf pipeline does not, which is why the pipeline is late in the sequence rather than first.</figcaption>
+  </figure>
+
+  <!-- ==================================================== deps -->
+
+  <h2 id="deps">What Rust deletes from the build</h2>
+
+  <p>This is the part of the case that is concrete and easy to verify. Every C++ dependency the service carries has a mature pure-Rust counterpart, and in several cases the counterpart is what the rest of the profiling world already uses.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Today</th><th>Used by</th><th>Rust counterpart</th><th>Confidence</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="v">LLVM Object, DebugInfoDWARF, Symbolize, Demangle</td><td>ObjectUtils, Symbols</td><td class="v bump">object · gimli · addr2line · symbolic-demangle</td><td>High — this is the Firefox and Sentry stack</td></tr>
+        <tr><td class="v">LLVM DebugInfoPDB, DebugInfoCodeView</td><td>PdbFileLlvm</td><td class="v bump">pdb</td><td>Good, but less complete than LLVM's reader</td></tr>
+        <tr><td class="v">libunwindstack + libbase, liblog, libprocinfo, LZMA</td><td>LinuxTracing</td><td class="v hold-t">framehop</td><td class="hold-t">Different unwinder, different failures. Measure first.</td></tr>
+        <tr><td class="v">capstone</td><td>USI trampolines, Disassembler</td><td class="v bump">iced-x86</td><td>Strictly better for relocation — it re-encodes, not just decodes</td></tr>
+        <tr><td class="v">gRPC + protobuf (C++)</td><td>every service</td><td class="v bump">tonic · prost</td><td>High. Same <code>.proto</code>, second codegen.</td></tr>
+        <tr><td class="v">Abseil containers, synchronisation, str_format</td><td>everywhere</td><td class="v bump">std · hashbrown · parking_lot</td><td>High</td></tr>
+        <tr><td class="v">Outcome (<code>ErrorMessageOr</code>)</td><td>1,342 call sites</td><td class="v bump">Result + thiserror</td><td>Built in</td></tr>
+        <tr><td class="v">raw <code>perf_event_open</code>, <code>mmap</code>, <code>ptrace</code></td><td>LinuxTracing, USI</td><td class="v">nix · libc</td><td>Same syscalls, same <code>unsafe</code>, no gain</td></tr>
+        <tr><td class="v">krabsetw (ETW), DIA SDK (COM)</td><td>Windows only</td><td class="v hold-t">ferrisetw · windows-rs</td><td class="hold-t">DIA is COM and proprietary. Windows is deprecated anyway.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The LLVM row is the one that matters most. The Bazel port needed two separate patches to LLVM 17 just to build it, and it is the largest single compile in the tree. Deleting six LLVM libraries in exchange for four pure-Rust crates removes a patch directory, a version pin that only exists because the registry has nothing newer, and a meaningful slice of cold-build time.</p>
+
+  <!-- ==================================================== never -->
+
+  <h2 id="never">The parts that should stay C++</h2>
+
+  <p>Three components should not be ported, and the reason is the same for all three: <strong>they execute inside a process Orbit does not own.</strong></p>
+
+  <div class="note hold">
+    <span class="note-label">The dlmopen problem, already documented in this tree</span>
+    <p>Orbit injects <code>liborbituserspaceinstrumentation.so</code> into the target with <code>dlmopen(LM_ID_NEWLM)</code>, which creates a fresh linker namespace. The Bazel port already discovered what that namespace does to a library with non-trivial initialisation: OpenSSL's initialiser corrupted the heap and aborted, reproducibly, in a twelve-line harness. A Rust <code>cdylib</code> brings its own runtime setup — <code>std::rt</code>, thread-local machinery, a panic runtime, a much larger static footprint. That is a considerably larger bet than OpenSSL was, in a place where failure means the profiler corrupts the program it is measuring.</p>
+  </div>
+
+  <p>The same argument, weaker but still decisive, covers <code>liborbit.so</code> — the manual-instrumentation library a user links into <em>their</em> application — and <code>OrbitVulkanLayer</code>, which the graphics driver loads into any Vulkan process. Both must be small, must not perturb the host, and must be loadable next to arbitrary third-party code. 503 lines of C++ with no runtime is the correct answer and will stay the correct answer.</p>
+
+  <p>The trampoline writer is a separate case with the same conclusion. <code>Trampoline.cpp</code> disassembles a function prologue, relocates the displaced instructions, and writes machine code into another process's address space. Rust offers nothing there: every line is <code>unsafe</code> by construction. You would trade eleven <code>reinterpret_cast</code>s for eleven <code>unsafe</code> blocks and gain no checking, while taking on the risk of reproducing 17 test files' worth of x86-64 encoding edge cases. <em>(<code>iced-x86</code> is genuinely better than capstone at instruction relocation — but that is an argument for a bindings-level change, not a port.)</em></p>
+
+  <!-- ==================================================== matrix -->
+
+  <h2 id="matrix">Ranking the eight</h2>
+
+  <p>Plotting each component on what Rust actually buys against what it costs to get there sorts the question out faster than any amount of prose.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 430" role="img" aria-label="A scatter plot of Orbit components. Vertical axis is what Rust actually buys, horizontal axis is migration cost and risk. High value and low cost: CaptureFile and the gRPC surface. High value and moderate cost: ObjectUtils and Symbols. High value and high cost: the LinuxTracing event pipeline. Moderate value, very high risk: replacing libunwindstack with framehop. Near zero or negative value at high cost: the trampoline writer, the injected payload, liborbit.so, the Vulkan layer, and Windows tracing.">
+        <defs>
+          <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- axes -->
+        <line x1="70" y1="366" x2="742" y2="366" stroke="currentColor" stroke-width="1.3" marker-end="url(#m1)"/>
+        <line x1="70" y1="366" x2="70" y2="26" stroke="currentColor" stroke-width="1.3" marker-end="url(#m1)"/>
+        <text x="406" y="392" font-size="11" text-anchor="middle" fill="currentColor">migration cost &amp; risk →</text>
+        <text x="0" y="0" font-size="11" fill="currentColor" transform="translate(46,200) rotate(-90)" text-anchor="middle">what Rust actually buys →</text>
+
+        <!-- quadrant guides -->
+        <line x1="406" y1="26" x2="406" y2="366" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity="0.3"/>
+        <line x1="70" y1="196" x2="742" y2="196" stroke="currentColor" stroke-width="1" stroke-dasharray="3 4" opacity="0.3"/>
+
+        <text x="80" y="44" font-size="9.5" fill="var(--accent)" opacity="0.9">DO THESE</text>
+        <text x="734" y="44" font-size="9.5" fill="var(--warn)" text-anchor="end" opacity="0.9">WORTH IT, EVENTUALLY</text>
+        <text x="734" y="358" font-size="9.5" fill="var(--hold)" text-anchor="end" opacity="0.9">DON'T</text>
+
+        <!-- points: high value low cost -->
+        <circle cx="150" cy="120" r="6" fill="var(--accent)"/>
+        <text x="164" y="117" font-size="11" font-weight="600" fill="currentColor">CaptureFile</text>
+        <text x="164" y="130" font-size="9.5" fill="var(--muted)">1,456 lines · pure parse/serialise · 5 test files</text>
+
+        <circle cx="196" cy="220" r="6" fill="currentColor"/>
+        <text x="210" y="217" font-size="11" font-weight="600" fill="currentColor">gRPC surface + event pipeline</text>
+        <text x="210" y="230" font-size="9.5" fill="var(--muted)">4,557 lines · tonic is a drop-in shape · low drama, low payoff</text>
+
+        <circle cx="196" cy="164" r="6" fill="var(--accent)"/>
+        <text x="210" y="161" font-size="11" font-weight="600" fill="currentColor">MemoryTracing</text>
+        <text x="210" y="174" font-size="9.5" fill="var(--muted)">773 lines · /proc text parsing · trivially isolated</text>
+
+        <circle cx="330" cy="72" r="7" fill="var(--accent)"/>
+        <text x="344" y="69" font-size="11.5" font-weight="700" fill="var(--accent)">ObjectUtils + Symbols</text>
+        <text x="344" y="82" font-size="9.5" fill="var(--muted)">4,344 lines · untrusted input, best crates, deletes LLVM · start here</text>
+
+        <!-- high value high cost -->
+        <circle cx="540" cy="96" r="7" fill="var(--warn)"/>
+        <text x="554" y="93" font-size="11.5" font-weight="700" fill="currentColor">LinuxTracing event pipeline</text>
+        <text x="554" y="106" font-size="9.5" fill="var(--muted)">ring buffer, decoders, ordered merge, visitors · ~7,000 lines</text>
+        <text x="554" y="118" font-size="9.5" fill="var(--muted)">20 test files carry the spec</text>
+
+        <circle cx="640" cy="212" r="6" fill="var(--warn)"/>
+        <text x="654" y="209" font-size="11" font-weight="600" fill="currentColor">framehop</text>
+        <text x="654" y="222" font-size="9.5" fill="var(--muted)">a different unwinder;</text>
+        <text x="654" y="234" font-size="9.5" fill="var(--muted)">changes output</text>
+
+        <!-- low value high cost -->
+        <circle cx="612" cy="306" r="6" fill="var(--hold)"/>
+        <text x="626" y="303" font-size="11" font-weight="600" fill="currentColor">Trampoline codegen</text>
+        <text x="626" y="316" font-size="9.5" fill="var(--muted)">all unsafe either way</text>
+
+        <circle cx="512" cy="336" r="6" fill="var(--hold)"/>
+        <text x="330" y="333" font-size="11" font-weight="600" text-anchor="end" fill="currentColor">WindowsTracing + DIA</text>
+        <text x="330" y="346" font-size="9.5" text-anchor="end" fill="var(--muted)">COM interop on a deprecated platform</text>
+        <line x1="336" y1="333" x2="504" y2="335" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+
+        <circle cx="676" cy="350" r="7" fill="var(--hold)"/>
+        <text x="668" y="347" font-size="11.5" font-weight="700" text-anchor="end" fill="var(--hold)">Injected code</text>
+        <text x="668" y="360" font-size="9.5" text-anchor="end" fill="var(--muted)">liborbit.so · USI payload · Vulkan layer</text>
+
+        <!-- OrbitBase note -->
+        <rect x="86" y="270" width="230" height="58" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="100" y="290" font-size="10.5" font-weight="600" fill="var(--accent)">OrbitBase isn't on this chart</text>
+        <text x="100" y="305" font-size="9.5" fill="currentColor">~3,000 lines of it don't get ported —</text>
+        <text x="100" y="318" font-size="9.5" fill="currentColor">they get deleted, as a side effect of the rest.</text>
+      </svg>
+    </div>
+    <figcaption><b>The vertical axis is not "how much C++ is there" — it is how much Rust changes about the code's failure modes.</b> Symbol parsing scores highest because it eats hostile input and has the strongest crate ecosystem. The trampoline writer scores near zero because every line of it is <code>unsafe</code> in either language. Injected code scores below zero because a Rust runtime in a foreign address space is a new risk, not a removed one.</figcaption>
+  </figure>
+
+  <!-- ==================================================== plan -->
+
+  <h2 id="plan">A sequence that ships</h2>
+
+  <p>Four tiers. Each one is independently useful, each one can be stopped after, and none of them requires the next to be worth doing.</p>
+
+  <div class="tier go wide">
+    <span class="rank">Tier 0 · now</span>
+    <h3>Shorten the seam you already have</h3>
+    <p>This is not a port. <code>LiveViewerBridge</code> currently opens a localhost gRPC channel from C++, reads the <code>CaptureResponse</code> stream, and translates each protobuf event into an <code>orbit_live_ingest_*</code> call. Move that client into <code>orbit-live-server</code> as a <code>tonic</code> client and the entire C++ translation layer disappears — the Rust side reads the stream and populates its own ring directly.</p>
+    <p>Cost: a few hundred lines. Payoff: it proves <code>tonic</code> against Orbit's own <code>.proto</code> files, on the real capture stream, before anything irreversible is committed. If <code>prost</code>-generated types turn out to be awkward against <code>capture.proto</code>, you find out here, cheaply.</p>
+  </div>
+
+  <div class="tier go wide">
+    <span class="rank">Tier 1 · after the viewer lands</span>
+    <h3>ObjectUtils and Symbols</h3>
+    <p>The highest-value module in the tree for this. It parses adversarial input, it has the strongest Rust ecosystem to land on (<code>object</code>, <code>gimli</code>, <code>addr2line</code>, <code>symbolic-demangle</code>, <code>pdb</code>), it has 8 test files and an existing fuzzer to act as the specification, and finishing it deletes six LLVM libraries and two build patches.</p>
+    <p>The blocker is the 16 dependents, most of them client-side. Do this behind the existing <code>SymbolsFile</code> interface so the C++ side sees no change, or wait until the Qt client is retired. That dependency is the reason this is Tier 1 rather than Tier 0.</p>
+  </div>
+
+  <div class="tier go wide">
+    <span class="rank">Tier 1 · alongside</span>
+    <h3>CaptureFile and MemoryTracing</h3>
+    <p>Two small, self-contained modules — 1,456 and 773 lines — with data-shaped interfaces and no threading. Neither is exciting; both are excellent practice at the Bazel/Cargo/test-migration workflow before it matters. <code>CaptureFile</code> in particular is a format the Rust viewer will eventually want to read directly anyway.</p>
+  </div>
+
+  <div class="tier maybe wide">
+    <span class="rank">Tier 2 · the actual prize</span>
+    <h3>The LinuxTracing event pipeline — but not the unwinder</h3>
+    <p>The ring buffer reader, the record decoders, <code>PerfEventQueue</code>'s timestamp-ordered merge, and the visitor chain. About 7,000 of the module's 10,017 lines, already structured as small independently-testable pieces, with 20 test files to port as the spec.</p>
+    <p>Keep <code>libunwindstack</code> behind a C ABI throughout. It is already a third-party C++ library reached through a narrow interface — <code>LibunwindstackUnwinder</code> — which makes it the natural thing to leave on the far side of the boundary. Replacing it with <code>framehop</code> is a separate experiment with its own success criterion: run both unwinders over the same recorded captures and diff the resulting stacks. Ship the swap only if that diff is empty or explicably better. Do not bundle it into the port.</p>
+  </div>
+
+  <div class="tier stop wide">
+    <span class="rank">Tier 3 · no</span>
+    <h3>Everything that runs in someone else's process</h3>
+    <p><code>liborbit.so</code>, <code>liborbituserspaceinstrumentation.so</code>, <code>OrbitVulkanLayer</code>, and the ptrace/trampoline core of <code>UserSpaceInstrumentation</code>. Plus <code>WindowsTracing</code> and the DIA reader while Windows remains the deprecated platform.</p>
+    <p>The one change worth making here is unrelated to the port: swapping capstone for <code>iced-x86</code> in the trampoline relocator, because <code>iced-x86</code> re-encodes instructions rather than only decoding them, which is what that code actually needs. That is a dependency decision, and it would be worth making even if none of the rest of this happened.</p>
+  </div>
+
+  <!-- ==================================================== wire -->
+
+  <h2 id="wire">The wire format is the real boundary</h2>
+
+  <p>Everything above puts the seam through the <em>process</em>: some modules C++, some Rust, an ABI between them. There is a better place to put it, and the tree is already most of the way there. Put the seam in the <strong>wire format</strong> and the language question largely dissolves — the C++ service becomes one producer among several rather than the system's centre, and a Rust collector replaces it piecemeal by speaking the same protocol. No FFI, no shared types, no seam.</p>
+
+  <p><code>orbit-live-protocol</code> already does this for the live path, and it does it without protobuf. <code>LiveEvent</code> is <code>#[repr(C)]</code>, 32 bytes, little-endian, fixed layout. Frames are magic, version, type, length. The browser reads them with a <code>DataView</code> and no library — no grpc-web proxy, no protobuf-js, no codegen step.</p>
+
+  <p>So the question is whether that generalises from six live event kinds to the thirty-nine variants of <code>ClientCaptureEvent</code>. It does — but not by making all thirty-nine POD. <strong>The format should follow the frequency.</strong></p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 356" role="img" aria-label="Three lanes sorted by how often each event occurs. The hot lane, millions to hundreds of millions of events per capture, carries fixed-size POD records copied without conversion. The side-table lane, hundreds to hundreds of thousands, carries length-prefixed append-only entries keyed by id. The cold lane, one to a thousand events, carries serde-encoded structures where convenience beats speed.">
+        <defs>
+          <marker id="w1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="w1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- frequency axis -->
+        <line x1="46" y1="34" x2="46" y2="330" stroke="currentColor" stroke-width="1.2"/>
+        <text x="0" y="0" font-size="10.5" fill="var(--muted)" transform="translate(28,182) rotate(-90)" text-anchor="middle">events per capture</text>
+        <text x="40" y="60" font-size="9.5" text-anchor="end" fill="var(--muted)">10⁸</text>
+        <text x="40" y="176" font-size="9.5" text-anchor="end" fill="var(--muted)">10⁴</text>
+        <text x="40" y="300" font-size="9.5" text-anchor="end" fill="var(--muted)">10⁰</text>
+
+        <!-- source -->
+        <text x="58" y="22" font-size="10.5" fill="var(--muted)">39 variants of ClientCaptureEvent, sorted by how often they actually occur</text>
+
+        <!-- HOT -->
+        <rect x="58" y="34" width="470" height="96" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="72" y="54" font-size="12.5" font-weight="600" fill="var(--accent)">HOT · fixed-size POD</text>
+        <text x="72" y="72" font-size="10" fill="currentColor">scheduling_slice · function_call · callstack_sample · thread_state_slice</text>
+        <text x="72" y="86" font-size="10" fill="currentColor">api_scope_start/stop (+async) · api_track_× 6 · tracepoint_event</text>
+        <text x="72" y="100" font-size="10" fill="currentColor">address_info · present_event · gpu_job</text>
+        <text x="72" y="120" font-size="10" fill="var(--accent)">~12 record shapes in one 32-byte envelope · cast_slice, no per-field conversion</text>
+
+        <line x1="532" y1="82" x2="576" y2="82" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#w1a)"/>
+        <rect x="580" y="46" width="180" height="72" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="670" y="66" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--accent)">zero-copy both ends</text>
+        <text x="670" y="82" font-size="9.5" text-anchor="middle" fill="currentColor">N events = N×32 bytes</text>
+        <text x="670" y="95" font-size="9.5" text-anchor="middle" fill="currentColor">memcpy out, Uint8Array in</text>
+        <text x="670" y="110" font-size="9.5" text-anchor="middle" fill="currentColor">this is where the cost lives</text>
+
+        <!-- SIDE -->
+        <rect x="58" y="142" width="470" height="82" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="72" y="162" font-size="12.5" font-weight="600" fill="currentColor">SIDE TABLES · length-prefixed, id-keyed, append-only</text>
+        <text x="72" y="180" font-size="10" fill="currentColor">interned_string · interned_callstack · interned_tracepoint_info</text>
+        <text x="72" y="194" font-size="10" fill="currentColor">module_update_event · modules_snapshot · thread_name · thread_names_snapshot</text>
+        <text x="72" y="214" font-size="10" fill="var(--muted)">variable length, but written once and referenced by id from the hot lane</text>
+
+        <line x1="532" y1="182" x2="576" y2="182" stroke="currentColor" stroke-width="1.3" marker-end="url(#w1)"/>
+        <rect x="580" y="152" width="180" height="60" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="670" y="172" font-size="10.5" font-weight="600" text-anchor="middle" fill="currentColor">write once, read many</text>
+        <text x="670" y="188" font-size="9.5" text-anchor="middle" fill="currentColor">protobuf adds nothing here —</text>
+        <text x="670" y="201" font-size="9.5" text-anchor="middle" fill="currentColor">it is already a length + bytes</text>
+
+        <!-- COLD -->
+        <rect x="58" y="236" width="470" height="94" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="72" y="256" font-size="12.5" font-weight="600" fill="currentColor">COLD · serde — postcard or JSON</text>
+        <text x="72" y="274" font-size="10" fill="currentColor">capture_started · capture_finished · capture options · clock_resolution_event</text>
+        <text x="72" y="288" font-size="10" fill="currentColor">memory_usage_event · gpu_queue_submission · 8 warning and error events</text>
+        <text x="72" y="308" font-size="10" fill="var(--muted)">GpuQueueSubmission is nested-repeated three levels deep. CaptureOptions carries</text>
+        <text x="72" y="321" font-size="10" fill="var(--muted)">repeated instrumented functions with strings. Hand-rolling these is all downside.</text>
+
+        <line x1="532" y1="282" x2="576" y2="282" stroke="currentColor" stroke-width="1.3" marker-end="url(#w1)"/>
+        <rect x="580" y="252" width="180" height="60" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="670" y="272" font-size="10.5" font-weight="600" text-anchor="middle" fill="currentColor">convenience wins</text>
+        <text x="670" y="288" font-size="9.5" text-anchor="middle" fill="currentColor">a few hundred of these</text>
+        <text x="670" y="301" font-size="9.5" text-anchor="middle" fill="currentColor">per capture, at most</text>
+      </svg>
+    </div>
+    <figcaption><b>One format for everything is the mistake, in either direction.</b> Protobuf on the hot lane costs a varint decode and a heap allocation per event, millions of times. Hand-rolled POD on the cold lane costs a bespoke encoder per message for events that fire once. Sorting by frequency gets both right, and the split is already latent in <code>capture.proto</code> — that is what <code>InternedCallstack</code> and <code>InternedString</code> are.</figcaption>
+  </figure>
+
+  <p>The mechanism that makes the hot lane possible is already in both schemas: <strong>hoist the variable-length part out of the record and reference it by id.</strong> <code>CallstackSample</code> carries a <code>callstack_id</code> and the frames live in <code>InternedCallstack</code>; <code>LiveEvent</code> carries a <code>name_id</code> and the text lives in an <code>InternedString</code> frame. Once that is done, protobuf is varint-wrapping records that are already fixed-shape and length-prefixing tables that are already append-only. It is pure overhead on both.</p>
+
+  <h3>What protobuf is actually buying</h3>
+
+  <p>Two of these are real and need answers. Two do not survive contact with the tree.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Property</th><th>Evidence in the tree</th><th>Verdict</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Schema evolution</td>
+          <td><code>ClientCaptureEvent</code> has <code>reserved 9, 20, 23, 28, 29, 30</code> — six field numbers already burned — and a comment reserving 1–15 for high-frequency events because they encode in one byte</td>
+          <td><span class="bump">Real, but replaceable.</span> A <code>#[repr(C)]</code> struct has no field numbers: adding a field is a version bump, not a migration. The <code>Hello</code> frame already asserts <code>VERSION</code> and <code>event_size</code>. <strong>Negotiate, don't evolve</strong> — which means viewer and service ship together. Fine for a first-party pair; not fine for an SDK.</td>
+        </tr>
+        <tr>
+          <td>Existing <code>.orbit</code> files</td>
+          <td>The README advertises "Full Serialization of Captured Data"; <code>CaptureFile</code> reads protobuf-framed captures</td>
+          <td><span class="bump">Real.</span> Keep a protobuf <em>importer</em> for old files — bounded, one-directional, never extended. Do not keep a parallel writer.</td>
+        </tr>
+        <tr>
+          <td>Language-neutral producers</td>
+          <td><code>ProducerSideService</code> is a documented extension point over a Unix socket</td>
+          <td><span class="hold-t">Weak.</span> Every producer in the tree is first-party: <code>src/Api</code> and the USI payload. There is no ecosystem to break, only one that was never built.</td>
+        </tr>
+        <tr>
+          <td>Streaming transport, flow control, cancellation</td>
+          <td><code>rpc Capture(stream CaptureRequest) returns (stream CaptureResponse)</code></td>
+          <td><span class="hold-t">Already replaced.</span> The live viewer's WebSocket does this today, and has since <code>orbit-live-server</code> landed.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Set against that: dropping gRPC removes protobuf 36, gRPC 1.83, c-ares, and the entire BoringSSL-versus-OpenSSL conflict that took three attempts to resolve during the Bazel port. That is a larger win than the wire-format performance, and it is certain rather than projected.</p>
+
+  <h3>Five things to fix in LiveEvent first</h3>
+
+  <p>If this envelope grows to carry the whole capture stream, its cracks stop being cosmetic. All five are cheap to fix now and expensive to fix later.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 214" role="img" aria-label="The 32-byte LiveEvent record laid out by byte offset: start_ns at bytes 0 to 7, duration_ns at 8 to 15, tid at 16 to 19, pid at 20 to 23, then single bytes for kind, depth, extra and pad, then name_id at 28 to 31. Three fields are called out: duration_ns holds f32 bits when the kind is VALUE, extra means different things per kind, and the field named pad is not padding at all.">
+        <!-- byte ruler -->
+        <text x="20" y="24" font-size="9.5" fill="var(--muted)">byte</text>
+        <text x="20" y="38" font-size="9" fill="var(--muted)">0</text>
+        <text x="112" y="38" font-size="9" fill="var(--muted)">4</text>
+        <text x="204" y="38" font-size="9" fill="var(--muted)">8</text>
+        <text x="296" y="38" font-size="9" fill="var(--muted)">12</text>
+        <text x="388" y="38" font-size="9" fill="var(--muted)">16</text>
+        <text x="480" y="38" font-size="9" fill="var(--muted)">20</text>
+        <text x="572" y="38" font-size="9" fill="var(--muted)">24</text>
+        <text x="664" y="38" font-size="9" fill="var(--muted)">28</text>
+        <text x="750" y="38" font-size="9" fill="var(--muted)" text-anchor="end">31</text>
+
+        <!-- fields -->
+        <rect x="20" y="44" width="184" height="42" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="112" y="62" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">start_ns</text>
+        <text x="112" y="77" font-size="9" text-anchor="middle" fill="var(--muted)">u64</text>
+
+        <rect x="204" y="44" width="184" height="42" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1.6"/>
+        <text x="296" y="62" font-size="11" font-weight="600" text-anchor="middle" fill="var(--warn)">duration_ns</text>
+        <text x="296" y="77" font-size="9" text-anchor="middle" fill="var(--muted)">u64</text>
+
+        <rect x="388" y="44" width="92" height="42" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="434" y="62" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">tid</text>
+        <text x="434" y="77" font-size="9" text-anchor="middle" fill="var(--muted)">u32</text>
+
+        <rect x="480" y="44" width="92" height="42" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="526" y="62" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">pid</text>
+        <text x="526" y="77" font-size="9" text-anchor="middle" fill="var(--muted)">u32</text>
+
+        <rect x="572" y="44" width="23" height="42" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="583.5" y="68" font-size="8.5" text-anchor="middle" fill="currentColor">kind</text>
+
+        <rect x="595" y="44" width="23" height="42" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="606.5" y="68" font-size="8" text-anchor="middle" fill="currentColor">depth</text>
+
+        <rect x="618" y="44" width="23" height="42" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="629.5" y="68" font-size="8" text-anchor="middle" fill="var(--accent)">extra</text>
+
+        <rect x="641" y="44" width="23" height="42" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.6"/>
+        <text x="652.5" y="68" font-size="8" text-anchor="middle" fill="var(--hold)">_pad</text>
+
+        <rect x="664" y="44" width="92" height="42" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="710" y="62" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">name_id</text>
+        <text x="710" y="77" font-size="9" text-anchor="middle" fill="var(--muted)">u32</text>
+
+        <!-- callouts -->
+        <rect x="20" y="112" width="14" height="10" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1.4"/>
+        <text x="44" y="121" font-size="10.5" fill="currentColor"><tspan font-weight="600">duration_ns</tspan> holds <tspan font-family="monospace" font-size="9.5">f32::to_bits(value)</tspan> when <tspan font-family="monospace" font-size="9.5">kind == VALUE</tspan>, and is not a duration.</text>
+        <text x="44" y="135" font-size="10.5" fill="var(--muted)">A tagged union by convention. Nothing checks it, and every new kind makes it worse.</text>
+
+        <rect x="20" y="152" width="14" height="10" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="44" y="161" font-size="10.5" fill="currentColor"><tspan font-weight="600">extra</tspan> is a core id for scheduling slices and a ThreadState for thread-state slices.</text>
+        <text x="44" y="175" font-size="10.5" fill="var(--muted)">Same pattern, but documented and small — acceptable as long as the payloads stay typed.</text>
+
+        <rect x="20" y="192" width="14" height="10" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.4"/>
+        <text x="44" y="201" font-size="10.5" fill="currentColor"><tspan font-weight="600">_pad</tspan> is not padding. It carries <tspan font-family="monospace" font-size="9.5">color_mode::AUTO_NAME</tspan>. Rename it before someone zeroes it.</text>
+      </svg>
+    </div>
+    <figcaption><b>The envelope is already carrying more meaning than its field names admit.</b> Two of the eight fields mean different things depending on <code>kind</code>, and one of them is named as though it means nothing at all. That is survivable at six event kinds and not at twelve.</figcaption>
+  </figure>
+
+  <ol>
+    <li><strong>Rename <code>_pad</code>.</strong> It is a field, not padding, and its current name is an invitation to zero it during a refactor.</li>
+    <li><strong>Give each kind a typed payload.</strong> Keep the 32-byte envelope, but define per-kind <code>#[repr(C)]</code> payload structs viewed from the tail rather than reinterpreting <code>duration_ns</code> by convention. <code>bytemuck</code> or <code>zerocopy</code> give <code>FromBytes</code>/<code>AsBytes</code> derives with compile-time layout checks, so no <code>unsafe</code> appears in Orbit's own code.</li>
+    <li><strong>Stop encoding field by field.</strong> <code>encode_frame</code> currently runs <code>payload.extend_from_slice(&amp;ev.as_bytes())</code> per event, and <code>as_bytes</code> does eight separate <code>to_le_bytes</code> calls. Every target Orbit ships is little-endian: assert it with a <code>#[cfg(target_endian)]</code> compile error and <code>cast_slice</code> the whole batch in one <code>extend_from_slice</code>. On the wasm side it becomes a typed-array view with no copy at all.</li>
+    <li><strong>Cap <code>FunctionCall</code>'s registers inline.</strong> <code>repeated uint64 registers</code> is the one genuinely variable field in the hot lane. It holds the SysV argument registers, so six inline slots covers it — no side table needed.</li>
+    <li><strong>Let a batch identify itself.</strong> <code>Status</code> carries counters, but an <code>EventBatch</code> has no sequence number or base timestamp, so a client that reconnects cannot tell what it missed. One <code>u64</code> fixes it.</li>
+  </ol>
+
+  <div class="note">
+    <span class="note-label">Worth checking</span>
+    <p><code>LiveEvent</code> derives <code>Serialize</code> and <code>Deserialize</code>. If the wire is raw bytes and the spill file is raw bytes, serde is being carried for the dev path alone — worth confirming it still earns its dependency.</p>
+  </div>
+
+  <h3>Sequencing</h3>
+
+  <p>Land the three-lane split <strong>in the live protocol first</strong>. It is first-party, already versioned, and has no external consumers — the cheapest possible place to be wrong. gRPC stays as the legacy transport for the Qt client until the Qt client goes away, which is the same gate as everything else in this document and for the same reason.</p>
+
+  <p>The <code>.orbit</code> container gets the same three lanes, and the existing protobuf reader becomes an import path for old captures. That is bounded work with a defined end, not a second format to maintain.</p>
+
+  <p>What this changes about the rest of the analysis is the framing. The project stops being "port the C++ service to Rust" — with its FFI seam, its two protobuf universes, and its per-event marshalling cost — and becomes <strong>"define the protocol, then write a collector that speaks it."</strong> The C++ service keeps working as one producer against that protocol for exactly as long as it needs to, and nothing has to be ported in place.</p>
+
+  <!-- ==================================================== wrong -->
+
+  <h2 id="wrong">What would make this wrong</h2>
+
+  <p>Three things would change the ranking, and it is worth naming them so they can be watched for rather than argued about.</p>
+
+  <p><strong>If the Qt client is retired sooner than expected</strong>, the Tier 1 gate disappears and <code>ObjectUtils</code>, <code>CaptureFile</code> and <code>GrpcProtos</code> stop having C++ consumers at all. That would move the whole sequence forward by however long the client survives, and would also make the "two protobuf universes" objection evaporate — there would only be one, and it would be <code>prost</code>'s.</p>
+
+  <p><strong>If the wire format lands first</strong>, the tier list above stops being the plan and becomes a fallback. That case is made <a href="#wire">in its own section</a> because it turned out to be the stronger argument: a protocol boundary costs no FFI, forces no shared types, and lets the C++ service keep running unmodified while a Rust collector grows beside it. The risk is the reverse of a port's — not that the migration stalls half-done, but that two collectors both work and neither is retired.</p>
+
+  <p><strong>If a capture-correctness bug traces to a memory error in the C++ parsers</strong>, Tier 1 becomes Tier 0. That is the one class of failure where this port stops being an engineering preference and starts being a fix.</p>
+
+  <div class="note">
+    <span class="note-label">The measurement to take first</span>
+    <p>Before committing to Tier 2, capture the same workload twice — once through the existing pipeline, once through a Rust prototype of just the ring-buffer reader and decoder — and compare event counts, lost-event counts, and timestamps. If the Rust reader cannot keep up with the same ring buffer sizes, the whole Tier 2 argument changes shape, and that is a two-week experiment rather than a two-year commitment.</p>
+  </div>
+
+  <h2 id="close">In one paragraph</h2>
+
+  <p>Porting OrbitService to Rust is worth doing, is already a third started, and is a bad idea as a project. The parts of the service where Rust wins decisively — parsing binaries that the user's toolchain produced and the kernel's variable-length records — are also the parts that are smallest, most isolated, and easiest to test, so they should go first and they will pay for themselves. The parts that would be a heroic rewrite are the unwinder and the trampoline writer, neither of which becomes safer in Rust, one of which changes the profiler's output. And the code that runs inside the program being profiled should stay 503 lines of C++ with no runtime for as long as Orbit exists. The correct project is not "port the service"; it is "settle the protocol, then keep growing the Rust half along the seams that are already narrow" — which, protocol aside, is what the last few months of commits have been doing anyway.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Line counts from the working tree at 92aa0cc7e, excluding test and mock sources except where stated.<br>
+    Related: <a href="bazel-port.html">Orbit on Bazel</a> &middot; <a href="uprobe-stop.html">Why uprobes stop</a>
+  </div>
+</footer>
+
+</body>
+</html>

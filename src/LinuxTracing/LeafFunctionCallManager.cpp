@@ -19,7 +19,7 @@
 
 namespace orbit_linux_tracing {
 template <typename CallchainPerfEventDataT>
-orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManager::PatchCallerOfLeafFunctionImpl(
+orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManagerCpp::PatchCallerOfLeafFunctionImpl(
     const CallchainPerfEventDataT* event_data, LibunwindstackMaps* current_maps,
     LibunwindstackUnwinder* unwinder) {
   ORBIT_CHECK(event_data != nullptr);
@@ -135,17 +135,17 @@ orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManager::PatchCaller
 }
 
 template orbit_grpc_protos::Callstack::CallstackType
-LeafFunctionCallManager::PatchCallerOfLeafFunctionImpl<CallchainSamplePerfEventData>(
+LeafFunctionCallManagerCpp::PatchCallerOfLeafFunctionImpl<CallchainSamplePerfEventData>(
     const CallchainSamplePerfEventData* event_data, LibunwindstackMaps* current_maps,
     LibunwindstackUnwinder* unwinder);
 
 template orbit_grpc_protos::Callstack::CallstackType
-LeafFunctionCallManager::PatchCallerOfLeafFunctionImpl<SchedWakeupWithCallchainPerfEventData>(
+LeafFunctionCallManagerCpp::PatchCallerOfLeafFunctionImpl<SchedWakeupWithCallchainPerfEventData>(
     const SchedWakeupWithCallchainPerfEventData* event_data, LibunwindstackMaps* current_maps,
     LibunwindstackUnwinder* unwinder);
 
 template orbit_grpc_protos::Callstack::CallstackType
-LeafFunctionCallManager::PatchCallerOfLeafFunctionImpl<SchedSwitchWithCallchainPerfEventData>(
+LeafFunctionCallManagerCpp::PatchCallerOfLeafFunctionImpl<SchedSwitchWithCallchainPerfEventData>(
     const SchedSwitchWithCallchainPerfEventData* event_data, LibunwindstackMaps* current_maps,
     LibunwindstackUnwinder* unwinder);
 }  //  namespace orbit_linux_tracing

@@ -292,6 +292,80 @@ mod tests {
     use super::*;
     use std::ffi::CStr;
 
+    /// The whole path a C caller takes: attach to a running Python process,
+    /// read its stack, free everything. Spawns `python3` as a child (ptrace
+    /// of a child is allowed at every Yama scope) and expects to see its
+    /// function on the stack.
+    #[test]
+    fn attaches_to_a_python_child_and_reads_its_stack() {
+        use std::process::{Command, Stdio};
+        let program = "import time\ndef orbit_pyspy_probe():\n    while True:\n        time.sleep(0.01)\norbit_pyspy_probe()\n";
+        let mut child = match Command::new("python3")
+            .args(["-c", program])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                eprintln!("PY-SPY TEST SKIPPED: no python3 ({error})");
+                return;
+            }
+        };
+        // Let the interpreter get past start-up into the loop.
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let pid = child.id();
+        let result = std::panic::catch_unwind(|| unsafe {
+            let mut error: c_int = 0;
+            let spy = pyspy_new(pid, &mut error);
+            if spy.is_null() {
+                let msg = CStr::from_ptr(pyspy_error_string(error)).to_string_lossy().into_owned();
+                if error == PySpyError::PermissionDenied as c_int {
+                    eprintln!("PY-SPY TEST SKIPPED: {msg}");
+                    return;
+                }
+                panic!("pyspy_new failed: {msg} ({error})");
+            }
+            let mut traces: *mut PySpyStackTrace = ptr::null_mut();
+            let mut count: usize = 0;
+            // The first read can race the interpreter's own start-up; a few
+            // tries cover it.
+            let mut names: Vec<String> = Vec::new();
+            for _ in 0..20 {
+                let rc = pyspy_get_stack_traces(spy, &mut traces, &mut count);
+                assert_eq!(rc, PySpyError::Success as c_int, "get_stack_traces: {}", CStr::from_ptr(pyspy_error_string(rc)).to_string_lossy());
+                names.clear();
+                if count > 0 && !traces.is_null() {
+                    let slice = std::slice::from_raw_parts(traces, count);
+                    for trace in slice {
+                        if !trace.frames.is_null() {
+                            for frame in std::slice::from_raw_parts(trace.frames, trace.frame_count) {
+                                names.push(CStr::from_ptr(frame.function_name).to_string_lossy().into_owned());
+                            }
+                        }
+                    }
+                }
+                pyspy_free_traces(traces, count);
+                traces = ptr::null_mut();
+                if names.iter().any(|n| n == "orbit_pyspy_probe") {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            pyspy_free(spy);
+            eprintln!("PY-SPY TEST: frames {names:?}");
+            assert!(
+                names.iter().any(|n| n == "orbit_pyspy_probe"),
+                "the probe function is not on the stack: {names:?}"
+            );
+        });
+        let _ = child.kill();
+        let _ = child.wait();
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
     #[test]
     fn test_error_string() {
         unsafe {

@@ -1,0 +1,138 @@
+/* Copyright (c) 2026 The Orbit Authors. All rights reserved.
+   Use of this source code is governed by a BSD-style license that can be
+   found in the LICENSE file. */
+
+/* White, quiet, one accent: the blue of the Orbit logo. */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f8f9fa;
+  --ink: #202124;
+  --ink-soft: #3c4043;
+  --muted: #5f6368;
+  --line: #dadce0;
+  --line-soft: #e8eaed;
+  --accent: #3474bc;
+  --accent-deep: #285f9c;
+  --accent-wash: #e8f0fb;
+  --code-bg: #f1f3f4;
+  --shadow: 0 1px 2px rgba(60, 64, 67, .3), 0 1px 3px 1px rgba(60, 64, 67, .15);
+  --shadow-lg: 0 1px 3px rgba(60, 64, 67, .3), 0 4px 8px 3px rgba(60, 64, 67, .15);
+  --sans: "Roboto", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --measure: 44rem;
+  --wide: 76rem;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+  font-family: var(--sans);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent-deep); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: var(--mono); font-size: 0.875em; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; color: var(--ink); }
+pre {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+pre code { background: none; padding: 0; }
+h1, h2, h3, h4 { font-weight: 400; line-height: 1.25; color: var(--ink); letter-spacing: -0.01em; }
+h1 { font-size: 2.25rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.5rem; margin: 2.4rem 0 0.6rem; }
+h3 { font-size: 1.125rem; font-weight: 500; margin: 1.5rem 0 0.4rem; }
+p { margin: 0 0 1rem; }
+img { max-width: 100%; height: auto; border-radius: 8px; box-shadow: var(--shadow); }
+table { border-collapse: collapse; margin: 0.6rem 0 1.4rem; display: block; overflow-x: auto; max-width: 100%; font-size: 0.925rem; }
+th, td { text-align: left; padding: 0.45rem 0.8rem; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: 0.3rem 0; }
+li p { margin: 0; }
+strong { font-weight: 500; }
+
+/* top bar */
+nav.site {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 1.6rem;
+  padding: 0.55rem 1.5rem;
+  background: rgba(255, 255, 255, .95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 0.925rem;
+}
+nav.site a { color: var(--muted); font-weight: 500; }
+nav.site a:hover { color: var(--ink); text-decoration: none; }
+nav.site a.brand { display: flex; align-items: center; margin-right: 0.4rem; }
+nav.site a.brand img { height: 26px; width: auto; border-radius: 0; box-shadow: none; }
+nav.site .spacer { flex: 1; }
+nav.site a.cta {
+  color: #fff; background: var(--accent); padding: 0.4rem 0.95rem; border-radius: 999px;
+}
+nav.site a.cta:hover { background: var(--accent-deep); }
+
+main.doc { max-width: var(--measure); margin: 0 auto; padding: 2.5rem 1.5rem 5rem; }
+main.wide { max-width: var(--wide); margin: 0 auto; padding: 0 1.5rem 5rem; }
+footer.site {
+  max-width: var(--wide); margin: 0 auto; padding: 2rem 1.5rem 3rem;
+  color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line-soft);
+  display: flex; gap: 1.5rem; flex-wrap: wrap;
+}
+footer.site a { color: var(--muted); }
+
+/* landing */
+.hero { text-align: center; max-width: 52rem; margin: 3.6rem auto 2.2rem; }
+.hero h1 { font-size: 3rem; font-weight: 400; margin: 0 0 1rem; letter-spacing: -0.02em; }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero .lede { font-size: 1.2rem; color: var(--ink-soft); margin: 0 auto 1.2rem; max-width: 42rem; }
+.hero .actions { display: flex; gap: 0.7rem; justify-content: center; flex-wrap: wrap; margin-top: 1.4rem; }
+.btn {
+  display: inline-block; padding: 0.6rem 1.3rem; border-radius: 999px; font-weight: 500; font-size: 0.95rem;
+  border: 1px solid var(--line); color: var(--accent-deep); background: #fff;
+}
+.btn:hover { background: var(--bg-soft); text-decoration: none; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-deep); }
+
+.embed {
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0b0c0e;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--line);
+}
+.embed iframe { display: block; width: 100%; height: 640px; border: 0; }
+.caption {
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  font-size: 0.9rem; color: var(--muted); margin: 0.7rem 0.2rem 0;
+}
+.facts { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); text-align: center; margin: 0.9rem 0 0; }
+
+.section { margin: 4rem auto 0; }
+.section h2 { text-align: center; font-size: 1.75rem; margin: 0 0 0.4rem; }
+.section .sub { text-align: center; color: var(--muted); margin: 0 auto 2rem; max-width: 40rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.2rem; }
+.card {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 1.3rem 1.4rem 1.2rem;
+  transition: box-shadow .15s ease;
+}
+.card:hover { box-shadow: var(--shadow); }
+.card .kicker { color: var(--accent); font-size: 0.78rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 0.4rem; }
+.card h3 { margin: 0 0 0.5rem; font-size: 1.15rem; }
+.card p { margin: 0 0 0.7rem; color: var(--ink-soft); font-size: 0.97rem; }
+.card a.more { font-weight: 500; font-size: 0.925rem; }
+.card.primary { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-wash), #fff 70%); }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: start; }
+@media (max-width: 720px) { .two { grid-template-columns: 1fr; } .hero h1 { font-size: 2.2rem; } .embed iframe { height: 460px; } }
+.keys { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); text-align: center; margin: 2.5rem 0 0; }

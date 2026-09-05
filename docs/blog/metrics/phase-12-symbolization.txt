@@ -1,0 +1,59 @@
+Phase 12 -- the symbolization gaps the e2e screenshots exposed
+==============================================================
+Date: 2026-09-04.  Found by looking at docs/screenshots/03-report-flat.png
+and 14-scope-report.png from the first e2e run: the hottest frames of
+OrbitTestRust were bare hex addresses with an empty module column, and the
+app's own functions were `OrbitTestRust+0x...`.
+
+Three causes, three fixes
+-------------------------
+1. The `[vdso]` mapping was skipped (no file, inode 0), so every sample in
+   clock_gettime -- 65% of a program that asks the time in a loop -- was a
+   raw address. The service now reads its own vDSO image (identical in
+   every process of one kernel), loads its dynamic symbol table and applies
+   it at the target's `[vdso]` address. Exported names resolve
+   (`__vdso_clock_gettime`); the vDSO's local helpers have no symbol in the
+   image, so an address inside them is `[vdso]+0xa09`, which is the honest
+   answer -- the kernel's debug package would name them and is not
+   installed here.
+
+2. Stripped distribution libraries only have `.dynsym`. The service now
+   looks for the detached debug file first: by build id under
+   `/usr/lib/debug/.build-id/xx/rest.debug`, else by `.gnu_debuglink`
+   (next to the file, in `.debug/`, under `/usr/lib/debug/<dir>/`) with the
+   CRC checked. `orbit_object::detached_debug_file`, used by both the
+   sampling symbolizer and the instrumentable-function index.
+
+     libc.so.6 functions from .dynsym            2,958
+     libc.so.6 functions from libc6-dbg's file   7,030
+
+3. `[profile.release] strip = true` stripped the symbol tables of every
+   release binary, the test apps included, so a profiler's own example
+   program could not be symbolized. Now `strip = "debuginfo"` in both
+   workspaces (the service has its own): debug info goes, `.symtab` stays.
+
+     OrbitTestRust   422,656 -> 511,184 bytes   (581 functions named)
+     orbit-service   17,343,736 -> 18,585,888 bytes (10,309 symbols; 17 MB
+                     of it is the embedded viewer pack)
+
+   Rust names are demangled with rustc-demangle (std-only, no deps):
+   `OrbitTestRust::main` instead of `_ZN13OrbitTestRust4main17h..E`. C++
+   names still pass through mangled in the Rust service: blog post 02
+   records why cpp_demangle was rejected, and a static musl binary has no
+   `__cxa_demangle` to call.
+
+Cost
+----
+cargo test --release this_process_symbolizes_its_own_code -- --nocapture
+
+  SYMBOLIZER_LOAD modules=6 symbols=17321 ms=10.2
+
+10 ms to build the symbolizer for a process with libc's 4.5 MB debug file
+in the mix; it was under 2 ms with .dynsym alone. Once per capture start.
+
+Verified
+--------
+tools/e2e/orbit_e2e.py --only scope-report: 'render': 900 samples over
+300 instances, with `OrbitTestRust::main`, `__clock_gettime libc.so.6`
+and `__vdso_clock_gettime [vdso]` in the flat report
+(docs/screenshots/14-scope-report.png).

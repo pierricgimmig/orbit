@@ -1,0 +1,56 @@
+Phase 7g -- GPU telemetry into a static binary, without dlopen (2026-08-31)
+==========================================================================
+
+A correction, and the architecture it produced
+----------------------------------------------
+Phases 7e and 7f each ended with the same claim: the live libcupti /
+libnvidia-ml bindings cannot work with the service because it ships as a
+fully static musl binary. Challenged on it, the claim was tested rather than
+defended:
+
+  static musl:  dlopen("libm.so.6") -> NULL: "Dynamic loading not supported"
+  glibc dynamic: dlopen("libm.so.6") -> OK
+
+So the FACT was right -- musl deliberately does not support dlopen in static
+binaries -- but the CONCLUSION was too strong. A static binary cannot load a
+shared library into its own address space, but fork/exec and pipes work
+perfectly well. The library boundary does not have to be a symbol table.
+
+The architecture
+----------------
+GPU telemetry now comes from a helper process:
+
+  [static musl orbit-service]  <--pipe(pod bytes)--  [dynamic helper: NVML/CUPTI]
+
+The helper is dynamically linked and links whatever proprietary library it
+needs; it writes pod events on stdout. The service spawns it (--gpu-helper
+<path>), drains the stream into the capture, and keeps its own zero runtime
+dependencies. The protocol is just the pod format already used everywhere
+else -- no bespoke IPC, and the helper is trivially testable because "a
+helper" is any program that writes a pod stream.
+
+orbit-service::telemetry handles the stream properly: it decodes as many
+whole events as the buffer holds and retains a partial trailing record for
+the next drain (a pipe splits records wherever it likes), and it will not
+wedge on a malformed record.
+
+How it is verified
+------------------
+- Unit tests: draining pod events from a real spawned process, a record fed
+  in two halves decoding only once complete, and a missing helper being an
+  error rather than a panic.
+- End to end, which is the point: the STATIC musl binary (ldd: "statically
+  linked") ran with --gpu-helper pointed at a DYNAMICALLY linked helper and
+  ingested its telemetry:
+      47 samples, 2711 scheduling slices, 31 GPU telemetry events
+  and the capture decodes cleanly (clean EOF), first GpuMetrics util=40%.
+
+What this changes
+-----------------
+The "static binary cannot have NVIDIA support" limitation recorded in 7e and
+7f is withdrawn. A CUDA/NVIDIA host runs the same static service plus a
+small helper binary; the ~30 lines of NVML/CUPTI calls in that helper are
+the only piece still unwritten, and they feed the DeviceSample /
+CudaKernelActivity structs that are already implemented and tested.
+
+Service size: 828 KB static (up from 776 KB with the telemetry ingestion).

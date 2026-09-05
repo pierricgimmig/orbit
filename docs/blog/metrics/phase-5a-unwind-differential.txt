@@ -1,0 +1,56 @@
+Phase 5a -- the framehop unwinder vs libunwindstack (2026-08-31)
+================================================================
+
+What: DWARF-based callstack unwinding ported to rust/crates/orbit-unwind:
+framehop 0.13.3 + the object crate replace libunwindstack for offline
+unwinding (registers + copied stack slice + the process's maps). Modules are
+loaded from a /proc/<pid>/maps snapshot; .eh_frame/.eh_frame_hdr/
+.debug_frame come through object, which also transparently decompresses
+SHF_COMPRESSED debug sections. New crates: framehop (deps: gimli, fallible-
+iterator, macho-unwind-info, pe-unwind-info, zerocopy -- all Rust).
+
+How it is verified
+------------------
+rust/tools/differential/stack_unwind_differential.cpp: one child running a
+28-deep non-inlined recursion whose leaves put real time into libc (memset,
+qsort through a callback, snprintf), live stack samples with full registers
+and 64000-byte stack copies, and each sample handed with the SAME registers,
+stack bytes, and maps snapshot to LibunwindstackUnwinder (offline memory
+only) and to orbit-unwind. Frames compared position by position.
+
+Results (x86_64, 8 runs x 1500 samples)
+---------------------------------------
+identical      11,890 / 12,000  (99.1%)
+prefix              0
+diverged            0            <- the number that matters
+one_failed        110  (0.9%)    ALL are libunwindstack-only failures
+                                 ("Invalid Elf at 0"); framehop unwound
+                                 those samples successfully. The Rust
+                                 unwinder never failed where the C++
+                                 succeeded.
+both_failed         0
+verdict: AGREEMENT in all 8 runs
+
+Sabotage check: shifting every module's load bias by 0x1000 on the Rust
+side produced diverged=1433/1500; reverting restored full agreement.
+
+What the differential caught (the reason it exists)
+---------------------------------------------------
+First run: every frame past the first diverged by EXACTLY one.
+libunwindstack reports return addresses minus one -- the address inside the
+call instruction, which is what symbolization wants -- and framehop reports
+raw return addresses, with the adjusted form behind address_for_lookup().
+Orbit's consumers are built on the adjusted convention, so the crate adopts
+it. Without a differential this is the kind of off-by-one that ships and
+mis-symbolizes call sites at function boundaries.
+
+Hurdle worth recording: the crate's first live self-test used an 8 KB stack
+dump and 80% of unwinds "failed" with stack reads past the slice -- a full
+walk to the thread root needs the whole used stack in the copy. Orbit's
+kMaxStackSampleUserSize of 65000 is not generosity, it is a requirement;
+with 64000-byte dumps the same test unwinds 1450/1450 samples 10+ frames
+deep.
+
+Remaining for Phase 5: port LeafFunctionCallManager and
+UprobesReturnAddressManager onto orbit-unwind (the libunwindstack weld is
+now replaceable), then the UprobesUnwindingVisitor itself.

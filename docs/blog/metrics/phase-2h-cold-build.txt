@@ -1,0 +1,15 @@
+Cold-build cost of //src/ObjectUtils, before and after deleting LLVM.
+
+Measured with the disk cache disabled so the action graph is genuinely
+cold, and the repository cache shared so this measures compiling rather
+than downloading:
+
+  bazel build --disk_cache= //src/ObjectUtils:ObjectUtils
+
+                                   wall   critical    actions
+with LLVM (c7c4e6566)            158.7s      68.3s       3324
+without LLVM                     104.6s      48.3s       2531
+delta                              -34%       -29%       -793
+
+The two LLVM patches went with it, so bazel/patches/ is down from three
+to one, and MODULE.bazel loses a bazel_dep and an archive_override.

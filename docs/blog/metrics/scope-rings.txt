@@ -1,0 +1,272 @@
+Manual instrumentation: per-core scope rings
+Measured 2026-09-02T01:51:33Z on Linux 7.0.0-30-generic, 32 threads.
+Commit: 29b0c754d
+
+Write path, taken apart (release build, single thread, release build)
+Three runs, medians; from tests/cost.rs.
+
+  owned ring, no clock       6.3 ns    load cursor, store payload, publish
+  owned ring + clock        14.1 ns    what an instrumented scope costs
+  shared ring, no clock      9.8 ns    the same, with an atomic claim
+  shared ring + clock       16.2 ns
+  clock read alone           9.3 ns    66% of a real scope
+  atomic fetch_add           4.4 ns
+  plain increment            0.2 ns
+  atomic premium             4.3 ns    what the owned path avoids
+
+  The owned path is the portable one: a thread takes a ring for its lifetime,
+  so there is one producer and the cursor needs a load and a store rather than
+  a read-modify-write. It saves 3.5 ns of ring cost -- close to the whole
+  4.3 ns atomic premium that rseq would have removed, and without a line of
+  assembly or a dependency on Linux.
+
+  Growing the record from 32 to 48 bytes to carry inline names cost 2.1 ns in
+  isolation and nothing in the real path: the extra stores hide under the
+  clock read's latency on an out-of-order core.
+
+  An earlier run reported "98 million events/s, 10.2 ns each" and attributed
+  about half of it to the clock. That was wrong: the benchmark pushed a
+  pre-built event with a constant timestamp and never read the clock.
+
+  Reproduce:
+    cargo test -p orbit-scope-ring --release --test cost -- --nocapture
+
+Robustness against a dead producer
+
+  There is no CAS loop anywhere in the design, so there is nothing to spin in:
+  the claim is a single wait-free fetch_add that always succeeds first try.
+  The hazard is on the other side. A producer killed between claiming a slot
+  and publishing it leaves a slot that never commits, and a consumer that
+  waits for it stalls that ring's frontier -- and the horizon is the minimum
+  across every ring, so the whole stream stops. Permanently, and silently.
+
+  The consumer decides by *liveness*, not by a timeout. If the producing
+  process is gone, nothing it claimed can ever be published, so the claim is
+  written off immediately, counted as dropped, and stepped over.
+
+  A timeout was tried first -- 250 ms, on the theory that no live producer
+  could exceed it. That was wrong, and the counter-examples are all things
+  that happen more often while profiling, not less: a thread stopped at a
+  debugger breakpoint, a cgroup that has spent its CPU quota, a major page
+  fault under memory pressure, a guest descheduled by its hypervisor. Any of
+  them outlasts 250 ms easily, and throwing away the events of a process that
+  is alive and about to publish them is the profiler corrupting its own
+  measurement.
+
+  A 30-second backstop remains, not as a timeout but as a bound on the
+  unforeseen -- a recycled pid answering the liveness question wrongly, say.
+  It will never fire in normal operation.
+
+  Worth recording: a false positive costs lost events, never corruption. The
+  seq stamp is re-read after the payload, so a producer waking late and
+  writing into a slot the consumer has already stepped past is detected rather
+  than mistaken for live data.
+
+  Four tests: a dead producer releases the stream at once; a live one stalled
+  for a full second keeps its event and delivers it on waking; the backstop
+  fires; and the default entry point assumes life.
+
+No merge, and why
+
+  An earlier version ran a k-way merge behind a horizon to deliver one
+  globally timestamp-ordered stream. It is gone. ring_for_thread is a pure
+  function of the thread id, so a thread always writes the same ring and its
+  events sit at increasing claim numbers; reading a ring in claim order yields
+  every thread's events in the order that thread wrote them. That is the only
+  order anything downstream needs -- the viewer's lanes are keyed by
+  (pid, tid, kind, depth), so a lane holds one thread's events and they arrive
+  already sorted. Lane::insert has an append fast path that now always hits.
+
+  What the merge bought was ordering between threads, which no consumer asked
+  for. What it cost was a global gate held at the minimum frontier across
+  every ring, so one producer stopped at a breakpoint stalled every other
+  thread's events. Removing it turns a global stall into a local one.
+
+  It also removed the slot's second atomic. pending_ns existed only to tell
+  the horizon how far back to hold; without a horizon the eight bytes went to
+  inline text, which grew from 20 to 28 bytes.
+
+Discovery: inotify on /dev/shm, no polling
+
+  /dev/shm is a tmpfs and an ordinary filesystem to the kernel, so inotify
+  works on it. Verified with a probe rather than assumed: a watch on the
+  directory reported mask 0x100 (IN_CREATE) when a process called shm_open and
+  0x200 (IN_DELETE) on shm_unlink.
+
+  A watcher still enumerates the directory once at startup for processes
+  already running, and treats a create as "try to open, retry if the header is
+  not initialised" -- the notification fires when the file appears, which is
+  before the writer has finished its header. That is the case the reader
+  already reports rather than mapping garbage.
+
+Names: written in full, never interned
+
+  Every record carries its name. No interned id, no hash, no registration.
+
+  The reasoning is that the record is a fixed-width write_volatile, so the
+  text bytes are stored whether they mean anything or not; what a name adds
+  on the write path is a length and a copy into the local record. Measured,
+  three release runs, against a record with no name at all:
+
+    no name                    7.6 -  10.3 ns
+    11-byte name inline       10.7 -  11.5 ns
+    32-byte name inline        7.0 -   8.9 ns   (fills the record)
+    cost of the copy          -2.5 -  +1.4 ns   noise
+
+  What it buys: a self-describing segment. No protocol for registering a name
+  before an event uses it, no race between the two across threads, no table to
+  ship to the service, nothing dangling when a process dies mid-run, and one
+  path for static and dynamic names alike. Interning happens on the consumer,
+  where a hash map costs nothing that matters.
+
+  Records grew from 28 to 32 inline bytes: the four-byte name_id the producer
+  no longer sets went to text. Longer names spill into continuation records
+  keyed by the same (tid, scope_id).
+
+  There is no policy cap on name length. One was added at 256 bytes with the
+  justification that a long name "would eat a ring", and it was wrong twice
+  over: a ring that fills is already handled honestly, by lapping and
+  reporting the count, so cutting names to protect it only trades a counted
+  loss for a silent one -- and it *was* silent, since the reader reported a
+  cut name as Complete. The only limit now is structural: a continuation's
+  position rides in a u8, so a chain is at most 256 records, 8 KiB. Past that
+  the last record is flagged CUT and the reader reports Truncated. A test
+  asserts a name one byte over the limit is reported as cut, and another that
+  a name exactly at it is not.
+
+  Two tests push chained names
+  through the ring itself rather than through the splitter in memory: one
+  rebuilds an 80-byte name across three records, and one has two threads
+  interleave 200 long names each on a single ring and checks every chain
+  rejoins with its own pieces.
+
+Isolation: one segment per process, and one merge per process
+
+  Each instrumented process owns /dev/shm/orbit-scopes-<pid> and the rings in
+  it. A process that dies mid-write, or stops at a breakpoint, stalls only its
+  own rings. The merge stays inside one segment for the same reason: a global
+  horizon is the minimum across every input, so breakpointing one process
+  would freeze every other process's timeline.
+
+  Nothing needs a global order. Scope nesting is matched within a thread by
+  (tid, scope_id), the viewer lanes by pid, and events carry absolute
+  CLOCK_MONOTONIC timestamps, so processes interleave correctly on the
+  timeline however they arrive.
+
+How much does instrumentation slow the target?
+
+  This is the question that decides the ring count, and it is not the one
+  first asked. "One ring caps a process at 78 M events/s" sounds alarming and
+  is nearly irrelevant: no real application sustains that, and one that tried
+  would be spending two whole cores inside the profiler.
+
+  Overhead as a share of ONE core, by event rate:
+
+      events/s      1 ring      8 ring     16 ring    128 ring
+          0.1M       0.23%       0.14%       0.13%       0.12%
+          1.0M       2.29%       1.40%       1.29%       1.25%
+          5.0M      11.45%       7.00%       6.45%       6.25%
+         10.0M      22.90%      14.00%      12.90%      12.50%
+
+  At a realistic 1 M events/s the difference between one ring and 128 is 1% of
+  one core -- 0.03% of a 32-core machine. As a slowdown argument, ring count
+  barely registers. The clock read dominates and is the same either way.
+
+  Where it does matter is measurement distortion, which is worse than
+  slowdown because it is a lie rather than a tax. Instrumenting a short scope
+  inflates it:
+
+      a   50 ns scope: +45.8% at 1 ring, +25.8% at 16, +25.0% at 128
+      a  100 ns scope: +22.9% at 1 ring, +12.9% at 16, +12.5% at 128
+      a 1000 ns scope: + 2.3% at 1 ring, + 1.3% at 16, + 1.2% at 128
+
+Ring count: why sixteen
+
+  Two things trade off. More rings means less contention when several threads
+  claim at once. Fewer rings means each gets a larger share of the budget,
+  which decides how long one busy thread runs before it laps.
+
+  Cost of a whole scope, 32 threads claiming flat out:
+
+      1 ring   22.9 ns      8 rings  14.0 ns
+      2 rings  18.3 ns     16 rings  12.9 ns
+      4 rings  15.5 ns    128 rings  12.5 ns
+
+  Buffer per ring at an 8 MiB budget:
+
+      1 ring   131072 slots      16 rings   8192 slots
+      8 rings   16384 slots     128 rings   1024 slots
+
+  Most of the contention benefit is gone by eight rings and all of it by
+  sixteen; past that, each extra ring only takes memory from the ones doing
+  the work. 128 rings -- the previous default -- left each with 1024 slots, so
+  a single hot thread lapped after a thousand events while fifteen sixteenths
+  of the buffer sat empty. That is the likelier failure by far: uneven load,
+  not thirty-two threads in lockstep.
+
+  Sixteen buys 95% of the contention win and eight times the headroom.
+
+Sizing
+
+One rule picks a ring, with no fast path and no fallback. An earlier version
+  handed out exclusive rings while any were free and sent the rest to a shared
+  pool; that was two policies wearing one name, since with bounded rings and
+  unbounded threads sharing is guaranteed by pigeonhole. Hashing is also
+  stateless, which matters more: a claim must be released when a thread exits,
+  and this code lives inside somebody else's application where a thread-local
+  destructor may run late or not at all.
+
+  The hash is a 64-bit golden-ratio multiply taking the high bits, never
+  `tid % ring_count`. Thread ids are not arbitrary: Windows hands them out in
+  multiples of four, and this code compiles into the profiled application. On
+  multiples of four, `tid % 8` reaches two rings of eight and leaves six idle;
+  there is a test asserting exactly that as the counter-example, and another
+  checking even spread at strides of 1, 4, 16 and 4096.
+
+  Measured on this machine, Linux tids stride by 1 (sequential and concurrent
+  creation both), so the defence is for the platforms the producer will be
+  compiled into rather than for this one.
+
+  Ring count is derived from expected threads, not from cores: rings follow
+  threads, and a process routinely has more threads than the machine has
+  cores. Sizing by cores would have put the excess on the shared ring.
+
+  Slots per ring are derived from a total budget rather than chosen, because
+  the number a profiled process cares about is what the segment costs it:
+
+    128 rings x 1024 slots x 64 B = 8.0 MiB
+
+  At 16384 slots -- the figure from when rings were per-core and there were
+  only as many as cores -- 128 rings would have been 128 MiB, which is not a
+  reasonable thing to ask of a process for agreeing to be profiled.
+
+Layout
+  event                    56 bytes (24 fixed + 32 inline name bytes)
+  slot                     64 bytes (one cache line: seq + pending_ns + event,
+                           exactly, with no padding left)
+  ring control block       64 bytes (one cache line, so neighbours never share)
+  rings                    128, chosen by ring_for_thread(tid); threads share
+                           whenever there are more of them than rings
+  default slots per ring   1024 (64 KiB), derived from the budget below
+  default total budget     8 MiB for the whole segment
+
+Write path instruction budget, per event, on an owned ring:
+  1 x relaxed load         read the cursor (nobody else writes it)
+  6 x plain 64-bit store   the payload
+  1 x release store        commit the slot
+  1 x release store        publish the cursor, after the commit, so a consumer
+                           never sees an unfinished slot
+  no atomic read-modify-write, no lock, no allocation, no syscall
+
+  On the shared overflow ring, add one relaxed fetch_add to claim the slot and
+  one release store to announce the timestamp.
+
+Tests
+  test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Not measured, and why
+  Cross-process throughput. The shared-memory path is exercised by a
+  writer and reader in one process; a second process mapping the same
+  segment is the next step, together with the C API that fills it.

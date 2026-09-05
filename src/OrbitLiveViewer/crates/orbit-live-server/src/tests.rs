@@ -520,9 +520,12 @@ fn capture_start_json_includes_sampling_and_hooks() {
         unwinding: "dwarf".into(),
         dynamic_instrumentation_method: "user_space".into(),
         instrumented_functions: vec![crate::http::InstrumentedFnRef { function_id: 7 }],
+        show_all_processes: false,
+        uprobe_duplicate_filter: true,
     };
     let json = body.to_json();
     assert!(json.contains("\"pid\":42"));
+    assert!(json.contains("\"show_all_processes\":false"));
     assert!(json.contains("\"samples_per_second\":1000"));
     assert!(json.contains("\"unwinding\":\"dwarf\""));
     assert!(json.contains("\"function_id\":7"));
@@ -586,4 +589,74 @@ fn function_call_ingest_uses_interned_pretty_name() {
     let snap = svc.ring().snapshot().1;
     assert_eq!(snap[0].name_id, name_id);
     assert_eq!(svc.intern.lock().get(snap[0].name_id), Some("HookMe"));
+}
+
+#[test]
+fn thread_and_process_names_are_replayed_to_a_late_subscriber() {
+    use orbit_live_protocol::{decode_frame, LiveFrame};
+    let svc = crate::LiveService::new(crate::ServerConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        ring_buffer_bytes: 1 << 20,
+        spill_path: None,
+        dev_self_profile: false,
+        wire: crate::WireFormat::default(),
+    })
+    .unwrap();
+    svc.set_thread_name(7, 70, "Worker-1");
+    svc.set_process_name(7, "game");
+    let mut seen_thread = false;
+    let mut seen_process = false;
+    for bytes in svc.hello_and_snapshot_frames() {
+        let (frame, _) = decode_frame(&bytes).unwrap();
+        match frame {
+            LiveFrame::ThreadName { pid, tid, name } => {
+                assert_eq!((pid, tid, name.as_str()), (7, 70, "Worker-1"));
+                seen_thread = true;
+            }
+            LiveFrame::ProcessName { pid, name } => {
+                assert_eq!((pid, name.as_str()), (7, "game"));
+                seen_process = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(seen_thread && seen_process);
+    let (threads, processes) = svc.capture_names();
+    assert_eq!(threads, vec![((7, 70), "Worker-1".to_string())]);
+    assert_eq!(processes, vec![(7, "game".to_string())]);
+    svc.clear_names();
+    assert!(svc.capture_names().0.is_empty());
+}
+
+#[test]
+fn nothing_from_before_the_capture_start_reaches_the_ring() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    svc.disable_self_profile();
+    // The handler's provisional start, then the loop's real one.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.mark_capture_started(7, 1_000);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    // A later provisional 0 (a second Record) does not forget the clock.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    svc.push_event(ev(50)); // start 500: before
+    svc.push_events(&[ev(90), ev(100), ev(200)]); // 900 before, 1000 and 2000 in
+    assert_eq!(svc.stats().events_live, 2);
+    assert_eq!(svc.dropped_before_start(), 2);
+    assert_eq!(svc.stats().oldest_start_ns, 1_000);
+    // A scope opened before the capture and closed inside it is not paired.
+    svc.ingest_scope_start(7, 1, 900, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 2, "the straddling scope was refused");
+    assert_eq!(svc.dropped_before_start(), 3);
+    svc.ingest_scope_start(7, 1, 1_100, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 3, "a scope inside the capture lands");
+    // Clear forgets the clock; a capture with no known start guards nothing.
+    svc.clear_capture().unwrap();
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.push_event(ev(50));
+    assert_eq!(svc.stats().events_live, 1);
+    assert_eq!(svc.dropped_before_start(), 0);
 }

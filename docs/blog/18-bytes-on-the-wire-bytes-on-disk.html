@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bytes on the Wire, Bytes on Disk</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 18</p>
+    <h1>Bytes on the Wire, Bytes on Disk</h1>
+    <p class="dek">Two questions in one morning: should a saved capture be compressed, and can something simple bring the live stream closer to protobuf's size? The answers turned out to be the same idea applied twice &mdash; stop sending the parts of a number that do not change &mdash; and a third question, whether <code>ssh -C</code> would have done the job for free, has a number too.</p>
+    <p class="byline">Every figure here is in <a href="metrics/phase-10-wire-and-bundle-compression.txt">metrics/phase-10-wire-and-bundle-compression.txt</a>, with the command that produced it, on a real 1,034,313-event capture of this machine</p>
+
+    <div class="stats">
+      <div class="stat"><b>32 &rarr; 11.06</b><span>Bytes per event on the wire, no dependency</span></div>
+      <div class="stat"><b>7.01</b><span>With deflate on top, a toggle</span></div>
+      <div class="stat"><b>27.8</b><span>What a protobuf-style layout would be</span></div>
+      <div class="stat"><b>38 &rarr; 7.9 MB</b><span>The saved events table, no codec</span></div>
+      <div class="stat"><b>0.14 s</b><span>To save it, from 0.87</span></div>
+      <div class="stat"><b>12&ndash;17&times;</b><span>CPU that ssh -C would cost instead</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Post 7 chose a fixed 32-byte record for every event and said, honestly, that it was 1.69&times; larger than protobuf. That was the right trade on the capture hot path, where decode CPU is the bottleneck and a local socket is not. It stopped being the whole story the day the viewer moved onto the network and a 100-second capture of a 32-core machine saved as a 127&nbsp;MB file. This post is the measured answer to both, and the reasoning is short enough to write down in full.</p>
+
+  <h2 id="record">What is in a 32-byte record</h2>
+
+  <p>A live event is a start time and a duration as 64-bit nanoseconds, a pid and a tid as 32-bit, a kind, a depth and an extra byte, a padding byte, and a 32-bit name id. On a real capture almost all of those bytes are zero or repeated. Consecutive events in a batch start a few microseconds apart, so the top five bytes of every timestamp are the same as the previous event's. A batch of 2048 events comes from a handful of threads, so the eight bytes of pid and tid repeat thousands of times. A name id is under 65,536. Kind, depth and extra are genuinely one byte each.</p>
+
+  <p>The instinctive fix is protobuf's: varints, seven bits per byte with a continuation bit, so a small number takes one byte. It does not work on this data, and the reason is worth knowing before spending effort on it. A nanosecond timestamp since boot is around 4&times;10<sup>14</sup>. As a varint that is eight bytes, one fewer than the fixed field, and the duration is the same story. Measured on the real events, a protobuf-style layout &mdash; a tag byte and a varint per field &mdash; is 27.8 bytes per event. Varints save bytes on the small integers and nothing on the two big ones, and the two big ones are half the record.</p>
+
+  <h2 id="packed">Packed: send what changed</h2>
+
+  <p>The version that works is one transform before the varints. Each event's start is written as the difference from the previous event's start, zigzag-encoded so an out-of-order event costs a sign bit rather than nine bytes. Inside a batch the difference is a few thousand nanoseconds: two or three bytes. The duration and the name id are varints as they are. The pid and tid pair goes into a small table at the head of the batch, and each event carries a one-byte index into it. Kind, depth and extra stay three plain bytes.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>1,034,313 events, batches of 2048</th><th>B/event</th><th>encode</th><th>decode</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>raw (the 32-byte record)</td><td class="v">32.00</td><td class="v">22 &micro;s</td><td class="v">7 &micro;s</td><td>per batch; decode is a memcpy</td></tr>
+        <tr><td>packed (delta, varints, thread table)</td><td class="v bump">11.06</td><td class="v">38 &micro;s</td><td class="v">19 &micro;s</td><td>no dependency</td></tr>
+        <tr><td>packed + deflate (miniz, level 1)</td><td class="v bump">7.01</td><td class="v">115 &micro;s</td><td class="v">70 &micro;s</td><td>pure Rust; runs in the browser's WASM</td></tr>
+        <tr><td>protobuf-style varints, no delta</td><td class="v">27.81</td><td></td><td></td><td>estimate, same events</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Packed is 2.9&times; smaller than raw and 2.5&times; smaller than the protobuf layout, for sixteen microseconds more per batch. Deflate on top of the packed bytes finds what the transform left &mdash; the same name id and kind recurring, durations that cluster &mdash; and takes another 37&nbsp;percent, at roughly a hundred microseconds each way. The decoder accepts all three; the producer chooses with <code>orbit-service --wire raw|packed|deflate</code>, <code>/api/status</code> reports which, and the viewer's stats line shows it after <code>ws</code>.</p>
+
+  <p>The default is packed, and the reason it is not deflate is latency. The service pushes a batch per capture pass, about every five milliseconds, so packing adds one percent of a pass and deflate four. On the link the arithmetic goes the other way: a 2048-event batch is 65.5&nbsp;KB raw and 22.8&nbsp;KB packed, which at 100&nbsp;Mbit/s is 5.2&nbsp;ms against 1.8. Packed pays fifty microseconds to save three and a half milliseconds on a slow link. Deflate pays 135 more to save 0.65. On a ten-gigabit link deflate is CPU for nothing, and on loopback so is packing, which is why the honest next step is to send raw to a loopback peer and packed to everyone else. That is a few lines in the socket handler and it is not done yet.</p>
+
+  <h2 id="ssh">Would ssh -C have done this?</h2>
+
+  <p>A fair question, because <code>ssh -C</code> is one flag and no code. It is zlib at level 6 over the whole connection, and a WebSocket's built-in permessage-deflate is the same thing per message. Both were measured on the raw record stream, since that is what they would see.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>zlib level 6 on the raw records</th><th>B/event</th><th>CPU per batch</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>per message</td><td class="v">8.38</td><td class="v">1,324 &micro;s</td><td>permessage-deflate</td></tr>
+        <tr><td>whole-stream context</td><td class="v">8.32</td><td class="v">1,958 &micro;s</td><td>ssh -C</td></tr>
+        <tr><td>packed + deflate level 1, for comparison</td><td class="v bump">7.01</td><td class="v bump">115 &micro;s</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>In bytes ssh lands between packed and packed-plus-deflate, and that is the "almost optimal by default" impression. In CPU it costs twelve to seventeen times more, on both ends, because it is grinding 65&nbsp;KB of mostly-zero bytes at level 6 instead of 23&nbsp;KB of already-packed bytes at level 1. A generic compressor sees consecutive timestamps as eight-byte words that mostly differ; it does not know they are small deltas, and that one-line transform is the half of the gain it cannot recover. Two practical points finish it: ssh's default is compression off, so the flag and a port forward are both needed, and the viewer is a browser tab that talks WebSocket to the service directly, so on the LAN there is no ssh in the path at all.</p>
+
+  <h2 id="disk">On disk: the wrong file, then the right encodings</h2>
+
+  <p>The saved capture is a zip with the events, samples and frames tables and a manifest of thread and process names. Its first version stored the tables as Arrow IPC with no compression, which is how a 100-second capture came to 127&nbsp;MB. The first fix that morning was the obvious one: deflate the zip entries with <code>miniz_oxide</code>, already in the tree through parquet, pure Rust, so the static service binary gains no C. The million-event table went from 38.1 to 7.6&nbsp;MB in 0.87 seconds.</p>
+
+  <p>Then the second question: would Parquet compress well? It compresses better than that with no compressor at all, and the way it does so is the wire trick again, per column.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>the same table, 1,034,313 events</th><th>size</th><th>write</th><th>read</th></tr></thead>
+      <tbody>
+        <tr><td>Arrow IPC (in the first zip)</td><td class="v">38.0 MB</td><td></td><td></td></tr>
+        <tr><td>Arrow IPC in a deflate zip</td><td class="v">7.6 MB</td><td class="v">0.87 s</td><td></td></tr>
+        <tr><td>Parquet, plain, no dictionary, no codec</td><td class="v">46.2 MB</td><td class="v">0.03 s</td><td class="v">0.15 s</td></tr>
+        <tr><td>Parquet, dictionary, no codec</td><td class="v">18.0 MB</td><td class="v">0.05 s</td><td class="v">0.01 s</td></tr>
+        <tr><td>Parquet, delta on the ns columns + dictionary, no codec</td><td class="v bump">7.9 MB</td><td class="v bump">0.04 s</td><td class="v bump">0.01 s</td></tr>
+        <tr><td>&hellip; + snappy</td><td class="v">7.3 MB</td><td class="v">0.04 s</td><td class="v">0.01 s</td></tr>
+        <tr><td>&hellip; + gzip</td><td class="v">7.0 MB</td><td class="v">0.16 s</td><td class="v">0.01 s</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The two rows that matter are the plain one and the delta one. Plain Parquet is <em>larger</em> than the IPC file, and it was what the <code>?format=parquet</code> export had been writing since the day it was added: a thing worth saying because "we export Parquet" sounds like a size claim and was not one. With <code>DELTA_BINARY_PACKED</code> on the two nanosecond columns and <code>RLE_DICTIONARY</code> on the other seven, the file is the same size as the deflated IPC, written twenty times faster and read in ten milliseconds because nothing has to be inflated first. Delta on a column of timestamps is exactly the delta the wire uses; a dictionary of pids is exactly the thread table. A codec on top buys five to ten percent, and the only codec in the Rust parquet crate that is not pure Rust is zstd, so there is none.</p>
+
+  <p>So the bundle is now three Parquet tables in a <em>stored</em> zip, and the plain export uses the same properties. In Rust, on the same slice, the stored Parquet bundle is 7.91&nbsp;MB in 0.14 seconds; deflating the zip on top of it gets 6.97&nbsp;MB for double the time and is not the default. Bundles from the first pass, Arrow tables in a deflated zip, still open, because the reader takes both. The verification was end to end: a fresh capture exported, pyarrow reading back the column encodings from the file's own metadata, the same file posted to <code>/api/capture/import</code> and coming back with the same 15,878 events.</p>
+
+  <h2 id="one-idea">One idea, three places</h2>
+
+  <p>Every number in this post comes from the same observation about the data: a capture is a long run of nearly-identical records whose only fast-changing field is a timestamp that moves by a few thousand at a time. The wire sends the delta and a table index. The file stores the delta and a dictionary. A generic compressor, ssh or deflate, gets most of the way by pattern-matching but pays an order of magnitude in CPU for not knowing what it is looking at, and on a local link the right amount of compression is none. The fixed record from post 7 is still what the ring holds and what the capture path writes, because there the cost that matters is the decode, and a memcpy is still the fastest decoder there is.</p>
+
+  <h2 id="left">What is left</h2>
+
+  <p>Raw on loopback, packed elsewhere, chosen per connection, so that local profiling pays nothing. A stateful deflate across batches would recover the 0.06 bytes per event between ssh's two rows above, which is not worth a stateful decoder in the browser. And the dataset directory that <code>--out-arrow</code> writes is still Arrow IPC while the bundle is Parquet; the Python example reads either, but one format for both would be tidier.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 18 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="17-where-the-frame-went.html">&larr; Post 17</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+</body>
+</html>

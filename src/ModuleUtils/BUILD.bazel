@@ -3,45 +3,82 @@
 # found in the LICENSE file.
 
 load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("//bazel:dual_backend.bzl", "orbit_dual_backend_test")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# Headers only, so //rust/shims/ModuleUtilsRust can implement Orbit's
+# interfaces without depending on the C++ implementation of them. This is what
+# keeps ModuleUtils -> ModuleUtilsRust from being a cycle.
+cc_library(
+    name = "ModuleUtilsHeaders",
+    hdrs = [
+        "include/ModuleUtils/ReadLinuxMaps.h",
+        "include/ModuleUtils/ReadLinuxModules.h",
+        "include/ModuleUtils/VirtualAndAbsoluteAddresses.h",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+    ],
+)
 
 cc_library(
     name = "ModuleUtils",
     srcs = ["VirtualAndAbsoluteAddresses.cpp"] + select({
         "@platforms//os:windows": [],
         "//conditions:default": [
+            # Backend.cpp defines the public ParseMaps() and dispatches to one
+            # of the two implementations. See docs/rust-port-plan.html.
+            "Backend.cpp",
             "ReadLinuxMaps.cpp",
             "ReadLinuxModules.cpp",
         ],
     }),
-    hdrs = [
-        "include/ModuleUtils/ReadLinuxMaps.h",
-        "include/ModuleUtils/ReadLinuxModules.h",
-        "include/ModuleUtils/VirtualAndAbsoluteAddresses.h",
-    ],
+    hdrs = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["ParseMapsBackend.h"],
+    }),
     copts = ORBIT_COPTS + [
         "-Isrc/ModuleUtils",
     ],
-    includes = ["include"],
     deps = [
+        ":ModuleUtilsHeaders",
         "//src/GrpcProtos",
         "//src/ObjectUtils",
         "//src/OrbitBase",
         "@abseil-cpp//absl/strings:str_format",
         "@abseil-cpp//absl/strings:strings",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["//rust/shims/ModuleUtilsRust"],
+    }),
+)
+
+# ReadLinuxMapsTest.cpp exercises ParseMaps, so it runs against both backends.
+orbit_dual_backend_test(
+    name = "ReadLinuxMapsTests",
+    size = "small",
+    srcs = ["ReadLinuxMapsTest.cpp"],
+    backend_env_var = "ORBIT_MAPS_BACKEND",
+    copts = ORBIT_COPTS,
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//src/ModuleUtils",
+        "//src/Test:gtest_main",
+        "//src/TestUtils",
     ],
 )
 
+# The rest of the suite does not touch ParseMaps directly.
 cc_test(
     name = "ModuleUtilsTests",
     srcs = ["VirtualAndAbsoluteAddressesTest.cpp"] + select({
         "@platforms//os:windows": [],
-        "//conditions:default": [
-            "ReadLinuxMapsTest.cpp",
-            "ReadLinuxModulesTest.cpp",
-        ],
+        "//conditions:default": ["ReadLinuxModulesTest.cpp"],
     }),
     copts = ORBIT_COPTS,
     data = glob(["testdata/**"]),

@@ -34,6 +34,27 @@ pub mod kind {
     /// Timestamped scalar sample. `duration_ns` holds `f32::to_bits(value) as u64`
     /// — it is not a duration. [`LiveEvent::end_ns`] is `start_ns + 1`.
     pub const VALUE: u8 = 6;
+    /// A sampled callstack, drawn as a single tick on a per-thread bar.
+    /// `duration_ns` is the sampling period, not a measured duration:
+    /// what the mark means is "a sample landed here".
+    pub const SAMPLE: u8 = 7;
+}
+
+/// The process id agent scopes are filed under (TODO item 12): scopes an
+/// agent or a script opens and closes through the service's HTTP interface
+/// rather than in its own process. Far above any real pid. Each track the
+/// callers name becomes one thread of it.
+pub const AGENT_PID: u32 = 0xA6E7_0000;
+
+/// What `extra` means per kind, where it means something. Scheduling
+/// slices carry the core, thread states the state code (see
+/// [`thread_state`]); function calls carry this.
+pub mod extra {
+    /// A `FUNCTION_CALL` that is one frame of a sampled callstack, drawn
+    /// under the sample tick so the stack reads on the thread track. It is
+    /// not a measured call: its duration is the sampling period, and the
+    /// Live functions table leaves it out.
+    pub const SAMPLED_FRAME: u8 = 1;
 }
 
 /// `ThreadStateSlice::ThreadState` values from `capture.proto`.
@@ -68,7 +89,11 @@ pub struct LiveEvent {
 
 impl LiveEvent {
     pub fn end_ns(self) -> u64 {
-        if self.kind == kind::VALUE {
+        // VALUE and SAMPLE are instants, not intervals. A sample's
+        // `duration_ns` carries the sampling period for tooltips, but what it
+        // means is "a sample landed at this timestamp", so it must draw as a
+        // tick at every zoom rather than widening into a box.
+        if self.kind == kind::VALUE || self.kind == kind::SAMPLE {
             self.start_ns.saturating_add(1)
         } else {
             self.start_ns.saturating_add(self.duration_ns)
@@ -103,15 +128,17 @@ impl LiveEvent {
     }
 
     pub fn color_for(self, intern: Option<&InternTable>) -> u32 {
-        let name = intern.and_then(|t| t.get(self.name_id)).map(str::as_bytes);
-        event_color(
+        // The name's hash, not its bytes: the table has it precomputed, and
+        // hashing the string here again was a third of the listing.
+        let hash = intern.and_then(|t| t.name_hash(self.name_id));
+        crate::color::event_color_hashed(
             self.kind,
             self.tid,
             self.depth,
             self.extra,
             self._pad,
             self.name_id,
-            name,
+            hash,
         )
     }
 
@@ -203,6 +230,7 @@ impl LaneKey {
 /// Thread/CPU scopes need tid+depth — prefer [`LiveEvent::color_rgba`].
 pub fn palette_color(kind: u8, extra: u8, name_id: u32) -> u32 {
     match kind {
+        kind::SAMPLE => crate::color::SAMPLE_TICK,
         kind::THREAD_STATE => thread_state_color(extra),
         kind::API_SCOPE | kind::API_TRACK => named_scope_color(&name_id.to_le_bytes(), extra),
         _ => thread_scope_color(name_id, extra),
@@ -228,10 +256,39 @@ struct OpenScope {
     name_id: u32,
 }
 
+/// A hasher for the id -> name map: ids are small dense integers, and the
+/// listing looks one up per instance per frame, so SipHash was a measurable
+/// share of a 20,000-instance frame. One multiply is enough.
+#[derive(Default, Clone, Copy)]
+pub struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.0 = (v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+pub type IdMap<V> = HashMap<u32, V, std::hash::BuildHasherDefault<IdHasher>>;
+
+/// One interned name, with the hash its colour is drawn from, computed once
+/// here rather than per instance per frame.
+struct Interned {
+    text: String,
+    hash: u32,
+}
+
 #[derive(Default)]
 pub struct InternTable {
     by_text: HashMap<String, u32>,
-    by_id: HashMap<u32, String>,
+    by_id: IdMap<Interned>,
     next_id: u32,
 }
 
@@ -243,20 +300,25 @@ impl InternTable {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         self.by_text.insert(text.to_string(), id);
-        self.by_id.insert(id, text.to_string());
+        self.by_id.insert(id, Interned { text: text.to_string(), hash: crate::color::name_hash(text.as_bytes()) });
         id
     }
 
     pub fn insert_id(&mut self, id: u32, text: &str) {
         self.by_text.insert(text.to_string(), id);
-        self.by_id.insert(id, text.to_string());
+        self.by_id.insert(id, Interned { text: text.to_string(), hash: crate::color::name_hash(text.as_bytes()) });
         if id >= self.next_id {
             self.next_id = id.wrapping_add(1);
         }
     }
 
     pub fn get(&self, id: u32) -> Option<&str> {
-        self.by_id.get(&id).map(String::as_str)
+        self.by_id.get(&id).map(|e| e.text.as_str())
+    }
+
+    /// The colour hash of a name, `name_hash` of its text, precomputed.
+    pub fn name_hash(&self, id: u32) -> Option<u32> {
+        self.by_id.get(&id).map(|e| e.hash)
     }
 
     pub fn len(&self) -> usize {
@@ -268,7 +330,7 @@ impl InternTable {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (u32, &str)> {
-        self.by_id.iter().map(|(&id, text)| (id, text.as_str()))
+        self.by_id.iter().map(|(&id, e)| (id, e.text.as_str()))
     }
 
     /// Resolve a scope search to matching `name_id`s. Empty query ⇒ empty set
@@ -561,6 +623,24 @@ mod tests {
             pid: 1,
         };
         assert_eq!(ev.color_rgba(), 0xFFF4_4336);
+    }
+
+    #[test]
+    fn a_sample_is_an_instant_not_an_interval() {
+        // Otherwise a 1ms sampling period would draw as a 1ms-wide box and
+        // the bar would be solid instead of a row of ticks.
+        let sample = LiveEvent {
+            start_ns: 1_000,
+            duration_ns: 1_000_000,
+            tid: 1,
+            pid: 1,
+            kind: kind::SAMPLE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: 0,
+        };
+        assert_eq!(sample.end_ns(), 1_001);
     }
 
     #[test]

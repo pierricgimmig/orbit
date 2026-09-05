@@ -1,0 +1,27 @@
+Phase 8: default to the target's processes, not the machine's
+
+Measured 2026-09-01 on Linux 7.0.0-30-generic, 32 threads.
+Target: a bash script running a busy loop that forks one child doing the same,
+so the descendant rule is exercised rather than assumed.
+
+Same capture, 3 seconds each, only show_all_processes differing:
+
+  show_all_processes=false    52 lanes    73,964 events
+  show_all_processes=true    305 lanes   189,941 events
+
+  lanes    5.9x fewer
+  events   2.6x fewer
+
+The 52 lanes are not just the target: 32 of them are the machine-wide
+Scheduler core rows, which are kept in both modes. A SCHEDULING_SLICE lanes
+by its core and ignores pid/tid, so what a core was doing still includes every
+process competing with the target. What the flag changes is only the
+per-thread projection, which lanes by (pid, tid) and is what was spawning a
+process row and a thread row for every process on the machine.
+
+Service log for the two runs:
+  orbit-service: showing pid 597641 and 1 related process(es); the Scheduler track stays machine-wide
+  orbit-service: showing every process on the machine
+
+The "1 related process" is the forked child, found by walking /proc parent
+links from the target.

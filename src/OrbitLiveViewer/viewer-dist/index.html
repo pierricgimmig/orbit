@@ -105,8 +105,16 @@
       // Old browsers / missing isolation headers → sequential, no crash.
       if (typeof SharedArrayBuffer !== "undefined" && typeof mod.initThreadPool === "function") {
         try {
+          // Workers are not free: each is a wasm instance with its own stack,
+          // spawned before the first frame. The parallel section here is
+          // per-frame collect/raster measured in single-digit milliseconds, so
+          // the useful width is bounded by that work, not by the core count.
+          // Default to a modest cap and let ?threads=N override it, so the
+          // knee can actually be measured on a given machine.
           const hw = Number(navigator.hardwareConcurrency) || 4;
-          const n = Math.max(1, Math.min(hw, 32));
+          const forced = Number(new URLSearchParams(location.search).get("threads"));
+          const want = Number.isFinite(forced) && forced > 0 ? forced : Math.min(hw, 16);
+          const n = Math.max(1, Math.min(want, 32));
           await mod.initThreadPool(n);
           if (typeof mod.markWasmPoolReady === "function") {
             mod.markWasmPoolReady(n);

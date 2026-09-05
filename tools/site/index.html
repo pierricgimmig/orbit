@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Orbit: dynamic instrumentation coupled with sampling profiling, for native applications, across processes, machines and platforms. A real capture, right here in the page.">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<nav class="site">
+  <a class="brand" href="index.html"><img src="logo.png" alt="Orbit"></a>
+  <a href="manual/index.html">Manual</a>
+  <a href="blog/index.html">Blog</a>
+  <a href="e2e/report.html">Test report</a>
+  <span class="spacer"></span>
+  <a class="cta" href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a>
+</nav>
+<main class="wide">
+  <div class="hero">
+    <h1>Dynamic instrumentation, <em>coupled with sampling.</em></h1>
+    <p class="lede">Orbit is a profiler for native applications. Hook the functions you care about on a running
+      process, without recompiling, and see every call as a scope on a timeline that draws a million of them at the
+      screen's refresh rate, with a sampling profile underneath that says where the rest of the time went.</p>
+    <div class="actions">
+      <a class="btn primary" href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the capture</a>
+      <a class="btn" href="manual/index.html">Read the manual</a>
+    </div>
+  </div>
+
+  <div class="embed">
+    <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit viewer"
+            allow="fullscreen"></iframe>
+  </div>
+  <p class="caption">
+    <span>A real capture: Box3D, three physics threads, sampled at 1 kHz with scheduling and the service's own lanes.
+      Nothing is running behind it.</span>
+    <span>Drag to pan &middot; wheel over the ruler to zoom &middot; click a thread &middot; right-click a scope
+      &middot; Home to fit</span>
+  </p>
+  <p class="facts">{{facts}}</p>
+
+  <section class="section">
+    <h2>What it does</h2>
+    <p class="sub">One timeline, three sources of truth about where the time goes.</p>
+    <div class="cards">
+      <div class="card primary">
+        <p class="kicker">The mode</p>
+        <h3>Dynamic instrumentation</h3>
+        <p>Pick a function in the sampling report, or search for it, and hook it: entry and exit become a scope on
+          the thread that called it, with its duration, count and distribution in the Live tab. Kernel uprobes, no
+          rebuild of the target.</p>
+        <a class="more" href="manual/index.html#5-selection-and-focus">Hook from the report &rarr;</a>
+      </div>
+      <div class="card">
+        <p class="kicker">Underneath it</p>
+        <h3>Sampling</h3>
+        <p>Callstacks at a fixed rate on every thread, DWARF or frame-pointer unwound, symbolized from the binaries
+          and their debug files. Flat report, top-down and bottom-up trees, a flame graph, and reports scoped to a
+          selection, a thread, or every instance of one scope.</p>
+        <a class="more" href="manual/index.html#6-the-report-panel">The report panel &rarr;</a>
+      </div>
+      <div class="card">
+        <p class="kicker">When you know the name</p>
+        <h3>Manual instrumentation</h3>
+        <p>One header, one static library: <code>orbit_start</code> / <code>orbit_stop</code>, async spans, links,
+          values. Rust, C, C++ and Python. Anything that can run a command uses <code>orbit-scope</code>.</p>
+        <a class="more" href="manual/index.html#8-manual-instrumentation">The API &rarr;</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Processes, machines, platforms</h2>
+    <p class="sub">Every process the service sees, on one timeline with the scheduler under them. A machine row per
+      service, from any host on the network. The service is one static binary; the viewer is a web page.</p>
+    <div class="two">
+      <div class="card">
+        <h3>Run it</h3>
+        <pre><code>orbit-service --serve 44766
+# Orbit live viewer: http://127.0.0.1:44766/
+#                    http://192.168.1.10:44766/</code></pre>
+        <p>The banner prints the LAN address; open it from any machine. Sampling needs
+          <code>perf_event_paranoid</code> at -1 or <code>CAP_PERFMON</code>; dynamic instrumentation needs
+          <code>CAP_PERFMON</code>.</p>
+        <a class="more" href="manual/live-viewer.html">Serving the viewer &rarr;</a>
+      </div>
+      <div class="card">
+        <h3>Where it runs</h3>
+        <p>Linux on x86-64 and arm64 today, as one static binary. Windows and macOS capture are in progress. The
+          viewer runs wherever there is a browser, and a saved capture opens as a file, like the one above.</p>
+        <p>Captures are Parquet in a zip; a slice of one is cut on disk without reading the rest, and pandas opens
+          them with nothing to install.</p>
+        <a class="more" href="manual/index.html#7-capture-files">Capture files &rarr;</a>
+      </div>
+    </div>
+  </section>
+
+  <p class="keys">Site built {{date}} at commit {{commit}}. The embedded capture is a <code>.orbit.stream</code>: the
+    frames a connecting viewer would receive, saved as a file.</p>
+</main>
+<footer class="site">
+  <span>Orbit &middot; the Rust port</span>
+  <a href="blog/index.html">Dev blog</a>
+  <a href="e2e/report.html">Latest test report</a>
+  <a href="todo.html">Roadmap</a>
+</footer>
+</body>
+</html>

@@ -1,0 +1,30 @@
+Phase 7b -- the first all-Rust vertical slice (2026-08-31)
+==========================================================
+
+What: the scheduling pipeline in orbit-collector, wiring three already-ported
+Rust pieces into one FFI-free path: raw sched-switch records -> the
+ContextSwitchManager (Phase 3, orbit-tracing-state) pairing switch-in/out
+into slices -> pod SchedulingSlice events (Phase 7a, orbit-wire). Kernel
+bytes in one end, pod bytes out the other, no language boundary crossed on
+the path.
+
+This is the first place the port's pieces COMPOSE into a capture output: the
+collector's ordering (Phase 4), the tracing-state logic (Phase 3), and the
+pod transport (7a) meet here. It is the shape the whole capture pipeline
+takes once every visitor is ported -- one Rust process from perf_event_open
+to the pod byte stream.
+
+How it is verified
+------------------
+Unit tests drive a run of context switches and assert the emitted pod bytes
+decode back to exactly the expected SchedulingSlice events (thread, core,
+duration, out-timestamp), and that a timestamp regression is counted as a
+death (the C++ ORBIT_CHECK case) rather than producing a bogus slice.
+
+bazel test //rust:orbit_collector_test -> pass.
+
+Not yet wired: the sample -> unwind -> intern -> CallstackSample path (needs
+the interning bookkeeping and the sample visitor) and the live end-to-end
+run (sched tracepoints are root-gated on this machine). The SchedulingSlice
+slice is the proof of composition; the remaining event types follow the same
+shape.

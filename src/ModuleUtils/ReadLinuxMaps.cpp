@@ -4,6 +4,8 @@
 
 #include "ModuleUtils/ReadLinuxMaps.h"
 
+#include "ParseMapsBackend.h"
+
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_format.h>
@@ -26,7 +28,7 @@ ErrorMessageOr<std::string> ReadMaps(pid_t pid) {
   return std::move(proc_pid_maps_content);
 }
 
-std::vector<LinuxMemoryMapping> ParseMaps(std::string_view proc_pid_maps_content) {
+std::vector<LinuxMemoryMapping> ParseMapsCpp(std::string_view proc_pid_maps_content) {
   const std::vector<std::string> proc_pid_maps_lines = absl::StrSplit(proc_pid_maps_content, '\n');
   std::vector<LinuxMemoryMapping> result;
 

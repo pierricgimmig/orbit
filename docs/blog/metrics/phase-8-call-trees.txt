@@ -1,0 +1,31 @@
+Phase 8: the aggregate report, replicating Orbit's call tree views
+
+Measured 2026-09-01T15:18:28Z, commit 16e341d16.
+Target: three CPU-bound threads, main -> outer -> inner and worker -> outer -> inner.
+
+Deepest chain of the bottom-up tree, whole capture, no selection:
+  samples: 8967
+    inner                              incl  8967 (100.0%) self     0 of-parent 100.0% busy         function
+      outer                              incl  8967 (100.0%) self     0 of-parent 100.0% busy         function
+        worker                             incl  5977 ( 66.7%) self     0 of-parent  66.7% busy         function
+          libc.so.6+0xa4079                  incl  5977 ( 66.7%) self     0 of-parent 100.0% libc.so.6    function
+            libc.so.6+0x13772b                 incl  5977 ( 66.7%) self     0 of-parent 100.0% libc.so.6    function
+              Thread 612644                      incl  2989 ( 33.3%) self  2989 of-parent  50.0%              thread
+
+Top-down, one thread's chain:
+    Thread 612642                      incl  2990 ( 33.3%) self     0 of-parent  33.3%              thread
+      _start                             incl  2990 ( 33.3%) self     0 of-parent 100.0% busy         function
+        __libc_start_main                  incl  2990 ( 33.3%) self     0 of-parent 100.0% libc.so.6    function
+          libc.so.6+0x2a600                  incl  2990 ( 33.3%) self     0 of-parent 100.0% libc.so.6    function
+            main                               incl  2990 ( 33.3%) self     0 of-parent 100.0% busy         function
+              outer                              incl  2990 ( 33.3%) self     0 of-parent 100.0% busy         function
+                inner                              incl  2990 ( 33.3%) self  2990 of-parent 100.0% busy         function
+
+Modules of the target:
+    2271  libc.so.6                /usr/lib/x86_64-linux-gnu/libc.so.6
+      22  ld-linux-x86-64.so.2     /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+      11  busy                     /tmp/claude-1000/-home-pierric-git-orbit/5caa4de1-4a11-4b27-bd97-ea62ebcdf1ad/scratchpad/busy
+
+Cross-check: every bottom-up root's inclusive count equals that function's
+self count in the flat report, because the walk starts at the innermost frame.
+  roots checked: 1, mismatches: 0

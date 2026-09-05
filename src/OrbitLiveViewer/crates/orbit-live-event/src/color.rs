@@ -31,6 +31,12 @@ pub const SELECTION: u32 = 0xFF00_80FF;
 pub const SAME_SCOPE_HIGHLIGHT: u32 = 0xFF64_B5F6;
 pub const INACTIVE: u32 = 0xFF64_6464;
 pub const BOX_BORDER: u32 = 0xFFFF_FFFF;
+
+/// One tick per sampled callstack, matching Orbit's own sample bar: a near-white
+/// vertical line, deliberately the same for every sample. The bar answers "when
+/// was this thread sampled", so colouring ticks by what was running would turn a
+/// density readout into a second, noisier flame graph.
+pub const SAMPLE_TICK: u32 = 0xFFEC_EFF1;
 pub const SHADE_LEFT: f32 = 0.94;
 
 pub const ORBIT_API_COLORS_RGBA: [u32; 19] = [
@@ -165,6 +171,20 @@ pub fn event_color(
     name_id: u32,
     name: Option<&[u8]>,
 ) -> u32 {
+    event_color_hashed(kind_id, tid, depth, extra, pad, name_id, name.map(name_hash))
+}
+
+/// `event_color` with the name already hashed (`name_hash`), for the
+/// per-instance path where the intern table has the hash ready.
+pub fn event_color_hashed(
+    kind_id: u8,
+    tid: u32,
+    depth: u8,
+    extra: u8,
+    pad: u8,
+    name_id: u32,
+    name_hash: Option<u32>,
+) -> u32 {
     if kind_id == kind::THREAD_STATE {
         return thread_state_color(extra);
     }
@@ -172,9 +192,13 @@ pub fn event_color(
         return material_index_to_argb(extra);
     }
     match kind_id {
+        // Before the name-based arms: a sample tick carries the leaf frame's
+        // name_id so hovering it says what was running, and colouring by that
+        // name is exactly what must not happen here.
+        kind::SAMPLE => SAMPLE_TICK,
         kind::API_SCOPE | kind::API_TRACK | kind::VALUE => {
-            let id = name_id.to_le_bytes();
-            named_scope_color(name.unwrap_or(&id), depth)
+            let hash = name_hash.unwrap_or_else(|| self::name_hash(&name_id.to_le_bytes()));
+            apply_even_depth(palette_index(hash), depth)
         }
         // Odd depth: full `GetThreadColor` (no even-row darken). Scheduler
         // slices have depth 0 on the wire.

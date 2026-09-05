@@ -7,16 +7,47 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# Shared with //rust:orbit_object_test so both implementations are tested
+# against exactly the same bytes.
+filegroup(
+    name = "testdata",
+    srcs = glob(["testdata/**"]),
+)
+
+# Headers only, so //rust/shims/ObjectUtilsRust can implement ElfFile without
+# depending on the LLVM implementation of it. This is what keeps
+# ObjectUtils -> ObjectUtilsRust from being a cycle.
+cc_library(
+    name = "ObjectUtilsHeaders",
+    hdrs = [
+        "include/ObjectUtils/CoffFile.h",
+        "include/ObjectUtils/ElfFile.h",
+        "include/ObjectUtils/ObjectFile.h",
+        "include/ObjectUtils/PdbFile.h",
+        "include/ObjectUtils/SymbolsFile.h",
+        "include/ObjectUtils/WindowsBuildIdUtils.h",
+    ],
+    srcs = [
+        "SymbolsFileHelpers.cpp",
+        "WindowsBuildIdUtils.cpp",
+    ],
+    copts = ORBIT_COPTS,
+    includes = ["include"],
+    deps = [
+        "//src/GrpcProtos",
+        "//src/OrbitBase",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+    ],
+)
+
 cc_library(
     name = "ObjectUtils",
     srcs = [
-        "CoffFile.cpp",
-        "ElfFile.cpp",
         "ObjectFile.cpp",
+        "ObjectFileBackend.cpp",
         "PdbFile.cpp",
-        "PdbFileLlvm.cpp",
         "SymbolsFile.cpp",
-        "WindowsBuildIdUtils.cpp",
     ] + select({
         "@platforms//os:windows": [
             "PdbFileDia.cpp",
@@ -25,7 +56,7 @@ cc_library(
         "//conditions:default": [],
     }),
     hdrs = [
-        "PdbFileLlvm.h",
+        "ObjectFileBackend.h",
         "include/ObjectUtils/CoffFile.h",
         "include/ObjectUtils/ElfFile.h",
         "include/ObjectUtils/ObjectFile.h",
@@ -42,7 +73,11 @@ cc_library(
     copts = ORBIT_COPTS,
     includes = ["include"],
     deps = [
-        "//bazel/deps:llvm",
+        ":ObjectUtilsHeaders",
+        # The shims are cross-platform now, so this is not in the select below:
+        # Windows reads ELF too, for profiling Linux targets from a Windows UI.
+        "//rust/shims/Demangle",
+        "//rust/shims/ObjectUtilsRust",
         "//src/GrpcProtos",
         "//src/Introspection",
         "//src/OrbitBase",
@@ -69,7 +104,6 @@ cc_test(
         "CoffFileTest.cpp",
         "ElfFileTest.cpp",
         "ObjectFileTest.cpp",
-        "PdbFileLlvmTest.cpp",
         "PdbFileTest.h",
         "SymbolsFileTest.cpp",
         "WindowsBuildIdUtilsTest.cpp",

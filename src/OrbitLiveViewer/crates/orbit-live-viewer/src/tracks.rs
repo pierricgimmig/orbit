@@ -1,6 +1,55 @@
 //! Machine → process → thread session tree. Leaf lanes sit under a thread.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// A multiplicative hasher for the row and lane keys the layout lives on.
+/// SipHash guards against attacker-chosen keys; these are ours, and hashing a
+/// few thousand rows several times a frame through it was most of the layout's
+/// time on a large capture.
+#[derive(Default, Clone, Copy)]
+pub struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 32;
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= h >> 29;
+        h
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.write_u64(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut buf = [0u8; 8];
+            buf[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(buf));
+        }
+    }
+    fn write_u8(&mut self, v: u8) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u16(&mut self, v: u16) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517C_C1B7_2722_0A95);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+
+pub type FastState = BuildHasherDefault<FastHasher>;
+pub type FastMap<K, V> = HashMap<K, V, FastState>;
+pub type FastSet<K> = HashSet<K, FastState>;
 
 use orbit_live_event::dev::{is_self_pid, MachineId};
 use orbit_live_event::{kind, LaneKey};
@@ -44,8 +93,10 @@ pub struct TrackStrip {
     pub scale: f32,
     collapsed: HashSet<RowId>,
     hidden: HashSet<ThreadId>,
-    y: HashMap<RowId, f32>,
+    y: FastMap<RowId, f32>,
     drag: Option<Drag>,
+    header_drag: Option<HeaderDrag>,
+    catalogue: LaneCatalogue,
     cached_rows: Vec<TrackRow>,
     cached_layout: Vec<(LaneKey, f32)>,
     cached_total_h: f32,
@@ -55,6 +106,68 @@ pub struct TrackStrip {
     /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
     pub process_sort: HashMap<u32, i32>,
     pub thread_sort: HashMap<(u32, u32), i32>,
+    /// User order for whole machine trees, overriding MachineId::sort_key.
+    pub machine_sort: HashMap<MachineId, i32>,
+}
+
+/// Everything the layout needs to know about the index, gathered in one pass
+/// and kept until the index's lane set changes.
+///
+/// Before this, every thread in the layout scanned every lane of the index to
+/// find its own -- and did so in the skeleton, again in the Y assignment, and
+/// again per block height -- so a frame cost threads x lanes several times
+/// over, on a rail that is laid out every frame. The catalogue makes each of
+/// those a lookup.
+#[derive(Default)]
+struct LaneCatalogue {
+    /// The `TrackIndex::lane_gen` this was built from; `None` before the first.
+    gen: Option<u64>,
+    /// Non-CPU lanes per (pid, tid), in draw order.
+    leaves: FastMap<(u32, u32), Vec<LaneKey>>,
+    /// Threads in order of first appearance in the index.
+    threads: Vec<ThreadId>,
+    /// Pids that own at least one non-CPU lane.
+    pids_with_lanes: FastSet<u32>,
+    /// The scheduler core lanes, one per core seen.
+    cores: Vec<LaneKey>,
+}
+
+impl LaneCatalogue {
+    fn build(index: &TrackIndex) -> LaneCatalogue {
+        let mut c = LaneCatalogue {
+            gen: Some(index.lane_gen()),
+            ..LaneCatalogue::default()
+        };
+        let mut n_cores = 0u16;
+        let mut seen_threads: FastSet<(u32, u32)> = FastSet::default();
+        for (k, lane) in index.lanes() {
+            if is_cpu_lane(k) {
+                n_cores = n_cores.max(u16::from(k.extra) + 1);
+                continue;
+            }
+            // A sampled callstack's frames stay in the index -- the report
+            // computed here and the sample bar's tooltip read them -- but
+            // they are not drawn: a sample is a tick on the sample bar, as
+            // in C++ Orbit, not a flame of guessed spans on the thread.
+            if is_sampled_frame_lane(k, lane) {
+                continue;
+            }
+            c.pids_with_lanes.insert(k.pid);
+            if seen_threads.insert((k.pid, k.tid)) {
+                c.threads.push(ThreadId { pid: k.pid, tid: k.tid });
+            }
+            c.leaves.entry((k.pid, k.tid)).or_default().push(k);
+        }
+        for leaves in c.leaves.values_mut() {
+            sort_thread_leaves(leaves);
+        }
+        c.cores = (0..n_cores).map(|i| LaneKey::scheduler(i as u8)).collect();
+        c
+    }
+
+    fn leaves_of(&self, t: ThreadId) -> &[LaneKey] {
+        self.leaves.get(&(t.pid, t.tid)).map(Vec::as_slice).unwrap_or(&[])
+    }
 }
 
 struct Drag {
@@ -62,6 +175,20 @@ struct Drag {
     grab_off: f32,
     pointer_y: f32,
     dest: usize,
+}
+
+/// Header rows (processes, machines) reorder by live shuffle rather than the
+/// thread drag's float-and-hole affordance: as the pointer crosses a sibling
+/// header the order is rewritten in place, so no separate ghost row is drawn.
+#[derive(Clone, Copy)]
+enum HeaderItem {
+    Process(u32),
+    Machine(MachineId),
+}
+
+struct HeaderDrag {
+    item: HeaderItem,
+    pointer_y: f32,
 }
 
 impl Default for TrackStrip {
@@ -72,8 +199,10 @@ impl Default for TrackStrip {
             scale: 1.0,
             collapsed: HashSet::new(),
             hidden: HashSet::new(),
-            y: HashMap::new(),
+            y: FastMap::default(),
             drag: None,
+            header_drag: None,
+            catalogue: LaneCatalogue::default(),
             cached_rows: Vec::new(),
             cached_layout: Vec::new(),
             cached_total_h: 0.0,
@@ -82,42 +211,43 @@ impl Default for TrackStrip {
             layout_gen: 0,
             process_sort: HashMap::new(),
             thread_sort: HashMap::new(),
+            machine_sort: HashMap::new(),
         }
     }
 }
 
 impl TrackStrip {
+    /// Rebuilds the lane catalogue if the index's lane set changed.
+    fn ensure_catalogue(&mut self, index: &TrackIndex) {
+        if self.catalogue.gen != Some(index.lane_gen()) {
+            self.catalogue = LaneCatalogue::build(index);
+        }
+    }
+
     pub fn sync(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
         self.filter_pid = filter_pid;
+        self.ensure_catalogue(index);
+        // A filter only narrows the rail when the filtered process actually
+        // has lanes; otherwise it would empty the rail before the capture
+        // has produced anything.
+        let narrow = filter_pid.filter(|p| self.catalogue.pids_with_lanes.contains(p));
         let mut pids: Vec<u32> = Vec::new();
-        let mut threads: Vec<ThreadId> = Vec::new();
-        for (key, _) in index.lanes() {
-            if is_cpu_lane(key) {
-                continue;
-            }
-            if let Some(pid) = filter_pid {
-                if key.pid != pid
-                    && !is_self_pid(key.pid)
-                    && index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k))
-                {
+        let mut threads: Vec<ThreadId> = Vec::with_capacity(self.catalogue.threads.len());
+        for &th in &self.catalogue.threads {
+            if let Some(pid) = narrow {
+                if th.pid != pid && !is_self_pid(th.pid) {
                     continue;
                 }
             }
-            if !pids.contains(&key.pid) {
-                pids.push(key.pid);
+            if !pids.contains(&th.pid) {
+                pids.push(th.pid);
             }
-            let th = ThreadId {
-                pid: key.pid,
-                tid: key.tid,
-            };
-            if !threads.contains(&th) {
-                threads.push(th);
-            }
+            threads.push(th);
         }
         pids.sort_unstable();
         pids.sort_by_key(|p| {
             (
-                MachineId::from_pid(*p).sort_key(),
+                machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
                 process_rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
@@ -125,7 +255,7 @@ impl TrackStrip {
         });
         threads.sort_by_key(|t| {
             (
-                MachineId::from_pid(t.pid).sort_key(),
+                machine_rank(&self.machine_sort, MachineId::from_pid(t.pid)),
                 process_rank(t.pid),
                 self.process_sort.get(&t.pid).copied().unwrap_or(0),
                 t.pid,
@@ -144,7 +274,7 @@ impl TrackStrip {
         }
         self.process_order.sort_by_key(|p| {
             (
-                MachineId::from_pid(*p).sort_key(),
+                machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
                 process_rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
@@ -156,15 +286,13 @@ impl TrackStrip {
                 self.thread_order.push(t);
             }
         }
-        let visible: HashSet<RowId> = self
-            .skeleton(index, filter_pid)
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect();
-        self.y.retain(|id, _| visible.contains(id));
-        for id in visible {
-            self.y.entry(id).or_insert(0.0);
-        }
+        // No seeding of `y` here. That used to retain the skeleton's rows and
+        // insert the rest at 0 for the lerp animation rows no longer have --
+        // and the skeleton lists only the rail lanes, so every frame it
+        // evicted the packed flame-graph lanes that apply_layout put straight
+        // back. The map never compared equal to itself, layout_gen bumped
+        // every frame, and the timeline rebuilt its primitives on every
+        // static frame. apply_layout rebuilds the whole map anyway.
         self.apply_layout(index, filter_pid);
     }
 
@@ -212,6 +340,93 @@ impl TrackStrip {
 
     pub fn dragging_thread(&self) -> Option<ThreadId> {
         self.drag.as_ref().map(|d| d.thread)
+    }
+
+    /// True while any row -- thread or header -- is being dragged, so the app
+    /// keeps repainting and routing pointer moves through the drag handlers.
+    pub fn any_dragging(&self) -> bool {
+        self.drag.is_some() || self.header_drag.is_some()
+    }
+
+    pub fn is_dragging_process(&self, pid: u32) -> bool {
+        matches!(
+            self.header_drag.as_ref().map(|d| d.item),
+            Some(HeaderItem::Process(p)) if p == pid
+        )
+    }
+
+    pub fn is_dragging_machine(&self, m: MachineId) -> bool {
+        matches!(
+            self.header_drag.as_ref().map(|d| d.item),
+            Some(HeaderItem::Machine(mm)) if mm == m
+        )
+    }
+
+    pub fn begin_process_drag(&mut self, pid: u32, pointer_y: f32) {
+        self.header_drag = Some(HeaderDrag {
+            item: HeaderItem::Process(pid),
+            pointer_y,
+        });
+    }
+
+    pub fn begin_machine_drag(&mut self, m: MachineId, pointer_y: f32) {
+        self.header_drag = Some(HeaderDrag {
+            item: HeaderItem::Machine(m),
+            pointer_y,
+        });
+    }
+
+    /// Reorder live from the pointer's current rail Y. `dest` is the count of
+    /// sibling headers whose midpoint sits above the pointer, which is exactly
+    /// the insertion slot `reorder_*` wants once the dragged item is removed.
+    pub fn update_header_drag(&mut self, pointer_y: f32) {
+        let Some(hd) = self.header_drag.as_mut() else {
+            return;
+        };
+        hd.pointer_y = pointer_y;
+        let item = hd.item;
+        let s = self.scale.max(0.01);
+        match item {
+            HeaderItem::Process(pid) => {
+                let machine = MachineId::from_pid(pid);
+                let tier = process_rank(pid);
+                let dest = self
+                    .process_order
+                    .iter()
+                    .copied()
+                    .filter(|p| {
+                        *p != pid
+                            && MachineId::from_pid(*p) == machine
+                            && process_rank(*p) == tier
+                    })
+                    .filter(|p| {
+                        self.y
+                            .get(&RowId::Process(*p))
+                            .map(|&y| y + PROCESS_H * s * 0.5 < pointer_y)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                self.reorder_process(pid, dest);
+            }
+            HeaderItem::Machine(m) => {
+                let dest = self
+                    .machines_present()
+                    .into_iter()
+                    .filter(|mm| *mm != m)
+                    .filter(|mm| {
+                        self.y
+                            .get(&RowId::Machine(*mm))
+                            .map(|&y| y + MACHINE_H * s * 0.5 < pointer_y)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                self.reorder_machine(m, dest);
+            }
+        }
+    }
+
+    pub fn end_header_drag(&mut self) {
+        self.header_drag = None;
     }
 
     pub fn row_on_thread(row: RowId, t: ThreadId) -> bool {
@@ -307,6 +522,10 @@ impl TrackStrip {
         h
     }
 
+    fn machine_rank(&self, m: MachineId) -> i64 {
+        machine_rank(&self.machine_sort, m)
+    }
+
     fn machines_present(&self) -> Vec<MachineId> {
         let mut out = Vec::new();
         for p in &self.process_order {
@@ -315,7 +534,7 @@ impl TrackStrip {
                 out.push(m);
             }
         }
-        out.sort_by_key(|m| m.sort_key());
+        out.sort_by_key(|m| self.machine_rank(*m));
         out
     }
 
@@ -345,12 +564,8 @@ impl TrackStrip {
         if self.collapsed.contains(&RowId::Thread(t)) {
             return h;
         }
-        for (id, _) in self.y.iter() {
-            if let RowId::Lane(k) = *id {
-                if k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(k) {
-                    h += (lane_height(k) + lane_gap(k)) * scale;
-                }
-            }
+        for &k in self.catalogue.leaves_of(t) {
+            h += (lane_height(k) + lane_gap(k)) * scale;
         }
         h
     }
@@ -393,6 +608,7 @@ impl TrackStrip {
 
     fn apply_layout(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
         self.filter_pid = filter_pid;
+        self.ensure_catalogue(index);
         let dest = self.drop_index_in_process();
         if let Some(d) = &mut self.drag {
             d.dest = dest;
@@ -401,7 +617,7 @@ impl TrackStrip {
         let skeleton = self.skeleton_with_threads(index, filter_pid, &rest);
         let items = self.skeleton_with_hole(&skeleton, dest);
         let mut y = 0.0;
-        let mut next = HashMap::with_capacity(skeleton.len() + 8);
+        let mut next: FastMap<RowId, f32> = FastMap::with_capacity_and_hasher(skeleton.len() + 8, FastState::default());
         let mut hole_y = None;
         for item in &items {
             match *item {
@@ -450,7 +666,7 @@ impl TrackStrip {
         }
     }
 
-    fn assign_packed_leaf_ys(&self, index: &TrackIndex, next: &mut HashMap<RowId, f32>) {
+    fn assign_packed_leaf_ys(&self, _index: &TrackIndex, next: &mut FastMap<RowId, f32>) {
         let s = self.scale.max(0.01);
         for t in self.shown_order() {
             if self.collapsed.contains(&RowId::Thread(t)) {
@@ -460,13 +676,10 @@ impl TrackStrip {
                 continue;
             };
             let mut ly = ty + THREAD_H * s;
-            let mut leaves: Vec<LaneKey> = index
-                .lanes()
-                .map(|(k, _)| k)
-                .filter(|k| k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(*k) && !is_rail_lane(*k))
-                .collect();
-            sort_thread_leaves(&mut leaves);
-            for k in leaves {
+            for &k in self.catalogue.leaves_of(t) {
+                if is_rail_lane(k) {
+                    continue;
+                }
                 next.insert(RowId::Lane(k), ly);
                 ly += (lane_height(k) + lane_gap(k)) * s;
             }
@@ -474,22 +687,15 @@ impl TrackStrip {
     }
 
     fn rebuild_rows(&mut self) {
-        let mut ids: Vec<RowId> = self.y.keys().copied().collect();
-        ids.sort_by(|a, b| {
-            self.y
-                .get(a)
-                .unwrap_or(&0.0)
-                .partial_cmp(self.y.get(b).unwrap_or(&0.0))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Sort (id, y) pairs outright: the comparator used to look each side
+        // up in the map, tens of thousands of hashes per frame on a big rail.
+        let mut rows: Vec<(RowId, f32)> = self.y.iter().map(|(id, y)| (*id, *y)).collect();
+        rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         self.cached_rows.clear();
         self.cached_layout.clear();
         let mut bottom = 0.0_f32;
         let mut height_sum = 0.0_f32;
-        for id in ids {
-            let Some(&y) = self.y.get(&id) else {
-                continue;
-            };
+        for (id, y) in rows {
             let height = self.height_of(id);
             bottom = bottom.max(y + height);
             if let RowId::Lane(k) = id {
@@ -601,6 +807,53 @@ impl TrackStrip {
         self.cached_insert_y = None;
     }
 
+    /// Move `pid` to slot `dest` among the processes sharing its machine, then
+    /// renumber `process_sort` densely so the order survives the next rebuild
+    /// (which re-sorts `process_order` by that map). Reorder acts within a
+    /// `process_rank` tier: the viewer and the service stay pinned to the top
+    /// of their machine, and the general processes reorder among themselves.
+    pub fn reorder_process(&mut self, pid: u32, dest: usize) {
+        let machine = MachineId::from_pid(pid);
+        let mut same: Vec<u32> = self
+            .process_order
+            .iter()
+            .copied()
+            .filter(|p| MachineId::from_pid(*p) == machine && process_rank(*p) == process_rank(pid))
+            .collect();
+        let Some(cur) = same.iter().position(|p| *p == pid) else {
+            return;
+        };
+        same.remove(cur);
+        let dest = dest.min(same.len());
+        same.insert(dest, pid);
+        for (i, p) in same.iter().enumerate() {
+            self.process_sort.insert(*p, i as i32);
+        }
+        self.process_order.sort_by_key(|p| {
+            (
+                machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
+                process_rank(*p),
+                self.process_sort.get(p).copied().unwrap_or(0),
+                *p,
+            )
+        });
+    }
+
+    /// Move `machine` to slot `dest` among the machines on screen, then
+    /// renumber `machine_sort` densely so the order sticks across rebuilds.
+    pub fn reorder_machine(&mut self, machine: MachineId, dest: usize) {
+        let mut order = self.machines_present();
+        let Some(cur) = order.iter().position(|m| *m == machine) else {
+            return;
+        };
+        order.remove(cur);
+        let dest = dest.min(order.len());
+        order.insert(dest, machine);
+        for (i, m) in order.iter().enumerate() {
+            self.machine_sort.insert(*m, i as i32);
+        }
+    }
+
     pub fn total_height(&self) -> f32 {
         self.cached_total_h
     }
@@ -620,11 +873,9 @@ impl TrackStrip {
         if self.collapsed.contains(&RowId::Thread(t)) {
             return h;
         }
-        for (id, _) in self.y.iter() {
-            if let RowId::Lane(k) = *id {
-                if k.pid == t.pid && k.tid == t.tid && !is_cpu_lane(k) && !is_rail_lane(k) {
-                    h += (lane_height(k) + lane_gap(k)) * s;
-                }
+        for &k in self.catalogue.leaves_of(t) {
+            if !is_rail_lane(k) {
+                h += (lane_height(k) + lane_gap(k)) * s;
             }
         }
         h
@@ -697,10 +948,6 @@ impl TrackStrip {
         items
     }
 
-    fn skeleton(&self, index: &TrackIndex, filter_pid: Option<u32>) -> Vec<(RowId, f32)> {
-        self.skeleton_with_threads(index, filter_pid, &self.thread_order)
-    }
-
     fn skeleton_with_threads(
         &self,
         index: &TrackIndex,
@@ -709,25 +956,41 @@ impl TrackStrip {
     ) -> Vec<(RowId, f32)> {
         let s = self.scale.max(0.01);
         let mut out = Vec::new();
-        let cores = scheduler_cores(index);
-        if !cores.is_empty() {
-            out.push((RowId::Scheduler, SCHEDULER_H * s));
-            if !self.collapsed.contains(&RowId::Scheduler) {
-                for k in cores {
-                    out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+        debug_assert_eq!(self.catalogue.gen, Some(index.lane_gen()), "catalogue is stale");
+        let cores = &self.catalogue.cores;
+        // The scheduler describes a machine's cores, so it belongs under that
+        // machine rather than beside it. It is emitted inside the machine loop
+        // below; `scheduler_machine` says which machine owns it.
+        if threads.is_empty() && self.process_order.is_empty() {
+            // Still show the scheduler when a capture has cores but no
+            // process tracks yet -- otherwise a scheduling-only capture looks
+            // empty.
+            if !cores.is_empty() {
+                let m = scheduler_machine();
+                out.push((RowId::Machine(m), MACHINE_H * s));
+                if !self.collapsed.contains(&RowId::Machine(m)) {
+                    push_scheduler_rows(&mut out, cores, self, s);
                 }
             }
-        }
-        if threads.is_empty() && self.process_order.is_empty() {
             return out;
         }
         let has_filter = filter_pid
-            .map(|pid| index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)))
+            .map(|pid| self.catalogue.pids_with_lanes.contains(&pid))
             .unwrap_or(false);
-        for m in self.machines_present() {
+        let mut machines = self.machines_present();
+        // A capture may have cores before it has processes on that machine.
+        let scheduler_owner = scheduler_machine();
+        if !cores.is_empty() && !machines.contains(&scheduler_owner) {
+            machines.push(scheduler_owner);
+            machines.sort_by_key(|m| m.sort_key());
+        }
+        for m in machines {
             out.push((RowId::Machine(m), MACHINE_H * s));
             if self.collapsed.contains(&RowId::Machine(m)) {
                 continue;
+            }
+            if m == scheduler_owner && !cores.is_empty() {
+                push_scheduler_rows(&mut out, cores, self, s);
             }
             for &pid in &self.process_order {
                 if MachineId::from_pid(pid) != m {
@@ -736,7 +999,7 @@ impl TrackStrip {
                 if has_filter && filter_pid != Some(pid) && !is_self_pid(pid) {
                     continue;
                 }
-                if !index.lanes().any(|(k, _)| k.pid == pid && !is_cpu_lane(k)) {
+                if !self.catalogue.pids_with_lanes.contains(&pid) {
                     continue;
                 }
                 let keep_drag_proc = self
@@ -755,15 +1018,10 @@ impl TrackStrip {
                     if th.pid != pid || !self.is_shown(th) {
                         continue;
                     }
-                    let mut leaves: Vec<LaneKey> = index
-                        .lanes()
-                        .map(|(k, _)| k)
-                        .filter(|k| k.pid == th.pid && k.tid == th.tid && !is_cpu_lane(*k))
-                        .collect();
-                    sort_thread_leaves(&mut leaves);
+                    let leaves = self.catalogue.leaves_of(th);
                     let mut stack = THREAD_H * s;
                     if !self.collapsed.contains(&RowId::Thread(th)) {
-                        for k in &leaves {
+                        for k in leaves {
                             if !is_rail_lane(*k) {
                                 stack += (lane_height(*k) + lane_gap(*k)) * s;
                             }
@@ -773,7 +1031,7 @@ impl TrackStrip {
                     if self.collapsed.contains(&RowId::Thread(th)) {
                         continue;
                     }
-                    for k in leaves {
+                    for &k in leaves {
                         if is_rail_lane(k) {
                             out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
                         }
@@ -789,11 +1047,40 @@ fn is_cpu_lane(k: LaneKey) -> bool {
     k.kind == kind::SCHEDULING_SLICE
 }
 
+/// A lane of sampled callstack frames: function-call events the service
+/// derives from samples, marked `SAMPLED_FRAME`. One lane holds one kind.
+fn is_sampled_frame_lane(k: LaneKey, lane: &orbit_live_render::Lane) -> bool {
+    k.kind == kind::FUNCTION_CALL
+        && lane.events().first().is_some_and(|e| e.extra == orbit_live_event::extra::SAMPLED_FRAME)
+}
+
 fn is_rail_lane(k: LaneKey) -> bool {
     k.kind == kind::VALUE
 }
 
 /// One paint lane per core, 0..N-1, matching native `num_cores_ = max+1`.
+/// The machine the scheduler track belongs to. Scheduler lanes are keyed with
+/// `pid: 0` (see `LaneKey::scheduler`), which is the local machine.
+fn scheduler_machine() -> MachineId {
+    MachineId::from_pid(0)
+}
+
+/// The Scheduler row and, unless collapsed, one row per core.
+fn push_scheduler_rows(
+    out: &mut Vec<(RowId, f32)>,
+    cores: &[LaneKey],
+    strip: &TrackStrip,
+    s: f32,
+) {
+    out.push((RowId::Scheduler, SCHEDULER_H * s));
+    if strip.collapsed.contains(&RowId::Scheduler) {
+        return;
+    }
+    for k in cores {
+        out.push((RowId::Lane(*k), (lane_height(*k) + lane_gap(*k)) * s));
+    }
+}
+
 fn scheduler_cores(index: &TrackIndex) -> Vec<LaneKey> {
     let mut n = 0u16;
     for (k, _) in index.lanes() {
@@ -802,6 +1089,17 @@ fn scheduler_cores(index: &TrackIndex) -> Vec<LaneKey> {
         }
     }
     (0..n).map(|c| LaneKey::scheduler(c as u8)).collect()
+}
+
+/// A machine's sort position: the user's order if it has one, else the
+/// built-in Local-before-Remote. i64 so an explicit 0..N always sorts ahead
+/// of the default key. Free function so a closure sorting one `self` field can
+/// capture only `machine_sort`, not all of `self`.
+fn machine_rank(machine_sort: &HashMap<MachineId, i32>, m: MachineId) -> i64 {
+    machine_sort
+        .get(&m)
+        .map(|&r| r as i64)
+        .unwrap_or(1_000 + m.sort_key() as i64)
 }
 
 fn process_rank(pid: u32) -> u8 {
@@ -1012,6 +1310,68 @@ mod tests {
     }
 
     #[test]
+    fn reorder_process_moves_and_persists() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(10, 1, 1));
+        idx.insert(scope(11, 1, 2));
+        idx.insert(scope(12, 1, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order, vec![10, 11, 12]);
+        // Move the last process to the front.
+        strip.reorder_process(12, 0);
+        assert_eq!(strip.process_order, vec![12, 10, 11]);
+        // The order survives a rebuild (process_order is re-sorted by the map).
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order, vec![12, 10, 11]);
+    }
+
+    #[test]
+    fn reorder_process_stays_within_rank_tier() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(orbit_live_event::dev::VIEWER_PID, 1, 1));
+        idx.insert(scope(10, 1, 2));
+        idx.insert(scope(11, 1, 3));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert_eq!(strip.process_order[0], orbit_live_event::dev::VIEWER_PID);
+        // Asking a general process to slot 0 cannot displace the pinned viewer.
+        strip.reorder_process(11, 0);
+        assert_eq!(
+            strip.process_order[0],
+            orbit_live_event::dev::VIEWER_PID,
+            "viewer stays pinned above general processes"
+        );
+        assert_eq!(strip.process_order[1], 11);
+        assert_eq!(strip.process_order[2], 10);
+    }
+
+    #[test]
+    fn reorder_machine_moves_and_persists() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(10, 1, 1));
+        idx.insert(scope(orbit_live_event::dev::REMOTE_DEMO_PID, 1, 2));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert_eq!(
+            strip.machines_present(),
+            vec![MachineId::Local, MachineId::Remote]
+        );
+        strip.reorder_machine(MachineId::Remote, 0);
+        assert_eq!(
+            strip.machines_present(),
+            vec![MachineId::Remote, MachineId::Local]
+        );
+        // Persists across rebuild, and the remote process now sorts first.
+        strip.sync(&idx, None);
+        assert_eq!(
+            strip.machines_present(),
+            vec![MachineId::Remote, MachineId::Local]
+        );
+        assert_eq!(strip.process_order[0], orbit_live_event::dev::REMOTE_DEMO_PID);
+    }
+
+    #[test]
     fn hidden_thread_is_omitted_from_layout() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(1, 1, 1));
@@ -1147,6 +1507,112 @@ mod tests {
     }
 
     #[test]
+    fn press_without_moving_leaves_every_row_where_it_was() {
+        let mut idx = TrackIndex::default();
+        // A layout with everything a real capture has: a scheduler with
+        // cores, two processes, threads of unequal height, and VALUE rails
+        // (which are laid out as sibling rows, not inside the thread row).
+        idx.insert(sched(1, 1, 0, 10, 3));
+        for (pid, tid) in [(1u32, 1u32), (1, 2), (1, 3), (9, 4), (9, 5)] {
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 0, 0));
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 1, 0));
+            if tid % 2 == 1 {
+                idx.insert(ev(kind::API_SCOPE, pid, tid, 2, 0));
+            }
+            if tid != 2 {
+                idx.insert(ev(kind::VALUE, pid, tid, 0, 0));
+            }
+            idx.insert(ev(kind::THREAD_STATE, pid, tid, 0, 0));
+        }
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let n = strip.thread_order.len();
+        assert_eq!(n, 5);
+        let before = strip.y.clone();
+        let before_h = strip.total_height();
+        for k in 0..n {
+            let t = strip.thread_order[k];
+            let y = strip.y.get(&RowId::Thread(t)).copied().unwrap();
+            strip.begin_drag(t, y, y);
+            strip.tick(0.0, &idx, None);
+            let mut moved: Vec<String> = Vec::new();
+            for (id, y0) in &before {
+                let y1 = strip.y.get(id).copied().unwrap_or(f32::NAN);
+                if (y1 - y0).abs() > 0.01 {
+                    moved.push(format!("{id:?} {y0} -> {y1}"));
+                }
+            }
+            assert!(
+                moved.is_empty(),
+                "press on thread {k} moved rows: {moved:?}"
+            );
+            assert!(
+                (strip.total_height() - before_h).abs() < 0.01,
+                "press on thread {k} changed total height {before_h} -> {}",
+                strip.total_height()
+            );
+            strip.end_drag();
+            strip.tick(0.0, &idx, None);
+        }
+    }
+
+    #[test]
+    fn press_keeps_body_lanes_under_their_headers() {
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 1, 0, 10, 3));
+        for (pid, tid) in [(1u32, 1u32), (1, 2), (1, 3), (9, 4), (9, 5)] {
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 0, 0));
+            idx.insert(ev(kind::API_SCOPE, pid, tid, 1, 0));
+            if tid % 2 == 1 {
+                idx.insert(ev(kind::API_SCOPE, pid, tid, 2, 0));
+            }
+            if tid != 2 {
+                idx.insert(ev(kind::VALUE, pid, tid, 0, 0));
+            }
+            idx.insert(ev(kind::THREAD_STATE, pid, tid, 0, 0));
+        }
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let quiet: std::collections::BTreeMap<LaneKey, i32> = strip
+            .layout()
+            .iter()
+            .map(|(k, y)| (*k, (y * 16.0).round() as i32))
+            .collect();
+        let mut bad: Vec<String> = Vec::new();
+        for t in strip.shown_order() {
+            let y = strip.y.get(&RowId::Thread(t)).copied().unwrap();
+            strip.begin_drag(t, y, y + 3.0);
+            strip.tick(0.0, &idx, None);
+            // What the body actually paints while a drag is held: the packed
+            // rest plus the lifted thread. Nothing moved, so it must be the
+            // same picture as the quiet frame the headers are still drawn from.
+            let mut painted: std::collections::BTreeMap<LaneKey, i32> =
+                std::collections::BTreeMap::new();
+            for (k, y) in strip.rest_layout().into_iter().chain(strip.drag_layout()) {
+                painted.insert(k, (y * 16.0).round() as i32);
+            }
+            for (k, qy) in &quiet {
+                match painted.get(k) {
+                    None => bad.push(format!("press tid={}: lane {k:?} vanished", t.tid)),
+                    Some(py) if py != qy => bad.push(format!(
+                        "press tid={}: lane {k:?} moved {} -> {}",
+                        t.tid,
+                        *qy as f32 / 16.0,
+                        *py as f32 / 16.0
+                    )),
+                    _ => {}
+                }
+            }
+            strip.end_drag();
+            strip.tick(0.0, &idx, None);
+        }
+        bad.truncate(10);
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
     fn drag_skips_hidden_threads() {
         let mut idx = TrackIndex::default();
         idx.insert(scope(1, 1, 1));
@@ -1248,11 +1714,82 @@ mod tests {
             RowId::Lane(k) if k.kind == kind::THREAD_STATE || k.kind == kind::API_SCOPE
         )));
         assert!(strip.rows().iter().any(|r| r.id == RowId::Scheduler));
-        assert!(strip.rows()[0].id == RowId::Scheduler);
+        // The machine heads the list; the scheduler is the first row under it.
+        assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
+        assert_eq!(strip.rows()[1].id, RowId::Scheduler);
         assert!(strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
         let th = strip.thread_order[0];
         assert_eq!(th, ThreadId { pid: 1, tid: 100 });
         assert!(!strip.thread_order.iter().any(|t| t.pid == 0 && t.tid == 0));
+    }
+
+    #[test]
+    fn the_scheduler_lives_under_its_machine_not_beside_it() {
+        // Scheduling describes a machine's cores, so it is a child of the
+        // machine track rather than a peer of it, and its cores follow.
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 10, 0, 10, 0));
+        idx.insert(sched(1, 11, 0, 10, 1));
+        idx.insert(ev(kind::API_SCOPE, 1, 100, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        let machine = ids
+            .iter()
+            .position(|id| matches!(id, RowId::Machine(_)))
+            .expect("a machine row");
+        let scheduler = ids
+            .iter()
+            .position(|id| *id == RowId::Scheduler)
+            .expect("a scheduler row");
+        assert!(machine < scheduler, "scheduler must sit under its machine: {ids:?}");
+        // The process for that machine comes after the scheduler's cores.
+        let process = ids
+            .iter()
+            .position(|id| matches!(id, RowId::Process(_)))
+            .expect("a process row");
+        assert!(scheduler < process, "cores come before processes: {ids:?}");
+    }
+
+    #[test]
+    fn collapsing_the_machine_hides_its_scheduler() {
+        // The test of real nesting: the parent's collapse must take the
+        // scheduler and its cores with it.
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(1, 10, 0, 10, 0));
+        idx.insert(sched(1, 11, 0, 10, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert!(strip.rows().iter().any(|r| r.id == RowId::Scheduler));
+
+        strip.toggle(RowId::Machine(MachineId::Local));
+        strip.tick(1.0, &idx, None);
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        assert!(
+            !ids.iter().any(|id| *id == RowId::Scheduler),
+            "collapsing the machine must hide the scheduler: {ids:?}"
+        );
+        assert!(
+            !ids.iter().any(|id| matches!(id, RowId::Lane(k) if k.is_scheduler())),
+            "and its core lanes: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn a_scheduling_only_capture_still_shows_its_machine() {
+        // Cores can arrive before any process track exists; the capture must
+        // not look empty.
+        let mut idx = TrackIndex::default();
+        idx.insert(sched(9, 99, 0, 10, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let ids: Vec<RowId> = strip.rows().iter().map(|r| r.id).collect();
+        assert_eq!(ids[0], RowId::Machine(MachineId::Local));
+        assert_eq!(ids[1], RowId::Scheduler);
     }
 
     #[test]
@@ -1272,7 +1809,10 @@ mod tests {
             .collect();
         assert_eq!(cores, vec![0, 1, 2, 3, 4]);
         assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 5);
-        assert_eq!(strip.rows()[0].id, RowId::Scheduler);
+        // Scheduling belongs to a machine, so the machine heads the list and
+        // the Scheduler row sits under it.
+        assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
+        assert_eq!(strip.rows()[1].id, RowId::Scheduler);
     }
 
     #[test]
@@ -1331,7 +1871,8 @@ mod tests {
         );
         assert!(strip.process_order.is_empty());
         assert_eq!(TrackStrip::scheduler_core_count_in(&idx), 2);
-        assert_eq!(strip.rows()[0].id, RowId::Scheduler);
+        assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
+        assert_eq!(strip.rows()[1].id, RowId::Scheduler);
         assert!(!strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
         assert!(!strip.rows().iter().any(|r| matches!(r.id, RowId::Process(_))));
     }
@@ -1358,5 +1899,90 @@ mod tests {
         strip.tick(1.0, &idx, None);
         assert_eq!(strip.hidden_in_process(1), 0);
         assert!(strip.thread_order.contains(&th));
+    }
+
+    /// Per-frame cost of the track layout on a large sampled capture.
+    /// Run with `cargo test --release layout_bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn layout_bench() {
+        // 4 processes x 25 threads; each thread carries a 40-deep flame graph
+        // (one lane per depth), a sample bar, and a thread-state bar: the
+        // shape a sampled capture of a busy process has.
+        let mut idx = TrackIndex::default();
+        let mut threads = 0u32;
+        for pid in 10..14u32 {
+            for t in 0..25u32 {
+                let tid = 1000 + pid * 100 + t;
+                threads += 1;
+                for depth in 0..40u8 {
+                    idx.insert(LiveEvent {
+                        start_ns: 0,
+                        duration_ns: 10,
+                        tid,
+                        pid,
+                        kind: kind::FUNCTION_CALL,
+                        depth,
+                        extra: 0,
+                        _pad: 0,
+                        name_id: 1,
+                    });
+                }
+                for k in [kind::SAMPLE, kind::THREAD_STATE] {
+                    idx.insert(LiveEvent {
+                        start_ns: 0,
+                        duration_ns: 10,
+                        tid,
+                        pid,
+                        kind: k,
+                        depth: 0,
+                        extra: 0,
+                        _pad: 0,
+                        name_id: 1,
+                    });
+                }
+            }
+        }
+        let lanes = idx.lane_count();
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let iters = 50;
+        let t = std::time::Instant::now();
+        for _ in 0..iters {
+            strip.sync(&idx, None);
+            strip.tick(0.016, &idx, None);
+        }
+        let frame_ms = t.elapsed().as_secs_f64() * 1e3 / iters as f64;
+        // With a process filter, as a live capture of one process runs.
+        let t = std::time::Instant::now();
+        for _ in 0..iters {
+            strip.sync(&idx, Some(11));
+            strip.tick(0.016, &idx, Some(11));
+        }
+        let filtered_ms = t.elapsed().as_secs_f64() * 1e3 / iters as f64;
+        strip.sync(&idx, None);
+        strip.tick(0.016, &idx, None);
+        let total_h = strip.total_height();
+        let t = std::time::Instant::now();
+        let mut hits = 0usize;
+        for i in 0..iters {
+            let y = total_h * (i as f32 + 0.5) / iters as f32;
+            if strip.hit_at_y(y).is_some() {
+                hits += 1;
+            }
+        }
+        let hit_us = t.elapsed().as_secs_f64() * 1e6 / iters as f64;
+        let t = std::time::Instant::now();
+        let mut n = 0usize;
+        for _ in 0..1_000 {
+            n += idx.event_count();
+        }
+        let count_us = t.elapsed().as_secs_f64() * 1e6 / 1_000.0;
+        println!("LAYOUT_BENCH threads={threads} lanes={lanes} rows={}", strip.rows().len());
+        println!("LAYOUT_BENCH sync_plus_tick_ms_per_frame={frame_ms:.3}");
+        println!("LAYOUT_BENCH sync_plus_tick_filtered_ms_per_frame={filtered_ms:.3}");
+        println!("LAYOUT_BENCH hit_at_y_us={hit_us:.1} (hits {hits})");
+        println!("LAYOUT_BENCH event_count_us={count_us:.2} (checksum {n})");
     }
 }

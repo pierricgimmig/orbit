@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LLVM Is Gone</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 05</p>
+    <h1>LLVM Is Gone</h1>
+    <p class="dek">The thing the whole port was for. Post 04 said PDB was blocked; it wasn't, and the correction is the most useful part of this one.</p>
+    <p class="byline">Stages 2d, 2g and 2h &middot; <a href="metrics/phase-2h-cold-build.txt">build timing</a> &middot; <a href="metrics/phase-2h-llvm-removed.json">phase-2h-llvm-removed.json</a></p>
+
+    <div class="stats">
+      <div class="stat"><b>0</b><span>LLVM dependents</span></div>
+      <div class="stat"><b>&minus;34%</b><span>Cold build</span></div>
+      <div class="stat"><b>&minus;2,191</b><span>ObjectUtils lines</span></div>
+      <div class="stat"><b>16.3M</b><span>Symbols verified</span></div>
+      <div class="stat"><b>71</b><span>Rust tests</span></div>
+      <div class="stat"><b>0</b><span>C++ tests edited</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Post 04 ended by saying stage 2g was blocked on reimplementing LLVM's CodeView type-name renderer, and that this made the whole goal unreachable. That was wrong. The renderer is about two hundred lines, and once it existed, line info fell too, and then there was nothing keeping LLVM in the tree.</p>
+
+  <h2 id="wrong">The assessment that was wrong</h2>
+
+  <p>I had measured the right things. The <code>pdb</code> crate read Orbit's test file exactly — GUID, age, 5,459 procedures, every address and size. Only the <em>names</em> were missing their argument lists, because <code>PdbFileLlvm</code> appends <code>LazyRandomTypeCollection::getTypeName</code> of the function's argument list, and that is LLVM's CodeView type-name renderer.</p>
+
+  <p>What I got wrong was the size of that. I wrote "a bounded, nameable project, but it is a project". It is <code>TypeNameComputer</code> plus <code>TypeIndex::simpleTypeName</code>: a switch over a dozen record kinds and a forty-entry table of primitive names.</p>
+
+  <p>And <code>PdbFileTest</code> turns out to be a <em>specification</em> of it. Whoever wrote it put one construct per symbol, deliberately:</p>
+
+  <pre><code>PrintString(<span class="k">const char*</span>)
+TakesVolatileInt(<span class="k">volatile int</span>)
+TakesFooReference(<span class="k">Foo&amp;</span>)
+TakesFooRValueReference(<span class="k">Foo&amp;&amp;</span>)
+TakesConstPtrToInt(<span class="k">int* const</span>)
+TakesReferenceToIntPtr(<span class="k">int*&amp;</span>)
+TakesVolatilePointerToConstUnsignedChar(<span class="k">const unsigned char* volatile</span>)
+TakesVoidFunctionPointer(<span class="c">void (int)*</span>)        <span class="c">// the test notes LLVM gets these wrong</span>
+TakesMemberFunctionPointer(<span class="c">const char* Foo::(int) Foo::*, Foo</span>)</code></pre>
+
+  <p>All of them pass. Matching LLVM means reproducing the two the test itself flags as wrong, which the renderer does.</p>
+
+  <div class="note warn">
+    <span class="note-label">Worth being precise about</span>
+    <p>I did not discover new information and change my mind. The measurement in post 04 was correct and complete; I drew a conclusion from it that was too pessimistic, and only found out because someone said "try again". An estimate stated as a blocker becomes one.</p>
+  </div>
+
+  <h2 id="corpus">Four more rounds of the corpus</h2>
+
+  <p>The renderer got the unit tests right immediately. The corpus, as usual, did not agree.</p>
+
+  <div class="hurdle warn wide">
+    <span class="num">16 · pdb</span>
+    <h3>An array renders as its name, which is empty</h3>
+    <p><code>TypeNameComputer</code> renders an array by the record's <em>name</em> field, which MSVC leaves blank — so a reference to <code>char[261]</code> is <code>&amp;</code>, not <code>char&amp;</code>. Matching LLVM meant rendering nothing.</p>
+  </div>
+
+  <div class="hurdle warn wide">
+    <span class="num">17 · pdb</span>
+    <h3><code>nullptr_t</code>, wrong in both directions</h3>
+    <p><code>TypeIndex::NullptrT()</code> is Void with <code>SimpleTypeMode::NearPointer</code> — <code>0x0103</code>. Plain <code>void*</code> on x64 is <code>NearPointer64</code>, <code>0x0603</code>. I guessed <code>0x0603</code> first, which rendered <code>nullptr_t</code> as <code>void*</code>; corrected it too far and rendered every void pointer as <code>std::nullptr_t</code>. Two consecutive corpus runs, one wrong answer each, each naming the exact symbol.</p>
+    <p>The special indices also have to be checked <em>before</em> the type stream, or a <code>nullptr_t</code> that also exists as a record renders through the table anyway.</p>
+  </div>
+
+  <div class="hurdle solved wide">
+    <span class="num">18 · pdb</span>
+    <h3>PDB names are MSVC-mangled</h3>
+    <p>Obvious in hindsight. <code>llvm::demangle</code> dispatches <code>?</code>-prefixed names to <code>microsoftDemangle</code>, and <code>abi::__cxa_demangle</code> knows nothing about them. <code>msvc-demangler</code> is a port of LLVM's own <code>MicrosoftDemangle.cpp</code>, which is why it matches — on all but one symbol in 12,420, a <code>vtordisp</code> thunk whose <code>$4…</code> encoding it rejects.</p>
+  </div>
+
+  <h2 id="lineinfo">And then line info, which post 03 had given up on</h2>
+
+  <p>With the same technique — reproduce LLVM's rules rather than trust a library's — the thing that stopped stage 2d came apart. The fix was to stop using <code>addr2line</code>'s pre-joined path and walk the line table with <code>gimli</code> directly, applying <code>getFileNameByIndex</code>'s rules.</p>
+
+  <p>Two findings, and they are a matched pair worth putting side by side:</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 268" role="img" aria-label="Two adjacent methods read the same DIE tree in opposite directions. GetLineInfo for an address inside an inlined call must report the outermost frame, the call site in the caller. GetDeclarationLocationOfFunction must report the innermost DIE, where the inlined callee is declared. Getting either backwards produces a plausible line number from the wrong function.">
+        <text x="8" y="18" font-size="10.5" font-family="monospace" fill="var(--muted)">one address, inside an inlined call &middot; two adjacent methods &middot; opposite answers</text>
+
+        <!-- the tree -->
+        <rect x="8" y="34" width="200" height="200" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <text x="22" y="54" font-size="11" font-weight="600" fill="currentColor">DIE tree</text>
+        <text x="30" y="80" font-size="10.5" fill="currentColor">compile_unit</text>
+        <text x="48" y="102" font-size="10.5" fill="currentColor">subprogram main</text>
+        <text x="48" y="118" font-size="9.5" fill="var(--muted)">decl_line 67</text>
+        <text x="66" y="142" font-size="10.5" fill="currentColor">inlined_subroutine</text>
+        <text x="66" y="158" font-size="9.5" fill="var(--muted)">call_line 13</text>
+        <text x="66" y="174" font-size="9.5" fill="var(--muted)">abstract_origin &rarr; decl_line 410</text>
+        <text x="84" y="198" font-size="10.5" fill="var(--accent)">&larr; the address is here</text>
+        <text x="30" y="222" font-size="9.5" fill="var(--muted)">line-table row says line 10</text>
+
+        <!-- line info -->
+        <line x1="212" y1="100" x2="256" y2="100" stroke="var(--accent)" stroke-width="1.4"/>
+        <rect x="260" y="70" width="250" height="62" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="274" y="90" font-size="11" font-weight="600" fill="var(--accent)">GetLineInfo</text>
+        <text x="274" y="107" font-size="9.5" fill="currentColor">outermost frame &rarr; the call site</text>
+        <text x="274" y="122" font-size="10.5" font-family="monospace" fill="currentColor">line 13</text>
+        <text x="522" y="96" font-size="9.5" fill="var(--muted)">the row says 10; symbolizeInlinedCode</text>
+        <text x="522" y="110" font-size="9.5" fill="var(--muted)">takes the *last* frame, so the caller wins</text>
+
+        <!-- declaration -->
+        <line x1="212" y1="180" x2="256" y2="180" stroke="var(--hold)" stroke-width="1.4"/>
+        <rect x="260" y="150" width="250" height="62" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.5"/>
+        <text x="274" y="170" font-size="11" font-weight="600" fill="var(--hold)">GetDeclarationLocationOfFunction</text>
+        <text x="274" y="187" font-size="9.5" fill="currentColor">innermost DIE &rarr; the callee's declaration</text>
+        <text x="274" y="202" font-size="10.5" font-family="monospace" fill="currentColor">line 410</text>
+        <text x="522" y="176" font-size="9.5" fill="var(--muted)">getSubroutineForAddress indexes inlined</text>
+        <text x="522" y="190" font-size="9.5" fill="var(--muted)">subroutines too, and the deepest wins</text>
+
+        <line x1="8" y1="246" x2="772" y2="246" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+        <text x="8" y="262" font-size="10.5" fill="currentColor">I got each of these backwards once. Both wrong answers are <tspan font-style="italic">plausible line numbers from a real function</tspan> — which is why only a value comparison finds them.</text>
+      </svg>
+    </div>
+    <figcaption><b>The same tree, read in opposite directions, one method apart.</b> Neither mistake produces anything that looks wrong: you get a real line number from a real function, just not the one LLVM would have given. Nothing short of running both implementations over the same binaries distinguishes them.</figcaption>
+  </figure>
+
+  <p>There was a third, smaller one in between: <code>gimli</code> parses <code>DW_AT_call_file</code> as <code>AttributeValue::FileIndex</code>, which <code>udata_value()</code> does not unwrap. Every inlined call was silently falling through to the callee's line because one attribute read returned <code>None</code>.</p>
+
+  <h2 id="deleted">Stage 2h</h2>
+
+  <p>With every method on Rust and the corpus clean, the deletion was mechanical:</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead>
+        <tr><th>Measure</th><th>Baseline</th><th>Now</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>//bazel/deps:llvm</code> dependents</td><td class="v">1</td><td class="v down">0</td><td class="down">deleted</td></tr>
+        <tr><td>Files including an <code>llvm/</code> header</td><td class="v">11</td><td class="v down">0</td><td class="down">&minus;11</td></tr>
+        <tr><td><code>bazel/patches/</code></td><td class="v">3</td><td class="v down">1</td><td class="down">both LLVM patches</td></tr>
+        <tr><td><code>bazel_dep</code> count</td><td class="v">14</td><td class="v down">13</td><td class="down">&minus;1</td></tr>
+        <tr><td><code>ObjectUtils</code> implementation lines</td><td class="v">3,680</td><td class="v down">1,489</td><td class="down">&minus;2,191</td></tr>
+        <tr><td><code>deps(//src/Service:OrbitService)</code></td><td class="v">22,220</td><td class="v down">21,237</td><td class="down">&minus;983</td></tr>
+        <tr><td>Cold build of <code>ObjectUtils</code></td><td class="v">158.7s</td><td class="v down">104.6s</td><td class="down">&minus;34%</td></tr>
+        <tr><td>&nbsp;&nbsp;critical path</td><td class="v">68.3s</td><td class="v down">48.3s</td><td class="down">&minus;29%</td></tr>
+        <tr><td>&nbsp;&nbsp;actions</td><td class="v">3,324</td><td class="v down">2,531</td><td class="down">&minus;793</td></tr>
+        <tr><td><code>deps(//src/ObjectUtils)</code></td><td class="v">5,843</td><td class="v up">7,173</td><td class="up">+1,330</td></tr>
+        <tr><td>&nbsp;&nbsp;external repositories</td><td class="v">17</td><td class="v up">99</td><td class="up">+82</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Those last two rows are the honest cost. <code>ObjectUtils</code> gained an entire Rust toolchain it did not have before, and at the module level that is a bigger graph than LLVM was. At the binary level the trade is already positive, because the WebAssembly viewer had brought the toolchain in regardless — <code>OrbitService</code>'s dependency graph is smaller by 983 targets.</p>
+
+  <p>The build-time number is the one that will be felt. A cold <code>ObjectUtils</code> build was two and a half minutes and is now under two, and the critical path — what a developer actually waits for — dropped by a third.</p>
+
+  <h2 id="cost">What it cost</h2>
+
+  <p>Three rendering differences are now production behaviour. They were measured before the switch was flipped, not after:</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Difference</th><th>Rate</th><th>What it looks like</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Demangled names</td><td class="v">3,426 / 17,152,735 &nbsp;<strong>0.020%</strong></td><td>llvm writes <code>'lambda'()</code>, libstdc++ writes <code>{lambda()#1}</code></td></tr>
+        <tr><td>Source paths</td><td class="v">2 / 1,235 &nbsp;<strong>0.162%</strong></td><td><code>sigaction.c</code> versus <code>../sysdeps/unix/sysv/linux/x86_64/sigaction.c</code></td></tr>
+        <tr><td>PDB names</td><td class="v">1 / 12,420 &nbsp;<strong>0.008%</strong></td><td>one <code>vtordisp</code> thunk that stays mangled</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Everything structural — addresses, sizes, hotpatchability, symbol counts, symbol ordering, and every line number — is identical across 16.3 million symbols from every binary on the machine.</p>
+
+  <p>The other cost is the one that is easy to miss. <strong>Deleting the C++ deletes the comparison.</strong> <code>ORBIT_OBJECT_BACKEND=both</code> is what found essentially every bug in this port — eighteen of them across five posts, most unreachable from the curated test data — and it only worked because there were two implementations. The differential tool is now a smoke test: it reads 4,709 files and reports what it read, and the counts must not move without explanation. To compare against LLVM again you check out <code>c7c4e6566</code>.</p>
+
+  <h2 id="ledger">The whole thing, in numbers</h2>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead>
+        <tr><th>Goal, as the plan stated it</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Correctness</strong> &mdash; the existing suite in three modes, a differential corpus, fuzz parity, no test file edited</td>
+          <td class="down">16.3M symbols, 12,420 PDB symbols and 1,235 line lookups compared against LLVM with zero structural disagreements. <strong>Not one C++ test edited</strong>, across 21 commits.</td>
+        </tr>
+        <tr>
+          <td><strong>Performance</strong> &mdash; measured, no regression permitted</td>
+          <td class="down"><code>ParseMaps</code> 1.75&times;. ELF metadata parse 6.5&times; to 50&times;, growing with file size.</td>
+        </tr>
+        <tr>
+          <td><strong>Ease of build</strong> &mdash; LLVM's compile off the critical path, patches gone</td>
+          <td class="down">Cold build &minus;34%, critical path &minus;29%, both LLVM patches deleted, the version pin that existed only because the registry had nothing newer is gone.</td>
+        </tr>
+        <tr>
+          <td><strong>Shrinking dependencies</strong> &mdash; <code>//bazel/deps:llvm</code> to zero dependents</td>
+          <td class="down">Zero. <code>OrbitService</code>'s graph &minus;983 targets. <code>ObjectUtils</code>'s own graph is larger, and that is stated in every post.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Five external Rust crates do the work that six LLVM libraries did: <code>object</code>, <code>gimli</code>, <code>pdb</code>, <code>msvc-demangler</code> and <code>flate2</code>. Two things deliberately stayed C++ because porting them would have removed nothing — <code>abi::__cxa_demangle</code> and Orbit's own protobuf post-processing.</p>
+
+  <h2 id="next">What is left</h2>
+
+  <p><code>ObjectUtils</code> and <code>ModuleUtils</code> are done. Phase 3 — the seven pure-logic classes in <code>LinuxTracing</code>, 1,355 implementation lines against 3,053 lines of test — has not started, and it is independent of everything here.</p>
+
+  <p>The one thing worth carrying forward is not a technique, it is a number: <strong>eighteen divergences, of which the repository's own test suite would have caught none.</strong> Every one came from running two implementations over binaries that happened to be on the machine. That is ninety seconds of compute per run, and it is the only reason any of the figures above are worth printing.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 05 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="04-two-predicates-one-header.html">&larr; Post 04</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+</body>
+</html>

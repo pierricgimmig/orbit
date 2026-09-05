@@ -1,0 +1,63 @@
+Phase 7m -- callstacks in the UI, and a sampling report (2026-08-31)
+====================================================================
+
+Two pieces of Orbit's sampling UX, built server-side.
+
+1. Symbolized callstacks on the timeline
+-----------------------------------------
+The capture thread now opens a sampling ring per thread of the target,
+unwinds each sample with orbit-unwind, symbolizes it, and pushes one
+FUNCTION_CALL span per frame, one sampling period wide, at its stack depth.
+Frames are reversed on the way in: the unwinder yields innermost first, a
+flame graph wants the outermost caller at depth 0.
+
+Symbolization reuses ported readers rather than adding anything: orbit-maps
+for the executable mappings and load bias, orbit-object for the ELF symbol
+tables (.symtab, falling back to .dynsym for stripped libraries). It degrades
+in steps -- function name, else module+0xoffset, else the bare address --
+because a flame graph with holes is worse than one with coarse labels.
+
+Measured: 6 modules, 5,999 symbols, 162,630 events, none dropped.
+
+2. A sampling report over a selection
+--------------------------------------
+GET /api/sampling/report?start_ns=&end_ns= aggregates the sampled callstacks
+in a time range, with the two counts Orbit shows:
+  self      -- samples whose INNERMOST frame is this function
+  inclusive -- samples with this function ANYWHERE on the stack
+A function is counted once per sample for the inclusive figure, so recursion
+cannot report more inclusive samples than were taken.
+
+The endpoint is additive on the server: a separate optional hook
+(set_sampling_report) rather than a new ControlHooks field, so the C++ FFI
+that builds ControlHooks compiles untouched and simply gets 501.
+
+Verified against a recursive Python workload, 3,981 samples:
+  self%  incl%  function
+    0.0  100.0  __libc_start_main        <- on every stack, never the leaf
+    0.0  100.0  libc.so.6+0x2a600
+    4.1    4.1  python3.14+0x1136c5      <- a leaf
+That shape is the report being right: callers carry inclusive time and no
+self time, leaves carry both.
+
+A misreading worth recording
+-----------------------------
+The first look at the report showed self% == inclusive% for every row and I
+took it as "the unwinder is returning single-frame stacks". It was not: the
+report is sorted by self, so the top rows are all leaves, whose inclusive
+equals their self by definition. Sorting by inclusive showed the 100%/0%
+callers immediately. Checking the same process through the file-capture path
+(11-12 frame stacks) would have settled it faster -- and did.
+
+Unsymbolized frames read as `python3.14+0x1136c5` because the distro Python
+is stripped. That matches what Orbit shows for unsymbolized addresses, but it
+does fragment the report: two samples in the same function at different
+instruction offsets are different rows. Reading .gnu_debuglink to pick up
+separate debug files (orbit-object already parses it) is the fix, and is not
+done yet.
+
+Still to build: the per-thread sample bar (one vertical line per sample) and
+a selection-driven report panel in the viewer. Those are wasm front-end
+changes -- a new event kind in orbit-live-event, drawing in
+orbit-live-render, and a panel in orbit-live-viewer -- plus a pack rebuild
+with the nightly + -Z build-std toolchain its build_wasm.sh requires.

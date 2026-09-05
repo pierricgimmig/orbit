@@ -1,0 +1,79 @@
+Phase 15: a render pass with the self profile, and what it found
+================================================================
+
+Measured 2026-09-05 on the dev box, headless Chrome (SwiftShader, so the
+browser's own frame period is 120-170 ms and says nothing; the viewer's
+CPU phases are what is compared), Box3D --threads 3, a 4 s capture with
+symbols, sampling at 1 kHz, DWARF. Self pane open throughout, which adds
+its own timeline (SelfPane ~0.35 ms) to every frame. Script:
+scratch measure2.py (the e2e harness's Chrome + Service, __orbit_self).
+
+New instrumentation this pass: frame_period_us / outside_frame_us (egui's
+dt against the outermost Frame scope: everything eframe, WebGPU submit and
+the compositor cost, invisible to the viewer's scopes), gpu_prepare_us /
+gpu_paint_us (CPU time inside the egui-wgpu callbacks, read one frame
+late), SelfTimeline / SelfPane / ReportPanel scopes.
+
+Before (commit d61a44bb8):
+
+  state                    Frame    listing/frame  listing avg  ReportPanel
+  fit, idle                4221 us  1.3            1037 us      (inside Frame, unscoped: ~0.8 ms)
+  zoomed x6, pointer still 3271 us  0.6            1109 us
+  zoomed, pointer moving   2541 us  0.3            1109 us
+  panning (D held)         2439 us  0.2            1130 us
+  live capture, follow     2596 us  0.1            1130 us
+
+Three findings, three fixes:
+
+1. The follow ease never lands. `t0 += (target - t0) * k` converges but
+   never reaches the target in integer nanoseconds: 234, 121, 61, 32, 16,
+   9, 4 ns a frame for a second after the live edge stops, and every one
+   of those is a new window, a full listing of 20,000 primitives and a
+   full upload of a still picture. Fix: snap when both edges are within
+   an eighth of a pixel. Idle listing per frame: 1.3 -> 0.2.
+
+2. The listing hashed every instance's name string every frame:
+   `color_for` did an intern lookup (SipHash) plus an FNV over the name
+   bytes per instance, a third of the walk. The intern table now stores
+   the name hash at insert and the id map uses a one-multiply hasher.
+   Listing of 15,000 primitives: 1109 -> 734 us (-34%).
+
+3. The sampling report's egui grid: 200 rows x 5 widgets laid out every
+   frame, 0.81 ms, forty percent of an idle frame, whatever the panel
+   showed. The Flat report is now laid out by hand like the Functions
+   view, only the rows in the clip rect, every row listed (no 200 cap).
+   ReportPanel: 810 -> 190 us. The sort comparators also stopped
+   allocating a lowercase copy per comparison.
+
+After (this commit):
+
+  state                    Frame    ReportPanel  listing avg  SelfPane
+  fit, idle                1383 us  203 us       258 us       358 us
+  zoomed x6, pointer still 1503 us  190 us       841 us       337 us
+  zoomed, pointer moving   1318 us  182 us       --           336 us
+  panning (D held)         1330 us  180 us       878 us       340 us
+  live capture, follow     1588 us  175 us       --           355 us
+
+Frame: 4.2 -> 1.4 ms idle, 3.3 -> 1.5 ms zoomed, 2.6 -> 1.6 ms live. A
+third of what remains is the Self pane itself, which a user never has
+open; without it the viewer's CPU frame is about 1 ms.
+
+Also in this pass: sampled frames are no longer laid out on the thread
+tracks (commit d61a44bb8), which took the Box3D capture from ~200,000
+primitives to ~15,000 zoomed in and 58 at fit.
+
+Still on the table, by size:
+- PrimitiveListing when it runs: 0.8 ms for 15k instances, of which
+  PoolDispatch (worker hand-off, walk and join) is most; the ListingCache
+  reuses lanes only when the window is unchanged, so a pan re-walks
+  every lane. A per-lane cache keyed on the lane's version with the
+  x-transform applied at upload (a uniform, not a re-walk) would make a
+  pan free.
+- Rasterize 0.18-0.36 ms per pixel-LOD frame (RasterWalk + ToRgba8 +
+  RemapTheme); the theme remap could be folded into the walk.
+- Chrome 0.16 ms: the transport and capture strip, laid out every frame.
+- gpu_prepare 0.1-0.36 ms: the instance buffer write, proportional to
+  the instances uploaded; a Flags-only change re-packs the whole buffer.
+- The browser side (outside_frame_us) is unmeasurable headless; on a real
+  GPU it is the egui tessellation and the WebGPU submit. Worth a look
+  with the browser's own profiler on the user's machine.

@@ -18,10 +18,13 @@ mod app;
 mod chrome_load;
 #[cfg(feature = "egui")]
 mod dev;
+mod live;
+mod local_report;
 #[cfg(feature = "egui")]
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;
+mod self_pane;
 #[cfg(feature = "egui")]
 mod theme;
 #[cfg(feature = "egui")]
@@ -156,7 +159,11 @@ impl LiveViewer {
             LiveFrame::CaptureStarted { .. } => {
                 self.index.clear();
             }
-            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } | LiveFrame::Status { .. } => {}
+            LiveFrame::CaptureFinished
+            | LiveFrame::Hello { .. }
+            | LiveFrame::Status { .. }
+            | LiveFrame::ThreadName { .. }
+            | LiveFrame::ProcessName { .. } => {}
         }
     }
 }

@@ -1,0 +1,92 @@
+Three build systems, one project: pre-Bazel CMake, Bazel, and cargo
+
+Measured 2026-09-01 on Linux 7.0.0-30-generic, 24 cores / 32 threads.
+Pre-Bazel tree: commit 91c8ae9d1 (parent of 3ce7b3609, "Port Orbit to Bazel").
+
+=============================================================================
+1. Pre-Bazel CMake + conan: NOT MEASURED, and why
+=============================================================================
+Attempted: git worktree at 91c8ae9d1, cmake -DCMAKE_BUILD_TYPE=Release.
+Result: configure fails before a single file compiles.
+
+  CMake Error at cmake/FindLLVM.cmake:21 (find_package):
+    Could not find a package configuration file provided by "LLVM"
+    (requested version 12)
+
+That build sourced its dependencies from *system packages*, not from the
+repository. Its CI installed 24 apt packages -- llvm-dev, qtbase5-dev,
+libgrpc++-dev, libcapstone-dev, libvulkan-dev and the rest -- plus 12 conan
+requirements on top. None of the LLVM, Qt5, gRPC or capstone development
+packages are installed on this machine, and installing them needs root.
+
+That is itself the finding. Both successors build here from a clean checkout
+with no privileged setup: Bazel fetches and compiles its own dependency tree,
+cargo fetches crates. The pre-Bazel build cannot be reproduced on a machine
+that builds both of its replacements without complaint. A build you cannot
+re-run is not a slow build, it is a lost one.
+
+What the old configuration says about its own cost, without running it:
+  CI job timeout                       360 minutes
+  ccache enabled, cache size            600 MB
+  apt packages required                     24
+  conan requirements                        12
+Compare the current CI: timeout-minutes is 20 for checks, 45 for the viewer.
+
+=============================================================================
+2. Bazel, C++ -- cold, `bazel build //src/...`
+=============================================================================
+Private output base, --disk_cache= (disabled). Dependency downloads excluded;
+external repositories were already fetched.
+
+  wall clock                     267.66 s   (4 min 28 s)
+  critical path                   80.91 s
+  actions executed                 9,150    (2,292 internal, 6,858 sandboxed)
+  targets built                      207
+  of which cc_test                    76
+  cc_library / cc_binary          75 / 15
+
+  For reference, the service alone in an earlier isolated run:
+  //src/Service:OrbitService       148.5 s, 4,506 actions
+
+This covers everything: the service, OrbitGl, the Qt UI (OrbitQt, with moc
+and uic), and every test target.
+
+=============================================================================
+3. Rust -- cold, all four workspaces, test binaries included
+=============================================================================
+Fresh CARGO_TARGET_DIR, `cargo test --no-run --release` in each workspace in
+turn. Sequential, sharing one target directory, which is how you would
+actually build the tree.
+
+  rust/ workspace (17 crates + tests)     13.86 s   2428% CPU
+  orbit-service (own workspace)           16.09 s    493% CPU
+  live-viewer server workspace            11.80 s   1432% CPU
+  orbit-live-viewer UI crate              33.03 s   2101% CPU
+  ------------------------------------------------------------
+  total                                   74.78 s
+
+=============================================================================
+4. Side by side
+=============================================================================
+                              C++ (Bazel)        Rust
+  cold build, everything        267.66 s        74.78 s     3.58x
+  units of work                 9,150 actions   23 crates
+  source lines                  175,817         41,816
+  translation units             685             n/a
+  test cases                    1,736 gtest     525 #[test]
+  third-party packages          13 bazel_dep    482 crates
+
+Two things this table does not say, and both matter.
+
+These are not the same program. The C++ tree is a complete profiler with a Qt
+desktop UI; the Rust tree is a service, a WASM viewer, and the ported
+libraries. 175,817 lines against 41,816 is most of the gap, and no build
+system closes a 4x difference in how much code there is.
+
+The Rust side has *more* third-party packages, not fewer: 482 crates against
+13 Bazel modules. The dependency count is not what makes it faster. What makes
+it faster is that each of those crates compiles exactly once and the graph
+parallelises -- the two heaviest steps ran at 2428% and 2101% CPU, roughly 24
+and 21 cores busy. C++ recompiles the same headers into every translation
+unit that includes them; 685 translation units is 685 re-expansions of a
+header set that includes abseil, gRPC and LLVM.

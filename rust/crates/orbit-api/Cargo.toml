@@ -1,0 +1,29 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Three shapes of the same library: rlib for Rust callers, staticlib for C and
+# C++ to link, cdylib for Python to load with ctypes.
+[lib]
+name = "orbit_api"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "orbit-scope-dump"
+path = "src/bin/orbit-scope-dump.rs"
+
+[[bin]]
+name = "orbit-scope"
+path = "src/bin/orbit-scope.rs"
+
+[dependencies]
+libc = "0.2"
+orbit-scope-ring = { path = "../orbit-scope-ring" }

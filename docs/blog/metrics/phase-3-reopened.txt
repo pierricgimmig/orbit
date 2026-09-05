@@ -1,0 +1,29 @@
+Phase 3, reopened by decision (2026-08-31): port everything portable,
+accept the measured per-event FFI toll for now, fix later.
+
+All five portable LinuxTracing classes now run on Rust BY DEFAULT:
+
+  class                       switch                          cpp -> rust
+  PerfEventQueue              ORBIT_PERF_MERGE_BACKEND       63-72 -> 77-79 ns/event
+  ThreadStateManager          ORBIT_THREAD_STATES_BACKEND    ~13   -> ~31   ns/transition
+  ContextSwitchManager        ORBIT_TRACING_STATE_BACKEND    ~22   -> ~36   ns/in-out pair
+  UprobesFunctionCallManager  ORBIT_TRACING_STATE_BACKEND    (same toll shape; not separately benched)
+  UprobeAddressMap            ORBIT_TRACING_STATE_BACKEND    setup-time + one lookup per sample
+
+Checksums are identical between backends in every benchmark run; the
+gap is purely the fixed toll of an opaque cross-language call (~5-9 ns
+per call) that cannot inline, plus marshalling. In capture terms: a
+worst-case 1M sched events/s costs roughly 2% of one core.
+
+NOT ported, and why -- a dependency boundary, not a perf one:
+  UprobesReturnAddressManager, LeafFunctionCallManager: both are welded
+  to libunwindstack (MapInfo/Maps/Unwinder), which the original analysis
+  keeps behind its existing C++ interface by design.
+
+The path to zero toll, in order of preference:
+  1. Cross-language LTO: clang + linker-plugin LTO can inline Rust into
+     C++ callers. Blocked on the CI toolchain being gcc.
+  2. Move the boundary to the wire format: a Rust collector has no
+     per-event FFI because there is no C++ on the other side.
+The C++ twins stay in tree behind their switches until one of those
+lands; rollback is one environment variable per class.

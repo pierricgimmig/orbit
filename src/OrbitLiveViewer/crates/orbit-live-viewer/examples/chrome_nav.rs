@@ -83,6 +83,7 @@ fn time_nav(strip: &mut TrackStrip, idx: &TrackIndex, bounds: (u64, u64), label:
             CollectOpts {
                 y_cull: Some(YCull::new(y0, y0 + view_h)),
                 early_out: true,
+                inline: false,
             },
         );
     }
