@@ -1105,8 +1105,6 @@ fn machine_rank(machine_sort: &HashMap<MachineId, i32>, m: MachineId) -> i64 {
 fn process_rank(pid: u32) -> u8 {
     if pid == orbit_live_event::dev::VIEWER_PID {
         0
-    } else if pid == orbit_live_event::dev::SERVICE_PID {
-        1
     } else {
         2
     }

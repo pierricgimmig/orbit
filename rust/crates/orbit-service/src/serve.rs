@@ -1190,17 +1190,9 @@ pub fn run_on(
         bind: format!("{host}:{port}").parse().map_err(|_| "bad bind address".to_string())?,
         ring_buffer_bytes: 256 << 20,
         spill_path: None,
-        dev_self_profile: false,
         wire,
     };
     let service = LiveService::new(config)?;
-    // The live-viewer server can profile itself (its rasterize/timeline
-    // handlers, shown as pids 2/3). That is a viewer-development feature, and
-    // for someone capturing real processes it is pure noise -- worse, it runs
-    // on a clock relative to viewer start while a capture uses CLOCK_MONOTONIC,
-    // so the two never share a time axis and the view parks on the self-
-    // profile with the capture off-screen. Off, in serve mode.
-    service.disable_self_profile();
     intern_gpu_lane_names(&service);
     // The service instruments its own capture loop with the public API, so
     // it appears in the viewer as one more process using it. Failing here

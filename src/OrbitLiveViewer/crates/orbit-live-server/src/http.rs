@@ -13,7 +13,6 @@ use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
 use orbit_live_event::argb_to_css;
-use orbit_live_event::dev::RelScopeBatch;
 use orbit_live_render::{
     choose_lod, collect_instances, stack_height, TimelineLod, INSTANCE_MIN_PX,
 };
@@ -48,9 +47,6 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/functions/search", get(functions_search))
         .route("/api/demo/start", post(demo_start))
         .route("/api/demo/stop", post(demo_stop))
-        .route("/api/self/start", post(self_start))
-        .route("/api/self/stop", post(self_stop))
-        .route("/api/self/events", post(self_events))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
@@ -144,7 +140,6 @@ struct StatusBody {
     spill_path: Option<String>,
     http_bind: String,
     machine: String,
-    self_profile: bool,
     /// OrbitService control hooks are registered (real capture, not rust-only).
     hooks: bool,
     /// Dynamic-instrumentation outcome for the running capture; empty when
@@ -179,7 +174,6 @@ impl StatusBody {
             spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
             http_bind: cfg.bind.to_string(),
             machine: "local".into(),
-            self_profile: svc.self_profile_enabled(),
             hooks: svc.has_hooks(),
             instrumentation: svc.instrumentation_status(),
             // From the guard already held: `svc.wire()` would take the same
@@ -779,24 +773,6 @@ async fn demo_stop(State(svc): State<Arc<LiveService>>) -> Response {
     StatusCode::OK.into_response()
 }
 
-async fn self_start(State(svc): State<Arc<LiveService>>) -> StatusCode {
-    svc.enable_self_profile();
-    StatusCode::OK
-}
-
-async fn self_stop(State(svc): State<Arc<LiveService>>) -> StatusCode {
-    svc.disable_self_profile();
-    StatusCode::OK
-}
-
-async fn self_events(
-    State(svc): State<Arc<LiveService>>,
-    Json(body): Json<RelScopeBatch>,
-) -> StatusCode {
-    svc.apply_self_scopes(&body.scopes);
-    StatusCode::OK
-}
-
 async fn get_config(State(svc): State<Arc<LiveService>>) -> Json<ConfigBody> {
     let cfg = svc.config.lock().clone();
     Json(ConfigBody::from_config(&cfg))
@@ -906,7 +882,6 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
             }
         }
     }
-    let t_prof = std::time::Instant::now();
     let index = svc.cached_index();
     let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
     let t0 = q.t0.unwrap_or(auto0);
@@ -929,7 +904,7 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
     let lod = choose_lod(&index, t0, t1, width as usize, INSTANCE_MIN_PX);
     let height = stack_height(&index).ceil() as u32;
     let intern = svc.intern.lock();
-    let (instances, worker_spans) = if lod == TimelineLod::Instanced {
+    let instances = if lod == TimelineLod::Instanced {
         let frame = collect_instances(&index, t0, t1, width as f32, 0.0, Some(&*intern));
         let instances = frame
             .instances
@@ -943,12 +918,11 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
                 r: i.radius,
             })
             .collect();
-        (instances, frame.worker_spans)
+        instances
     } else {
-        (Vec::new(), Vec::new())
+        Vec::new()
     };
     drop(intern);
-    svc.apply_worker_spans(&worker_spans);
     let body = TimelineBody {
         lod: lod.as_str(),
         width,
@@ -968,7 +942,6 @@ fn timeline_body(svc: &LiveService, q: FrameQuery) -> TimelineBody {
         instance_count: body.instance_count,
         instances: body.instances.clone(),
     });
-    svc.maybe_emit_timeline_scope(t_prof.elapsed().as_nanos() as u64);
     body
 }
 
@@ -1130,7 +1103,6 @@ mod isolation_tests {
             bind: "127.0.0.1:0".parse().unwrap(),
             ring_buffer_bytes: 1024 * 32,
             spill_path: None,
-            dev_self_profile: false,
             wire: crate::WireFormat::default(),
         })
         .unwrap()
@@ -1295,9 +1267,6 @@ mod isolation_tests {
     async fn clearing_empties_the_ring_and_tells_viewers_to_start_over() {
         use orbit_live_protocol::{decode_frame, LiveFrame};
         let svc = test_service();
-        // The server profiles itself by default and would push its own
-        // scopes into the ring under test; count only what this test pushes.
-        svc.disable_self_profile();
         svc.push_events(&[orbit_live_event::LiveEvent {
             start_ns: 10, duration_ns: 5, tid: 1, pid: 1, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 1,
         }]);

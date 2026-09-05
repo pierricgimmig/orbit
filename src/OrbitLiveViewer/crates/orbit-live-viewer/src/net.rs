@@ -37,8 +37,6 @@ pub struct StatusJson {
     pub spill_path: Option<String>,
     #[serde(default = "default_machine")]
     pub machine: String,
-    #[serde(default)]
-    pub self_profile: bool,
     /// The pid the running or last capture targets; 0 when none.
     #[serde(default)]
     pub target_pid: u32,
@@ -881,13 +879,6 @@ mod wasm_impl {
             self.send("POST", "/api/demo/stop", "{}".into());
         }
 
-        pub fn start_self(&self) {
-            if self.offline {
-                return;
-            }
-            self.send("POST", "/api/self/start", "{}".into());
-        }
-
         /// Empties the capture on the service; the ring's reset comes back
         /// over the WebSocket.
         pub fn clear_capture(&self) {
@@ -930,43 +921,6 @@ mod wasm_impl {
                 if let Err(e) = result {
                     inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(format!("open capture: {e}"));
                 }
-            });
-        }
-
-        pub fn stop_self(&self) {
-            if self.offline {
-                return;
-            }
-            self.send("POST", "/api/self/stop", "{}".into());
-        }
-
-        pub fn push_self_scopes(&self, scopes: &[orbit_live_event::dev::RelScope]) {
-            if self.offline {
-                return;
-            }
-            if scopes.is_empty() {
-                return;
-            }
-            if self
-                .self_busy
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_err()
-            {
-                return;
-            }
-            let Ok(body) = serde_json::to_string(&orbit_live_event::dev::RelScopeBatch {
-                scopes: scopes.to_vec(),
-            }) else {
-                self.self_busy.store(false, Ordering::Relaxed);
-                return;
-            };
-            let inbox = self.inbox.clone();
-            let busy = self.self_busy.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(e) = send_text("POST", "/api/self/events", &body).await {
-                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(e);
-                }
-                busy.store(false, Ordering::Relaxed);
             });
         }
 

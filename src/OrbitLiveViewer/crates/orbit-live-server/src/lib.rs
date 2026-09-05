@@ -3,23 +3,15 @@
 pub mod demo;
 pub mod http;
 
-use std::cell::Cell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use orbit_live_event::dev::{
-    align_self_cursor, batch_span, render_worker_label, render_worker_tid, stamp_batch_from,
-    RelScope, NAME_CHROME, NAME_COLLECT_LANE, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD,
-    NAME_PRIMITIVE_LISTING, NAME_PUSH, NAME_RASTER, NAME_RASTER_LANE, NAME_TIMELINE_API,
-    NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
-};
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
 pub use orbit_live_protocol::{decode_frame, encode_event_batch_with, WireFormat};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
-use orbit_live_render::{TrackIndex, WorkerSpan};
+use orbit_live_render::TrackIndex;
 use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
@@ -29,9 +21,6 @@ use tokio::sync::broadcast;
 /// slice of these -- the multi-select union.
 pub type SampleRangeSpec = (u64, u64, Option<u32>);
 
-thread_local! {
-    static IN_SELF: Cell<bool> = const { Cell::new(false) };
-}
 
 pub const DEFAULT_HTTP_PORT: u16 = 44766;
 pub const DEFAULT_RING_BYTES: u64 = 64 * 1024 * 1024;
@@ -74,7 +63,6 @@ pub struct ServerConfig {
     pub spill_path: Option<PathBuf>,
     /// `--dev-self-profile` / `ORBIT_LIVE_DEV=1`. Self-profile is on by default;
     /// the viewer Dev pill / `?dev=0` still toggles via `/api/self/*`.
-    pub dev_self_profile: bool,
     /// How event batches go out on the WebSocket. `--wire raw|packed|deflate`
     /// / `ORBIT_LIVE_WIRE`; packed by default.
     pub wire: WireFormat,
@@ -86,7 +74,6 @@ impl Default for ServerConfig {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HTTP_PORT)),
             ring_buffer_bytes: DEFAULT_RING_BYTES,
             spill_path: None,
-            dev_self_profile: false,
             wire: WireFormat::default(),
         }
     }
@@ -113,10 +100,6 @@ pub fn env_wire() -> WireFormat {
         .unwrap_or_default()
 }
 
-pub fn env_dev_self() -> bool {
-    matches!(std::env::var("ORBIT_LIVE_DEV").ok().as_deref(), Some("1"))
-}
-
 /// Optional hooks so OrbitService can list processes, load symbols, and
 /// start/stop a capture without the WASM client talking gRPC or parsing ELF.
 #[derive(Clone)]
@@ -138,7 +121,6 @@ pub struct LiveService {
     live_tx: broadcast::Sender<Vec<u8>>,
     pub capturing: AtomicBool,
     pub demo: AtomicBool,
-    pub self_profile: AtomicBool,
     pub hooks: Mutex<Option<ControlHooks>>,
     /// One line about dynamic instrumentation for the capture in progress:
     /// how many functions were armed, or why none were. The viewer shows it
@@ -205,11 +187,8 @@ pub struct LiveService {
     /// tracks without the process being alive.
     names: Mutex<CaptureNames>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
     data_gen: AtomicU64,
-    /// Incremented on self-profile pushes. Does not bust the timeline cache.
-    self_gen: AtomicU64,
     /// Capture/demo clock, ignoring self-profile events on the ring.
     live_end_ns: AtomicU64,
     /// When the current capture began on the capture clock, 0 until the
@@ -221,20 +200,12 @@ pub struct LiveService {
     dropped_before_start: AtomicU64,
     /// The pid the running (or last) capture targets; 0 when none.
     capture_pid: AtomicU64,
-    /// Next free ns on the self-profile axis. Only moves forward.
-    self_cursor_ns: AtomicU64,
-    /// `live_edge` at the last self-scope placement, so a frozen producer clock
-    /// can be told apart from an axis that jumped backwards.
-    self_edge_ns: AtomicU64,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
-    last_timeline_prof: Mutex<Option<Instant>>,
 }
 
 struct CachedIndex {
     data_gen: u64,
-    self_gen: u64,
-    built_at: Instant,
     index: Arc<TrackIndex>,
 }
 
@@ -288,7 +259,6 @@ impl LiveService {
         let ring = EventRing::with_bytes(config.ring_buffer_bytes, config.spill_path.as_deref())
             .map_err(|e| e.to_string())?;
         let (live_tx, _) = broadcast::channel(256);
-        let self_on = true;
         let svc = Arc::new(Self {
             config: Mutex::new(config),
             ring: Mutex::new(Arc::new(ring)),
@@ -297,7 +267,6 @@ impl LiveService {
             live_tx,
             capturing: AtomicBool::new(false),
             demo: AtomicBool::new(false),
-            self_profile: AtomicBool::new(self_on),
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
             sampling_report: Mutex::new(None),
@@ -312,175 +281,15 @@ impl LiveService {
             agent_scope: Mutex::new(None),
             names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
-            self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
-            self_gen: AtomicU64::new(0),
             live_end_ns: AtomicU64::new(0),
             capture_start_ns: AtomicU64::new(0),
             dropped_before_start: AtomicU64::new(0),
             capture_pid: AtomicU64::new(0),
-            self_cursor_ns: AtomicU64::new(0),
-            self_edge_ns: AtomicU64::new(0),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
-            last_timeline_prof: Mutex::new(None),
         });
-        if self_on {
-            svc.ensure_self_names();
-        }
         Ok(svc)
-    }
-
-    pub fn self_profile_enabled(&self) -> bool {
-        self.self_profile.load(Ordering::Relaxed)
-    }
-
-    pub fn enable_self_profile(&self) {
-        self.self_profile.store(true, Ordering::Relaxed);
-        self.ensure_self_names();
-    }
-
-    pub fn disable_self_profile(&self) {
-        self.self_profile.store(false, Ordering::Relaxed);
-    }
-
-    fn ensure_self_names(&self) {
-        if self.self_names.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        self.intern_id(TID_UI, "ui");
-        self.intern_id(TID_RENDER, "render");
-        self.intern_id(TID_NET, "net");
-        self.intern_id(TID_SERVER, "server");
-        self.intern_id(NAME_FRAME, "Frame");
-        self.intern_id(NAME_NET, "Net");
-        self.intern_id(NAME_TRACKS, "Tracks");
-        self.intern_id(NAME_LOD, "ChooseLod");
-        self.intern_id(NAME_PAYLOAD, "TimelinePayload");
-        self.intern_id(NAME_CHROME, "Chrome");
-        self.intern_id(NAME_PUSH, "PushEvents");
-        self.intern_id(NAME_RASTER, "Rasterize");
-        self.intern_id(NAME_TIMELINE_API, "TimelineApi");
-        self.intern_id(NAME_PRIMITIVE_LISTING, "PrimitiveListing");
-        self.intern_id(NAME_COLLECT_LANE, "CollectLane");
-        self.intern_id(NAME_RASTER_LANE, "RasterLane");
-        for i in 0..RENDER_WORKER_COUNT {
-            self.intern_id(render_worker_tid(i), render_worker_label(i));
-        }
-    }
-
-    pub fn apply_worker_spans(&self, spans: &[WorkerSpan]) {
-        if spans.is_empty() || !self.self_profile_enabled() {
-            return;
-        }
-        let t0 = spans.iter().map(|s| s.t0_ns).min().unwrap_or(0);
-        let scopes: Vec<RelScope> = spans
-            .iter()
-            .map(|s| RelScope {
-                pid: SERVICE_PID,
-                tid: s.tid,
-                name_id: s.name_id,
-                start_rel_ns: s.t0_ns.saturating_sub(t0),
-                duration_ns: s.t1_ns.saturating_sub(s.t0_ns).max(1),
-                depth: 0,
-            })
-            .collect();
-        self.apply_self_scopes(&scopes);
-    }
-
-    /// Demo/capture end only. Ignores ring `newest_end` (pid 2/3 self-profile).
-    fn live_edge_ns(&self) -> u64 {
-        self.live_end_ns()
-    }
-
-    /// Allocate `[cursor, cursor+span)` on the self-profile axis.
-    ///
-    /// `None` when the producer clock has stopped and the window ahead of the
-    /// live edge is full: snapping back there would restamp this batch over
-    /// scopes already in the ring. Mirrors `dev::place_self_batch`.
-    fn take_self_origin(&self, span: u64, live_edge: u64) -> Option<u64> {
-        if span == 0 {
-            return Some(self.self_cursor_ns.load(Ordering::Relaxed));
-        }
-        let mut cursor = self.self_cursor_ns.load(Ordering::Relaxed);
-        loop {
-            let frozen = self.self_edge_ns.load(Ordering::Relaxed) == live_edge;
-            // Frozen producer clock: march forward rather than snapping back
-            // onto scopes already in the ring. Dropping the batch would stop
-            // self-profiling entirely while the service sits idle.
-            let origin = if frozen {
-                cursor.max(live_edge)
-            } else {
-                align_self_cursor(cursor, live_edge)
-            };
-            let next = origin.saturating_add(span);
-            match self.self_cursor_ns.compare_exchange_weak(
-                cursor,
-                next,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.self_edge_ns.store(live_edge, Ordering::Relaxed);
-                    return Some(origin);
-                }
-                Err(actual) => cursor = actual,
-            }
-        }
-    }
-
-    /// Insert viewer/service [`RelScope`]s as real [`LiveEvent`]s on the ring.
-    pub fn apply_self_scopes(&self, scopes: &[RelScope]) {
-        if !self.self_profile.load(Ordering::Relaxed) || scopes.is_empty() {
-            return;
-        }
-        if IN_SELF.with(Cell::get) {
-            return;
-        }
-        self.ensure_self_names();
-        let span = batch_span(scopes);
-        let live_edge = self.live_edge_ns();
-        if span == 0 || live_edge == 0 {
-            return;
-        }
-        let Some(origin) = self.take_self_origin(span, live_edge) else {
-            return;
-        };
-        let events = stamp_batch_from(scopes, origin);
-        if events.is_empty() {
-            return;
-        }
-        let prev = IN_SELF.with(|c| {
-            let p = c.get();
-            c.set(true);
-            p
-        });
-        self.push_events(&events);
-        IN_SELF.with(|c| c.set(prev));
-    }
-
-    pub fn emit_server_scope(&self, name_id: u32, duration_ns: u64) {
-        if !self.self_profile.load(Ordering::Relaxed) || duration_ns == 0 {
-            return;
-        }
-        self.apply_self_scopes(&[RelScope {
-            pid: SERVICE_PID,
-            tid: TID_SERVER,
-            name_id,
-            start_rel_ns: 0,
-            duration_ns,
-            depth: 0,
-        }]);
-    }
-
-    fn with_server_scope<R>(&self, name_id: u32, f: impl FnOnce() -> R) -> R {
-        if !self.self_profile.load(Ordering::Relaxed) {
-            return f();
-        }
-        let t0 = Instant::now();
-        let r = f();
-        self.emit_server_scope(name_id, t0.elapsed().as_nanos() as u64);
-        r
     }
 
     /// Installs the sampling-report aggregator used by
@@ -712,28 +521,18 @@ impl LiveService {
         } else {
             events
         };
-        let in_self = IN_SELF.with(Cell::get);
-        let profile = self.self_profile.load(Ordering::Relaxed) && !in_self;
-        let t0 = profile.then(Instant::now);
         self.ring().push_many(events);
-        if in_self {
-            self.self_gen.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.data_gen.fetch_add(1, Ordering::Relaxed);
-            let mut end = 0u64;
-            for e in events {
-                if !orbit_live_event::dev::is_self_pid(e.pid) {
-                    end = end.max(e.end_ns());
-                }
+        self.data_gen.fetch_add(1, Ordering::Relaxed);
+        let mut end = 0u64;
+        for e in events {
+            if !orbit_live_event::dev::is_self_pid(e.pid) {
+                end = end.max(e.end_ns());
             }
-            if end > 0 {
-                self.note_live_end(end);
-            }
+        }
+        if end > 0 {
+            self.note_live_end(end);
         }
         self.broadcast_events(events);
-        if let Some(t0) = t0 {
-            self.emit_server_scope(NAME_PUSH, t0.elapsed().as_nanos() as u64);
-        }
     }
 
     pub fn note_live_end(&self, end_ns: u64) {
@@ -787,7 +586,6 @@ impl LiveService {
             self.capture_start_ns.store(start_ns, Ordering::Relaxed);
             self.dropped_before_start.store(0, Ordering::Relaxed);
         }
-        self.self_cursor_ns.store(start_ns, Ordering::Relaxed);
         self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
     }
@@ -889,12 +687,9 @@ impl LiveService {
 
     pub fn cached_index(&self) -> Arc<TrackIndex> {
         let data = self.data_gen.load(Ordering::Relaxed);
-        let selfg = self.self_gen.load(Ordering::Relaxed);
         let mut cache = self.index_cache.lock();
         if let Some(c) = cache.as_ref() {
-            if c.data_gen == data
-                && (c.self_gen == selfg || c.built_at.elapsed() < Duration::from_millis(250))
-            {
+            if c.data_gen == data {
                 return Arc::clone(&c.index);
             }
         }
@@ -904,8 +699,6 @@ impl LiveService {
         let index = Arc::new(index);
         *cache = Some(CachedIndex {
             data_gen: data,
-            self_gen: selfg,
-            built_at: Instant::now(),
             index: Arc::clone(&index),
         });
         index
@@ -917,33 +710,12 @@ impl LiveService {
         t1: Option<u64>,
         width: usize,
     ) -> orbit_live_render::RasterizedFrame {
-        self.with_server_scope(NAME_RASTER, || {
-            let index = self.cached_index();
-            let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
-            let t0 = t0.unwrap_or(auto0);
-            let t1 = t1.unwrap_or(auto1.max(t0 + 1));
-            let intern = self.intern.lock();
-            let frame = index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern));
-            drop(intern);
-            self.apply_worker_spans(&frame.worker_spans);
-            frame
-        })
-    }
-
-    /// Sampled TimelineApi scopes — never on a cache hit, at most every 250ms.
-    pub fn maybe_emit_timeline_scope(&self, duration_ns: u64) {
-        if !self.self_profile_enabled() || duration_ns == 0 {
-            return;
-        }
-        let mut last = self.last_timeline_prof.lock();
-        if let Some(t0) = *last {
-            if t0.elapsed() < Duration::from_millis(250) {
-                return;
-            }
-        }
-        *last = Some(Instant::now());
-        drop(last);
-        self.emit_server_scope(NAME_TIMELINE_API, duration_ns);
+        let index = self.cached_index();
+        let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
+        let t0 = t0.unwrap_or(auto0);
+        let t1 = t1.unwrap_or(auto1.max(t0 + 1));
+        let intern = self.intern.lock();
+        index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern))
     }
 
     pub fn replace_ring(&self, bytes: u64, spill: Option<PathBuf>) -> Result<(), String> {

@@ -12,7 +12,7 @@ use orbit_live_event::dev::{
     NAME_SELF_PANE, NAME_SELF_TIMELINE,
 };
 use orbit_live_event::dev::{
-    intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
+    intern_self_names, is_self_pid, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
     NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT,
     NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS,
     NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE, NAME_SCALE_PPP,
@@ -641,14 +641,8 @@ pub struct OrbitLiveApp {
     last_view: Option<ViewUniforms>,
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
-    self_cursor: orbit_live_event::dev::SelfCursor,
     /// Demo/capture end only. Not ring newest_end (pid 2/3).
     live_edge_ns: u64,
-    /// The capture axis is a guess: `CaptureStarted` arrived without a start
-    /// timestamp, so self-profile scopes are being laid on [`DEMO_ORIGIN_NS`]
-    /// until a real event says where the capture clock actually is. See
-    /// [`OrbitApp::adopt_capture_axis`].
-    self_axis_provisional: bool,
     slider_grab: Option<f32>,
     fps_ema: f32,
     fullscreen: bool,
@@ -664,8 +658,6 @@ pub struct OrbitLiveApp {
     compact: bool,
     light_canvas: bool,
     advanced: bool,
-    dev: bool,
-    dev_locked_off: bool,
     recording: bool,
     visible_count: u32,
     draw_label: String,
@@ -1203,14 +1195,11 @@ impl OrbitLiveApp {
         // default on Windows and GNOME; egui's 0.3 s is tight over a slow frame).
         cc.egui_ctx.options_mut(|o| o.input_options.max_double_click_delay = 0.5);
         let intern = InternTable::default();
-        let dev_locked_off = crate::dev::query_dev_locked_off_from_location();
-        let dev = false;
         let static_capture = crate::dev::query_capture_url_from_location();
         let net = match &static_capture {
             Some(url) => Net::from_capture_url(url),
             None => Net::connect(),
         };
-        net.stop_self();
         let mut has_gpu = false;
         if let Some(rs) = &cc.wgpu_render_state {
             let mut renderer = rs.renderer.write();
@@ -1266,9 +1255,7 @@ impl OrbitLiveApp {
             last_view: None,
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
-            self_cursor: Default::default(),
             live_edge_ns: 0,
-            self_axis_provisional: false,
             slider_grab: None,
             fps_ema: 0.0,
             fullscreen: false,
@@ -1283,8 +1270,6 @@ impl OrbitLiveApp {
             compact: false,
             light_canvas: false,
             advanced: false,
-            dev,
-            dev_locked_off,
             recording: false,
             visible_count: 0,
             draw_label: String::new(),
@@ -1458,24 +1443,13 @@ impl OrbitLiveApp {
             let pid = self.selected_pid.unwrap_or(0);
             self.recording = true;
             // The capture clock is the target's, and nothing here knows it
-            // yet -- `CaptureStarted` brings it. Until then self-profile
-            // scopes go on a provisional axis that the first real event
-            // replaces, rather than on whatever a previous demo left behind.
-            self.self_cursor.reset_to(DEMO_ORIGIN_NS);
+            // yet -- `CaptureStarted` brings it.
             self.live_edge_ns = DEMO_ORIGIN_NS;
-            self.self_axis_provisional = true;
             self.net.start_capture(&self.capture_start(pid));
         } else {
             self.recording = true;
-            self.self_cursor.reset_to(DEMO_ORIGIN_NS);
             self.live_edge_ns = DEMO_ORIGIN_NS;
-            self.self_axis_provisional = false;
             self.net.start_demo();
-        }
-        if !self.dev_locked_off {
-            intern_self_names(&mut self.intern);
-            self.dev = true;
-            self.net.start_self();
         }
         self.follow = true;
     }
@@ -1484,15 +1458,8 @@ impl OrbitLiveApp {
         self.clear_file_trace();
         self.error.clear();
         self.recording = true;
-        self.self_cursor.reset_to(DEMO_ORIGIN_NS);
         self.live_edge_ns = DEMO_ORIGIN_NS;
-        self.self_axis_provisional = false;
         self.net.start_demo();
-        if !self.dev_locked_off {
-            intern_self_names(&mut self.intern);
-            self.dev = true;
-            self.net.start_self();
-        }
         self.follow = true;
     }
 
@@ -1523,8 +1490,6 @@ impl OrbitLiveApp {
         self.recording = false;
         self.net.stop_capture();
         self.net.stop_demo();
-        self.dev = false;
-        self.net.stop_self();
     }
 
     fn process_display_name(&self, pid: u32) -> String {
@@ -1532,9 +1497,6 @@ impl OrbitLiveApp {
         // names: their pids are synthetic.
         if pid == VIEWER_PID {
             return orbit_live_event::dev::VIEWER_NAME.to_string();
-        }
-        if pid == orbit_live_event::dev::SERVICE_PID {
-            return orbit_live_event::dev::SERVICE_NAME.to_string();
         }
         self.processes
             .iter()
@@ -1606,24 +1568,6 @@ impl OrbitLiveApp {
             self.t0,
             self.t1,
         )
-    }
-
-    /// First real event of a capture that started without a clock: this is
-    /// where the capture axis actually is.
-    ///
-    /// Self-profile scopes laid down while the axis was a guess are on the
-    /// wrong one -- typically 1 ms against a capture at time since boot. They
-    /// cannot be shifted (the gap is not a constant offset, it is a different
-    /// clock), and keeping them makes the content span the whole gap: fit then
-    /// crams the self scopes into the leftmost pixel, the real capture into
-    /// the rightmost, and every ruler label reads the same. Drop them and
-    /// re-pin the cursor; the next frame's batch lands on the real axis.
-    fn adopt_capture_axis(&mut self, start_ns: u64) {
-        self.self_axis_provisional = false;
-        self.index.retain(|e| !is_self_pid(e.pid));
-        self.self_cursor.reset_to(start_ns);
-        self.live_edge_ns = start_ns;
-        self.mark_layout_changed();
     }
 
     /// Zero of the ruler: the start of what is on screen, so labels read as
@@ -1704,7 +1648,6 @@ impl OrbitLiveApp {
         self.trace_processes.clear();
         self.trace_name = Some(load.name.clone());
         self.live_edge_ns = 0;
-        self.self_axis_provisional = false;
         self.t0 = 0.0;
         self.t1 = FOLLOW_NS;
         self.content_t0 = None;
@@ -2029,10 +1972,6 @@ impl OrbitLiveApp {
         if let Some(p) = &s.spill_path {
             self.spill_path = p.clone();
         }
-        if s.self_profile && !self.dev {
-            intern_self_names(&mut self.intern);
-            self.dev = true;
-        }
         if s.live_end_ns > 0 {
             self.live_edge_ns = self.live_edge_ns.max(s.live_end_ns);
         }
@@ -2188,15 +2127,7 @@ impl OrbitLiveApp {
                     return;
                 }
                 for ev in events {
-                    // Viewer scopes are inserted locally on the capture clock
-                    // so a lagged WS (demo flood) cannot hide pid 2.
-                    if self.dev && ev.pid == VIEWER_PID {
-                        continue;
-                    }
                     if !is_self_pid(ev.pid) {
-                        if self.self_axis_provisional {
-                            self.adopt_capture_axis(ev.start_ns);
-                        }
                         self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
                     }
                     self.live_all.push(&ev);
@@ -2226,23 +2157,10 @@ impl OrbitLiveApp {
                 self.measure = None;
                 self.sample_sels.clear();
                 // `start_ns == 0` means "a capture is starting, its clock is
-                // not known yet". `LiveViewerBridge` sends that as soon as the
-                // gRPC request is written and the real CLOCK_MONOTONIC origin
-                // only when the service answers with `CaptureStarted` -- which
-                // is late, and never at all when no probe fires. Every
-                // self-profile scope emitted in between lands on
-                // `DEMO_ORIGIN_NS`, 1 ms, while the capture itself is at time
-                // since boot. Flag the axis so the first real event can throw
-                // those away instead of leaving a cluster hours to the left.
-                self.self_axis_provisional = start_ns == 0;
+                // not known yet": the real CLOCK_MONOTONIC origin comes with
+                // the service's own `CaptureStarted`.
                 self.capture_start_ns = start_ns;
-                let origin = if start_ns > 0 {
-                    start_ns
-                } else {
-                    DEMO_ORIGIN_NS
-                };
-                self.self_cursor.reset_to(origin);
-                self.live_edge_ns = origin;
+                self.live_edge_ns = if start_ns > 0 { start_ns } else { DEMO_ORIGIN_NS };
             }
             LiveFrame::Status {
                 capturing,
@@ -2270,7 +2188,6 @@ impl OrbitLiveApp {
                     ring_bytes,
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
-                    self_profile: self.status.self_profile,
                     target_pid: self.status.target_pid,
                     hooks: self.status.hooks,
                     // This frame is the WebSocket's stats push, which carries
@@ -6507,7 +6424,7 @@ impl eframe::App for OrbitLiveApp {
         self.now_s = ctx.input(|i| i.time);
         // The self-profile pane needs the same scopes the track injection does,
         // so a frame is instrumented when either wants it.
-        let devf = DevFrame::begin(self.dev || self.self_pane_open);
+        let devf = DevFrame::begin(self.self_pane_open);
         {
             let _frame_scope = devf.scope(TID_UI, NAME_FRAME);
             let interaction = ctx.input(|i| {
@@ -6763,11 +6680,27 @@ impl eframe::App for OrbitLiveApp {
                 *live_edge = (*live_edge).max(ev.end_ns());
                 self.self_tl.index.insert(ev);
             }
+            let (up_ns, up_bytes) = crate::timeline::last_instance_upload();
             for (name, v) in [
                 (NAME_FPS, self.fps_ema.max(0.0)),
                 (NAME_POOL_WAKE_US, self.last_pool_wake_us),
                 (NAME_POOL_TAIL_US, self.last_pool_tail_us),
                 (NAME_LISTING_INLINE, if self.listing_inline { 1.0 } else { 0.0 }),
+                (NAME_N_PRIMS, self.last_n_prims as f32),
+                (NAME_LANES_KEPT, self.last_n_lanes_kept as f32),
+                (NAME_POOL_THREADS, orbit_live_render::parallelism() as f32),
+                (NAME_WORKER_SPANS, devf_counts.0 as f32),
+                (NAME_SPANS_DROPPED, devf_counts.1 as f32),
+                (NAME_UPLOAD_INST_US, up_ns as f32 / 1_000.0),
+                (NAME_UPLOAD_INST_BYTES, up_bytes as f32),
+                (NAME_FRAME_PERIOD_US, self.frame_period_s * 1e6),
+                (
+                    NAME_OUTSIDE_FRAME_US,
+                    (self.frame_period_s * 1e6 - self.self_profile.last_frame_span_ns() as f32 / 1e3).max(0.0),
+                ),
+                (NAME_GPU_PREPARE_US, self.last_gpu_prepare_us),
+                (NAME_GPU_PAINT_US, self.last_gpu_paint_us),
+                (NAME_WASM_MEM, wasm_mem_bytes().unwrap_or(0.0)),
             ] {
                 self.self_tl.index.insert(LiveEvent::from_value(
                     devf_origin.max(1),
@@ -6797,99 +6730,6 @@ impl eframe::App for OrbitLiveApp {
                     self.index.lane_gen(),
                 );
             }
-        }
-        if self.dev && !scopes.is_empty() {
-            intern_self_names(&mut self.intern);
-            let live_edge = self.live_edge_ns;
-            let placed = place_self_batch(&mut self.self_cursor, &scopes, live_edge);
-            let sample_t = placed
-                .first()
-                .map(|e| e.start_ns)
-                .unwrap_or(live_edge)
-                .max(1);
-            for ev in placed {
-                self.index.insert(ev);
-            }
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_FPS,
-                self.fps_ema.max(0.0),
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_N_PRIMS,
-                self.last_n_prims as f32,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_LANES_KEPT,
-                self.last_n_lanes_kept as f32,
-            ));
-            // One frame behind: the wgpu prepare phase that does the upload
-            // runs after update() returns.
-            // Why worker lanes are or are not there: pool_threads == 1 means no
-            // pool, so the walks are sequential and emit nothing at all.
-            let (kept, dropped) = devf_counts;
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_POOL_THREADS,
-                orbit_live_render::parallelism() as f32,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_WORKER_SPANS,
-                kept as f32,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_SPANS_DROPPED,
-                dropped as f32,
-            ));
-            let (up_ns, up_bytes) = crate::timeline::last_instance_upload();
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_UPLOAD_INST_US,
-                up_ns as f32 / 1_000.0,
-            ));
-            for (name, v) in [
-                (NAME_FRAME_PERIOD_US, self.frame_period_s * 1e6),
-                (
-                    NAME_OUTSIDE_FRAME_US,
-                    (self.frame_period_s * 1e6 - self.self_profile.last_frame_span_ns() as f32 / 1e3).max(0.0),
-                ),
-                (NAME_GPU_PREPARE_US, self.last_gpu_prepare_us),
-                (NAME_GPU_PAINT_US, self.last_gpu_paint_us),
-            ] {
-                self.index.insert(LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, name, v));
-            }
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_UPLOAD_INST_BYTES,
-                up_bytes as f32,
-            ));
-            if let Some(mem) = wasm_mem_bytes() {
-                let mut ev =
-                    LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, NAME_WASM_MEM, mem);
-                ev.extra = 1;
-                self.index.insert(ev);
-            }
-            self.net.push_self_scopes(&scopes);
         }
     }
 }
@@ -9121,7 +8961,7 @@ mod tests {
     use super::*;
     use crate::tracks::TrackStrip;
     use orbit_live_event::{chrome, kind, LiveEvent};
-    use orbit_live_render::collect_instances;
+
 
     fn proc(pid: u32, name: &str, path: &str) -> ProcessJson {
         ProcessJson {
@@ -9246,67 +9086,6 @@ mod tests {
         assert!(label_fits(60.0, 40.0, 50.0, right));
         // A label that would spill past the bar's end is dropped.
         assert!(!label_fits(780.0, 40.0, 0.0, right));
-    }
-
-    #[test]
-    fn a_provisional_self_axis_is_purged_by_the_first_real_event() {
-        use orbit_live_event::dev::{is_self_pid, DEMO_ORIGIN_NS, TID_UI, VIEWER_PID};
-        // `LiveViewerBridge` marks the capture started with `start_ns == 0`
-        // the moment the gRPC request is written, so the viewer lays
-        // self-profile scopes on DEMO_ORIGIN_NS (1 ms) until the service
-        // answers with the real CLOCK_MONOTONIC origin -- late, or never when
-        // no probe fires.
-        let mut idx = TrackIndex::default();
-        for i in 0..64u64 {
-            idx.insert(LiveEvent {
-                start_ns: DEMO_ORIGIN_NS + i * 8_000_000,
-                duration_ns: 400_000,
-                tid: TID_UI,
-                pid: VIEWER_PID,
-                kind: kind::API_SCOPE,
-                depth: 0,
-                extra: 0,
-                _pad: 0,
-                name_id: 1,
-            });
-        }
-        let capture0 = 137_458_000_000_000u64;
-        let real = |start, dur| LiveEvent {
-            start_ns: start,
-            duration_ns: dur,
-            tid: 7,
-            pid: 4242,
-            kind: kind::API_SCOPE,
-            depth: 0,
-            extra: 0,
-            _pad: 0,
-            name_id: 2,
-        };
-        idx.insert(real(capture0, 1_000_000));
-        idx.insert(real(capture0 + 4_000_000, 2_000_000));
-
-        // Both axes in one index. The bounds already leave the viewer's own
-        // rows out (they used to span a day and a half here, the capture a
-        // handful of pixels on the right and the self scopes a smear on the
-        // left), so the fit is the capture's before the purge as well; the
-        // purge is still what removes the rows themselves.
-        let (a, b) = idx.time_bounds().expect("mixed bounds");
-        assert_eq!(a, capture0, "self rows at {DEMO_ORIGIN_NS} must not set the start");
-        let (m0, m1) = fit_content_window(a as f64, b as f64);
-        assert!((m1 - m0 - 6e6).abs() < 1.0, "fit is the capture even with self rows present");
-
-        idx.retain(|e| !is_self_pid(e.pid));
-
-        let (a, b) = idx.time_bounds().expect("capture bounds");
-        assert_eq!(a, capture0);
-        assert_eq!(b, capture0 + 6_000_000);
-        let (t0, t1) = fit_content_window(a as f64, b as f64);
-        assert!(
-            (t1 - t0 - 6e6).abs() < 1.0,
-            "fit is the capture, {t0}..{t1}"
-        );
-        // And no empty viewer lanes left behind to hold rows on screen.
-        assert!(!idx.lanes().any(|(k, _)| is_self_pid(k.pid)));
     }
 
     #[test]

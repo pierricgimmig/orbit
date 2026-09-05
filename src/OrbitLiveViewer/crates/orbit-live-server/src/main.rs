@@ -14,7 +14,6 @@ fn parse_args() -> ServerConfig {
         bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HTTP_PORT)),
         ring_buffer_bytes: DEFAULT_RING_BYTES,
         spill_path: None,
-        dev_self_profile: orbit_live_server::env_dev_self(),
         wire: orbit_live_server::env_wire(),
     };
     let mut args = std::env::args().skip(1);
@@ -36,9 +35,6 @@ fn parse_args() -> ServerConfig {
                 if !p.is_empty() {
                     cfg.spill_path = Some(PathBuf::from(p));
                 }
-            }
-            "--dev-self-profile" | "--dev_self_profile" => {
-                cfg.dev_self_profile = true;
             }
             "--wire" => {
                 let v = args.next().expect("missing wire format: raw, packed or deflate");
