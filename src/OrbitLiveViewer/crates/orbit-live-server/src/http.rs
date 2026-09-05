@@ -1006,8 +1006,8 @@ fn send_scope_name(bytes: &[u8]) -> &'static str {
 async fn send_frame(sink: &mut futures_util::stream::SplitSink<WebSocket, Message>, bytes: Vec<u8>) -> bool {
     let name = send_scope_name(&bytes);
     let size = bytes.len() as f64;
-    let scope = orbit_api::scope(name);
-    orbit_api::value("ws frame bytes", size);
+    let scope = crate::scope(name);
+    crate::value("ws frame bytes", size);
     let ok = sink.send(Message::Binary(bytes)).await.is_ok();
     drop(scope);
     ok

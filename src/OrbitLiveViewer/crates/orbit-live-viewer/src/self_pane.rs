@@ -43,6 +43,11 @@ pub struct SelfProfile {
     pool_threads: u32,
     worker_kept: u32,
     worker_dropped: u32,
+    /// Smoothed over the last frames, so the readout is a rate, not a spike.
+    frame_period_us: f32,
+    outside_us: f32,
+    gpu_prepare_us: f32,
+    gpu_paint_us: f32,
     /// The last `window.__orbit_self` text, so the page is written only on change.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     last_published: String,
@@ -58,6 +63,12 @@ pub struct FrameStats {
     pub pool_threads: u32,
     pub worker_kept: u32,
     pub worker_dropped: u32,
+    /// The browser's frame period and what of it the scopes did not see.
+    pub frame_period_us: f32,
+    pub outside_us: f32,
+    /// The previous frame's egui-wgpu callback CPU time.
+    pub gpu_prepare_us: f32,
+    pub gpu_paint_us: f32,
 }
 
 impl SelfProfile {
@@ -102,6 +113,16 @@ impl SelfProfile {
         self.pool_threads = stats.pool_threads;
         self.worker_kept = stats.worker_kept;
         self.worker_dropped = stats.worker_dropped;
+        let ema = |acc: &mut f32, v: f32| *acc = if *acc <= 0.0 { v } else { *acc * 0.9 + v * 0.1 };
+        ema(&mut self.frame_period_us, stats.frame_period_us);
+        ema(&mut self.outside_us, stats.outside_us);
+        ema(&mut self.gpu_prepare_us, stats.gpu_prepare_us);
+        ema(&mut self.gpu_paint_us, stats.gpu_paint_us);
+    }
+
+    /// The last frame's span in nanoseconds (the outermost `Frame` scope).
+    pub fn last_frame_span_ns(&self) -> u64 {
+        self.frame_span_ns
     }
 
     pub fn frames_seen(&self) -> u64 {
@@ -122,12 +143,16 @@ impl SelfProfile {
             .collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1));
         let mut out = format!(
-            "{{\"frames\":{},\"events\":{events},\"layout_gen\":{layout_gen},\"lane_gen\":{lane_gen},\"fps\":{:.1},\"prims\":{},\"lanes\":{},\"reused\":{},\"phases\":[",
+            "{{\"frames\":{},\"events\":{events},\"layout_gen\":{layout_gen},\"lane_gen\":{lane_gen},\"fps\":{:.1},\"prims\":{},\"lanes\":{},\"reused\":{},\"frame_period_us\":{:.0},\"outside_us\":{:.0},\"gpu_prepare_us\":{:.0},\"gpu_paint_us\":{:.0},\"phases\":[",
             self.frames_seen,
             self.fps,
             self.prims,
             self.lanes_kept,
-            self.lanes_reused
+            self.lanes_reused,
+            self.frame_period_us,
+            self.outside_us,
+            self.gpu_prepare_us,
+            self.gpu_paint_us
         );
         for (i, (name, sum, n, mx)) in rows.iter().enumerate() {
             if i > 0 {
@@ -330,7 +355,7 @@ mod tests {
         intern.insert_id(NAME_TRACKS, "Tracks");
         let json = sp.phases_json_with(&intern, 7, 8, 9);
         assert!(
-            json.starts_with("{\"frames\":1,\"events\":7,\"layout_gen\":8,\"lane_gen\":9,\"fps\":0.0,\"prims\":0,\"lanes\":0,\"reused\":0,\"phases\":[{\"name\":\"Frame\""),
+            json.starts_with("{\"frames\":1,\"events\":7,\"layout_gen\":8,\"lane_gen\":9,\"fps\":0.0,\"prims\":0,\"lanes\":0,\"reused\":0,\"frame_period_us\":0,\"outside_us\":0,\"gpu_prepare_us\":0,\"gpu_paint_us\":0,\"phases\":[{\"name\":\"Frame\""),
             "{json}"
         );
         assert!(json.contains("\"name\":\"Tracks\""));
@@ -369,6 +394,7 @@ mod tests {
                 pool_threads: 4,
                 worker_kept: 12,
                 worker_dropped: 1,
+                ..Default::default()
             },
         );
         assert!(sp.frames_seen() > 0);

@@ -421,7 +421,11 @@ there is something that is introducing ghost scopes with dynamic instrumentation
 
 greying out of scopes when selecting a thread should only apply to the scheduling slices
 
+  DONE 2026-09-05 (d61a44bb8): thread tracks keep their colours; only the scheduler greys.
+
 samples should only be visualized as the vertical white lines in the sample bar, hovering on a sample shows the callstack, and we should be able to select samples from a single thread, just like the c++ app does, to generate a sampling report
+
+  DONE 2026-09-05 (d61a44bb8): sampled frames stay in the index but are not laid out; a tick's tooltip is its callstack, leaf first; a left drag on a thread's sample bar selects that thread's samples (already there, kept).
 
 figure out what the orbit-live-service is and remove if useless
 
@@ -429,9 +433,15 @@ orbit-service and orbit-live-viewer tracks should be collapsed by default, and b
 
 make sure py-spy still works
 
+  CHECKED 2026-09-05: third_party/py-spy-ffi builds and its new test attaches to a python3 child and reads `orbit_pyspy_probe` off its stack (`cd third_party/py-spy-ffi && cargo test --release`). The Bazel target //third_party/py-spy-ffi:py-spy-ffi builds again after the cross-workspace orbit-api dependency in orbit-live-server was replaced by an installed hook. Python sampling is C++-side only; the Rust service has no py-spy path.
+
 more detailed instrumentation of rendering, this needs to be blazing fast, we need to find other optimization opportunities
 
+  PASS 1 DONE 2026-09-05: frame period / outside-frame / GPU callback lanes, ReportPanel, SelfPane and SelfTimeline scopes; three fixes (follow ease that never landed, per-instance name hashing, the report's egui grid) took the CPU frame from 4.2 to 1.4 ms idle and 3.3 to 1.5 ms zoomed. Numbers and what is left in docs/blog/metrics/phase-15-render-pass.txt.
+
 we should be able to sort by columns in the sampling reports, I want to be able to see all the hooked functions for example if i sort by "hooked"
+
+  DONE 2026-09-05 (d61a44bb8): every Flat and Functions header sorts, a second click flips, hooked first lists the instrumented functions together.
 
 we should be able to see the right pane event when we haven't captured anything yet
 

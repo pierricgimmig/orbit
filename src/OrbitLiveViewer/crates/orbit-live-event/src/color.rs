@@ -171,6 +171,20 @@ pub fn event_color(
     name_id: u32,
     name: Option<&[u8]>,
 ) -> u32 {
+    event_color_hashed(kind_id, tid, depth, extra, pad, name_id, name.map(name_hash))
+}
+
+/// `event_color` with the name already hashed (`name_hash`), for the
+/// per-instance path where the intern table has the hash ready.
+pub fn event_color_hashed(
+    kind_id: u8,
+    tid: u32,
+    depth: u8,
+    extra: u8,
+    pad: u8,
+    name_id: u32,
+    name_hash: Option<u32>,
+) -> u32 {
     if kind_id == kind::THREAD_STATE {
         return thread_state_color(extra);
     }
@@ -183,8 +197,8 @@ pub fn event_color(
         // name is exactly what must not happen here.
         kind::SAMPLE => SAMPLE_TICK,
         kind::API_SCOPE | kind::API_TRACK | kind::VALUE => {
-            let id = name_id.to_le_bytes();
-            named_scope_color(name.unwrap_or(&id), depth)
+            let hash = name_hash.unwrap_or_else(|| self::name_hash(&name_id.to_le_bytes()));
+            apply_even_depth(palette_index(hash), depth)
         }
         // Odd depth: full `GetThreadColor` (no even-row darken). Scheduler
         // slices have depth 0 on the wire.

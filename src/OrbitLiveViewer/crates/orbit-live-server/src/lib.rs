@@ -36,6 +36,37 @@ thread_local! {
 pub const DEFAULT_HTTP_PORT: u16 = 44766;
 pub const DEFAULT_RING_BYTES: u64 = 64 * 1024 * 1024;
 
+/// How the embedding service instruments this server's work -- one scope
+/// per WebSocket send, one per event-batch encode -- without this crate
+/// depending on the service's API crate (the two live in different Cargo
+/// workspaces, and Bazel's crate universe cannot follow a path dependency
+/// out of a workspace). The service installs `orbit_api::scope` and
+/// `orbit_api::value` here at start-up; a server with nothing installed
+/// measures nothing.
+pub struct Instrument {
+    /// Opens a scope; dropping the box closes it.
+    pub scope: fn(&'static str) -> Box<dyn std::any::Any + Send>,
+    /// One sample on a value lane.
+    pub value: fn(&'static str, f64),
+}
+
+static INSTRUMENT: std::sync::OnceLock<Instrument> = std::sync::OnceLock::new();
+
+/// Installs the instrumentation; a second call is ignored.
+pub fn set_instrument(instrument: Instrument) {
+    let _ = INSTRUMENT.set(instrument);
+}
+
+pub(crate) fn scope(name: &'static str) -> Option<Box<dyn std::any::Any + Send>> {
+    INSTRUMENT.get().map(|i| (i.scope)(name))
+}
+
+pub(crate) fn value(name: &'static str, value: f64) {
+    if let Some(i) = INSTRUMENT.get() {
+        (i.value)(name, value);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub bind: SocketAddr,
@@ -656,7 +687,7 @@ impl LiveService {
         }
         // Encoding is its own scope: the packed and deflate formats cost
         // CPU here, the sends cost it in every viewer's ws task.
-        let _encode = orbit_api::scope("encode events");
+        let _encode = crate::scope("encode events");
         let _ = self.live_tx.send(encode_event_batch_with(events, self.wire()));
     }
 

@@ -691,14 +691,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "orbit-api"
-version = "0.1.0"
-dependencies = [
- "libc",
- "orbit-scope-ring",
-]
-
-[[package]]
 name = "orbit-live-event"
 version = "0.1.0"
 dependencies = [
@@ -749,7 +741,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
- "orbit-api",
  "orbit-live-event",
  "orbit-live-protocol",
  "orbit-live-render",
@@ -759,13 +750,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-http",
-]
-
-[[package]]
-name = "orbit-scope-ring"
-version = "0.1.0"
-dependencies = [
- "libc",
 ]
 
 [[package]]

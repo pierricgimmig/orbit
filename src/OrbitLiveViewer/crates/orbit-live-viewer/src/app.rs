@@ -8,6 +8,10 @@ use eframe::egui::{
 };
 use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::dev::{
+    NAME_FRAME_PERIOD_US, NAME_GPU_PAINT_US, NAME_GPU_PREPARE_US, NAME_OUTSIDE_FRAME_US, NAME_REPORT_PANEL,
+    NAME_SELF_PANE, NAME_SELF_TIMELINE,
+};
+use orbit_live_event::dev::{
     intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
     NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT,
     NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS,
@@ -720,6 +724,11 @@ pub struct OrbitLiveApp {
     /// the running wall time of each mode (us) that decides it. See
     /// `tune_listing_mode`.
     listing_inline: bool,
+    /// This frame's period (egui's dt) and the previous frame's GPU callback
+    /// CPU time, for the self profile's value lanes.
+    frame_period_s: f32,
+    last_gpu_prepare_us: f32,
+    last_gpu_paint_us: f32,
     listing_frames: u32,
     listing_inline_ema_us: Option<f32>,
     listing_pool_ema_us: Option<f32>,
@@ -1312,6 +1321,9 @@ impl OrbitLiveApp {
             last_pool_wake_us: 0.0,
             last_pool_tail_us: 0.0,
             listing_inline: false,
+            frame_period_s: 0.0,
+            last_gpu_prepare_us: 0.0,
+            last_gpu_paint_us: 0.0,
             listing_frames: 0,
             listing_inline_ema_us: None,
             listing_pool_ema_us: None,
@@ -3041,9 +3053,9 @@ impl OrbitLiveApp {
                             .contains(&fa.function_id)
                             .cmp(&hooked_ids.contains(&fb.function_id))
                             .then(fb.name.cmp(&fa.name)),
-                        1 => fa.name.to_lowercase().cmp(&fb.name.to_lowercase()),
+                        1 => cmp_ci(&fa.name, &fb.name),
                         2 => fa.size.cmp(&fb.size).then(fb.name.cmp(&fa.name)),
-                        _ => fa.module.to_lowercase().cmp(&fb.module.to_lowercase()).then(fb.name.cmp(&fa.name)),
+                        _ => cmp_ci(&fa.module, &fb.module).then(fb.name.cmp(&fa.name)),
                     };
                     if sort_desc { ord.reverse() } else { ord }
                 });
@@ -5339,7 +5351,10 @@ impl OrbitLiveApp {
                 // The main follow tick ran on the capture's state; the pane
                 // follows its own live edge.
                 self.tick_follow(dt, false);
-                self.timeline(ui, dt, dev);
+                {
+                    let _self_tl = dev.scope(TID_UI, NAME_SELF_TIMELINE);
+                    self.timeline(ui, dt, dev);
+                }
                 self.canvas_override = None;
                 self.gpu_slot = 0;
                 self.swap_timeline_state(&mut tl);
@@ -5653,8 +5668,8 @@ impl OrbitLiveApp {
                     .then(a.self_count.cmp(&b.self_count)),
                 1 => a.self_count.cmp(&b.self_count),
                 2 => a.inclusive_count.cmp(&b.inclusive_count),
-                3 => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                _ => a.module.to_lowercase().cmp(&b.module.to_lowercase()).then(a.name.cmp(&b.name)),
+                3 => cmp_ci(&a.name, &b.name),
+                _ => cmp_ci(&a.module, &b.module).then(a.name.cmp(&b.name)),
             };
             if sort_desc { ord.reverse() } else { ord }
         });
@@ -5665,56 +5680,119 @@ impl OrbitLiveApp {
                     .size(self.ui_tweaks.report_font - 0.5),
             );
         }
+        // Laid out by hand, like the Functions view: only the rows inside
+        // the clip rect become widgets. The egui grid of 200 rows cost
+        // 0.8 ms every frame, forty percent of an idle frame, and a report
+        // has more rows than that on any real capture.
+        let font = self.ui_tweaks.report_font;
+        let bar_w = self.ui_tweaks.report_bar_w;
+        let col_gap = self.ui_tweaks.report_col_gap;
+        let row_h = font + self.ui_tweaks.report_row_gap + 6.0;
+        let avail_w = ui.available_width().max(300.0);
+        let widths = [22.0f32, bar_w, bar_w, 0.0, 150.0]; // hooked, self, incl, function (rest), module
+        let name_w = (avail_w - widths[0] - widths[1] - widths[2] - widths[4] - 4.0 * col_gap).max(120.0);
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         let mut sort_click: Option<u8> = None;
-        egui::Grid::new("orbit_sampling_rows")
-            .num_columns(5)
-            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
-            .striped(true)
-            .show(ui, |ui| {
-                for (i, h) in ["hooked", "self", "incl", "function", "module"].iter().enumerate() {
-                    if sort_header(ui, h, self.flat_sort, i as u8, self.ui_tweaks.report_font - 0.5) {
-                        sort_click = Some(i as u8);
-                    }
+        let flat_sort = self.flat_sort;
+        ui.horizontal(|ui| {
+            for (i, (h, w)) in [
+                ("hooked", widths[0]),
+                ("self", widths[1]),
+                ("incl", widths[2]),
+                ("function", name_w),
+                ("module", widths[4]),
+            ]
+            .iter()
+            .enumerate()
+            {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(*w, row_h), Sense::click());
+                let active = flat_sort.0 == i as u8;
+                let text_w = ui
+                    .painter()
+                    .text(
+                        r.left_center(),
+                        Align2::LEFT_CENTER,
+                        *h,
+                        FontId::new(font - 0.5, FontFamily::Proportional),
+                        if active { theme::TEXT } else { theme::MUTED },
+                    )
+                    .width();
+                if active {
+                    paint_sort_arrow(ui, Pos2::new(r.left() + text_w + 8.0, r.center().y), flat_sort.1);
                 }
-                ui.end_row();
-                for row in rows.iter().take(200) {
-                    // The hooked column first, as C++ Orbit's sampling report
-                    // has it: tick a row to instrument it on the next Record.
-                    let hooked = self.is_hooked(row.function_id);
-                    let mut tick = hooked;
-                    let check = ui.add_enabled(row.function_id != 0, egui::Checkbox::without_text(&mut tick));
-                    note_ui_rect(&format!("hook:{}", row.name), check.rect);
-                    if tick != hooked {
-                        actions.push((
-                            if tick { HookAction::Hook } else { HookAction::Unhook },
-                            row.function_id,
-                            row.name.clone(),
-                            row.module.clone(),
-                        ));
-                    }
-                    // Bars here as well as in the trees. The native UI only
-                    // paints them on the call tree's Inclusive column, but
-                    // this is the view you scan hardest, and a column of bars
-                    // is read faster than a column of numbers.
-                    percent_bar(ui, row.self_percent as f64, true, self.ui_tweaks.report_bar_w);
-                    percent_bar(ui, row.inclusive_percent as f64, false, self.ui_tweaks.report_bar_w);
-                    let label = ui.add(
-                        egui::Label::new(
-                            RichText::new(&row.name)
-                                .color(if hooked { theme::ACCENT } else { theme::TEXT })
-                                .size(self.ui_tweaks.report_font),
-                        )
-                        .sense(Sense::click()),
-                    );
-                    note_ui_rect(&format!("report:{}", row.name), label.rect);
-                    if let Some(action) = hook_menu(&label, row.function_id, hooked) {
-                        actions.push((action, row.function_id, row.name.clone(), row.module.clone()));
-                    }
-                    ui.label(RichText::new(&row.module).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
-                    ui.end_row();
+                note_ui_rect(&format!("sort:{h}"), r);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    sort_click = Some(i as u8);
                 }
-            });
+                ui.add_space(col_gap);
+            }
+        });
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
+        let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(rows.len());
+        let first = first.min(last);
+        if first > 0 {
+            ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
+        }
+        for (n, row) in rows[first..last].iter().enumerate() {
+            let hooked = hooked_ids.contains(&row.function_id) && row.function_id != 0;
+            let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
+            if (first + n) % 2 == 1 {
+                ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+            }
+            let mut x = row_rect.left();
+            // hooked: a painted box, like the Functions view; rows with no
+            // function id (no file offset) show none.
+            let check_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[0], row_h));
+            if row.function_id != 0 {
+                let check = ui.interact(check_rect, ui.id().with(("rephook", first + n)), Sense::click());
+                paint_hook_box(ui, check_rect, hooked);
+                if check.clicked() {
+                    actions.push((
+                        if hooked { HookAction::Unhook } else { HookAction::Hook },
+                        row.function_id,
+                        row.name.clone(),
+                        row.module.clone(),
+                    ));
+                }
+            }
+            note_ui_rect(&format!("hook:{}", row.name), check_rect);
+            x += widths[0] + col_gap;
+            // self and inclusive, as bars with the number on them
+            for (pct, strong, w) in [(row.self_percent, true, widths[1]), (row.inclusive_percent, false, widths[2])] {
+                let bar = Rect::from_min_size(Pos2::new(x, row_rect.center().y - 7.0), Vec2::new(w, 14.0));
+                paint_percent_bar(ui, bar, pct as f64, strong);
+                x += w + col_gap;
+            }
+            // function
+            let name_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(name_w, row_h));
+            let label = ui.interact(name_rect, ui.id().with(("repname", first + n)), Sense::click());
+            ui.painter().text(
+                name_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&row.name, name_w - 4.0, font),
+                FontId::new(font, FontFamily::Proportional),
+                if hooked { theme::ACCENT } else { theme::TEXT },
+            );
+            note_ui_rect(&format!("report:{}", row.name), name_rect);
+            if let Some(action) = hook_menu(&label, row.function_id, hooked) {
+                actions.push((action, row.function_id, row.name.clone(), row.module.clone()));
+            }
+            x += name_w + col_gap;
+            // module
+            let module_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[4], row_h));
+            ui.painter().text(
+                module_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&row.module, widths[4] - 4.0, font - 0.5),
+                FontId::new(font - 0.5, FontFamily::Proportional),
+                theme::MUTED,
+            );
+        }
+        if last < rows.len() {
+            ui.allocate_exact_size(Vec2::new(avail_w, (rows.len() - last) as f32 * row_h), Sense::hover());
+        }
         for (action, id, name, module) in actions {
             self.apply_hook_action(action, id, &name, &module);
         }
@@ -6407,6 +6485,15 @@ impl OrbitLiveApp {
         let k = 1.0 - (-dt / 0.10).exp();
         self.t0 += (target_t0 - self.t0) * k as f64;
         self.t1 += (target_t1 - self.t1) * k as f64;
+        // The ease converges but never arrives: a few nanoseconds a frame
+        // for a second after the edge stops moving, each one a new window
+        // and a full listing and upload of a still picture. Under an eighth
+        // of a pixel, land.
+        let px_ns = (self.t1 - self.t0).max(1.0) / self.view_width.max(1) as f64;
+        if (target_t0 - self.t0).abs() < px_ns * 0.125 && (target_t1 - self.t1).abs() < px_ns * 0.125 {
+            self.t0 = target_t0;
+            self.t1 = target_t1;
+        }
         if let Some((c0, c1)) = self.content_span() {
             let (t0, t1) = clamp_window_contain(self.t0, self.t1, c0, c1);
             self.t0 = t0;
@@ -6454,6 +6541,12 @@ impl eframe::App for OrbitLiveApp {
             let dt_raw = ctx.input(|i| i.stable_dt);
             let dt = dt_raw.clamp(0.0, 0.05);
             self.note_fps(dt_raw);
+            self.frame_period_s = ctx.input(|i| i.unstable_dt);
+            {
+                let (prepare_ns, paint_ns) = crate::timeline::take_gpu_times();
+                self.last_gpu_prepare_us = prepare_ns as f32 / 1_000.0;
+                self.last_gpu_paint_us = paint_ns as f32 / 1_000.0;
+            }
             self.apply_layout(ctx);
             self.sync_fullscreen(ctx);
             self.take_dropped_traces(ctx);
@@ -6598,10 +6691,16 @@ impl eframe::App for OrbitLiveApp {
             }
 
             self.refresh_sampling_report(ctx.input(|i| i.time));
-            self.sampling_panel(ctx);
+            {
+                let _report = devf.scope(TID_UI, NAME_REPORT_PANEL);
+                self.sampling_panel(ctx);
+            }
             self.tweaks_window(ctx);
             self.paint_scope_menu(ctx);
-            self.self_pane(ctx, dt, &devf);
+            {
+                let _pane = devf.scope(TID_UI, NAME_SELF_PANE);
+                self.self_pane(ctx, dt, &devf);
+            }
             self.publish_selection();
 
             egui::CentralPanel::default()
@@ -6636,6 +6735,12 @@ impl eframe::App for OrbitLiveApp {
                     pool_threads: orbit_live_render::parallelism() as u32,
                     worker_kept: devf_counts.0,
                     worker_dropped: devf_counts.1,
+                    frame_period_us: self.frame_period_s * 1e6,
+                    outside_us: (self.frame_period_s * 1e6
+                        - self.self_profile.last_frame_span_ns() as f32 / 1e3)
+                        .max(0.0),
+                    gpu_prepare_us: self.last_gpu_prepare_us,
+                    gpu_paint_us: self.last_gpu_paint_us,
                 },
             );
             // The pane's timeline: this frame's scopes on their absolute
@@ -6760,6 +6865,17 @@ impl eframe::App for OrbitLiveApp {
                 NAME_UPLOAD_INST_US,
                 up_ns as f32 / 1_000.0,
             ));
+            for (name, v) in [
+                (NAME_FRAME_PERIOD_US, self.frame_period_s * 1e6),
+                (
+                    NAME_OUTSIDE_FRAME_US,
+                    (self.frame_period_s * 1e6 - self.self_profile.last_frame_span_ns() as f32 / 1e3).max(0.0),
+                ),
+                (NAME_GPU_PREPARE_US, self.last_gpu_prepare_us),
+                (NAME_GPU_PAINT_US, self.last_gpu_paint_us),
+            ] {
+                self.index.insert(LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, name, v));
+            }
             self.index.insert(LiveEvent::from_value(
                 sample_t,
                 VIEWER_PID,
@@ -7093,19 +7209,59 @@ fn paint_sort_arrow(ui: &Ui, at: Pos2, desc: bool) {
     ui.painter().add(egui::Shape::convex_polygon(pts, theme::TEXT, Stroke::NONE));
 }
 
-/// A clickable report column header, with the sort arrow on the active
-/// column. Returns true when clicked. Labelled `sort:<name>` for the harness.
-fn sort_header(ui: &mut Ui, label: &str, sort: (u8, bool), col: u8, font: f32) -> bool {
-    let active = sort.0 == col;
-    let resp = ui.add(
-        egui::Label::new(RichText::new(label).color(if active { theme::TEXT } else { theme::MUTED }).size(font))
-            .sense(Sense::click()),
+/// Case-insensitive ordering without allocating a lowercase copy per
+/// comparison: a sort of a few thousand rows runs this tens of thousands of
+/// times a frame while the header is clicked.
+fn cmp_ci(a: &str, b: &str) -> std::cmp::Ordering {
+    a.chars()
+        .map(|c| c.to_ascii_lowercase())
+        .cmp(b.chars().map(|c| c.to_ascii_lowercase()))
+}
+
+/// The hooked checkbox of a hand-laid report row: a 12 px box, ticked in
+/// the accent when hooked.
+fn paint_hook_box(ui: &Ui, cell: Rect, hooked: bool) {
+    let box_r = Rect::from_center_size(cell.center(), Vec2::splat(12.0));
+    ui.painter().rect(
+        box_r,
+        2.0,
+        if hooked { theme::ACCENT } else { theme::INPUT },
+        Stroke::new(1.0, if hooked { theme::ACCENT } else { theme::MUTED }),
+        StrokeKind::Inside,
     );
-    if active {
-        paint_sort_arrow(ui, Pos2::new(resp.rect.right() + 7.0, resp.rect.center().y), sort.1);
+    if hooked {
+        ui.painter().line_segment(
+            [Pos2::new(box_r.left() + 3.0, box_r.center().y), Pos2::new(box_r.center().x, box_r.bottom() - 3.0)],
+            Stroke::new(1.5, theme::CANVAS),
+        );
+        ui.painter().line_segment(
+            [Pos2::new(box_r.center().x, box_r.bottom() - 3.0), Pos2::new(box_r.right() - 2.0, box_r.top() + 3.0)],
+            Stroke::new(1.5, theme::CANVAS),
+        );
     }
-    note_ui_rect(&format!("sort:{label}"), resp.rect);
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// `percent_bar` painted at a given rect, for rows laid out by hand.
+fn paint_percent_bar(ui: &Ui, rect: Rect, percent: f64, strong: bool) {
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, theme::INPUT);
+    let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
+    if fraction > 0.0 {
+        let mut filled = rect;
+        filled.set_width(rect.width() * fraction);
+        painter.rect_filled(
+            filled,
+            2.0,
+            if strong { Color32::from_rgb(0x3A, 0x54, 0x68) } else { Color32::from_rgb(0x24, 0x2C, 0x36) },
+        );
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{percent:.1}%"),
+        FontId::monospace(10.5),
+        if strong { theme::TEXT } else { theme::MUTED },
+    );
 }
 
 /// Empties this frame's rectangles into a JSON text.

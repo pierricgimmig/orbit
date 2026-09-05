@@ -128,15 +128,17 @@ impl LiveEvent {
     }
 
     pub fn color_for(self, intern: Option<&InternTable>) -> u32 {
-        let name = intern.and_then(|t| t.get(self.name_id)).map(str::as_bytes);
-        event_color(
+        // The name's hash, not its bytes: the table has it precomputed, and
+        // hashing the string here again was a third of the listing.
+        let hash = intern.and_then(|t| t.name_hash(self.name_id));
+        crate::color::event_color_hashed(
             self.kind,
             self.tid,
             self.depth,
             self.extra,
             self._pad,
             self.name_id,
-            name,
+            hash,
         )
     }
 
@@ -254,10 +256,39 @@ struct OpenScope {
     name_id: u32,
 }
 
+/// A hasher for the id -> name map: ids are small dense integers, and the
+/// listing looks one up per instance per frame, so SipHash was a measurable
+/// share of a 20,000-instance frame. One multiply is enough.
+#[derive(Default, Clone, Copy)]
+pub struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.0 = (v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+pub type IdMap<V> = HashMap<u32, V, std::hash::BuildHasherDefault<IdHasher>>;
+
+/// One interned name, with the hash its colour is drawn from, computed once
+/// here rather than per instance per frame.
+struct Interned {
+    text: String,
+    hash: u32,
+}
+
 #[derive(Default)]
 pub struct InternTable {
     by_text: HashMap<String, u32>,
-    by_id: HashMap<u32, String>,
+    by_id: IdMap<Interned>,
     next_id: u32,
 }
 
@@ -269,20 +300,25 @@ impl InternTable {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         self.by_text.insert(text.to_string(), id);
-        self.by_id.insert(id, text.to_string());
+        self.by_id.insert(id, Interned { text: text.to_string(), hash: crate::color::name_hash(text.as_bytes()) });
         id
     }
 
     pub fn insert_id(&mut self, id: u32, text: &str) {
         self.by_text.insert(text.to_string(), id);
-        self.by_id.insert(id, text.to_string());
+        self.by_id.insert(id, Interned { text: text.to_string(), hash: crate::color::name_hash(text.as_bytes()) });
         if id >= self.next_id {
             self.next_id = id.wrapping_add(1);
         }
     }
 
     pub fn get(&self, id: u32) -> Option<&str> {
-        self.by_id.get(&id).map(String::as_str)
+        self.by_id.get(&id).map(|e| e.text.as_str())
+    }
+
+    /// The colour hash of a name, `name_hash` of its text, precomputed.
+    pub fn name_hash(&self, id: u32) -> Option<u32> {
+        self.by_id.get(&id).map(|e| e.hash)
     }
 
     pub fn len(&self) -> usize {
@@ -294,7 +330,7 @@ impl InternTable {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (u32, &str)> {
-        self.by_id.iter().map(|(&id, text)| (id, text.as_str()))
+        self.by_id.iter().map(|(&id, e)| (id, e.text.as_str()))
     }
 
     /// Resolve a scope search to matching `name_id`s. Empty query ⇒ empty set

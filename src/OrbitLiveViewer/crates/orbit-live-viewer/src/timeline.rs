@@ -480,6 +480,7 @@ impl CallbackTrait for TimelineCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
+        let t0 = upload_clock_ns();
         if let Some(slots) = callback_resources.get_mut::<TimelineGpuSlot>() {
             let gpu = slots.get_mut(self.slot);
             if self.layer == TimelineLayer::Base && !matches!(self.payload, TimelinePayload::Keep) {
@@ -487,6 +488,7 @@ impl CallbackTrait for TimelineCallback {
             }
             gpu.upload(device, queue, &self.payload, self.view, self.layer);
         }
+        GPU_PREPARE_NS.fetch_add(upload_clock_ns().saturating_sub(t0), Ordering::Relaxed);
         Vec::new()
     }
 
@@ -504,10 +506,24 @@ impl CallbackTrait for TimelineCallback {
         if sw > 0 && sh > 0 {
             render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
         }
+        let t0 = upload_clock_ns();
         if let Some(slots) = callback_resources.get::<TimelineGpuSlot>() {
             slots.get(self.slot).draw(render_pass, self.layer);
         }
+        GPU_PAINT_NS.fetch_add(upload_clock_ns().saturating_sub(t0), Ordering::Relaxed);
     }
+}
+
+/// CPU time spent in the egui-wgpu callbacks since the last `take`, summed
+/// over every callback of the frame (base and overlay layers, both
+/// timelines). Like the upload stats, written after `App::update` returns
+/// and read one frame late.
+static GPU_PREPARE_NS: AtomicU64 = AtomicU64::new(0);
+static GPU_PAINT_NS: AtomicU64 = AtomicU64::new(0);
+
+/// (prepare ns, paint ns) accumulated since the previous call.
+pub fn take_gpu_times() -> (u64, u64) {
+    (GPU_PREPARE_NS.swap(0, Ordering::Relaxed), GPU_PAINT_NS.swap(0, Ordering::Relaxed))
 }
 
 /// TypeMap slot for [`TimelineGpu`].

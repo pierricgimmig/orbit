@@ -144,6 +144,23 @@ pub const NAME_POOL_WAKE_US: u32 = 30_048;
 pub const NAME_POOL_TAIL_US: u32 = 30_049;
 /// 1 while the listing walks lanes inline, 0 while it uses the pool.
 pub const NAME_LISTING_INLINE: u32 = 30_050;
+/// The browser's frame period (egui's dt), and what of it fell outside the
+/// `Frame` scope: eframe's own tessellation, the WebGPU submit, the browser
+/// compositor -- everything the viewer's scopes cannot see.
+pub const NAME_FRAME_PERIOD_US: u32 = 30_051;
+pub const NAME_OUTSIDE_FRAME_US: u32 = 30_052;
+/// CPU time inside the egui-wgpu callbacks, the previous frame's: `prepare`
+/// (buffer and texture writes) and `paint` (the draw calls). They run after
+/// `App::update` returns, so they are read one frame late.
+pub const NAME_GPU_PREPARE_US: u32 = 30_053;
+pub const NAME_GPU_PAINT_US: u32 = 30_054;
+/// The Self pane's own timeline draw, so its listing and upload nest under
+/// one scope instead of doubling the capture timeline's counts.
+pub const NAME_SELF_TIMELINE: u32 = 30_055;
+/// The sampling report side panel (egui layout of its rows) and the Self
+/// pane as a whole, the two UI costs that were hiding inside `Frame`.
+pub const NAME_REPORT_PANEL: u32 = 30_056;
+pub const NAME_SELF_PANE: u32 = 30_057;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +239,13 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_POOL_WAKE_US, "pool_wake_us");
     intern.insert_id(NAME_POOL_TAIL_US, "pool_tail_us");
     intern.insert_id(NAME_LISTING_INLINE, "listing_inline");
+    intern.insert_id(NAME_FRAME_PERIOD_US, "frame_period_us");
+    intern.insert_id(NAME_OUTSIDE_FRAME_US, "outside_frame_us");
+    intern.insert_id(NAME_GPU_PREPARE_US, "gpu_prepare_us");
+    intern.insert_id(NAME_GPU_PAINT_US, "gpu_paint_us");
+    intern.insert_id(NAME_SELF_TIMELINE, "SelfTimeline");
+    intern.insert_id(NAME_REPORT_PANEL, "ReportPanel");
+    intern.insert_id(NAME_SELF_PANE, "SelfPane");
     intern_render_worker_names(intern);
 }
 

@@ -859,7 +859,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
- "orbit-api",
  "orbit-live-event",
  "orbit-live-protocol",
  "orbit-live-render",

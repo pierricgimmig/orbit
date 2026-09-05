@@ -1208,6 +1208,12 @@ pub fn run_on(
     if let Err(errno) = orbit_api::init() {
         eprintln!("orbit-service: self-instrumentation off (orbit_init errno {errno})");
     }
+    // And the live server's sends and encodes with the same API: the server
+    // crate has a hook rather than a dependency on orbit-api.
+    orbit_live_server::set_instrument(orbit_live_server::Instrument {
+        scope: |name| Box::new(orbit_api::scope(name)),
+        value: |name, value| orbit_api::value(name, value),
+    });
 
     let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
     let store = Arc::new(SampleStore::new());
