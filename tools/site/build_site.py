@@ -10,6 +10,7 @@ the blog and the screenshots.
     python3 tools/site/build_site.py                      # captures Box3D for the front page
     python3 tools/site/build_site.py --stream my.orbit.stream
     python3 tools/site/build_site.py --bundle capture.orbit.zip
+    python3 tools/site/build_site.py --skip-viewer --empty-stream   # chrome only, no WASM / capture
     python3 tools/site/serve.py --dir site --port 8081    # then open it
 
 The front-page capture is a `.orbit.stream`: the wire frames a connecting
@@ -133,20 +134,70 @@ def inline(text):
     return text
 
 
-def page(title, body, root=".", nav=True):
+def page(title, body, root=".", nav=True, sidebar="", current=""):
     template = open(os.path.join(HERE, "page.html")).read()
     return (template.replace("{{title}}", html.escape(title))
             .replace("{{root}}", root)
             .replace("{{body}}", body)
-            .replace("{{nav}}", NAV.replace("{{root}}", root) if nav else ""))
+            .replace("{{sidebar}}", sidebar)
+            .replace("{{nav}}", nav_html(root, current) if nav else ""))
 
 
-NAV = ('<nav class="site"><a class="brand" href="{{root}}/index.html"><img src="{{root}}/logo.png" alt="Orbit"></a>'
-       '<a href="{{root}}/manual/index.html">Manual</a>'
-       '<a href="{{root}}/blog/index.html">Blog</a>'
-       '<a href="{{root}}/e2e/report.html">Test report</a>'
-       '<span class="spacer"></span>'
-       '<a class="cta" href="{{root}}/viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a></nav>')
+def toc_html(text):
+    """On-this-page list from ## / ### headings. Empty when a page has none."""
+    items = []
+    for line in text.splitlines():
+        match = re.match(r"^(#{2,3})\s+(.*)$", line)
+        if match:
+            items.append((len(match.group(1)), match.group(2)))
+    if not items:
+        return ""
+    out = ['<aside class="toc"><p class="toc-label">On this page</p><nav class="toc-nav"><ol>']
+    for level, title in items:
+        kind = "l2" if level == 2 else "l3"
+        out.append(f'<li class="{kind}"><a href="#{slug(title)}">{inline(title)}</a></li>')
+    out.append("</ol></nav></aside>")
+    return "\n".join(out)
+
+
+def preface(src, root):
+    """Breadcrumb and, for the two manual chapters, a section switcher."""
+    home = f'<nav class="crumbs" aria-label="Breadcrumb"><a href="{root}/index.html">Home</a>'
+    if src.endswith("docs/manual/features.md"):
+        return (f'{home}<span aria-hidden="true">/</span><span>Manual</span></nav>\n'
+                '<nav class="doc-tabs" aria-label="Manual sections">'
+                '<a class="is-current" href="index.html">Feature catalogue</a>'
+                '<a href="live-viewer.html">Live viewer</a></nav>')
+    if src.endswith("docs/manual/live-viewer.md"):
+        return (f'{home}<span aria-hidden="true">/</span><span>Manual</span></nav>\n'
+                '<nav class="doc-tabs" aria-label="Manual sections">'
+                '<a href="index.html">Feature catalogue</a>'
+                '<a class="is-current" href="live-viewer.html">Live viewer</a></nav>')
+    if src.endswith("docs/e2e/report.md"):
+        return f'{home}<span aria-hidden="true">/</span><span>Test report</span></nav>'
+    if src.endswith("docs/TODO.md"):
+        return f'{home}<span aria-hidden="true">/</span><span>Roadmap</span></nav>'
+    return ""
+
+
+def nav_html(root, current=""):
+    def item(href, label, key):
+        if current == key:
+            return f'<a class="is-current" href="{root}/{href}" aria-current="page">{label}</a>'
+        return f'<a href="{root}/{href}">{label}</a>'
+
+    return (
+        '<nav class="site">'
+        f'<a class="brand" href="{root}/index.html"><img src="{root}/logo.png" alt="Orbit"></a>'
+        '<div class="nav-links">'
+        f'{item("manual/index.html", "Manual", "manual")}'
+        f'{item("blog/index.html", "Blog", "blog")}'
+        f'{item("e2e/report.html", "Test report", "report")}'
+        '</div>'
+        '<span class="spacer"></span>'
+        f'<a class="cta" href="{root}/viewer/index.html?capture=../captures/{{{{capture}}}}&collapse=scheduler">Open the viewer</a>'
+        '</nav>'
+    )
 
 
 # ------------------------------------------------------------------- capture
@@ -188,10 +239,13 @@ def capture_stream(bundle, port):
 # ---------------------------------------------------------------------- site
 
 
-def build(out, stream_path, bundle, name, port):
+def build(out, stream_path, bundle, name, port, skip_viewer=False, empty_stream=False):
     os.makedirs(out, exist_ok=True)
     # The viewer pack, as built (build_wasm.sh).
-    shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
+    if skip_viewer:
+        os.makedirs(os.path.join(out, "viewer"), exist_ok=True)
+    else:
+        shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
     for asset in ("site.css", "logo.png", "favicon.png"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
     # The front-page capture.
@@ -200,6 +254,8 @@ def build(out, stream_path, bundle, name, port):
     status = None
     if stream_path:
         data = open(stream_path, "rb").read()
+    elif empty_stream:
+        data = b""
     else:
         data, status = capture_stream(bundle, port)
     capture_file = f"{name}.orbit.stream"
@@ -223,11 +279,17 @@ def build(out, stream_path, bundle, name, port):
         text = open(path).read()
         # Screenshot references in the docs are bare file names or ../screenshots/.
         text = text.replace("docs/screenshots/", "../screenshots/")
-        body = render_markdown(text)
+        body = preface(src, root) + render_markdown(text)
         body = re.sub(r'src="(\d\d-[^"]+\.png)"', r'src="../screenshots/\1"', body)
         body = re.sub(r"<code>(\d\d-[^<]+\.png)</code>", r'<a href="../screenshots/\1"><code>\1</code></a>', body)
+        current = ""
+        if "manual" in src:
+            current = "manual"
+        elif "e2e" in src:
+            current = "report"
         with open(os.path.join(out, dst), "w") as handle:
-            handle.write(page(title, body, root).replace("{{capture}}", capture_file))
+            handle.write(page(title, body, root, sidebar=toc_html(text), current=current)
+                         .replace("{{capture}}", capture_file))
     # The front page.
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     facts = f"{len(data) / 1024 / 1024:.1f} MB stream"
@@ -251,10 +313,16 @@ def main():
     parser.add_argument("--bundle", help="an .orbit.zip to convert for the front page")
     parser.add_argument("--name", default="box3d", help="the capture's file stem on the site")
     parser.add_argument("--port", type=int, default=44850, help="port for the throwaway service")
+    parser.add_argument("--skip-viewer", action="store_true",
+                        help="omit the WASM viewer pack (chrome/layout preview; the iframe 404s)")
+    parser.add_argument("--empty-stream", action="store_true",
+                        help="write an empty capture file instead of capturing Box3D or reading --stream")
     args = parser.parse_args()
-    if not os.path.exists(os.path.join(VIEWER_DIST, "orbit_live_viewer_bg.wasm")):
+    wasm = os.path.join(VIEWER_DIST, "orbit_live_viewer_bg.wasm")
+    if not args.skip_viewer and not os.path.exists(wasm):
         raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run src/OrbitLiveViewer/build_wasm.sh first")
-    capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port)
+    capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port,
+                                skip_viewer=args.skip_viewer, empty_stream=args.empty_stream)
     print(f"site in {args.out}: front page opens captures/{capture_file} ({facts})")
     print(f"serve it:  python3 tools/site/serve.py --dir {args.out} --port 8081")
 
