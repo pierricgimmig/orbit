@@ -826,6 +826,18 @@ pub struct OrbitLiveApp {
     functions_show_all: bool,
     /// Flat report sort: column index (hooked, self, incl, function, module) and descending.
     flat_sort: (u8, bool),
+    /// The code views' state: the source document, the disassembly, how
+    /// they read, the rows built from them, and what went wrong.
+    code_doc: Option<crate::code::CodeDoc>,
+    code_disasm: Option<crate::code::Disassembly>,
+    code_mode: crate::code::CodeMode,
+    code_rows: Vec<crate::code::CodeRow>,
+    /// (mode, doc identity, disassembly identity) the rows were built for.
+    code_rows_key: (u8, usize, u64),
+    code_error: String,
+    code_loading: bool,
+    /// Row to scroll into view once, after a load.
+    code_scroll_to: Option<usize>,
     /// Functions view sort: column index (hooked, function, size, module) and descending.
     functions_sort: (u8, bool),
     selected_hooks: Vec<FunctionHit>,
@@ -889,6 +901,9 @@ enum ReportTab {
     /// Every function of the selected process, with a hooked column: C++
     /// Orbit's Functions view, where dynamic instrumentation is chosen.
     Functions,
+    /// The code views: a source file, a function's disassembly, or the
+    /// two interleaved (TODO item 30).
+    Code,
 }
 
 impl ReportTab {
@@ -903,6 +918,7 @@ impl ReportTab {
             "live" => Some(ReportTab::Live),
             "flame" => Some(ReportTab::Flame),
             "functions" => Some(ReportTab::Functions),
+            "code" => Some(ReportTab::Code),
             _ => None,
         }
     }
@@ -916,6 +932,7 @@ impl ReportTab {
             ReportTab::Live => "Live",
             ReportTab::Flame => "Flame",
             ReportTab::Functions => "Functions",
+            ReportTab::Code => "Code",
         }
     }
 
@@ -1087,7 +1104,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1146,6 +1163,16 @@ impl OrbitLiveApp {
             self.pointer_readout.clone(),
             VIEWER_BUILD,
             if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
+            format!(
+                "{{\"mode\":\"{}\",\"rows\":{},\"source\":{:?},\"disasm\":{:?},\"instructions\":{},\"error\":{:?},\"loading\":{}}}",
+                self.code_mode.label(),
+                self.code_rows.len(),
+                self.code_doc.as_ref().map(|d| d.path.as_str()).unwrap_or(""),
+                self.code_disasm.as_ref().map(|d| d.function.name.as_str()).unwrap_or(""),
+                self.code_disasm.as_ref().map(|d| d.lines.len()).unwrap_or(0),
+                self.code_error,
+                self.code_loading,
+            ),
         );
         if text == self.sel_readout {
             return;
@@ -1391,7 +1418,7 @@ impl OrbitLiveApp {
             self_tl: TimelineState::fresh(),
             gpu_slot: 0,
             canvas_override: None,
-            capture_open: static_capture.is_none() && (true),
+            capture_open: false,
             process_filter: String::new(),
             opt_api: true,
             opt_csw: true,
@@ -1408,6 +1435,14 @@ impl OrbitLiveApp {
             functions_requested: false,
             functions_show_all: false,
             flat_sort: (1, true),
+            code_doc: None,
+            code_disasm: None,
+            code_mode: crate::code::CodeMode::Both,
+            code_rows: Vec::new(),
+            code_rows_key: (255, 0, 0),
+            code_error: String::new(),
+            code_loading: false,
+            code_scroll_to: None,
             functions_sort: (1, false),
             selected_hooks: Vec::new(),
             last_symbol_poll: -1.0,
@@ -2105,6 +2140,44 @@ impl OrbitLiveApp {
         }
         if let Some(m) = inbox.modules {
             self.modules = Some(m);
+        }
+        if let Some(result) = inbox.disassembly {
+            self.code_loading = false;
+            match result {
+                Ok(d) => {
+                    // The function's own file, when the line table names one
+                    // and it is not what is open already, for the two to be
+                    // read together.
+                    let want = if !d.function.file.is_empty() { d.function.file.clone() } else { d.files.first().cloned().unwrap_or_default() };
+                    let have = self.code_doc.as_ref().map(|doc| doc.path.clone()).unwrap_or_default();
+                    if !want.is_empty() && want != have {
+                        self.net.get_source(&want);
+                    }
+                    let has_lines = d.lines.iter().any(|l| l.line > 0);
+                    self.code_mode = if has_lines { crate::code::CodeMode::Both } else { crate::code::CodeMode::Disassembly };
+                    self.code_disasm = Some(d);
+                    self.code_error.clear();
+                    self.code_scroll_to = Some(0);
+                    self.report_tab = ReportTab::Code;
+                    self.report_open = true;
+                    if self.report_collapsed {
+                        self.report_collapsed = false;
+                        self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                    }
+                }
+                Err(e) => self.code_error = e,
+            }
+            self.needs_repaint = true;
+        }
+        if let Some(result) = inbox.source {
+            match result {
+                Ok(f) => {
+                    self.code_doc = Some(crate::code::CodeDoc::new(&f.path, &f.text));
+                    self.code_error.clear();
+                }
+                Err(e) => self.code_error = e,
+            }
+            self.needs_repaint = true;
         }
         if let Some(s) = inbox.symbols {
             self.symbols = s;
@@ -5513,7 +5586,7 @@ impl OrbitLiveApp {
                 });
                 ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
-                    const TABS: [ReportTab; 7] = [
+                    const TABS: [ReportTab; 8] = [
                         ReportTab::Live,
                         ReportTab::Flat,
                         ReportTab::Flame,
@@ -5521,6 +5594,7 @@ impl OrbitLiveApp {
                         ReportTab::BottomUp,
                         ReportTab::Modules,
                         ReportTab::Functions,
+                        ReportTab::Code,
                     ];
                     let labels: Vec<&str> = TABS.iter().map(|t| t.label()).collect();
                     let current = TABS.iter().position(|t| *t == self.report_tab).unwrap_or(0);
@@ -5632,6 +5706,9 @@ impl OrbitLiveApp {
                         );
                     }
                 });
+                if self.report_tab == ReportTab::Code {
+                    self.code_toolbar(ui);
+                }
                 // Both axes: a call tree or a long function name is wider than
                 // the panel, and the rows are the thing to scroll, not the
                 // panel to widen.
@@ -5646,6 +5723,7 @@ impl OrbitLiveApp {
                         ReportTab::Live => self.live_rows(ui),
                         ReportTab::Flame => self.flame_rows(ui),
                         ReportTab::Functions => self.function_rows(ui),
+                        ReportTab::Code => self.code_rows(ui),
                     }
                 });
             });
@@ -5946,6 +6024,214 @@ impl OrbitLiveApp {
         }
     }
 
+    /// The Code tab: a toolbar (how it reads, what is open, the examples)
+    /// and the rows, laid out by hand and only for the rows in view, with
+    /// a gutter of line numbers or addresses. C++ Orbit's `Viewer`, minus
+    /// the sample heatmap for now.
+    fn code_toolbar(&mut self, ui: &mut Ui) {
+        use crate::code::CodeMode;
+        let font = self.ui_tweaks.report_font;
+        let mut load_example: Option<u8> = None;
+        ui.horizontal(|ui| {
+            let modes = [CodeMode::Source, CodeMode::Disassembly, CodeMode::Both];
+            let labels: Vec<&str> = modes.iter().map(|m| m.label()).collect();
+            let current = modes.iter().position(|m| *m == self.code_mode).unwrap_or(2);
+            if let Some(i) = segmented(ui, "orbit_code_mode", &labels, current) {
+                self.code_mode = modes[i];
+            }
+            ui.add_space(8.0);
+            let examples = pill(ui, "Examples", false).on_hover_text("Code to look at with nothing captured");
+            egui::Popup::menu(&examples).show(|ui| {
+                let rust = ui.button("Rust: uprobes.rs (this repository)");
+                note_ui_rect("code:example:rust", rust.rect);
+                if rust.clicked() {
+                    load_example = Some(0);
+                    ui.close();
+                }
+                let cpp = ui.button("C++: UprobesUnwindingVisitor.cpp (this repository)");
+                note_ui_rect("code:example:cpp", cpp.rect);
+                if cpp.clicked() {
+                    load_example = Some(1);
+                    ui.close();
+                }
+                let asm = ui.button("Disassembly: a function of the running orbit-service, with its source");
+                note_ui_rect("code:example:asm", asm.rect);
+                if asm.clicked() {
+                    load_example = Some(2);
+                    ui.close();
+                }
+            });
+            ui.add_space(8.0);
+            let what = match (&self.code_disasm, &self.code_doc) {
+                (Some(d), _) => format!("{}  {}  {} instructions", d.function.name, d.function.module, d.lines.len()),
+                (None, Some(doc)) => format!("{}  {}  {} lines", doc.name(), doc.lang.label(), doc.lines.len()),
+                (None, None) => "Right-click a function in a report for its disassembly, or open an example.".to_string(),
+            };
+            ui.label(RichText::new(what).font(FontId::monospace(font - 0.5)).color(theme::MUTED));
+            if self.code_loading {
+                ui.label(RichText::new("loading…").font(FontId::monospace(font - 0.5)).color(theme::ACCENT));
+            }
+        });
+        match load_example {
+            Some(0) => {
+                let doc = crate::code::CodeDoc::new(crate::code::EXAMPLE_RUST_PATH, crate::code::EXAMPLE_RUST);
+                self.code_scroll_to = Some(doc.first_body_line());
+                self.code_doc = Some(doc);
+                self.code_disasm = None;
+                self.code_mode = CodeMode::Source;
+                self.code_error.clear();
+            }
+            Some(1) => {
+                let doc = crate::code::CodeDoc::new(crate::code::EXAMPLE_CPP_PATH, crate::code::EXAMPLE_CPP);
+                self.code_scroll_to = Some(doc.first_body_line());
+                self.code_doc = Some(doc);
+                self.code_disasm = None;
+                self.code_mode = CodeMode::Source;
+                self.code_error.clear();
+            }
+            Some(2) => {
+                self.net.get_example_disassembly();
+                self.code_loading = true;
+                self.code_error.clear();
+            }
+            _ => {}
+        }
+        if !self.code_error.is_empty() {
+            ui.label(RichText::new(&self.code_error).font(FontId::monospace(font - 0.5)).color(Color32::from_rgb(0xE5, 0x73, 0x73)));
+        }
+        if let Some(d) = &self.code_disasm {
+            let src = match &self.code_doc {
+                Some(doc) if d.files.iter().any(|f| *f == doc.path) => doc.name().to_string(),
+                _ if d.files.is_empty() => "no line table in the module: disassembly only".to_string(),
+                _ => "source not loaded".to_string(),
+            };
+            ui.label(
+                RichText::new(format!("{}  {:#x}  {} bytes  {}{}", d.arch, d.function.address, d.function.size, src, if d.truncated { "  (cut)" } else { "" }))
+                    .font(FontId::monospace(font - 1.0))
+                    .color(theme::MUTED),
+            );
+        }
+    }
+
+    fn code_rows(&mut self, ui: &mut Ui) {
+        use crate::code::{token_color, CodeMode, CodeRow, Language, TokenKind};
+        let font = self.ui_tweaks.report_font;
+        // Rows, rebuilt when what they are built from changes.
+        let key = (
+            self.code_mode as u8,
+            self.code_doc.as_ref().map(|d| d.lines.len() ^ (d.path.len() << 20)).unwrap_or(0),
+            self.code_disasm.as_ref().map(|d| d.function.address ^ (d.lines.len() as u64) << 40).unwrap_or(0),
+        );
+        if key != self.code_rows_key {
+            self.code_rows = crate::code::build_rows(self.code_mode, self.code_doc.as_ref(), self.code_disasm.as_ref());
+            self.code_rows_key = key;
+        }
+        if self.code_rows.is_empty() {
+            return;
+        }
+        let mono = FontId::monospace(font);
+        let row_h = font + 5.0;
+        let gutter_w = 64.0;
+        let avail_w = ui.available_width().max(300.0);
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        if let Some(row) = self.code_scroll_to.take() {
+            let y = top + row as f32 * row_h;
+            ui.scroll_to_rect(Rect::from_min_size(Pos2::new(clip.left(), y), Vec2::new(1.0, row_h)), Some(egui::Align::TOP));
+        }
+        let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
+        let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(self.code_rows.len());
+        let first = first.min(last);
+        if first > 0 {
+            ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
+        }
+        let pointer = ui.ctx().pointer_hover_pos();
+        // The widest line in view sets the horizontal extent, so the scroll
+        // area can scroll sideways to the end of a long line.
+        let mut widest = avail_w;
+        for i in first..last {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
+            let painter = ui.painter();
+            let hovered = pointer.is_some_and(|p| rect.contains(p));
+            let row = &self.code_rows[i];
+            let is_annotation = matches!(row, CodeRow::Source { .. } | CodeRow::Note { .. }) && self.code_mode == CodeMode::Both;
+            if is_annotation {
+                painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2C, 0x2F, 0x33));
+            } else if hovered {
+                painter.rect_filled(rect, 0.0, theme::TRACK_ALT);
+            }
+            let text_x = rect.left() + gutter_w + 8.0;
+            match row {
+                CodeRow::Source { line } => {
+                    let Some(doc) = &self.code_doc else { continue };
+                    painter.text(
+                        Pos2::new(rect.left() + gutter_w - 4.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        (line + 1).to_string(),
+                        FontId::monospace(font - 1.0),
+                        theme::MUTED,
+                    );
+                    let text = &doc.lines[*line];
+                    let spans = doc.spans(*line);
+                    let mut job = egui::text::LayoutJob::default();
+                    for s in spans {
+                        job.append(&text[s.start..s.end], 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(s.kind), ..Default::default() });
+                    }
+                    let galley = ui.fonts(|f| f.layout_job(job));
+                    widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
+                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+                }
+                CodeRow::Asm { index } => {
+                    let Some(d) = &self.code_disasm else { continue };
+                    let ins = &d.lines[*index];
+                    painter.text(
+                        Pos2::new(rect.left() + gutter_w - 4.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        format!("{:x}", ins.address),
+                        FontId::monospace(font - 1.0),
+                        token_color(TokenKind::Address),
+                    );
+                    let mut job = egui::text::LayoutJob::default();
+                    // The bytes, dim, then the instruction, then the call
+                    // target as a comment.
+                    let bytes = format!("{:<24}", ins.bytes);
+                    job.append(&bytes, 0.0, egui::TextFormat { font_id: FontId::monospace(font - 1.5), color: Color32::from_rgb(0x5A, 0x60, 0x66), ..Default::default() });
+                    let (spans, _) = crate::code::lex_line(Language::Asm, &ins.text, Default::default());
+                    for s in spans {
+                        job.append(&ins.text[s.start..s.end], 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(s.kind), ..Default::default() });
+                    }
+                    if !ins.target.is_empty() {
+                        job.append(&format!("   ; {}", ins.target), 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(TokenKind::Comment), ..Default::default() });
+                    }
+                    if self.code_mode == CodeMode::Both {
+                        if let Some(tail) = crate::code::other_file_tail(ins, self.code_doc.as_ref()) {
+                            job.append(&format!("   {tail}"), 0.0, egui::TextFormat { font_id: FontId::monospace(font - 1.5), color: Color32::from_rgb(0x5A, 0x60, 0x66), ..Default::default() });
+                        }
+                    }
+                    let galley = ui.fonts(|f| f.layout_job(job));
+                    widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
+                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+                }
+                CodeRow::Note { text } => {
+                    painter.text(
+                        Pos2::new(text_x, rect.center().y),
+                        Align2::LEFT_CENTER,
+                        text,
+                        FontId::monospace(font - 1.0),
+                        theme::MUTED,
+                    );
+                }
+            }
+        }
+        if last < self.code_rows.len() {
+            ui.allocate_exact_size(Vec2::new(avail_w, (self.code_rows.len() - last) as f32 * row_h), Sense::hover());
+        }
+        if widest > avail_w {
+            // Claim the width so ScrollArea::both offers the sideways scroll.
+            ui.allocate_exact_size(Vec2::new(widest, 0.0), Sense::hover());
+        }
+    }
+
     fn is_hooked(&self, function_id: u64) -> bool {
         function_id != 0 && self.selected_hooks.iter().any(|h| h.function_id == function_id)
     }
@@ -5967,6 +6253,14 @@ impl OrbitLiveApp {
                 }
             }
             HookAction::Unhook => self.selected_hooks.retain(|h| h.function_id != function_id),
+            HookAction::Disassemble => {
+                if let Some(pid) = self.selected_pid.filter(|p| *p > 0) {
+                    self.net.get_disassembly(pid, function_id);
+                    self.code_loading = true;
+                    self.code_error.clear();
+                    self.report_tab = ReportTab::Code;
+                }
+            }
         }
         self.needs_repaint = true;
     }
@@ -7046,6 +7340,8 @@ fn tree_node_matches(node: &crate::net::TreeNodeJson, needle: &str) -> bool {
 enum HookAction {
     Hook,
     Unhook,
+    /// Open the function's disassembly, with its source, in the Code tab.
+    Disassemble,
 }
 
 /// The right-click menu of a function in a report: hook it for dynamic
@@ -7066,6 +7362,12 @@ fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool) -> Option<H
         note_ui_rect("menu:hook", item.rect);
         if item.clicked() {
             action = Some(if hooked { HookAction::Unhook } else { HookAction::Hook });
+            ui.close();
+        }
+        let code = ui.button("Show disassembly and source");
+        note_ui_rect("menu:disassemble", code.rect);
+        if code.clicked() {
+            action = Some(HookAction::Disassemble);
             ui.close();
         }
     });

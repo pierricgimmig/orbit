@@ -45,6 +45,9 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/symbols/load", post(symbols_load))
         .route("/api/symbols/status", get(symbols_status))
         .route("/api/functions/search", get(functions_search))
+        .route("/api/code/disassembly", get(code_disassembly))
+        .route("/api/code/source", get(code_source))
+        .route("/api/code/example", get(code_example))
         .route("/api/demo/start", post(demo_start))
         .route("/api/demo/stop", post(demo_stop))
         .route("/api/config", get(get_config).put(put_config))
@@ -749,6 +752,45 @@ struct SearchQuery {
     pid: Option<u32>,
     q: Option<String>,
     limit: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct DisassemblyQuery {
+    pid: Option<u32>,
+    function_id: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct SourceQuery {
+    path: Option<String>,
+}
+
+fn json_or_error(result: Result<String, String>) -> Response {
+    match result {
+        Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
+    }
+}
+
+async fn code_disassembly(State(svc): State<Arc<LiveService>>, Query(q): Query<DisassemblyQuery>) -> Response {
+    match hooks_clone(&svc) {
+        Some(h) => json_or_error((h.disassemble_json)(q.pid.unwrap_or(0), q.function_id.unwrap_or(0))),
+        None => (StatusCode::NOT_IMPLEMENTED, "no service behind this server").into_response(),
+    }
+}
+
+async fn code_source(State(svc): State<Arc<LiveService>>, Query(q): Query<SourceQuery>) -> Response {
+    match hooks_clone(&svc) {
+        Some(h) => json_or_error((h.source_json)(q.path.as_deref().unwrap_or(""))),
+        None => (StatusCode::NOT_IMPLEMENTED, "no service behind this server").into_response(),
+    }
+}
+
+async fn code_example(State(svc): State<Arc<LiveService>>) -> Response {
+    match hooks_clone(&svc) {
+        Some(h) => json_or_error((h.example_disassembly_json)()),
+        None => (StatusCode::NOT_IMPLEMENTED, "no service behind this server").into_response(),
+    }
 }
 
 async fn functions_search(

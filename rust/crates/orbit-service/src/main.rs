@@ -16,6 +16,7 @@
 //! With no --pid it samples its own busy worker thread, which needs no root
 //! at perf_event_paranoid <= 1.
 
+mod code;
 mod functions;
 mod interner;
 mod lan;

@@ -193,7 +193,7 @@ Opened by the Report pill or by a selection. The title line says what the
 report covers; under it a row of tabs (the current one underlined in the
 accent) and the filter box. The panel
 is resizable with the splitter; dragged fully to one side it collapses to a
-slim edge tab that brings it back. `?report=flat|top_down|bottom_up|modules|live|flame`
+slim edge tab that brings it back. `?report=flat|top_down|bottom_up|modules|live|flame|functions|code`
 in the URL opens a tab on load.
 
 - **Filter box.** "filter functions", next to the tabs: rows whose name or
@@ -239,6 +239,34 @@ in the URL opens a tab on load.
   50,000 rows cost what a screenful does. Ticking a row hooks it for the
   next Record, the same list the report's right-click feeds. C++ Orbit's
   Functions view.
+- **Code** the code views. Right-click a function in the Flat report, a
+  call tree or the Functions list and pick "Show disassembly and source":
+  the service disassembles the function out of the process's module
+  (Intel syntax, call and branch targets named), walks the module's line
+  table for it, and the tab opens with the function's source file when
+  the line table names one and the file is under a root the service is
+  allowed to serve (`ORBIT_SOURCE_ROOTS`, the current directory by
+  default; nothing outside those roots is ever read). Three ways to read
+  it, in the segmented control: **Source** alone, **Disassembly** alone,
+  and **Both**, the C++ Orbit `AnnotatingLine` layout: the instructions
+  are the text, and each source line is inserted, on a raised row, above
+  the first instruction it produced; instructions from lines of other
+  files (inlined callees) carry `file:line` at their end instead. The
+  gutter shows line numbers or addresses; bytes, mnemonic, registers,
+  sizes, immediates and call targets are coloured the Darcula way the C++
+  app's highlighters are, as are keywords, types, calls, numbers, strings,
+  comments, preprocessor lines, lifetimes, attributes and macros in Rust,
+  C and C++ source. The rows are laid out only for the screenful in view,
+  so a 50,000-line file scrolls like a short one, and the panel scrolls
+  sideways to the end of the longest line in view. A module built without
+  line info (no `-g`) gives disassembly only, and the line under the
+  toolbar says so. **Examples** opens code with nothing captured: two
+  files of this repository embedded in the viewer (`uprobes.rs`,
+  `UprobesUnwindingVisitor.cpp`), opened at their first function, and the
+  running orbit-service's own `UprobeSession::drain_up_to`, disassembled
+  live from its binary with its source interleaved, the way a hooked
+  function in a `-g` build reads. Screenshots: `26-code-both.png`,
+  `27-code-source.png`.
 
 ## 7. Capture files
 
@@ -354,3 +382,5 @@ in the URL opens a tab on load.
 | `23-static-viewer.png` | website | The viewer alone on a stream file, no service |
 | `24-hook-from-report.png` | hook-from-report | The hook menu on a report row |
 | `25-report-filter.png` | report-filter | The Flat report narrowed by the filter box |
+| `26-code-both.png` | code-views | The Code tab in Both mode: the service's own function, source lines above the instructions they produced |
+| `27-code-source.png` | code-views | The Code tab on an embedded Rust file, highlighted |

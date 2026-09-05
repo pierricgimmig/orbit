@@ -281,6 +281,9 @@ pub struct Inbox {
     pub function_hits: Option<FunctionSearchJson>,
     /// Every function of a process, for the Functions view.
     pub function_list: Option<FunctionSearchJson>,
+    /// The code views: a disassembly and a source file, or why not.
+    pub disassembly: Option<Result<crate::code::Disassembly, String>>,
+    pub source: Option<Result<crate::code::SourceFile, String>>,
 }
 
 #[allow(dead_code)] // used from the wasm Net impl
@@ -584,6 +587,8 @@ mod wasm_impl {
                 modules: inbox.modules.take(),
                 function_hits: inbox.function_hits.take(),
                 function_list: inbox.function_list.take(),
+                disassembly: inbox.disassembly.take(),
+                source: inbox.source.take(),
             }
         }
 
@@ -801,6 +806,46 @@ mod wasm_impl {
                     .and_then(|t| parse_sampling_tree_json(&t));
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 g.tree = result.ok();
+            });
+        }
+
+        /// A function of `pid` disassembled, with its source lines.
+        pub fn get_disassembly(&self, pid: u32, function_id: u64) {
+            self.fetch_disassembly(format!("/api/code/disassembly?pid={pid}&function_id={function_id}"));
+        }
+
+        /// The service's example: one of its own functions.
+        pub fn get_example_disassembly(&self) {
+            self.fetch_disassembly("/api/code/example".to_string());
+        }
+
+        fn fetch_disassembly(&self, url: String) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&url)
+                    .await
+                    .and_then(|t| serde_json::from_str::<crate::code::Disassembly>(&t).map_err(|e| format!("disassembly: {e}")));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.disassembly = Some(result);
+            });
+        }
+
+        /// A source file the service may serve (one a disassembly named).
+        pub fn get_source(&self, path: &str) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            let url = format!("/api/code/source?path={}", percent_encode(path));
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&url)
+                    .await
+                    .and_then(|t| serde_json::from_str::<crate::code::SourceFile>(&t).map_err(|e| format!("source: {e}")));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                g.source = Some(result);
             });
         }
 
@@ -1226,6 +1271,9 @@ mod native_impl {
         pub fn get_sampling_tree_scope(&self, _name_id: u32, _mode: &str) {}
         pub fn get_sampling_tree(&self, _ranges: &[(u64, u64, Option<u32>)], _mode: &str) {}
         pub fn get_modules(&self, _pid: u32) {}
+        pub fn get_disassembly(&self, _pid: u32, _function_id: u64) {}
+        pub fn get_example_disassembly(&self) {}
+        pub fn get_source(&self, _path: &str) {}
         pub fn get_processes(&self) {}
         pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
         pub fn start_capture(&self, _req: &CaptureStart) {}
@@ -1450,3 +1498,18 @@ mod tests {
         assert_eq!(hits.functions[0].name, "foo::Bar");
     }
 }
+
+/// A query value, percent-encoded: paths carry `/`, spaces and worse.
+#[allow(dead_code)]
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3);
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+

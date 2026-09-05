@@ -59,6 +59,15 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
-# Debug info goes, the symbol table stays: a profiler's own binaries -- the
-# service, the test apps -- must symbolize. Costs a few percent of size.
-strip = "debuginfo"
+# The symbol table stays -- a profiler's own binaries, the service and the
+# test apps, must symbolize -- and so does the line table: the code views
+# interleave a function's disassembly with its source, which needs
+# .debug_line, and the example disassembly is of the service itself.
+# Nothing else of DWARF (no .debug_info beyond what the line table needs).
+debug = "line-tables-only"
+strip = "none"
+
+# The dependencies carry no debug info at all: their line tables were 35 MB
+# on the service, for code nobody disassembles from here.
+[profile.release.package."*"]
+debug = false

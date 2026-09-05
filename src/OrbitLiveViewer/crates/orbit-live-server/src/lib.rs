@@ -111,6 +111,12 @@ pub struct ControlHooks {
     pub symbols_status_json: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
     pub search_functions_json:
         std::sync::Arc<dyn Fn(u32, &str, u32) -> Result<String, String> + Send + Sync>,
+    /// The code views: a function of a process disassembled with its
+    /// source lines, a source file a disassembly named, and an example
+    /// disassembly of the service's own binary.
+    pub disassemble_json: std::sync::Arc<dyn Fn(u32, u64) -> Result<String, String> + Send + Sync>,
+    pub source_json: std::sync::Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>,
+    pub example_disassembly_json: std::sync::Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
 }
 
 pub struct LiveService {

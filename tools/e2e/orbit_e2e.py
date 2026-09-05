@@ -1342,6 +1342,62 @@ def report_filter(run):
     return f"{len(after)} of {len(before)} rows match 'b3Mul'"
 
 
+@scenario("code-views", "Source, disassembly and the two interleaved: the examples, then a Box3D function from the report")
+def code_views(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.load_symbols()
+    run.capture(seconds=3.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=code")
+    run.wait_for(lambda: run.sel().get("tab") == "Code", "the Code tab", timeout=20)
+
+    def code():
+        return run.sel().get("code") or {}
+
+    def example(label):
+        run.click("Examples")
+        run.rect(label, timeout=5)
+        run.click(label)
+        return run.wait_for(lambda: (not code().get("loading")) and code().get("rows") and code() or None,
+                            f"{label} loaded", timeout=30)
+
+    # The embedded files: each opens, highlighted, at its first function.
+    rust = example("code:example:rust")
+    check(rust["mode"] == "Source" and rust["rows"] > 500 and rust["source"].endswith("uprobes.rs"), f"rust example: {rust}")
+    run.shot("27-code-source", settle=0.5)
+    cpp = example("code:example:cpp")
+    check(cpp["rows"] > 500 and cpp["source"].endswith(".cpp"), f"C++ example: {cpp}")
+    # The service's own function, disassembled live, its source interleaved.
+    asm = example("code:example:asm")
+    check(asm["mode"] == "Both" and asm["instructions"] > 100, f"example disassembly: {asm}")
+    check(asm["rows"] > asm["instructions"], f"Both has no source rows: {asm}")
+    check(asm["source"].endswith("uprobes.rs"), f"the example's source is not uprobes.rs: {asm}")
+    run.shot("26-code-both", settle=0.5)
+    run.click("Disassembly")
+    run.wait_for(lambda: code().get("rows") == asm["instructions"], "disassembly alone")
+    run.click("Source")
+    run.wait_for(lambda: code().get("mode") == "Source", "source alone")
+    # A function of the target, from the Flat report's context menu.
+    run.click("Flat")
+    rows = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    target_rows = sorted((v[1], k) for k, v in rows.items()
+                         if (k.startswith("report:b3") or "orbit_e2e" in k) and 0 <= v[1] < canvas_h - 20)
+    check(target_rows, f"no Box3D row in view: {sorted(rows)[:8]}")
+    row = target_rows[0][1]
+    run.click(row, button="right")
+    run.click("menu:disassemble")
+    got = run.wait_for(lambda: (not code().get("loading")) and code().get("disasm") and code() or None,
+                       "the row's disassembly", timeout=30)
+    name = row[len("report:"):]
+    check(got["disasm"] == name and got["instructions"] > 0, f"disassembly of {name!r}: {got}")
+    check(run.sel().get("tab") == "Code", "the Code tab opened")
+    return (f"examples: uprobes.rs {rust['rows']} lines, C++ {cpp['rows']} lines, "
+            f"{asm['disasm'].rsplit('::', 1)[-1]} {asm['instructions']} instructions in {asm['rows']} rows; "
+            f"{name}: {got['instructions']} instructions ({got['mode']})")
+
+
 # --------------------------------------------------------------------- main
 
 def main():

@@ -1481,6 +1481,10 @@ pub fn run_on(
     let status_state = symbols.clone();
     let search_state = symbols.clone();
 
+    let code_state = symbols.clone();
+    let source_allow: crate::code::SourceAllowList = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let code_allow = source_allow.clone();
+    let example_allow = source_allow.clone();
     service.set_hooks(ControlHooks {
         list_processes_json: Arc::new(list_processes_json),
         start_capture: Arc::new(move |body: &str| {
@@ -1603,6 +1607,15 @@ pub fn run_on(
             }
             Ok(state.status_json())
         }),
+        disassemble_json: Arc::new(move |pid, function_id| {
+            let state = code_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
+            match (&state.index, state.pid == pid) {
+                (Some(index), true) => crate::code::disassemble_json(index, function_id, &code_allow),
+                _ => Err(format!("symbols for pid {pid} are not loaded")),
+            }
+        }),
+        source_json: Arc::new(move |path| crate::code::source_json(path, &source_allow)),
+        example_disassembly_json: Arc::new(move || crate::code::example_disassembly_json(&example_allow)),
         search_functions_json: Arc::new(move |pid, query, limit| {
             let state = search_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
             match (&state.index, state.pid == pid) {

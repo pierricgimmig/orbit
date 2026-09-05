@@ -17,7 +17,15 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 # Symbols stay (a profiler must symbolize itself); only debug info goes.
-strip = "debuginfo"
+# Line tables stay (the code views interleave disassembly with source, and
+# the example disassembly is of this binary); the rest of DWARF goes.
+debug = "line-tables-only"
+strip = "none"
+
+# The dependencies carry no debug info at all: their line tables were 35 MB
+# on the service, for code nobody disassembles from here.
+[profile.release.package."*"]
+debug = false
 
 [package]
 name = "orbit-service"
@@ -35,6 +43,9 @@ path = "src/main.rs"
 libc = "0.2"
 # Pure Rust; already in the tree through orbit-capture. Used by the wire bench only.
 miniz_oxide = "0.8"
+# The disassembler behind the code views (pure Rust); the trampoline crate
+# already carries it.
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
 orbit-api = { path = "../orbit-api" }
 orbit-capture = { path = "../orbit-capture" }
 orbit-live-event = { path = "../../../src/OrbitLiveViewer/crates/orbit-live-event" }

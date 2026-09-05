@@ -83,7 +83,7 @@ impl FunctionIndex {
                 };
                 functions.push(InstrumentableFunction {
                     id: function_id(path, file_offset),
-                    name: symbol.mangled_name,
+                    name: pretty_name(&symbol.mangled_name),
                     module: module.clone(),
                     module_path: path.to_string(),
                     file_offset,
@@ -109,6 +109,11 @@ impl FunctionIndex {
 
     pub fn module_count(&self) -> usize {
         self.module_count
+    }
+
+    /// Every function, in module order.
+    pub fn functions(&self) -> impl Iterator<Item = &InstrumentableFunction> {
+        self.functions.iter()
     }
 
     pub fn by_id(&self, id: u64) -> Option<&InstrumentableFunction> {
@@ -346,3 +351,18 @@ mod tests {
         assert_eq!(total, index.len() as u64, "every function belongs to a module");
     }
 }
+
+/// A Rust symbol demangled (legacy `_ZN..E` without its hash, and v0), a C
+/// or C++ one as it is: the Functions view and the disassembly read names,
+/// and `_ZN12orbit_service7uprobes..` is not one. The same rule the
+/// symbolizer applies to sampled frames.
+fn pretty_name(mangled: &str) -> String {
+    if mangled.starts_with("_R") || (mangled.starts_with("_ZN") && mangled.ends_with('E')) {
+        let demangled = format!("{:#}", rustc_demangle::demangle(mangled));
+        if demangled != mangled {
+            return demangled;
+        }
+    }
+    mangled.to_string()
+}
+

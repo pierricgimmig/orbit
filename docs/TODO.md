@@ -508,7 +508,21 @@ makes the tool feel premium. For debugging the views, example Rust and
 C++ code from this repo and a disassembly of a function of an Orbit
 binary must be loadable on demand from the viewer.
 
-**Status: in progress (2026-09-05).** The process picker stays in the main
-UI (a slim row under the transport); everything else is in the Settings
-window behind the gear.
+**Status: DONE (2026-09-05).** Service: `/api/code/disassembly?pid&function_id`
+(iced-x86, Intel syntax, targets named through the function index, one
+DWARF walk per function through `orbit_object::line_rows`),
+`/api/code/source?path` behind an allow-list of roots (`ORBIT_SOURCE_ROOTS`,
+cwd by default; only files a disassembly named, or under a root) and
+`/api/code/example` (the service's own `UprobeSession::drain_up_to`).
+Viewer: a Code tab with Source / Disassembly / Both (the C++
+`AnnotatingLine` layout), a hand-rolled lexer per language (Rust, C, C++,
+x86 asm) with the C++ app's Darcula colours, rows laid out for the
+screenful in view only, "Show disassembly and source" in every function
+context menu, and an Examples menu (two embedded files of this repo, the
+live example disassembly). Verified headless: the service example is 1153
+instructions with source interleaved in 60 ms; Box3D's `b3MulW` from the
+flat report (no line info in libbox3d: disassembly only). Left for later:
+per-line sample counts and the heatmap sidebar (needs the pc of every
+sample per function), navigating to a call target, arm64 disassembly, and
+a path-mapping dialog for sources not under a served root.
 

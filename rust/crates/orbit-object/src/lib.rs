@@ -42,6 +42,7 @@ pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
 pub use dwarf::{subprograms, Subprogram};
 pub use msvc::demangle_msvc;
 pub use pdb_file::{has_dbi_stream, load_pdb_symbols, pdb_info, PdbInfo, UNKNOWN_SYMBOL_SIZE};
+pub use lineinfo::{line_rows, LineRow};
 pub use lineinfo::{declaration_location, line_info, no_line_info_error, LineInfo};
 pub use symbols::{load_symbols, Symbol, SymbolTable};
 pub use unwind::{load_unwind_ranges, no_ranges_error};

@@ -16,6 +16,7 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 mod app;
 #[cfg(feature = "egui")]
 mod chrome_load;
+mod code;
 #[cfg(feature = "egui")]
 mod dev;
 mod live;

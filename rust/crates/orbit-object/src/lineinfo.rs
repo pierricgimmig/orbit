@@ -291,6 +291,90 @@ fn file_name_by_index(
     Some(path)
 }
 
+/// One row of the line table: from `address` on, until the next row, the
+/// code is on `line` of `file`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineRow {
+    pub address: u64,
+    pub file: String,
+    pub line: u32,
+}
+
+/// Every line-table row whose address is in `[start, end)`, in address
+/// order, plus the row in force at `start`: what a code view needs for a
+/// whole function in one walk of the DWARF, where `line_info` walks it once
+/// per address. Rows give the innermost inlined line, as a debugger's
+/// disassembly view shows it, not the outermost call site `line_info`
+/// reports for symbolization.
+pub fn line_rows(data: &[u8], start: u64, end: u64) -> Vec<LineRow> {
+    match object::FileKind::parse(data) {
+        Ok(object::FileKind::Elf32) => line_rows_typed::<elf::FileHeader32<Endianness>>(data, start, end),
+        Ok(object::FileKind::Elf64) => line_rows_typed::<elf::FileHeader64<Endianness>>(data, start, end),
+        _ => Vec::new(),
+    }
+}
+
+fn line_rows_typed<Elf>(data: &[u8], start: u64, end: u64) -> Vec<LineRow>
+where
+    Elf: FileHeader<Endian = Endianness>,
+{
+    let mut out = Vec::new();
+    let Ok(header) = Elf::parse(data) else { return out };
+    let Ok(endian) = header.endian() else { return out };
+    let loaded = crate::sections::DwarfSections::load(header, endian, data);
+    let Ok(dwarf) = gimli::Dwarf::load(|id| -> Result<gimli::EndianSlice<gimli::RunTimeEndian>, ()> {
+        Ok(gimli::EndianSlice::new(loaded.get(id), gimli::RunTimeEndian::Little))
+    }) else {
+        return out;
+    };
+    let mut units = dwarf.units();
+    while let Ok(Some(unit_header)) = units.next() {
+        let Ok(unit) = dwarf.unit(unit_header) else { continue };
+        if !unit_covers(&dwarf, &unit, start) {
+            continue;
+        }
+        let Some(program) = unit.line_program.clone() else { continue };
+        let comp_dir = unit.comp_dir.as_ref().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+        let Ok((program, sequences)) = program.sequences() else { continue };
+        let header = program.header();
+        let mut file_names: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
+        for sequence in sequences.iter().filter(|s| s.end > start && s.start < end) {
+            let mut rows = program.resume_from(sequence);
+            let mut before: Option<LineRow> = None;
+            while let Ok(Some((_, row))) = rows.next_row() {
+                if row.end_sequence() {
+                    break;
+                }
+                let address = row.address();
+                if address >= end {
+                    break;
+                }
+                let file = file_names
+                    .entry(row.file_index())
+                    .or_insert_with(|| {
+                        file_name_by_index(&dwarf, &unit, header, row.file_index(), &comp_dir).unwrap_or_default()
+                    })
+                    .clone();
+                let line = row.line().map(std::num::NonZeroU64::get).unwrap_or(0) as u32;
+                let entry = LineRow { address, file, line };
+                if address < start {
+                    before = Some(entry);
+                    continue;
+                }
+                if let Some(b) = before.take() {
+                    out.push(LineRow { address: start, ..b });
+                }
+                out.push(entry);
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    out.sort_by_key(|r| r.address);
+    out
+}
+
 /// The errors `ElfFileImpl::GetDeclarationLocationOfFunction` returns, matched
 /// by `ElfFileTest` on their exact text.
 pub mod declaration_errors {
