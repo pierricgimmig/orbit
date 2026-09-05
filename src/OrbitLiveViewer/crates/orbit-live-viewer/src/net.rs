@@ -74,6 +74,8 @@ pub struct SamplingRow {
     pub inclusive_count: u64,
     pub self_percent: f32,
     pub inclusive_percent: f32,
+    /// The function index's id, for hooking the row; 0 when unknown.
+    pub function_id: u64,
 }
 
 /// The whole report for one selection.
@@ -149,6 +151,8 @@ pub struct TreeNodeJson {
     pub module: String,
     #[serde(default)]
     pub address: u64,
+    #[serde(default)]
+    pub function_id: u64,
     #[serde(default)]
     pub inclusive: u64,
     #[serde(default)]
@@ -372,6 +376,8 @@ pub fn parse_sampling_report_json(text: &str) -> Result<SamplingReport, String> 
                             self_percent: number_after(row_text, "\"self_percent\":").unwrap_or(0.0) as f32,
                             inclusive_percent: number_after(row_text, "\"inclusive_percent\":").unwrap_or(0.0)
                                 as f32,
+                            // 48-bit ids: exact through the f64 the number parser hands back.
+                            function_id: number_after(row_text, "\"function_id\":").unwrap_or(0.0) as u64,
                         });
                     }
                 }

@@ -65,6 +65,9 @@ pub struct FrameInfo {
     pub name: String,
     pub module: String,
     pub address: u64,
+    /// The function index's id for the function, so the row can be hooked
+    /// from the report; 0 when unknown (vDSO, an imported capture).
+    pub function_id: u64,
 }
 
 /// One captured stack, kept for later aggregation. Frames are innermost
@@ -438,6 +441,7 @@ impl SampleStore {
                 serde_json::json!({
                     "name": inner.name_of(*id),
                     "module": inner.names.get(id).map(|f| f.module.clone()).unwrap_or_default(),
+                    "function_id": inner.names.get(id).map(|f| f.function_id).unwrap_or(0),
                     "self": self_count,
                     "inclusive": inclusive,
                     "self_percent": percent(*self_count),
@@ -735,6 +739,7 @@ fn write_children(
                 .unwrap_or_else(|_| "\"\"".into()),
         );
         write_kv_u64(out, "address", info.map(|f| f.address).unwrap_or(0));
+        write_kv_u64(out, "function_id", info.map(|f| f.function_id).unwrap_or(0));
         write_kv_u64(out, "inclusive", child.sample_count);
         write_kv_u64(out, "exclusive", child.exclusive_count);
         write_kv_f64(out, "inclusive_percent", percent_of(child.sample_count, total));
@@ -849,7 +854,7 @@ mod tests {
         for (id, name) in [(1u32, "main"), (2, "work"), (3, "inner"), (4, "other")] {
             store.record_frame(
                 id,
-                FrameInfo { name: name.to_string(), module: "app".into(), address: 0x1000 + id as u64 },
+                FrameInfo { name: name.to_string(), module: "app".into(), address: 0x1000 + id as u64, function_id: 0 },
             );
         }
         store.push(StoredSample { timestamp_ns: 10, tid: 7, frames: vec![3, 2, 1] });

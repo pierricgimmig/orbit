@@ -162,6 +162,7 @@ impl FrameNames {
             name: name.to_string(),
             module: String::new(),
             address: 0,
+            function_id: 0,
         })
     }
 
@@ -184,6 +185,7 @@ impl FrameNames {
                 name: frame.name.clone(),
                 module: frame.module.clone(),
                 address: frame.address,
+                function_id: frame.function_id,
             },
         );
         self.ids.insert(frame.name.clone(), id);
@@ -533,7 +535,7 @@ fn open_bundle(
         bundle
             .frames
             .iter()
-            .map(|f| (f.id, FrameInfo { name: f.name.clone(), module: f.module.clone(), address: f.address }))
+            .map(|f| (f.id, FrameInfo { name: f.name.clone(), module: f.module.clone(), address: f.address, function_id: 0 }))
             .collect(),
     );
     service.mark_capture_finished();

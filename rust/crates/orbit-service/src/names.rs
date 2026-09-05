@@ -268,7 +268,7 @@ mod tests {
             },
         ];
         let store = SampleStore::new();
-        store.record_frame(9, FrameInfo { name: "f".into(), module: "m".into(), address: 0x9 });
+        store.record_frame(9, FrameInfo { name: "f".into(), module: "m".into(), address: 0x9, function_id: 0 });
         store.push(StoredSample { timestamp_ns: 12, tid: 555, frames: vec![9] });
         let known = vec![((4_000_000, 777), "Known".to_string())];
         let b = capture_bundle(&events, &intern, &store, &known, &[(4_000_000, "ghost".into())], 4_000_000);

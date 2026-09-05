@@ -199,7 +199,7 @@ pub fn file_offset_of(segments: &[ObjectSegment], address: u64) -> Option<u64> {
 /// Truncation is deliberate: the id crosses to the viewer as a JSON number,
 /// and 48 bits stays exactly representable as an `f64` no matter which JSON
 /// reader is on the other end.
-fn function_id(module_path: &str, file_offset: u64) -> u64 {
+pub(crate) fn function_id(module_path: &str, file_offset: u64) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut hash = OFFSET_BASIS;

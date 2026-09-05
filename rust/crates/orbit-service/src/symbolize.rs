@@ -24,7 +24,9 @@
 //! process that asks the time in a loop spends most of its samples.
 
 use orbit_maps::{parse_maps, PROT_EXEC};
-use orbit_object::{detached_debug_file, load_symbols, parse_elf_metadata, SymbolTable};
+use orbit_object::{detached_debug_file, load_symbols, parse_elf_metadata, ObjectSegment, SymbolTable};
+
+use crate::functions::{file_offset_of, function_id};
 
 /// One executable mapping, and the symbols of the file behind it.
 struct Module {
@@ -33,6 +35,11 @@ struct Module {
     /// Address in the file corresponding to `start` (start - offset).
     bias: u64,
     name: String,
+    /// Absolute path of the file, empty for the vDSO; with the loadable
+    /// segments it turns a symbol's address into the file offset the
+    /// function index keys hooks by.
+    path: String,
+    segments: Vec<ObjectSegment>,
     /// Function symbols sorted by address, for binary search.
     symbols: Vec<(u64, u64, String)>,
 }
@@ -41,12 +48,15 @@ pub struct Symbolizer {
     modules: Vec<Module>,
 }
 
-/// A frame with everything the call trees display.
+/// A frame with everything the call trees display, and the id the
+/// function index gives the function the address is in, so a report row
+/// can be hooked (0 when the address is in no known function).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedFrame {
     pub name: String,
     pub module: String,
     pub address: u64,
+    pub function_id: u64,
 }
 
 impl Symbolizer {
@@ -62,7 +72,15 @@ impl Symbolizer {
         Symbolizer {
             modules: modules
                 .into_iter()
-                .map(|(start, end, bias, name, symbols)| Module { start, end, bias, name, symbols })
+                .map(|(start, end, bias, name, symbols)| Module {
+                    start,
+                    end,
+                    bias,
+                    name,
+                    path: String::new(),
+                    segments: Vec::new(),
+                    symbols,
+                })
                 .collect(),
         }
     }
@@ -86,6 +104,8 @@ impl Symbolizer {
                         end: mapping.end_address,
                         bias: mapping.start_address,
                         name: "[vdso]".to_string(),
+                        path: String::new(),
+                        segments: Vec::new(),
                         symbols: sorted_symbols(&image, None),
                     });
                 }
@@ -96,14 +116,18 @@ impl Symbolizer {
             }
             let name = path.rsplit('/').next().unwrap_or(path).to_string();
             let bias = mapping.start_address.wrapping_sub(mapping.offset);
-            let symbols = std::fs::read(path)
-                .map(|bytes| sorted_symbols(&bytes, Some(path)))
+            let bytes = std::fs::read(path).unwrap_or_default();
+            let symbols = sorted_symbols(&bytes, Some(path));
+            let segments = parse_elf_metadata(&bytes, path)
+                .map(|m| m.loadable_segments)
                 .unwrap_or_default();
             modules.push(Module {
                 start: mapping.start_address,
                 end: mapping.end_address,
                 bias,
                 name,
+                path: path.to_string(),
+                segments,
                 symbols,
             });
         }
@@ -131,6 +155,7 @@ impl Symbolizer {
             name: self.resolve(address),
             module: module.map(|m| m.name.clone()).unwrap_or_default(),
             address,
+            function_id: module.map(|m| m.function_id_at(address)).unwrap_or(0),
         }
     }
 
@@ -149,6 +174,31 @@ impl Symbolizer {
             return demangle(name);
         }
         format!("{}+{:#x}", module.name, file_address)
+    }
+}
+
+impl Module {
+    /// The function index's id for the function containing `address`: the
+    /// hash of the module path and the symbol's file offset, the same
+    /// arithmetic `FunctionIndex::for_pid` does, so a report row and a
+    /// search hit for one function agree. 0 for the vDSO and for addresses
+    /// outside any symbol.
+    fn function_id_at(&self, address: u64) -> u64 {
+        if self.path.is_empty() {
+            return 0;
+        }
+        let file_address = address.wrapping_sub(self.bias);
+        let index = self.symbols.partition_point(|(start, _, _)| *start <= file_address);
+        let Some((start, size, _)) = index.checked_sub(1).and_then(|i| self.symbols.get(i)) else {
+            return 0;
+        };
+        let inside = if *size == 0 { *start == file_address } else { file_address < start + size };
+        if !inside {
+            return 0;
+        }
+        file_offset_of(&self.segments, *start)
+            .map(|offset| function_id(&self.path, offset))
+            .unwrap_or(0)
     }
 }
 
@@ -313,6 +363,25 @@ mod tests {
         } else {
             assert_eq!(libc.symbols.len(), dynsym, "without a debug file the dynamic table is all there is");
         }
+    }
+
+    #[test]
+    fn a_frames_function_id_is_the_function_indexs_id_for_it() {
+        let pid = std::process::id() as i32;
+        let symbolizer = Symbolizer::for_pid(pid);
+        let here = a_frames_function_id_is_the_function_indexs_id_for_it as usize as u64;
+        let frame = symbolizer.resolve_frame(here + 3);
+        assert_ne!(frame.function_id, 0, "our own code has a function id: {frame:?}");
+        let index = crate::functions::FunctionIndex::for_pid(pid);
+        let hit = index.by_id(frame.function_id).expect("the id is one the function index knows");
+        assert!(
+            hit.name.contains("a_frames_function_id_is_the_function_indexs_id_for_it"),
+            "index names it {}",
+            hit.name
+        );
+        // A hand-built module has no path: nothing to hook.
+        let sym = Symbolizer::from_parts(vec![(0x1000, 0x2000, 0x1000, "x".into(), symbols())]);
+        assert_eq!(sym.resolve_frame(0x1010).function_id, 0);
     }
 
     #[test]

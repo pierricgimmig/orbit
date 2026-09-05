@@ -115,6 +115,13 @@ Pills, left to right. A filled pill is on.
   window; the report panel then covers that window. Dragging on one
   thread's sample bar selects the samples of that thread only ("a tid
   narrows it further"). Several drags accumulate.
+- **Hook from the report.** Right-clicking a function in the Flat report
+  or in a call tree offers "Hook function for dynamic instrumentation"
+  (or "Unhook function"). The function joins the capture row's hook list,
+  its row turns accent-coloured, and a line above the report says how
+  many are hooked and that Record arms them. Functions the service could
+  not place in a file (the vDSO, an imported capture) say "Not hookable".
+  Screenshot: `24-hook-from-report.png`.
 - **Scope menu.** Right-clicking a scope opens a menu: "Sampling report for
   this scope" builds the report over every instance of that scope on that
   thread (the samples that fell inside any call of it); "Highlight every
@@ -251,3 +258,4 @@ in the URL opens a tab on load.
 | `21-self-pane.png` | wire-and-perf | The viewer's self-profile pane |
 | `22-website.png` | website | The site's front page with the embedded capture |
 | `23-static-viewer.png` | website | The viewer alone on a stream file, no service |
+| `24-hook-from-report.png` | hook-from-report | The hook menu on a report row |

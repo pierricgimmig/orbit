@@ -1061,6 +1061,56 @@ def _http_ok(url):
         return False
 
 
+
+@scenario("hook-from-report", "A function is hooked from the sampling report, and the next capture arms it")
+def hook_from_report(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    # Box3D, with symbols, so the report's rows carry function ids.
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=flat")
+    rows = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    # The workload's own function, so the hook is on the target's code; the
+    # first one in view (the report scrolls, and rows below the fold are in
+    # the readout too, with a y past the canvas).
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    target_rows = [(v[1], k) for k, v in rows.items()
+                   if (k.startswith("report:b3") or "orbit_e2e" in k) and 0 <= v[1] < canvas_h - 20]
+    check(target_rows, f"no Box3D row in view in the report: {sorted(rows)[:8]}")
+    row = sorted(target_rows)[0][1]
+    run.click(row, button="right")
+    run.rect("menu:hook", timeout=5)
+    run.shot("24-hook-from-report", settle=0.5)
+    run.click("menu:hook")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("hooks") else None, "the hook in the readout")
+    ids = sel["hooks"]
+    check(len(ids) == 1, f"one hook expected, got {ids}")
+    # The id is one the service's function index knows, under the same name.
+    name = row[len("report:"):]
+    hits = run.service.get(f"/api/functions/search?pid={run.target.pid}&q={name}&limit=8")["functions"]
+    check(any(h["function_id"] == ids[0] for h in hits), f"the report's id {ids[0]} is not a search hit for {name!r}: {hits[:3]}")
+    # Unhook and hook again through the same menu: the list follows.
+    run.click(row, button="right")
+    run.click("menu:hook")
+    run.wait_for(lambda: run.sel().get("hooks") == [], "the hook removed")
+    run.click(row, button="right")
+    run.click("menu:hook")
+    run.wait_for(lambda: run.sel().get("hooks") == ids, "the hook back")
+    # What Record would send: the same ids, to the same route.
+    run.capture(seconds=3.0, instrumented_functions=[{"function_id": i} for i in ids],
+                dynamic_instrumentation_method="kernel_uprobes")
+    message = run.service.get("/api/status").get("instrumentation", "")
+    run.stop_capture()
+    check(message, "the service said nothing about the hook it was asked to arm")
+    if "no hooks armed" in message:
+        check("CAP_PERFMON" in message, f"refusal does not name the capability: {message}")
+        return f"hooked {name!r}; arming skipped: {message.split('.')[0]}"
+    check("instrumenting" in message, f"unexpected instrumentation status: {message}")
+    return f"hooked {name!r}: {message}"
+
+
 # --------------------------------------------------------------------- main
 
 def main():

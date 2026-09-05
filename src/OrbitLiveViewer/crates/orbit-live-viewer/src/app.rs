@@ -994,7 +994,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}]}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1039,6 +1039,11 @@ impl OrbitLiveApp {
                 None => "null".to_string(),
             },
             self.index.event_count(),
+            self.selected_hooks
+                .iter()
+                .map(|h| h.function_id.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
         );
         if text == self.sel_readout {
             return;
@@ -5239,6 +5244,8 @@ impl OrbitLiveApp {
             ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
             return;
         }
+        self.hooked_hint(ui);
+        let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         egui::Grid::new("orbit_sampling_rows")
             .num_columns(4)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
@@ -5255,11 +5262,66 @@ impl OrbitLiveApp {
                     // is read faster than a column of numbers.
                     percent_bar(ui, row.self_percent as f64, true, self.ui_tweaks.report_bar_w);
                     percent_bar(ui, row.inclusive_percent as f64, false, self.ui_tweaks.report_bar_w);
-                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    let hooked = self.is_hooked(row.function_id);
+                    let label = ui.add(
+                        egui::Label::new(
+                            RichText::new(&row.name)
+                                .color(if hooked { theme::ACCENT } else { theme::TEXT })
+                                .size(self.ui_tweaks.report_font),
+                        )
+                        .sense(Sense::click()),
+                    );
+                    note_ui_rect(&format!("report:{}", row.name), label.rect);
+                    if let Some(action) = hook_menu(&label, row.function_id, hooked) {
+                        actions.push((action, row.function_id, row.name.clone(), row.module.clone()));
+                    }
                     ui.label(RichText::new(&row.module).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
                 }
             });
+        for (action, id, name, module) in actions {
+            self.apply_hook_action(action, id, &name, &module);
+        }
+    }
+
+    fn is_hooked(&self, function_id: u64) -> bool {
+        function_id != 0 && self.selected_hooks.iter().any(|h| h.function_id == function_id)
+    }
+
+    /// Hooks or unhooks one function picked from a report row. The hook
+    /// list is the capture row's: the pill appears there, and the next
+    /// Record arms it, the way C++ Orbit's "Hook" in the sampling report
+    /// works.
+    fn apply_hook_action(&mut self, action: HookAction, function_id: u64, name: &str, module: &str) {
+        match action {
+            HookAction::Hook => {
+                if !self.is_hooked(function_id) {
+                    self.selected_hooks.push(FunctionHit {
+                        function_id,
+                        name: name.to_string(),
+                        module: module.to_string(),
+                        size: 0,
+                    });
+                }
+            }
+            HookAction::Unhook => self.selected_hooks.retain(|h| h.function_id != function_id),
+        }
+        self.needs_repaint = true;
+    }
+
+    /// The line above a report that says what is hooked and what to do
+    /// about it: hooks arm on the next Record, not on the capture in view.
+    fn hooked_hint(&self, ui: &mut Ui) {
+        let n = self.selected_hooks.len();
+        if n == 0 {
+            return;
+        }
+        let text = if self.status.capturing {
+            format!("{n} function(s) hooked — they arm on the next Record")
+        } else {
+            format!("{n} function(s) hooked — press Record to instrument them")
+        };
+        ui.label(RichText::new(text).color(theme::ACCENT).size(self.ui_tweaks.report_font - 0.5));
     }
 
     /// Marks every node of the current tree expanded.
@@ -5284,6 +5346,8 @@ impl OrbitLiveApp {
             ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
             return;
         }
+        let mut tree_actions: Vec<(HookAction, u64, String, String)> = Vec::new();
+        self.hooked_hint(ui);
         egui::Grid::new("orbit_call_tree_rows")
             .num_columns(5)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
@@ -5348,6 +5412,13 @@ impl OrbitLiveApp {
                         if expandable && label.clicked() {
                             toggle = true;
                         }
+                        if !is_thread {
+                            note_ui_rect(&format!("tree:{}", node.name), label.rect);
+                            let hooked = self.is_hooked(node.function_id);
+                            if let Some(action) = hook_menu(&label, node.function_id, hooked) {
+                                tree_actions.push((action, node.function_id, node.name.clone(), node.module.clone()));
+                            }
+                        }
                     });
                     if toggle {
                         if expanded {
@@ -5366,6 +5437,9 @@ impl OrbitLiveApp {
                     }
                 }
             });
+        for (action, id, name, module) in tree_actions {
+            self.apply_hook_action(action, id, &name, &module);
+        }
     }
 
     fn module_rows(&mut self, ui: &mut Ui) {
@@ -6235,6 +6309,36 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
         RowId::Lane(key) if key.is_scheduler() => theme::TRACK,
         RowId::Lane(key) => theme::process_track_wash_role(key.pid, theme::WashRole::Leaf),
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HookAction {
+    Hook,
+    Unhook,
+}
+
+/// The right-click menu of a function in a report: hook it for dynamic
+/// instrumentation, or unhook it. A function the service could not place
+/// in a file (the vDSO, an imported capture) says so instead.
+fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool) -> Option<HookAction> {
+    let mut action = None;
+    label.context_menu(|ui| {
+        if function_id == 0 {
+            ui.label(RichText::new("Not hookable: no file offset for this function").color(theme::MUTED).size(11.0));
+            return;
+        }
+        let item = if hooked {
+            ui.button("Unhook function")
+        } else {
+            ui.button("Hook function for dynamic instrumentation")
+        };
+        note_ui_rect("menu:hook", item.rect);
+        if item.clicked() {
+            action = Some(if hooked { HookAction::Unhook } else { HookAction::Hook });
+            ui.close();
+        }
+    });
+    action
 }
 
 fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {

@@ -55,7 +55,7 @@ link will do: egui paints to a canvas, so a tab pill has no DOM node.
 ## Clicking by name
 
 The feature scenarios (`thread-focus`, `scope-report`, `live-tab`, `clear`,
-`agent-scopes`, ...) do click, but never at a fixed pixel. The viewer
+`agent-scopes`, `hook-from-report`, ...) do click, but never at a fixed pixel. The viewer
 publishes three readouts on the page:
 
 - `window.__orbit_ui` -- the rectangle of every pill, report tab, scope-menu

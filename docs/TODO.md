@@ -385,3 +385,18 @@ from the detached debug file (`/usr/lib/debug`, by build id or
 `phase-12-symbolization.txt`. Not done: C++ demangling in the Rust service
 (blog post 02), and the vDSO's local helpers, which need the kernel's
 debug package.
+
+## 29. Hook functions from the sampling report
+
+Like C++ Orbit: right-click a function in the report and hook it.
+
+**Status: done (2026-09-04).** Report rows and call-tree nodes carry the
+function index's id (the symbolizer computes it from the symbol's file
+offset, the same hash the search uses), and a right-click offers
+"Hook function for dynamic instrumentation" / "Unhook". Hooked rows are
+accent-coloured, the capture row's hook list shows the pill, and the next
+Record arms them. The `hook-from-report` e2e scenario hooks a Box3D
+function from the report, checks the id against the search, and starts a
+capture with it; unprivileged it records the CAP_PERFMON refusal, with the
+capability it expects "instrumenting 1 of 1". Not done: hooking from the
+Flame tab and from the timeline's sampled frames.
