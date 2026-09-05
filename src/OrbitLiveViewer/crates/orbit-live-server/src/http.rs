@@ -90,7 +90,10 @@ async fn static_asset(
     axum::extract::Path(path): axum::extract::Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    asset_response(&path, &headers).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+    // Browsers ask for /favicon.ico whatever the page links; the icon is
+    // a PNG, and this is the same file.
+    let path = if path == "favicon.ico" { "favicon.png" } else { path.as_str() };
+    asset_response(path, &headers).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
 /// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.

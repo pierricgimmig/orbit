@@ -80,6 +80,11 @@ stamp_orbit_js_header() {
 stamp_orbit_js_header "$ROOT/viewer-dist/orbit_live_viewer.js"
 while IFS= read -r -d '' f; do
   stamp_orbit_js_header "$f"
+  # wasm-bindgen-rayon's worker helper still calls the module's init with
+  # positional arguments, which the generated `__wbg_init` warns about on
+  # every worker start (one line per pool thread in the console). The
+  # object form is what it wants.
+  sed -i 's/await pkg\.default(data\.module, data\.memory);/await pkg.default({ module_or_path: data.module, memory: data.memory });/' "$f"
 done < <(find "$ROOT/viewer-dist/snippets" -name '*.js' -print0 2>/dev/null || true)
 
 echo "Wrote $ROOT/viewer-dist/orbit_live_viewer.js and .wasm"
