@@ -366,4 +366,122 @@ mod tests {
             "unexpected refusal from the uprobe PMU: {failure}"
         );
     }
+
+    /// The function the firing test hooks. A real symbol in this test
+    /// binary: not inlined, not mangled, and it does enough that the
+    /// compiler keeps the call.
+    #[no_mangle]
+    #[inline(never)]
+    pub extern "C" fn orbit_uprobe_test_target(i: u64) -> u64 {
+        std::hint::black_box(i).wrapping_mul(2_654_435_761) ^ 0x5bd1_e995
+    }
+
+    /// A probe actually fires: this process arms entry and return probes on
+    /// `orbit_uprobe_test_target` in its own binary, a thread calls it in a
+    /// loop, and the paired calls come back with sane durations on that
+    /// thread. Uprobes need CAP_PERFMON, so unprivileged this prints that it
+    /// is skipped and passes; the run that proves the feature is
+    ///
+    ///     cargo test -p orbit-service --no-run   (note the test binary path)
+    ///     sudo <that binary> a_uprobe_fires -- --nocapture
+    ///
+    /// or the same with `sudo setcap cap_perfmon+ep` on the test binary.
+    #[test]
+    fn a_uprobe_fires_on_a_function_of_this_process() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+        if orbit_perf_ring::attr::uprobe_pmu_type().is_none() {
+            eprintln!("UPROBE TEST SKIPPED: no uprobe PMU on this kernel");
+            return;
+        }
+        let pid = std::process::id() as i32;
+        let index = crate::functions::FunctionIndex::for_pid(pid);
+        let target = index
+            .search("orbit_uprobe_test_target", 4)
+            .into_iter()
+            .find(|f| f.name == "orbit_uprobe_test_target")
+            .expect("this binary's symbol table names the target function");
+        let hook = HookSpec {
+            function_id: target.id,
+            module_path: target.module_path.clone(),
+            file_offset: target.file_offset,
+            name: target.name.clone(),
+        };
+        // The worker exists before arming: probes go on the threads that
+        // exist then (later ones through inherit, which this does not lean on).
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls_made = Arc::new(AtomicU64::new(0));
+        let worker_tid = Arc::new(AtomicU64::new(0));
+        let ready = Arc::new(AtomicBool::new(false));
+        let worker = {
+            let (stop, calls_made, worker_tid, ready) =
+                (stop.clone(), calls_made.clone(), worker_tid.clone(), ready.clone());
+            std::thread::spawn(move || {
+                worker_tid.store(unsafe { libc::gettid() } as u64, Ordering::SeqCst);
+                ready.store(true, Ordering::SeqCst);
+                while !ready.load(Ordering::SeqCst) || worker_tid.load(Ordering::SeqCst) == 0 {}
+                // Wait for the probes to be armed, then call.
+                while !stop.load(Ordering::SeqCst) {
+                    if calls_made.load(Ordering::SeqCst) == u64::MAX {
+                        break;
+                    }
+                    if ARMED.load(Ordering::SeqCst) {
+                        std::hint::black_box(orbit_uprobe_test_target(calls_made.load(Ordering::SeqCst)));
+                        calls_made.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_micros(500));
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+            })
+        };
+        static ARMED: AtomicBool = AtomicBool::new(false);
+        while !ready.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let (mut session, report) = UprobeSession::arm(pid, &[hook]);
+        if report.probe_count == 0 {
+            let failure = report.failures.first().cloned().unwrap_or_default();
+            stop.store(true, Ordering::SeqCst);
+            let _ = worker.join();
+            assert!(
+                failure.contains("Permission denied") || failure.contains("Operation not permitted"),
+                "the probe was refused for a reason other than privilege: {failure}"
+            );
+            eprintln!("UPROBE TEST SKIPPED: needs CAP_PERFMON ({failure})");
+            return;
+        }
+        ARMED.store(true, Ordering::SeqCst);
+        let started = std::time::Instant::now();
+        let mut calls = Vec::new();
+        while started.elapsed() < std::time::Duration::from_millis(1500) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            calls.extend(session.poll());
+        }
+        stop.store(true, Ordering::SeqCst);
+        let _ = worker.join();
+        calls.extend(session.flush());
+        let made = calls_made.load(Ordering::SeqCst);
+        let tid = worker_tid.load(Ordering::SeqCst);
+        eprintln!(
+            "UPROBE TEST: {} probes armed, {made} calls made, {} calls seen, first {:?}",
+            report.probe_count,
+            calls.len(),
+            calls.first()
+        );
+        assert!(made >= 100, "the worker made only {made} calls");
+        assert!(
+            calls.len() as u64 >= made / 2,
+            "expected most of the {made} calls to be seen, got {}",
+            calls.len()
+        );
+        assert!(calls.iter().all(|c| c.tid as u64 == tid), "every call is on the worker thread");
+        assert!(calls.iter().all(|c| c.function_id == target.id));
+        assert!(calls.iter().all(|c| c.depth == 0), "the target calls nothing hooked");
+        assert!(
+            calls.iter().all(|c| c.duration_ns > 0 && c.duration_ns < 5_000_000),
+            "durations are real and under 5 ms (a kernel round trip each way): {:?}",
+            calls.iter().map(|c| c.duration_ns).take(5).collect::<Vec<_>>()
+        );
+    }
 }

@@ -398,5 +398,11 @@ accent-coloured, the capture row's hook list shows the pill, and the next
 Record arms them. The `hook-from-report` e2e scenario hooks a Box3D
 function from the report, checks the id against the search, and starts a
 capture with it; unprivileged it records the CAP_PERFMON refusal, with the
-capability it expects "instrumenting 1 of 1". Not done: hooking from the
-Flame tab and from the timeline's sampled frames.
+capability it expects "instrumenting 1 of 1" and then counts the hooked
+function's scopes in the exported bundle. The Functions tab lists every
+symbol of the process with a hooked column (2026-09-04), replacing the
+pills in the capture row; uprobes are the default method. A unit test
+(`a_uprobe_fires_on_a_function_of_this_process`) arms a probe on the test
+binary's own function and checks the paired calls; unprivileged it prints
+UPROBE TEST SKIPPED, with CAP_PERFMON it asserts. Not done: hooking from
+the Flame tab and from the timeline's sampled frames.

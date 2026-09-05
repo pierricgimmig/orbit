@@ -274,6 +274,8 @@ pub struct Inbox {
     pub modules: Option<ModulesJson>,
     pub sampling: Option<SamplingReport>,
     pub function_hits: Option<FunctionSearchJson>,
+    /// Every function of a process, for the Functions view.
+    pub function_list: Option<FunctionSearchJson>,
 }
 
 #[allow(dead_code)] // used from the wasm Net impl
@@ -576,6 +578,7 @@ mod wasm_impl {
                 tree: inbox.tree.take(),
                 modules: inbox.modules.take(),
                 function_hits: inbox.function_hits.take(),
+                function_list: inbox.function_list.take(),
             }
         }
 
@@ -824,6 +827,25 @@ mod wasm_impl {
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 match result {
                     Ok(s) => g.function_hits = Some(s),
+                    Err(e) => g.error = Some(e),
+                }
+            });
+        }
+
+        /// Every function the service indexed for `pid`, for the Functions
+        /// view. One request; the view filters and pages on its own.
+        pub fn list_functions(&self, pid: u32) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text(&format!("/api/functions/search?pid={pid}&q=&limit=200000"))
+                    .await
+                    .and_then(|t| parse_function_search_json(&t));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(s) => g.function_list = Some(s),
                     Err(e) => g.error = Some(e),
                 }
             });
@@ -1249,6 +1271,7 @@ mod native_impl {
         pub fn load_symbols(&self, _pid: u32) {}
         pub fn get_symbols_status(&self, _pid: u32) {}
         pub fn search_functions(&self, _pid: u32, _q: &str, _limit: u32) {}
+        pub fn list_functions(&self, _pid: u32) {}
         pub fn start_demo(&self) {}
         pub fn stop_demo(&self) {}
         pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}

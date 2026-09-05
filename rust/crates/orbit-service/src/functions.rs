@@ -127,7 +127,13 @@ impl FunctionIndex {
             .iter()
             .filter(|function| function.name.to_ascii_lowercase().contains(&needle))
             .collect();
-        hits.sort_by(|a, b| a.name.len().cmp(&b.name.len()).then_with(|| a.name.cmp(&b.name)));
+        if needle.is_empty() {
+            // A listing, not a search: alphabetical, the way a Functions
+            // view reads.
+            hits.sort_by(|a, b| a.name.cmp(&b.name));
+        } else {
+            hits.sort_by(|a, b| a.name.len().cmp(&b.name.len()).then_with(|| a.name.cmp(&b.name)));
+        }
         hits.truncate(limit);
         hits
     }

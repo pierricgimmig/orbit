@@ -597,7 +597,30 @@ def instrumentation(run):
         check("CAP_PERFMON" in message, f"refusal does not name the capability: {message}")
         return f"skipped: {message.split('.')[0]}"
     check("instrumenting" in message, f"unexpected instrumentation status: {message}")
-    return None
+    # Privileged: the hooked function's calls must be scopes on the target's
+    # threads. The bundle's events table says so, through pyarrow.
+    probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+    if probe.returncode != 0:
+        return f"{message}; spans not checked ({PYARROW_PYTHON} has no pyarrow)"
+    path = _export_bundle(run, "hooked.orbit.zip")
+    folder = os.path.join(SCRATCH, "hooked-unzipped")
+    shutil.rmtree(folder, ignore_errors=True)
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        z.extractall(folder)
+    count = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import pyarrow.parquet as pq,sys;t=pq.read_table(sys.argv[1]+'/events.parquet');"
+         "name=t.column('name').to_pylist();kind=t.column('kind').to_pylist();dur=t.column('duration_ns').to_pylist();"
+         "rows=[d for n,k,d in zip(name,kind,dur) if k==1 and 'orbit_e2e_step' in n];"
+         "print(len(rows), max(rows) if rows else 0)", folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(count.returncode == 0, f"pyarrow query failed: {count.stderr[-300:]}")
+    spans, longest = (int(v) for v in count.stdout.split())
+    check_at_least(spans, 10, "hooked-function scopes on the timeline")
+    check(longest < 1_000_000_000, f"a hooked span of {longest} ns is not a real call")
+    return f"{message}; {spans} hooked spans, longest {longest/1e6:.2f} ms"
 
 
 # ------------------------------------------------------------------------ run

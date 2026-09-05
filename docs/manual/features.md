@@ -87,8 +87,13 @@ Pills, left to right. A filled pill is on.
 - **CSW** context switches (the scheduler track). **States** thread state
   slices. **API** manual `orbit.h` scopes. **Sample** callstack sampling
   with the period in ms next to it.
-- **DWARF / FP** choose the unwinder. **User-space / Uprobes** choose the
-  dynamic instrumentation mechanism.
+- **DWARF / FP** choose the unwinder. **Uprobes** (the default) arms kernel
+  uprobes on the hooked functions; it needs `CAP_PERFMON`. **User-space**
+  is the trampoline mechanism, not ported yet: choosing it also arms
+  uprobes and says so in the log.
+- **HOOK line** counts the hooked functions and opens the **Functions**
+  view; "Unhook all" clears them. After Record, the line says what was
+  armed ("instrumenting N of M functions") or why nothing was.
 
 ## 4. The timeline
 
@@ -173,6 +178,11 @@ in the URL opens a tab on load.
   `15-live-tab.png`.
 - **Flame** the top-down tree as a flame graph; hover names a bar, click
   zooms to it. Screenshot: `16-flame-tab.png`.
+- **Functions** every function the service indexed for the selected
+  process, alphabetical, with a hooked checkbox column, size and module;
+  the filter box narrows it (the first 500 matches are listed). Ticking a
+  row hooks it for the next Record, the same list the report's right-click
+  feeds. C++ Orbit's Functions view.
 
 ## 7. Capture files
 

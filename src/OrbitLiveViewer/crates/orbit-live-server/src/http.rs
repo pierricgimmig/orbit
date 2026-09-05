@@ -718,7 +718,8 @@ async fn functions_search(
 ) -> Response {
     let pid = q.pid.unwrap_or(0);
     let query = q.q.unwrap_or_default();
-    let limit = q.limit.unwrap_or(24).min(64);
+    // A search wants a handful; the Functions view asks for everything.
+    let limit = q.limit.unwrap_or(24).min(200_000);
     match hooks_clone(&svc) {
         Some(h) => match (h.search_functions_json)(pid, &query, limit) {
             Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),

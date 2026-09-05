@@ -770,10 +770,12 @@ pub struct OrbitLiveApp {
     /// Off by default: see StartBody::show_all_processes.
     show_all_processes: bool,
     symbols: SymbolsStatusJson,
-    hook_query: String,
-    hook_hits: Vec<FunctionHit>,
+    /// Every function the service indexed for `functions_pid`, for the
+    /// Functions view.
+    functions: Vec<FunctionHit>,
+    functions_pid: Option<u32>,
+    functions_requested: bool,
     selected_hooks: Vec<FunctionHit>,
-    last_hook_query: String,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
     /// Chrome-trace file session (not Demo, not the 64 MB ring).
@@ -831,6 +833,9 @@ enum ReportTab {
     /// updated as the capture runs, computed in the viewer from its own
     /// index, no request to the service.
     Live,
+    /// Every function of the selected process, with a hooked column: C++
+    /// Orbit's Functions view, where dynamic instrumentation is chosen.
+    Functions,
 }
 
 impl ReportTab {
@@ -844,6 +849,7 @@ impl ReportTab {
             "modules" => Some(ReportTab::Modules),
             "live" => Some(ReportTab::Live),
             "flame" => Some(ReportTab::Flame),
+            "functions" => Some(ReportTab::Functions),
             _ => None,
         }
     }
@@ -856,6 +862,7 @@ impl ReportTab {
             ReportTab::Modules => "Modules",
             ReportTab::Live => "Live",
             ReportTab::Flame => "Flame",
+            ReportTab::Functions => "Functions",
         }
     }
 
@@ -1304,13 +1311,13 @@ impl OrbitLiveApp {
             opt_sampling: true,
             sample_period_ms: "1.0".into(),
             unwind_dwarf: true,
-            user_space_hooks: true,
+            user_space_hooks: false,
             show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
-            hook_query: String::new(),
-            hook_hits: Vec::new(),
+            functions: Vec::new(),
+            functions_pid: None,
+            functions_requested: false,
             selected_hooks: Vec::new(),
-            last_hook_query: String::new(),
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
             trace_load: None,
@@ -2041,9 +2048,12 @@ impl OrbitLiveApp {
         if let Some(s) = inbox.symbols {
             self.symbols = s;
         }
-        if let Some(hits) = inbox.function_hits {
-            self.hook_hits = hits.functions;
+        if let Some(list) = inbox.function_list {
+            self.functions_pid = Some(list.pid);
+            self.functions = list.functions;
+            self.functions_requested = false;
         }
+        let _ = inbox.function_hits;
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
             let seeded_into_empty = self.processes.is_empty();
             for (pid, name) in [
@@ -2693,7 +2703,8 @@ impl OrbitLiveApp {
             if let Some(pid) = self.selected_pid {
                 self.loaded_symbol_pid = Some(pid);
                 self.symbols = SymbolsStatusJson { pid, status: "loading".into(), ..Default::default() };
-                self.hook_hits.clear();
+                self.functions.clear();
+                self.functions_pid = None;
                 self.net.load_symbols(pid);
             }
         }
@@ -2875,17 +2886,17 @@ impl OrbitLiveApp {
             {
                 self.unwind_dwarf = false;
             }
-            if pill(ui, "User-space", self.user_space_hooks)
-                .on_hover_text("Dynamic instrumentation: user-space (default)")
-                .clicked()
-            {
-                self.user_space_hooks = true;
-            }
             if pill(ui, "Uprobes", !self.user_space_hooks)
-                .on_hover_text("Dynamic instrumentation: kernel uprobes")
+                .on_hover_text("Dynamic instrumentation: kernel uprobes (default; needs CAP_PERFMON)")
                 .clicked()
             {
                 self.user_space_hooks = false;
+            }
+            if pill(ui, "User-space", self.user_space_hooks)
+                .on_hover_text("User-space trampolines are not ported yet: this also arms uprobes")
+                .clicked()
+            {
+                self.user_space_hooks = true;
             }
             if self.opt_csw {
                 ui.label(
@@ -2905,77 +2916,32 @@ impl OrbitLiveApp {
                     .extra_letter_spacing(1.2)
                     .color(theme::MUTED),
             );
-            let ready = self.symbols.status == "ready";
-            let resp = ui.add_enabled(
-                ready,
-                egui::TextEdit::singleline(&mut self.hook_query)
-                    .id_salt("orbit_hook_search")
-                    .desired_width(220.0)
-                    .hint_text(if ready {
-                        "function name"
-                    } else {
-                        "symbols not ready"
-                    })
-                    .font(FontId::monospace(11.0))
-                    .background_color(theme::INPUT),
-            );
-            if ready && resp.changed() {
-                self.last_hook_query.clear();
+            // Which functions are hooked lives in the Functions view (every
+            // symbol of the process, a hooked column), as in C++ Orbit, and
+            // in the sampling report's right-click. This line only counts.
+            let n = self.selected_hooks.len();
+            let text = match n {
+                0 => "no functions hooked".to_string(),
+                1 => "1 function hooked".to_string(),
+                n => format!("{n} functions hooked"),
+            };
+            ui.label(RichText::new(text).font(FontId::monospace(10.5)).color(theme::MUTED));
+            if pill(ui, "Functions", self.report_open && self.report_tab == ReportTab::Functions)
+                .on_hover_text("Every function of the selected process, with a hooked column")
+                .clicked()
+            {
+                self.report_open = true;
+                self.report_collapsed = false;
+                self.report_tab = ReportTab::Functions;
             }
-            let selected = std::mem::take(&mut self.selected_hooks);
-            let mut drop = None;
-            for (i, hook) in selected.iter().enumerate() {
-                if pill(ui, &short_fn(&hook.name), true)
-                    .on_hover_text(&hook.name)
-                    .clicked()
-                {
-                    drop = Some(i);
-                }
+            if n > 0 && pill(ui, "Unhook all", false).clicked() {
+                self.selected_hooks.clear();
             }
-            let mut selected = selected;
-            if let Some(i) = drop {
-                selected.remove(i);
-            }
-            self.selected_hooks = selected;
-        });
-        if self.symbols.status == "ready"
-            && !self.hook_hits.is_empty()
-            && !self.hook_query.is_empty()
-        {
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(52.0);
-                let hits = self.hook_hits.clone();
-                for hit in hits {
-                    if self
-                        .selected_hooks
-                        .iter()
-                        .any(|h| h.function_id == hit.function_id)
-                    {
-                        continue;
-                    }
-                    if pill(ui, &short_fn(&hit.name), false)
-                        .on_hover_text(format!("{}\n{}", hit.name, hit.module))
-                        .clicked()
-                    {
-                        self.selected_hooks.push(hit);
-                    }
-                }
-            });
-        }
-        if !self.symbols.error.is_empty() && self.symbols.status == "error" {
-            ui.label(
-                RichText::new(&self.symbols.error)
-                    .size(11.0)
-                    .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
-            );
-        }
-        // What actually happened to the ticked functions. Uprobes need
-        // CAP_PERFMON, so "nothing was armed" is a normal outcome that has to
-        // read as a fixable permissions problem rather than as an empty track.
-        if !self.status.instrumentation.is_empty() {
-            let armed = self.status.instrumentation.starts_with("instrumenting");
-            ui.horizontal(|ui| {
-                ui.add_space(52.0);
+            // What actually happened to the hooked functions. Uprobes need
+            // CAP_PERFMON, so "nothing was armed" is a normal outcome that has
+            // to read as a fixable permissions problem, not an empty track.
+            if !self.status.instrumentation.is_empty() {
+                let armed = self.status.instrumentation.starts_with("instrumenting");
                 ui.label(
                     RichText::new(&self.status.instrumentation).size(11.0).color(if armed {
                         theme::MUTED
@@ -2983,7 +2949,96 @@ impl OrbitLiveApp {
                         Color32::from_rgb(0xFF, 0xB3, 0x00)
                     }),
                 );
+            }
+        });
+    }
+
+    /// The Functions view: every function the service indexed for the
+    /// selected process, with a hooked column, the report filter box
+    /// narrowing it. Ticking a row hooks it for the next Record, exactly as
+    /// the sampling report's right-click does.
+    fn function_rows(&mut self, ui: &mut Ui) {
+        let font = self.ui_tweaks.report_font;
+        let Some(pid) = self.selected_pid else {
+            ui.label(RichText::new("Select a process to list its functions.").color(theme::MUTED).size(font));
+            return;
+        };
+        if self.symbols.status != "ready" {
+            ui.label(
+                RichText::new(format!("Symbols for pid {pid}: {}", self.symbol_status_line()))
+                    .color(theme::MUTED)
+                    .size(font),
+            );
+            return;
+        }
+        if self.functions_pid != Some(pid) {
+            ui.label(RichText::new("Listing functions…").color(theme::MUTED).size(font));
+            return;
+        }
+        self.hooked_hint(ui);
+        let filter = self.report_filter.trim().to_lowercase();
+        let rows: Vec<FunctionHit> = self
+            .functions
+            .iter()
+            .filter(|f| filter.is_empty() || contains_ci(&f.name, &filter) || contains_ci(&f.module, &filter))
+            .cloned()
+            .collect();
+        const MAX_ROWS: usize = 500;
+        ui.label(
+            RichText::new(if rows.len() > MAX_ROWS {
+                format!(
+                    "{} of {} functions match; the first {MAX_ROWS} are listed, filter to narrow",
+                    rows.len(),
+                    self.functions.len()
+                )
+            } else {
+                format!("{} of {} functions", rows.len(), self.functions.len())
+            })
+            .color(theme::MUTED)
+            .size(font - 0.5),
+        );
+        let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
+        egui::Grid::new("orbit_function_rows")
+            .num_columns(4)
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["hooked", "function", "size", "module"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
+                }
+                ui.end_row();
+                for f in rows.iter().take(MAX_ROWS) {
+                    let hooked = self.is_hooked(f.function_id);
+                    let mut tick = hooked;
+                    let check = ui.checkbox(&mut tick, "");
+                    note_ui_rect(&format!("hook:{}", f.name), check.rect);
+                    if tick != hooked {
+                        actions.push((
+                            if tick { HookAction::Hook } else { HookAction::Unhook },
+                            f.function_id,
+                            f.name.clone(),
+                            f.module.clone(),
+                        ));
+                    }
+                    let label = ui.add(
+                        egui::Label::new(
+                            RichText::new(&f.name)
+                                .color(if hooked { theme::ACCENT } else { theme::TEXT })
+                                .size(font),
+                        )
+                        .sense(Sense::click()),
+                    );
+                    note_ui_rect(&format!("fn:{}", f.name), label.rect);
+                    if let Some(action) = hook_menu(&label, f.function_id, hooked) {
+                        actions.push((action, f.function_id, f.name.clone(), f.module.clone()));
+                    }
+                    ui.label(RichText::new(f.size.to_string()).color(theme::MUTED).monospace().size(font));
+                    ui.label(RichText::new(&f.module).color(theme::MUTED).size(font - 0.5));
+                    ui.end_row();
+                }
             });
+        for (action, id, name, module) in actions {
+            self.apply_hook_action(action, id, &name, &module);
         }
     }
 
@@ -2996,8 +3051,8 @@ impl OrbitLiveApp {
                     status: "loading".into(),
                     ..Default::default()
                 };
-                self.hook_hits.clear();
-                self.hook_query.clear();
+                self.functions.clear();
+                self.functions_pid = None;
                 self.net.load_symbols(pid);
             }
             if self.status.hooks
@@ -3007,18 +3062,15 @@ impl OrbitLiveApp {
                 self.last_symbol_poll = now;
                 self.net.get_symbols_status(pid);
             }
-            let q = self.hook_query.trim().to_string();
+            // The Functions view's list, once symbols are ready and the tab
+            // wants it.
             if self.symbols.status == "ready"
-                && q != self.last_hook_query
-                && now - self.last_symbol_poll > 0.15
+                && self.report_tab == ReportTab::Functions
+                && self.functions_pid != Some(pid)
+                && !self.functions_requested
             {
-                self.last_hook_query = q.clone();
-                self.last_symbol_poll = now;
-                if q.is_empty() {
-                    self.hook_hits.clear();
-                } else {
-                    self.net.search_functions(pid, &q, 16);
-                }
+                self.functions_requested = true;
+                self.net.list_functions(pid);
             }
         }
     }
@@ -5184,6 +5236,7 @@ impl OrbitLiveApp {
                         ReportTab::TopDown,
                         ReportTab::BottomUp,
                         ReportTab::Modules,
+                        ReportTab::Functions,
                     ] {
                         if pill(ui, tab.label(), self.report_tab == tab).clicked()
                             && self.report_tab != tab
@@ -5235,6 +5288,7 @@ impl OrbitLiveApp {
                         ReportTab::Modules => self.module_rows(ui),
                         ReportTab::Live => self.live_rows(ui),
                         ReportTab::Flame => self.flame_rows(ui),
+                        ReportTab::Functions => self.function_rows(ui),
                     }
                 });
             });
@@ -6182,11 +6236,7 @@ impl eframe::App for OrbitLiveApp {
 
                 if self.capture_open && !self.chrome_collapsed() {
                     egui::TopBottomPanel::top("orbit_capture_strip")
-                        .exact_height(if self.hook_hits.is_empty() || self.hook_query.is_empty() {
-                            86.0
-                        } else {
-                            118.0
-                        })
+                        .exact_height(86.0)
                         .frame(
                             Frame::new()
                                 .fill(theme::RAIL)
@@ -6411,18 +6461,6 @@ fn ui_hairline_sidebar(ctx: &Context, side_w: f32) {
         [Pos2::new(x, screen.top()), Pos2::new(x, screen.bottom())],
         hairline(),
     );
-}
-
-fn short_fn(name: &str) -> String {
-    const MAX: usize = 28;
-    if name.len() <= MAX {
-        return name.to_string();
-    }
-    let mut end = MAX.saturating_sub(1);
-    while end > 0 && !name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &name[..end])
 }
 
 fn section(ui: &mut Ui, label: &str) {
