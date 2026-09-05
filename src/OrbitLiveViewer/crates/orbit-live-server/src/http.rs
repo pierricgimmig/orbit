@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, header::HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -77,8 +77,8 @@ async fn isolation_middleware(
     apply_isolation(next.run(req).await)
 }
 
-async fn index() -> Response {
-    asset_response("index.html").unwrap_or_else(|| {
+async fn index(headers: axum::http::HeaderMap) -> Response {
+    asset_response("index.html", &headers).unwrap_or_else(|| {
         apply_isolation(
             Html("<!doctype html><title>Orbit Live</title><p>viewer-dist/index.html missing</p>")
                 .into_response(),
@@ -86,8 +86,11 @@ async fn index() -> Response {
     })
 }
 
-async fn static_asset(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
-    asset_response(&path).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+async fn static_asset(
+    axum::extract::Path(path): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    asset_response(&path, &headers).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
 /// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.
@@ -112,11 +115,39 @@ fn apply_isolation(mut resp: Response) -> Response {
     resp
 }
 
-fn asset_response(path: &str) -> Option<Response> {
+/// An embedded viewer asset. Served with `Cache-Control: no-cache` and an
+/// ETag of its bytes: the browser keeps its copy but asks every time, and
+/// a service restarted with a new pack answers with the new bytes rather
+/// than a tab quietly running the old viewer until a hard refresh. Same
+/// bytes, and the answer is a 304.
+fn asset_response(path: &str, headers: &axum::http::HeaderMap) -> Option<Response> {
     let (mime, data) = assets::get(path)?;
-    Some(apply_isolation(
-        ([(header::CONTENT_TYPE, mime)], data).into_response(),
-    ))
+    let etag = format!("\"{:016x}\"", asset_hash(data));
+    let unchanged = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|tag| tag.trim() == etag));
+    let mut resp = if unchanged {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        ([(header::CONTENT_TYPE, mime)], data).into_response()
+    };
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    if let Ok(v) = HeaderValue::from_str(&etag) {
+        resp.headers_mut().insert(header::ETAG, v);
+    }
+    Some(apply_isolation(resp))
+}
+
+/// FNV-1a over the asset, for its ETag. The assets are a few megabytes and
+/// this runs per request; it is cheap next to sending them.
+fn asset_hash(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 async fn status(State(svc): State<Arc<LiveService>>) -> Json<StatusBody> {

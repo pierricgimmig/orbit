@@ -67,6 +67,10 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   capture (also the space bar).
 - **Search box.** Typing filters scopes by name; matching scopes stay lit and
   the rest grey out. Escape clears the search and every selection.
+- **Viewer build.** The More menu ends with the viewer's build (UTC time
+  and commit), also `build` in `window.__orbit_sel`. The service serves
+  the viewer with `Cache-Control: no-cache` and an ETag, so a restarted
+  service is never a stale tab: a plain reload picks up the new viewer.
 - **Stats line.** Live event count, visible count, draw count, the transport
   (`http`, `ws packed`) and, during a capture, the socket's MB/s next to the
   frame rate.

@@ -1087,7 +1087,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"draw\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1144,6 +1144,7 @@ impl OrbitLiveApp {
             match self.selected_pid { Some(p) => p.to_string(), None => "null".to_string() },
             self.recording || self.status.capturing,
             self.pointer_readout.clone(),
+            VIEWER_BUILD,
             if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
         );
         if text == self.sel_readout {
@@ -2438,8 +2439,13 @@ impl OrbitLiveApp {
             .clicked()
         {
             self.show_tweaks = !self.show_tweaks;
-            ui.close();
         }
+        ui.separator();
+        ui.label(
+            RichText::new(format!("viewer build {VIEWER_BUILD}"))
+                .font(FontId::monospace(10.5))
+                .color(theme::MUTED),
+        );
         if ui
             .selectable_label(self.light_canvas, "Paper")
             .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
@@ -3546,7 +3552,7 @@ impl OrbitLiveApp {
                 // those samples -- the white ticks are the thing you drag
                 // across -- and the timeline does not pan underneath it.
                 // Anywhere else, a left drag pans as before.
-                if body_resp.drag_started_by(PointerButton::Primary) {
+                if body_resp.drag_started_by(PointerButton::Primary) && self.report_splitter_grab.is_none() {
                     self.sample_drag = body_resp
                         .interact_pointer_pos()
                         .and_then(|p| self.sample_lane_at_y(p.y - body.top()))
@@ -4693,7 +4699,7 @@ impl OrbitLiveApp {
                 self.apply_pan_window(t0, t1);
             }
         }
-        if response.drag_started_by(PointerButton::Primary) {
+        if response.drag_started_by(PointerButton::Primary) && self.report_splitter_grab.is_none() {
             // Click or a new drag grabs the list immediately (kills a coast).
             self.vscroll.cancel();
             let y_drag = vscroll_from_primary_drag(ctx.input(|i| i.any_touches()), self.was_narrow);
@@ -4758,7 +4764,7 @@ impl OrbitLiveApp {
             Vec2::new(BAR_W - 2.0, handle_h),
         );
         let resp = ui.interact(track, ui.id().with("orbit_lane_scrollbar"), Sense::click_and_drag());
-        if resp.dragged() && travel > 0.0 {
+        if resp.dragged() && travel > 0.0 && self.report_splitter_grab.is_none() {
             let next = self.lane_scroll + resp.drag_delta().y * max_off / travel;
             self.pending_vscroll = Some(clamp_offset(next, self.vscroll_max));
             self.needs_repaint = true;
@@ -5152,7 +5158,7 @@ impl OrbitLiveApp {
         if !rect.is_positive() {
             return;
         }
-        if response.drag_started_by(button) {
+        if response.drag_started_by(button) && self.report_splitter_grab.is_none() {
             if let Some(p) = response.interact_pointer_pos() {
                 let mods = response.ctx.input(|i| i.modifiers);
                 // Shift adds to the selection; Ctrl is the zoom gesture and
@@ -5634,20 +5640,20 @@ impl OrbitLiveApp {
     /// nothing else can claim the press -- the widget version lost it more
     /// often than it kept it.
     fn paint_report_splitter(&mut self, ctx: &Context, panel: Rect, screen_w: f32) {
-        const HANDLE_W: f32 = 10.0;
+        // A few points either side of the edge: the line is drawn at the
+        // panel's edge and a hand lands on both sides of it. The timeline's
+        // own drags (pan, selection, the lane scrollbar) stand down while a
+        // splitter drag is on, so the overlap costs nothing.
         let handle = Rect::from_min_max(
-            Pos2::new(panel.left(), panel.top()),
-            Pos2::new(panel.left() + HANDLE_W, panel.bottom()),
+            Pos2::new(panel.left() - 4.0, panel.top()),
+            Pos2::new(panel.left() + 10.0, panel.bottom()),
         );
-        let (down, origin, pos, any_pressed) = ctx.input(|i| {
-            (
-                i.pointer.primary_down(),
-                i.pointer.press_origin(),
-                i.pointer.latest_pos(),
-                i.pointer.primary_pressed(),
-            )
-        });
-        if any_pressed && origin.is_some_and(|p| handle.contains(p)) {
+        let (down, origin, pos) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.latest_pos()));
+        // Read while the button is held, not only on the frame it went
+        // down: the press origin stays put for the whole hold, so a press
+        // frame that ran before this code saw it (the web runner runs a
+        // frame from inside the pointerdown handler) still starts the drag.
+        if down && self.report_splitter_grab.is_none() && origin.is_some_and(|p| handle.contains(p)) {
             self.report_splitter_grab = origin.map(|p| p.x - panel.left());
         }
         if !down {
@@ -5670,7 +5676,7 @@ impl OrbitLiveApp {
         }
         let active = hovering || dragging;
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("orbit_report_splitter")));
-        let x = handle.left() + 4.0;
+        let x = panel.left() + 1.0;
         painter.line_segment(
             [Pos2::new(x, handle.top()), Pos2::new(x, handle.bottom())],
             Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
@@ -7237,6 +7243,15 @@ thread_local! {
     /// whenever the layout does.
     static UI_RECTS: std::cell::RefCell<Vec<(String, Rect)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// What this viewer was built from: the UTC time and the commit, set by
+/// build_wasm.sh (ORBIT_VIEWER_BUILD). Shown in the More menu and on the
+/// wordmark, and published as `build` in window.__orbit_sel, so a stale
+/// page or a stale pack in a service binary is one look away.
+const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
+    Some(build) => build,
+    None => "dev",
+};
 
 fn note_ui_rect(label: &str, rect: Rect) {
     UI_RECTS.with(|v| v.borrow_mut().push((label.to_string(), rect)));
