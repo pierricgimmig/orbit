@@ -1464,9 +1464,8 @@ impl OrbitLiveApp {
     }
 
     fn process_display_name(&self, pid: u32) -> String {
-        // The viewer's and the server's own rows: on a real machine pids 2
-        // and 3 are kthreadd and pool_workqueue_release, and the live
-        // process list would say so.
+        // The viewer's and the server's own rows, which no process list
+        // names: their pids are synthetic.
         if pid == VIEWER_PID {
             return orbit_live_event::dev::VIEWER_NAME.to_string();
         }

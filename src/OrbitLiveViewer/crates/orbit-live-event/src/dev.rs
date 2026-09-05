@@ -19,8 +19,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{color_mode, kind, InternTable, LiveEvent};
 
-pub const VIEWER_PID: u32 = 2;
-pub const SERVICE_PID: u32 = 3;
+/// The viewer's and the server's own self-profile rows. High, like the
+/// agent's pid, so they can never be a real process: they were 2 and 3,
+/// and on a machine capturing every process those are kthreadd and
+/// pool_workqueue_release, which the timeline then labelled
+/// orbit-live-viewer and orbit-live-service.
+pub const VIEWER_PID: u32 = 0x5E1F_0002;
+pub const SERVICE_PID: u32 = 0x5E1F_0003;
 
 /// Spoofed remote-demo pids. LiveEvent has no machine field — the rail maps
 /// pid ranges. Do not reuse 2/3.
