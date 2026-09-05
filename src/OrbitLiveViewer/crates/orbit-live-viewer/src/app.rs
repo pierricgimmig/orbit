@@ -799,6 +799,10 @@ pub struct OrbitLiveApp {
     functions_requested: bool,
     /// List every function, not the first 500 matches.
     functions_show_all: bool,
+    /// Flat report sort: column index (hooked, self, incl, function, module) and descending.
+    flat_sort: (u8, bool),
+    /// Functions view sort: column index (hooked, function, size, module) and descending.
+    functions_sort: (u8, bool),
     selected_hooks: Vec<FunctionHit>,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
@@ -1351,6 +1355,8 @@ impl OrbitLiveApp {
             functions_pid: None,
             functions_requested: false,
             functions_show_all: false,
+            flat_sort: (1, true),
+            functions_sort: (1, false),
             selected_hooks: Vec::new(),
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
@@ -3015,13 +3021,34 @@ impl OrbitLiveApp {
         }
         self.hooked_hint(ui);
         let filter = self.report_filter.trim().to_lowercase();
-        let rows: Vec<usize> = self
+        let mut rows: Vec<usize> = self
             .functions
             .iter()
             .enumerate()
             .filter(|(_, f)| filter.is_empty() || contains_ci(&f.name, &filter) || contains_ci(&f.module, &filter))
             .map(|(i, _)| i)
             .collect();
+        {
+            let (sort_col, sort_desc) = self.functions_sort;
+            let hooked_ids: HashSet<u64> = self.selected_hooks.iter().map(|h| h.function_id).collect();
+            let functions = &self.functions;
+            // The list arrives alphabetical; only another column costs a sort.
+            if sort_col != 1 || sort_desc {
+                rows.sort_by(|&a, &b| {
+                    let (fa, fb) = (&functions[a], &functions[b]);
+                    let ord = match sort_col {
+                        0 => hooked_ids
+                            .contains(&fa.function_id)
+                            .cmp(&hooked_ids.contains(&fb.function_id))
+                            .then(fb.name.cmp(&fa.name)),
+                        1 => fa.name.to_lowercase().cmp(&fb.name.to_lowercase()),
+                        2 => fa.size.cmp(&fb.size).then(fb.name.cmp(&fa.name)),
+                        _ => fa.module.to_lowercase().cmp(&fb.module.to_lowercase()).then(fb.name.cmp(&fa.name)),
+                    };
+                    if sort_desc { ord.reverse() } else { ord }
+                });
+            }
+        }
         const MAX_ROWS: usize = 500;
         let capped = !self.functions_show_all && rows.len() > MAX_ROWS;
         ui.horizontal(|ui| {
@@ -3051,20 +3078,39 @@ impl OrbitLiveApp {
         let widths = [22.0f32, 0.0, 64.0, 170.0]; // hooked, function (rest), size, module
         let avail_w = ui.available_width().max(300.0);
         let name_w = (avail_w - widths[0] - widths[2] - widths[3] - 3.0 * col_gap).max(120.0);
-        // Header.
+        // Header: each column sorts on click.
+        let functions_sort = self.functions_sort;
+        let mut sort_click: Option<u8> = None;
         ui.horizontal(|ui| {
-            for (h, w) in [("hooked", widths[0]), ("function", name_w), ("size", widths[2]), ("module", widths[3])] {
-                let (r, _) = ui.allocate_exact_size(Vec2::new(w, row_h), Sense::hover());
-                ui.painter().text(
-                    r.left_center(),
-                    Align2::LEFT_CENTER,
-                    h,
-                    FontId::new(font - 0.5, FontFamily::Proportional),
-                    theme::MUTED,
-                );
+            for (i, (h, w)) in [("hooked", widths[0]), ("function", name_w), ("size", widths[2]), ("module", widths[3])]
+                .iter()
+                .enumerate()
+            {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(*w, row_h), Sense::click());
+                let active = functions_sort.0 == i as u8;
+                let text_w = ui.painter()
+                    .text(
+                        r.left_center(),
+                        Align2::LEFT_CENTER,
+                        *h,
+                        FontId::new(font - 0.5, FontFamily::Proportional),
+                        if active { theme::TEXT } else { theme::MUTED },
+                    )
+                    .width();
+                if active {
+                    paint_sort_arrow(ui, Pos2::new(r.left() + text_w + 8.0, r.center().y), functions_sort.1);
+                }
+                note_ui_rect(&format!("sort:{h}"), r);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    sort_click = Some(i as u8);
+                }
                 ui.add_space(col_gap);
             }
         });
+        if let Some(col) = sort_click {
+            toggle_sort(&mut self.functions_sort, col, col == 0 || col == 2);
+            self.needs_repaint = true;
+        }
         let clip = ui.clip_rect();
         let top = ui.cursor().top();
         let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
@@ -3661,7 +3707,12 @@ impl OrbitLiveApp {
                     self.tracks.scale,
                 );
                 if let Some(h) = self.hover {
-                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h);
+                    let stack = if h.kind == kind::SAMPLE {
+                        sample_callstack(&self.index, &self.intern, h)
+                    } else {
+                        Vec::new()
+                    };
+                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h, &stack);
                 }
             } else {
                 ui.painter().text(
@@ -5584,11 +5635,29 @@ impl OrbitLiveApp {
         }
         self.hooked_hint(ui);
         let filter = self.report_filter.trim().to_lowercase();
-        let rows: Vec<&crate::net::SamplingRow> = report
+        let mut rows: Vec<&crate::net::SamplingRow> = report
             .rows
             .iter()
             .filter(|row| filter.is_empty() || contains_ci(&row.name, &filter) || contains_ci(&row.module, &filter))
             .collect();
+        // Sorted by the column whose header was clicked; the service's own
+        // order (self, descending) until then. Hooked first is how you see
+        // every instrumented function at once, as C++ Orbit's report sorts.
+        let hooked_ids: HashSet<u64> = self.selected_hooks.iter().map(|h| h.function_id).collect();
+        let (sort_col, sort_desc) = self.flat_sort;
+        rows.sort_by(|a, b| {
+            let ord = match sort_col {
+                0 => hooked_ids
+                    .contains(&a.function_id)
+                    .cmp(&hooked_ids.contains(&b.function_id))
+                    .then(a.self_count.cmp(&b.self_count)),
+                1 => a.self_count.cmp(&b.self_count),
+                2 => a.inclusive_count.cmp(&b.inclusive_count),
+                3 => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                _ => a.module.to_lowercase().cmp(&b.module.to_lowercase()).then(a.name.cmp(&b.name)),
+            };
+            if sort_desc { ord.reverse() } else { ord }
+        });
         if !filter.is_empty() {
             ui.label(
                 RichText::new(format!("{} of {} functions match", rows.len(), report.rows.len()))
@@ -5597,13 +5666,16 @@ impl OrbitLiveApp {
             );
         }
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
+        let mut sort_click: Option<u8> = None;
         egui::Grid::new("orbit_sampling_rows")
             .num_columns(5)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["hooked", "self", "incl", "function", "module"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                for (i, h) in ["hooked", "self", "incl", "function", "module"].iter().enumerate() {
+                    if sort_header(ui, h, self.flat_sort, i as u8, self.ui_tweaks.report_font - 0.5) {
+                        sort_click = Some(i as u8);
+                    }
                 }
                 ui.end_row();
                 for row in rows.iter().take(200) {
@@ -5645,6 +5717,12 @@ impl OrbitLiveApp {
             });
         for (action, id, name, module) in actions {
             self.apply_hook_action(action, id, &name, &module);
+        }
+        if let Some(col) = sort_click {
+            // Numbers and the hooked tick read best largest first, names
+            // alphabetically; a second click on the same header flips it.
+            toggle_sort(&mut self.flat_sort, col, col <= 2);
+            self.needs_repaint = true;
         }
     }
 
@@ -6998,6 +7076,38 @@ fn note_ui_rect(label: &str, rect: Rect) {
     UI_RECTS.with(|v| v.borrow_mut().push((label.to_string(), rect)));
 }
 
+/// A click on a column header: the same column flips the direction, a new
+/// one takes its natural direction (`desc_first` for numbers and ticks).
+fn toggle_sort(sort: &mut (u8, bool), col: u8, desc_first: bool) {
+    *sort = if sort.0 == col { (col, !sort.1) } else { (col, desc_first) };
+}
+
+/// A small triangle: down for descending, up for ascending.
+fn paint_sort_arrow(ui: &Ui, at: Pos2, desc: bool) {
+    let (w, h) = (3.5, 3.5);
+    let pts = if desc {
+        vec![Pos2::new(at.x - w, at.y - h * 0.5), Pos2::new(at.x + w, at.y - h * 0.5), Pos2::new(at.x, at.y + h * 0.5)]
+    } else {
+        vec![Pos2::new(at.x - w, at.y + h * 0.5), Pos2::new(at.x + w, at.y + h * 0.5), Pos2::new(at.x, at.y - h * 0.5)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(pts, theme::TEXT, Stroke::NONE));
+}
+
+/// A clickable report column header, with the sort arrow on the active
+/// column. Returns true when clicked. Labelled `sort:<name>` for the harness.
+fn sort_header(ui: &mut Ui, label: &str, sort: (u8, bool), col: u8, font: f32) -> bool {
+    let active = sort.0 == col;
+    let resp = ui.add(
+        egui::Label::new(RichText::new(label).color(if active { theme::TEXT } else { theme::MUTED }).size(font))
+            .sense(Sense::click()),
+    );
+    if active {
+        paint_sort_arrow(ui, Pos2::new(resp.rect.right() + 7.0, resp.rect.center().y), sort.1);
+    }
+    note_ui_rect(&format!("sort:{label}"), resp.rect);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 /// Empties this frame's rectangles into a JSON text.
 fn take_ui_rects_json() -> String {
     let rects = UI_RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()));
@@ -8233,12 +8343,32 @@ fn paint_flow_arrows(
     }
 }
 
+/// The callstack a sample tick carries, leaf first: the sampled frames of
+/// its thread at its timestamp, one lane per depth in the index.
+fn sample_callstack(index: &TrackIndex, intern: &InternTable, pick: ScopePick) -> Vec<String> {
+    let mut frames: Vec<(u8, u32)> = index
+        .lanes()
+        .filter(|(k, _)| k.pid == pick.pid && k.tid == pick.tid && k.kind == kind::FUNCTION_CALL)
+        .filter_map(|(k, lane)| {
+            lane.overlapping(pick.start_ns, pick.start_ns.saturating_add(1))
+                .filter(|e| e.extra == orbit_live_event::extra::SAMPLED_FRAME && e.start_ns == pick.start_ns)
+                .map(|e| (k.depth, e.name_id))
+        })
+        .collect();
+    frames.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+    frames
+        .iter()
+        .map(|(_, id)| intern.get(*id).map(str::to_string).unwrap_or_else(|| format!("#{id}")))
+        .collect()
+}
+
 fn show_scope_tooltip(
     ui: &Ui,
     intern: &InternTable,
     processes: &[ProcessJson],
     args: &HashMap<ArgKey, u32>,
     pick: ScopePick,
+    callstack: &[String],
 ) {
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
@@ -8282,6 +8412,48 @@ fn show_scope_tooltip(
                     .font(FontId::monospace(11.0))
                     .color(theme::MUTED),
             );
+            return;
+        }
+        if pick.kind == kind::SAMPLE {
+            // A sample: its callstack, leaf first, the way C++ Orbit's
+            // sample bar tooltip reads. The tick's name is the leaf.
+            let tname = intern
+                .get(pick.tid)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{}", pick.tid));
+            ui.label(
+                RichText::new("Callstack sample")
+                    .family(fonts::medium())
+                    .size(12.0)
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(format!("Thread: {tname} [{}]", pick.tid))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            if callstack.is_empty() {
+                ui.label(
+                    RichText::new("no frames for this sample")
+                        .font(FontId::monospace(11.0))
+                        .color(theme::MUTED),
+                );
+            }
+            const MAX_FRAMES: usize = 40;
+            for (i, frame) in callstack.iter().take(MAX_FRAMES).enumerate() {
+                ui.label(
+                    RichText::new(frame)
+                        .font(FontId::monospace(10.5))
+                        .color(if i == 0 { theme::TEXT } else { theme::MUTED }),
+                );
+            }
+            if callstack.len() > MAX_FRAMES {
+                ui.label(
+                    RichText::new(format!("… {} more", callstack.len() - MAX_FRAMES))
+                        .font(FontId::monospace(10.5))
+                        .color(theme::MUTED),
+                );
+            }
             return;
         }
         let name = intern

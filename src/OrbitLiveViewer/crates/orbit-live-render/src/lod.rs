@@ -1084,12 +1084,11 @@ pub fn apply_highlight_flags(
             inst.flags = f;
             continue;
         }
-        // Thread tracks: outside the selection is grey before anything else
-        // (ThreadTrack::GetTimerColor checks IsTimerActive first).
-        if !focus.active_on_track(inst.pid, inst.tid) {
-            inst.flags = FLAG_INACTIVE;
-            continue;
-        }
+        // Thread tracks keep their colours whatever thread is selected: the
+        // selection is read off the scheduler, where the selected thread's
+        // slices stay in colour and every other thread's go grey. Greying
+        // the other threads' scopes too hid the very thing a selection is
+        // for, comparing what this thread did against the others.
         if let Some(ids) = search {
             if !ids.contains(&inst.name_id) {
                 f = FLAG_DIMMED;

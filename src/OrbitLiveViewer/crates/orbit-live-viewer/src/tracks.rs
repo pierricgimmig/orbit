@@ -140,9 +140,16 @@ impl LaneCatalogue {
         };
         let mut n_cores = 0u16;
         let mut seen_threads: FastSet<(u32, u32)> = FastSet::default();
-        for (k, _) in index.lanes() {
+        for (k, lane) in index.lanes() {
             if is_cpu_lane(k) {
                 n_cores = n_cores.max(u16::from(k.extra) + 1);
+                continue;
+            }
+            // A sampled callstack's frames stay in the index -- the report
+            // computed here and the sample bar's tooltip read them -- but
+            // they are not drawn: a sample is a tick on the sample bar, as
+            // in C++ Orbit, not a flame of guessed spans on the thread.
+            if is_sampled_frame_lane(k, lane) {
                 continue;
             }
             c.pids_with_lanes.insert(k.pid);
@@ -1038,6 +1045,13 @@ impl TrackStrip {
 
 fn is_cpu_lane(k: LaneKey) -> bool {
     k.kind == kind::SCHEDULING_SLICE
+}
+
+/// A lane of sampled callstack frames: function-call events the service
+/// derives from samples, marked `SAMPLED_FRAME`. One lane holds one kind.
+fn is_sampled_frame_lane(k: LaneKey, lane: &orbit_live_render::Lane) -> bool {
+    k.kind == kind::FUNCTION_CALL
+        && lane.events().first().is_some_and(|e| e.extra == orbit_live_event::extra::SAMPLED_FRAME)
 }
 
 fn is_rail_lane(k: LaneKey) -> bool {

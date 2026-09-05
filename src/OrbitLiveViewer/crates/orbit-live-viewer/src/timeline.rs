@@ -362,17 +362,9 @@ fn grey_raster_outside_focus(
             continue;
         };
         let scheduler = key.kind == orbit_live_event::kind::SCHEDULING_SLICE;
-        // A thread's own row is one thread: decide once, not per pixel.
+        // Only the scheduler reads the selection: a thread's own rows keep
+        // their colours whichever thread is selected.
         if !scheduler {
-            if focus.active_on_track(key.pid, key.tid) {
-                continue;
-            }
-            let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
-            for px in dest.iter_mut() {
-                if *px != orbit_live_event::chrome::TRACK {
-                    *px = crate::theme::grey_argb(*px, 100);
-                }
-            }
             continue;
         }
         let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];

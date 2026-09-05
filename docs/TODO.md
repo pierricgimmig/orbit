@@ -423,11 +423,17 @@ greying out of scopes when selecting a thread should only apply to the schedulin
 
 samples should only be visualized as the vertical white lines in the sample bar, hovering on a sample shows the callstack, and we should be able to select samples from a single thread, just like the c++ app does, to generate a sampling report
 
+figure out what the orbit-live-service is and remove if useless
+
+orbit-service and orbit-live-viewer tracks should be collapsed by default, and be at the bottom of the capture. It  should be target process right after scheduling slices, then any process with manual instrumentation, ordered by number of events (decreasing), then the auto tracks (service, viewer)
+
 make sure py-spy still works
 
 more detailed instrumentation of rendering, this needs to be blazing fast, we need to find other optimization opportunities
 
 we should be able to sort by columns in the sampling reports, I want to be able to see all the hooked functions for example if i sort by "hooked"
+
+we should be able to see the right pane event when we haven't captured anything yet
 
 we need a solution to aggregate many machines' services to a single viewer, so there needs to be precise clock synchronization, also, we should have an easy way to either launch a service with the main viewer endpoint as param, or actually from the viewer itself, connect to a service running on a remote machine. Suggestions are welcome for the most streamlined ux. 
 

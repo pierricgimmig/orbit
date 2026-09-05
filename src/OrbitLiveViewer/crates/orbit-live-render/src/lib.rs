@@ -1427,7 +1427,7 @@ mod tests {
         assert_eq!(insts[0].flags, FLAG_NONE, "selected thread keeps its colour");
         assert_eq!(insts[1].flags, FLAG_SAME_PID);
         assert_eq!(insts[2].flags, FLAG_INACTIVE);
-        assert_eq!(insts[3].flags, FLAG_INACTIVE, "other threads' scopes go grey");
+        assert_eq!(insts[3].flags, FLAG_NONE, "other threads' scopes keep their colour: only the scheduler greys");
         assert_eq!(insts[4].flags, FLAG_NONE);
         // No selection: the target process is active, others grey.
         let focus = ThreadFocus { selected: None, target_pid: Some(1) };

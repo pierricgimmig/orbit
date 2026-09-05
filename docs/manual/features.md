@@ -125,10 +125,14 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   drag its handle, or click the track above or below it to page. The
   report splitter sits just right of it and only that resizes the panel.
 - **Hover.** A scope shows its name and duration in a tooltip. The sample
-  bar under each thread shows one tick per sample.
-- **Colour.** Scopes are coloured by thread; when a thread is focused
-  (section 5) every other thread's scopes and scheduler slices grey out, the
-  way C++ Orbit does it.
+  bar under each thread shows one tick per sample, a white line on the
+  dark bar, and nothing else stands for a sample on the timeline: the
+  sampled frames stay in the report, not on the thread track, as in C++
+  Orbit. Hovering a tick shows that sample's callstack, leaf first.
+- **Colour.** Scopes are coloured by thread. When a thread is focused
+  (section 5) the scheduler greys every other thread's slices and keeps
+  the focused one in colour; the thread tracks keep their colours, so the
+  focused thread can be read against the others.
 
 ## 5. Selection and focus
 
@@ -173,7 +177,9 @@ in the URL opens a tab on load.
 
 - **Flat** a hooked checkbox, then self and inclusive percentages per
   function, with module; ticking the box hooks the function for the next
-  Record, as in C++ Orbit's sampling report.
+  Record, as in C++ Orbit's sampling report. Every column header sorts
+  the rows (a second click flips the direction; the arrow says which);
+  sorting by hooked lists every hooked function first.
   Names come from the module's detached debug file when the distribution's
   `-dbg` package is installed, else its symbol tables; the `[vdso]` is a
   module too; Rust names are demangled. What has no name shows as
@@ -195,7 +201,8 @@ in the URL opens a tab on load.
   come back). Screenshot: `16-flame-tab.png`.
 - **Functions** every function the service indexed for the selected
   process, alphabetical, with a hooked checkbox column, size and module;
-  the filter box narrows it; the first 500 matches are listed until "Show
+  the column headers sort it (hooked first, by size, by module); the
+  filter box narrows it; the first 500 matches are listed until "Show
   all", which lists every match and lays out only the rows in view, so
   50,000 rows cost what a screenful does. Ticking a row hooks it for the
   next Record, the same list the report's right-click feeds. C++ Orbit's
