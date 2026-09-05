@@ -1370,7 +1370,29 @@ pub fn run_on(
             let show_all_processes = wants_all_processes(body);
             let mut hooks = Vec::new();
             if !ids.is_empty() {
-                let index = start_symbols.lock().ok().and_then(|state| state.index.clone());
+                // The index for this process, loading it now if the viewer
+                // never asked (a hook picked from a report needs no search
+                // first). A few hundred milliseconds at most, once.
+                let mut index = start_symbols
+                    .lock()
+                    .ok()
+                    .and_then(|state| (state.pid == pid as u32).then(|| state.index.clone()).flatten());
+                if index.is_none() && pid > 0 {
+                    eprintln!("orbit-service: loading symbols for pid {pid} before arming {} hook(s)", ids.len());
+                    let fresh = FunctionIndex::for_pid(pid);
+                    if !fresh.is_empty() {
+                        let fresh = Arc::new(fresh);
+                        if let Ok(mut state) = start_symbols.lock() {
+                            *state = SymbolState {
+                                pid: pid as u32,
+                                status: "ready".to_string(),
+                                error: String::new(),
+                                index: Some(fresh.clone()),
+                            };
+                        }
+                        index = Some(fresh);
+                    }
+                }
                 match index {
                     Some(index) => {
                         let (resolved, unknown) = hooks_from_ids(&index, &ids);
@@ -1386,7 +1408,7 @@ pub fn run_on(
                         hooks = resolved;
                     }
                     None => eprintln!(
-                        "orbit-service: {} functions selected but symbols are not loaded; \
+                        "orbit-service: {} functions selected but no symbols could be loaded for pid {pid}; \
                          starting without instrumentation",
                         ids.len()
                     ),

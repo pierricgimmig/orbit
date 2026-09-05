@@ -78,10 +78,12 @@ Pills, left to right. A filled pill is on.
 
 ## 3. The process row
 
-- **Process picker** lists every process the service sees, live; a refresh
-  button re-reads `/proc`. The symbols state (`symbols idle`, loading,
-  ready) sits next to it; symbols load in the background when a capture
-  starts and the report names functions once they are ready.
+- **Process picker** lists every process the service sees, live; the
+  Refresh pill re-reads `/proc`. The **Symbols** pill next to it shows the
+  state for the selected process (`symbols loading`, `ready N fn M mod`,
+  or an error) and a click loads or reloads them. Symbols load on their
+  own as soon as a process is selected, and the service loads them itself
+  when a capture starts with hooks and none are loaded yet.
 - **CSW** context switches (the scheduler track). **States** thread state
   slices. **API** manual `orbit.h` scopes. **Sample** callstack sampling
   with the period in ms next to it.

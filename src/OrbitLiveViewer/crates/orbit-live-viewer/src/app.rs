@@ -2672,6 +2672,40 @@ impl OrbitLiveApp {
         });
     }
 
+    /// The symbols pill: what the service has indexed for the selected
+    /// process, and a click to (re)load it. Loading also starts on its own
+    /// when a process is selected; this is for the eye and for a retry.
+    fn paint_symbols_pill(&mut self, ui: &mut Ui) {
+        let ready = self.symbols.status == "ready";
+        let label = if self.selected_pid.is_none() {
+            "Symbols".to_string()
+        } else {
+            self.symbol_status_line()
+        };
+        let resp = pill(ui, &label, ready).on_hover_text(match self.symbols.status.as_str() {
+            "ready" => "Symbols are loaded; click to reload them",
+            "loading" => "Loading the process's symbols",
+            "error" => "Symbol loading failed; click to retry",
+            _ => "Load the selected process's symbols (function names for hooks and reports)",
+        });
+        note_ui_rect("Symbols", resp.rect);
+        if resp.clicked() {
+            if let Some(pid) = self.selected_pid {
+                self.loaded_symbol_pid = Some(pid);
+                self.symbols = SymbolsStatusJson { pid, status: "loading".into(), ..Default::default() };
+                self.hook_hits.clear();
+                self.net.load_symbols(pid);
+            }
+        }
+        if !self.symbols.error.is_empty() && self.symbols.status == "error" {
+            ui.label(
+                RichText::new(&self.symbols.error)
+                    .font(FontId::monospace(10.5))
+                    .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
+            );
+        }
+    }
+
     fn symbol_status_line(&self) -> String {
         let st = if self.symbols.status.is_empty() {
             "idle"
@@ -2774,15 +2808,13 @@ impl OrbitLiveApp {
                     .color(theme::MUTED),
             );
             self.paint_process_picker(ui, "orbit_processes_strip");
-            if icon_pill(ui, "↻", "Refresh process list").clicked() {
+            // Plain words: the font has no glyph for a refresh arrow and drew
+            // a question mark in its place.
+            if pill(ui, "Refresh", false).on_hover_text("Re-read the process list").clicked() {
                 self.last_process_request = ui.input(|i| i.time);
                 self.net.get_processes();
             }
-            ui.label(
-                RichText::new(self.symbol_status_line())
-                    .font(FontId::monospace(10.5))
-                    .color(theme::MUTED),
-            );
+            self.paint_symbols_pill(ui);
             if !self.status.hooks {
                 ui.label(
                     RichText::new("Record starts Demo — no OrbitService hooks")
@@ -3151,15 +3183,6 @@ impl OrbitLiveApp {
             FontId::new(9.5, fonts::medium()),
             theme::MUTED,
         );
-        if (self.dev || self.status.self_profile) && header_w >= 140.0 {
-            ui.painter().text(
-                header_cut.left_center() + Vec2::new(62.0, 0.0),
-                Align2::LEFT_CENTER,
-                "DEV",
-                FontId::new(9.5, fonts::medium()),
-                theme::ACCENT,
-            );
-        }
         if self.tracks.hidden_count() > 0 {
             let all = Rect::from_center_size(
                 Pos2::new(header_cut.right() - 28.0, header_cut.center().y),
@@ -6096,6 +6119,12 @@ impl eframe::App for OrbitLiveApp {
                 if has_service && !self.ws_ok && now - self.last_ws_retry_s > 2.0 {
                     self.last_ws_retry_s = now;
                     self.net.reconnect_ws_if_closed();
+                }
+                // Symbols for the selected process, their status while they
+                // load, and the hook search: every frame, throttled inside.
+                // This used to run only while the socket was down, so a
+                // selected process never had its symbols loaded.
+                if has_service {
                     self.tick_capture_net(now);
                 }
                 if has_service
