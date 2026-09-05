@@ -60,6 +60,15 @@ pub const SAMPLE_REGS_USER_ALL: u64 = 0x00FF0FFF;
 #[cfg(target_arch = "aarch64")]
 pub const SAMPLE_REGS_USER_ALL: u64 = 0x1_FFFF_FFFF;
 
+/// The stack pointer and the instruction pointer, nothing else: what a
+/// uprobe sample needs for the duplicate-event filter. The block the kernel
+/// writes is ordered by bit number, so sp comes first on both architectures
+/// (x86-64: SP is bit 7, IP bit 8; arm64: SP is bit 31, PC bit 32).
+#[cfg(target_arch = "x86_64")]
+pub const SAMPLE_REGS_USER_SP_IP: u64 = (1 << 7) | (1 << 8);
+#[cfg(target_arch = "aarch64")]
+pub const SAMPLE_REGS_USER_SP_IP: u64 = (1 << 31) | (1 << 32);
+
 use orbit_perf_records::reader::sample_bits;
 
 fn max_stack() -> u16 {
@@ -219,6 +228,11 @@ impl UprobeAttr {
         // config1 is uprobe_path, config2 is uprobe_offset.
         attr.config1 = path.as_ptr() as u64;
         attr.config2 = file_offset;
+        // sp and ip ride along with every hit: the duplicate filter in
+        // `orbit-service`'s uprobe session tells a re-reported entry from a
+        // real one by them, as `UprobesUnwindingVisitor` does in C++.
+        attr.sample_type |= sample_bits::REGS_USER;
+        attr.sample_regs_user = SAMPLE_REGS_USER_SP_IP;
         // No `inherit`: the probe is opened per CPU for every process
         // (pid -1), which covers threads born later on its own. An inherited
         // per-task event cannot mmap a ring at all -- perf_mmap refuses
@@ -247,6 +261,17 @@ mod tests {
             SAMPLE_REGS_USER_ALL.count_ones() as usize,
             orbit_perf_records::reader::REGS_USER_ALL_COUNT
         );
+    }
+
+    #[test]
+    fn the_sp_ip_mask_names_two_registers_sp_first() {
+        assert_eq!(SAMPLE_REGS_USER_SP_IP.count_ones(), 2);
+        // The lower bit is the stack pointer on both architectures.
+        let low = SAMPLE_REGS_USER_SP_IP.trailing_zeros();
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(low, 7, "PERF_REG_X86_SP");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(low, 31, "PERF_REG_ARM64_SP");
     }
 
     #[test]

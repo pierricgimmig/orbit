@@ -521,6 +521,7 @@ fn capture_start_json_includes_sampling_and_hooks() {
         dynamic_instrumentation_method: "user_space".into(),
         instrumented_functions: vec![crate::http::InstrumentedFnRef { function_id: 7 }],
         show_all_processes: false,
+        uprobe_duplicate_filter: true,
     };
     let json = body.to_json();
     assert!(json.contains("\"pid\":42"));

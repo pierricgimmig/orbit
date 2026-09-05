@@ -787,6 +787,8 @@ pub struct OrbitLiveApp {
     sample_period_ms: String,
     unwind_dwarf: bool,
     user_space_hooks: bool,
+    /// The kernel-side duplicate-uprobe filter; off to see the ghosts.
+    uprobe_duplicate_filter: bool,
     /// Off by default: see StartBody::show_all_processes.
     show_all_processes: bool,
     symbols: SymbolsStatusJson,
@@ -1342,6 +1344,7 @@ impl OrbitLiveApp {
             sample_period_ms: "1.0".into(),
             unwind_dwarf: true,
             user_space_hooks: false,
+            uprobe_duplicate_filter: true,
             show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
             functions: Vec::new(),
@@ -1869,6 +1872,7 @@ impl OrbitLiveApp {
             },
             instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
             show_all_processes: self.show_all_processes,
+            uprobe_duplicate_filter: self.uprobe_duplicate_filter,
         }
     }
 
@@ -2925,6 +2929,16 @@ impl OrbitLiveApp {
             section_label(ui, "HOOKS");
             if let Some(i) = segmented(ui, "orbit_hook_method", &["Uprobes", "User-space"], usize::from(self.user_space_hooks)) {
                 self.user_space_hooks = i == 1;
+            }
+            if pill(ui, "Dedupe", self.uprobe_duplicate_filter)
+                .on_hover_text(
+                    "Drop the duplicate entry the kernel reports when a thread migrates inside a uprobe \
+                     (same stack and instruction pointer, another CPU), and an entry above the last one's \
+                     stack. Off shows the ghost scopes it removes; the count is on the status line either way.",
+                )
+                .clicked()
+            {
+                self.uprobe_duplicate_filter = !self.uprobe_duplicate_filter;
             }
             ui.label(
                 RichText::new(if self.user_space_hooks {

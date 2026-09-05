@@ -89,7 +89,15 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
 - **UNWIND** is a two-way switch, DWARF or FP. **HOOKS** is another:
   **Uprobes** (the default) arms kernel uprobes on the hooked functions and
   needs `CAP_PERFMON`; **User-space** is the trampoline mechanism, not
-  ported yet, and choosing it also arms uprobes and says so.
+  ported yet, and choosing it also arms uprobes and says so. **Dedupe**
+  (on by default) is the duplicate-uprobe filter C++ Orbit carries in
+  `UprobesUnwindingVisitor`: the kernel can report one function entry twice
+  when the thread migrates inside the probe (same stack and instruction
+  pointer, another CPU), and every such duplicate is a ghost scope. The
+  filter drops those and any entry whose stack pointer sits above the
+  previous entry's on that thread. Switch it off to see the ghosts; the
+  status line after the capture counts what was dropped, or what would
+  have been.
 - **HOOKED** counts the hooked functions and opens the **Functions**
   view; "Unhook all" clears them. After Record, the line says what was
   armed ("instrumenting N of M functions") or why nothing was.

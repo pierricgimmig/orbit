@@ -307,6 +307,15 @@ fn wants_all_processes(body: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the uprobe duplicate filter is on for this capture. Absent means
+/// on: the filter is the fix, the switch exists to see what it does.
+fn wants_duplicate_filter(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("uprobe_duplicate_filter").and_then(|v| v.as_bool()))
+        .unwrap_or(true)
+}
+
 /// The function ids and method the viewer put in the capture request.
 fn hook_request(body: &str) -> (Vec<u64>, String) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -565,6 +574,7 @@ fn capture_loop(
     gpu_helper: Option<String>,
     hooks: Vec<HookSpec>,
     show_all_processes: bool,
+    uprobe_duplicate_filter: bool,
 ) {
     // GPU telemetry rides the same helper-process path the file mode uses:
     // the static service cannot dlopen NVML, so a helper streams pod events
@@ -690,7 +700,7 @@ fn capture_loop(
         service.set_instrumentation_status("");
         None
     } else {
-        let (session, report) = UprobeSession::arm(target_pid, &hooks);
+        let (session, report) = UprobeSession::arm(target_pid, &hooks, uprobe_duplicate_filter);
         eprintln!(
             "orbit-service: armed {} of {} hooks ({} probes)",
             report.armed_functions,
@@ -718,10 +728,11 @@ fn capture_loop(
                 visible.add_instrumented(target_pid as u32);
             }
             let mut message = format!(
-                "instrumenting {} of {} functions ({} probes)",
+                "instrumenting {} of {} functions ({} probes{})",
                 report.armed_functions,
                 hooks.len(),
-                report.probe_count
+                report.probe_count,
+                if uprobe_duplicate_filter { "" } else { ", duplicate filter off" }
             );
             for failure in &report.failures {
                 message.push_str(&format!("; {failure}"));
@@ -1112,6 +1123,29 @@ fn capture_loop(
         if !tail.is_empty() {
             service.push_events(&tail);
         }
+        // What the duplicate filter did, on the status line the viewer
+        // shows, so switching it off and on has a number to compare.
+        let duplicates = session.duplicates();
+        let summary = if uprobe_duplicate_filter {
+            format!(
+                "{instrumented_calls} calls, {} duplicate uprobes dropped ({} on migration, {} with the stack above the last entry)",
+                duplicates.dropped(),
+                duplicates.dropped_migration,
+                duplicates.dropped_sp_above_last
+            )
+        } else {
+            format!(
+                "{instrumented_calls} calls, duplicate filter off: {} uprobes it would have dropped went through",
+                duplicates.seen_off
+            )
+        };
+        eprintln!("orbit-service: {summary}");
+        let mut status = service.instrumentation_status();
+        if !status.is_empty() {
+            status.push_str("; ");
+        }
+        status.push_str(&summary);
+        service.set_instrumentation_status(status);
     }
     eprintln!("orbit-service: {samples_parsed} callstack samples recorded");
     // Only worth a line when it happened: a sample whose register set came
@@ -1368,6 +1402,7 @@ pub fn run_on(
             // whenever the list is non-empty.
             let (ids, method) = hook_request(body);
             let show_all_processes = wants_all_processes(body);
+            let uprobe_duplicate_filter = wants_duplicate_filter(body);
             let mut hooks = Vec::new();
             if !ids.is_empty() {
                 // The index for this process, loading it now if the viewer
@@ -1442,7 +1477,16 @@ pub fn run_on(
             std::thread::Builder::new()
                 .name("orbit-capture".to_string())
                 .spawn(move || {
-                    capture_loop(service, running, pid, store, helper, hooks, show_all_processes)
+                    capture_loop(
+                        service,
+                        running,
+                        pid,
+                        store,
+                        helper,
+                        hooks,
+                        show_all_processes,
+                        uprobe_duplicate_filter,
+                    )
                 })
                 .map_err(|error| error.to_string())?;
             eprintln!("orbit-service: capture started (pid {pid})");

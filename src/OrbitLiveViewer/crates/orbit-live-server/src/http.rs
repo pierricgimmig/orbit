@@ -607,6 +607,11 @@ pub struct StartBody {
     /// bar per process, which buries the target under hundreds of rows.
     #[serde(default)]
     pub show_all_processes: bool,
+    /// Drop the duplicate uprobe entries the kernel reports on thread
+    /// migration (the C++ `UprobesUnwindingVisitor` filter). On by default;
+    /// off shows the ghost scopes it removes.
+    #[serde(default = "default_true")]
+    pub uprobe_duplicate_filter: bool,
 }
 
 fn default_true() -> bool {

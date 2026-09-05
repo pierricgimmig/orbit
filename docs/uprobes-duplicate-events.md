@@ -121,3 +121,49 @@ separate rings, so a drain can hand back an exit before the entry that opened
 it; hits are held for 100 ms and paired in timestamp order. That is a
 different problem from the duplicate, and it is the one per-task probes
 actually create.
+
+## Follow-up: per-CPU after all, and the filter ported (2026-09-05)
+
+The per-task route did not survive its first privileged run: `perf_mmap`
+refuses a ring on an inherited event with `cpu == -1` (EINVAL), so since
+`8ec682331` the Rust service arms probes exactly as the C++ does -- one event
+per CPU, `pid = -1`, all probes of a CPU sharing one ring, hits filtered to
+the target pid when read. With that, the two-buffer duplicate this document
+describes is possible again, and it was seen: ghost scopes on an
+instrumented capture, an entry that never closes or one that closes with the
+next return and swallows a real call.
+
+`UprobesUnwindingVisitor::OnUprobes`'s filter is now in
+`rust/crates/orbit-service/src/uprobes.rs`, rule for rule:
+
+- every uprobe sample carries the user `sp` and `ip`
+  (`PERF_SAMPLE_REGS_USER` with the `SAMPLE_REGS_USER_SP_IP` mask, two
+  registers, sp first on both architectures) and the reporting CPU;
+- per thread the last accepted entry's `(sp, ip, cpu)` is kept -- one, not a
+  stack, taken before the check as the C++ pops it -- and an entry is dropped
+  when `sp > last_sp` (`MISSING URETPROBE OR DUPLICATE UPROBE` in the C++
+  log) or when `sp == last_sp && ip == last_ip && cpu != last_cpu`
+  (`Duplicate uprobe on thread migration`);
+- a return clears the last entry and is never checked, the tolerant
+  unmatched-exit behaviour of `FunctionCallManager` handling the rest.
+
+The filter runs on the reordered, timestamp-sorted stream, so it sees a
+thread's hits in the order they happened rather than the order the CPU rings
+were drained -- a small improvement on the C++, whose visitor sees them in
+ring-drain order.
+
+Unlike the C++, it has a switch: `uprobe_duplicate_filter` in the capture
+request (the Dedupe pill in the viewer's HOOKS row), on by default. Off, the
+same two rules are evaluated and counted but nothing is dropped, and the
+status line after the capture says how many entries went through that the
+filter would have removed; on, it says how many were dropped and by which
+rule. That is the number to compare when judging whether the ghosts are
+this and only this.
+
+The unit tests in `uprobes.rs` cover each rule (the migration duplicate
+dropped, the same frame from the same CPU kept, an entry above the last
+dropped, equal sp with another ip kept, the post-drop state empty so the next
+entry is unchecked, a return clearing the state, the filter off counting
+only, threads independent). The kernel's actual behaviour is exercised by
+`a_uprobe_fires_on_a_function_of_this_process` under `tools/uprobe-test.sh`,
+which needs `CAP_PERFMON`.

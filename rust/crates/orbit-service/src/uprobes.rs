@@ -8,23 +8,34 @@
 //! request; this arms a uprobe at each function's entry and a uretprobe at its
 //! return, then pairs the two into spans on the timeline.
 //!
-//! Two decisions are worth stating, because both are departures from the C++.
+//! Three things are worth stating.
 //!
-//! **Probes are opened per task, not per CPU.** `LinuxTracing` opens a probe
-//! on every CPU in the cpuset, which makes one logical hit surface in two
-//! ring buffers when a thread migrates mid-probe, and `UprobesUnwindingVisitor`
-//! carries a `(sp, ip, cpu)` duplicate filter to cope --
-//! `docs/uprobes-duplicate-events.md` traces that to the XOL preemption
-//! window. Per-task probes cannot produce that duplicate at all, because a
-//! thread has exactly one buffer wherever it runs. The cost is file
-//! descriptors, which is why the number of hooks is capped.
+//! **Probes are opened per CPU, for every process (pid -1).** That is what
+//! `LinuxTracing` does too, and it is the only shape the kernel accepts with a
+//! ring: an inherited per-task event cannot be mmapped. It also means one
+//! logical hit can surface in two CPUs' rings when a thread migrates inside
+//! the probe's window -- `docs/uprobes-duplicate-events.md` traces that to
+//! the XOL preemption window -- which is why...
+//!
+//! **Duplicate entries are filtered, as `UprobesUnwindingVisitor` does.**
+//! Every uprobe sample carries the stack pointer and the instruction pointer.
+//! Per thread, the last entry's `(sp, ip, cpu)` is kept; an entry whose sp is
+//! *above* the last one's (the stack grows down, so a nested entry cannot be)
+//! is a duplicate or follows a missed return, and an entry with the same sp
+//! and ip from another CPU is the same hit reported twice. Both are dropped.
+//! Without this, every duplicate is a ghost scope: an entry that never
+//! closes, or closes with the next return and swallows a real call. The
+//! filter can be switched off per capture (`uprobe_duplicate_filter`) to see
+//! its effect; the drops are counted either way.
 //!
 //! **Records are held before they are paired.** Entry and exit arrive on
 //! different rings, so a drain can hand back an exit before the entry that
 //! opened it. Everything is buffered and sorted by timestamp, and only records
 //! older than the newest seen minus `REORDER_DELAY_NS` are paired -- the same
 //! delayed-ordering trick the collector's `OrderedProcessor` uses, in
-//! miniature.
+//! miniature. The duplicate filter runs on that ordered stream, so it sees a
+//! thread's hits in the order they happened, not the order the rings were
+//! drained.
 
 use std::collections::HashMap;
 
@@ -51,6 +62,31 @@ pub struct ProbeHit {
     pub tid: i32,
     pub function_id: u64,
     pub is_return: bool,
+    /// The user stack pointer at the hit; 0 for a return, which carries none.
+    pub sp: u64,
+    /// The user instruction pointer at the hit; 0 for a return.
+    pub ip: u64,
+    /// The CPU whose ring reported it.
+    pub cpu: u32,
+}
+
+/// What the duplicate filter dropped, and what it saw, over a session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DuplicateReport {
+    /// Entries whose stack pointer was above the previous entry's on the
+    /// same thread: a duplicate, or a return that never came.
+    pub dropped_sp_above_last: u64,
+    /// Entries with the previous entry's sp and ip, from another CPU.
+    pub dropped_migration: u64,
+    /// Entries the filter would have dropped but let through, because it
+    /// was off. The same two rules, counted instead of applied.
+    pub seen_off: u64,
+}
+
+impl DuplicateReport {
+    pub fn dropped(&self) -> u64 {
+        self.dropped_sp_above_last + self.dropped_migration
+    }
 }
 
 /// One matched call, ready to become a timeline span.
@@ -98,6 +134,13 @@ pub struct UprobeSession {
     calls: FunctionCallManager,
     pending: Vec<ProbeHit>,
     newest_seen_ns: u64,
+    /// Whether the `(sp, ip, cpu)` filter drops what it flags, or only counts.
+    duplicate_filter: bool,
+    /// Per thread, the last entry that was let through: `(sp, ip, cpu)`.
+    /// At most one, as in the C++ -- it is the last entry, not a shadow
+    /// stack. Taken on the next entry and on every return.
+    last_entry: HashMap<i32, (u64, u64, u32)>,
+    duplicates: DuplicateReport,
 }
 
 /// One function to hook: where the probe goes, in file terms.
@@ -118,7 +161,10 @@ impl UprobeSession {
     ///
     /// A hook that cannot be armed is reported, not fatal: instrumenting nine
     /// of ten requested functions is worth more than instrumenting none.
-    pub fn arm(pid: i32, hooks: &[HookSpec]) -> (UprobeSession, ArmReport) {
+    ///
+    /// `duplicate_filter` off keeps every entry the kernel reports and only
+    /// counts what the filter would have dropped, so its effect can be seen.
+    pub fn arm(pid: i32, hooks: &[HookSpec], duplicate_filter: bool) -> (UprobeSession, ArmReport) {
         let mut session = UprobeSession {
             target_pid: pid,
             rings: Vec::new(),
@@ -126,6 +172,9 @@ impl UprobeSession {
             calls: FunctionCallManager::new(),
             pending: Vec::new(),
             newest_seen_ns: 0,
+            duplicate_filter,
+            last_entry: HashMap::new(),
+            duplicates: DuplicateReport::default(),
         };
         let mut report = ArmReport::default();
         let cpus = online_cpus();
@@ -216,18 +265,26 @@ impl UprobeSession {
                 if { header.kind } != record_type::SAMPLE {
                     continue;
                 }
-                let Some(sample) = parse_record_sample(&record, flags, false) else { continue };
+                // `true`: keep the register block, it is sp and ip.
+                let Some(sample) = parse_record_sample(&record, flags, true) else { continue };
                 // Every process mapping the file fires the probe; only the
                 // target's hits are this capture's.
                 if sample.pid as i32 != self.target_pid {
                     continue;
                 }
                 let Some(&(function_id, is_return)) = self.by_stream.get(&sample.stream_id) else { continue };
+                let (sp, ip) = match sample.regs.as_deref() {
+                    Some([sp, ip, ..]) => (*sp, *ip),
+                    _ => (0, 0),
+                };
                 let hit = ProbeHit {
                     timestamp_ns: sample.time,
                     tid: sample.tid as i32,
                     function_id,
                     is_return,
+                    sp,
+                    ip,
+                    cpu: sample.cpu,
                 };
                 self.newest_seen_ns = self.newest_seen_ns.max(hit.timestamp_ns);
                 self.pending.push(hit);
@@ -243,6 +300,33 @@ impl UprobeSession {
         self.drain_up_to(u64::MAX)
     }
 
+    /// What the duplicate filter dropped so far (or would have, when off).
+    pub fn duplicates(&self) -> DuplicateReport {
+        self.duplicates
+    }
+
+    /// The C++ rule, on one entry: drop it when its stack pointer is above
+    /// the thread's last entry (a nested call cannot be; a duplicate or a
+    /// missed return is), or when it repeats the last entry's sp and ip from
+    /// another CPU (the same hit, surfacing in two rings). The last entry is
+    /// taken before the check, as `UprobesUnwindingVisitor::OnUprobes` does,
+    /// so a drop leaves the thread with no last entry and the next one is
+    /// accepted unchecked.
+    fn is_duplicate_entry(&mut self, hit: &ProbeHit) -> bool {
+        let Some((last_sp, last_ip, last_cpu)) = self.last_entry.remove(&hit.tid) else {
+            return false;
+        };
+        if hit.sp > last_sp {
+            self.duplicates.dropped_sp_above_last += 1;
+            return true;
+        }
+        if hit.sp == last_sp && hit.ip == last_ip && hit.cpu != last_cpu {
+            self.duplicates.dropped_migration += 1;
+            return true;
+        }
+        false
+    }
+
     fn drain_up_to(&mut self, horizon: u64) -> Vec<CompletedCall> {
         // Sorting the whole buffer keeps this correct when a ring hands back
         // a burst out of order relative to its neighbours; the buffer only
@@ -250,8 +334,12 @@ impl UprobeSession {
         self.pending.sort_by_key(|hit| hit.timestamp_ns);
         let ready = self.pending.partition_point(|hit| hit.timestamp_ns <= horizon);
         let mut out = Vec::new();
-        for hit in self.pending.drain(..ready) {
+        let ready_hits: Vec<ProbeHit> = self.pending.drain(..ready).collect();
+        for hit in ready_hits {
             if hit.is_return {
+                // A return closes the last entry whatever it was; there is
+                // no duplicate check on returns, as in the C++.
+                self.last_entry.remove(&hit.tid);
                 if let Some(call) =
                     self.calls.process_function_exit(hit.tid, hit.timestamp_ns, None)
                 {
@@ -264,6 +352,18 @@ impl UprobeSession {
                     });
                 }
             } else {
+                if self.is_duplicate_entry(&hit) {
+                    if self.duplicate_filter {
+                        continue;
+                    }
+                    // Off: the entry goes through, and the count says what
+                    // the filter would have done. Undo the counted drop so
+                    // the totals mean one thing each.
+                    self.duplicates.seen_off += 1;
+                    self.duplicates.dropped_sp_above_last = 0;
+                    self.duplicates.dropped_migration = 0;
+                }
+                self.last_entry.insert(hit.tid, (hit.sp, hit.ip, hit.cpu));
                 self.calls.process_function_entry(
                     hit.tid,
                     hit.function_id,
@@ -276,9 +376,13 @@ impl UprobeSession {
     }
 }
 
-/// What a uprobe sample carries: no registers and no stack, just who and when.
+/// What a uprobe sample carries: who, when, which CPU, and two registers
+/// (sp then ip, the `SAMPLE_REGS_USER_SP_IP` mask). No stack.
 fn uprobe_sample_flags() -> SampleFlags {
-    SampleFlags { sample_type: sample_bits::TID_TIME_STREAMID_CPU, regs_user_count: 0 }
+    SampleFlags {
+        sample_type: sample_bits::TID_TIME_STREAMID_CPU | sample_bits::REGS_USER,
+        regs_user_count: orbit_perf_ring::attr::SAMPLE_REGS_USER_SP_IP.count_ones() as usize,
+    }
 }
 
 /// The CPUs a per-CPU event can be opened on: 0 to the online count.
@@ -313,11 +417,133 @@ mod tests {
             calls: FunctionCallManager::new(),
             pending: Vec::new(),
             newest_seen_ns: 0,
+            duplicate_filter: true,
+            last_entry: HashMap::new(),
+            duplicates: DuplicateReport::default(),
         }
     }
 
     fn hit(timestamp_ns: u64, function_id: u64, is_return: bool) -> ProbeHit {
-        ProbeHit { timestamp_ns, tid: 7, function_id, is_return }
+        ProbeHit { timestamp_ns, tid: 7, function_id, is_return, sp: 0, ip: 0, cpu: 0 }
+    }
+
+    /// An entry with a stack frame: nested calls have decreasing sp.
+    fn entry(timestamp_ns: u64, function_id: u64, sp: u64, ip: u64, cpu: u32) -> ProbeHit {
+        ProbeHit { timestamp_ns, tid: 7, function_id, is_return: false, sp, ip, cpu }
+    }
+
+    fn ret(timestamp_ns: u64, function_id: u64) -> ProbeHit {
+        ProbeHit { timestamp_ns, tid: 7, function_id, is_return: true, sp: 0, ip: 0, cpu: 0 }
+    }
+
+    // ---- the duplicate filter, rule by rule -----------------------------
+
+    #[test]
+    fn the_same_hit_from_another_cpu_is_dropped() {
+        // One entry, reported by cpu 0 and again by cpu 3 with the same sp
+        // and ip, then one return: one call, not a ghost left open.
+        let mut session = empty_session();
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), entry(101, 1, 0x50, 0xabc, 3), ret(400, 1)];
+        let calls = session.flush();
+        assert_eq!(calls.len(), 1);
+        assert_eq!((calls[0].start_ns, calls[0].duration_ns), (100, 300));
+        assert_eq!(session.duplicates().dropped_migration, 1);
+        assert_eq!(session.duplicates().dropped_sp_above_last, 0);
+        session.pending = vec![ret(500, 1)];
+        assert!(session.flush().is_empty(), "nothing left open");
+    }
+
+    #[test]
+    fn the_same_frame_from_the_same_cpu_is_kept() {
+        // Equal sp and ip on one CPU is not the migration duplicate; the C++
+        // keeps it, and so does this (a recursive call re-entering at the
+        // same sp is not possible, but the rule is the rule).
+        let mut session = empty_session();
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 2), entry(101, 1, 0x50, 0xabc, 2), ret(300, 1), ret(400, 1)];
+        let calls = session.flush();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(session.duplicates().dropped(), 0);
+    }
+
+    #[test]
+    fn an_entry_above_the_last_entrys_stack_is_dropped() {
+        // Nested: 0x50 then 0x40 is fine. 0x60 after 0x40 with no return in
+        // between cannot be a nested call: dropped, counted as such.
+        let mut session = empty_session();
+        session.pending = vec![
+            entry(100, 1, 0x50, 0xa, 0),
+            entry(110, 2, 0x40, 0xb, 0),
+            entry(120, 3, 0x60, 0xc, 0),
+            ret(200, 2),
+            ret(300, 1),
+        ];
+        let calls = session.flush();
+        assert_eq!(calls.iter().map(|c| c.function_id).collect::<Vec<_>>(), vec![2, 1]);
+        assert_eq!(session.duplicates().dropped_sp_above_last, 1);
+        assert_eq!(session.duplicates().dropped_migration, 0);
+    }
+
+    #[test]
+    fn an_equal_sp_with_a_different_ip_is_kept() {
+        let mut session = empty_session();
+        session.pending = vec![entry(100, 1, 0x50, 0xa, 0), entry(110, 2, 0x50, 0xb, 1), ret(200, 2), ret(300, 1)];
+        assert_eq!(session.flush().len(), 2);
+        assert_eq!(session.duplicates().dropped(), 0);
+    }
+
+    #[test]
+    fn a_drop_leaves_no_last_entry_so_the_next_one_is_unchecked() {
+        // The C++ pops the last entry before the checks: after a drop the
+        // thread has no last entry, and the next entry is accepted even
+        // though its sp is above the one before the drop.
+        let mut session = empty_session();
+        session.pending = vec![
+            entry(100, 1, 0x40, 0xa, 0),
+            entry(110, 2, 0x50, 0xb, 0), // dropped: above 0x40
+            entry(120, 3, 0x60, 0xc, 0), // kept: no last entry to compare with
+            ret(200, 3),
+            ret(300, 1),
+        ];
+        let calls = session.flush();
+        assert_eq!(calls.iter().map(|c| c.function_id).collect::<Vec<_>>(), vec![3, 1]);
+        assert_eq!(session.duplicates().dropped(), 1);
+    }
+
+    #[test]
+    fn a_return_clears_the_last_entry_and_needs_no_check() {
+        // After a return, a fresh entry at a higher sp is a new call at a
+        // shallower depth, not a duplicate.
+        let mut session = empty_session();
+        session.pending = vec![entry(100, 1, 0x40, 0xa, 0), ret(200, 1), entry(300, 2, 0x50, 0xb, 0), ret(400, 2)];
+        assert_eq!(session.flush().len(), 2);
+        assert_eq!(session.duplicates().dropped(), 0);
+        // A return with nothing open is a no-op for the filter too.
+        session.pending = vec![ret(500, 9)];
+        assert!(session.flush().is_empty());
+    }
+
+    #[test]
+    fn with_the_filter_off_duplicates_go_through_and_are_only_counted() {
+        let mut session = empty_session();
+        session.duplicate_filter = false;
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), entry(101, 1, 0x50, 0xabc, 3), ret(400, 1)];
+        let calls = session.flush();
+        // The ghost: the return closes the duplicate, the real entry stays open.
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].start_ns, 101);
+        assert_eq!(session.duplicates().seen_off, 1);
+        assert_eq!(session.duplicates().dropped(), 0);
+    }
+
+    #[test]
+    fn threads_keep_their_own_last_entry() {
+        let mut session = empty_session();
+        let mut other = entry(105, 1, 0x50, 0xabc, 3);
+        other.tid = 8;
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), other, ret(400, 1)];
+        let calls = session.flush();
+        assert_eq!(calls.len(), 1, "thread 8's entry is not thread 7's duplicate");
+        assert_eq!(session.duplicates().dropped(), 0);
     }
 
     #[test]
@@ -385,9 +611,9 @@ mod tests {
     fn threads_do_not_close_each_others_calls() {
         let mut session = empty_session();
         session.pending = vec![
-            ProbeHit { timestamp_ns: 100, tid: 1, function_id: 9, is_return: false },
-            ProbeHit { timestamp_ns: 200, tid: 2, function_id: 9, is_return: true },
-            ProbeHit { timestamp_ns: 300, tid: 1, function_id: 9, is_return: true },
+            ProbeHit { timestamp_ns: 100, tid: 1, function_id: 9, is_return: false, sp: 0, ip: 0, cpu: 0 },
+            ProbeHit { timestamp_ns: 200, tid: 2, function_id: 9, is_return: true, sp: 0, ip: 0, cpu: 0 },
+            ProbeHit { timestamp_ns: 300, tid: 1, function_id: 9, is_return: true, sp: 0, ip: 0, cpu: 0 },
         ];
         let calls = session.flush();
         // Only thread 1's pair closes; thread 2's stray return is dropped.
@@ -414,7 +640,7 @@ mod tests {
             file_offset: 0x1000,
             name: "probe_routing".to_string(),
         };
-        let (session, report) = UprobeSession::arm(std::process::id() as i32, &[hook]);
+        let (session, report) = UprobeSession::arm(std::process::id() as i32, &[hook], true);
         if report.probe_count > 0 {
             // Running privileged: the probes armed, which is the stronger
             // outcome and equally fine.
@@ -500,7 +726,7 @@ mod tests {
         while !ready.load(Ordering::SeqCst) {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        let (mut session, report) = UprobeSession::arm(pid, &[hook]);
+        let (mut session, report) = UprobeSession::arm(pid, &[hook], true);
         if report.probe_count == 0 {
             let failure = report.failures.first().cloned().unwrap_or_default();
             stop.store(true, Ordering::SeqCst);
