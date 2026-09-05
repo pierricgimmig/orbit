@@ -5585,28 +5585,45 @@ impl OrbitLiveApp {
                         // to arrive open. Left, everything; right, only the
                         // hottest path.
                         ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(if self.tree_expand_threshold <= 0.0 {
-                                "open all".to_string()
-                            } else {
-                                format!("open > {:.0}%", self.tree_expand_threshold)
-                            })
-                            .color(theme::MUTED)
-                            .size(self.ui_tweaks.report_font - 0.5),
-                        );
                         let mut threshold = self.tree_expand_threshold;
-                        let slider = ui.add(
-                            egui::Slider::new(&mut threshold, 0.0..=100.0)
-                                .show_value(false)
-                                .step_by(1.0),
-                        );
+                        // The slider first and the text after it, at a fixed
+                        // width: with the text before the slider, "open all"
+                        // and "open > 12%" were different widths, the slider
+                        // moved under a still pointer, the value followed, the
+                        // text changed back -- a flicker on every press.
+                        let slider = ui
+                            .scope(|ui| {
+                                // The knob is the rail's height / 2.5, and the
+                                // rail is the taller of the Body text and the
+                                // interact height: three quarters of both.
+                                let style = ui.style_mut();
+                                style.spacing.interact_size.y = 13.5;
+                                style.spacing.slider_width = 84.0;
+                                if let Some(body) = style.text_styles.get_mut(&egui::TextStyle::Body) {
+                                    body.size = 10.0;
+                                }
+                                ui.add(egui::Slider::new(&mut threshold, 0.0..=100.0).show_value(false).step_by(1.0))
+                            })
+                            .inner;
                         note_ui_rect("tree_expand_slider", slider.rect);
-                        if slider.changed() {
+                        if slider.changed() && (threshold - self.tree_expand_threshold).abs() >= 0.5 {
                             self.tree_expand_threshold = threshold;
                             if let Some(tree) = &self.tree {
                                 self.tree_expanded = expandable_paths_over(&tree.roots, threshold);
                             }
                         }
+                        ui.add_sized(
+                            Vec2::new(78.0, ui.spacing().interact_size.y),
+                            egui::Label::new(
+                                RichText::new(if self.tree_expand_threshold <= 0.0 {
+                                    "open all".to_string()
+                                } else {
+                                    format!("open > {:.0}%", self.tree_expand_threshold)
+                                })
+                                .color(theme::MUTED)
+                                .size(self.ui_tweaks.report_font - 0.5),
+                            ),
+                        );
                     }
                 });
                 // Both axes: a call tree or a long function name is wider than
