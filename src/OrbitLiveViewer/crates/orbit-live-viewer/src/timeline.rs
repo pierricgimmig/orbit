@@ -10,7 +10,7 @@ use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use orbit_live_event::dev::{
-    NAME_DIM_SEARCH, NAME_PLACE_EXTENT, NAME_PUNCH_DRAG, NAME_RASTER_WALK, NAME_REMAP_THEME,
+    NAME_DIM_SEARCH, NAME_PLACE_EXTENT, NAME_PUNCH_DRAG, NAME_RASTER_WALK,
     NAME_TO_RGBA8, TID_RENDER,
 };
 use orbit_live_event::{chrome, LaneKey};
@@ -21,6 +21,9 @@ use orbit_live_render::{
 use std::collections::HashMap;
 
 pub const INSTANCE_STRIDE: u64 = 48;
+/// Where the flag word sits in a packed instance: after x, y, w, h, the four
+/// colour channels and the radius (`pack_instances`).
+pub const INSTANCE_FLAGS_OFFSET: u64 = 36;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuDirtyKey {
@@ -142,6 +145,12 @@ pub enum TimelinePayload {
     Instanced {
         instances: Vec<ScopeInstance>,
     },
+    /// Hover, selection or search moved and nothing else: only these
+    /// instances' flag words change, written in place -- 4 bytes each
+    /// instead of the whole buffer repacked and re-sent.
+    Flags {
+        changes: Vec<(u32, f32)>,
+    },
 }
 
 impl TimelinePayload {
@@ -237,15 +246,13 @@ impl TimelinePayload {
                     raster.placed_extent(layout, scale)
                 };
                 // Single-threaded, one write per pixel of the whole timeline.
-                let (mut rgba, height) = {
+                // `to_rgba8_placed` already writes the track colour as
+                // transparent; the theme remap that followed it was a second
+                // full pass over the buffer that changed nothing.
+                let (rgba, height) = {
                     let _rgba = dev.scope(TID_RENDER, NAME_TO_RGBA8);
                     raster.to_rgba8_placed(layout, scale)
                 };
-                // A second full pass over the same buffer.
-                {
-                    let _remap = dev.scope(TID_RENDER, NAME_REMAP_THEME);
-                    crate::theme::remap_rgba8(&mut rgba);
-                }
                 let overlay = overlay
                     .iter()
                     .cloned()
@@ -506,6 +513,20 @@ impl CallbackTrait for TimelineCallback {
         if sw > 0 && sh > 0 {
             render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
         }
+        // The scissor is the callback's own rect (the timeline body) cut by
+        // the ui clip, not the ui clip alone: instances are listed for a
+        // window wider than the view, and what sits left or right of the
+        // body must not paint over the header rail or the report.
+        let vp = info.viewport_in_pixels();
+        let clip = info.clip_rect_in_pixels();
+        let x0 = vp.left_px.max(clip.left_px).max(0);
+        let y0 = vp.top_px.max(clip.top_px).max(0);
+        let x1 = (vp.left_px + vp.width_px).min(clip.left_px + clip.width_px).min(sw as i32);
+        let y1 = (vp.top_px + vp.height_px).min(clip.top_px + clip.height_px).min(sh as i32);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        render_pass.set_scissor_rect(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32);
         let t0 = upload_clock_ns();
         if let Some(slots) = callback_resources.get::<TimelineGpuSlot>() {
             slots.get(self.slot).draw(render_pass, self.layer);
@@ -859,6 +880,19 @@ impl TimelineGpu {
                 }
                 self.upload_instances(device, queue, instances, layer);
             }
+            TimelinePayload::Flags { changes } => {
+                let slot = self.layer_mut(layer);
+                if let Some(buf) = &slot.instance_buf {
+                    let t0 = upload_clock_ns();
+                    for (i, flags) in changes {
+                        let offset = u64::from(*i) * INSTANCE_STRIDE + INSTANCE_FLAGS_OFFSET;
+                        if offset + 4 <= slot.instance_cap {
+                            queue.write_buffer(buf, offset, &flags.to_le_bytes());
+                        }
+                    }
+                    record_instance_upload(upload_clock_ns().saturating_sub(t0), changes.len() as u64 * 4);
+                }
+            }
         }
     }
 
@@ -1092,6 +1126,18 @@ mod tests {
     use orbit_live_render::{
         choose_lod, collect_instances_layout, stacked_layout, TrackIndex, INSTANCE_MIN_PX,
     };
+
+    #[test]
+    fn the_flags_word_sits_at_the_documented_offset() {
+        let mut inst = ScopeInstance {
+            x: 1.0, y: 2.0, w: 10.0, h: 16.0, color: 0xFFE7_4435, radius: 3.0, name_id: 1,
+            start_ns: 0, duration_ns: 1, pid: 1, tid: 1, kind: 1, depth: 0, extra: 0, flags: 0.0,
+        };
+        inst.flags = 3.0;
+        let bytes = pack_instances(&[inst]);
+        let off = INSTANCE_FLAGS_OFFSET as usize;
+        assert_eq!(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()), 3.0);
+    }
 
     #[test]
     fn pack_instances_is_48_bytes_each() {

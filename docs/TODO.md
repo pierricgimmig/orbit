@@ -429,7 +429,11 @@ samples should only be visualized as the vertical white lines in the sample bar,
 
 figure out what the orbit-live-service is and remove if useless
 
+  DONE 2026-09-05 (79ca2a4ce): it was the live server timing its own handlers onto the capture ring under a synthetic pid, the pre-Self-pane dev profiler; removed with the viewer's dev injection, /api/self/*, --dev-self-profile and ?dev=0.
+
 orbit-service and orbit-live-viewer tracks should be collapsed by default, and be at the bottom of the capture. It  should be target process right after scheduling slices, then any process with manual instrumentation, ordered by number of events (decreasing), then the auto tracks (service, viewer)
+
+  DONE 2026-09-05 (02b656434): three tiers (target, instrumented by event count on a log scale, service and viewer folded), header drags stay within a tier.
 
 make sure py-spy still works
 

@@ -77,3 +77,44 @@ Still on the table, by size:
 - The browser side (outside_frame_us) is unmeasurable headless; on a real
   GPU it is the egui tessellation and the WebGPU submit. Worth a look
   with the browser's own profiler on the user's machine.
+
+Pass 2 (same day, same setup, service rows now folded by default so the
+zoomed view lists ~7,600 primitives instead of ~15,000; compare shapes,
+not the listing's absolute cost):
+
+  state                    Frame    ReportPanel  listing/frame  Chrome
+  fit, idle                 860 us  165 us       0.1            143 us
+  zoomed x6, pointer still  952 us  168 us       0.2            148 us
+  zoomed, pointer moving    908 us  171 us       0.0            154 us
+  panning (D held)          905 us  173 us       0.0            156 us
+  live capture, follow      941 us  172 us       --             154 us
+
+Three more changes:
+
+1. A pan no longer re-walks the lanes. Zoomed in, once the view span has
+   held for a frame, the instances are listed for a window half a view
+   wider on each side; a pan that stays inside it changes one uniform
+   (the base layer's origin) and uploads nothing -- the D-held row above
+   lists 0.0 times per frame where pass 1 listed 0.1-0.2 and the original
+   0.2 with a full walk each. The listing itself costs about twice as
+   much when it runs (2x the window), which is why a zoom (span changing
+   every frame) and a thread drag list the plain view. The render pass
+   now scissors to the timeline body, since instances exist left and
+   right of it.
+2. Hover, selection and search changes write only the flag words that
+   moved (4 bytes each, at their offset in the instance buffer) instead
+   of repacking and re-sending the whole buffer; when more than an eighth
+   of the instances change (a thread focus, a search) the full write is
+   cheaper and still happens. gpu_prepare_us: 100-360 us in pass 1, 7-13
+   us here outside a live capture.
+3. The theme remap after the pixel-column raster was a second full pass
+   over the RGBA buffer that changed nothing: to_rgba8_placed already
+   writes the track colour transparent. Removed.
+
+Frame: 4.2 -> 1.4 -> 0.9 ms idle; 3.3 -> 1.5 -> 0.95 ms zoomed; 2.6 ->
+1.6 -> 0.94 ms live. With the Self pane closed (SelfPane ~0.15 ms plus its
+timeline) the viewer's CPU frame is about 0.7 ms.
+
+Still on the table: Chrome (the transport and capture strip, 0.15 ms every
+frame, the largest single item left), ReportPanel (0.17 ms, the visible
+rows of the report), and the browser side, which headless cannot measure.

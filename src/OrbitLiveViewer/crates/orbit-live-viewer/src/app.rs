@@ -635,6 +635,16 @@ pub struct OrbitLiveApp {
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
+    /// The window the instances were listed for when it is wider than the
+    /// view: `(t0, t1, width in points, the view span it was built for)`.
+    /// A pan that stays inside it is a uniform change, not a re-walk.
+    overscan_window: Option<(u64, u64, f32, u64)>,
+    /// How far into the listing window the view's left edge sits, in
+    /// points; 0 when the listing is the view.
+    listing_pan_pts: f32,
+    /// The view span of the previous frame: overscan is only worth listing
+    /// once the span holds still (a zoom changes it every frame).
+    last_view_span: Option<u64>,
     last_dirty: Option<GpuDirtyKey>,
     last_lod: orbit_live_render::TimelineLod,
     /// Dest of the last painted frame; `TimelinePayload::Keep` reuses it.
@@ -921,6 +931,16 @@ pub struct TimelineState {
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
+    /// The window the instances were listed for when it is wider than the
+    /// view: `(t0, t1, width in points, the view span it was built for)`.
+    /// A pan that stays inside it is a uniform change, not a re-walk.
+    overscan_window: Option<(u64, u64, f32, u64)>,
+    /// How far into the listing window the view's left edge sits, in
+    /// points; 0 when the listing is the view.
+    listing_pan_pts: f32,
+    /// The view span of the previous frame: overscan is only worth listing
+    /// once the span holds still (a zoom changes it every frame).
+    last_view_span: Option<u64>,
     last_dirty: Option<GpuDirtyKey>,
     last_lod: orbit_live_render::TimelineLod,
     last_view: Option<ViewUniforms>,
@@ -959,6 +979,9 @@ impl TimelineState {
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
+            overscan_window: None,
+            listing_pan_pts: 0.0,
+            last_view_span: None,
             last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
             last_view: None,
@@ -998,6 +1021,9 @@ impl OrbitLiveApp {
         std::mem::swap(&mut self.last_instances, &mut other.last_instances);
         std::mem::swap(&mut self.last_layout, &mut other.last_layout);
         std::mem::swap(&mut self.last_instanced_window, &mut other.last_instanced_window);
+        std::mem::swap(&mut self.overscan_window, &mut other.overscan_window);
+        std::mem::swap(&mut self.listing_pan_pts, &mut other.listing_pan_pts);
+        std::mem::swap(&mut self.last_view_span, &mut other.last_view_span);
         std::mem::swap(&mut self.last_dirty, &mut other.last_dirty);
         std::mem::swap(&mut self.last_lod, &mut other.last_lod);
         std::mem::swap(&mut self.last_view, &mut other.last_view);
@@ -1250,6 +1276,9 @@ impl OrbitLiveApp {
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
+            overscan_window: None,
+            listing_pan_pts: 0.0,
+            last_view_span: None,
             last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
             last_view: None,
@@ -3558,13 +3587,19 @@ impl OrbitLiveApp {
                     }
                     // Keep redraws last frame's texture, so it must keep last
                     // frame's dest or the blit jumps between LOD rects.
-                    TimelinePayload::Keep => {
+                    TimelinePayload::Keep if self.last_lod != orbit_live_render::TimelineLod::Instanced => {
                         let mut v = self.last_view.unwrap_or(view_body);
                         v.time = now;
                         v
                     }
                     _ => view_body,
                 };
+                let mut view = view;
+                if self.last_lod == orbit_live_render::TimelineLod::Instanced {
+                    // The instances are in listing-window points; the view
+                    // starts `listing_pan_pts` into that window.
+                    view.origin[0] -= self.listing_pan_pts * ppp;
+                }
                 self.last_view = Some(view);
                 {
                     let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
@@ -3579,6 +3614,7 @@ impl OrbitLiveApp {
                         body,
                         &self.intern,
                         &self.last_instances,
+                        -self.listing_pan_pts,
                         if lifting {
                             ClipLabelSet::Rest
                         } else {
@@ -3607,6 +3643,7 @@ impl OrbitLiveApp {
                             body,
                             &self.intern,
                             &self.last_instances,
+                            -self.listing_pan_pts,
                             ClipLabelSet::Dragged,
                             self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
                             &mut self.clip_labels,
@@ -4208,10 +4245,35 @@ impl OrbitLiveApp {
         let rest_layout = self.tracks.rest_layout();
         let drag_layout = self.tracks.drag_layout();
         let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
+        // The listing window. Zoomed in, and once the span holds still, the
+        // instances are listed for a window half a view wider on each side;
+        // a pan that stays inside it changes one uniform (the origin) and
+        // walks nothing. A zoom, a drag or the pixel LOD list the view.
+        // t0 and t1 are f64 in the view and the span drifts by a nanosecond
+        // between frames; a few ns of play is not a zoom.
+        let view_span = t1.saturating_sub(t0).max(1);
+        let span_held = self.last_view_span.is_some_and(|s| s.abs_diff(view_span) <= 4);
+        self.last_view_span = Some(view_span);
+        let (lt0, lt1, lwidth) = if lod == orbit_live_render::TimelineLod::Instanced && dragged.is_none() && span_held {
+            match self.overscan_window {
+                Some((a, b, w, span)) if span.abs_diff(view_span) <= 4 && t0 >= a && t1 <= b => (a, b, w),
+                _ => {
+                    let a = t0.saturating_sub(view_span / 2);
+                    let b = t1.saturating_add(view_span / 2);
+                    let w = width * ((b - a) as f64 / view_span as f64) as f32;
+                    self.overscan_window = Some((a, b, w, view_span));
+                    (a, b, w)
+                }
+            }
+        } else {
+            self.overscan_window = None;
+            (t0, t1, width)
+        };
+        self.listing_pan_pts = if lt1 > lt0 { (t0 - lt0) as f64 as f32 / (lt1 - lt0) as f32 * lwidth } else { 0.0 };
         let next_key = GpuDirtyKey {
-            t0,
-            t1,
-            width_bits: width.to_bits(),
+            t0: lt0,
+            t1: lt1,
+            width_bits: lwidth.to_bits(),
             scroll_q: y_cull.map(|c| quant_px(c.y0)).unwrap_or(0),
             view_h_q: y_cull.map(|c| quant_px(c.y1 - c.y0)).unwrap_or(0),
             dest_x_q: quant_px(body.min.x),
@@ -4272,7 +4334,20 @@ impl OrbitLiveApp {
             let mut instances = self.last_instances.clone();
             let search = self.search_active().then_some(&self.search_ids);
             apply_highlight_flags(&mut instances, self.selected, self.hover, search, self.thread_focus());
+            // Only the flag words that moved go to the GPU: a hover touches
+            // two instances, not the whole buffer. A thread focus or a
+            // search can touch most of them, and then one write is cheaper.
+            let changes: Vec<(u32, f32)> = instances
+                .iter()
+                .zip(self.last_instances.iter())
+                .enumerate()
+                .filter(|(_, (new, old))| new.flags.to_bits() != old.flags.to_bits())
+                .map(|(i, (new, _))| (i as u32, new.flags))
+                .collect();
             self.last_instances = instances.clone();
+            if changes.len() * 8 <= instances.len() {
+                return (TimelinePayload::Flags { changes }, None);
+            }
             scale_instances_ppp(&mut instances, ppp);
             return (TimelinePayload::Instanced { instances }, None);
         }
@@ -4280,7 +4355,7 @@ impl OrbitLiveApp {
             let mut overlay = Vec::new();
             if lod == orbit_live_render::TimelineLod::Instanced {
                 let d = self.tracks.scale;
-                let window = (t0, t1, width.to_bits());
+                let window = (lt0, lt1, lwidth.to_bits());
                 let mut instances = std::mem::take(&mut self.last_instances);
                 let can_shift = y_cull.is_none()
                     && self.last_instanced_window == Some(window)
@@ -4302,9 +4377,9 @@ impl OrbitLiveApp {
                     let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
                     let mut frame = collect_instances_cached(
                         &self.index,
-                        t0,
-                        t1,
-                        width,
+                        lt0,
+                        lt1,
+                        lwidth,
                         &rest_layout,
                         Some(&self.intern),
                         CollectOpts {
@@ -5128,7 +5203,7 @@ impl OrbitLiveApp {
         if self.last_lod == orbit_live_render::TimelineLod::Instanced
             && !self.last_instances.is_empty()
         {
-            return pick_instance_at(&self.last_instances, x, y)
+            return pick_instance_at(&self.last_instances, x + self.listing_pan_pts, y)
                 .map(|i| ScopePick::from_instance(&self.last_instances[i]));
         }
         // The live layout, not `last_layout`: that one is only refreshed by
@@ -8891,6 +8966,7 @@ fn paint_clip_labels(
     body: Rect,
     intern: &InternTable,
     instances: &[ScopeInstance],
+    x_shift: f32,
     set: ClipLabelSet,
     dragged: Option<(u32, u32)>,
     cache: &mut ClipLabelCache,
@@ -8930,7 +9006,7 @@ fn paint_clip_labels(
             continue;
         }
         let box_rect = Rect::from_min_size(
-            Pos2::new(body.left() + inst.x, body.top() + inst.y),
+            Pos2::new(body.left() + inst.x + x_shift, body.top() + inst.y),
             Vec2::new(inst.w, inst.h),
         );
         let clip = box_rect.intersect(view);
