@@ -8,8 +8,15 @@ worker pool needs. Standard library only.
 
 The chrome is a light Material / Google-docs surface: system fonts (Roboto
 when the OS has it), `#1a73e8` accent, a sticky product nav, and a contents
-rail on long manual pages. No webfont CDN, so the pages stay readable
-offline.
+rail on long manual and blog pages. No webfont CDN, so the pages stay
+readable offline. Dark surfaces follow `prefers-color-scheme` with the
+same tokens.
+
+Blog HTML under `docs/blog/` stays as authored (including the old
+editorial skins). At build time each `*.html` body is extracted and
+wrapped in `page.html`, so the published `/blog/` pages share the site
+nav, footer and `site.css`. `metrics/` and other non-HTML files are
+copied unchanged.
 
 ```
 python3 tools/site/build_site.py                       # captures Box3D for the front page

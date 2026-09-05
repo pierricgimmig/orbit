@@ -180,6 +180,94 @@ def preface(src, root):
     return ""
 
 
+def extract_html_title(markup):
+    match = re.search(r"<title>(.*?)</title>", markup, re.I | re.S)
+    return html.unescape(match.group(1).strip()) if match else "Orbit blog"
+
+
+def extract_html_body(markup):
+    match = re.search(r"<body[^>]*>(.*)</body>", markup, re.I | re.S)
+    return match.group(1) if match else markup
+
+
+def take_html_footer(body):
+    """Lift the source footer's prev/next line into a series note, then drop it."""
+    match = re.search(r"<footer\b[^>]*>(.*?)</footer>", body, re.I | re.S)
+    if not match:
+        return body, ""
+    inner = re.sub(r"</?div\b[^>]*>", "", match.group(1)).strip()
+    note = f'<p class="series">{inner}</p>' if inner else ""
+    return body[:match.start()] + body[match.end():], note
+
+
+def ensure_heading_ids(markup):
+    def repl(match):
+        level, attrs, inner = match.group(1), match.group(2) or "", match.group(3)
+        if re.search(r"\bid\s*=", attrs, re.I):
+            return match.group(0)
+        text = html.unescape(re.sub(r"<[^>]+>", "", inner))
+        return f'<h{level}{attrs} id="{slug(text)}">{inner}</h{level}>'
+
+    return re.sub(r"<h([23])(\s[^>]*)?>(.*?)</h\1>", repl, markup, flags=re.I | re.S)
+
+
+def toc_from_html(markup):
+    """On-this-page list from h2s already in the extracted blog body."""
+    items = []
+    for match in re.finditer(r"<h2(\s[^>]*)?>(.*?)</h2>", markup, re.I | re.S):
+        attrs, inner = match.group(1) or "", match.group(2)
+        text = html.unescape(re.sub(r"<[^>]+>", "", inner)).strip()
+        if not text:
+            continue
+        id_match = re.search(r'\bid="([^"]+)"', attrs)
+        items.append((text, id_match.group(1) if id_match else slug(text)))
+    if len(items) < 2:
+        return ""
+    out = ['<aside class="toc"><p class="toc-label">On this page</p><nav class="toc-nav"><ol>']
+    for title, hid in items:
+        out.append(f'<li class="l2"><a href="#{html.escape(hid)}">{html.escape(title)}</a></li>')
+    out.append("</ol></nav></aside>")
+    return "\n".join(out)
+
+
+def wrap_blog_pages(out, capture_file):
+    """Copy docs/blog/ then wrap every HTML page in the shared site chrome.
+
+    Metrics and other non-HTML assets stay as copied. Source files under
+    docs/blog/ are not rewritten.
+    """
+    src = os.path.join(REPO, "docs/blog")
+    dst = os.path.join(out, "blog")
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+    for name in sorted(os.listdir(dst)):
+        if not name.endswith(".html"):
+            continue
+        path = os.path.join(dst, name)
+        raw = open(path, encoding="utf-8").read()
+        title = extract_html_title(raw)
+        body = ensure_heading_ids(extract_html_body(raw))
+        body, series = take_html_footer(body)
+        if series:
+            if re.search(r"<script\b", body, re.I):
+                body = re.sub(r"(<script\b)", series + "\n\\1", body, count=1, flags=re.I)
+            else:
+                body += "\n" + series
+        if name == "index.html":
+            crumbs = ('<nav class="crumbs" aria-label="Breadcrumb">'
+                      '<a href="../index.html">Home</a>'
+                      '<span aria-hidden="true">/</span><span>Blog</span></nav>')
+        else:
+            crumbs = ('<nav class="crumbs" aria-label="Breadcrumb">'
+                      '<a href="../index.html">Home</a>'
+                      '<span aria-hidden="true">/</span>'
+                      '<a href="index.html">Blog</a>'
+                      f'<span aria-hidden="true">/</span><span>{html.escape(title)}</span></nav>')
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(page(title, crumbs + body, root="..",
+                              sidebar=toc_from_html(body), current="blog")
+                         .replace("{{capture}}", capture_file))
+
+
 def nav_html(root, current=""):
     def item(href, label, key):
         if current == key:
@@ -261,8 +349,8 @@ def build(out, stream_path, bundle, name, port, skip_viewer=False, empty_stream=
     capture_file = f"{name}.orbit.stream"
     with open(os.path.join(captures, capture_file), "wb") as handle:
         handle.write(data)
-    # Blog, screenshots, manual, test report.
-    shutil.copytree(os.path.join(REPO, "docs/blog"), os.path.join(out, "blog"), dirs_exist_ok=True)
+    # Blog (wrapped in shared chrome), screenshots, manual, test report.
+    wrap_blog_pages(out, capture_file)
     shutil.copytree(os.path.join(REPO, "docs/screenshots"), os.path.join(out, "screenshots"), dirs_exist_ok=True)
     os.makedirs(os.path.join(out, "manual"), exist_ok=True)
     os.makedirs(os.path.join(out, "e2e"), exist_ok=True)
