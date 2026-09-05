@@ -156,6 +156,8 @@ struct StatusBody {
     capture_start_ns: u64,
     /// Events refused for starting before that, this capture.
     dropped_before_start: u64,
+    /// The pid the capture targets; 0 when none was started.
+    target_pid: u32,
 }
 
 impl StatusBody {
@@ -185,6 +187,7 @@ impl StatusBody {
             wire: cfg.wire.name(),
             capture_start_ns: svc.capture_start_ns(),
             dropped_before_start: svc.dropped_before_start(),
+            target_pid: svc.capture_pid(),
         }
     }
 }
@@ -978,10 +981,37 @@ async fn ws_upgrade(
     ws.on_upgrade(move |socket| ws_loop(socket, svc))
 }
 
+/// The scope name for one wire frame, by its type byte: what a capture of
+/// the service shows for every send to a viewer.
+fn send_scope_name(bytes: &[u8]) -> &'static str {
+    use orbit_live_protocol::*;
+    match bytes.get(4).copied() {
+        Some(FRAME_EVENT_BATCH) | Some(FRAME_EVENT_BATCH_PACKED) | Some(FRAME_EVENT_BATCH_DEFLATE) => "ws send events",
+        Some(FRAME_INTERNED_STRING) => "ws send string",
+        Some(FRAME_THREAD_NAME) | Some(FRAME_PROCESS_NAME) => "ws send name",
+        Some(FRAME_STATUS) => "ws send status",
+        Some(FRAME_HELLO) => "ws send hello",
+        Some(FRAME_CAPTURE_STARTED) | Some(FRAME_CAPTURE_FINISHED) => "ws send capture mark",
+        _ => "ws send frame",
+    }
+}
+
+/// One frame to one viewer, as a scope named for what it carries, with the
+/// frame's size on a value lane.
+async fn send_frame(sink: &mut futures_util::stream::SplitSink<WebSocket, Message>, bytes: Vec<u8>) -> bool {
+    let name = send_scope_name(&bytes);
+    let size = bytes.len() as f64;
+    let scope = orbit_api::scope(name);
+    orbit_api::value("ws frame bytes", size);
+    let ok = sink.send(Message::Binary(bytes)).await.is_ok();
+    drop(scope);
+    ok
+}
+
 async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
     let (mut sink, mut stream) = socket.split();
     for frame in svc.hello_and_snapshot_frames() {
-        if sink.send(Message::Binary(frame)).await.is_err() {
+        if !send_frame(&mut sink, frame).await {
             return;
         }
     }
@@ -1001,7 +1031,7 @@ async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
             live = rx.recv() => {
                 match live {
                     Ok(bytes) => {
-                        if sink.send(Message::Binary(bytes)).await.is_err() {
+                        if !send_frame(&mut sink, bytes).await {
                             break;
                         }
                     }
@@ -1013,7 +1043,7 @@ async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
                         // plus the whole ring, which the viewer takes as a
                         // reset. Anything broadcast meanwhile follows.
                         for frame in svc.hello_and_snapshot_frames() {
-                            if sink.send(Message::Binary(frame)).await.is_err() {
+                            if !send_frame(&mut sink, frame).await {
                                 return;
                             }
                         }

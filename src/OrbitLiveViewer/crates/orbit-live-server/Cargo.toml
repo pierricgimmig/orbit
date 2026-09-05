@@ -6,6 +6,9 @@ license.workspace = true
 description = "HTTP + WebSocket server that serves the live WASM viewer and streams packed events"
 
 [dependencies]
+# The service's manual-instrumentation API, so every send to a viewer is a
+# scope of its own on the service's timeline.
+orbit-api = { path = "../../../../rust/crates/orbit-api" }
 orbit-live-event = { path = "../orbit-live-event" }
 orbit-live-protocol = { path = "../orbit-live-protocol" }
 orbit-live-render = { path = "../orbit-live-render" }

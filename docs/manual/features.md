@@ -45,19 +45,19 @@ Instructions for the manual writer:
 
 Left to right, in clusters separated by thin rules. A filled pill is on.
 
-- **Record / Stop** is the one primary button, with a red dot; while
-  recording it reads Stop and the dot pulses. It captures the selected
-  process, or everything the service sees when none is selected.
+- **Record / Stop** is the one primary button: a red dot to record, a
+  pulsing square on red to stop. The X key does the same. It captures the
+  selected process, or everything the service sees when none is selected.
   Screenshot: `02-capture-live.png`.
 - **Open** opens a saved Orbit capture (`.orbit.zip`) or a Chrome trace
   (`.json` / `.json.gz`); dropping the file on the page does the same.
   Screenshot: `17-opened-slice.png` (a slice reopened through the API).
-- **Save** is a menu: the whole capture as `.orbit.zip`, the selected time
-  slice as its own `.orbit.zip` (when a selection exists), or the
-  `.orbit.stream` a web page embeds. See section 7.
-- **Clear** empties the capture everywhere: every event on the service and
-  in the page. Refused while a capture is running. Screenshot:
-  `20-cleared.png`.
+- **Save** (the tray icon) is a menu: the whole capture as `.orbit.zip`,
+  the selected time slice as its own `.orbit.zip` (when a selection
+  exists), or the `.orbit.stream` a web page embeds. See section 7.
+- **Clear** (the bin icon) empties the capture everywhere: every event on
+  the service and in the page. Refused while a capture is running.
+  Screenshot: `20-cleared.png`.
 - **Capture** shows or hides the capture strip (section 3). **Report**
   opens the report panel on the right (section 6). **Self** opens the
   viewer's own profile in a second pane: frame phases as a live timeline of
@@ -161,7 +161,9 @@ in the URL opens a tab on load.
   Escape in the box, or its ×, clears it. C++ Orbit's filter over the
   sampling report. Screenshot: `25-report-filter.png`.
 
-- **Flat** self and inclusive percentages per function, with module.
+- **Flat** a hooked checkbox, then self and inclusive percentages per
+  function, with module; ticking the box hooks the function for the next
+  Record, as in C++ Orbit's sampling report.
   Names come from the module's detached debug file when the distribution's
   `-dbg` package is installed, else its symbol tables; the `[vdso]` is a
   module too; Rust names are demangled. What has no name shows as
@@ -177,13 +179,17 @@ in the URL opens a tab on load.
   the scope on the timeline. The header counts scopes and samples and shows
   the sample rate; a "samples by thread" line follows. Screenshot:
   `15-live-tab.png`.
-- **Flame** the top-down tree as a flame graph; hover names a bar, click
-  zooms to it. Screenshot: `16-flame-tab.png`.
+- **Flame** the top-down tree as a flame graph; hover names a bar, a click
+  highlights that function on the timeline, a double-click zooms the graph
+  to that bar's subtree (double-click the root bar or press Zoom out to
+  come back). Screenshot: `16-flame-tab.png`.
 - **Functions** every function the service indexed for the selected
   process, alphabetical, with a hooked checkbox column, size and module;
-  the filter box narrows it (the first 500 matches are listed). Ticking a
-  row hooks it for the next Record, the same list the report's right-click
-  feeds. C++ Orbit's Functions view.
+  the filter box narrows it; the first 500 matches are listed until "Show
+  all", which lists every match and lays out only the rows in view, so
+  50,000 rows cost what a screenful does. Ticking a row hooks it for the
+  next Record, the same list the report's right-click feeds. C++ Orbit's
+  Functions view.
 
 ## 7. Capture files
 
@@ -234,7 +240,12 @@ in the URL opens a tab on load.
 - **The service instruments itself** with the same API: read context
   switches, read samples, unwind, symbolize, drain scope rings, push to
   viewer, and its `events per pass`, `service cpu %` and `service rss MiB`
-  lanes. Screenshots: `11-self-instrumentation.png`, `19-service-lanes.png`.
+  lanes. Every frame sent to a viewer is a scope on the WebSocket task's
+  thread, named for what it carries (`ws send events`, `ws send string`,
+  `ws send name`, `ws send status`, `ws send hello`, `ws send capture
+  mark`), with the frame's size on a `ws frame bytes` lane, and the
+  encoding of a batch is `encode events`: capture the service to see the
+  cost of streaming. Screenshots: `11-self-instrumentation.png`, `19-service-lanes.png`.
 
 ## 9. Agents and automation
 

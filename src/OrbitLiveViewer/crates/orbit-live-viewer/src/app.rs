@@ -589,6 +589,9 @@ pub struct OrbitLiveApp {
     /// True while the self pane's timeline is drawing, so its rows stay out
     /// of the `__orbit_ui` readout.
     in_self_pane: bool,
+    /// The flame graph's zoom: the path (child indices from the roots) of
+    /// the bar a double-click made the root; empty when showing everything.
+    flame_zoom: Vec<usize>,
     /// The report panel's function filter: rows whose name or module does
     /// not contain it are not shown, and a tree opens along the paths to
     /// the rows that do. C++ Orbit's filter box over the sampling report.
@@ -792,6 +795,8 @@ pub struct OrbitLiveApp {
     functions: Vec<FunctionHit>,
     functions_pid: Option<u32>,
     functions_requested: bool,
+    /// List every function, not the first 500 matches.
+    functions_show_all: bool,
     selected_hooks: Vec<FunctionHit>,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
@@ -1030,7 +1035,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"draw\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"draw\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1083,6 +1088,9 @@ impl OrbitLiveApp {
             self.capture_start_ns,
             self.report_filter,
             self.last_n_prims,
+            self.flame_zoom.len(),
+            match self.selected_pid { Some(p) => p.to_string(), None => "null".to_string() },
+            self.recording || self.status.capturing,
             if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
         );
         if text == self.sel_readout {
@@ -1176,6 +1184,9 @@ impl OrbitLiveApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         fonts::install(&cc.egui_ctx);
         apply_orbit_visuals(&cc.egui_ctx);
+        // Half a second between the clicks of a double-click (the desktop
+        // default on Windows and GNOME; egui's 0.3 s is tight over a slow frame).
+        cc.egui_ctx.options_mut(|o| o.input_options.max_double_click_delay = 0.5);
         let intern = InternTable::default();
         let dev_locked_off = crate::dev::query_dev_locked_off_from_location();
         let dev = false;
@@ -1336,6 +1347,7 @@ impl OrbitLiveApp {
             functions: Vec::new(),
             functions_pid: None,
             functions_requested: false,
+            functions_show_all: false,
             selected_hooks: Vec::new(),
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
@@ -1352,6 +1364,7 @@ impl OrbitLiveApp {
             reupload_next_frame: false,
             draw_readout: String::new(),
             report_filter: String::new(),
+            flame_zoom: Vec::new(),
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
             trace_args: HashMap::new(),
@@ -1985,6 +1998,11 @@ impl OrbitLiveApp {
     fn apply_status(&mut self, s: StatusJson) {
         self.got_status = true;
         self.last_status_seen_s = self.now_s;
+        // A capture started from the API (not this viewer) still names its
+        // target: the Functions view and the hook menu need a process.
+        if s.target_pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
+            self.selected_pid = Some(s.target_pid);
+        }
         self.ring_bytes = s.ring_bytes.to_string();
         if let Some(p) = &s.spill_path {
             self.spill_path = p.clone();
@@ -2064,6 +2082,7 @@ impl OrbitLiveApp {
         }
         if let Some(t) = inbox.tree {
             self.tree = Some(t);
+            self.flame_zoom.clear();
         }
         if let Some(m) = inbox.modules {
             self.modules = Some(m);
@@ -2166,9 +2185,15 @@ impl OrbitLiveApp {
             LiveFrame::InternedString { id, text } => {
                 self.intern.insert_id(id, &text);
             }
-            LiveFrame::CaptureStarted { start_ns, .. } => {
+            LiveFrame::CaptureStarted { pid, start_ns } => {
                 if self.import_pending {
                     self.import_started = true;
+                }
+                // A capture started elsewhere (the API, an agent) names its
+                // target: with nothing picked here, that is the process the
+                // symbols, the hooks and the Functions view are about.
+                if pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
+                    self.selected_pid = Some(pid);
                 }
                 self.user_set_view = false;
                 self.clear_file_trace();
@@ -2224,6 +2249,7 @@ impl OrbitLiveApp {
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
                     self_profile: self.status.self_profile,
+                    target_pid: self.status.target_pid,
                     hooks: self.status.hooks,
                     // This frame is the WebSocket's stats push, which carries
                     // no control state; keep what /api/status last said.
@@ -2602,7 +2628,7 @@ impl OrbitLiveApp {
                 } else {
                     "No OrbitService hooks — Record starts the demo producer"
                 };
-                if record_button(ui, recording).on_hover_text(tip).clicked() {
+                if record_button(ui, recording).on_hover_text(format!("{tip} (X)")).clicked() {
                     if recording {
                         self.stop_record();
                     } else {
@@ -2611,10 +2637,7 @@ impl OrbitLiveApp {
                 }
                 self.transport_open(ui);
                 self.transport_save(ui);
-                if pill(ui, "Clear", false)
-                    .on_hover_text("Empty the capture: every event, on the service and here")
-                    .clicked()
-                {
+                if icon_button(ui, "Clear", "Empty the capture: every event, on the service and here", paint_clear_icon).clicked() {
                     self.clear_everything();
                 }
             } else if let Some(url) = &self.static_capture {
@@ -2674,7 +2697,7 @@ impl OrbitLiveApp {
     /// Save as a small menu: the whole capture, the selected slice when
     /// there is one, or the stream a web page embeds.
     fn transport_save(&mut self, ui: &mut Ui) {
-        let save = pill(ui, "Save", false).on_hover_text("Download the capture");
+        let save = icon_button(ui, "Save", "Download the capture", paint_save_icon);
         let slice = self.selection_span();
         egui::Popup::menu(&save).show(|ui| {
             ui.set_min_width(240.0);
@@ -2978,66 +3001,142 @@ impl OrbitLiveApp {
         }
         self.hooked_hint(ui);
         let filter = self.report_filter.trim().to_lowercase();
-        let rows: Vec<FunctionHit> = self
+        let rows: Vec<usize> = self
             .functions
             .iter()
-            .filter(|f| filter.is_empty() || contains_ci(&f.name, &filter) || contains_ci(&f.module, &filter))
-            .cloned()
+            .enumerate()
+            .filter(|(_, f)| filter.is_empty() || contains_ci(&f.name, &filter) || contains_ci(&f.module, &filter))
+            .map(|(i, _)| i)
             .collect();
         const MAX_ROWS: usize = 500;
-        ui.label(
-            RichText::new(if rows.len() > MAX_ROWS {
-                format!(
-                    "{} of {} functions match; the first {MAX_ROWS} are listed, filter to narrow",
-                    rows.len(),
-                    self.functions.len()
-                )
-            } else {
-                format!("{} of {} functions", rows.len(), self.functions.len())
-            })
-            .color(theme::MUTED)
-            .size(font - 0.5),
-        );
+        let capped = !self.functions_show_all && rows.len() > MAX_ROWS;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(if capped {
+                    format!("{} of {} functions match; the first {MAX_ROWS} are listed", rows.len(), self.functions.len())
+                } else {
+                    format!("{} of {} functions", rows.len(), self.functions.len())
+                })
+                .color(theme::MUTED)
+                .size(font - 0.5),
+            );
+            if rows.len() > MAX_ROWS
+                && pill(ui, "Show all", self.functions_show_all)
+                    .on_hover_text("Every matching row; only the rows in view are laid out")
+                    .clicked()
+            {
+                self.functions_show_all = !self.functions_show_all;
+            }
+        });
+        let shown = if capped { &rows[..MAX_ROWS] } else { &rows[..] };
+        // Laid out by hand: only the rows inside the clip rect become
+        // widgets, the rest are one allocation above and one below, so a
+        // 50,000-row list costs what a screenful does.
+        let row_h = font + self.ui_tweaks.report_row_gap + 6.0;
+        let col_gap = self.ui_tweaks.report_col_gap;
+        let widths = [22.0f32, 0.0, 64.0, 170.0]; // hooked, function (rest), size, module
+        let avail_w = ui.available_width().max(300.0);
+        let name_w = (avail_w - widths[0] - widths[2] - widths[3] - 3.0 * col_gap).max(120.0);
+        // Header.
+        ui.horizontal(|ui| {
+            for (h, w) in [("hooked", widths[0]), ("function", name_w), ("size", widths[2]), ("module", widths[3])] {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(w, row_h), Sense::hover());
+                ui.painter().text(
+                    r.left_center(),
+                    Align2::LEFT_CENTER,
+                    h,
+                    FontId::new(font - 0.5, FontFamily::Proportional),
+                    theme::MUTED,
+                );
+                ui.add_space(col_gap);
+            }
+        });
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
+        let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(shown.len());
+        let first = first.min(last);
+        if first > 0 {
+            ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
+        }
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
-        egui::Grid::new("orbit_function_rows")
-            .num_columns(4)
-            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
-            .striped(true)
-            .show(ui, |ui| {
-                for h in ["hooked", "function", "size", "module"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
-                }
-                ui.end_row();
-                for f in rows.iter().take(MAX_ROWS) {
-                    let hooked = self.is_hooked(f.function_id);
-                    let mut tick = hooked;
-                    let check = ui.checkbox(&mut tick, "");
-                    note_ui_rect(&format!("hook:{}", f.name), check.rect);
-                    if tick != hooked {
-                        actions.push((
-                            if tick { HookAction::Hook } else { HookAction::Unhook },
-                            f.function_id,
-                            f.name.clone(),
-                            f.module.clone(),
-                        ));
-                    }
-                    let label = ui.add(
-                        egui::Label::new(
-                            RichText::new(&f.name)
-                                .color(if hooked { theme::ACCENT } else { theme::TEXT })
-                                .size(font),
-                        )
-                        .sense(Sense::click()),
-                    );
-                    note_ui_rect(&format!("fn:{}", f.name), label.rect);
-                    if let Some(action) = hook_menu(&label, f.function_id, hooked) {
-                        actions.push((action, f.function_id, f.name.clone(), f.module.clone()));
-                    }
-                    ui.label(RichText::new(f.size.to_string()).color(theme::MUTED).monospace().size(font));
-                    ui.label(RichText::new(&f.module).color(theme::MUTED).size(font - 0.5));
-                    ui.end_row();
-                }
-            });
+        for (n, &i) in shown[first..last].iter().enumerate() {
+            let f = &self.functions[i];
+            let hooked = self.is_hooked(f.function_id);
+            let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
+            if (first + n) % 2 == 1 {
+                ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+            }
+            let mut x = row_rect.left();
+            // hooked
+            let check_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[0], row_h));
+            let check = ui.interact(check_rect, ui.id().with(("fnhook", i)), Sense::click());
+            let box_r = Rect::from_center_size(check_rect.center(), Vec2::splat(12.0));
+            ui.painter().rect(
+                box_r,
+                2.0,
+                if hooked { theme::ACCENT } else { theme::INPUT },
+                Stroke::new(1.0, if hooked { theme::ACCENT } else { theme::MUTED }),
+                StrokeKind::Inside,
+            );
+            if hooked {
+                ui.painter().line_segment(
+                    [Pos2::new(box_r.left() + 3.0, box_r.center().y), Pos2::new(box_r.center().x, box_r.bottom() - 3.0)],
+                    Stroke::new(1.5, theme::CANVAS),
+                );
+                ui.painter().line_segment(
+                    [Pos2::new(box_r.center().x, box_r.bottom() - 3.0), Pos2::new(box_r.right() - 2.0, box_r.top() + 3.0)],
+                    Stroke::new(1.5, theme::CANVAS),
+                );
+            }
+            note_ui_rect(&format!("hook:{}", f.name), check_rect);
+            if check.clicked() {
+                actions.push((
+                    if hooked { HookAction::Unhook } else { HookAction::Hook },
+                    f.function_id,
+                    f.name.clone(),
+                    f.module.clone(),
+                ));
+            }
+            x += widths[0] + col_gap;
+            // function
+            let name_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(name_w, row_h));
+            let label = ui.interact(name_rect, ui.id().with(("fnname", i)), Sense::click());
+            ui.painter().text(
+                name_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&f.name, name_w - 4.0, font),
+                FontId::new(font, FontFamily::Proportional),
+                if hooked { theme::ACCENT } else { theme::TEXT },
+            );
+            note_ui_rect(&format!("fn:{}", f.name), name_rect);
+            if let Some(action) = hook_menu(&label, f.function_id, hooked) {
+                actions.push((action, f.function_id, f.name.clone(), f.module.clone()));
+            }
+            x += name_w + col_gap;
+            // size
+            let size_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[2], row_h));
+            ui.painter().text(
+                size_rect.left_center(),
+                Align2::LEFT_CENTER,
+                f.size.to_string(),
+                FontId::monospace(font),
+                theme::MUTED,
+            );
+            x += widths[2] + col_gap;
+            // module
+            let module_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[3], row_h));
+            ui.painter().text(
+                module_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&f.module, widths[3] - 4.0, font - 0.5),
+                FontId::new(font - 0.5, FontFamily::Proportional),
+                theme::MUTED,
+            );
+        }
+        if last < shown.len() {
+            ui.allocate_exact_size(Vec2::new(avail_w, (shown.len() - last) as f32 * row_h), Sense::hover());
+        }
         for (action, id, name, module) in actions {
             self.apply_hook_action(action, id, &name, &module);
         }
@@ -4734,6 +4833,14 @@ impl OrbitLiveApp {
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
         }
+        // X starts and stops a capture, as the Record button does.
+        if self.static_capture.is_none() && ctx.input(|i| i.key_pressed(Key::X) && i.modifiers.is_none()) {
+            if self.recording || self.status.demo || self.status.capturing {
+                self.stop_record();
+            } else {
+                self.start_record();
+            }
+        }
         if ctx.input(|i| i.key_pressed(Key::Home)) {
             self.fit_to_content();
             self.needs_repaint = true;
@@ -5225,7 +5332,6 @@ impl OrbitLiveApp {
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
-                self.report_splitter(ui, width, screen_w);
                 let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
                 // Wrapped, not a single row: the panel is narrow and the tabs
                 // and the selection text must not run off its right edge.
@@ -5343,35 +5449,39 @@ impl OrbitLiveApp {
                     }
                 });
             });
+        self.paint_report_splitter(ctx, inner.response.rect, width, screen_w);
         self.after_report_panel(ctx, inner.response.rect);
     }
 
     /// The report panel's resize handle: a strip on the panel's side of its
-    /// left edge, in the frame's margin, so it never overlaps the timeline's
-    /// scrollbar. Dragging it sets the width; the cursor says so on hover.
-    fn report_splitter(&mut self, ui: &mut Ui, width: f32, screen_w: f32) {
-        let content = ui.max_rect();
-        // The frame's inner margin is 12 px: the handle takes 8 of them,
-        // starting 2 px in so the timeline's edge pixel column stays the
-        // timeline's.
+    /// left edge, in a layer of its own above both panels, so neither
+    /// panel's clip nor the timeline's widgets can take the drag from it.
+    fn paint_report_splitter(&mut self, ctx: &Context, panel: Rect, width: f32, screen_w: f32) {
         let handle = Rect::from_min_max(
-            Pos2::new(content.left() - 10.0, content.top() - 8.0),
-            Pos2::new(content.left() - 2.0, content.bottom() + 8.0),
+            Pos2::new(panel.left() + 1.0, panel.top()),
+            Pos2::new(panel.left() + 9.0, panel.bottom()),
         );
-        let resp = ui
-            .interact(handle, ui.id().with("orbit_report_splitter"), Sense::drag())
-            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        let resp = egui::Area::new(egui::Id::new("orbit_report_splitter_area"))
+            .order(egui::Order::Middle)
+            .fixed_pos(handle.min)
+            .interactable(true)
+            .show(ctx, |ui| {
+                let (rect, resp) = ui.allocate_exact_size(handle.size(), Sense::drag());
+                let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                let active = resp.hovered() || resp.dragged();
+                ui.painter().line_segment(
+                    [rect.center_top(), rect.center_bottom()],
+                    Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
+                );
+                note_ui_rect("report_splitter", rect);
+                resp
+            })
+            .inner;
         if resp.dragged() {
             let next = (width - resp.drag_delta().x).clamp(0.0, screen_w);
             self.report_w_user = Some(next);
             self.needs_repaint = true;
         }
-        let active = resp.hovered() || resp.dragged();
-        ui.painter().line_segment(
-            [handle.center_top(), handle.center_bottom()],
-            Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
-        );
-        note_ui_rect("report_splitter", handle);
     }
 
     /// Notices the splitter at either edge. Under `REPORT_COLLAPSE_W` the
@@ -5474,22 +5584,35 @@ impl OrbitLiveApp {
         }
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         egui::Grid::new("orbit_sampling_rows")
-            .num_columns(4)
+            .num_columns(5)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["self", "incl", "function", "module"] {
+                for h in ["hooked", "self", "incl", "function", "module"] {
                     ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
                 for row in rows.iter().take(200) {
+                    // The hooked column first, as C++ Orbit's sampling report
+                    // has it: tick a row to instrument it on the next Record.
+                    let hooked = self.is_hooked(row.function_id);
+                    let mut tick = hooked;
+                    let check = ui.add_enabled(row.function_id != 0, egui::Checkbox::without_text(&mut tick));
+                    note_ui_rect(&format!("hook:{}", row.name), check.rect);
+                    if tick != hooked {
+                        actions.push((
+                            if tick { HookAction::Hook } else { HookAction::Unhook },
+                            row.function_id,
+                            row.name.clone(),
+                            row.module.clone(),
+                        ));
+                    }
                     // Bars here as well as in the trees. The native UI only
                     // paints them on the call tree's Inclusive column, but
                     // this is the view you scan hardest, and a column of bars
                     // is read faster than a column of numbers.
                     percent_bar(ui, row.self_percent as f64, true, self.ui_tweaks.report_bar_w);
                     percent_bar(ui, row.inclusive_percent as f64, false, self.ui_tweaks.report_bar_w);
-                    let hooked = self.is_hooked(row.function_id);
                     let label = ui.add(
                         egui::Label::new(
                             RichText::new(&row.name)
@@ -5904,8 +6027,31 @@ impl OrbitLiveApp {
             }
             return;
         }
+        // A double-click zooms to that bar's subtree; a double-click on the
+        // zoomed root, or on nothing, zooms back out.
+        let mut zoomed_roots: Vec<crate::net::TreeNodeJson> = Vec::new();
+        let zoom_target = flame_node_at(&tree.roots, &self.flame_zoom).cloned();
+        let (roots, zoomed): (&[crate::net::TreeNodeJson], bool) = match zoom_target {
+            Some(node) if !self.flame_zoom.is_empty() => {
+                zoomed_roots.push(node);
+                (&zoomed_roots, true)
+            }
+            _ => (&tree.roots, false),
+        };
+        if zoomed {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("zoomed to {}", roots[0].name))
+                        .color(theme::MUTED)
+                        .size(font - 0.5),
+                );
+                if pill(ui, "Zoom out", false).on_hover_text("Back to the whole tree (or double-click the root bar)").clicked() {
+                    self.flame_zoom.clear();
+                }
+            });
+        }
         let width = ui.available_width().max(200.0);
-        let bars = flame_layout(&tree.roots, width);
+        let bars = flame_layout(roots, width);
         let depth = bars.iter().map(|b| b.depth).max().unwrap_or(0) + 1;
         let row_h = (font + 7.0).max(16.0);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, depth as f32 * row_h), Sense::hover());
@@ -5914,7 +6060,10 @@ impl OrbitLiveApp {
         let selected_name = self.selected.and_then(|p| self.intern.get(p.name_id)).map(str::to_string);
         let mut hovered: Option<&FlameBar> = None;
         let mut clicked: Option<String> = None;
-        let click = ui.input(|i| i.pointer.primary_clicked());
+        let (click, double) = ui.input(|i| {
+            (i.pointer.primary_clicked(), i.pointer.button_double_clicked(egui::PointerButton::Primary))
+        });
+        let mut zoom_change: Option<Vec<usize>> = None;
         for bar in &bars {
             let r = Rect::from_min_size(
                 Pos2::new(rect.left() + bar.x, rect.top() + bar.depth as f32 * row_h),
@@ -5936,6 +6085,9 @@ impl OrbitLiveApp {
                 base
             };
             painter.rect_filled(r, 2.0, fill);
+            if !bar.is_thread {
+                note_ui_rect(&format!("flame:{}", bar.name), r);
+            }
             if selected_name.as_deref() == Some(bar.name.as_str()) {
                 painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT), StrokeKind::Inside);
             }
@@ -5951,8 +6103,37 @@ impl OrbitLiveApp {
             }
             if is_hover {
                 hovered = Some(bar);
-                if click {
+                if double {
+                    // The zoomed root itself: back out one level. Anything
+                    // else: make it the root.
+                    zoom_change = Some(if zoomed && bar.depth == 0 {
+                        let mut up = self.flame_zoom.clone();
+                        up.pop();
+                        up
+                    } else if zoomed {
+                        let mut down = self.flame_zoom.clone();
+                        down.extend(bar.path.iter().skip(1));
+                        down
+                    } else {
+                        bar.path.clone()
+                    });
+                } else if click {
                     clicked = Some(bar.name.clone());
+                }
+            }
+        }
+        if double && hovered.is_none() && pointer.is_some_and(|p| rect.contains(p)) {
+            zoom_change = Some(Vec::new());
+        }
+        if let Some(z) = zoom_change {
+            self.flame_zoom = z;
+            self.needs_repaint = true;
+            clicked = None;
+            // The first click of the pair already toggled the search filter
+            // to this bar: a double-click means zoom, not filter.
+            if let Some(bar) = hovered {
+                if self.search == bar.name {
+                    self.search.clear();
                 }
             }
         }
@@ -6614,41 +6795,79 @@ fn section_label(ui: &mut Ui, text: &str) {
 
 const RECORD_RED: Color32 = Color32::from_rgb(0xE0, 0x4A, 0x4A);
 
-/// The one primary action. A red dot before "Record"; while recording the
-/// button reads "Stop" and the dot pulses.
-fn record_button(ui: &mut Ui, recording: bool) -> egui::Response {
-    // Non-breaking spaces: the layout keeps them, and the dot sits in them.
-    let text = if recording { "\u{a0}\u{a0}\u{a0}Stop" } else { "\u{a0}\u{a0}\u{a0}Record" };
-    let resp = ui.add(
-        egui::Button::new(
-            RichText::new(text)
-                .family(fonts::medium())
-                .size(11.0)
-                .color(if recording { theme::CANVAS } else { theme::TEXT }),
+/// An icon-only button: a pill-sized box with a painted glyph. The label
+/// names it for the harness and the tooltip says what it does; the font has
+/// no glyphs for these, so they are drawn.
+fn icon_button(ui: &mut Ui, label: &str, tip: &str, paint: fn(&egui::Painter, Rect, Color32)) -> egui::Response {
+    let resp = ui
+        .add(
+            egui::Button::new(RichText::new(" ").size(1.0))
+                .fill(theme::TRACK)
+                .stroke(Stroke::new(1.0, theme::HAIR))
+                .min_size(Vec2::new(28.0, 22.0))
+                .corner_radius(4),
         )
-        .fill(if recording { RECORD_RED } else { theme::TRACK })
-        .stroke(if recording { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
-        .min_size(Vec2::new(0.0, 22.0))
-        .corner_radius(4),
+        .on_hover_text(tip);
+    let color = if resp.hovered() { theme::TEXT } else { theme::MUTED };
+    paint(ui.painter(), resp.rect, color);
+    note_ui_rect(label, resp.rect);
+    resp
+}
+
+
+/// The one primary action: a red dot to record, a square on red to stop.
+/// The dot pulses while recording. Also the X key.
+fn record_button(ui: &mut Ui, recording: bool) -> egui::Response {
+    let resp = ui.add(
+        egui::Button::new(RichText::new(" ").size(1.0))
+            .fill(if recording { RECORD_RED } else { theme::TRACK })
+            .stroke(if recording { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+            .min_size(Vec2::new(30.0, 22.0))
+            .corner_radius(4),
     );
-    let dot = Pos2::new(resp.rect.left() + 11.0, resp.rect.center().y);
-    let pulse = if recording {
-        let t = ui.input(|i| i.time);
-        0.55 + 0.45 * ((t * 3.0).sin() as f32 * 0.5 + 0.5)
-    } else {
-        1.0
-    };
-    let color = if recording {
-        Color32::from_white_alpha((230.0 * pulse) as u8)
-    } else {
-        RECORD_RED
-    };
-    ui.painter().circle_filled(dot, 3.5, color);
+    let c = resp.rect.center();
     if recording {
+        let t = ui.input(|i| i.time);
+        let pulse = 0.55 + 0.45 * ((t * 3.0).sin() as f32 * 0.5 + 0.5);
+        ui.painter().rect_filled(
+            Rect::from_center_size(c, Vec2::splat(9.0)),
+            1.5,
+            Color32::from_white_alpha((235.0 * pulse) as u8),
+        );
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    } else {
+        ui.painter().circle_filled(c, 5.0, RECORD_RED);
+        if resp.hovered() {
+            ui.painter().circle_stroke(c, 7.0, Stroke::new(1.0, theme::TEXT));
+        }
     }
     note_ui_rect(if recording { "Stop" } else { "Record" }, resp.rect);
     resp
+}
+
+/// A tray with an arrow pointing down into it.
+fn paint_save_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = Stroke::new(1.5, color);
+    painter.line_segment([Pos2::new(c.x, c.y - 6.0), Pos2::new(c.x, c.y + 2.0)], s);
+    painter.line_segment([Pos2::new(c.x - 3.5, c.y - 1.5), Pos2::new(c.x, c.y + 2.0)], s);
+    painter.line_segment([Pos2::new(c.x + 3.5, c.y - 1.5), Pos2::new(c.x, c.y + 2.0)], s);
+    painter.line_segment([Pos2::new(c.x - 6.0, c.y + 2.0), Pos2::new(c.x - 6.0, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x - 6.0, c.y + 6.0), Pos2::new(c.x + 6.0, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x + 6.0, c.y + 6.0), Pos2::new(c.x + 6.0, c.y + 2.0)], s);
+}
+
+/// A bin: lid, body, two slats.
+fn paint_clear_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = Stroke::new(1.5, color);
+    painter.line_segment([Pos2::new(c.x - 6.0, c.y - 4.0), Pos2::new(c.x + 6.0, c.y - 4.0)], s);
+    painter.line_segment([Pos2::new(c.x - 2.0, c.y - 6.5), Pos2::new(c.x + 2.0, c.y - 6.5)], s);
+    painter.line_segment([Pos2::new(c.x - 4.5, c.y - 4.0), Pos2::new(c.x - 3.5, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x + 4.5, c.y - 4.0), Pos2::new(c.x + 3.5, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x - 3.5, c.y + 6.0), Pos2::new(c.x + 3.5, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x - 1.5, c.y - 1.5), Pos2::new(c.x - 1.2, c.y + 4.0)], s);
+    painter.line_segment([Pos2::new(c.x + 1.5, c.y - 1.5), Pos2::new(c.x + 1.2, c.y + 4.0)], s);
 }
 
 /// Joined buttons for one choice among a few: the selected one is filled.
@@ -7556,11 +7775,25 @@ struct FlameBar {
     x: f32,
     w: f32,
     depth: usize,
+    /// Child indices from the roots down to this bar: what a double-click
+    /// zooms to.
+    path: Vec<usize>,
     name: String,
     samples: u64,
     percent: f64,
     /// A thread root: drawn plain and labelled, never coloured by name.
     is_thread: bool,
+}
+
+/// The node a zoom path points at: the first index picks a root, the rest
+/// descend through children.
+fn flame_node_at<'a>(roots: &'a [crate::net::TreeNodeJson], path: &[usize]) -> Option<&'a crate::net::TreeNodeJson> {
+    let (first, rest) = path.split_first()?;
+    let mut node = roots.get(*first)?;
+    for i in rest {
+        node = node.children.get(*i)?;
+    }
+    Some(node)
 }
 
 /// Lays the top-down tree out as flame bars across `width` pixels: the
@@ -7574,22 +7807,15 @@ fn flame_layout(roots: &[crate::net::TreeNodeJson], width: f32) -> Vec<FlameBar>
     }
     let scale = width as f64 / total as f64;
     let mut out = Vec::new();
-    let mut stack: Vec<(&crate::net::TreeNodeJson, f64, usize)> = Vec::new();
-    let mut x = 0.0f64;
-    for r in roots.iter().rev() {
-        stack.push((r, x, 0));
-        x += r.inclusive as f64 * scale;
-    }
     // Reversed so the first root pops first; children likewise.
-    let mut order: Vec<(&crate::net::TreeNodeJson, f64, usize)> = Vec::new();
+    let mut order: Vec<(&crate::net::TreeNodeJson, f64, usize, Vec<usize>)> = Vec::new();
     let mut x = 0.0f64;
-    for r in roots {
-        order.push((r, x, 0));
+    for (i, r) in roots.iter().enumerate() {
+        order.push((r, x, 0, vec![i]));
         x += r.inclusive as f64 * scale;
     }
-    stack.clear();
-    stack.extend(order.into_iter().rev());
-    while let Some((node, x, depth)) = stack.pop() {
+    let mut stack: Vec<(&crate::net::TreeNodeJson, f64, usize, Vec<usize>)> = order.into_iter().rev().collect();
+    while let Some((node, x, depth, path)) = stack.pop() {
         let w = node.inclusive as f64 * scale;
         if w < 0.5 {
             continue;
@@ -7598,15 +7824,18 @@ fn flame_layout(roots: &[crate::net::TreeNodeJson], width: f32) -> Vec<FlameBar>
             x: x as f32,
             w: w as f32,
             depth,
+            path: path.clone(),
             name: node.name.clone(),
             samples: node.inclusive,
             percent: 100.0 * node.inclusive as f64 / total as f64,
             is_thread: node.kind == "thread",
         });
         let mut cx = x;
-        let mut children: Vec<(&crate::net::TreeNodeJson, f64, usize)> = Vec::new();
-        for c in &node.children {
-            children.push((c, cx, depth + 1));
+        let mut children: Vec<(&crate::net::TreeNodeJson, f64, usize, Vec<usize>)> = Vec::new();
+        for (ci, c) in node.children.iter().enumerate() {
+            let mut cpath = path.clone();
+            cpath.push(ci);
+            children.push((c, cx, depth + 1, cpath));
             cx += c.inclusive as f64 * scale;
         }
         stack.extend(children.into_iter().rev());

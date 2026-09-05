@@ -39,6 +39,9 @@ pub struct StatusJson {
     pub machine: String,
     #[serde(default)]
     pub self_profile: bool,
+    /// The pid the running or last capture targets; 0 when none.
+    #[serde(default)]
+    pub target_pid: u32,
     /// OrbitService registered control hooks (real capture).
     #[serde(default)]
     pub hooks: bool,

@@ -188,6 +188,8 @@ pub struct LiveService {
     /// agent's back-dated timestamp, cannot put anything left of the start.
     capture_start_ns: AtomicU64,
     dropped_before_start: AtomicU64,
+    /// The pid the running (or last) capture targets; 0 when none.
+    capture_pid: AtomicU64,
     /// Next free ns on the self-profile axis. Only moves forward.
     self_cursor_ns: AtomicU64,
     /// `live_edge` at the last self-scope placement, so a frozen producer clock
@@ -285,6 +287,7 @@ impl LiveService {
             live_end_ns: AtomicU64::new(0),
             capture_start_ns: AtomicU64::new(0),
             dropped_before_start: AtomicU64::new(0),
+            capture_pid: AtomicU64::new(0),
             self_cursor_ns: AtomicU64::new(0),
             self_edge_ns: AtomicU64::new(0),
             index_cache: Mutex::new(None),
@@ -502,6 +505,7 @@ impl LiveService {
         self.capturing.store(false, Ordering::Relaxed);
         self.capture_start_ns.store(0, Ordering::Relaxed);
         self.dropped_before_start.store(0, Ordering::Relaxed);
+        self.capture_pid.store(0, Ordering::Relaxed);
         self.live_end_ns.store(0, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid: 0, start_ns: 0 });
         self.broadcast_frame(&LiveFrame::CaptureFinished);
@@ -650,6 +654,9 @@ impl LiveService {
         if self.live_tx.receiver_count() == 0 {
             return;
         }
+        // Encoding is its own scope: the packed and deflate formats cost
+        // CPU here, the sends cost it in every viewer's ws task.
+        let _encode = orbit_api::scope("encode events");
         let _ = self.live_tx.send(encode_event_batch_with(events, self.wire()));
     }
 
@@ -742,6 +749,9 @@ impl LiveService {
     /// every push uses. A 0 never overwrites a real start.
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         self.capturing.store(true, Ordering::Relaxed);
+        if pid > 0 {
+            self.capture_pid.store(pid as u64, Ordering::Relaxed);
+        }
         if start_ns > 0 {
             self.capture_start_ns.store(start_ns, Ordering::Relaxed);
             self.dropped_before_start.store(0, Ordering::Relaxed);
@@ -749,6 +759,11 @@ impl LiveService {
         self.self_cursor_ns.store(start_ns, Ordering::Relaxed);
         self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
+    }
+
+    /// The pid of the running or last capture; 0 when there is none.
+    pub fn capture_pid(&self) -> u32 {
+        self.capture_pid.load(Ordering::Relaxed) as u32
     }
 
     pub fn mark_capture_finished(&self) {
