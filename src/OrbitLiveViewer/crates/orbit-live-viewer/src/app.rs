@@ -2378,8 +2378,14 @@ impl OrbitLiveApp {
             self.follow = !self.follow;
         }
         ui.separator();
-        self.paint_search(ui);
-        ui.separator();
+        if ui
+            .selectable_label(self.show_tweaks, "UI knobs")
+            .on_hover_text("Row spacing, track density and the like")
+            .clicked()
+        {
+            self.show_tweaks = !self.show_tweaks;
+            ui.close();
+        }
         if ui
             .selectable_label(self.light_canvas, "Paper")
             .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
@@ -2536,6 +2542,9 @@ impl OrbitLiveApp {
             self.transport_narrow_bar(ui);
             return;
         }
+        // Clusters, left to right: the mark and the link; the capture's
+        // verbs (Record, Open, Save, Clear); the panels (Capture, Report,
+        // Self); Follow; the search; the stats; the rest behind "…".
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(
@@ -2547,98 +2556,52 @@ impl OrbitLiveApp {
             );
             ui.add_space(2.0);
             self.paint_link_dot(ui);
-            ui.add_space(8.0);
+            vsep(ui);
             let has_service = self.static_capture.is_none();
             if has_service {
                 let recording = self.recording || self.status.demo || self.status.capturing;
-                if recording {
-                    if pill(ui, "Stop", true)
-                        .on_hover_text(if self.status.hooks && !self.status.demo {
-                            "Stop capture"
-                        } else {
-                            "Stop demo"
-                        })
-                        .clicked()
-                    {
-                        self.stop_record();
+                let tip = if recording {
+                    if self.status.hooks && !self.status.demo { "Stop capture" } else { "Stop demo" }
+                } else if self.status.hooks {
+                    if self.selected_pid.is_some() {
+                        "Start a capture of the selected process"
+                    } else {
+                        "Capture with no target: the scheduler, orbit-service, and every instrumented process"
                     }
                 } else {
-                    let record_ok = true;
-                    let resp = pill(ui, "Record", false).on_hover_text(if self.status.hooks {
-                        if self.selected_pid.is_some() {
-                            "Start a real OrbitService capture of the selected process"
-                        } else {
-                            "Capture with no target: the scheduler, orbit-service, and every instrumented process"
-                        }
+                    "No OrbitService hooks — Record starts the demo producer"
+                };
+                if record_button(ui, recording).on_hover_text(tip).clicked() {
+                    if recording {
+                        self.stop_record();
                     } else {
-                        "No OrbitService hooks — Record starts the demo producer"
-                    });
-                    if resp.clicked() && record_ok {
                         self.start_record();
                     }
                 }
-            }
-            if has_service && (!self.status.hooks || !self.status.capturing) {
-                if pill(ui, "Demo", self.status.demo)
-                    .on_hover_text("Dummy scopes (no OrbitService attach)")
-                    .clicked()
-                {
-                    if self.status.demo || self.recording {
-                        self.stop_record();
-                    } else {
-                        self.start_demo_path();
-                    }
-                }
-            }
-            if has_service {
                 self.transport_open(ui);
-                if pill(ui, "Capture", self.capture_open)
-                    .on_hover_text("Process, sampling, and hooks")
+                self.transport_save(ui);
+                if pill(ui, "Clear", false)
+                    .on_hover_text("Empty the capture: every event, on the service and here")
                     .clicked()
                 {
-                    self.capture_open = !self.capture_open;
-                    self.capture_user = true;
+                    self.clear_everything();
                 }
             } else if let Some(url) = &self.static_capture {
                 let name = url.rsplit('/').next().unwrap_or(url);
                 ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED))
                     .on_hover_text("This page shows a saved capture; there is no service behind it");
             }
-            if pill(ui, "Follow", self.follow).clicked() {
-                self.follow = !self.follow;
-            }
-            if pill(ui, "Self", self.self_pane_open)
-                .on_hover_text("Profile the viewer itself, in its own pane — independent of any capture")
-                .clicked()
-            {
-                self.self_pane_open = !self.self_pane_open;
-            }
+            vsep(ui);
             if has_service
-                && pill(ui, "Clear", false)
-                    .on_hover_text("Empty the capture: every event, on the service and here")
+                && pill(ui, "Capture", self.capture_open)
+                    .on_hover_text("Process, sampling, and hooks")
                     .clicked()
             {
-                self.clear_everything();
-            }
-            if has_service && pill(ui, "Save", false)
-                .on_hover_text("Download the whole capture as a self-contained .orbit.zip (events, samples, names) — drop it back on the viewer to open it")
-                .clicked()
-            {
-                ui.ctx()
-                    .open_url(egui::OpenUrl::new_tab("/api/capture/export?format=bundle"));
-            }
-            if let Some((a, b)) = self.selection_span().filter(|_| has_service) {
-                if pill(ui, "Save slice", false)
-                    .on_hover_text("Download the selected time slice as a self-contained capture (.orbit.zip)")
-                    .clicked()
-                {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
-                        "/api/capture/export?format=bundle&t0={a}&t1={b}"
-                    )));
-                }
+                self.capture_open = !self.capture_open;
+                self.capture_user = true;
             }
             if pill(ui, "Report", self.report_open)
-                .on_hover_text("The report panel: Live scope statistics, and the sampling report of a selection")
+                .on_hover_text("The report panel: Live scope statistics, the sampling report, the functions")
                 .clicked()
             {
                 self.report_open = !self.report_open;
@@ -2650,11 +2613,18 @@ impl OrbitLiveApp {
                     self.report_tab = ReportTab::Live;
                 }
             }
-            if pill(ui, "UI", self.show_tweaks)
-                .on_hover_text("Knobs for the report rows and the tracks")
+            if pill(ui, "Self", self.self_pane_open)
+                .on_hover_text("Profile the viewer itself, in its own pane — independent of any capture")
                 .clicked()
             {
-                self.show_tweaks = !self.show_tweaks;
+                self.self_pane_open = !self.self_pane_open;
+            }
+            vsep(ui);
+            if pill(ui, "Follow", self.follow)
+                .on_hover_text("Keep the newest events in view while capturing (space)")
+                .clicked()
+            {
+                self.follow = !self.follow;
             }
             ui.add_space(6.0);
             self.paint_search(ui);
@@ -2665,20 +2635,43 @@ impl OrbitLiveApp {
                 if fullscreen_pill(ui, self.fullscreen).clicked() {
                     self.set_fullscreen(ui.ctx(), !self.fullscreen);
                 }
-                if shape_pill(ui, self.compact, "Track density", paint_density_icon).clicked() {
-                    self.compact = !self.compact;
-                    self.compact_user = true;
-                }
-                if pill(ui, "Paper", self.light_canvas)
-                    .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
-                    .clicked()
-                {
-                    self.light_canvas = !self.light_canvas;
-                }
-                if shape_pill(ui, self.advanced, "Inspector", paint_inspector_icon).clicked() {
-                    self.advanced = !self.advanced;
-                }
+                self.transport_more(ui);
             });
+        });
+    }
+
+    /// Save as a small menu: the whole capture, the selected slice when
+    /// there is one, or the stream a web page embeds.
+    fn transport_save(&mut self, ui: &mut Ui) {
+        let save = pill(ui, "Save", false).on_hover_text("Download the capture");
+        let slice = self.selection_span();
+        egui::Popup::menu(&save).show(|ui| {
+            ui.set_min_width(240.0);
+            if ui
+                .button("Capture (.orbit.zip)")
+                .on_hover_text("Events, samples and names in one file; drop it back on the viewer to open it")
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("/api/capture/export?format=bundle"));
+                ui.close();
+            }
+            let slice_item = ui.add_enabled(slice.is_some(), egui::Button::new("Selected slice (.orbit.zip)"));
+            if slice_item.on_hover_text("The selected time range as a capture of its own").clicked() {
+                if let Some((a, b)) = slice {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                        "/api/capture/export?format=bundle&t0={a}&t1={b}"
+                    )));
+                }
+                ui.close();
+            }
+            if ui
+                .button("Stream for a web page (.orbit.stream)")
+                .on_hover_text("What a connecting viewer receives, as a file; the viewer opens it with ?capture=<url> and no service")
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("/api/capture/export?format=stream"));
+                ui.close();
+            }
         });
     }
 
@@ -2811,13 +2804,7 @@ impl OrbitLiveApp {
     fn capture_strip(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
-            ui.label(
-                RichText::new("PROCESS")
-                    .family(fonts::medium())
-                    .size(9.5)
-                    .extra_letter_spacing(1.2)
-                    .color(theme::MUTED),
-            );
+            section_label(ui, "PROCESS");
             self.paint_process_picker(ui, "orbit_processes_strip");
             // Plain words: the font has no glyph for a refresh arrow and drew
             // a question mark in its place.
@@ -2837,6 +2824,7 @@ impl OrbitLiveApp {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
+            section_label(ui, "COLLECT");
             if pill(ui, "CSW", self.opt_csw)
                 .on_hover_text("Context switches / Scheduler track")
                 .clicked()
@@ -2874,48 +2862,30 @@ impl OrbitLiveApp {
                     .font(FontId::monospace(10.5))
                     .color(theme::MUTED),
             );
-            if pill(ui, "DWARF", self.unwind_dwarf)
-                .on_hover_text("DWARF unwind (default)")
-                .clicked()
-            {
-                self.unwind_dwarf = true;
+            vsep(ui);
+            section_label(ui, "UNWIND");
+            if let Some(i) = segmented(ui, "orbit_unwind", &["DWARF", "FP"], usize::from(!self.unwind_dwarf)) {
+                self.unwind_dwarf = i == 0;
             }
-            if pill(ui, "FP", !self.unwind_dwarf)
-                .on_hover_text("Frame-pointer unwind")
-                .clicked()
-            {
-                self.unwind_dwarf = false;
+            vsep(ui);
+            section_label(ui, "HOOKS");
+            if let Some(i) = segmented(ui, "orbit_hook_method", &["Uprobes", "User-space"], usize::from(self.user_space_hooks)) {
+                self.user_space_hooks = i == 1;
             }
-            if pill(ui, "Uprobes", !self.user_space_hooks)
-                .on_hover_text("Dynamic instrumentation: kernel uprobes (default; needs CAP_PERFMON)")
-                .clicked()
-            {
-                self.user_space_hooks = false;
-            }
-            if pill(ui, "User-space", self.user_space_hooks)
-                .on_hover_text("User-space trampolines are not ported yet: this also arms uprobes")
-                .clicked()
-            {
-                self.user_space_hooks = true;
-            }
-            if self.opt_csw {
-                ui.label(
-                    RichText::new("CSW needs root (./wasm.sh)")
-                        .font(FontId::monospace(10.0))
-                        .color(theme::MUTED),
-                );
-            }
+            ui.label(
+                RichText::new(if self.user_space_hooks {
+                    "trampolines are not ported yet; uprobes are armed"
+                } else {
+                    "needs CAP_PERFMON"
+                })
+                .font(FontId::monospace(10.0))
+                .color(theme::MUTED),
+            );
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
-            ui.label(
-                RichText::new("HOOK")
-                    .family(fonts::medium())
-                    .size(9.5)
-                    .extra_letter_spacing(1.2)
-                    .color(theme::MUTED),
-            );
+            section_label(ui, "HOOKED");
             // Which functions are hooked lives in the Functions view (every
             // symbol of the process, a hooked column), as in C++ Orbit, and
             // in the sampling report's right-click. This line only counts.
@@ -5228,8 +5198,10 @@ impl OrbitLiveApp {
                             self.tree_expanded.clear();
                         }
                     }
-                    ui.add_space(8.0);
-                    for tab in [
+                });
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    const TABS: [ReportTab; 7] = [
                         ReportTab::Live,
                         ReportTab::Flat,
                         ReportTab::Flame,
@@ -5237,10 +5209,12 @@ impl OrbitLiveApp {
                         ReportTab::BottomUp,
                         ReportTab::Modules,
                         ReportTab::Functions,
-                    ] {
-                        if pill(ui, tab.label(), self.report_tab == tab).clicked()
-                            && self.report_tab != tab
-                        {
+                    ];
+                    let labels: Vec<&str> = TABS.iter().map(|t| t.label()).collect();
+                    let current = TABS.iter().position(|t| *t == self.report_tab).unwrap_or(0);
+                    if let Some(i) = tab_strip(ui, &labels, current) {
+                        let tab = TABS[i];
+                        if self.report_tab != tab {
                             let was_tree_mode = self.report_tab.mode();
                             self.report_tab = tab;
                             // Switching between top-down and bottom-up needs a
@@ -6236,7 +6210,7 @@ impl eframe::App for OrbitLiveApp {
 
                 if self.capture_open && !self.chrome_collapsed() {
                     egui::TopBottomPanel::top("orbit_capture_strip")
-                        .exact_height(86.0)
+                        .exact_height(114.0)
                         .frame(
                             Frame::new()
                                 .fill(theme::RAIL)
@@ -6533,6 +6507,142 @@ fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool) -> Option<H
         }
     });
     action
+}
+
+/// A thin vertical rule between clusters of controls.
+fn vsep(ui: &mut Ui) {
+    ui.add_space(6.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 18.0), Sense::hover());
+    ui.painter().line_segment(
+        [rect.center_top(), rect.center_bottom()],
+        Stroke::new(1.0, Color32::from_white_alpha(26)),
+    );
+    ui.add_space(6.0);
+}
+
+/// The small-caps label that names a group of controls.
+fn section_label(ui: &mut Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .family(fonts::medium())
+            .size(9.5)
+            .extra_letter_spacing(1.2)
+            .color(theme::MUTED),
+    );
+}
+
+const RECORD_RED: Color32 = Color32::from_rgb(0xE0, 0x4A, 0x4A);
+
+/// The one primary action. A red dot before "Record"; while recording the
+/// button reads "Stop" and the dot pulses.
+fn record_button(ui: &mut Ui, recording: bool) -> egui::Response {
+    // Non-breaking spaces: the layout keeps them, and the dot sits in them.
+    let text = if recording { "\u{a0}\u{a0}\u{a0}Stop" } else { "\u{a0}\u{a0}\u{a0}Record" };
+    let resp = ui.add(
+        egui::Button::new(
+            RichText::new(text)
+                .family(fonts::medium())
+                .size(11.0)
+                .color(if recording { theme::CANVAS } else { theme::TEXT }),
+        )
+        .fill(if recording { RECORD_RED } else { theme::TRACK })
+        .stroke(if recording { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+        .min_size(Vec2::new(0.0, 22.0))
+        .corner_radius(4),
+    );
+    let dot = Pos2::new(resp.rect.left() + 11.0, resp.rect.center().y);
+    let pulse = if recording {
+        let t = ui.input(|i| i.time);
+        0.55 + 0.45 * ((t * 3.0).sin() as f32 * 0.5 + 0.5)
+    } else {
+        1.0
+    };
+    let color = if recording {
+        Color32::from_white_alpha((230.0 * pulse) as u8)
+    } else {
+        RECORD_RED
+    };
+    ui.painter().circle_filled(dot, 3.5, color);
+    if recording {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    note_ui_rect(if recording { "Stop" } else { "Record" }, resp.rect);
+    resp
+}
+
+/// Joined buttons for one choice among a few: the selected one is filled.
+/// Returns the index clicked, if any.
+fn segmented(ui: &mut Ui, id: &str, options: &[&str], selected: usize) -> Option<usize> {
+    let mut clicked = None;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let last = options.len().saturating_sub(1);
+        for (i, label) in options.iter().enumerate() {
+            let on = i == selected;
+            let mut radius = egui::CornerRadius::ZERO;
+            if i == 0 {
+                radius.nw = 4;
+                radius.sw = 4;
+            }
+            if i == last {
+                radius.ne = 4;
+                radius.se = 4;
+            }
+            let resp = ui.add(
+                egui::Button::new(
+                    RichText::new(*label)
+                        .family(fonts::medium())
+                        .size(11.0)
+                        .color(if on { theme::CANVAS } else { theme::TEXT }),
+                )
+                .fill(if on { theme::ACCENT } else { theme::TRACK })
+                .stroke(if on { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+                .min_size(Vec2::new(0.0, 22.0))
+                .corner_radius(radius),
+            );
+            note_ui_rect(label, resp.rect);
+            if resp.clicked() && !on {
+                clicked = Some(i);
+            }
+        }
+        let _ = id;
+    });
+    ui.spacing_mut().item_spacing.x = 8.0;
+    clicked
+}
+
+/// Tabs: plain text, the current one in the accent with a rule under it.
+/// Returns the index clicked, if any.
+fn tab_strip(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
+    let mut clicked = None;
+    for (i, label) in labels.iter().enumerate() {
+        let on = i == selected;
+        let resp = ui.add(
+            egui::Button::new(
+                RichText::new(*label)
+                    .family(fonts::medium())
+                    .size(11.0)
+                    .color(if on { theme::ACCENT } else { theme::MUTED }),
+            )
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .min_size(Vec2::new(0.0, 22.0))
+            .corner_radius(0),
+        );
+        if on {
+            let r = resp.rect;
+            ui.painter().line_segment(
+                [Pos2::new(r.left() + 4.0, r.bottom() - 1.0), Pos2::new(r.right() - 4.0, r.bottom() - 1.0)],
+                Stroke::new(2.0, theme::ACCENT),
+            );
+        }
+        note_ui_rect(label, resp.rect);
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
 }
 
 fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
@@ -6911,59 +7021,6 @@ fn paint_fullscreen_icon(painter: &egui::Painter, rect: Rect, compressed: bool, 
     for (origin, dx, dy) in corners {
         painter.line_segment([origin, origin + Vec2::new(dx * arm, 0.0)], stroke);
         painter.line_segment([origin, origin + Vec2::new(0.0, dy * arm)], stroke);
-    }
-}
-
-fn shape_pill(
-    ui: &mut Ui,
-    on: bool,
-    tip: &str,
-    paint: fn(&egui::Painter, Rect, Color32),
-) -> egui::Response {
-    let fill = if on { theme::ACCENT } else { theme::TRACK };
-    let resp = ui
-        .add(
-            egui::Button::new(RichText::new(" ").size(1.0))
-                .fill(fill)
-                .stroke(if on {
-                    Stroke::NONE
-                } else {
-                    Stroke::new(1.0, theme::HAIR)
-                })
-                .min_size(Vec2::new(28.0, 22.0))
-                .corner_radius(4),
-        )
-        .on_hover_text(tip);
-    let color = if on {
-        theme::CANVAS
-    } else if resp.hovered() {
-        theme::TEXT
-    } else {
-        theme::MUTED
-    };
-    paint(ui.painter(), resp.rect, color);
-    resp
-}
-
-fn paint_density_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let stroke = Stroke::new(1.35, color);
-    let c = rect.center();
-    let w = 9.0;
-    for dy in [-3.5_f32, 0.0, 3.5] {
-        painter.line_segment(
-            [
-                Pos2::new(c.x - w * 0.5, c.y + dy),
-                Pos2::new(c.x + w * 0.5, c.y + dy),
-            ],
-            stroke,
-        );
-    }
-}
-
-fn paint_inspector_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let c = rect.center();
-    for dx in [-4.5_f32, 0.0, 4.5] {
-        painter.circle_filled(Pos2::new(c.x + dx, c.y), 1.35, color);
     }
 }
 

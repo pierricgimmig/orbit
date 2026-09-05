@@ -43,38 +43,37 @@ Instructions for the manual writer:
 
 ## 2. The top bar
 
-Pills, left to right. A filled pill is on.
+Left to right, in clusters separated by thin rules. A filled pill is on.
 
-- **Record / Stop** starts and stops a capture of the selected process.
-  Hover text says whether a real service capture or the no-attach demo will
-  run. Screenshot: `02-capture-live.png`.
-- **Demo** streams synthetic scopes with no service attach.
+- **Record / Stop** is the one primary button, with a red dot; while
+  recording it reads Stop and the dot pulses. It captures the selected
+  process, or everything the service sees when none is selected.
+  Screenshot: `02-capture-live.png`.
 - **Open** opens a saved Orbit capture (`.orbit.zip`) or a Chrome trace
   (`.json` / `.json.gz`); dropping the file on the page does the same.
   Screenshot: `17-opened-slice.png` (a slice reopened through the API).
-- **Capture** shows or hides the capture timeline.
-- **Follow** keeps the right edge of the window on the newest event during a
-  capture (also the space bar).
-- **Self** opens the viewer's own profile in a second pane: frame phases
-  (paint headers, layout, upload, ...) as a live timeline of the viewer
-  itself, independent of any capture. Screenshot: `21-self-pane.png`,
-  `11-self-instrumentation.png` (the service's own capture-loop scopes).
+- **Save** is a menu: the whole capture as `.orbit.zip`, the selected time
+  slice as its own `.orbit.zip` (when a selection exists), or the
+  `.orbit.stream` a web page embeds. See section 7.
 - **Clear** empties the capture everywhere: every event on the service and
   in the page. Refused while a capture is running. Screenshot:
   `20-cleared.png`.
-- **Save** downloads the whole capture as a self-contained `.orbit.zip`:
-  events, samples, sampled frames, thread and process names. **Save slice**
-  appears when a time selection exists and downloads only that window as
-  the same kind of file, which opens on its own. See section 6.
-- **Report** opens the report panel on the right (section 5). **UI** opens
-  the tweak window: row spacing of the report, track density and the like.
-- **Paper** switches to a light canvas. The remaining pills are fullscreen,
-  track density and the inspector.
+- **Capture** shows or hides the capture strip (section 3). **Report**
+  opens the report panel on the right (section 6). **Self** opens the
+  viewer's own profile in a second pane: frame phases as a live timeline of
+  the viewer itself, independent of any capture. Screenshots:
+  `21-self-pane.png`, `11-self-instrumentation.png`.
+- **Follow** keeps the right edge of the window on the newest event during a
+  capture (also the space bar).
 - **Search box.** Typing filters scopes by name; matching scopes stay lit and
   the rest grey out. Escape clears the search and every selection.
 - **Stats line.** Live event count, visible count, draw count, the transport
   (`http`, `ws packed`) and, during a capture, the socket's MB/s next to the
   frame rate.
+- **More** holds what is used rarely: Demo (synthetic scopes with no
+  service attach), the UI knobs window (report row spacing, track
+  density), Paper (a light canvas), the Inspector, compact tracks. The
+  last pill is fullscreen.
 
 ## 3. The process row
 
@@ -84,14 +83,14 @@ Pills, left to right. A filled pill is on.
   or an error) and a click loads or reloads them. Symbols load on their
   own as soon as a process is selected, and the service loads them itself
   when a capture starts with hooks and none are loaded yet.
-- **CSW** context switches (the scheduler track). **States** thread state
-  slices. **API** manual `orbit.h` scopes. **Sample** callstack sampling
-  with the period in ms next to it.
-- **DWARF / FP** choose the unwinder. **Uprobes** (the default) arms kernel
-  uprobes on the hooked functions; it needs `CAP_PERFMON`. **User-space**
-  is the trampoline mechanism, not ported yet: choosing it also arms
-  uprobes and says so in the log.
-- **HOOK line** counts the hooked functions and opens the **Functions**
+- **COLLECT** toggles: **CSW** context switches (the scheduler track),
+  **States** thread state slices, **API** manual `orbit.h` scopes,
+  **Sample** callstack sampling with the period in ms next to it.
+- **UNWIND** is a two-way switch, DWARF or FP. **HOOKS** is another:
+  **Uprobes** (the default) arms kernel uprobes on the hooked functions and
+  needs `CAP_PERFMON`; **User-space** is the trampoline mechanism, not
+  ported yet, and choosing it also arms uprobes and says so.
+- **HOOKED** counts the hooked functions and opens the **Functions**
   view; "Unhook all" clears them. After Record, the line says what was
   armed ("instrumenting N of M functions") or why nothing was.
 
@@ -148,7 +147,9 @@ Pills, left to right. A filled pill is on.
 
 ## 6. The report panel
 
-Opened by the Report pill or by a selection; tabs along its top. The panel
+Opened by the Report pill or by a selection. The title line says what the
+report covers; under it a row of tabs (the current one underlined in the
+accent) and the filter box. The panel
 is resizable with the splitter; dragged fully to one side it collapses to a
 slim edge tab that brings it back. `?report=flat|top_down|bottom_up|modules|live|flame`
 in the URL opens a tab on load.
