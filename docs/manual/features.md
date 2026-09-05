@@ -196,9 +196,8 @@ in the URL opens a tab on load.
   module too; Rust names are demangled. What has no name shows as
   `module+0xoffset`. Screenshot: `03-report-flat.png`.
 - **Top-down / Bottom-up** call trees, expandable, with "expand all" and
-  "collapse all" pills on the filter row under the tabs (the title row
-  above the tabs never moves), with
-  "collapse all". Screenshots: `04-report-topdown.png`,
+  "collapse all" pills on the filter row under the tabs, so the title row
+  above the tabs never moves. Screenshots: `04-report-topdown.png`,
   `05-report-bottomup.png`.
 - **Modules** the loaded modules and their function counts. Screenshot:
   `06-report-modules.png`.
