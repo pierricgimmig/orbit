@@ -3718,7 +3718,9 @@ impl OrbitLiveApp {
                     &self.trace_flows,
                     self.tracks.scale,
                 );
-                if let Some(h) = self.hover {
+                // A graph lane already writes its value at the cursor line;
+                // the tooltip on top of that said the same thing twice.
+                if let Some(h) = self.hover.filter(|h| h.kind != kind::VALUE) {
                     let stack = if h.kind == kind::SAMPLE {
                         sample_callstack(&self.index, &self.intern, h)
                     } else {
