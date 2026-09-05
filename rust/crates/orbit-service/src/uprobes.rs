@@ -17,16 +17,24 @@
 //! the probe's window -- `docs/uprobes-duplicate-events.md` traces that to
 //! the XOL preemption window -- which is why...
 //!
-//! **Duplicate entries are filtered, as `UprobesUnwindingVisitor` does.**
-//! Every uprobe sample carries the stack pointer and the instruction pointer.
-//! Per thread, the last entry's `(sp, ip, cpu)` is kept; an entry whose sp is
-//! *above* the last one's (the stack grows down, so a nested entry cannot be)
-//! is a duplicate or follows a missed return, and an entry with the same sp
-//! and ip from another CPU is the same hit reported twice. Both are dropped.
-//! Without this, every duplicate is a ghost scope: an entry that never
-//! closes, or closes with the next return and swallows a real call. The
-//! filter can be switched off per capture (`uprobe_duplicate_filter`) to see
-//! its effect; the drops are counted either way.
+//! **Hits are paired by stack frame, not by count.** Every uprobe sample
+//! carries the stack pointer and the instruction pointer. A nested call sits
+//! strictly below every open frame, and a return leaves exactly the frame of
+//! its entry (one slot above it on x86-64, where `ret` has popped the return
+//! address). So an entry at or above an open frame proves that frame's
+//! return was lost, and a return from a frame with no open entry proves the
+//! entry was lost; both are counted and the pairing carries on with the
+//! right depth. Without this, one lost hit is a permanent ghost: an entry
+//! that never closes shifts every later scope on the thread down a level,
+//! and a lost entry lets the next return close the caller early. A real
+//! capture (`docs/uprobes-duplicate-events.md`) showed one hit lost at
+//! about one thread migration in ten, entries and returns both.
+//!
+//! On top of that runs the `UprobesUnwindingVisitor` rule from the C++: an
+//! entry with the last entry's sp and ip from another CPU is the same hit
+//! surfacing in two rings and is dropped. Both mechanisms are behind one
+//! switch (`uprobe_duplicate_filter`, on by default) so the effect can be
+//! seen; the counts are on the status line either way.
 //!
 //! **Records are held before they are paired.** Entry and exit arrive on
 //! different rings, so a drain can hand back an exit before the entry that
@@ -70,22 +78,35 @@ pub struct ProbeHit {
     pub cpu: u32,
 }
 
-/// What the duplicate filter dropped, and what it saw, over a session.
+/// What the pairing saw over a session: what it dropped, what it discarded,
+/// what the kernel lost. The numbers behind the status line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DuplicateReport {
-    /// Entries whose stack pointer was above the previous entry's on the
-    /// same thread: a duplicate, or a return that never came.
-    pub dropped_sp_above_last: u64,
-    /// Entries with the previous entry's sp and ip, from another CPU.
+pub struct HitReport {
+    /// Entries with the previous entry's sp and ip, from another CPU: the
+    /// same hit surfacing in two rings, dropped (the C++ rule).
     pub dropped_migration: u64,
-    /// Entries the filter would have dropped but let through, because it
-    /// was off. The same two rules, counted instead of applied.
+    /// Open entries discarded because a later hit showed their return never
+    /// came: an entry at or above their stack slot, or a return from a
+    /// frame above them. Each was a ghost scope in the making.
+    pub discarded_unclosed: u64,
+    /// Returns whose frame matched no open entry: the entry was lost.
+    pub orphan_returns: u64,
+    /// Entries the migration rule flagged but let through, filter off.
     pub seen_off: u64,
+    /// Records the kernel reported as lost (`PERF_RECORD_LOST`, summed).
+    pub records_lost: u64,
+    /// Sample records that did not parse.
+    pub parse_failures: u64,
+    /// Samples whose stream id belongs to no probe of this session.
+    pub unknown_stream: u64,
+    /// Sample records with no user register block (sp and ip unknown).
+    pub without_regs: u64,
 }
 
-impl DuplicateReport {
+impl HitReport {
+    /// Everything the pairing refused or gave up on.
     pub fn dropped(&self) -> u64 {
-        self.dropped_sp_above_last + self.dropped_migration
+        self.dropped_migration + self.discarded_unclosed + self.orphan_returns
     }
 }
 
@@ -140,7 +161,11 @@ pub struct UprobeSession {
     /// At most one, as in the C++ -- it is the last entry, not a shadow
     /// stack. Taken on the next entry and on every return.
     last_entry: HashMap<i32, (u64, u64, u32)>,
-    duplicates: DuplicateReport,
+    report: HitReport,
+    /// Per thread, the stack slot (sp at entry) of every open entry, in
+    /// the same order as the call manager's stack: what a return is matched
+    /// against, and what an entry is checked against.
+    open: HashMap<i32, Vec<u64>>,
 }
 
 /// One function to hook: where the probe goes, in file terms.
@@ -174,7 +199,8 @@ impl UprobeSession {
             newest_seen_ns: 0,
             duplicate_filter,
             last_entry: HashMap::new(),
-            duplicates: DuplicateReport::default(),
+            report: HitReport::default(),
+            open: HashMap::new(),
         };
         let mut report = ArmReport::default();
         let cpus = online_cpus();
@@ -262,20 +288,35 @@ impl UprobeSession {
         for cpu in self.rings.iter_mut() {
             while let Ok(Some(record)) = cpu.ring.read_record() {
                 let Some(header) = PerfEventHeader::parse(&record) else { continue };
+                if { header.kind } == record_type::LOST {
+                    // id (u64), lost (u64) after the 8-byte header.
+                    let lost = record.get(16..24).map(|b| u64::from_le_bytes(b.try_into().unwrap())).unwrap_or(1);
+                    self.report.records_lost += lost;
+                    continue;
+                }
                 if { header.kind } != record_type::SAMPLE {
                     continue;
                 }
                 // `true`: keep the register block, it is sp and ip.
-                let Some(sample) = parse_record_sample(&record, flags, true) else { continue };
+                let Some(sample) = parse_record_sample(&record, flags, true) else {
+                    self.report.parse_failures += 1;
+                    continue;
+                };
                 // Every process mapping the file fires the probe; only the
                 // target's hits are this capture's.
                 if sample.pid as i32 != self.target_pid {
                     continue;
                 }
-                let Some(&(function_id, is_return)) = self.by_stream.get(&sample.stream_id) else { continue };
+                let Some(&(function_id, is_return)) = self.by_stream.get(&sample.stream_id) else {
+                    self.report.unknown_stream += 1;
+                    continue;
+                };
                 let (sp, ip) = match sample.regs.as_deref() {
                     Some([sp, ip, ..]) => (*sp, *ip),
-                    _ => (0, 0),
+                    _ => {
+                        self.report.without_regs += 1;
+                        (0, 0)
+                    }
                 };
                 let hit = ProbeHit {
                     timestamp_ns: sample.time,
@@ -300,31 +341,33 @@ impl UprobeSession {
         self.drain_up_to(u64::MAX)
     }
 
-    /// What the duplicate filter dropped so far (or would have, when off).
-    pub fn duplicates(&self) -> DuplicateReport {
-        self.duplicates
+    /// What the pairing did so far.
+    pub fn report(&self) -> HitReport {
+        self.report
     }
 
-    /// The C++ rule, on one entry: drop it when its stack pointer is above
-    /// the thread's last entry (a nested call cannot be; a duplicate or a
-    /// missed return is), or when it repeats the last entry's sp and ip from
-    /// another CPU (the same hit, surfacing in two rings). The last entry is
-    /// taken before the check, as `UprobesUnwindingVisitor::OnUprobes` does,
-    /// so a drop leaves the thread with no last entry and the next one is
-    /// accepted unchecked.
-    fn is_duplicate_entry(&mut self, hit: &ProbeHit) -> bool {
+    /// The C++ rule, on one entry: it repeats the thread's last entry's sp
+    /// and ip from another CPU, so it is the same hit surfacing in two
+    /// rings. The last entry is taken before the check, as
+    /// `UprobesUnwindingVisitor::OnUprobes` does.
+    fn is_migration_duplicate(&mut self, hit: &ProbeHit) -> bool {
         let Some((last_sp, last_ip, last_cpu)) = self.last_entry.remove(&hit.tid) else {
             return false;
         };
-        if hit.sp > last_sp {
-            self.duplicates.dropped_sp_above_last += 1;
-            return true;
+        hit.sp == last_sp && hit.ip == last_ip && hit.cpu != last_cpu
+    }
+
+    /// Closes the thread's top open entry without a return: a later hit
+    /// proved its return will never come.
+    fn discard_top(&mut self, tid: i32) {
+        if let Some(stack) = self.open.get_mut(&tid) {
+            stack.pop();
+            if stack.is_empty() {
+                self.open.remove(&tid);
+            }
         }
-        if hit.sp == last_sp && hit.ip == last_ip && hit.cpu != last_cpu {
-            self.duplicates.dropped_migration += 1;
-            return true;
-        }
-        false
+        let _ = self.calls.process_function_exit(tid, 0, None);
+        self.report.discarded_unclosed += 1;
     }
 
     fn drain_up_to(&mut self, horizon: u64) -> Vec<CompletedCall> {
@@ -337,9 +380,35 @@ impl UprobeSession {
         let ready_hits: Vec<ProbeHit> = self.pending.drain(..ready).collect();
         for hit in ready_hits {
             if hit.is_return {
-                // A return closes the last entry whatever it was; there is
-                // no duplicate check on returns, as in the C++.
                 self.last_entry.remove(&hit.tid);
+                // The frame this return leaves: on x86-64 `ret` has popped
+                // the return address, so sp is one slot above the entry's;
+                // on arm64 `ret` leaves sp where the entry saw it.
+                let frame = hit.sp.wrapping_sub(RETURN_SP_ADJUST);
+                if self.duplicate_filter && hit.sp != 0 {
+                    // Open entries below this frame are deeper calls whose
+                    // return was lost: closing them with this return would
+                    // put the wrong span on the timeline, and leave this
+                    // return's own entry open as a ghost.
+                    while self.open.get(&hit.tid).and_then(|s| s.last()).is_some_and(|&top| top < frame) {
+                        self.discard_top(hit.tid);
+                    }
+                    match self.open.get(&hit.tid).and_then(|s| s.last()) {
+                        Some(&top) if top == frame => {}
+                        _ => {
+                            // Nothing open at this frame: the entry was
+                            // lost. Popping a caller for it is the ghost.
+                            self.report.orphan_returns += 1;
+                            continue;
+                        }
+                    }
+                }
+                if let Some(stack) = self.open.get_mut(&hit.tid) {
+                    stack.pop();
+                    if stack.is_empty() {
+                        self.open.remove(&hit.tid);
+                    }
+                }
                 if let Some(call) =
                     self.calls.process_function_exit(hit.tid, hit.timestamp_ns, None)
                 {
@@ -352,18 +421,24 @@ impl UprobeSession {
                     });
                 }
             } else {
-                if self.is_duplicate_entry(&hit) {
+                if self.is_migration_duplicate(&hit) {
                     if self.duplicate_filter {
+                        self.report.dropped_migration += 1;
                         continue;
                     }
-                    // Off: the entry goes through, and the count says what
-                    // the filter would have done. Undo the counted drop so
-                    // the totals mean one thing each.
-                    self.duplicates.seen_off += 1;
-                    self.duplicates.dropped_sp_above_last = 0;
-                    self.duplicates.dropped_migration = 0;
+                    self.report.seen_off += 1;
                 }
                 self.last_entry.insert(hit.tid, (hit.sp, hit.ip, hit.cpu));
+                if self.duplicate_filter && hit.sp != 0 {
+                    // A nested call sits strictly below every open frame.
+                    // An open entry at or above this one has returned
+                    // without a return hit (or is this hit's own duplicate
+                    // on the same CPU): it will never close, discard it.
+                    while self.open.get(&hit.tid).and_then(|s| s.last()).is_some_and(|&top| top <= hit.sp) {
+                        self.discard_top(hit.tid);
+                    }
+                }
+                self.open.entry(hit.tid).or_default().push(hit.sp);
                 self.calls.process_function_entry(
                     hit.tid,
                     hit.function_id,
@@ -375,6 +450,14 @@ impl UprobeSession {
         out
     }
 }
+
+/// What `ret` does to the stack pointer before the return probe fires:
+/// x86-64 pops the return address, arm64 leaves sp alone.
+#[cfg(target_arch = "x86_64")]
+const RETURN_SP_ADJUST: u64 = 8;
+#[cfg(not(target_arch = "x86_64"))]
+const RETURN_SP_ADJUST: u64 = 0;
+
 
 /// What a uprobe sample carries: who, when, which CPU, and two registers
 /// (sp then ip, the `SAMPLE_REGS_USER_SP_IP` mask). No stack.
@@ -419,7 +502,8 @@ mod tests {
             newest_seen_ns: 0,
             duplicate_filter: true,
             last_entry: HashMap::new(),
-            duplicates: DuplicateReport::default(),
+            report: HitReport::default(),
+            open: HashMap::new(),
         }
     }
 
@@ -427,123 +511,206 @@ mod tests {
         ProbeHit { timestamp_ns, tid: 7, function_id, is_return, sp: 0, ip: 0, cpu: 0 }
     }
 
-    /// An entry with a stack frame: nested calls have decreasing sp.
+    // ---- pairing by stack frame, and the migration rule ----------------
+    //
+    // Frames: a nested call sits strictly below its caller's slot. On x86-64
+    // the return probe sees sp one slot (8) above the entry's; the helpers
+    // below speak in entry slots and add the adjustment.
+
     fn entry(timestamp_ns: u64, function_id: u64, sp: u64, ip: u64, cpu: u32) -> ProbeHit {
         ProbeHit { timestamp_ns, tid: 7, function_id, is_return: false, sp, ip, cpu }
     }
 
-    fn ret(timestamp_ns: u64, function_id: u64) -> ProbeHit {
-        ProbeHit { timestamp_ns, tid: 7, function_id, is_return: true, sp: 0, ip: 0, cpu: 0 }
+    fn ret_from(timestamp_ns: u64, sp_entry: u64) -> ProbeHit {
+        ProbeHit {
+            timestamp_ns,
+            tid: 7,
+            function_id: 0,
+            is_return: true,
+            sp: sp_entry.wrapping_add(RETURN_SP_ADJUST),
+            ip: 0,
+            cpu: 0,
+        }
     }
 
-    // ---- the duplicate filter, rule by rule -----------------------------
+    fn ids(calls: &[CompletedCall]) -> Vec<u64> {
+        calls.iter().map(|c| c.function_id).collect()
+    }
 
     #[test]
     fn the_same_hit_from_another_cpu_is_dropped() {
         // One entry, reported by cpu 0 and again by cpu 3 with the same sp
         // and ip, then one return: one call, not a ghost left open.
         let mut session = empty_session();
-        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), entry(101, 1, 0x50, 0xabc, 3), ret(400, 1)];
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), entry(101, 1, 0x50, 0xabc, 3), ret_from(400, 0x50)];
         let calls = session.flush();
         assert_eq!(calls.len(), 1);
         assert_eq!((calls[0].start_ns, calls[0].duration_ns), (100, 300));
-        assert_eq!(session.duplicates().dropped_migration, 1);
-        assert_eq!(session.duplicates().dropped_sp_above_last, 0);
-        session.pending = vec![ret(500, 1)];
+        assert_eq!(session.report().dropped_migration, 1);
+        assert_eq!(session.report().discarded_unclosed, 0);
+        session.pending = vec![ret_from(500, 0x50)];
         assert!(session.flush().is_empty(), "nothing left open");
+        assert_eq!(session.report().orphan_returns, 1);
     }
 
     #[test]
-    fn the_same_frame_from_the_same_cpu_is_kept() {
-        // Equal sp and ip on one CPU is not the migration duplicate; the C++
-        // keeps it, and so does this (a recursive call re-entering at the
-        // same sp is not possible, but the rule is the rule).
+    fn the_same_frame_from_the_same_cpu_replaces_the_open_entry() {
+        // Equal sp on one CPU is not the migration duplicate. It is still
+        // impossible as a nested call, so the open entry at that slot is
+        // discarded and the new one takes the frame: one call closes.
         let mut session = empty_session();
-        session.pending = vec![entry(100, 1, 0x50, 0xabc, 2), entry(101, 1, 0x50, 0xabc, 2), ret(300, 1), ret(400, 1)];
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 2), entry(101, 1, 0x50, 0xabc, 2), ret_from(300, 0x50)];
         let calls = session.flush();
-        assert_eq!(calls.len(), 2);
-        assert_eq!(session.duplicates().dropped(), 0);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].start_ns, 101);
+        assert_eq!(session.report().discarded_unclosed, 1);
+        assert_eq!(session.report().dropped_migration, 0);
     }
 
     #[test]
-    fn an_entry_above_the_last_entrys_stack_is_dropped() {
-        // Nested: 0x50 then 0x40 is fine. 0x60 after 0x40 with no return in
-        // between cannot be a nested call: dropped, counted as such.
+    fn nested_calls_pair_by_frame() {
         let mut session = empty_session();
         session.pending = vec![
             entry(100, 1, 0x50, 0xa, 0),
             entry(110, 2, 0x40, 0xb, 0),
-            entry(120, 3, 0x60, 0xc, 0),
-            ret(200, 2),
-            ret(300, 1),
+            entry(120, 3, 0x30, 0xc, 0),
+            ret_from(130, 0x30),
+            ret_from(140, 0x40),
+            ret_from(150, 0x50),
         ];
         let calls = session.flush();
-        assert_eq!(calls.iter().map(|c| c.function_id).collect::<Vec<_>>(), vec![2, 1]);
-        assert_eq!(session.duplicates().dropped_sp_above_last, 1);
-        assert_eq!(session.duplicates().dropped_migration, 0);
+        assert_eq!(ids(&calls), vec![3, 2, 1]);
+        assert_eq!(calls.iter().map(|c| c.depth).collect::<Vec<_>>(), vec![2, 1, 0]);
+        assert_eq!(session.report(), HitReport::default());
     }
 
     #[test]
-    fn an_equal_sp_with_a_different_ip_is_kept() {
-        let mut session = empty_session();
-        session.pending = vec![entry(100, 1, 0x50, 0xa, 0), entry(110, 2, 0x50, 0xb, 1), ret(200, 2), ret(300, 1)];
-        assert_eq!(session.flush().len(), 2);
-        assert_eq!(session.duplicates().dropped(), 0);
-    }
-
-    #[test]
-    fn a_drop_leaves_no_last_entry_so_the_next_one_is_unchecked() {
-        // The C++ pops the last entry before the checks: after a drop the
-        // thread has no last entry, and the next entry is accepted even
-        // though its sp is above the one before the drop.
+    fn a_lost_return_is_healed_by_the_next_entry() {
+        // The capture that found this: a thread migrates, the return of the
+        // joint it was in never arrives, the next entry comes at the same
+        // slot. The unclosed entry is discarded; nothing else shifts.
         let mut session = empty_session();
         session.pending = vec![
-            entry(100, 1, 0x40, 0xa, 0),
-            entry(110, 2, 0x50, 0xb, 0), // dropped: above 0x40
-            entry(120, 3, 0x60, 0xc, 0), // kept: no last entry to compare with
-            ret(200, 3),
-            ret(300, 1),
+            entry(100, 1, 0x50, 0xa, 0),  // task
+            entry(110, 2, 0x40, 0xb, 0),  // joint, its return lost
+            entry(130, 3, 0x40, 0xc, 5),  // another call at the same slot, after the migration
+            ret_from(140, 0x40),
+            ret_from(150, 0x50),
         ];
         let calls = session.flush();
-        assert_eq!(calls.iter().map(|c| c.function_id).collect::<Vec<_>>(), vec![3, 1]);
-        assert_eq!(session.duplicates().dropped(), 1);
+        assert_eq!(ids(&calls), vec![3, 1]);
+        assert_eq!(calls[0].start_ns, 130, "the call that did return");
+        assert_eq!(calls[1].depth, 0);
+        assert_eq!(session.report().discarded_unclosed, 1);
+        assert_eq!(session.report().dropped_migration, 0);
     }
 
     #[test]
-    fn a_return_clears_the_last_entry_and_needs_no_check() {
-        // After a return, a fresh entry at a higher sp is a new call at a
-        // shallower depth, not a duplicate.
+    fn a_sibling_at_the_same_slot_from_the_same_site_after_a_migration_is_taken_for_the_duplicate() {
+        // The one case the two rules cannot tell apart: the same call site
+        // (same ip), the same slot, another CPU, no return in between. The
+        // C++ rule calls it the migration duplicate and drops the second
+        // entry. If it was in fact the next call after a lost return, the
+        // two calls merge into one span -- a bounded error, and the frame
+        // check keeps the depth right from there on.
         let mut session = empty_session();
-        session.pending = vec![entry(100, 1, 0x40, 0xa, 0), ret(200, 1), entry(300, 2, 0x50, 0xb, 0), ret(400, 2)];
-        assert_eq!(session.flush().len(), 2);
-        assert_eq!(session.duplicates().dropped(), 0);
-        // A return with nothing open is a no-op for the filter too.
-        session.pending = vec![ret(500, 9)];
-        assert!(session.flush().is_empty());
+        session.pending = vec![
+            entry(100, 1, 0x50, 0xa, 0),
+            entry(110, 2, 0x40, 0xb, 0),
+            entry(130, 2, 0x40, 0xb, 5),
+            ret_from(140, 0x40),
+            ret_from(150, 0x50),
+        ];
+        let calls = session.flush();
+        assert_eq!(ids(&calls), vec![2, 1]);
+        assert_eq!((calls[0].start_ns, calls[0].duration_ns), (110, 30), "merged");
+        assert_eq!(calls[1].depth, 0);
+        assert_eq!(session.report().dropped_migration, 1);
+        assert_eq!(session.report().discarded_unclosed, 0);
     }
 
     #[test]
-    fn with_the_filter_off_duplicates_go_through_and_are_only_counted() {
+    fn a_lost_return_is_healed_by_the_callers_return() {
+        // The deeper entry never returned; the caller's return arrives from
+        // a frame above it. Discard the deeper one, close the caller.
+        let mut session = empty_session();
+        session.pending = vec![entry(100, 1, 0x50, 0xa, 0), entry(110, 2, 0x40, 0xb, 0), ret_from(150, 0x50)];
+        let calls = session.flush();
+        assert_eq!(ids(&calls), vec![1]);
+        assert_eq!(calls[0].depth, 0);
+        assert_eq!(session.report().discarded_unclosed, 1);
+    }
+
+    #[test]
+    fn a_lost_entry_leaves_its_return_an_orphan() {
+        // The other half of the capture: the entry after the migration is
+        // lost, its return arrives from a frame below the open task. Without
+        // the frame check that return closed the task early and every joint
+        // after it sat at depth 0.
+        let mut session = empty_session();
+        session.pending = vec![
+            entry(100, 1, 0x50, 0xa, 0),  // task
+            ret_from(120, 0x40),          // a joint whose entry was lost
+            entry(130, 2, 0x40, 0xb, 0),  // the next joint
+            ret_from(140, 0x40),
+            ret_from(150, 0x50),
+        ];
+        let calls = session.flush();
+        assert_eq!(ids(&calls), vec![2, 1]);
+        assert_eq!(calls[0].depth, 1, "still under the task");
+        assert_eq!(session.report().orphan_returns, 1);
+        assert_eq!(session.report().discarded_unclosed, 0);
+    }
+
+    #[test]
+    fn a_tail_call_chain_returns_twice_from_one_slot() {
+        // b jumps to c: both entries share the slot, the trampoline fires a
+        // return for each. Two calls, innermost first.
+        let mut session = empty_session();
+        session.pending = vec![entry(100, 1, 0x50, 0xa, 0), entry(110, 2, 0x50, 0xb, 0), ret_from(150, 0x50), ret_from(151, 0x50)];
+        let calls = session.flush();
+        // The second entry at the same slot discards the first: a chained
+        // return instance is indistinguishable from a lost return here, and
+        // one honest scope beats a guess.
+        assert_eq!(ids(&calls), vec![2]);
+        assert_eq!(session.report().orphan_returns, 1);
+    }
+
+    #[test]
+    fn without_registers_the_pairing_is_the_plain_stack() {
+        // sp 0 on every hit (no register block): entries push, returns pop.
+        let mut session = empty_session();
+        session.pending = vec![hit(100, 1, false), hit(110, 2, false), hit(120, 2, true), hit(130, 1, true)];
+        assert_eq!(ids(&session.flush()), vec![2, 1]);
+        assert_eq!(session.report(), HitReport::default());
+    }
+
+    #[test]
+    fn with_the_filter_off_nothing_is_dropped_or_discarded() {
         let mut session = empty_session();
         session.duplicate_filter = false;
-        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), entry(101, 1, 0x50, 0xabc, 3), ret(400, 1)];
+        session.pending = vec![
+            entry(100, 1, 0x50, 0xabc, 0),
+            entry(101, 1, 0x50, 0xabc, 3), // the migration duplicate, let through
+            ret_from(400, 0x50),
+        ];
         let calls = session.flush();
         // The ghost: the return closes the duplicate, the real entry stays open.
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].start_ns, 101);
-        assert_eq!(session.duplicates().seen_off, 1);
-        assert_eq!(session.duplicates().dropped(), 0);
+        assert_eq!(session.report().seen_off, 1);
+        assert_eq!(session.report().dropped(), 0);
     }
 
     #[test]
-    fn threads_keep_their_own_last_entry() {
+    fn threads_keep_their_own_frames() {
         let mut session = empty_session();
         let mut other = entry(105, 1, 0x50, 0xabc, 3);
         other.tid = 8;
-        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), other, ret(400, 1)];
+        session.pending = vec![entry(100, 1, 0x50, 0xabc, 0), other, ret_from(400, 0x50)];
         let calls = session.flush();
-        assert_eq!(calls.len(), 1, "thread 8's entry is not thread 7's duplicate");
-        assert_eq!(session.duplicates().dropped(), 0);
+        assert_eq!(calls.len(), 1, "thread 8's entry is not thread 7's duplicate, nor above its frame");
+        assert_eq!(session.report().dropped(), 0);
     }
 
     #[test]
@@ -770,5 +937,15 @@ mod tests {
             "durations are real and under 5 ms (a kernel round trip each way): {:?}",
             calls.iter().map(|c| c.duration_ns).take(5).collect::<Vec<_>>()
         );
+        // The frame pairing depends on every hit carrying sp, and on the
+        // return's sp sitting RETURN_SP_ADJUST above the entry's. Were
+        // either wrong, every return would be an orphan and this would say
+        // so, loudly, rather than the pairing quietly falling back.
+        let report = session.report();
+        eprintln!("UPROBE TEST: {report:?}");
+        assert_eq!(report.without_regs, 0, "every hit carries sp and ip");
+        assert_eq!(report.orphan_returns, 0, "every return matched its entry's frame");
+        assert_eq!(report.discarded_unclosed, 0, "no entry was left open");
+        assert_eq!(report.records_lost, 0);
     }
 }

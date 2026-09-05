@@ -90,14 +90,16 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   **Uprobes** (the default) arms kernel uprobes on the hooked functions and
   needs `CAP_PERFMON`; **User-space** is the trampoline mechanism, not
   ported yet, and choosing it also arms uprobes and says so. **Dedupe**
-  (on by default) is the duplicate-uprobe filter C++ Orbit carries in
-  `UprobesUnwindingVisitor`: the kernel can report one function entry twice
-  when the thread migrates inside the probe (same stack and instruction
-  pointer, another CPU), and every such duplicate is a ghost scope. The
-  filter drops those and any entry whose stack pointer sits above the
-  previous entry's on that thread. Switch it off to see the ghosts; the
-  status line after the capture counts what was dropped, or what would
-  have been.
+  (on by default) is what keeps a lost or doubled probe hit from becoming
+  a ghost scope. Every hit carries its stack pointer, so entries and
+  returns are paired by stack frame: an entry at or above an open frame
+  means that frame's return was lost (the open entry is discarded), a
+  return from a frame nothing is open at means its entry was lost (the
+  return is dropped), and an entry repeating the last one's stack and
+  instruction pointer from another CPU is the kernel reporting one hit
+  twice on a thread migration (dropped, the C++ `UprobesUnwindingVisitor`
+  rule). Off, hits are paired by count alone, as a plain stack; the
+  status line after the capture counts what each rule did.
 - **HOOKED** counts the hooked functions and opens the **Functions**
   view; "Unhook all" clears them. After Record, the line says what was
   armed ("instrumenting N of M functions") or why nothing was.

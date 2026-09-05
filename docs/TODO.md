@@ -419,9 +419,17 @@ there is something that is introducing ghost scopes with dynamic instrumentation
   Unit-tested rule by rule; the effect on a real target needs a privileged run
   (`tools/uprobe-test.sh`, then a capture with Dedupe off and on).
 
-make a website that will be the official website, with landing page, manual, but also that will serve the presigned urls that a user can upload their data to. I have an s3 bucket, ask me for credentials once you get to the implementation/testing phase.
+greying out of scopes when selecting a thread should only apply to the scheduling slices
+
+samples should only be visualized as the vertical white lines in the sample bar, hovering on a sample shows the callstack, and we should be able to select samples from a single thread, just like the c++ app does, to generate a sampling report
 
 make sure py-spy still works
 
 more detailed instrumentation of rendering, this needs to be blazing fast, we need to find other optimization opportunities
 
+we should be able to sort by columns in the sampling reports, I want to be able to see all the hooked functions for example if i sort by "hooked"
+
+we need a solution to aggregate many machines' services to a single viewer, so there needs to be precise clock synchronization, also, we should have an easy way to either launch a service with the main viewer endpoint as param, or actually from the viewer itself, connect to a service running on a remote machine. Suggestions are welcome for the most streamlined ux. 
+
+make the record icon a 
+make a website that will be the official website, with landing page, manual, but also that will serve the presigned urls that a user can upload their data to. I have an s3 bucket, ask me for credentials once you get to the implementation/testing phase.

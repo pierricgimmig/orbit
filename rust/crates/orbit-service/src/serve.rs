@@ -1123,22 +1123,32 @@ fn capture_loop(
         if !tail.is_empty() {
             service.push_events(&tail);
         }
-        // What the duplicate filter did, on the status line the viewer
-        // shows, so switching it off and on has a number to compare.
-        let duplicates = session.duplicates();
-        let summary = if uprobe_duplicate_filter {
+        // What the pairing did, on the status line the viewer shows, so
+        // switching the filter off and on has numbers to compare.
+        let report = session.report();
+        let mut summary = if uprobe_duplicate_filter {
             format!(
-                "{instrumented_calls} calls, {} duplicate uprobes dropped ({} on migration, {} with the stack above the last entry)",
-                duplicates.dropped(),
-                duplicates.dropped_migration,
-                duplicates.dropped_sp_above_last
+                "{instrumented_calls} calls; {} duplicate entries dropped, {} entries with no return discarded, {} returns with no entry dropped",
+                report.dropped_migration, report.discarded_unclosed, report.orphan_returns
             )
         } else {
             format!(
-                "{instrumented_calls} calls, duplicate filter off: {} uprobes it would have dropped went through",
-                duplicates.seen_off
+                "{instrumented_calls} calls; filter off, {} migration duplicates went through",
+                report.seen_off
             )
         };
+        if uprobe_duplicate_filter && report.dropped() > 0 {
+            summary.push_str(&format!(" ({} hits refused in all)", report.dropped()));
+        }
+        if report.records_lost > 0 {
+            summary.push_str(&format!("; {} records lost by the kernel", report.records_lost));
+        }
+        if report.parse_failures + report.unknown_stream + report.without_regs > 0 {
+            summary.push_str(&format!(
+                "; {} unparsed, {} unknown stream, {} without registers",
+                report.parse_failures, report.unknown_stream, report.without_regs
+            ));
+        }
         eprintln!("orbit-service: {summary}");
         let mut status = service.instrumentation_status();
         if !status.is_empty() {

@@ -167,3 +167,47 @@ entry is unchecked, a return clearing the state, the filter off counting
 only, threads independent). The kernel's actual behaviour is exercised by
 `a_uprobe_fires_on_a_function_of_this_process` under `tools/uprobe-test.sh`,
 which needs `CAP_PERFMON`.
+
+## Follow-up: a real capture, and what the ghosts actually were (2026-09-05)
+
+A 15 s capture of Box3D with four functions hooked (`b3World_Step`,
+`b3SolverTask`, `b3SolveJoint`, `b3SolveSphericalJoint`; 2.86 M scopes
+on 8 threads), taken with the filter above switched on, still showed
+ghosts: on the main thread every scope after 6.9 s sat one level too deep,
+and on four worker threads runs of joints sat at depth 0, outside any
+`b3SolverTask`. `tools/check_hooked_scopes.py` on the exported bundle finds
+every point where a function's depth changes and lines them up with the
+scheduler slices of that thread:
+
+- every one of the 47 depth changes (23 distinct incidents) is 10 to 20 us
+  after the thread resumed on another CPU;
+- each incident is one hit missing, never one extra: on the main thread the
+  return of a `b3SolveJoint` that should have come just before or after the
+  migration is absent, so that joint stayed open (1.24 ms, closed by the
+  task's return) and the task by the step's, and the step forever; on the
+  workers it is the *entry* of the first joint after the migration that is
+  absent, so its return popped the task, and the joints that followed had
+  no parent;
+- no incident had two entries with the same stack pointer: the `(sp, ip,
+  cpu)` duplicate rule had nothing to drop.
+
+So the kernel, on this box (7.0.0-30, per-CPU probes, pid -1), loses the
+first probe hit after a migration about one time in ten, entries and
+returns alike; it does not double them. Why is not established. The rings
+reported no `PERF_RECORD_LOST`, the tracepoint PMU is not subject to
+`perf_event_max_sample_rate` throttling, and the hit is the very first on
+the new CPU, which points at the per-CPU event or its hlist not being in
+place at that instant rather than at the ring. That is a kernel question;
+what the service can do is stop one lost hit from becoming a ghost.
+
+It now pairs by stack frame (`uprobes.rs`, module doc): an entry at or
+above an open frame discards that frame's entry (its return was lost), a
+return from a frame nothing is open at is dropped (its entry was lost), and
+depth is right from the next hit on. The C++ duplicate rule still runs in
+front of it. Both are counted on the status line: "N calls; a duplicate
+entries dropped, b entries with no return discarded, c returns with no
+entry dropped; d records lost by the kernel". One case the rules cannot
+tell apart: the next call from the same site at the same slot on another
+CPU with the return in between lost looks exactly like the migration
+duplicate; the C++ rule takes it, and the two calls merge into one span.
+Bounded, and rare, and the counts say when it happened.
