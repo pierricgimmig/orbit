@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Orbit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Orbit: a profiler for native applications, ported to Rust. A live capture, right here in the page.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<nav class="site">
+  <a href="index.html">Orbit</a>
+  <a href="manual/index.html">Manual</a>
+  <a href="blog/index.html">Blog</a>
+  <a href="e2e/report.html">Test report</a>
+  <a href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open the viewer</a>
+</nav>
+<main class="wide">
+  <div class="hero">
+    <h1>Orbit</h1>
+    <p class="lede">A profiler for native applications: scheduling, callstack sampling, manual and dynamic
+      instrumentation, on a timeline that draws a million scopes at the screen's refresh rate.
+      The service is one static binary; the viewer is this page.</p>
+    <p class="facts">Below: a real capture, {{facts}}. Nothing is running behind it. Drag to pan, wheel over the
+      ruler to zoom, click a thread to focus it, right-click a scope, press Home to fit.</p>
+  </div>
+  <div class="embed">
+    <iframe src="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler" title="Orbit viewer"
+            allow="fullscreen"></iframe>
+  </div>
+  <p class="caption">
+    <span>Box3D, three physics threads, sampled at 1 kHz with scheduling and the service's own lanes.</span>
+    <a href="viewer/index.html?capture=../captures/{{capture}}&collapse=scheduler">Open full page &rarr;</a>
+  </p>
+
+  <div class="cards">
+    <div class="card">
+      <h3>Manual</h3>
+      <p>Every feature, how to reach it, and the screenshot that shows it: the top bar, the timeline, selection
+        and focus, the report panel, capture files, instrumentation, automation.</p>
+      <a class="more" href="manual/index.html">Read the manual &rarr;</a>
+    </div>
+    <div class="card">
+      <h3>Instrument your code</h3>
+      <p>One header, one static library: <code>orbit_start</code> / <code>orbit_stop</code>, async spans, links,
+        values. Rust, C, C++ and Python examples. Anything that can run a command uses <code>orbit-scope</code>.</p>
+      <a class="more" href="manual/index.html#8-manual-instrumentation">The API &rarr;</a>
+    </div>
+    <div class="card">
+      <h3>Blog</h3>
+      <p>The port, written up as it happened: LLVM leaving, the ring per core, how the timeline draws, bytes on the
+        wire and on disk. Numbers in the metrics files next to each post.</p>
+      <a class="more" href="blog/index.html">The dev blog &rarr;</a>
+    </div>
+    <div class="card">
+      <h3>Run it</h3>
+      <p><code>orbit-service --serve 44766</code> serves this viewer and the API on one port; the banner prints the
+        LAN address. Sampling needs <code>perf_event_paranoid</code> at -1 or <code>CAP_PERFMON</code>.</p>
+      <a class="more" href="manual/live-viewer.html">Serving the viewer &rarr;</a>
+    </div>
+  </div>
+  <p class="keys">Site built {{date}} at commit {{commit}} by <code>tools/site/build_site.py</code>. The embedded
+    capture is a <code>.orbit.stream</code>: the frames a connecting viewer would receive, saved as a file
+    (<code>GET /api/capture/export?format=stream</code>).</p>
+</main>
+<footer class="site">Orbit &middot; the Rust port</footer>
+</body>
+</html>

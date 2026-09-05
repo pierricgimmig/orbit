@@ -346,9 +346,16 @@ plus the report are its inputs.
 Website for the project with embedded interactive capture, that's
 something I've always wanted. It will also host the dev blog.
 
-**Status: not started.** The viewer is a static WASM pack plus a service;
-an embedded capture needs the viewer to open a bundle without a service
-(item 4's mmap/zero-copy note) or a hosted read-only service.
+**Status: done (2026-09-04), first version.** `tools/site/build_site.py`
+builds a static directory: the viewer pack, one capture the front page
+opens with no service (`?capture=<url>` on a `.orbit.stream`, the new
+`stream` export: the frames a connecting viewer receives, as a file), the
+manual rendered from `docs/manual`, the blog, the screenshots and the e2e
+report. `tools/site/serve.py` serves it on the LAN with the isolation
+headers. The `website` e2e scenario builds and opens it every run. Numbers
+in `phase-13-website.txt`. Not done: a viewer-side sampling report for the
+static page (the report tabs need the service), and hosting it somewhere
+public.
 
 ## 26. Capture sharing to S3
 
@@ -364,3 +371,17 @@ Add orbit service cpu/mem usage track.
 `/proc/self/stat` and `/proc/self/statm` and writes `service cpu %` and
 `service rss MiB` through the manual instrumentation API; they show as
 value lanes under the service's process (selfstat.rs).
+
+## 28. Symbolization gaps seen in the e2e screenshots
+
+Bare addresses for the hottest frames, `OrbitTestRust+0x...` for the
+app's own functions.
+
+**Status: done (2026-09-04).** The `[vdso]` is a module (its image read
+from the service's own mapping), stripped libraries get their internals
+from the detached debug file (`/usr/lib/debug`, by build id or
+`.gnu_debuglink`), release binaries keep their symbol tables
+(`strip = "debuginfo"`), and Rust names are demangled. Numbers in
+`phase-12-symbolization.txt`. Not done: C++ demangling in the Rust service
+(blog post 02), and the vDSO's local helpers, which need the kernel's
+debug package.

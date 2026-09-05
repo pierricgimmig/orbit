@@ -93,6 +93,14 @@ with `orbit-scope` scopes on the agent track and symbols loaded. A scenario
 that empties the ring (`save-slice-open`, `clear`) marks it stale and the
 next one re-takes it.
 
+## The web site
+
+`website` exports the shared capture as a `.orbit.stream`, builds the site
+into the scratch directory with `tools/site/build_site.py`, serves it with
+`tools/site/serve.py` on the service's port + 7, and reads the embedded
+viewer's `__orbit_sel` through the iframe (same origin) to check every
+event arrived with no service behind the page.
+
 ## The Python reader
 
 `python-reader` runs `rust/crates/orbit-capture/python/open_capture.py` on

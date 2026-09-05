@@ -14,9 +14,17 @@
 //! symbol table has one, else `module+0x1234`, else the bare address. Every
 //! frame gets *some* label, because a flame graph with holes is worse than
 //! one with coarse labels.
+//!
+//! Where the names come from, in order: the module's detached debug file
+//! (`/usr/lib/debug`, by build id or `.gnu_debuglink`), which is what turns
+//! a stripped libc's internals into names; the module's own `.symtab`; its
+//! `.dynsym`. The `[vdso]` is a module too: it has no file, but its image
+//! is the same in every process of one kernel, so the service reads its own
+//! and applies it at the target's address. That one mapping is where a
+//! process that asks the time in a loop spends most of its samples.
 
 use orbit_maps::{parse_maps, PROT_EXEC};
-use orbit_object::{load_symbols, SymbolTable};
+use orbit_object::{detached_debug_file, load_symbols, parse_elf_metadata, SymbolTable};
 
 /// One executable mapping, and the symbols of the file behind it.
 struct Module {
@@ -67,30 +75,30 @@ impl Symbolizer {
             return Symbolizer { modules };
         };
         for mapping in parse_maps(&content) {
-            if mapping.perms & PROT_EXEC == 0 || mapping.inode == 0 {
+            if mapping.perms & PROT_EXEC == 0 {
                 continue;
             }
             let Ok(path) = std::str::from_utf8(&mapping.pathname) else { continue };
+            if path == "[vdso]" {
+                if let Some(image) = vdso_image() {
+                    modules.push(Module {
+                        start: mapping.start_address,
+                        end: mapping.end_address,
+                        bias: mapping.start_address,
+                        name: "[vdso]".to_string(),
+                        symbols: sorted_symbols(&image, None),
+                    });
+                }
+                continue;
+            }
             if path.is_empty() || !path.starts_with('/') {
                 continue;
             }
             let name = path.rsplit('/').next().unwrap_or(path).to_string();
             let bias = mapping.start_address.wrapping_sub(mapping.offset);
-            let mut symbols = Vec::new();
-            if let Ok(bytes) = std::fs::read(path) {
-                // Prefer the full table; fall back to the dynamic one, which
-                // is all a stripped shared library has.
-                let loaded = load_symbols(&bytes, SymbolTable::Debug)
-                    .or_else(|_| load_symbols(&bytes, SymbolTable::Dynamic));
-                if let Ok(loaded) = loaded {
-                    symbols = loaded
-                        .into_iter()
-                        .filter(|symbol| symbol.address != 0)
-                        .map(|symbol| (symbol.address, symbol.size, symbol.mangled_name))
-                        .collect();
-                    symbols.sort_by_key(|(address, _, _)| *address);
-                }
-            }
+            let symbols = std::fs::read(path)
+                .map(|bytes| sorted_symbols(&bytes, Some(path)))
+                .unwrap_or_default();
             modules.push(Module {
                 start: mapping.start_address,
                 end: mapping.end_address,
@@ -157,11 +165,57 @@ fn find_symbol(symbols: &[(u64, u64, String)], address: u64) -> Option<&str> {
     }
 }
 
-/// Itanium C++ names are long and the timeline is narrow, so keep the
-/// mangled form's shape but strip the leading `_Z` noise for readability.
-/// Full demangling lives in the shims and is not worth linking here.
+/// Rust names are demangled (legacy `_ZN..E` with its hash dropped, and v0
+/// `_R..`); anything else passes through as the linker wrote it. Itanium
+/// C++ demangling stays with `abi::__cxa_demangle` in the C++ shims: blog
+/// post 02 records why the Rust crate for it was not good enough, and a
+/// static musl service has no libstdc++ to call.
 fn demangle(name: &str) -> String {
-    name.to_string()
+    format!("{:#}", rustc_demangle::demangle(name))
+}
+
+/// The function symbols of one ELF image, sorted by address: from its
+/// detached debug file when `path` names a file that has one, else its own
+/// `.symtab`, else its `.dynsym`.
+pub(crate) fn symbol_source(bytes: &[u8], path: Option<&str>) -> Result<Vec<orbit_object::Symbol>, String> {
+    if let Some(path) = path {
+        if let Ok(metadata) = parse_elf_metadata(bytes, path) {
+            if let Some(debug) = detached_debug_file(std::path::Path::new(path), &metadata) {
+                if let Ok(debug_bytes) = std::fs::read(&debug) {
+                    if let Ok(symbols) = load_symbols(&debug_bytes, SymbolTable::Debug) {
+                        return Ok(symbols);
+                    }
+                }
+            }
+        }
+    }
+    load_symbols(bytes, SymbolTable::Debug).or_else(|_| load_symbols(bytes, SymbolTable::Dynamic))
+}
+
+fn sorted_symbols(bytes: &[u8], path: Option<&str>) -> Vec<(u64, u64, String)> {
+    let mut symbols: Vec<(u64, u64, String)> = symbol_source(bytes, path)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|symbol| symbol.address != 0)
+        .map(|symbol| (symbol.address, symbol.size, symbol.mangled_name))
+        .collect();
+    symbols.sort_by_key(|(address, _, _)| *address);
+    symbols
+}
+
+/// This process's vDSO image, copied out of its own mapping. Every process
+/// on one kernel maps the same image, so its symbol table serves the
+/// target's `[vdso]` at the target's address.
+fn vdso_image() -> Option<Vec<u8>> {
+    let content = std::fs::read("/proc/self/maps").ok()?;
+    let mapping = parse_maps(&content)
+        .into_iter()
+        .find(|m| m.pathname.as_slice() == b"[vdso]")?;
+    let len = mapping.end_address.checked_sub(mapping.start_address)? as usize;
+    // SAFETY: the mapping is this process's own vDSO, readable for the life
+    // of the process; the kernel never unmaps it.
+    let bytes = unsafe { std::slice::from_raw_parts(mapping.start_address as *const u8, len) };
+    Some(bytes.to_vec())
 }
 
 #[cfg(test)]
@@ -203,13 +257,69 @@ mod tests {
 
     #[test]
     fn this_process_symbolizes_its_own_code() {
+        let started = std::time::Instant::now();
         let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
+        eprintln!(
+            "SYMBOLIZER_LOAD modules={} symbols={} ms={:.1}",
+            symbolizer.module_count(),
+            symbolizer.symbol_count(),
+            started.elapsed().as_secs_f64() * 1e3
+        );
         assert!(symbolizer.module_count() > 0, "no executable modules found");
         // Our own text address must land in a module, so it must not come
         // back as a bare hex address.
         let here = this_process_symbolizes_its_own_code as usize as u64;
         let label = symbolizer.resolve(here);
         assert!(!label.starts_with("0x"), "unresolved: {label}");
+    }
+
+    #[test]
+    fn the_vdso_is_a_module_with_names() {
+        let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
+        let vdso = symbolizer.modules.iter().find(|m| m.name == "[vdso]").expect("a [vdso] module");
+        assert!(!vdso.symbols.is_empty(), "the vDSO image has a dynamic symbol table");
+        // clock_gettime is what a program asking the time in a loop samples in.
+        let (offset, _, name) = vdso
+            .symbols
+            .iter()
+            .find(|(_, _, n)| n.contains("clock_gettime"))
+            .expect("clock_gettime in the vDSO");
+        let frame = symbolizer.resolve_frame(vdso.start + offset);
+        // `clock_gettime` and `__vdso_clock_gettime` alias one address;
+        // either name is the right answer.
+        assert!(frame.name.contains("clock_gettime"), "{} resolved to {}", name, frame.name);
+        assert_eq!(frame.module, "[vdso]");
+    }
+
+    #[test]
+    fn a_stripped_libc_gets_its_internals_from_the_detached_debug_file() {
+        let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
+        let Some(libc) = symbolizer.modules.iter().find(|m| m.name.starts_with("libc.so")) else {
+            return; // a static test binary: nothing to check
+        };
+        let path = format!("/usr/lib/x86_64-linux-gnu/{}", libc.name);
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        let has_debug_file = parse_elf_metadata(&bytes, &path)
+            .ok()
+            .and_then(|m| detached_debug_file(std::path::Path::new(&path), &m))
+            .is_some();
+        let dynsym = load_symbols(&bytes, SymbolTable::Dynamic).map(|s| s.len()).unwrap_or(0);
+        if has_debug_file {
+            assert!(
+                libc.symbols.len() > dynsym,
+                "with libc6-dbg installed the module has more than its {dynsym} exported names, got {}",
+                libc.symbols.len()
+            );
+        } else {
+            assert_eq!(libc.symbols.len(), dynsym, "without a debug file the dynamic table is all there is");
+        }
+    }
+
+    #[test]
+    fn rust_names_are_demangled_and_others_pass_through() {
+        assert_eq!(demangle("_ZN4core3ptr13drop_in_place17h1234567890abcdefE"), "core::ptr::drop_in_place");
+        assert_eq!(demangle("_ZN3app6module8functionEv"), "_ZN3app6module8functionEv");
+        assert_eq!(demangle("clock_gettime"), "clock_gettime");
     }
 
     #[test]

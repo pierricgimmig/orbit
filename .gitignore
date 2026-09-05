@@ -27,3 +27,6 @@ target/
 
 # py-spy is a submodule in upstream; do not track it as a gitlink here.
 third_party/py-spy/
+
+# The built web site (tools/site/build_site.py)
+/site/

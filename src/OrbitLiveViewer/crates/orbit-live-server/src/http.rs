@@ -373,13 +373,17 @@ async fn sampling_tree(
 /// a few hundred megabytes; the ring itself is 256 MiB by default.
 const IMPORT_BODY_LIMIT: usize = 4 << 30;
 
-/// `GET /api/capture/export?format=ipc|parquet|bundle&t0=..&t1=..` -- the
-/// capture as one file, offered as a download. `ipc` (the default) is an
+/// `GET /api/capture/export?format=ipc|parquet|bundle|stream&t0=..&t1=..` --
+/// the capture as one file, offered as a download. `ipc` (the default) is an
 /// Arrow IPC file of the events, `parquet` the same as Parquet, `bundle` a
 /// self-contained `.orbit.zip` (events, samples, frames, thread and process
 /// names) that the viewer can open again. With `t0` and `t1` (capture-clock
 /// nanoseconds) only that time slice is exported. 501 when the service does
-/// not provide an encoder, 400 for a format it does not know.
+/// not provide an encoder, 400 for a format it does not know. `stream` is
+/// the wire frames a connecting viewer receives, as one file
+/// (`.orbit.stream`): the viewer opens it with `?capture=<url>` and no
+/// service, which is how a web page embeds a capture. Served by the server
+/// itself, no encoder needed.
 #[derive(Deserialize)]
 struct ExportQuery {
     format: Option<String>,
@@ -394,6 +398,7 @@ fn export_filename(format: &str, sliced: bool) -> String {
     match format {
         "parquet" => format!("{stem}.parquet"),
         "bundle" => format!("{stem}.orbit.zip"),
+        "stream" => format!("{stem}.orbit.stream"),
         _ => format!("{stem}.arrow"),
     }
 }
@@ -402,14 +407,6 @@ async fn capture_export(
     State(svc): State<Arc<LiveService>>,
     Query(q): Query<ExportQuery>,
 ) -> Response {
-    let hook = svc.capture_export.lock().clone();
-    let Some(export) = hook else {
-        return (
-            StatusCode::NOT_IMPLEMENTED,
-            "this service does not export captures",
-        )
-            .into_response();
-    };
     let format = q.format.unwrap_or_else(|| "ipc".to_string());
     let window = match (q.t0, q.t1) {
         (Some(a), Some(b)) => Some((a.min(b), a.max(b))),
@@ -418,6 +415,29 @@ async fn capture_export(
             return (StatusCode::BAD_REQUEST, "give both t0 and t1, or neither").into_response();
         }
     };
+    if format == "stream" {
+        let filename = export_filename(&format, window.is_some());
+        let bytes = svc.capture_stream(window);
+        return (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream"),
+                (
+                    header::CONTENT_DISPOSITION,
+                    &*format!("attachment; filename=\"{filename}\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response();
+    }
+    let hook = svc.capture_export.lock().clone();
+    let Some(export) = hook else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "this service does not export captures",
+        )
+            .into_response();
+    };
     let content_type = match format.as_str() {
         "ipc" => "application/vnd.apache.arrow.file",
         "parquet" => "application/vnd.apache.parquet",
@@ -425,7 +445,7 @@ async fn capture_export(
         other => {
             return (
                 StatusCode::BAD_REQUEST,
-                format!("unknown export format {other:?}; use ipc, parquet or bundle"),
+                format!("unknown export format {other:?}; use ipc, parquet, bundle or stream"),
             )
                 .into_response();
         }

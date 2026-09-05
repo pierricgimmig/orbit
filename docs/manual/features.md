@@ -129,7 +129,10 @@ slim edge tab that brings it back. `?report=flat|top_down|bottom_up|modules|live
 in the URL opens a tab on load.
 
 - **Flat** self and inclusive percentages per function, with module.
-  Screenshot: `03-report-flat.png`.
+  Names come from the module's detached debug file when the distribution's
+  `-dbg` package is installed, else its symbol tables; the `[vdso]` is a
+  module too; Rust names are demangled. What has no name shows as
+  `module+0xoffset`. Screenshot: `03-report-flat.png`.
 - **Top-down / Bottom-up** call trees, expandable, with "expand all" and
   "collapse all". Screenshots: `04-report-topdown.png`,
   `05-report-bottomup.png`.
@@ -158,6 +161,13 @@ in the URL opens a tab on load.
   with the file as the body, or `POST /api/capture/open {"path": ..., "t0":
   ..., "t1": ...}` to open a file the service can see. Screenshot:
   `17-opened-slice.png`.
+- **Stream export.** `GET /api/capture/export?format=stream` writes the
+  frames a connecting viewer receives as one `.orbit.stream` file. The
+  viewer opens it with `viewer/index.html?capture=<url>` and no service:
+  the pills and tabs that need a service are hidden, the file name shows
+  next to the link dot, and the timeline, focus, scope highlight, Live tab
+  and Self pane work. This is how the web site embeds a capture.
+  Screenshot: `23-static-viewer.png`.
 - **Python.** `rust/crates/orbit-capture/python/open_capture.py <unzipped dir>`
   reads the tables with pyarrow and prints the columns and counts; its
   README documents every column. The `python-reader` scenario runs it on
@@ -212,6 +222,11 @@ in the URL opens a tab on load.
   `window.__orbit_self` (the frame-phase breakdown while the Self pane is
   open). `tools/e2e/orbit_e2e.py` clicks by label through these.
 
+- **The web site.** `python3 tools/site/build_site.py` builds a static
+  directory (viewer, a capture on the front page, this manual, the blog,
+  screenshots, the e2e report); `python3 tools/site/serve.py --dir site
+  --port 8081` serves it on the LAN. Screenshot: `22-website.png`.
+
 ## 10. Screenshot index
 
 | File | Scenario | Shows |
@@ -234,3 +249,5 @@ in the URL opens a tab on load.
 | `19-service-lanes.png` | service-lanes | The service's cpu and rss lanes |
 | `20-cleared.png` | clear | The empty timeline after Clear |
 | `21-self-pane.png` | wire-and-perf | The viewer's self-profile pane |
+| `22-website.png` | website | The site's front page with the embedded capture |
+| `23-static-viewer.png` | website | The viewer alone on a stream file, no service |

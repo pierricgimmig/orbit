@@ -59,4 +59,6 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
-strip = true
+# Debug info goes, the symbol table stays: a profiler's own binaries -- the
+# service, the test apps -- must symbolize. Costs a few percent of size.
+strip = "debuginfo"

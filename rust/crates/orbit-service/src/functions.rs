@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 
 use orbit_maps::{parse_maps, PROT_EXEC};
-use orbit_object::{load_symbols, parse_elf_metadata, ObjectSegment, SymbolTable};
+use orbit_object::{parse_elf_metadata, ObjectSegment};
 
 /// One function that can be hooked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,9 +70,9 @@ impl FunctionIndex {
             let segments = parse_elf_metadata(&bytes, path)
                 .map(|metadata| metadata.loadable_segments)
                 .unwrap_or_default();
-            let symbols = load_symbols(&bytes, SymbolTable::Debug)
-                .or_else(|_| load_symbols(&bytes, SymbolTable::Dynamic));
-            let Ok(symbols) = symbols else { continue };
+            // The detached debug file first, so a distribution's stripped
+            // library offers its internal functions too; see symbolize.rs.
+            let Ok(symbols) = crate::symbolize::symbol_source(&bytes, Some(path)) else { continue };
             let module = path.rsplit('/').next().unwrap_or(path).to_string();
             for symbol in symbols {
                 if symbol.address == 0 || symbol.mangled_name.is_empty() {

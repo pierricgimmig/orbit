@@ -503,6 +503,9 @@ mod wasm_impl {
         /// Held so the JS WebSocket is not GC'd.
         #[allow(dead_code)]
         ws: Arc<Mutex<Option<WebSocket>>>,
+        /// A capture file was opened instead of a service: no socket, and
+        /// every request that would go to the service is dropped.
+        offline: bool,
     }
 
     impl Net {
@@ -516,6 +519,37 @@ mod wasm_impl {
                 view_busy: Arc::new(AtomicBool::new(false)),
                 self_busy: Arc::new(AtomicBool::new(false)),
                 ws,
+                offline: false,
+            }
+        }
+
+        /// Fetches a capture stream file (`/api/capture/export?format=stream`
+        /// saved to disk) and feeds it in as if a service had sent it. The
+        /// static web page's mode: no service, no socket.
+        pub fn from_capture_url(url: &str) -> Self {
+            let inbox = Arc::new(Mutex::new(Inbox::default()));
+            let url = url.to_string();
+            let fetch_into = inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_bytes(&url).await;
+                let mut g = fetch_into.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(bytes) => {
+                        g.bytes_in += bytes.len() as u64;
+                        g.frames.push(bytes);
+                        g.ws_ok = true;
+                        g.http_ok = true;
+                    }
+                    Err(e) => g.error = Some(format!("capture file: {e}")),
+                }
+            });
+            Self {
+                inbox,
+                http_busy: Arc::new(AtomicBool::new(false)),
+                view_busy: Arc::new(AtomicBool::new(false)),
+                self_busy: Arc::new(AtomicBool::new(false)),
+                ws: Arc::new(Mutex::new(None)),
+                offline: true,
             }
         }
 
@@ -542,6 +576,9 @@ mod wasm_impl {
         /// Opens a new WebSocket if the last one closed -- a service that was
         /// restarted comes back without a page reload. Cheap when connected.
         pub fn reconnect_ws_if_closed(&self) {
+            if self.offline {
+                return;
+            }
             let closed = self.ws.lock().map(|w| w.is_none()).unwrap_or(true);
             if closed {
                 start_ws(self.inbox.clone(), self.ws.clone());
@@ -549,6 +586,9 @@ mod wasm_impl {
         }
 
         pub fn get_status(&self) {
+            if self.offline {
+                return;
+            }
             if self
                 .http_busy
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -583,6 +623,9 @@ mod wasm_impl {
         }
 
         pub fn get_processes(&self) {
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = get_text("/api/processes")
@@ -597,6 +640,9 @@ mod wasm_impl {
         }
 
         pub fn pull_view(&self, t0: u64, t1: u64, width: u32) {
+            if self.offline {
+                return;
+            }
             if self
                 .view_busy
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -624,6 +670,9 @@ mod wasm_impl {
         }
 
         pub fn start_capture(&self, req: &CaptureStart) {
+            if self.offline {
+                return;
+            }
             let fns: String = req
                 .instrumented_function_ids
                 .iter()
@@ -646,10 +695,16 @@ mod wasm_impl {
         }
 
         pub fn load_symbols(&self, pid: u32) {
+            if self.offline {
+                return;
+            }
             self.send("POST", "/api/symbols/load", format!(r#"{{"pid":{pid}}}"#));
         }
 
         pub fn get_symbols_status(&self, pid: u32) {
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = get_text(&format!("/api/symbols/status?pid={pid}"))
@@ -667,6 +722,9 @@ mod wasm_impl {
         /// `(start_ns, end_ns, tid)` windows. An empty slice means the whole
         /// capture, which is what the panel shows before anything is selected.
         pub fn get_sampling_report(&self, ranges: &[(u64, u64, Option<u32>)]) {
+            if self.offline {
+                return;
+            }
             let query = ranges_query(ranges);
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -685,6 +743,9 @@ mod wasm_impl {
 
         /// The report over every sample inside any instance of the scope.
         pub fn get_sampling_report_scope(&self, name_id: u32) {
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = get_text(&format!("/api/sampling/report?scope={name_id}"))
@@ -696,6 +757,9 @@ mod wasm_impl {
         }
 
         pub fn get_sampling_tree_scope(&self, name_id: u32, mode: &str) {
+            if self.offline {
+                return;
+            }
             let query = format!("/api/sampling/tree?scope={name_id}&mode={mode}");
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -709,6 +773,9 @@ mod wasm_impl {
         /// slice means the whole capture, which is what the panel asks for when
         /// a capture stops and nothing is selected.
         pub fn get_sampling_tree(&self, ranges: &[(u64, u64, Option<u32>)], mode: &str) {
+            if self.offline {
+                return;
+            }
             let rq = ranges_query(ranges);
             let sep = if rq.is_empty() { '?' } else { '&' };
             let query = format!("{rq}{sep}mode={mode}");
@@ -723,6 +790,9 @@ mod wasm_impl {
         }
 
         pub fn get_modules(&self, pid: u32) {
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = get_text(&format!("/api/symbols/modules?pid={pid}"))
@@ -734,6 +804,9 @@ mod wasm_impl {
         }
 
         pub fn search_functions(&self, pid: u32, q: &str, limit: u32) {
+            if self.offline {
+                return;
+            }
             let q = urlencoding_lite(q);
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -751,10 +824,16 @@ mod wasm_impl {
         }
 
         pub fn stop_capture(&self) {
+            if self.offline {
+                return;
+            }
             self.send("POST", "/api/capture/stop", "{}".into());
         }
 
         pub fn start_demo(&self) {
+            if self.offline {
+                return;
+            }
             self.send(
                 "POST",
                 "/api/demo/start",
@@ -763,22 +842,34 @@ mod wasm_impl {
         }
 
         pub fn stop_demo(&self) {
+            if self.offline {
+                return;
+            }
             self.send("POST", "/api/demo/stop", "{}".into());
         }
 
         pub fn start_self(&self) {
+            if self.offline {
+                return;
+            }
             self.send("POST", "/api/self/start", "{}".into());
         }
 
         /// Empties the capture on the service; the ring's reset comes back
         /// over the WebSocket.
         pub fn clear_capture(&self) {
+            if self.offline {
+                return;
+            }
             self.send("POST", "/api/capture/clear", "{}".into());
         }
 
         /// Posts a `.orbit.zip` to the service, which opens it as the current
         /// capture and streams it back over the WebSocket.
         pub fn import_capture(&self, bytes: Vec<u8>) {
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(e) = send_bytes("/api/capture/import", &bytes, "application/zip").await {
@@ -790,6 +881,9 @@ mod wasm_impl {
         /// As [`import_capture`](Self::import_capture), reading the browser
         /// `File` first.
         pub fn import_capture_file(&self, file: web_sys::File) {
+            if self.offline {
+                return;
+            }
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = async {
@@ -807,10 +901,16 @@ mod wasm_impl {
         }
 
         pub fn stop_self(&self) {
+            if self.offline {
+                return;
+            }
             self.send("POST", "/api/self/stop", "{}".into());
         }
 
         pub fn push_self_scopes(&self, scopes: &[orbit_live_event::dev::RelScope]) {
+            if self.offline {
+                return;
+            }
             if scopes.is_empty() {
                 return;
             }
@@ -838,6 +938,9 @@ mod wasm_impl {
         }
 
         pub fn apply_config(&self, ring_bytes: u64, spill: &str) {
+            if self.offline {
+                return;
+            }
             let spill_json = if spill.is_empty() {
                 "null".to_string()
             } else {
@@ -1118,6 +1221,9 @@ mod native_impl {
 
     impl Net {
         pub fn connect() -> Self {
+            Self
+        }
+        pub fn from_capture_url(_url: &str) -> Self {
             Self
         }
         pub fn take(&self) -> Inbox {

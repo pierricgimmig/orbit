@@ -22,6 +22,7 @@ use object::Endianness;
 
 mod coff;
 mod coff_symbols;
+mod debugfile;
 mod debuglink;
 mod dwarf;
 mod msvc;
@@ -36,6 +37,7 @@ pub use coff_symbols::{
     coff_has_debug_symbols, coff_symbol_table_symbols, exception_table_symbols, export_table_symbols, has_export_table,
     unwind_ranges, UnwindRange,
 };
+pub use debugfile::{detached_debug_file, detached_debug_file_under, DEFAULT_DEBUG_ROOT};
 pub use debuglink::{crc32_continue, crc32_gnu_debuglink, GnuDebugLink};
 pub use dwarf::{subprograms, Subprogram};
 pub use msvc::demangle_msvc;

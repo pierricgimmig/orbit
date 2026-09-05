@@ -922,6 +922,7 @@ dependencies = [
  "orbit-tracing-state",
  "orbit-unwind",
  "orbit-wire",
+ "rustc-demangle",
  "serde_json",
  "tokio",
 ]
@@ -1102,6 +1103,12 @@ checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc_version"

@@ -245,6 +245,52 @@ pub fn query_report_tab_from_location() -> Option<String> {
     }
 }
 
+/// `?capture=<url>` -- open a capture stream file (the `stream` export)
+/// instead of connecting to a service: the static web page's mode. The
+/// URL is relative to the page.
+pub fn query_capture_url_from_location() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|s| query_capture_url(&s))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+pub fn query_capture_url(search: &str) -> Option<String> {
+    let value = search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("capture="))?;
+    if value.is_empty() {
+        return None;
+    }
+    Some(percent_decode(value))
+}
+
+/// Enough of percent-decoding for a path: `%2F`, `%3A` and friends.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// `?collapse=scheduler` -- start with the machine-wide scheduler track
 /// folded, so a process's own lanes are in view without scrolling. On a
 /// 32-core box the scheduler alone is taller than a screenshot, and the
@@ -451,5 +497,22 @@ mod absorb_guard_tests {
         assert!(!query_collapses_scheduler("?collapse=machine"));
         assert!(!query_collapses_scheduler("?xcollapse=scheduler"));
         assert!(!query_collapses_scheduler(""));
+    }
+}
+
+#[cfg(test)]
+mod capture_url_tests {
+    use super::query_capture_url;
+
+    #[test]
+    fn the_capture_query_is_read_and_decoded() {
+        assert_eq!(query_capture_url("?capture=captures/box3d.orbit.stream"), Some("captures/box3d.orbit.stream".into()));
+        assert_eq!(
+            query_capture_url("?collapse=scheduler&capture=..%2Fcaptures%2Fa%20b.orbit.stream"),
+            Some("../captures/a b.orbit.stream".into())
+        );
+        assert_eq!(query_capture_url("?capture="), None);
+        assert_eq!(query_capture_url("?report=live"), None);
+        assert_eq!(query_capture_url("?capture=x%2"), Some("x%2".into()));
     }
 }

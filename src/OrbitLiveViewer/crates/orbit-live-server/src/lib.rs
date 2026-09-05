@@ -704,6 +704,24 @@ impl LiveService {
     }
 
     pub fn hello_and_snapshot_frames(&self) -> Vec<Vec<u8>> {
+        self.hello_and_snapshot_frames_in(None)
+    }
+
+    /// The whole capture as one byte string of wire frames: what a viewer
+    /// receives when it connects, ended by `CaptureFinished` so a viewer
+    /// opening it from a file fits the view. A static web page serves this
+    /// next to the viewer pack and needs no service. With `window`, only the
+    /// events starting inside it.
+    pub fn capture_stream(&self, window: Option<(u64, u64)>) -> Vec<u8> {
+        let mut out = Vec::new();
+        for frame in self.hello_and_snapshot_frames_in(window) {
+            out.extend_from_slice(&frame);
+        }
+        out.extend_from_slice(&encode_frame(&LiveFrame::CaptureFinished));
+        out
+    }
+
+    pub fn hello_and_snapshot_frames_in(&self, window: Option<(u64, u64)>) -> Vec<Vec<u8>> {
         use orbit_live_event::LIVE_EVENT_SIZE;
         let mut frames = vec![encode_frame(&LiveFrame::Hello {
             version: VERSION,
@@ -733,7 +751,10 @@ impl LiveService {
         }
         let stats = self.stats();
         frames.push(encode_frame(&self.status_frame(&stats)));
-        let (_, events) = self.ring().snapshot();
+        let (_, mut events) = self.ring().snapshot();
+        if let Some((a, b)) = window {
+            events.retain(|e| e.start_ns >= a && e.start_ns <= b);
+        }
         if !events.is_empty() {
             // Chunk so one WS message stays reasonable.
             let wire = self.wire();

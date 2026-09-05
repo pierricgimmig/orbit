@@ -1,0 +1,54 @@
+Phase 13 -- the project web site with an embedded capture (TODO item 25)
+========================================================================
+Date: 2026-09-04.
+
+What it is
+----------
+tools/site/build_site.py assembles a static directory: the viewer pack,
+one capture the front page opens with no service behind it, the manual
+rendered from docs/manual/*.md, the blog, the screenshots and the latest
+e2e report. tools/site/serve.py serves it with the cross-origin isolation
+headers the viewer's worker pool wants. Standard library only.
+
+The design decision: how does a static page open a capture?
+-----------------------------------------------------------
+Option A was Parquet in the browser: compile the parquet/arrow crates into
+the viewer's WASM and open .orbit.zip directly. Pure Rust, so it would
+build; but it is several MB of WASM for a reader the page uses once, and
+a second decode path to keep correct.
+
+Option B, taken: a new export format, `stream`, which is exactly the bytes
+a connecting viewer receives over the WebSocket -- Hello, interned names,
+thread and process names, status, the events as packed batches -- ended by
+a CaptureFinished so the view fits. The viewer fetches the file and feeds
+it to the same frame decoder it uses for the socket. No new format on the
+viewer side, no new dependency, ~60 lines: `?capture=<url>` and an
+offline Net that drops every request that would have gone to a service.
+
+Sizes, same capture (OrbitTestRust, 4 s, e2e run):
+  .orbit.zip bundle (Parquet)   2,153,445 bytes
+  .orbit.stream (packed wire)   2,486,977 bytes  (+15%)
+The bundle stays the archival format (Parquet, sliceable on disk, opens in
+pandas); the stream is what a web page serves. A site with many captures
+would want the stream deflated by the host (Content-Encoding), which the
+viewer never sees.
+
+Front page (Box3D, 3 threads, 4 s): 191,918 events, 2.1 MB stream.
+
+Measured (e2e `website`, headless Chrome / SwiftShader)
+-------------------------------------------------------
+  215,938 events shown of 215,938 on the service (100%)
+  6.3 s from navigation to the first events in the embedded viewer
+  (the page loads the 8 MB pack + a 2.4 MB stream; the wait_for polls at
+  250 ms; a GPU machine on a LAN is well under that)
+
+Screenshots: docs/screenshots/22-website.png (the front page with the
+embedded viewer), 23-static-viewer.png (the viewer alone on a stream).
+
+What works with no service: timeline, focus, selection, scope highlight,
+Live tab and histogram, Self pane. Hidden or inert on the site: Record,
+Demo, Open, Clear, Save, the process row, and the sampling report tabs,
+which the service computes (a viewer-side flat report over the sampled
+frames it already holds is the natural next step).
+
+Serving on the LAN: python3 tools/site/serve.py --dir site --port 8081

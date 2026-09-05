@@ -590,6 +590,10 @@ pub struct OrbitLiveApp {
     /// True while the self pane's timeline is drawing, so its rows stay out
     /// of the `__orbit_ui` readout.
     in_self_pane: bool,
+    /// The page opened a capture file (`?capture=<url>`) and has no
+    /// service: nothing is polled, and the pills that need one are not
+    /// shown. The static web site's mode.
+    static_capture: Option<String>,
     /// Last frame's per-lane listing rows (TODO item 21); swapped with the
     /// self pane's like the rest of the timeline state.
     listing_cache: orbit_live_render::ListingCache,
@@ -1130,7 +1134,11 @@ impl OrbitLiveApp {
         let intern = InternTable::default();
         let dev_locked_off = crate::dev::query_dev_locked_off_from_location();
         let dev = false;
-        let net = Net::connect();
+        let static_capture = crate::dev::query_capture_url_from_location();
+        let net = match &static_capture {
+            Some(url) => Net::from_capture_url(url),
+            None => Net::connect(),
+        };
         net.stop_self();
         let mut has_gpu = false;
         if let Some(rs) = &cc.wgpu_render_state {
@@ -1268,7 +1276,7 @@ impl OrbitLiveApp {
             self_tl: TimelineState::fresh(),
             gpu_slot: 0,
             canvas_override: None,
-            capture_open: true,
+            capture_open: static_capture.is_none() && (true),
             process_filter: String::new(),
             opt_api: true,
             opt_csw: true,
@@ -1291,6 +1299,7 @@ impl OrbitLiveApp {
             content_t1: None,
             user_set_view: false,
             in_self_pane: false,
+            static_capture: static_capture.clone(),
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
             trace_args: HashMap::new(),
@@ -2234,8 +2243,6 @@ impl OrbitLiveApp {
                 if !self.file_trace_active() {
                     self.index.clear();
                     self.live_all.clear();
-                self.live_all.clear();
-        self.live_all.clear();
                     self.thread_names.clear();
                     self.trace_processes.clear();
                     self.hover = None;
@@ -2490,6 +2497,12 @@ impl OrbitLiveApp {
     }
 
     fn paint_link_dot(&self, ui: &mut Ui) {
+        if let Some(url) = &self.static_capture {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            ui.painter().circle_filled(rect.center(), 4.0, LINK_GREEN);
+            resp.on_hover_text(format!("Capture file {url} — no service"));
+            return;
+        }
         let state = self.link_state();
         let (color, what) = match state {
             LinkState::Connected => (LINK_GREEN, "Connected to the service"),
@@ -2532,7 +2545,8 @@ impl OrbitLiveApp {
             ui.add_space(2.0);
             self.paint_link_dot(ui);
             ui.add_space(8.0);
-            {
+            let has_service = self.static_capture.is_none();
+            if has_service {
                 let recording = self.recording || self.status.demo || self.status.capturing;
                 if recording {
                     if pill(ui, "Stop", true)
@@ -2561,7 +2575,7 @@ impl OrbitLiveApp {
                     }
                 }
             }
-            if !self.status.hooks || !self.status.capturing {
+            if has_service && (!self.status.hooks || !self.status.capturing) {
                 if pill(ui, "Demo", self.status.demo)
                     .on_hover_text("Dummy scopes (no OrbitService attach)")
                     .clicked()
@@ -2573,22 +2587,28 @@ impl OrbitLiveApp {
                     }
                 }
             }
-            self.transport_open(ui);
-            let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
-            if pill(ui, chrome_load::THEVERGE_LABEL, theverge_on)
-                .on_hover_text(
-                    "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
-                )
-                .clicked()
-            {
-                self.begin_trace_load(chrome_load::start_theverge());
-            }
-            if pill(ui, "Capture", self.capture_open)
-                .on_hover_text("Process, sampling, and hooks")
-                .clicked()
-            {
-                self.capture_open = !self.capture_open;
-                self.capture_user = true;
+            if has_service {
+                self.transport_open(ui);
+                let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
+                if pill(ui, chrome_load::THEVERGE_LABEL, theverge_on)
+                    .on_hover_text(
+                        "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
+                    )
+                    .clicked()
+                {
+                    self.begin_trace_load(chrome_load::start_theverge());
+                }
+                if pill(ui, "Capture", self.capture_open)
+                    .on_hover_text("Process, sampling, and hooks")
+                    .clicked()
+                {
+                    self.capture_open = !self.capture_open;
+                    self.capture_user = true;
+                }
+            } else if let Some(url) = &self.static_capture {
+                let name = url.rsplit('/').next().unwrap_or(url);
+                ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED))
+                    .on_hover_text("This page shows a saved capture; there is no service behind it");
             }
             if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
@@ -2599,20 +2619,21 @@ impl OrbitLiveApp {
             {
                 self.self_pane_open = !self.self_pane_open;
             }
-            if pill(ui, "Clear", false)
-                .on_hover_text("Empty the capture: every event, on the service and here")
-                .clicked()
+            if has_service
+                && pill(ui, "Clear", false)
+                    .on_hover_text("Empty the capture: every event, on the service and here")
+                    .clicked()
             {
                 self.clear_everything();
             }
-            if pill(ui, "Save", false)
+            if has_service && pill(ui, "Save", false)
                 .on_hover_text("Download the whole capture as a self-contained .orbit.zip (events, samples, names) — drop it back on the viewer to open it")
                 .clicked()
             {
                 ui.ctx()
                     .open_url(egui::OpenUrl::new_tab("/api/capture/export?format=bundle"));
             }
-            if let Some((a, b)) = self.selection_span() {
+            if let Some((a, b)) = self.selection_span().filter(|_| has_service) {
                 if pill(ui, "Save slice", false)
                     .on_hover_text("Download the selected time slice as a self-contained capture (.orbit.zip)")
                     .clicked()
@@ -5876,23 +5897,26 @@ impl eframe::App for OrbitLiveApp {
                     self.tick_follow(dt, hold_window);
                 }
                 let now = ctx.input(|i| i.time);
-                if now - self.last_status_request > 0.25 {
+                let has_service = self.static_capture.is_none();
+                if has_service && now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
                 }
                 // A closed WebSocket is retried every couple of seconds, so a
                 // restarted service picks the page back up on its own.
-                if !self.ws_ok && now - self.last_ws_retry_s > 2.0 {
+                if has_service && !self.ws_ok && now - self.last_ws_retry_s > 2.0 {
                     self.last_ws_retry_s = now;
                     self.net.reconnect_ws_if_closed();
                     self.tick_capture_net(now);
                 }
-                if should_poll_processes(
-                    self.processes.is_empty(),
-                    self.capture_open,
-                    now,
-                    self.last_process_request,
-                ) {
+                if has_service
+                    && should_poll_processes(
+                        self.processes.is_empty(),
+                        self.capture_open,
+                        now,
+                        self.last_process_request,
+                    )
+                {
                     self.last_process_request = now;
                     self.net.get_processes();
                 }

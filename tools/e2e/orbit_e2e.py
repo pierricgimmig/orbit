@@ -706,12 +706,13 @@ def scope_report(run):
     x, y, w, h = run.rect("row:scheduler")
     head_right = x + w  # the header column's right edge: the canvas starts here
     canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
-    opened = False
     # Zoom in first (W held, pointer over the first thread) so the scopes
     # are a few pixels wide rather than sub-pixel columns, then sweep the
-    # thread rows until the right-click lands on a manual scope (kind 1):
-    # the menu opens and `scope_menu` in the readout says what was picked.
-    # A sampled frame opens the menu too; keep going past those.
+    # thread rows. A right-click that lands on a manual scope (kind 1)
+    # opens the menu and `scope_menu` in the readout says so; a sampled
+    # frame opens it too, and a scope shorter than the sampling period has
+    # no samples inside it, so keep going past both until the scoped report
+    # has substance.
     canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
     first = sorted(lanes.items())[0][1]
     run.chrome.move(head_right + (canvas_right - head_right) * 0.5, first[1] + first[3] * 0.5)
@@ -719,37 +720,45 @@ def scope_report(run):
     time.sleep(1.5)
     run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="w", code="KeyW", windowsVirtualKeyCode=87)
     time.sleep(0.5)
-    for _, (lx, ly, lw, lh) in sorted(lanes.items()):
-        if ly > canvas_h:
-            continue  # below the fold
-        for dy in (0.3, 0.4, 0.5, 0.2, 0.6, 0.7, 0.8, 0.15, 0.9):
-            if ly + lh * dy > canvas_h:
-                continue
-            for frac in (0.5, 0.3, 0.7):
-                px = head_right + (canvas_right - head_right) * frac
-                run.chrome.click(px, ly + lh * dy, button="right")
-                time.sleep(0.5)
-                menu = run.sel().get("scope_menu")
-                if menu and menu[2] == KIND_API_SCOPE:
-                    opened = True
-                    break
-                if menu:
-                    run.chrome.key("Escape")
-                    time.sleep(0.3)
-            if opened:
-                break
-        if opened:
+
+    def sweep():
+        for _, (lx, ly, lw, lh) in sorted(lanes.items()):
+            if ly > canvas_h:
+                continue  # below the fold
+            for dy in (0.3, 0.4, 0.5, 0.2, 0.6, 0.7, 0.8, 0.15, 0.9):
+                if ly + lh * dy > canvas_h:
+                    continue
+                for frac in (0.5, 0.3, 0.7):
+                    yield head_right + (canvas_right - head_right) * frac, ly + lh * dy
+
+    report = None
+    tried = []
+    for px, py in sweep():
+        run.chrome.click(px, py, button="right")
+        time.sleep(0.5)
+        menu = run.sel().get("scope_menu")
+        if not menu:
+            continue
+        if menu[2] != KIND_API_SCOPE:
+            run.chrome.key("Escape")
+            time.sleep(0.3)
+            continue
+        run.shot("13-scope-menu", settle=0.5)
+        run.click("menu:report")
+        sel = run.wait_for(lambda: run.sel() if run.sel().get("scope_report") else None, "the scoped report")
+        name_id, name = sel["scope_report"]
+        # The viewer asked the service for the report over this scope's
+        # instances; ask the same question and check it has substance.
+        candidate = run.service.get(f"/api/sampling/report?scope={name_id}")
+        tried.append((name, candidate.get("range_count", 0), candidate.get("samples", 0)))
+        if candidate.get("samples", 0) >= 1:
+            report = candidate
             break
-    check(opened, "no right-click on the thread rows landed on a manual scope")
-    run.shot("13-scope-menu", settle=0.5)
-    run.click("menu:report")
-    sel = run.wait_for(lambda: run.sel() if run.sel().get("scope_report") else None, "the scoped report")
-    name_id, name = sel["scope_report"]
-    # The viewer asked the service for the report over this scope's
-    # instances; ask the same question and check it has substance.
-    report = run.service.get(f"/api/sampling/report?scope={name_id}")
+        run.chrome.key("Escape")
+        run.wait_for(lambda: not run.sel().get("scope_report"), "Escape to drop the empty report")
+    check(tried, "no right-click on the thread rows landed on a manual scope")
+    check(report is not None, f"no scope with samples inside it; tried {tried}")
     check_at_least(report.get("range_count", 0), 1, f"instances of {name!r} the report is scoped to")
-    check_at_least(report.get("samples", 0), 1, f"samples inside {name!r}")
     run.shot("14-scope-report", settle=2.0)
     run.chrome.key("Escape")
     run.wait_for(lambda: not run.sel().get("scope_report"), "Escape to drop the scoped report")
@@ -982,6 +991,76 @@ def wire_and_perf(run):
     return note
 
 
+
+@scenario("website", "The static site embeds a capture the viewer opens with no service")
+def website(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    stream = run.service.get("/api/capture/export?format=stream")
+    check(isinstance(stream, bytes) and len(stream) > 1000, "the stream export is empty")
+    events = run.service.get("/api/status")["events_live"]
+    os.makedirs(SCRATCH, exist_ok=True)
+    stream_path = os.path.join(SCRATCH, "site.orbit.stream")
+    with open(stream_path, "wb") as handle:
+        handle.write(stream)
+    site = os.path.join(SCRATCH, "site")
+    shutil.rmtree(site, ignore_errors=True)
+    build = subprocess.run(
+        [sys.executable, os.path.join(REPO, "tools/site/build_site.py"), "--out", site,
+         "--stream", stream_path, "--name", "e2e"],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(build.returncode == 0, f"build_site.py failed: {build.stderr[-400:]}")
+    for needed in ("index.html", "viewer/orbit_live_viewer_bg.wasm", "captures/e2e.orbit.stream",
+                   "manual/index.html", "blog/index.html", "e2e/report.html", "site.css"):
+        check(os.path.exists(os.path.join(site, needed)), f"the site is missing {needed}")
+    port = run.service.port + 7
+    server = subprocess.Popen(
+        [sys.executable, os.path.join(REPO, "tools/site/serve.py"), "--dir", site, "--port", str(port),
+         "--bind", "127.0.0.1"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        base = f"http://127.0.0.1:{port}"
+        run.wait_for(lambda: _http_ok(base + "/index.html"), "the site server")
+        # The front page embeds the viewer in an iframe; its readout is
+        # reachable from the page because both are one origin.
+        started = time.time()
+        run.chrome.goto(base + "/index.html", settle=6.0)
+        sel_js = ("(()=>{const f=document.querySelector('iframe');"
+                  "const s=f&&f.contentWindow&&f.contentWindow.__orbit_sel;return s||null})()")
+        shown = run.wait_for(
+            lambda: (lambda s: json.loads(s)["events"] if s else 0)(run.chrome.eval(sel_js)) or None,
+            "events in the embedded viewer", timeout=30,
+        )
+        seconds = time.time() - started
+        check_at_least(shown, int(events * 0.9), "events the embedded viewer shows of the service's")
+        run.shot("22-website", settle=2.0)
+        # The viewer page alone, as the "Open full page" link opens it.
+        run.chrome.goto(f"{base}/viewer/index.html?capture=../captures/e2e.orbit.stream&collapse=scheduler", settle=6.0)
+        sel = run.wait_for(lambda: run.sel() if run.sel().get("events") else None, "the full-page viewer", timeout=30)
+        check(sel["hellos"] >= 1, "the stream's Hello frame was read")
+        run.shot("23-static-viewer", settle=2.0)
+        run.perf["stream_bytes"] = len(stream)
+        run.perf["site_first_events_s"] = round(seconds, 1)
+        return f"{shown} events from a {len(stream)//1024} KB stream, {seconds:.1f} s to first events"
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+
+
+def _http_ok(url):
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return response.status == 200
+    except Exception:  # noqa: BLE001 - not up yet
+        return False
+
+
 # --------------------------------------------------------------------- main
 
 def main():
@@ -1062,7 +1141,7 @@ def write_report(path, results, perf, shots_dir):
         lines.append(f"| {name} | {verdict} | {seconds:.1f}s | {(note or '').replace('|', '/')} |")
     lines += ["", "## Numbers", ""]
     if perf:
-        for key in ("wire", "events", "ws_bps_during_capture", "bundle_bytes", "slice_bytes"):
+        for key in ("wire", "events", "ws_bps_during_capture", "bundle_bytes", "slice_bytes", "stream_bytes", "site_first_events_s"):
             if key in perf:
                 lines.append(f"- {key}: {perf[key]}")
         if "status" in perf:
