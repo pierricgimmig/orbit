@@ -214,8 +214,24 @@ Timestamped notes attached to the capture, rendered as markers on the
 timeline. URL deep-links straight to an annotation. Turns a capture
 from a dump into a conversation.
 
+Restated by the owner on 2026-09-05:
+
+annotation feature, useful when sharing captures, or getting back to an
+old capture, we need to think of a nice ux
+
 **Status: not started.** The manifest already carries per-capture
 metadata (names, slice window), which is where annotations would live.
+The two uses to design for are sharing (someone else opens the capture
+and reads why it was taken and where to look) and returning to an old
+one months later. Open UX questions, to settle before writing code: what
+an annotation attaches to -- a time, a time range, a scope instance, a
+report row, or a whole track -- and whether that anchor survives a
+re-capture; how a note is created (a keystroke on the selection, a
+right-click, a comment box in the report); how notes are shown without
+crowding the timeline (a marker rail above the tracks, opened on hover
+or click, versus an always-visible pane listing them in time order);
+and who wrote one, once captures are shared. Deep links share the URL
+scheme with 13 and 25.
 
 ## 16. Diff mode
 
@@ -405,7 +421,7 @@ symbol of the process with a hooked column (2026-09-04), replacing the
 pills in the capture row; uprobes are the default method. A unit test
 (`a_uprobe_fires_on_a_function_of_this_process`) arms a probe on the test
 binary's own function and checks the paired calls; unprivileged it prints
-UPROBE TEST SKIPPED, with CAP_PERFMON it asserts. Not done: hooking from
+UPROBE TEST SKIPPED, with CAP_SYS_ADMIN it asserts (the uprobe PMU checks that capability, not CAP_PERFMON: measured 2026-09-05). Not done: hooking from
 the Flame tab and from the timeline's sampled frames.
 
 
@@ -456,7 +472,7 @@ make a website that will be the official website, with landing page, manual, but
 
 stress test for dynamic instrumentation: OrbitTestRust takes a thread count and a call rate, an e2e scenario hooks its three functions and checks the capture call for call (counts, depths, containment, the healing equation), blog post of its own
 
-  DONE 2026-09-05, unprivileged path only: `dyn-instr-stress` (skips with the CAP_PERFMON refusal here; `--sudo` runs the service as root), `tools/e2e/check_stress.py`, blog post 19 "Call for Call", metrics/phase-16-dynamic-instrumentation-stress.txt awaiting the first privileged run.
+  DONE 2026-09-05: `dyn-instr-stress`, `tools/e2e/check_stress.py`, blog post 19 "Call for Call", metrics/phase-16-dynamic-instrumentation-stress.txt. First privileged runs 2026-09-05/06 through tools/sudo: 360,000 and 720,000 scopes in a second with nothing lost and nothing at the wrong depth; from 1.44 M scopes/s the per-CPU rings overflow (records lost by the kernel), which is the open item below. The kernel wants CAP_SYS_ADMIN for uprobes, not CAP_PERFMON; message and manual corrected.
 
 five viewer notes (2026-09-05): sampling misses threads created during the capture; expand/collapse all shift the report's title row; graphs zoomed out omit the points outside the window; the Self pane should open the viewer's rows and name its graphs, with a value readout where the cursor crosses every graph; a vertical cursor line across the tracks like C++ Orbit
 
@@ -470,25 +486,8 @@ three viewer notes (2026-09-05): the report splitter only moved one way; threads
 
 Every note from 2026-09-05 is done. What remains, by readiness:
 
-- Waiting on a privileged run: `python3 tools/e2e/orbit_e2e.py --only
-  dyn-instr-stress --sudo --no-shots`, whose numbers go into blog post 19
-  and metrics/phase-16, and which confirms the frame pairing on a real
-  capture.
-- Deferred by the owner for now: the official website with presigned S3
-  upload URLs (items 13, 25, 26; needs the bucket credentials); 14, the
-  GitHub Action, which depends on it; 15, annotations with deep links; 16,
-  diff mode, and 18, the regression detector on it; 19, agent-driven
-  continuous analysis (needs 12, 13, 18); 20, the consumer diagnostic
-  daemon.
-- Done with leftovers: rendering (the transport strip 0.15 ms and the
-  report's visible rows 0.17 ms per frame; the browser side, which only a
-  real GPU can measure); 12, the MCP layer and links for agent scopes; 21,
-  per-lane GPU buffers, compute-shader rasterization, the level pyramid
-  and per-bucket palette; 28, C++ demangling in the Rust service; 29,
-  hooking from the Flame tab and from the timeline's sampled frames, and
-  the user-space trampolines.
-- Deferred, other machines: 7 and 8, the Windows and macOS capture
-  backends and shared-memory ring (docs/windows-agent-brief.md).
+- Privileged runs happen through `tools/sudo` now (a wrapper with a NOPASSWD sudoers rule, root-equivalent by the user's decision on 2026-09-05); `--sudo` in the e2e harness uses it. The stress numbers are in blog post 19 and the phase-16 metrics file.
+- Open: the uprobe drain ceiling. At 1.44 M scopes/s (2.9 M hits/s) the 1 MB per-CPU rings overflow before the single 5 ms-poll drain thread reaches them, worst when few threads run at high rates (8 x 20 kHz loses 15.9 %, 16 x 10 kHz 1.07 %). Bigger rings, a drain per CPU or a pool, and a loss counter in the viewer's status line.
 
 Recommendation: annotations (15) is small and self-contained and makes a
 shared capture a conversation once the website exists; diff mode (16) is
@@ -526,3 +525,57 @@ per-line sample counts and the heatmap sidebar (needs the pc of every
 sample per function), navigating to a call target, arm64 disassembly, and
 a path-mapping dialog for sources not under a served root.
 
+
+## 31. Read perf event layouts from sysfs — nothing hard-coded
+
+make sure we read perf event layouts from sysfs, don't hardcode
+anything, we need a service executable to work cross-kernel
+
+**Status: partly done.** Already read at runtime: the uprobe PMU's type
+number and its `retprobe` config bit
+(`/sys/bus/event_source/devices/uprobe/{type,format/retprobe}`),
+tracepoint ids (`/sys/kernel/tracing/events/*/*/id`, with the older
+`/sys/kernel/debug/tracing` as fallback), and
+`/proc/sys/kernel/perf_event_max_stack` — all in
+`rust/crates/orbit-perf-ring/src/attr.rs`. What is still hard-coded is
+the shape of the tracepoint `RAW` payloads:
+`rust/crates/orbit-perf-records/src/tracepoints.rs` carries the field
+offsets of `sched_switch`, `sched_wakeup`, `sched_process_fork`/`exit`
+and the `amdgpu`/`dma_fence` events by hand, ported offset for offset
+from the C++ `KernelTracepoints.h`. Those offsets are what actually move
+between kernels (v5.14 already dropped `sched_wakeup`'s `success` field),
+so the fix is to parse each event's `format` file at capture start and
+build the field offsets from it, falling back to the compiled-in layout
+only if the file cannot be read. Same treatment for anything else read by
+constant, and a check that a kernel missing an event degrades to "this
+machine cannot do X" instead of misparsing.
+
+## 32. Logging, correlated with the viewer by time and thread id
+
+a logging feature, that we can correlate with the viewer from time and
+thread id
+
+**Status: not started.** A log line carries a timestamp and a thread id,
+which is exactly what a track row is keyed by, so the viewer can put a
+log next to the scope that emitted it: a per-thread log lane or marker
+row, a log pane filtered by the current selection, and a click that
+jumps between a line and the scope containing it. Needs a decision on
+where lines enter — the API the profiled process calls, a `tracing`/
+`spdlog` sink, or the service reading an existing stream — and on the
+clock, which must be the capture clock so the correlation is exact
+rather than approximate.
+
+## 33. Payload on a scope — displayed, not aggregated
+
+a way to add a "payload" to a scope, that could be a dynamic string for
+example, which would get displayed in scope, but not used in the
+aggregation
+
+**Status: not started.** The scope keeps its interned name for every
+report and tree (so aggregation is unchanged), and carries an extra
+per-instance value — a string, and probably a number too — that the
+timeline draws in the box and the tooltip shows in full. Touches the
+wire format (a variable-length field per scope event), the ring's fixed
+record size, the Parquet schema (its own column, dictionary-encoded),
+and the timeline's text layout. Related to 32: a payload is a log line
+with a scope's lifetime.

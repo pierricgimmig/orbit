@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn arming_reaches_the_uprobe_pmu_even_when_it_is_refused() {
-        // Without CAP_PERFMON the kernel refuses in perf_uprobe_event_init,
+        // Without CAP_SYS_ADMIN the kernel refuses in perf_uprobe_event_init,
         // so this cannot assert that a probe fires. What it can assert is
         // *which* refusal comes back: EACCES means the attr routed to the
         // uprobe PMU and was turned away on privilege. A wrong PMU type or a
@@ -833,13 +833,13 @@ mod tests {
     /// A probe actually fires: this process arms entry and return probes on
     /// `orbit_uprobe_test_target` in its own binary, a thread calls it in a
     /// loop, and the paired calls come back with sane durations on that
-    /// thread. Uprobes need CAP_PERFMON, so unprivileged this prints that it
+    /// thread. Uprobes need CAP_SYS_ADMIN, so unprivileged this prints that it
     /// is skipped and passes; the run that proves the feature is
     ///
     ///     cargo test -p orbit-service --no-run   (note the test binary path)
     ///     sudo <that binary> a_uprobe_fires -- --nocapture
     ///
-    /// or the same with `sudo setcap cap_perfmon+ep` on the test binary.
+    /// or the same with `sudo setcap cap_sys_admin,cap_perfmon+ep` on the test binary.
     #[test]
     fn a_uprobe_fires_on_a_function_of_this_process() {
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -902,7 +902,7 @@ mod tests {
                 failure.contains("Permission denied") || failure.contains("Operation not permitted"),
                 "the probe was refused for a reason other than privilege: {failure}"
             );
-            eprintln!("UPROBE TEST SKIPPED: needs CAP_PERFMON ({failure})");
+            eprintln!("UPROBE TEST SKIPPED: needs CAP_SYS_ADMIN ({failure})");
             return;
         }
         ARMED.store(true, Ordering::SeqCst);

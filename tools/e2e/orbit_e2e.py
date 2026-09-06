@@ -128,12 +128,22 @@ class Service:
         self.base = f"http://127.0.0.1:{port}"
         self.log = open(f"/tmp/orbit-e2e-service-{port}.log", "w")
         self.sudo = SUDO if sudo is None else sudo
-        prefix = ["sudo", "-n", "--"] if self.sudo else []
+        # Through the wrapper tools/sudo/install.sh installs, when it is
+        # there: its sudoers rule needs no password and is tied to the
+        # binary's name, so a rebuilt or relocated service still qualifies.
+        wrapper = "/usr/local/bin/orbit-service-sudo"
+        prefix = []
+        if self.sudo:
+            prefix = ["sudo", "-n", "--"] + ([wrapper] if os.path.exists(wrapper) else [])
+            binary = os.path.abspath(binary)
         # sudo relays the SIGTERM `stop` sends, so the service exits either way.
         self.proc = subprocess.Popen(
             prefix + [binary, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
         )
         self._wait_ready()
+        # The service's own pid: under sudo, `proc` is sudo (and the wrapper
+        # behind it), and the service is a grandchild.
+        self.pid = self.get("/api/status").get("service_pid") or self.proc.pid
 
     def _wait_ready(self, timeout=30.0):
         deadline = time.time() + timeout
@@ -553,7 +563,7 @@ def self_instrumentation(run):
         run.service.post("/api/capture/stop")
         time.sleep(1.5)
         log = run.service.stderr_text()
-        service_pid = run.service.proc.pid
+        service_pid = run.service.pid
         check(
             f"opened segment of pid {service_pid}" in log,
             f"the service did not open its own segment (pid {service_pid}); log tail: {log[-500:]}",
@@ -613,10 +623,11 @@ def instrumentation(run):
     message = status.get("instrumentation", "")
     check(message != "", "the service said nothing about the hooks it was asked to arm")
     run.stop_capture()
-    # Uprobes need CAP_PERFMON. Unprivileged, the correct outcome is a clear
+    # Uprobes need CAP_SYS_ADMIN (the kernel's uprobe PMU checks that one,
+    # not CAP_PERFMON). Unprivileged, the correct outcome is a clear
     # refusal naming the fix -- not silence, and not a crash.
     if "no hooks armed" in message:
-        check("CAP_PERFMON" in message, f"refusal does not name the capability: {message}")
+        check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
         return f"skipped: {message.split('.')[0]}"
     check("instrumenting" in message, f"unexpected instrumentation status: {message}")
     # Privileged: the hooked function's calls must be scopes on the target's
@@ -699,7 +710,7 @@ def _week_capture(run, seconds=4.0):
     finally:
         app.stop()
     WeekCapture.pid = app.pid
-    WeekCapture.service_pid = run.service.proc.pid
+    WeekCapture.service_pid = run.service.pid
     WeekCapture.taken = True
 
 
@@ -1190,7 +1201,7 @@ def hook_from_report(run):
     run.stop_capture()
     check(message, "the service said nothing about the hook it was asked to arm")
     if "no hooks armed" in message:
-        check("CAP_PERFMON" in message, f"refusal does not name the capability: {message}")
+        check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
         return f"hooked {name!r}; arming skipped: {message.split('.')[0]}"
     check("instrumenting" in message, f"unexpected instrumentation status: {message}")
     return f"hooked {name!r}: {message}"
@@ -1246,7 +1257,7 @@ def dyn_instr_stress(run):
         check(message, "the service said nothing about arming the hooks")
         if "no hooks armed" in message:
             run.service.post("/api/capture/stop")
-            check("CAP_PERFMON" in message, f"refusal does not name the capability: {message}")
+            check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
             return f"skipped: {message.split('.')[0]} (run with --sudo)"
         check("instrumenting 3 of 3" in message, f"not every function armed: {message}")
         app.go()
@@ -1291,12 +1302,25 @@ def dyn_instr_stress(run):
               f"{verdict['outer_inside_something']} outer scopes nested inside another scope")
         check(calls_seen == sum(verdict["observed"].values()),
               f"status line says {calls_seen} calls, the bundle holds {sum(verdict['observed'].values())}")
-        # Every hit the kernel lost is one scope missing and one count on the
-        # status line: the two must agree, or the pairing is inventing or
-        # hiding something.
-        check(verdict["missing_total"] == healed,
-              f"{verdict['missing_total']} scopes missing but the pairing healed {healed} "
-              f"({dup} dup, {discarded} unclosed, {orphans} orphan)")
+        with open(f"/tmp/orbit-e2e-stress-{run.service.port}.json", "w") as out:
+            json.dump(run.perf["stress"], out, indent=1)
+        # Every hit the pairing gave up on is one scope missing and one count
+        # on the status line: the two must agree, or the pairing is inventing
+        # or hiding something. A dropped duplicate is the one count that
+        # need not cost a scope: a hit the kernel re-reported at a migration
+        # is dropped for free, a real call misjudged as one goes missing. So
+        # the hole is at least the unclosed and orphan counts, and at most
+        # those plus the duplicates. Records the kernel lost outright never
+        # reach the pairing, so with any of those the floor still holds and
+        # the one-percent ceiling below is what fails.
+        floor = discarded + orphans
+        check(floor <= verdict["missing_total"],
+              f"{verdict['missing_total']} scopes missing but the pairing gave up on {floor} "
+              f"({discarded} unclosed, {orphans} orphan)")
+        if lost_records == 0:
+            check(verdict["missing_total"] <= floor + dup,
+                  f"{verdict['missing_total']} scopes missing, more than the pairing gave up on "
+                  f"({discarded} unclosed, {orphans} orphan, {dup} dup) with no records lost")
         # A lost hit can put the scopes under it one level off until it is
         # healed: at most 8 (an outer's 2 middles and 6 inners) per loss.
         check(verdict["depth_wrong_total"] <= 8 * healed,

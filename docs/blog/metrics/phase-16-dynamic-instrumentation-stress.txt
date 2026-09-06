@@ -8,9 +8,10 @@ checker tools/e2e/check_stress.py. Blog post 19, "Call for Call".
 Tree: outer -> 2 x middle -> 3 x inner. Expected scopes: N*K outer at
 depth 0, 2*N*K middle at depth 1, 6*N*K inner at depth 2.
 
-Run 0, 2026-09-05, unprivileged (no CAP_PERFMON in this session):
+Run 0, 2026-09-05, unprivileged (no CAP_SYS_ADMIN in this session):
   python3 tools/e2e/orbit_e2e.py --only dyn-instr-stress --no-shots
-  -> PASS in 0.6 s, "skipped: no hooks armed: uprobes need CAP_PERFMON
+  -> PASS in 0.6 s, "skipped: no hooks armed: uprobes need CAP_PERFMON (the
+     message of the time; the kernel wants CAP_SYS_ADMIN, see below)
      (run with --sudo)". The program alone (4 x 5 kHz x 5000) makes
      20,000 outer / 40,000 middle / 120,000 inner in 1.00 s; the checker's
      self-test (--self-test) passes.
@@ -23,3 +24,66 @@ the report's perf table ("stress"):
   duplicates dropped, unclosed discarded, orphan returns, records lost
   scopes at wrong depth, outside parent
   loss %, durations (min / p50 / max) per function
+
+Kernel finding, 2026-09-05: the uprobe PMU is gated on capable(CAP_SYS_ADMIN)
+(kernel/events/core.c, perf_uprobe_event_init, v7.0 line 11562). A process
+holding only CAP_PERFMON gets EACCES from the minimal uprobe attr while the
+same capability is honoured for attr.namespaces (C probe, this session).
+The service's refusal message and the manual were corrected. Privileged runs
+below go through /usr/local/bin/orbit-service-sudo (tools/sudo), which gives
+the service CAP_SYS_ADMIN, CAP_PERFMON and CAP_DAC_READ_SEARCH under the
+user's uid.
+
+Run 1, 2026-09-05 16:58 UTC, rixbox, Linux 7.0.0-30-generic (32 CPUs),
+ORBIT_E2E_STRESS=8,5000,5000 (the default):
+  360000 of 360000 scopes, 0.000% lost; 0 dup, 0 unclosed, 0 orphan, 0
+  records lost, 0 at wrong depth, 0 outside parent. PASS in 4.3 s.
+  armed 3 of 3 hooks (192 probes = 3 functions x 2 x 32 CPUs).
+
+Sweep, 2026-09-06 00:03-00:10 UTC, same machine; expected = N*K outer,
+2*N*K middle, 6*N*K inner, the program's own second of work:
+
+  threads x Hz x calls   scopes     observed   missing   loss    dup unclosed orphan  records lost  depth wrong  outside
+  8  x  5000 x  5000     360,000    360,000          0  0.000%     1        0      0             0            0        0
+  16 x  5000 x  5000     720,000    720,000          0  0.000%     0        0      0             0            0        0
+  16 x 10000 x 10000   1,440,000  1,424,535     15,465  1.07%      0       70     13        30,847           15       73
+  8  x 20000 x 20000   1,440,000  1,211,008    228,992  15.9%      1      445    188       457,351          208      508
+  16 x 20000 x 20000   2,880,000  1,565,261  1,314,739  45.7%      0      488    302     2,584,248          331      594
+
+  Durations (min / p50 / max, ns), outer -> middle -> inner:
+  8x5k:    outer 21,495 / 24,780 / 274,580   middle 8,805 / 10,066 / 126,854   inner 1,170 / 1,399 / 101,148
+  16x5k:   outer 21,991 / 40,033 / 385,930   middle 8,983 / 16,109 / 247,176   inner 1,190 / 1,927 / 103,841
+  16x10k:  outer 21,671 / 39,691 / 5,039,678 middle 8,799 / 15,989 / 4,995,878 inner 1,162 / 1,930 / 4,891,269
+  8x20k:   outer 21,656 / 23,990 / 8,341,671 middle 8,803 / 9,737 / 8,298,583  inner 1,159 / 1,393 / 8,284,487
+  16x20k:  outer 21,941 / 40,521 / 18,043,311 middle 8,924 / 16,305 / 18,018,905 inner 1,172 / 1,990 / 18,006,668
+
+  Reading: up to 720,000 scopes (1.44 M probe hits) in a second, nothing is
+  lost and nothing is at the wrong depth. From 1.44 M scopes/s (2.9 M hits)
+  the kernel reports lost records: the per-CPU rings (256 pages, 1 MB each)
+  overflow before the single drain thread (5 ms poll) gets to them, and
+  what the kernel drops never reaches the pairing, so the pairing's own
+  counts (hundreds) are far below the hole (thousands to a million). The
+  same total rate on fewer threads loses more (8 x 20 kHz: 15.9 % against
+  16 x 10 kHz: 1.07 %): a thread at 20 kHz pours 360,000 hits/s into one
+  CPU's ring, which fills in ~40 ms. The ms-scale maxima in the lossy runs
+  are pairing artefacts across a hole, not calls that took that long.
+
+  The healing equation, refined by run 1's sibling 8x5k run (1 dup, 0
+  missing): a dropped duplicate costs a scope only when the filter
+  misjudged a real call, so missing is bounded by unclosed + orphan below
+  and unclosed + orphan + dup above, and with records lost only the floor
+  is checked (the 1 % ceiling is what fails).
+
+  The one duplicate in a 360,000-scope run, at 0 missing, is the number
+  the filter's future is decided on: it dropped a real re-report once in
+  720,000 hits and misjudged nothing.
+
+  Other privileged scenarios through the wrapper, first ever runs:
+  instrumentation (63,613 hooked spans, longest 3.39 ms), hook-from-report
+  (b3MulW armed, 64 probes), thread-states, self-instrumentation: all pass.
+
+Open: the drain ceiling. Bigger rings and a drain per CPU (or a drain
+thread pool) would raise the 1.4 M scopes/s mark; the pairing itself was
+not the limit in any run (it never fell behind a ring that had not
+overflowed).
+

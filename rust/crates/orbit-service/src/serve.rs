@@ -747,13 +747,15 @@ fn capture_loop(
             eprintln!("orbit-service: hook not armed -- {failure}");
         }
         if report.probe_count == 0 {
-            // The kernel gates the uprobe PMU on CAP_PERFMON in
-            // perf_uprobe_event_init, before perf_event_paranoid is even
-            // consulted, so lowering paranoid does not help and saying it
-            // would send the reader down a dead end.
+            // The kernel gates the uprobe PMU on capable(CAP_SYS_ADMIN) in
+            // perf_uprobe_event_init (kernel/events/core.c), before
+            // perf_event_paranoid is even consulted: lowering paranoid does
+            // not help, and neither does CAP_PERFMON, which the rest of perf
+            // honours -- a process with only that capability gets EACCES
+            // from the very same call (measured on 7.0, 2026-09-05).
             let message = concat!(
-                "no hooks armed: uprobes need CAP_PERFMON. Run the service with sudo, ",
-                "or: sudo setcap cap_perfmon,cap_sys_ptrace+ep <orbit-service>"
+                "no hooks armed: uprobes need CAP_SYS_ADMIN. Run the service with sudo, ",
+                "or: sudo setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep <orbit-service>"
             );
             eprintln!("orbit-service: {message}");
             service.set_instrumentation_status(message);

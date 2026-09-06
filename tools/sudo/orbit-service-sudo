@@ -1,0 +1,57 @@
+#!/bin/bash
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+#
+# Runs an orbit-service binary with the capabilities uprobes need, as the
+# user who asked:
+# any build, any checkout, as long as the file is named orbit-service and
+# belongs to that user. Installed by tools/sudo/install.sh as
+# /usr/local/bin/orbit-service-sudo with a NOPASSWD sudoers rule on
+# exactly this path.
+#
+# Root lasts for the wrapper alone. The service itself runs under the
+# caller's uid with three capabilities in the ambient set: CAP_SYS_ADMIN,
+# which the kernel's uprobe PMU demands (perf_uprobe_event_init checks
+# that one and nothing weaker), CAP_PERFMON for the rest of perf, and
+# CAP_DAC_READ_SEARCH to read tracepoint ids out of a root-only tracefs.
+# Be clear about what that is: CAP_SYS_ADMIN is root in all but name, so
+# a file someone planted under the right name gains the machine. The
+# uid stays yours only so captures and caches are not root-owned.
+#
+#   sudo -n orbit-service-sudo /abs/path/to/orbit-service --serve 44766
+set -eu
+if [ "$#" -lt 1 ]; then
+  echo "usage: orbit-service-sudo /absolute/path/to/orbit-service [args...]" >&2
+  exit 64
+fi
+bin=$1
+shift
+case "$bin" in
+  /*) ;;
+  *) echo "orbit-service-sudo: refused: $bin is not an absolute path" >&2; exit 126 ;;
+esac
+case "$(basename -- "$bin")" in
+  orbit-service|orbit-service-*) ;;
+  *) echo "orbit-service-sudo: refused: $bin is not named orbit-service" >&2; exit 126 ;;
+esac
+if [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
+  echo "orbit-service-sudo: refused: $bin is not an executable file" >&2
+  exit 126
+fi
+user=${SUDO_USER:-}
+uid=${SUDO_UID:-}
+if [ -z "$user" ] || [ -z "$uid" ] || [ "$uid" = 0 ]; then
+  echo "orbit-service-sudo: refused: run it through sudo, as a user" >&2
+  exit 126
+fi
+owner=$(stat -c %u -- "$bin")
+if [ "$owner" != "$uid" ]; then
+  echo "orbit-service-sudo: refused: $bin is owned by uid $owner, not you" >&2
+  exit 126
+fi
+# Back to the caller's uid and groups, keeping the capabilities through
+# the change, then into the ambient set so they survive the exec.
+caps=cap_sys_admin,cap_perfmon,cap_dac_read_search
+exec capsh --keep=1 --user="$user" --inh="$caps" --addamb="$caps" -- \
+  -c 'exec "$0" "$@"' "$bin" "$@"
