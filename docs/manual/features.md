@@ -185,10 +185,17 @@ opens on first load with a service and closes with its ×. Its rows:
 - **Clearing.** Escape, a click on empty canvas, or the chip's × clears the
   focus, the scope pick and the measure at once. Only a header or a scope
   selects; a click on nothing never selects.
+- **Sample bar.** Each thread has a dedicated sample bar, a strip on a
+  slightly lifted background under its scopes, with a white tick per
+  callstack sample, as in C++ Orbit. Hovering a tick shows the callstack;
+  clicking one copies it.
 - **Time selection.** Dragging on the ruler or the sample bar selects a
-  window; the report panel then covers that window. Dragging on one
-  thread's sample bar selects the samples of that thread only ("a tid
-  narrows it further"). Several drags accumulate.
+  window; the report panel then covers that window. A left-drag that
+  starts on one thread's sample bar selects that thread's samples only,
+  and the selection is drawn right on that bar (C++ Orbit's per-thread
+  callstack selection), with the report scoped to the thread. A drag on
+  the ruler or empty space is process-wide and spans the height. Several
+  drags accumulate (Shift adds).
 - **Hook from the report.** Right-clicking a function in the Flat report
   or in a call tree offers "Hook function for dynamic instrumentation"
   (or "Unhook function"). The function joins the capture row's hook list,

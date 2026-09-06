@@ -1397,6 +1397,46 @@ def report_filter(run):
     return f"{len(after)} of {len(before)} rows match 'b3Mul'"
 
 
+@scenario("sample-bar-select", "A left-drag on one thread's sample bar selects that thread's samples, drawn on the bar")
+def sample_bar_select(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler")
+    run.wait_for(lambda: run.sel().get("events"), "events", timeout=20)
+    time.sleep(0.5)
+    bars = {k: v for k, v in run.rects_matching("sample_bar:").items()}
+    check(bars, "no sample bars are drawn")
+    # A bar well inside the viewport.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    inview = sorted((v[1], k) for k, v in bars.items() if 120 < v[1] < canvas_h - 40)
+    check(inview, f"no sample bar in view: {sorted(bars)[:4]}")
+    label = inview[len(inview) // 2][1]
+    tid = int(label.split(":")[2])
+    x, y, w, h = bars[label]
+    cy = y + h * 0.5
+    x0, x1 = x + w * 0.30, x + w * 0.62
+    # A real press-move-release: egui needs the intermediate moves to build
+    # a drag, and the selection only starts when the press lands on the bar.
+    def mouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+    mouse("mousePressed", x0, cy)
+    for i in range(1, 11):
+        mouse("mouseMoved", x0 + (x1 - x0) * i / 10, cy)
+        time.sleep(0.02)
+    run.shot("30-sample-bar-select", settle=0.3)
+    mouse("mouseReleased", x1, cy)
+    ranges = run.wait_for(
+        lambda: (run.sel().get("ranges") or None), "the committed selection", timeout=10
+    )
+    # One range, carrying this thread's tid: the selection is per-thread.
+    tids = [r[2] for r in ranges if len(r) >= 3]
+    check(tid in tids, f"selection is not scoped to thread {tid}: {ranges}")
+    return f"selected {len(ranges)} range(s) on thread {tid}"
+
+
 @scenario("code-views", "Source, disassembly and the two interleaved: the examples, then a Box3D function from the report")
 def code_views(run):
     if run.chrome is None:

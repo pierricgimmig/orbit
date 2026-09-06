@@ -3673,7 +3673,7 @@ impl OrbitLiveApp {
                 && self.trace_load.is_none();
             if empty {
                 paint_empty(ui, body, dropping);
-                paint_selection_overlay(ui, body, self.t0, self.t1, &self.sample_sels, self.measure, true);
+                paint_selection_overlay(ui, body, self.t0, self.t1, &self.sample_sels, self.measure, true, &|_| None);
                 self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
             }
@@ -3720,6 +3720,7 @@ impl OrbitLiveApp {
                     view.origin[0] -= self.listing_pan_pts * ppp;
                 }
                 self.last_view = Some(view);
+                self.paint_sample_bars(ui, body, Some(y_cull));
                 {
                     let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
                     ui.painter().add(paint_callback(body, payload, view, self.gpu_slot));
@@ -3793,7 +3794,16 @@ impl OrbitLiveApp {
                     self.live_edge_ns as f64,
                     self.light_canvas,
                 );
-                paint_selection_overlay(ui, body, self.t0, self.t1, &self.sample_sels, self.measure, true);
+                paint_selection_overlay(
+                    ui,
+                    body,
+                    self.t0,
+                    self.t1,
+                    &self.sample_sels,
+                    self.measure,
+                    true,
+                    &|tid| self.sample_bar_screen_band(body, tid),
+                );
                 paint_flow_arrows(
                     ui,
                     body,
@@ -3841,7 +3851,7 @@ impl OrbitLiveApp {
         // the ruler's white line trailed the lane area's by one frame for the
         // whole drag. Painting it here reads the same `self.measure` the lane
         // overlay just used, whichever region the drag started in.
-        paint_selection_overlay(ui, ruler, self.t0, self.t1, &self.sample_sels, self.measure, false);
+        paint_selection_overlay(ui, ruler, self.t0, self.t1, &self.sample_sels, self.measure, false, &|_| None);
         let fps_area = Rect::from_min_max(
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
@@ -5313,6 +5323,54 @@ impl OrbitLiveApp {
     /// its state bar is not the same gesture as dragging over its sample bar,
     /// and quietly scoping the report from either would make the selection
     /// mean different things in places that look alike.
+    /// A shade for the sample bar's background, a touch off the canvas so
+    /// the bar reads as its own strip (C++ Orbit gives it a lighter row).
+    /// Nudged toward mid-grey, which lifts a dark canvas and settles a light
+    /// one, so it works in both themes.
+    fn sample_bar_color(&self) -> Color32 {
+        let c = self.canvas_color();
+        let mix = |v: u8| -> u8 {
+            let target = if self.light_canvas { 0u8 } else { 255u8 };
+            ((v as f32) * 0.88 + (target as f32) * 0.12) as u8
+        };
+        Color32::from_rgb(mix(c.r()), mix(c.g()), mix(c.b()))
+    }
+
+    /// Fills each thread's sample lane with `sample_bar_color`, a strip behind
+    /// the white sample ticks. Drawn before the timeline callback so the ticks
+    /// sit on top.
+    fn paint_sample_bars(&self, ui: &Ui, body: Rect, y_cull: Option<YCull>) {
+        let scale = self.tracks.scale.max(0.01);
+        let color = self.sample_bar_color();
+        let painter = ui.painter_at(body);
+        for (k, y) in self.tracks.layout() {
+            if k.kind != kind::SAMPLE {
+                continue;
+            }
+            let h = lane_height(*k) * scale;
+            if y_cull.is_some_and(|c| !c.hits(*y, h)) {
+                continue;
+            }
+            let top = body.top() + *y;
+            let bar = Rect::from_min_max(Pos2::new(body.left(), top), Pos2::new(body.right(), top + h));
+            painter.rect_filled(bar, 0.0, color);
+            note_ui_rect(&format!("sample_bar:{}:{}", k.pid, k.tid), bar);
+        }
+    }
+
+    /// The on-screen top and bottom of `tid`'s sample lane, for confining a
+    /// per-thread selection to the bar it was dragged on (C++ Orbit draws the
+    /// selection right on the thread's sample bar).
+    fn sample_bar_screen_band(&self, body: Rect, tid: u32) -> Option<(f32, f32)> {
+        let scale = self.tracks.scale.max(0.01);
+        self.tracks.layout().iter().find_map(|(k, y)| {
+            (k.kind == kind::SAMPLE && k.tid == tid).then(|| {
+                let top = body.top() + *y;
+                (top, top + lane_height(*k) * scale)
+            })
+        })
+    }
+
     fn sample_lane_at_y(&self, y: f32) -> Option<u32> {
         let scale = self.tracks.scale.max(0.01);
         self.tracks.layout().iter().find_map(|(key, lane_y)| {
@@ -9281,6 +9339,10 @@ fn paint_selection_overlay(
     committed: &[TimeMeasure],
     active: Option<TimeMeasure>,
     draw_label: bool,
+    // The on-screen top/bottom of a thread's sample bar, for a selection that
+    // began on one: it is drawn confined to that bar (C++ Orbit's
+    // per-thread callstack selection), not as a full-height column.
+    sample_band: &dyn Fn(u32) -> Option<(f32, f32)>,
 ) {
     if t1 <= t0 || !rect.is_positive() {
         return;
@@ -9303,9 +9365,20 @@ fn paint_selection_overlay(
             x_at_time(max_t, rect, t0, t1),
         )
     };
+    // Where a band paints vertically: a per-thread selection sits on its
+    // sample bar; anything else spans the whole height.
+    let band_y = |m: &TimeMeasure| -> (f32, f32, bool) {
+        match m.sample_tid.and_then(|t| sample_band(t)) {
+            Some((a, b)) => (a.max(rect.top()), b.min(rect.bottom()), true),
+            None => (rect.top(), rect.bottom(), false),
+        }
+    };
 
-    if bands.len() == 1 {
-        // The familiar single-selection look: dim outside, white edges.
+    // The familiar single-selection look -- dim outside, full-height white
+    // edges -- only for a lone process-wide selection. A per-thread one, or
+    // several, are drawn as filled bands instead.
+    let lone_full = bands.len() == 1 && !band_y(&bands[0]).2;
+    if lone_full {
         let (x0, x1) = edge_x(&bands[0]);
         if (x1 - x0).abs() >= 0.5 {
             if x0 > rect.left() {
@@ -9330,22 +9403,32 @@ fn paint_selection_overlay(
             }
         }
     } else {
-        // Multi-select: highlight each band, no outside dimming.
         for m in &bands {
             let (x0, x1) = edge_x(m);
             if (x1 - x0).abs() < 0.5 {
                 continue;
             }
+            let (yt, yb, confined) = band_y(m);
             painter.rect_filled(
-                Rect::from_min_max(Pos2::new(x0, rect.top()), Pos2::new(x1, rect.bottom())),
+                Rect::from_min_max(Pos2::new(x0, yt), Pos2::new(x1, yb)),
                 0.0,
                 MEASURE_FILL,
             );
             for x in [x0, x1] {
                 painter.line_segment(
-                    [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                    [Pos2::new(x, yt), Pos2::new(x, yb)],
                     Stroke::new(1.0, Color32::WHITE),
                 );
+            }
+            // Frame a bar-confined band top and bottom so it reads as a
+            // selected strip, the way the C++ bar highlights.
+            if confined {
+                for y in [yt, yb] {
+                    painter.line_segment(
+                        [Pos2::new(x0, y), Pos2::new(x1, y)],
+                        Stroke::new(1.0, Color32::WHITE),
+                    );
+                }
             }
         }
     }
