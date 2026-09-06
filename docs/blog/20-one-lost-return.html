@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Ghosts on Migration</title>
+<title>One Lost Return</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -617,7 +617,6 @@
 
 <style>
   figure { margin: 0.5rem 0; background: var(--surface); border: 1px solid var(--line); padding: 1.35rem 1.35rem 1rem; }
-  figure img { display: block; width: 100%; height: auto; border: 1px solid var(--line); }
   figcaption { font-family: var(--display); font-size: 0.8rem; line-height: 1.45; color: var(--muted); margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
   figcaption b { color: var(--ink-soft); font-weight: 600; }
   .embed { background: #0b0c0e; border: 1px solid var(--line); }
@@ -630,91 +629,79 @@
 <header class="masthead">
   <div class="masthead-inner">
     <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 20</p>
-    <h1>Ghosts on Migration</h1>
-    <p class="dek">A hooked function that calls nothing kept showing up nested inside itself, dozens deep, but only on some threads. The stack pointer every uprobe hit carries said what happened: the kernel was dropping a hit, an entry or a return, and one dropped hit is a ghost that never leaves. Here is how the timeline made it obvious, what the kernel does with a uretprobe, and the pairing that heals it.</p>
-    <p class="byline">The filter and the frame pairing are in <code>rust/crates/orbit-service/src/uprobes.rs</code>, behind one switch (the <b>Dedupe</b> pill, or <code>uprobe_duplicate_filter</code> in the capture request). Two real captures are embedded below; drag to pan, wheel over the ruler to zoom, click a thread to open its rows.</p>
+    <h1>One Lost Return, Ten Thousand Ghosts</h1>
+    <p class="dek">A hooked function kept appearing nested inside itself, tens of thousands of times. The first theory was a kernel that duplicates uprobe hits on thread migration. It was wrong, and so was the second theory, and the mistake that produced the second one is the most useful part of the story. The real cause is one lost return per thread, at the instant instrumentation is switched on, turned into a landslide by pairing entries to returns by counting them.</p>
+    <p class="byline">The pairing is in <code>rust/crates/orbit-service/src/uprobes.rs</code>, behind the <b>Dedupe</b> pill (<code>uprobe_duplicate_filter</code>). Two real captures are embedded below, the same workload one switch apart; drag to pan, wheel over the ruler to zoom, open a thread to read the depths.</p>
     <div class="stats">
-      <div class="stat"><b>256</b><span>Probes: 4 functions &times; entry+return &times; 32 CPUs</span></div>
-      <div class="stat"><b>41%</b><span>Of one function's scopes wrongly nested, filter off</span></div>
-      <div class="stat"><b>0%</b><span>Wrongly nested, filter on</span></div>
-      <div class="stat"><b>0</b><span>Duplicated hits, in every run &mdash; they were losses</span></div>
+      <div class="stat"><b>73,944</b><span>Entry hits the kernel delivered, one capture</span></div>
+      <div class="stat"><b>73,894</b><span>Return hits &mdash; 50 fewer, all accounted for</span></div>
+      <div class="stat"><b>6</b><span>Threads that lost a return, each at its very first call</span></div>
+      <div class="stat"><b>16,174</b><span>Ghost scopes those six losses became, paired by count</span></div>
+      <div class="stat"><b>0</b><span>Ghosts once paired by stack frame</span></div>
     </div>
   </div>
 </header>
 
 <article class="doc">
 
-  <p class="lede">Post 19 built a test that holds a capture to a known number of calls. This is the bug it was built for. Hook four Box3D functions with kernel uprobes, run the physics on more threads than cores, and the timeline fills with scopes that cannot be right: <code>b3World_Step</code>, the outermost call, appears nested inside another <code>b3World_Step</code>, and inside that one another, on some threads a dozen deep. The function calls no copy of itself. The nesting is a lie, and it is a lie the profiler tells confidently, with durations and a call tree, which is worse than telling nothing.</p>
+  <p class="lede">Hook four Box3D functions with kernel uprobes, run the physics on more threads than the machine has cores, and the timeline fills with scopes that cannot be right. <code>b3World_Step</code>, the outermost call, appears nested inside another <code>b3World_Step</code>, and inside that one another, on some threads a couple of levels deep and never coming back up. The function calls no copy of itself. Something is wrong, and the profiler is stating it with a straight face, complete with durations and a call tree.</p>
 
   <h2 id="see-it">See it</h2>
 
-  <p>Two captures of the same workload, four functions hooked, five seconds each. The only difference is one switch. Open a thread in each and read the depth of <code>b3World_Step</code>: in the first it is often one, two, three levels down, a scope inside a scope of the same name; in the second it is always at the top, where it belongs.</p>
+  <p>Two captures of the same workload, four functions hooked. The only difference is one switch. Open a thread in each and read the depth of <code>b3World_Step</code>: in the first it is often one or two levels down, a scope inside a scope of the same name; in the second it is always at the top, where it belongs.</p>
 
   <figure class="wide">
-    <p class="embed-head off">Filter off &mdash; ghosts</p>
-    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/ghosts-off.orbit.stream&collapse=scheduler" title="Box3D capture, duplicate filter off" loading="lazy"></iframe></div>
-    <figcaption>Click a thread open and read <b>b3World_Step</b>: on several threads it is nested one, two, three deep, a scope inside a scope of the same name. 41% of its scopes sit below depth&nbsp;0; 8 of 24 threads are affected. The sampling report on the right is correct &mdash; only the instrumented scopes are wrong.</figcaption>
+    <p class="embed-head off">Paired by count &mdash; ghosts</p>
+    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/ghosts-off.orbit.stream&collapse=scheduler" title="Box3D capture, count-based pairing" loading="lazy"></iframe></div>
+    <figcaption>Around 40% of <b>b3World_Step</b> scopes sit below depth 0, on the threads that lost a return. The sampling report on the right is correct; only the instrumented scopes are wrong.</figcaption>
   </figure>
 
   <figure class="wide">
-    <p class="embed-head on">Filter on &mdash; healed</p>
-    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/ghosts-on.orbit.stream&collapse=scheduler" title="Box3D capture, duplicate filter on" loading="lazy"></iframe></div>
-    <figcaption>Same workload, same four hooks, one switch flipped. Every <b>b3World_Step</b> sits at depth&nbsp;0, where it belongs; nothing is nested inside it.</figcaption>
+    <p class="embed-head on">Paired by frame &mdash; clean</p>
+    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/ghosts-on.orbit.stream&collapse=scheduler" title="Box3D capture, frame-based pairing" loading="lazy"></iframe></div>
+    <figcaption>Same workload, same four hooks, one switch flipped. Every <b>b3World_Step</b> at depth 0.</figcaption>
   </figure>
 
-  <p>These are not renderings of stored images; they are the real capture frames a connecting viewer would have received, opened by the viewer with no service behind it. The report panel's Flat and tree tabs are computed in the browser from the sampled callstacks the capture also carries, which is why the sampling profile looks identical in both: sampling was never wrong. Only the instrumented scopes were.</p>
+  <p>These are the real capture frames a connecting viewer would receive, opened with no service behind them. Dynamic instrumentation is what makes the bug visible at all: a sampling profiler counts a miscounted call as a rounding error, but instrumentation draws every call as a box at the depth it ran, so one accounting mistake is a box in the wrong place, and it stays there for the eye to catch.</p>
 
-  <h2 id="obvious">Why it was easy to spot</h2>
+  <h2 id="lore">The theory everyone starts with</h2>
 
-  <p>A sampling profiler would have hidden this. A miscounted call is a rounding error against a million samples. But dynamic instrumentation draws every call as a scope on the thread that made it, at the depth it ran, so a single accounting mistake is not a number that drifts &mdash; it is a box drawn in the wrong place, and it stays there. When <code>b3World_Step</code> sits one level too deep, everything it appears to contain is one level too deep with it, and the eye catches the whole column at once.</p>
+  <p>C++ Orbit has a workaround for this exact symptom. Its <code>UprobesUnwindingVisitor</code> keeps, per thread, the stack pointer, instruction pointer and CPU of the last uprobe, and drops an incoming entry that repeats the last one's <code>sp</code> and <code>ip</code> from a different CPU, under a comment that reads, in part, <em>&ldquo;on thread migration, uprobe events can sometimes be duplicated.&rdquo;</em> Orbit opens its probes per CPU, so one hit surfacing in two CPUs' ring buffers is plausible, and the fix has worked for years. The rule was ported to the Rust service line for line. On the ghost capture it dropped nothing &mdash; not a few, zero &mdash; and every run since reports the same: <code>filter off, 0 migration duplicates went through</code>. Whatever this was, it was not a duplicated stack pointer.</p>
 
-  <p>Better still, Orbit draws the scheduler under the threads. Line the depth changes up with the scheduler slices and a pattern appears: in the capture that first showed this &mdash; a real Box3D run, not the synthetic one above &mdash; every one of the 47 depth changes landed 10 to 20 microseconds after the thread resumed on a <em>different</em> core. The bug had a signature, and the signature was thread migration. That is the kind of clue a flat profile cannot give you, because a flat profile has no threads, no time and no cores on it.</p>
+  <h2 id="mistake">The mistake worth telling</h2>
 
-  <h2 id="not-duplicates">The obvious fix, which fixed nothing</h2>
+  <p>The service can write every probe hit to a file before any pairing (<code>--uprobe-dump</code>): timestamp, thread, CPU, function, entry or return, and the stack pointer and instruction pointer the sample carries. I walked a thread's hits keeping a stack of open frames by their stack pointer, flagged every break in the nesting, and found losses everywhere &mdash; hundreds of them, entries and returns, and a first draft of this post that said the kernel loses about one hit in ten, correlated with thread migration.</p>
 
-  <p>C++ Orbit has a workaround for exactly this. Its <code>UprobesUnwindingVisitor</code> keeps, per thread, the stack pointer, instruction pointer and CPU of the last uprobe, and drops an incoming entry that repeats the last one's <code>sp</code> and <code>ip</code> from a different CPU:</p>
+  <p>That draft was wrong, and it was wrong for a dull reason. The dump is written in the order the per-CPU rings are drained, not the order the hits happened. A thread's entry and the return of the call before it can come off two different CPU rings microseconds apart and land in the file out of order. The service does not pair them in that order &mdash; it holds hits for 100&nbsp;ms and sorts them by timestamp first &mdash; but my analysis did not, so it saw phantom breaks in the nesting wherever the file order and the true order disagreed. One line, sorting each thread's hits by timestamp before the walk, deleted about 500 of the 513 anomalies. The 258 &ldquo;lost entries&rdquo; became zero. The correlation with migration went with them.</p>
 
-  <div class="table-wrap"><pre><code>// We are seeing that, on thread migration, uprobe events can sometimes be
-// duplicated: the duplicate will have the same stack pointer and instruction
-// pointer as the previous uprobe, but different cpu. Discard the second one.</code></pre></div>
+  <h2 id="truth">What the sorted hits say</h2>
 
-  <p>The reading is that a thread migrating inside the probe's window makes one logical hit surface in two per-CPU ring buffers. Orbit opens its probes per CPU, so two buffers for one hit is plausible. The rule was ported to the Rust service verbatim, and on the ghost capture it dropped nothing. Not a few. Zero. Every run since, synthetic or real, reports the same: <code>filter off, 0 migration duplicates went through</code>. Whatever was wrong, it was not a duplicated stack pointer.</p>
+  <p>Sorted, the same 73,944-entry capture is almost perfectly balanced: 73,944 entries, 73,894 returns. The 50-hit gap is functions still running when the capture stopped. The genuine anomalies mid-capture number eight, in six threads, and they share a property the file order had hidden:</p>
 
-  <h2 id="losses">Reading the raw hits</h2>
+  <div class="table-wrap"><pre><code>entries delivered            73,944
+returns delivered            73,894     (50 open at capture end)
+anomalies, timestamp-sorted       8     (all lost returns)
+  ...their position         first 1% of each thread's hits
+kernel duplicates                 0
+</code></pre></div>
 
-  <p>The service can write every probe hit to a file before any pairing &mdash; timestamp, thread, CPU, function, entry or return, and the stack pointer and instruction pointer the sample carries (<code>--uprobe-dump</code>). With the file in hand the accounting is arithmetic. The stack grows downward, so a nested call's stack pointer is strictly below its caller's, and a return leaves exactly the frame its entry opened. Walk a thread's hits keeping a stack of open frames, and every place the nesting breaks is either an entry sitting at or above a frame that is still open &mdash; its return was never delivered &mdash; or a return for a frame nothing opened &mdash; its entry was never delivered.</p>
+  <p>Every one of the eight is a lost return, and every one is at the very start of its thread. Two consecutive <code>b3World_Step</code> entries appear at the same stack pointer, on the same CPU, milliseconds apart, with no return between them: the first call's return never arrived. There are no duplicates, on this box, at all.</p>
 
-  <p>On a filter-off capture of about 1.7&nbsp;million hits, the walk found the breaks, and they were all of one kind: hits <em>missing</em>. Entries with no matching return, returns with no matching entry, and not once two entries sharing a stack pointer. The kernel was not doubling hits. It was losing them, entries and returns alike, and a lost hit is unrecoverable at the ring: the data never arrived. The duplicate filter was built for a bug this box does not have; the bug this box has is a hole.</p>
+  <h2 id="cascade">How six losses become sixteen thousand ghosts</h2>
 
-  <p>A hole is worse than a double, because it is silent and it is permanent. Drop one return and the entry it belonged to never closes; the next call on that thread opens inside it, and the one after that inside <em>it</em>, and the depth is off by one for the rest of the capture &mdash; or by two, or by twelve, one per hole. That is the pile of ghost nesting in the first embed above, and it is why a single lost hit near the start of a busy thread taints everything that thread does afterward.</p>
+  <p>Eight lost returns cannot draw sixteen thousand ghost boxes on their own. The multiplier is the pairing. With the filter off, entries and returns are matched by counting: an entry pushes a level, a return pops one. That has no way to notice a missing return. Drop one, and the entry it belonged to never closes; the next call opens inside it, and the one after that inside <em>that</em>, and every scope on the thread is a level too deep for the rest of the capture. Simulating count-based pairing on the raw hits reproduces the bundle exactly &mdash; 16,187 ghosts against the capture's 16,174 &mdash; and it makes no difference whether the hits are fed in file order or timestamp order. Six threads that each lost their first return account for all of it.</p>
 
-  <h2 id="kernel">What the kernel does with a uretprobe</h2>
+  <p>Frame-based pairing does not count; it reads the stack pointer every hit carries. A nested call sits strictly below its caller's frame, and a return leaves exactly the frame its entry opened. So an entry that lands at or above a frame still marked open proves that frame's return was lost: the stale frame is closed, and the new call opens at the right depth. On the same raw hits, in either order, this gives zero ghosts. It is the same idea the C++ visitor uses; its rule fires on the missing-return case, which its own comment names first (<em>&ldquo;MISSING URETPROBE OR DUPLICATE UPROBE&rdquo;</em>), and the migration-duplicate reading was always the second half of an or.</p>
 
-  <p>Chasing the hole into the kernel is where honesty has to take over from proof. The delivery path is per-CPU: a uprobe fires, the handler runs, and <code>__uprobe_perf_func</code> writes the sample into <code>this_cpu_ptr(call-&gt;perf_events)</code> &mdash; the ring of whatever CPU the thread is on at that instant. Nothing there drops a hit on its own. The interesting half is the return probe, because a uretprobe is not a breakpoint at the return address; it is a hijack. When the entry fires, <code>prepare_uretprobe</code> (in <code>kernel/events/uprobes.c</code>) rewrites the return address on the user stack to point at a trampoline, and pushes a return instance onto a per-task list. And it has three ways to give up, each a silent <code>goto free</code>:</p>
+  <h2 id="why">Why a return goes missing, and why at the start</h2>
 
-  <div class="table-wrap"><pre><code>if (!get_xol_area())                       goto free;   // no execute-out-of-line page
-if (utask-&gt;depth &gt;= MAX_URETPROBE_DEPTH)    goto free;   // nesting limit
-orig_ret_vaddr = arch_uretprobe_hijack_return_addr(trampoline_vaddr, regs);
-if (orig_ret_vaddr == -1)                  goto free;   // could not write the user stack</code></pre></div>
+  <p>A uretprobe is not a breakpoint at the return address; it is a hijack. When the entry fires, the kernel rewrites the return address on the user stack to point at a trampoline. Instrument a process that is already running and its threads are mid-loop, and the first call caught after the probes arm does not get a clean hijack &mdash; its return goes to the real address, not the trampoline, and no return event is produced. That is not a kernel bug. It is the unavoidable edge of switching instrumentation on over a running program, and it shows up exactly where the data puts it: the first call of each affected thread.</p>
 
-  <p>The third is the one that matches a migration. Hijacking the return address means writing to the user stack from kernel context, and if that page is not writable at that instant &mdash; a fault, a race &mdash; the hijack returns <code>-1</code> and the return probe is quietly dropped: the entry was recorded, the return will never come. That is a lost return, the exact shape of the ghost. There is also the arming edge, which the synthetic captures here hit hardest: when probes are installed on a process already running, threads that are mid-call when the breakpoint lands hit a return the kernel has no entry for, or an entry whose return address was already on its way back. Both are holes, and both cluster right after arming, which is where this kernel puts most of them.</p>
+  <p>The proof is one line of the previous post's stress test. That test arms the probes and <em>then</em> starts its worker threads, so no call is ever in flight when a probe lands, and it records 720,000 scopes in a second with nothing lost and nothing at the wrong depth. Box3D loses a handful of returns because it is already looping when we hook it. Same hooks, same kernel; the only difference is whether a call was in flight at the moment of arming.</p>
 
-  <p>The migration signature from the original capture points past all three, at the class of bug the arm64 kprobes series <em>"fix XOL preemption window"</em> describes: probe state kept per-CPU, executed out of line while the thread can still be preempted, so a migration inside that window is handled on a CPU that never set the state up. Same shape, different architecture; the upstream fix disables preemption across the single-step so the pair cannot split across CPUs. I could not pin the exact x86-64 line that loses a steady-state hit on this kernel &mdash; the reproducible drops are the arming edge and the <code>prepare_uretprobe</code> paths above &mdash; and saying more than that would be dressing a guess as a finding. What is certain from the raw hits is the shape: the kernel loses whole hits, correlated with scheduling, and never doubles them.</p>
+  <h2 id="honest">What is proven</h2>
 
-  <h2 id="fix">Pairing by frame, not by count</h2>
-
-  <p>If the kernel will lose hits, the service cannot pair entries to returns by counting them; it has to use something that survives a hole. The stack pointer is that thing. Every uprobe sample already carries it, so the pairing keeps, per thread, the stack of open frames by their stack pointer, and lets the geometry decide:</p>
-
-  <ul>
-    <li><b>An entry at or above an open frame</b> proves that frame's return was lost: a real nested call would sit strictly below it. The stale frame is closed and counted as an unclosed entry, and the new call opens at the right depth.</li>
-    <li><b>A return for a frame nothing is open at</b> proves its entry was lost: closing the caller instead would be the ghost. The return is dropped and counted as an orphan.</li>
-  </ul>
-
-  <p>Depth is correct from the next hit onward, so a hole costs one scope, not the rest of the capture. The C++ stack-pointer duplicate rule still runs in front of it &mdash; it costs nothing to keep and it is the right fix if a kernel ever does double &mdash; and both sit behind one switch, on by default, so the effect can be measured. The status line after a capture says what happened either way: with the filter on, <code>N calls; a duplicate entries dropped, b entries with no return discarded, c returns with no entry dropped</code>; with it off, how many hits went through that the filter would have caught. The two embeds above are those two status lines made visible.</p>
-
-  <h2 id="honest">What is proven, and what is not</h2>
-
-  <p>Proven, from the raw hits and the two captures: the ghosts are lost uprobe hits, not duplicated ones; a lost hit shifts every later scope on its thread until it is healed; the frame pairing heals it, taking one capture from 41% of a function's scopes wrongly nested to none. Correlated, strongly, in the capture that started this: the losses follow thread migration. Not pinned: the exact kernel path that loses a hit at steady-state migration on this box &mdash; on this kernel the synthetic reproductions concentrate the losses at probe arming, and the clean steady-state migration signature came from a heavier machine's real capture. The fix does not depend on which it is. It assumes the kernel can lose any hit, and keeps the timeline honest when it does.</p>
+  <p>The kernel is not losing hits at any meaningful rate: entries and returns balance to a hundredth of a percent, and there are no duplicates. The ghosts are a handful of returns lost at the arming edge, each one turned into a thread-long landslide by pairing that counts instead of looking at the frame. Pairing by the stack pointer bounds each loss to the single scope it actually damaged and gets every other depth right, which is the 40%-to-nothing the two captures show. The migration duplicate the C++ code guards against did not appear once here; the guard costs nothing and stays, in case a kernel ever does double, but it is not what was wrong. And the first version of this post, which blamed the kernel for losses it never made, was an artifact of reading hits in the order they were drained rather than the order they occurred &mdash; a good reminder that the fix for a profiler bug can start with a bug in how you read the profile.</p>
 
 </article>
 

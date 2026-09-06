@@ -641,10 +641,10 @@
   <h2 id="posts">Posts</h2>
 
   <div class="posts wide">
-    <a href="20-ghosts-on-migration.html">
+    <a href="20-one-lost-return.html">
       <span class="n">20 &middot; instrumentation</span>
-      <h3>Ghosts on Migration</h3>
-      <p>A hooked function kept appearing nested inside itself, but only on some threads. The stack pointer every uprobe hit carries said why: the kernel drops a hit at thread migration, and one dropped hit is a ghost that never leaves. With two real captures embedded, off and on.</p>
+      <h3>One Lost Return, Ten Thousand Ghosts</h3>
+      <p>A hooked function kept appearing nested inside itself, tens of thousands of times. Not a kernel that duplicates hits on migration, as the lore says, nor one that loses them in bulk, as a first bad reading of the data claimed: one return lost per thread at the instant of arming, turned into a landslide by pairing entries to returns by count. With two real captures embedded.</p>
     </a>
     <a href="19-call-for-call.html">
       <span class="n">19 &middot; testing</span>

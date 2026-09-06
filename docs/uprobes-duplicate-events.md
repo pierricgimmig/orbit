@@ -212,7 +212,42 @@ CPU with the return in between lost looks exactly like the migration
 duplicate; the C++ rule takes it, and the two calls merge into one span.
 Bounded, and rare, and the counts say when it happened.
 
-## Follow-up: into the kernel, and a blog post with two captures (2026-09-06)
+## Follow-up: not loss, not duplication -- a count-pairing cascade (2026-09-06, corrects the above)
+
+Blog post 20 ("One Lost Return, Ten Thousand Ghosts") reinvestigated this and
+overturned the earlier follow-ups' framing. The method that produced the wrong
+answer: `--uprobe-dump` writes every raw hit, but in ring-drain order, not
+timestamp order. Walking that order manufactures phantom nesting breaks
+wherever two CPU rings were drained out of order. The service pairs on a
+timestamp-sorted stream (100 ms reorder window); the analysis must too.
+
+Sorted, one controlled Box3D capture (24 threads on 4 cores, filter off):
+73,944 entry hits and 73,894 return hits -- balanced to 0.07%, the 50-hit gap
+being calls open at capture end. Eight genuine anomalies, all lost *returns*,
+all in the first 1% of their thread's hits; zero duplicates (the C++
+`(sp,ip,cpu)` rule fires zero times, sorted or not).
+
+The ghosts (16,174, ~30% of b3World_Step) come from **count-based pairing**, not
+from lost hits: with the filter off, entry/return are matched by push/pop, which
+cannot notice a missing return, so one lost return shifts every later scope on
+that thread down a level for the rest of the capture. Six threads that each lost
+their first return produce all 16k ghosts. Simulating count pairing on the raw
+hits reproduces the bundle (16,187 vs 16,174), identically in drain and
+timestamp order. Frame-based pairing (the sp every hit carries) gives 0 ghosts
+in either order.
+
+**Why the return is lost, and why at the start:** the arming edge. A uretprobe
+hijacks the return address at entry; a thread already mid-call when the probes
+are installed loses that call's return (no hijack took). Inherent to
+instrumenting a running process, not a kernel migration bug. Proof: post 19's
+stress test arms *before* starting its workers and loses nothing at 720k
+scopes; Box3D is already looping when hooked and loses a handful. The earlier
+"one hit in ten, correlated with migration" claim was the drain-order artifact,
+now retracted. No code changed: the frame pairing was already correct; only the
+explanation was wrong. The `--uprobe-dump` flag (service) is the tool that
+settled it.
+
+## Follow-up: into the kernel, and a blog post with two captures (2026-09-06, superseded above)
 
 Blog post 20, "Ghosts on Migration", is written from this investigation, with
 two real captures embedded (`docs/blog/captures/ghosts-{off,on}.orbit.stream`):
