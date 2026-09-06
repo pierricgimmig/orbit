@@ -718,15 +718,16 @@ impl TrackStrip {
                 let s = self.scale.max(0.01);
                 let mut ly = base + THREAD_H * s;
                 if !self.collapsed.contains(&RowId::Thread(d.thread)) {
-                    let mut leaves: Vec<LaneKey> = index
-                        .lanes()
-                        .map(|(k, _)| k)
-                        .filter(|k| {
-                            k.pid == d.thread.pid && k.tid == d.thread.tid && !is_cpu_lane(*k)
-                        })
-                        .collect();
-                    sort_thread_leaves(&mut leaves);
-                    for k in leaves {
+                    // The dragged thread's leaves come from the same catalogue,
+                    // in the same order, as every other thread's. Reading
+                    // `index.lanes()` here was a second copy of that selection
+                    // that missed the catalogue's exclusions, so sampled-frame
+                    // flame lanes -- kept out of every resting track -- were
+                    // drawn on the one being dragged. The lifted thread stacks
+                    // all of them contiguously (rail lanes included: for a
+                    // resting thread the skeleton gives rail lanes their own
+                    // trailing rows, but the lifted thread has no skeleton row).
+                    for &k in self.catalogue.leaves_of(d.thread) {
                         next.insert(RowId::Lane(k), ly);
                         ly += (lane_height(k) + lane_gap(k)) * s;
                     }
@@ -1668,6 +1669,48 @@ mod tests {
             strip.end_drag();
             strip.tick(0.0, &idx, None);
         }
+    }
+
+    #[test]
+    fn a_dragged_thread_never_lifts_its_sampled_frame_lanes() {
+        // The regression behind blog post 20's sibling bug: the dragged
+        // thread's lanes were once collected straight from the index, which
+        // (unlike the catalogue every resting thread uses) does not drop the
+        // sampled-frame flame. The two paths must select the same lanes.
+        let mut idx = TrackIndex::default();
+        // A thread with a real scope lane, a value rail, a thread-state lane,
+        // and a lane of sampled callstack frames (FUNCTION_CALL / SAMPLED_FRAME).
+        idx.insert(ev(kind::API_SCOPE, 1, 1, 0, 0));
+        idx.insert(ev(kind::VALUE, 1, 1, 0, 0));
+        idx.insert(ev(kind::THREAD_STATE, 1, 1, 0, 0));
+        idx.insert(ev(kind::FUNCTION_CALL, 1, 1, 0, orbit_live_event::extra::SAMPLED_FRAME));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let sampled: Vec<LaneKey> = strip
+            .layout()
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| k.kind == kind::FUNCTION_CALL)
+            .collect();
+        assert!(sampled.is_empty(), "resting layout already draws sampled frames: {sampled:?}");
+        let t = ThreadId { pid: 1, tid: 1 };
+        let y = strip.y.get(&RowId::Thread(t)).copied().unwrap();
+        strip.begin_drag(t, y, y + 40.0);
+        strip.tick(0.0, &idx, None);
+        let lifted = strip.drag_layout();
+        assert!(
+            lifted.iter().all(|(k, _)| k.kind != kind::FUNCTION_CALL),
+            "the dragged thread lifted a sampled-frame lane: {lifted:?}"
+        );
+        // And it still carries the lanes it should: the scope, the rail, the state.
+        for want in [kind::API_SCOPE, kind::VALUE, kind::THREAD_STATE] {
+            assert!(
+                lifted.iter().any(|(k, _)| k.kind == want),
+                "the dragged thread dropped a {want} lane: {lifted:?}"
+            );
+        }
+        strip.end_drag();
     }
 
     #[test]
