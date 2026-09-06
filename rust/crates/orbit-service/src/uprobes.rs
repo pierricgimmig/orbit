@@ -46,6 +46,7 @@
 //! drained.
 
 use std::collections::HashMap;
+use crate::hooks::{HookSpec, MAX_HOOKS};
 
 use orbit_perf_records::reader::{parse_record_sample, sample_bits, SampleFlags};
 use orbit_perf_records::{record_type, PerfEventHeader};
@@ -57,11 +58,6 @@ use orbit_tracing_state::function_calls::FunctionCallManager;
 /// skew between two rings drained microseconds apart, short enough that the
 /// timeline stays live.
 const REORDER_DELAY_NS: u64 = 100_000_000;
-
-/// Ceiling on armed probes. Each hook costs two file descriptors and two
-/// mappings per thread, so a careless selection over a 200-thread process is
-/// a resource problem, not just a slow one.
-pub const MAX_HOOKS: usize = 16;
 
 /// Where a probe fires and what it means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,15 +167,6 @@ pub struct UprobeSession {
     /// the same order as the call manager's stack: what a return is matched
     /// against, and what an entry is checked against.
     open: HashMap<i32, Vec<u64>>,
-}
-
-/// One function to hook: where the probe goes, in file terms.
-#[derive(Clone, Debug)]
-pub struct HookSpec {
-    pub function_id: u64,
-    pub module_path: String,
-    pub file_offset: u64,
-    pub name: String,
 }
 
 impl UprobeSession {

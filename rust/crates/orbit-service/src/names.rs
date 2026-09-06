@@ -22,8 +22,11 @@ use orbit_capture::{CaptureBundle, EventRow, FrameRow, ProcessName, SampleRow, T
 use orbit_live_event::{InternTable, LiveEvent};
 
 use crate::report::SampleStore;
+#[cfg(target_os = "macos")]
+pub use crate::macos::{process_comm, thread_comm, thread_ids};
 
 /// Reads `/proc/<pid>/comm`, trimmed; `None` when the process is gone.
+#[cfg(target_os = "linux")]
 pub fn process_comm(pid: u32) -> Option<String> {
     let s = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
     let s = s.trim();
@@ -31,6 +34,7 @@ pub fn process_comm(pid: u32) -> Option<String> {
 }
 
 /// Reads `/proc/<pid>/task/<tid>/comm`, trimmed.
+#[cfg(target_os = "linux")]
 pub fn thread_comm(pid: u32, tid: u32) -> Option<String> {
     let s = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/comm")).ok()?;
     let s = s.trim();
@@ -38,6 +42,7 @@ pub fn thread_comm(pid: u32, tid: u32) -> Option<String> {
 }
 
 /// The tids of a live process, from `/proc/<pid>/task`.
+#[cfg(target_os = "linux")]
 pub fn thread_ids(pid: u32) -> Vec<u32> {
     std::fs::read_dir(format!("/proc/{pid}/task"))
         .map(|dir| {
@@ -185,13 +190,14 @@ mod tests {
         let me = std::process::id();
         assert!(process_comm(me).is_some());
         let tids = thread_ids(me);
-        assert!(tids.contains(&me), "the main thread's tid is the pid");
-        assert!(thread_comm(me, me).is_some());
+        let current = orbit_scope_ring::platform::thread_id() as u32;
+        assert!(tids.contains(&current));
+        assert!(thread_comm(me, current).is_some());
         // A named thread shows up under its name.
         let t = std::thread::Builder::new()
             .name("orbit-name-test".into())
             .spawn(|| {
-                let tid = unsafe { libc::gettid() } as u32;
+                let tid = orbit_scope_ring::platform::thread_id() as u32;
                 (tid, thread_comm(std::process::id(), tid))
             })
             .unwrap()

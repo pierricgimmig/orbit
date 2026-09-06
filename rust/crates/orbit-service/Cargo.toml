@@ -57,9 +57,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 orbit-maps = { path = "../orbit-maps" }
 orbit-object = { path = "../orbit-object" }
 orbit-perf-records = { path = "../orbit-perf-records" }
-orbit-perf-ring = { path = "../orbit-perf-ring" }
 orbit-scope-ring = { path = "../orbit-scope-ring" }
 orbit-thread-states = { path = "../orbit-thread-states" }
 orbit-tracing-state = { path = "../orbit-tracing-state" }
-orbit-unwind = { path = "../orbit-unwind" }
 orbit-wire = { path = "../orbit-wire" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+orbit-perf-ring = { path = "../orbit-perf-ring" }
+orbit-unwind = { path = "../orbit-unwind" }

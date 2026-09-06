@@ -24,11 +24,17 @@ impl Default for SelfStat {
         // SAFETY: sysconf reads a constant.
         let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        SelfStat {
+        let mut result = SelfStat {
             ticks_per_sec: if ticks > 0 { ticks as f64 } else { 100.0 },
             page_bytes: if page > 0 { page as f64 } else { 4096.0 },
             last: None,
+        };
+        if cfg!(target_os = "macos") {
+            // proc_pidinfo returns CPU nanoseconds and resident bytes.
+            result.ticks_per_sec = 1_000_000_000.0;
+            result.page_bytes = 1.0;
         }
+        result
     }
 }
 
@@ -53,10 +59,12 @@ impl SelfStat {
     /// `(cpu percent of one core since the last sample, resident MiB)`;
     /// `None` on the first call (no interval yet) or if /proc is unreadable.
     pub fn sample(&mut self) -> Option<(f64, f64)> {
-        let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-        let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
-        let ticks = cpu_ticks_from_stat(&stat)?;
-        let rss_mib = resident_pages_from_statm(&statm)? as f64 * self.page_bytes / (1024.0 * 1024.0);
+        let (ticks, resident) = process_usage()?;
+        let rss_mib = resident as f64 * self.page_bytes / (1024.0 * 1024.0);
+        self.sample_usage(ticks, rss_mib)
+    }
+
+    fn sample_usage(&mut self, ticks: u64, rss_mib: f64) -> Option<(f64, f64)> {
         let now = std::time::Instant::now();
         let cpu = match self.last {
             Some((then, then_ticks)) => {
@@ -72,6 +80,22 @@ impl SelfStat {
         self.last = Some((now, ticks));
         cpu.map(|c| (c, rss_mib))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn process_usage() -> Option<(u64, u64)> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    Some((cpu_ticks_from_stat(&stat)?, resident_pages_from_statm(&statm)?))
+}
+
+#[cfg(target_os = "macos")]
+fn process_usage() -> Option<(u64, u64)> {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as i32;
+    let n = unsafe { libc::proc_pidinfo(std::process::id() as i32, libc::PROC_PIDTASKINFO, 0,
+                                      (&mut info as *mut libc::proc_taskinfo).cast(), size) };
+    (n == size).then_some((info.pti_total_user.saturating_add(info.pti_total_system), info.pti_resident_size))
 }
 
 #[cfg(test)]

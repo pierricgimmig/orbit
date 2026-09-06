@@ -25,8 +25,10 @@ _lib = None
 def _find_library():
     candidates = [os.environ.get("ORBIT_API_LIB")]
     here = os.path.dirname(os.path.abspath(__file__))
+    library = "liborbit_api.dylib" if sys.platform == "darwin" else "liborbit_api.so"
+    candidates.append(os.path.join(here, library))
     for rel in ("../../rust/target/release", "../../rust/target/debug"):
-        candidates.append(os.path.join(here, rel, "liborbit_api.so"))
+        candidates.append(os.path.join(here, rel, library))
     for path in candidates:
         if path and os.path.exists(path):
             return path

@@ -31,6 +31,8 @@
 //! sentinel pids and never come through here.
 
 use std::collections::HashSet;
+#[cfg(target_os = "macos")]
+use crate::macos::read_parent_map;
 
 /// How often the descendant set is rebuilt from `/proc` during a capture.
 /// Children appear at any time; a second is well under human patience and
@@ -104,6 +106,7 @@ impl VisibleProcesses {
 }
 
 /// Every process on the machine, mapped to its parent.
+#[cfg(target_os = "linux")]
 fn read_parent_map() -> Vec<(u32, u32)> {
     let mut pairs = Vec::new();
     let Ok(entries) = std::fs::read_dir("/proc") else { return pairs };

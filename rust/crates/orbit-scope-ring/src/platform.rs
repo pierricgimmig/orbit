@@ -11,17 +11,11 @@
 //! because the producer compiles into the profiled application, which may be
 //! a game on Windows or a tool on macOS.
 //!
-//! The clock must be the same one the OS's scheduling and sampling events are
-//! stamped with, or scopes will not line up with them on the timeline:
-//! `CLOCK_MONOTONIC` on Linux and macOS, `QueryPerformanceCounter` on Windows
-//! (which is what ETW timestamps derive from).
-//!
-//! Only the Unix arm is compiled and tested on this project's CI, which is
-//! Linux. The macOS arm shares the Unix clock and differs only in the thread
-//! id call; the Windows arm is written against Win32 and is structurally
-//! correct but unverified until there is a Windows runner.
+//! Linux manual scopes share CLOCK_MONOTONIC with perf events. On macOS the
+//! producer and service share CLOCK_MONOTONIC; a future kernel collector must
+//! explicitly convert its timestamps to this epoch. Windows uses QPC.
 
-/// Monotonic nanoseconds, on the clock the OS's own trace events use.
+/// Host-wide monotonic nanoseconds, shared by producer and service.
 #[cfg(unix)]
 #[inline]
 pub fn monotonic_ns() -> u64 {
@@ -75,9 +69,22 @@ pub fn thread_id() -> u64 {
 #[inline]
 pub fn thread_id() -> u64 {
     let mut tid: u64 = 0;
-    // SAFETY: writes one u64; passing null for the current thread.
-    unsafe { libc::pthread_threadid_np(std::ptr::null_mut(), &mut tid) };
+    // SAFETY: writes one u64; passing zero for the current thread.
+    unsafe { libc::pthread_threadid_np(0, &mut tid) };
     tid
+}
+
+/// A permission error means the process may still be alive. Only ESRCH
+/// proves disappearance; never reclaim a producer's claims on a timeout.
+#[cfg(unix)]
+pub fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else { return false };
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: signal zero only checks existence/permission; it sends no signal.
+    (unsafe { libc::kill(pid, 0) == 0 })
+        || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(windows)]
