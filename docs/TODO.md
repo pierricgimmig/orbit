@@ -591,3 +591,24 @@ wire format (a variable-length field per scope event), the ring's fixed
 record size, the Parquet schema (its own column, dictionary-encoded),
 and the timeline's text layout. Related to 32: a payload is a log line
 with a scope's lifetime.
+
+## Non-urgent backlog
+
+### 34. Evaluate Frida Gum for user-space dynamic instrumentation
+
+**Status: deferred — non-urgent; revisit when time allows.** Evaluate
+Frida Gum through its Rust bindings before considering a custom Rust
+engine or a port of Gum. See the
+[implementation review and Linux alternatives](dynamic-instrumentation-review.md).
+
+- Prototype native entry/exit callbacks in a Rust recording agent with
+  Gum statically linked; keep kernel uprobes as a fallback.
+- Validate Linux x86-64 and AArch64, and assess reuse on Windows through
+  an agent DLL. Treat remote injection separately from interception.
+- Verify sensible perf callstacks throughout instrumented spans: recover
+  original return addresses, correlate hook events with sample timestamps,
+  and handle samples in trampolines and lost events explicitly. Reuse the
+  existing return-address repair machinery where appropriate.
+- Compare overhead, footprint, recursive calls, unwinding, and safe
+  installation/removal against the existing C++ inline and Rust uprobe
+  paths before choosing an engine.
