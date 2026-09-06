@@ -34,6 +34,45 @@ fn comm_at(bytes: &[u8], offset: usize) -> Option<String> {
     Some(String::from_utf8_lossy(&raw[..end]).into_owned())
 }
 
+/// The `offset` and `size` of each named field in a tracepoint's tracefs
+/// `format` file. The offsets are what move between kernels (v5.14 dropped
+/// `sched_wakeup`'s `success` field and shifted everything after it), so a
+/// service that means to run cross-kernel parses this at capture start
+/// rather than trusting a compiled-in number.
+///
+/// Lines look like `\tfield:char prev_comm[16];\toffset:8;\tsize:16;\tsigned:1;`.
+/// The field name is the last identifier of the declaration, with any `[N]`
+/// stripped.
+pub fn format_field_offsets(text: &str) -> std::collections::HashMap<String, (usize, usize)> {
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("field:") else { continue };
+        let mut decl = None;
+        let mut offset = None;
+        let mut size = None;
+        for part in rest.split(';') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("offset:") {
+                offset = v.trim().parse::<usize>().ok();
+            } else if let Some(v) = part.strip_prefix("size:") {
+                size = v.trim().parse::<usize>().ok();
+            } else if !part.is_empty() && decl.is_none() {
+                decl = Some(part);
+            }
+        }
+        let (Some(decl), Some(offset), Some(size)) = (decl, offset, size) else { continue };
+        // The declaration is `<type...> <name>` with an optional `[N]`; the
+        // name is the last whitespace-separated token, cut at `[`.
+        let name = decl.rsplit(|c: char| c.is_whitespace() || c == '*').next().unwrap_or("");
+        let name = name.split('[').next().unwrap_or(name).trim();
+        if !name.is_empty() {
+            out.insert(name.to_string(), (offset, size));
+        }
+    }
+    out
+}
+
 /// `sched:sched_switch`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchedSwitch {
@@ -45,23 +84,57 @@ pub struct SchedSwitch {
     pub next_tid: i32,
 }
 
+/// Where `sched_switch`'s fields sit, from its `format` file or the
+/// compiled-in default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SchedSwitchLayout {
+    pub prev_comm: usize,
+    pub prev_pid: usize,
+    pub prev_state: usize,
+    pub next_comm: usize,
+    pub next_pid: usize,
+}
+
+impl SchedSwitchLayout {
+    /// The layout the C++ hard-codes, matching every kernel measured so far.
+    pub const DEFAULT: SchedSwitchLayout = SchedSwitchLayout {
+        prev_comm: 8,
+        prev_pid: 24,
+        prev_state: 32,
+        next_comm: 40,
+        next_pid: 56,
+    };
+
+    /// From the tracefs `format` text; `None` if a field it needs is absent.
+    pub fn from_format(text: &str) -> Option<SchedSwitchLayout> {
+        let f = format_field_offsets(text);
+        Some(SchedSwitchLayout {
+            prev_comm: f.get("prev_comm")?.0,
+            prev_pid: f.get("prev_pid")?.0,
+            prev_state: f.get("prev_state")?.0,
+            next_comm: f.get("next_comm")?.0,
+            next_pid: f.get("next_pid")?.0,
+        })
+    }
+}
+
 impl SchedSwitch {
     /// Layout: common(8), prev_comm[16], prev_pid(4), prev_prio(4),
     /// prev_state(8), next_comm[16], next_pid(4), next_prio(4), pad(4) = 68.
     pub const LEN: usize = 68;
 
+    /// Parse with the compiled-in default layout.
     pub fn parse(payload: &[u8]) -> Option<SchedSwitch> {
-        if payload.len() < 60 {
-            // The trailing 4 bytes are padding the format file does not
-            // document, so they are not required to be present.
-            return None;
-        }
+        SchedSwitch::parse_with(payload, &SchedSwitchLayout::DEFAULT)
+    }
+
+    pub fn parse_with(payload: &[u8], layout: &SchedSwitchLayout) -> Option<SchedSwitch> {
         Some(SchedSwitch {
-            prev_comm: comm_at(payload, 8)?,
-            prev_tid: i32_at(payload, 24)?,
-            prev_state: i64_at(payload, 32)?,
-            next_comm: comm_at(payload, 40)?,
-            next_tid: i32_at(payload, 56)?,
+            prev_comm: comm_at(payload, layout.prev_comm)?,
+            prev_tid: i32_at(payload, layout.prev_pid)?,
+            prev_state: i64_at(payload, layout.prev_state)?,
+            next_comm: comm_at(payload, layout.next_comm)?,
+            next_tid: i32_at(payload, layout.next_pid)?,
         })
     }
 }
@@ -73,6 +146,22 @@ pub struct SchedWakeup {
     pub tid: i32,
 }
 
+/// Where `sched_wakeup`'s fields sit. `comm` then `pid`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SchedWakeupLayout {
+    pub comm: usize,
+    pub pid: usize,
+}
+
+impl SchedWakeupLayout {
+    pub const DEFAULT: SchedWakeupLayout = SchedWakeupLayout { comm: 8, pid: 24 };
+
+    pub fn from_format(text: &str) -> Option<SchedWakeupLayout> {
+        let f = format_field_offsets(text);
+        Some(SchedWakeupLayout { comm: f.get("comm")?.0, pid: f.get("pid")?.0 })
+    }
+}
+
 impl SchedWakeup {
     /// Only the fixed head is read. Kernel v5.14 removed the `success` field
     /// (torvalds/linux 58b9987de86c) and the padding with it, so everything
@@ -80,10 +169,11 @@ impl SchedWakeup {
     pub const FIXED_LEN: usize = 32;
 
     pub fn parse(payload: &[u8]) -> Option<SchedWakeup> {
-        if payload.len() < 28 {
-            return None;
-        }
-        Some(SchedWakeup { comm: comm_at(payload, 8)?, tid: i32_at(payload, 24)? })
+        SchedWakeup::parse_with(payload, &SchedWakeupLayout::DEFAULT)
+    }
+
+    pub fn parse_with(payload: &[u8], layout: &SchedWakeupLayout) -> Option<SchedWakeup> {
+        Some(SchedWakeup { comm: comm_at(payload, layout.comm)?, tid: i32_at(payload, layout.pid)? })
     }
 }
 
@@ -101,20 +191,42 @@ pub struct TaskNewtask {
 /// `CLONE_THREAD` from `<linux/sched.h>`.
 pub const CLONE_THREAD: u64 = 0x0001_0000;
 
+/// Where `task_newtask`'s fields sit: `pid`, `comm`, `clone_flags`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TaskNewtaskLayout {
+    pub pid: usize,
+    pub comm: usize,
+    pub clone_flags: usize,
+}
+
+impl TaskNewtaskLayout {
+    pub const DEFAULT: TaskNewtaskLayout = TaskNewtaskLayout { pid: 8, comm: 12, clone_flags: 28 };
+
+    pub fn from_format(text: &str) -> Option<TaskNewtaskLayout> {
+        let f = format_field_offsets(text);
+        Some(TaskNewtaskLayout {
+            pid: f.get("pid")?.0,
+            comm: f.get("comm")?.0,
+            clone_flags: f.get("clone_flags")?.0,
+        })
+    }
+}
+
 impl TaskNewtask {
     /// Layout: common(8), pid(4), comm[16], clone_flags(8), oom_score_adj(2),
     /// pad(14) = 52.
     pub const LEN: usize = 52;
 
     pub fn parse(payload: &[u8]) -> Option<TaskNewtask> {
-        if payload.len() < 28 {
-            return None;
-        }
+        TaskNewtask::parse_with(payload, &TaskNewtaskLayout::DEFAULT)
+    }
+
+    pub fn parse_with(payload: &[u8], layout: &TaskNewtaskLayout) -> Option<TaskNewtask> {
         Some(TaskNewtask {
-            tid: i32_at(payload, 8)?,
-            comm: comm_at(payload, 12)?,
+            tid: i32_at(payload, layout.pid)?,
+            comm: comm_at(payload, layout.comm)?,
             clone_flags: payload
-                .get(28..36)
+                .get(layout.clone_flags..layout.clone_flags + 8)
                 .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
                 .unwrap_or(0),
         })
@@ -261,5 +373,64 @@ mod tests {
         // be mistaken for a state.
         assert_eq!(thread_state_from_bits(0x1000), thread_state::RUNNABLE);
         assert!(!is_combined_state(0x1001));
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    // A trimmed-down but real-shaped sched_switch format file.
+    const SWITCH_FMT: &str = "name: sched_switch\nID: 314\nformat:\n\tfield:unsigned short common_type;\toffset:0;\tsize:2;\tsigned:0;\n\tfield:unsigned char common_flags;\toffset:2;\tsize:1;\tsigned:0;\n\tfield:unsigned char common_preempt_count;\toffset:3;\tsize:1;\tsigned:0;\n\tfield:int common_pid;\toffset:4;\tsize:4;\tsigned:1;\n\n\tfield:char prev_comm[16];\toffset:8;\tsize:16;\tsigned:0;\n\tfield:pid_t prev_pid;\toffset:24;\tsize:4;\tsigned:1;\n\tfield:int prev_prio;\toffset:28;\tsize:4;\tsigned:1;\n\tfield:long prev_state;\toffset:32;\tsize:8;\tsigned:1;\n\tfield:char next_comm[16];\toffset:40;\tsize:16;\tsigned:0;\n\tfield:pid_t next_pid;\toffset:56;\tsize:4;\tsigned:1;\n\tfield:int next_prio;\toffset:60;\tsize:4;\tsigned:1;\n";
+
+    #[test]
+    fn the_format_parser_reads_offsets_and_sizes_and_strips_array_bounds() {
+        let f = format_field_offsets(SWITCH_FMT);
+        assert_eq!(f.get("prev_comm"), Some(&(8, 16)));
+        assert_eq!(f.get("prev_pid"), Some(&(24, 4)));
+        assert_eq!(f.get("prev_state"), Some(&(32, 8)));
+        assert_eq!(f.get("next_pid"), Some(&(56, 4)));
+        assert_eq!(f.get("common_pid"), Some(&(4, 4)));
+    }
+
+    #[test]
+    fn a_sched_switch_layout_from_format_matches_the_compiled_default() {
+        assert_eq!(SchedSwitchLayout::from_format(SWITCH_FMT), Some(SchedSwitchLayout::DEFAULT));
+    }
+
+    #[test]
+    fn a_moved_field_parses_by_its_own_layout_where_the_default_would_read_garbage() {
+        // A kernel that inserted 8 bytes before next_comm/next_pid.
+        let moved = SWITCH_FMT
+            .replace("next_comm[16];\toffset:40", "next_comm[16];\toffset:48")
+            .replace("next_pid;\toffset:56", "next_pid;\toffset:64");
+        let layout = SchedSwitchLayout::from_format(&moved).unwrap();
+        assert_eq!(layout.next_pid, 64);
+        // Build a payload with next_pid=4242 at the moved offset.
+        let mut payload = vec![0u8; 72];
+        payload[8..10].copy_from_slice(b"ab"); // prev_comm
+        payload[24..28].copy_from_slice(&7i32.to_le_bytes());
+        payload[48..50].copy_from_slice(b"cd"); // next_comm at 48
+        payload[64..68].copy_from_slice(&4242i32.to_le_bytes());
+        let parsed = SchedSwitch::parse_with(&payload, &layout).unwrap();
+        assert_eq!(parsed.next_tid, 4242);
+        assert_eq!(parsed.prev_tid, 7);
+        // The default layout would read next_pid from offset 56 -- zero here.
+        let by_default = SchedSwitch::parse_with(&payload, &SchedSwitchLayout::DEFAULT).unwrap();
+        assert_eq!(by_default.next_tid, 0);
+    }
+
+    #[test]
+    fn from_format_is_none_when_a_needed_field_is_missing() {
+        let stripped = SWITCH_FMT.replace("prev_state", "prev_STATE_renamed");
+        assert_eq!(SchedSwitchLayout::from_format(&stripped), None);
+    }
+
+    #[test]
+    fn wakeup_and_newtask_layouts_parse_from_format() {
+        let wake = "\tfield:char comm[16];\toffset:8;\tsize:16;\tsigned:0;\n\tfield:pid_t pid;\toffset:24;\tsize:4;\tsigned:1;\n";
+        assert_eq!(SchedWakeupLayout::from_format(wake), Some(SchedWakeupLayout::DEFAULT));
+        let newtask = "\tfield:pid_t pid;\toffset:8;\tsize:4;\n\tfield:char comm[16];\toffset:12;\tsize:16;\n\tfield:unsigned long clone_flags;\toffset:28;\tsize:8;\n";
+        assert_eq!(TaskNewtaskLayout::from_format(newtask), Some(TaskNewtaskLayout::DEFAULT));
     }
 }

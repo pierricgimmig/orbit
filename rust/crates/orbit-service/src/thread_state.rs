@@ -25,7 +25,8 @@
 
 use std::collections::{HashMap, HashSet};
 use orbit_perf_records::tracepoints::{
-    thread_state_from_bits, SchedSwitch, SchedWakeup, TaskNewtask,
+    thread_state_from_bits, SchedSwitch, SchedSwitchLayout, SchedWakeup, SchedWakeupLayout,
+    TaskNewtask, TaskNewtaskLayout,
 };
 use orbit_perf_records::reader::{parse_record_sample, sample_bits, SampleFlags};
 use orbit_perf_records::{record_type, PerfEventHeader};
@@ -138,6 +139,12 @@ pub struct ThreadStateTracer {
     pending: Vec<Transition>,
     newest_seen_ns: u64,
     focus: Focus,
+    /// Field offsets read from each tracepoint's tracefs `format` at open,
+    /// so a kernel that moved a field is parsed by its own layout rather
+    /// than a compiled-in guess; the default is the C++'s hard-coded layout.
+    switch_layout: SchedSwitchLayout,
+    wakeup_layout: SchedWakeupLayout,
+    newtask_layout: TaskNewtaskLayout,
 }
 
 impl ThreadStateTracer {
@@ -150,11 +157,35 @@ impl ThreadStateTracer {
     pub fn open(cpu_count: usize) -> (Option<ThreadStateTracer>, TracepointReport) {
         let mut report = TracepointReport::default();
         let mut rings = Vec::new();
+        // Field offsets from each tracepoint's `format`, falling back to the
+        // compiled-in layout (and saying so) when the file is unreadable or
+        // is missing a field. This is what lets one service binary parse a
+        // kernel whose scheduler tracepoints moved a field.
+        let mut switch_layout = SchedSwitchLayout::DEFAULT;
+        let mut wakeup_layout = SchedWakeupLayout::DEFAULT;
+        let mut newtask_layout = TaskNewtaskLayout::DEFAULT;
         for (category, name, kind) in [
             ("sched", "sched_switch", Kind::SchedSwitch),
             ("sched", "sched_wakeup", Kind::SchedWakeup),
             ("task", "task_newtask", Kind::TaskNewtask),
         ] {
+            match orbit_perf_ring::attr::tracepoint_format(category, name) {
+                Some(text) => {
+                    let parsed = match kind {
+                        Kind::SchedSwitch => SchedSwitchLayout::from_format(&text).map(|l| switch_layout = l).is_some(),
+                        Kind::SchedWakeup => SchedWakeupLayout::from_format(&text).map(|l| wakeup_layout = l).is_some(),
+                        Kind::TaskNewtask => TaskNewtaskLayout::from_format(&text).map(|l| newtask_layout = l).is_some(),
+                    };
+                    if !parsed {
+                        report.failures.push(format!(
+                            "{category}:{name}: format file lacks an expected field; using the compiled-in layout"
+                        ));
+                    }
+                }
+                None => report.failures.push(format!(
+                    "{category}:{name}: no format file in tracefs; using the compiled-in layout"
+                )),
+            }
             let Some(id) = orbit_perf_ring::attr::tracepoint_id(category, name) else {
                 report.failures.push(format!(
                     "{category}:{name}: no id in tracefs (not mounted, or not readable)"
@@ -198,6 +229,9 @@ impl ThreadStateTracer {
                 pending: Vec::new(),
                 newest_seen_ns: 0,
                 focus: Focus::all(),
+                switch_layout,
+                wakeup_layout,
+                newtask_layout,
             }),
             report,
         )
@@ -251,7 +285,7 @@ impl ThreadStateTracer {
                 let Some(sample) = parse_record_sample(&record, flags, true) else { continue };
                 let Some(raw) = sample.raw_data.as_deref() else { continue };
                 let payload = match kind {
-                    Kind::SchedSwitch => SchedSwitch::parse(raw).and_then(|s| {
+                    Kind::SchedSwitch => SchedSwitch::parse_with(raw, &self.switch_layout).and_then(|s| {
                         let prev_in = self.focus.contains_tid(s.prev_tid);
                         let next_in = self.focus.contains_tid(s.next_tid);
                         (prev_in || next_in).then_some(Payload::Switch {
@@ -262,10 +296,10 @@ impl ThreadStateTracer {
                             next_in,
                         })
                     }),
-                    Kind::SchedWakeup => SchedWakeup::parse(raw)
+                    Kind::SchedWakeup => SchedWakeup::parse_with(raw, &self.wakeup_layout)
                         .filter(|w| self.focus.contains_tid(w.tid))
                         .map(|w| Payload::Wakeup { tid: w.tid }),
-                    Kind::TaskNewtask => TaskNewtask::parse(raw).and_then(|t| {
+                    Kind::TaskNewtask => TaskNewtask::parse_with(raw, &self.newtask_layout).and_then(|t| {
                         // A new task inside a focused process joins the
                         // focus: a thread under the parent process, a forked
                         // child as a process of its own (its tid is its pid).
@@ -397,6 +431,9 @@ mod tests {
             pending: Vec::new(),
             newest_seen_ns: 0,
             focus: Focus::all(),
+            switch_layout: SchedSwitchLayout::DEFAULT,
+            wakeup_layout: SchedWakeupLayout::DEFAULT,
+            newtask_layout: TaskNewtaskLayout::DEFAULT,
         }
     }
 

@@ -154,6 +154,21 @@ pub fn tracepoint_id(category: &str, name: &str) -> Option<u64> {
     None
 }
 
+/// The tracefs `format` text for a tracepoint, sibling of its `id` file, so
+/// its field offsets can be read at capture start rather than hard-coded
+/// (`orbit_perf_records::tracepoints::*Layout::from_format`). `None` when the
+/// file cannot be read, which the caller treats as "use the compiled-in
+/// layout".
+pub fn tracepoint_format(category: &str, name: &str) -> Option<String> {
+    for root in ["/sys/kernel/tracing", "/sys/kernel/debug/tracing"] {
+        let path = format!("{root}/events/{category}/{name}/format");
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            return Some(text);
+        }
+    }
+    None
+}
+
 /// Attributes for one kernel tracepoint.
 ///
 /// `RAW` is the point of it: the tracepoint's own fields arrive as an opaque

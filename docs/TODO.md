@@ -531,7 +531,7 @@ a path-mapping dialog for sources not under a served root.
 make sure we read perf event layouts from sysfs, don't hardcode
 anything, we need a service executable to work cross-kernel
 
-**Status: partly done.** Already read at runtime: the uprobe PMU's type
+**Status: scheduler tracepoints done 2026-09-06; GPU tracepoints remain.** Already read at runtime: the uprobe PMU's type
 number and its `retprobe` config bit
 (`/sys/bus/event_source/devices/uprobe/{type,format/retprobe}`),
 tracepoint ids (`/sys/kernel/tracing/events/*/*/id`, with the older
@@ -543,12 +543,22 @@ the shape of the tracepoint `RAW` payloads:
 offsets of `sched_switch`, `sched_wakeup`, `sched_process_fork`/`exit`
 and the `amdgpu`/`dma_fence` events by hand, ported offset for offset
 from the C++ `KernelTracepoints.h`. Those offsets are what actually move
-between kernels (v5.14 already dropped `sched_wakeup`'s `success` field),
-so the fix is to parse each event's `format` file at capture start and
-build the field offsets from it, falling back to the compiled-in layout
-only if the file cannot be read. Same treatment for anything else read by
-constant, and a check that a kernel missing an event degrades to "this
-machine cannot do X" instead of misparsing.
+between kernels (v5.14 already dropped `sched_wakeup`'s `success` field).
+
+**Update 2026-09-06:** the scheduler tracepoints now do this. At capture
+start the tracer reads each event's tracefs `format`
+(`orbit_perf_ring::attr::tracepoint_format`) and builds the field offsets
+from it (`SchedSwitchLayout`/`SchedWakeupLayout`/`TaskNewtaskLayout::from_format`
+in `orbit-perf-records/tracepoints.rs`), falling back to the compiled-in
+layout -- and saying so in the tracepoint report -- when the file cannot
+be read or lacks a field. `parse_with(payload, &layout)` replaces the
+by-constant `parse`. Unit tests cover the parser, a moved field, a
+missing field, and the wakeup/newtask layouts; the thread-states and
+capture-scheduling e2e scenarios exercise the real kernel's format.
+Still hard-coded: the GPU tracepoints' payload offsets (`amdgpu`,
+`dma_fence`), which want the same `from_format` treatment; and a kernel
+missing an event already degrades to "tracepoint unavailable" rather
+than misparsing.
 
 ## 32. Logging, correlated with the viewer by time and thread id
 
