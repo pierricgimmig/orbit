@@ -531,7 +531,7 @@ a path-mapping dialog for sources not under a served root.
 make sure we read perf event layouts from sysfs, don't hardcode
 anything, we need a service executable to work cross-kernel
 
-**Status: scheduler tracepoints done 2026-09-06; GPU tracepoints remain.** Already read at runtime: the uprobe PMU's type
+**Status: done for the service 2026-09-06 (it parses only scheduler tracepoints from raw).** Already read at runtime: the uprobe PMU's type
 number and its `retprobe` config bit
 (`/sys/bus/event_source/devices/uprobe/{type,format/retprobe}`),
 tracepoint ids (`/sys/kernel/tracing/events/*/*/id`, with the older
@@ -555,10 +555,12 @@ be read or lacks a field. `parse_with(payload, &layout)` replaces the
 by-constant `parse`. Unit tests cover the parser, a moved field, a
 missing field, and the wakeup/newtask layouts; the thread-states and
 capture-scheduling e2e scenarios exercise the real kernel's format.
-Still hard-coded: the GPU tracepoints' payload offsets (`amdgpu`,
-`dma_fence`), which want the same `from_format` treatment; and a kernel
-missing an event already degrades to "tracepoint unavailable" rather
-than misparsing.
+The Rust service parses only the scheduler tracepoints from raw payloads;
+GPU jobs (`amdgpu`/`dma_fence`) arrive pre-parsed from the GPU helper, so
+there are no GPU raw offsets in the service to convert. If the service
+ever parses those tracepoints directly, give them the same `from_format`
+treatment. A kernel missing an event already degrades to "tracepoint
+unavailable" rather than misparsing.
 
 ## 32. Logging, correlated with the viewer by time and thread id
 
