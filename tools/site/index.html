@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
 <meta charset="utf-8">
 <title>Orbit</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,7 +23,7 @@
 </nav>
 <main class="wide">
   <div class="hero">
-    <h1>Dynamic instrumentation, <em>coupled with sampling.</em></h1>
+    <h1>Hook a running program. <em>Watch every call.</em></h1>
     <p class="lede">Orbit is a profiler for native applications. Hook the functions you care about on a running
       process, without recompiling, and see every call as a scope on a timeline that draws a million of them at the
       screen's refresh rate, with a sampling profile underneath that says where the rest of the time went.</p>
@@ -109,5 +110,7 @@
   <a href="e2e/report.html">Latest test report</a>
   <a href="todo.html">Roadmap</a>
 </footer>
+<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("theme-toggle");if(!b)return;function cur(){return document.documentElement.getAttribute("data-theme")||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
 </body>
 </html>
