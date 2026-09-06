@@ -64,6 +64,8 @@ pub fn router(service: Arc<LiveService>) -> Router {
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
         )
+        .route("/site", get(site_index))
+        .route("/site/", get(site_index))
         .route("/*path", get(static_asset))
         .layer(CorsLayer::permissive())
         // Outermost: HTML, js, wasm, worker snippets, and API all get
@@ -97,6 +99,28 @@ async fn static_asset(
     // a PNG, and this is the same file.
     let path = if path == "favicon.ico" { "favicon.png" } else { path.as_str() };
     asset_response(path, &headers).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+/// The embedded website's landing page (`/site`), served by orbit-service
+/// while there is no public site. When no site was built into this binary,
+/// a short note says how to add one rather than a bare 404.
+async fn site_index(headers: axum::http::HeaderMap) -> Response {
+    if let Some(resp) = asset_response("site/index.html", &headers) {
+        return resp;
+    }
+    let note = concat!(
+        "<!doctype html><meta charset=utf-8><title>Orbit site</title>",
+        "<body style='font-family:system-ui;max-width:34rem;margin:4rem auto;padding:0 1rem;line-height:1.6'>",
+        "<h1>No website in this build</h1>",
+        "<p>orbit-service can serve the landing page, manual and dev blog at ",
+        "<code>/site</code>, but none was embedded in this binary. Build it and ",
+        "rebuild the service:</p>",
+        "<pre>python3 tools/site/build_site.py\n",
+        "touch src/OrbitLiveViewer/crates/orbit-live-server/build.rs\n",
+        "cargo build -p orbit-service --release</pre>",
+        "<p><a href='/'>Back to the viewer</a></p></body>",
+    );
+    apply_isolation(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], Html(note)).into_response())
 }
 
 /// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.

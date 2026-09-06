@@ -73,8 +73,30 @@ fn find_viewer_dist() -> Option<PathBuf> {
     }
 }
 
+/// The built website (`build_site.py` output). Embedded under `site/` when
+/// present so orbit-service can serve the landing/manual/blog at /site until
+/// there is a public site. `ORBIT_SITE_DIR` points at it explicitly; else a
+/// `site/` beside the workspace is used.
+fn find_site() -> Option<PathBuf> {
+    if let Ok(explicit) = env::var("ORBIT_SITE_DIR") {
+        let path = PathBuf::from(explicit);
+        return path.is_dir().then_some(path);
+    }
+    let mut dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").ok()?);
+    loop {
+        let candidate = dir.join("site");
+        if candidate.join("index.html").is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=ORBIT_VIEWER_DIST");
+    println!("cargo:rerun-if-env-changed=ORBIT_SITE_DIR");
     let dist = find_viewer_dist();
     if let Some(dist) = &dist {
         println!("cargo:rerun-if-changed={}", dist.display());
@@ -90,6 +112,11 @@ fn main() {
     if let Some(dist) = &dist {
         collect_files(dist, "", &mut files);
     }
+    let site = find_site();
+    if let Some(site) = &site {
+        println!("cargo:rerun-if-changed={}", site.display());
+        collect_files(site, "site", &mut files);
+    }
     for (index, (rel, path)) in files.into_iter().enumerate() {
         println!("cargo:rerun-if-changed={}", path.display());
         // Flat, index-based names: asset paths carry subdirectories (wasm-bindgen
@@ -104,6 +131,7 @@ fn main() {
         ));
     }
     code.push_str("        _ => None,\n    }\n}\n");
+    code.push_str(&format!("pub const SITE_EMBEDDED: bool = {};\n", site.is_some()));
 
     fs::write(out_dir.join("embedded_assets.rs"), code).unwrap();
 }

@@ -38,3 +38,23 @@ The output is plain files. Any static host works; a host that cannot set
 works, with the viewer's lane walk running single-threaded.
 
 `site/` is ignored by git; the inputs are.
+
+
+## Served by orbit-service
+
+`orbit-service` embeds the built `site/` (when one exists at build time)
+and serves it at `/site`, so the landing page, manual and blog are one
+click away from the live viewer (the More menu's "Website & docs"), while
+there is no public site. Build the site, then rebuild the service so the
+embed picks it up:
+
+```
+python3 tools/site/build_site.py
+touch src/OrbitLiveViewer/crates/orbit-live-server/build.rs
+cargo build -p orbit-service --release
+```
+
+Without a `site/`, `/site` shows a short note instead. Set `ORBIT_SITE_DIR`
+to embed one from elsewhere. The embed adds the site's size to the binary
+(a full viewer copy and the captures), so `rm -rf site/` before building if
+you want the service lean again.

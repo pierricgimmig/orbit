@@ -2516,6 +2516,19 @@ impl OrbitLiveApp {
             ui.close();
         }
         ui.separator();
+        // The website (landing, manual, dev blog) is served by the service
+        // at /site while there is no public site yet.
+        if self.static_capture.is_none() {
+            if ui
+                .button("Website & docs")
+                .on_hover_text("The landing page, manual and dev blog, served by orbit-service")
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("/site/index.html"));
+                ui.close();
+            }
+            ui.separator();
+        }
         ui.label(
             RichText::new(format!("viewer build {VIEWER_BUILD}"))
                 .font(FontId::monospace(10.5))
