@@ -487,7 +487,7 @@ three viewer notes (2026-09-05): the report splitter only moved one way; threads
 Every note from 2026-09-05 is done. What remains, by readiness:
 
 - Privileged runs happen through `tools/sudo` now (a wrapper with a NOPASSWD sudoers rule, root-equivalent by the user's decision on 2026-09-05); `--sudo` in the e2e harness uses it. The stress numbers are in blog post 19 and the phase-16 metrics file.
-- Open: the uprobe drain ceiling. At 1.44 M scopes/s (2.9 M hits/s) the 1 MB per-CPU rings overflow before the single 5 ms-poll drain thread reaches them, worst when few threads run at high rates (8 x 20 kHz loses 15.9 %, 16 x 10 kHz 1.07 %). Bigger rings, a drain per CPU or a pool, and a loss counter in the viewer's status line.
+- Drain ceiling, improved 2026-09-06: the per-CPU uprobe ring was 256 KB, raised to 4 MB (UPROBE_RING_KB). The clean ceiling moved from ~720k scopes/s to ~1.44 M (16 x 10 kHz and 8 x 20 kHz now lose nothing, was 1.04 % and 15.5 %); the extreme 16 x 20 kHz (5.76 M hits/s) still loses 16.7 %, down from 45.7 %. The viewer's status reads amber when the kernel lost records. Numbers in metrics/phase-16. Still open if the ceiling must go higher: a drain per CPU or a drain-thread pool; the ring is 4 MB x online CPUs (128 MB on 32), so a much larger ring is not free.
 
 Recommendation: annotations (15) is small and self-contained and makes a
 shared capture a conversation once the website exists; diff mode (16) is

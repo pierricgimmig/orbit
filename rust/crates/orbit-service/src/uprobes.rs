@@ -248,7 +248,7 @@ impl UprobeSession {
                     };
                 for cpu in &cpus {
                     match ring_of_cpu.get(cpu).copied() {
-                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, 256) {
+                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, UPROBE_RING_KB) {
                             Ok(ring) => {
                                 let id = match orbit_perf_ring::ring::event_id(&ring) {
                                     Ok(id) => id,
@@ -482,6 +482,14 @@ impl UprobeSession {
         out
     }
 }
+
+/// Per-CPU uprobe ring, in KB (power of two). All probes of a CPU share it.
+/// The single drain thread can be starved for tens of milliseconds under a
+/// load heavier than the machine's cores, and a hit lost to an overflowed
+/// ring is unrecoverable; 4 MB tolerates a ~350 ms gap at one thread's
+/// 360k hits/s, where 256 KB tolerated ~22 ms. Cost: this times the online
+/// CPU count, mapped once per capture (128 MB on 32 CPUs).
+const UPROBE_RING_KB: u64 = 4096;
 
 /// What `ret` does to the stack pointer before the return probe fires:
 /// x86-64 pops the return address, arm64 leaves sp alone.

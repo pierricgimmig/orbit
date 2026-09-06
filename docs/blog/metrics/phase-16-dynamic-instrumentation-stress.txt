@@ -59,8 +59,9 @@ Sweep, 2026-09-06 00:03-00:10 UTC, same machine; expected = N*K outer,
 
   Reading: up to 720,000 scopes (1.44 M probe hits) in a second, nothing is
   lost and nothing is at the wrong depth. From 1.44 M scopes/s (2.9 M hits)
-  the kernel reports lost records: the per-CPU rings (256 pages, 1 MB each)
-  overflow before the single drain thread (5 ms poll) gets to them, and
+  the kernel reports lost records: the per-CPU rings (256 KB each,
+  raised to 4 MB on 2026-09-06, see below) overflow before the single
+  drain thread (5 ms poll) gets to them, and
   what the kernel drops never reaches the pairing, so the pairing's own
   counts (hundreds) are far below the hole (thousands to a million). The
   same total rate on fewer threads loses more (8 x 20 kHz: 15.9 % against
@@ -87,3 +88,24 @@ thread pool) would raise the 1.4 M scopes/s mark; the pairing itself was
 not the limit in any run (it never fell behind a ring that had not
 overflowed).
 
+Ring size sweep, 2026-09-06, same box, --sudo through tools/sudo. The
+per-CPU uprobe ring was 256 KB (UPROBE_RING_KB, uprobes.rs); raised to
+4 MB. Under load heavier than the cores the single drain thread is
+starved for tens of ms, and a bigger ring tolerates a longer gap. Loss,
+256 KB -> 4 MB:
+
+  threads x Hz x calls   scopes/s   256 KB loss    4 MB loss    kernel records lost 256KB -> 4MB
+  8  x  5000 x  5000       360k        0.000%         0.000%          0 -> 0
+  16 x  5000 x  5000       720k        0.000%         0.000%          0 -> 0
+  16 x 10000 x 10000     1.44M         1.04%          0.000%     29,763 -> 0
+  8  x 20000 x 20000     1.44M        15.50%          0.000%    445,367 -> 0
+  16 x 20000 x 20000     2.88M        45.7%          16.7%      2.58M -> ~0.96M
+
+  The clean ceiling moved from ~720k scopes/s to ~1.44M (2.88 M hits/s);
+  the extreme 16 x 20 kHz (5.76 M hits/s) still overflows one drain thread
+  but loses a third of what it did. Cost: 4 MB x online CPUs, mapped once
+  per instrumented capture (128 MB on 32 CPUs). A drain per CPU or a pool
+  is the next lever if the ceiling needs to go higher; the pairing itself
+  never fell behind a ring that had not overflowed. The viewer's
+  instrumentation status now reads amber when the kernel lost records, so
+  a lossy capture is visible.

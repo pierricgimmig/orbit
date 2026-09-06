@@ -3058,8 +3058,12 @@ impl OrbitLiveApp {
             // to read as a fixable permissions problem, not an empty track.
             if !self.status.instrumentation.is_empty() {
                 let armed = self.status.instrumentation.starts_with("instrumenting");
+                // Records the kernel dropped mean an incomplete capture -- the
+                // ring overflowed -- so it reads amber even when hooks armed,
+                // not the muted grey of a clean run.
+                let lossy = self.status.instrumentation.contains("records lost");
                 ui.label(
-                    RichText::new(&self.status.instrumentation).size(11.0).color(if armed {
+                    RichText::new(&self.status.instrumentation).size(11.0).color(if armed && !lossy {
                         theme::MUTED
                     } else {
                         Color32::from_rgb(0xFF, 0xB3, 0x00)

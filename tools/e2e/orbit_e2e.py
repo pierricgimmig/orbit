@@ -1335,21 +1335,19 @@ def dyn_instr_stress(run):
               f"status line says {calls_seen} calls, the bundle holds {sum(verdict['observed'].values())}")
         with open(f"/tmp/orbit-e2e-stress-{run.service.port}.json", "w") as out:
             json.dump(run.perf["stress"], out, indent=1)
-        # Every hit the pairing gave up on is one scope missing and one count
-        # on the status line: the two must agree, or the pairing is inventing
-        # or hiding something. A dropped duplicate is the one count that
-        # need not cost a scope: a hit the kernel re-reported at a migration
-        # is dropped for free, a real call misjudged as one goes missing. So
-        # the hole is at least the unclosed and orphan counts, and at most
-        # those plus the duplicates. Records the kernel lost outright never
-        # reach the pairing, so with any of those the floor still holds and
-        # the one-percent ceiling below is what fails.
-        floor = discarded + orphans
-        check(floor <= verdict["missing_total"],
-              f"{verdict['missing_total']} scopes missing but the pairing gave up on {floor} "
-              f"({discarded} unclosed, {orphans} orphan)")
+        # An unclosed entry -- an open scope whose return was lost -- is a
+        # scope that will not appear, so it is a floor on the hole. An orphan
+        # return (a return whose entry was lost) is not: at the arming edge
+        # the entry can predate the capture, so its scope was never expected
+        # and dropping the stray return costs nothing. So the floor is the
+        # unclosed count; the ceiling, when the kernel lost no records, is the
+        # unclosed plus orphan plus duplicate counts (each of those at most
+        # one scope). A handful of arming-edge orphans and duplicates is the
+        # slack between them.
+        check(discarded <= verdict["missing_total"],
+              f"{verdict['missing_total']} scopes missing but {discarded} entries went unclosed")
         if lost_records == 0:
-            check(verdict["missing_total"] <= floor + dup,
+            check(verdict["missing_total"] <= discarded + orphans + dup,
                   f"{verdict['missing_total']} scopes missing, more than the pairing gave up on "
                   f"({discarded} unclosed, {orphans} orphan, {dup} dup) with no records lost")
         # A lost hit can put the scopes under it one level off until it is
