@@ -841,6 +841,20 @@ fn capture_loop(
     let mut samples_short_regs: u64 = 0;
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
     let mut scope_batch: Vec<LiveEvent> = Vec::with_capacity(256);
+    // How long the loop sleeps between drains. This is also how often events
+    // are batched to the live viewer, so it is not simply minimised: a
+    // shorter interval drains the uprobe rings sooner (fewer overflows under
+    // load) at the cost of more WebSocket traffic. Default 5 ms;
+    // `ORBIT_DRAIN_MS` overrides it, clamped to 1..=100. See
+    // `orbit_service::uprobes::uprobe_ring_kb` for the ring-size / drain
+    // tradeoff measured on the stress test.
+    let drain_interval = std::time::Duration::from_millis(
+        std::env::var("ORBIT_DRAIN_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(5)
+            .clamp(1, 100),
+    );
     // Buffer fullness is graphed as values on the service's own lanes. Read
     // every pass, pushed twenty times a second: enough to see a ring climbing
     // towards a lap, few enough not to be the busiest lane in the capture.
@@ -1154,7 +1168,7 @@ fn capture_loop(
             let _push = orbit_api::scope("push to viewer");
             service.push_events(&batch);
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(drain_interval);
     }
 
     if let Some(tracer) = thread_states.as_mut() {

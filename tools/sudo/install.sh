@@ -37,7 +37,7 @@ cat > "$tmp" <<RULE
 # themselves with CAP_SYS_ADMIN, CAP_PERFMON and CAP_DAC_READ_SEARCH,
 # through the wrapper, which checks the name and the owner. CAP_SYS_ADMIN
 # is root in all but name. Written by $0.
-Defaults!$wrapper env_keep += "ORBIT_SOURCE_ROOTS ORBIT_E2E_STRESS"
+Defaults!$wrapper env_keep += "ORBIT_SOURCE_ROOTS ORBIT_E2E_STRESS ORBIT_UPROBE_RING_KB ORBIT_DRAIN_MS"
 $user ALL=(root) NOPASSWD: $wrapper
 RULE
 visudo -c -q -f "$tmp"

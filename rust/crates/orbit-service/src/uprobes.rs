@@ -221,6 +221,7 @@ impl UprobeSession {
             open: HashMap::new(),
         };
         let mut report = ArmReport::default();
+        let ring_kb = uprobe_ring_kb();
         let cpus = online_cpus();
         // cpu index -> position in `session.rings`, once a leader exists.
         let mut ring_of_cpu: HashMap<i32, usize> = HashMap::new();
@@ -248,7 +249,7 @@ impl UprobeSession {
                     };
                 for cpu in &cpus {
                     match ring_of_cpu.get(cpu).copied() {
-                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, UPROBE_RING_KB) {
+                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, ring_kb) {
                             Ok(ring) => {
                                 let id = match orbit_perf_ring::ring::event_id(&ring) {
                                     Ok(id) => id,
@@ -489,7 +490,24 @@ impl UprobeSession {
 /// ring is unrecoverable; 4 MB tolerates a ~350 ms gap at one thread's
 /// 360k hits/s, where 256 KB tolerated ~22 ms. Cost: this times the online
 /// CPU count, mapped once per capture (128 MB on 32 CPUs).
-const UPROBE_RING_KB: u64 = 4096;
+///
+/// Ring size and the drain interval (`ORBIT_DRAIN_MS`, serve.rs) are the two
+/// levers against overflow, and draining more often is the cheaper one:
+/// measured on the stress test, a 1 MB ring drained every 2 ms held the same
+/// realistic loads at zero loss as this 4 MB ring drained every 5 ms, at a
+/// quarter of the memory (the drain interval also paces the live WebSocket,
+/// which is why it is not simply set to 1 ms). Left at the roomy default;
+/// `ORBIT_UPROBE_RING_KB` overrides it.
+const UPROBE_RING_KB_DEFAULT: u64 = 4096;
+
+/// The ring size to use: `ORBIT_UPROBE_RING_KB` if it is a power of two of at
+/// least one page (4), else the default.
+pub fn uprobe_ring_kb() -> u64 {
+    match std::env::var("ORBIT_UPROBE_RING_KB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(kb) if kb >= 4 && kb.is_power_of_two() => kb,
+        _ => UPROBE_RING_KB_DEFAULT,
+    }
+}
 
 /// What `ret` does to the stack pointer before the return probe fires:
 /// x86-64 pops the return address, arm64 leaves sp alone.
@@ -530,6 +548,32 @@ fn thread_ids(pid: i32) -> Vec<i32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ring_kb_env_is_validated_or_falls_back_to_the_default() {
+        // The env is process-global; set, read, restore so the test is
+        // order-independent.
+        let saved = std::env::var("ORBIT_UPROBE_RING_KB").ok();
+        let cases = [
+            (Some("1024"), 1024u64),        // a valid power-of-two override
+            (Some("256"), 256),
+            (Some("3000"), UPROBE_RING_KB_DEFAULT), // not a power of two
+            (Some("2"), UPROBE_RING_KB_DEFAULT),    // below one page (4 KB)
+            (Some("nonsense"), UPROBE_RING_KB_DEFAULT),
+            (None, UPROBE_RING_KB_DEFAULT),
+        ];
+        for (set, want) in cases {
+            match set {
+                Some(v) => std::env::set_var("ORBIT_UPROBE_RING_KB", v),
+                None => std::env::remove_var("ORBIT_UPROBE_RING_KB"),
+            }
+            assert_eq!(super::uprobe_ring_kb(), want, "for {set:?}");
+        }
+        match saved {
+            Some(v) => std::env::set_var("ORBIT_UPROBE_RING_KB", v),
+            None => std::env::remove_var("ORBIT_UPROBE_RING_KB"),
+        }
+    }
+
     use super::*;
 
     fn empty_session() -> UprobeSession {

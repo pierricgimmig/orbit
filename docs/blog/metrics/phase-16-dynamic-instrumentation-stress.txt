@@ -109,3 +109,22 @@ starved for tens of ms, and a bigger ring tolerates a longer gap. Loss,
   never fell behind a ring that had not overflowed. The viewer's
   instrumentation status now reads amber when the kernel lost records, so
   a lossy capture is visible.
+
+Drain interval vs ring size, 2026-09-06. Two levers against ring overflow,
+measured on the stress test (--sudo). Draining more often is the cheaper
+one:
+
+  config                         16x10k    8x20k    ring mem (32 CPUs)
+  256 KB ring, 5 ms drain (old)   1.04%    15.50%      8 MB
+  4 MB  ring, 5 ms drain (kept)   0.00%     0.00%    128 MB
+  256 KB ring, 1 ms drain         0.00%     0.37%      8 MB
+  1 MB  ring, 2 ms drain          0.00%     0.00%     32 MB
+
+A 1 MB ring drained every 2 ms holds the realistic loads at zero loss for
+a quarter of the 4 MB ring's memory. The drain interval is not simply
+minimised because the same loop paces the live WebSocket batches (2 ms is
+2.5x the traffic of 5 ms, 1 ms is 5x). Left at the roomy 4 MB / 5 ms
+default; both are now env-configurable for tuning without a rebuild:
+ORBIT_UPROBE_RING_KB (power of two KB, >= 4) and ORBIT_DRAIN_MS (1..=100).
+Under the tools/sudo wrapper they must be in its sudoers env_keep.
+
