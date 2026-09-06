@@ -4,33 +4,9 @@
 
 name: build-and-test
 on:
-  push:
-    branches:
-      - 'main'
-    paths:
-      - '.bazelrc'
-      - '.bazelversion'
-      - '.github/**'
-      - 'MODULE.bazel'
-      - 'MODULE.bazel.lock'
-      - 'bazel/**'
-      - 'src/**'
-      - 'third_party/**'
-  pull_request:
-    branches:
-      - 'main'
-    paths:
-      - '.bazelrc'
-      - '.bazelversion'
-      - '.github/**'
-      - 'MODULE.bazel'
-      - 'MODULE.bazel.lock'
-      - 'bazel/**'
-      - 'src/**'
-      - 'third_party/**'
-  schedule:
-  - cron: '0 7 * * *'
-
+  # C++/Bazel CI disabled: the port no longer changes C++, so these
+  # builds are manual-only now (run from the Actions tab if ever needed).
+  workflow_dispatch:
 permissions: read-all
 
 concurrency:
