@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Bytes;
@@ -66,6 +67,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         )
         .route("/site", get(site_index))
         .route("/site/", get(site_index))
+        .route("/site/*path", get(site_file))
         .route("/*path", get(static_asset))
         .layer(CorsLayer::permissive())
         // Outermost: HTML, js, wasm, worker snippets, and API all get
@@ -104,23 +106,69 @@ async fn static_asset(
 /// The embedded website's landing page (`/site`), served by orbit-service
 /// while there is no public site. When no site was built into this binary,
 /// a short note says how to add one rather than a bare 404.
-async fn site_index(headers: axum::http::HeaderMap) -> Response {
-    if let Some(resp) = asset_response("site/index.html", &headers) {
+/// The built website (`build_site.py --service`) directory, served at /site
+/// straight from disk -- a dev-only convenience while there is no public
+/// site, so nothing is baked into the binary. `ORBIT_SITE_DIR` points at it;
+/// otherwise a `site/` in the working directory (the repo root, in dev).
+fn site_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("ORBIT_SITE_DIR") {
+        let p = PathBuf::from(dir);
+        return p.is_dir().then_some(p);
+    }
+    let p = PathBuf::from("site");
+    p.is_dir().then_some(p)
+}
+
+fn site_mime(name: &str) -> &'static str {
+    match name.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" => "application/javascript; charset=utf-8",
+        "wasm" => "application/wasm",
+        "json" => "application/json",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "stream" | "orbit" => "application/octet-stream",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Reads `rel` from the site directory, refusing anything that escapes it.
+async fn serve_site_file(rel: &str) -> Option<Response> {
+    let base = site_dir()?;
+    let base_canon = tokio::fs::canonicalize(&base).await.ok()?;
+    let full = tokio::fs::canonicalize(base.join(rel)).await.ok()?;
+    if !full.starts_with(&base_canon) {
+        return None; // path traversal
+    }
+    let bytes = tokio::fs::read(&full).await.ok()?;
+    let mime = site_mime(&full.file_name()?.to_string_lossy());
+    let mut resp = ([(header::CONTENT_TYPE, mime)], bytes).into_response();
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    Some(apply_isolation(resp))
+}
+
+async fn site_index() -> Response {
+    if let Some(resp) = serve_site_file("index.html").await {
         return resp;
     }
     let note = concat!(
         "<!doctype html><meta charset=utf-8><title>Orbit site</title>",
         "<body style='font-family:system-ui;max-width:34rem;margin:4rem auto;padding:0 1rem;line-height:1.6'>",
-        "<h1>No website in this build</h1>",
-        "<p>orbit-service can serve the landing page, manual and dev blog at ",
-        "<code>/site</code>, but none was embedded in this binary. Build it and ",
-        "rebuild the service:</p>",
-        "<pre>python3 tools/site/build_site.py\n",
-        "touch src/OrbitLiveViewer/crates/orbit-live-server/build.rs\n",
-        "cargo build -p orbit-service --release</pre>",
-        "<p><a href='/'>Back to the viewer</a></p></body>",
+        "<h1>No website found</h1>",
+        "<p>orbit-service serves the landing page, manual and dev blog at ",
+        "<code>/site</code> from a built <code>site/</code> on disk (a dev-only ",
+        "convenience). Build it, then run the service from the repo root:</p>",
+        "<pre>python3 tools/site/build_site.py --service</pre>",
+        "<p>Or point <code>ORBIT_SITE_DIR</code> at a built site. ",
+        "<a href='/'>Back to the viewer</a></p></body>",
     );
     apply_isolation(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], Html(note)).into_response())
+}
+
+async fn site_file(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    serve_site_file(&path).await.unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 
 /// COOP/COEP so the wasm-bindgen-rayon pool can use SharedArrayBuffer.

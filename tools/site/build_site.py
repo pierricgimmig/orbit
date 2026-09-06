@@ -188,10 +188,13 @@ def capture_stream(bundle, port):
 # ---------------------------------------------------------------------- site
 
 
-def build(out, stream_path, bundle, name, port):
+def build(out, stream_path, bundle, name, port, service=False):
     os.makedirs(out, exist_ok=True)
-    # The viewer pack, as built (build_wasm.sh).
-    shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
+    # The viewer pack, as built (build_wasm.sh). Skipped in --service mode:
+    # the service already serves the viewer at /, so the site's embeds point
+    # there instead of bundling a second 8+ MB copy.
+    if not service:
+        shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
     for asset in ("site.css", "logo.png", "favicon.png"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
     # The front-page capture.
@@ -241,7 +244,32 @@ def build(out, stream_path, bundle, name, port):
              .replace("{{date}}", time.strftime("%Y-%m-%d")))
     with open(os.path.join(out, "index.html"), "w") as handle:
         handle.write(index)
+    if service:
+        _point_embeds_at_service(out)
     return capture_file, facts
+
+
+def _point_embeds_at_service(out):
+    """Rewrite every viewer embed/link to the service's own viewer at / (and
+    make the capture URLs absolute under /site), so no second viewer copy is
+    shipped. Assumes the service serves this site at /site."""
+    subs = [
+        ("../viewer/index.html?capture=../", "/index.html?capture=/site/"),
+        ("viewer/index.html?capture=../", "/index.html?capture=/site/"),
+        ("../viewer/index.html", "/index.html"),
+        ("viewer/index.html", "/index.html"),
+    ]
+    for root, _dirs, files in os.walk(out):
+        for fn in files:
+            if not fn.endswith(".html"):
+                continue
+            fp = os.path.join(root, fn)
+            text = open(fp, encoding="utf-8").read()
+            before = text
+            for a, b in subs:
+                text = text.replace(a, b)
+            if text != before:
+                open(fp, "w", encoding="utf-8").write(text)
 
 
 def main():
@@ -251,10 +279,11 @@ def main():
     parser.add_argument("--bundle", help="an .orbit.zip to convert for the front page")
     parser.add_argument("--name", default="box3d", help="the capture's file stem on the site")
     parser.add_argument("--port", type=int, default=44850, help="port for the throwaway service")
+    parser.add_argument("--service", action="store_true", help="build for embedding in orbit-service: no bundled viewer, embeds point at the service viewer at / (site served at /site)")
     args = parser.parse_args()
     if not os.path.exists(os.path.join(VIEWER_DIST, "orbit_live_viewer_bg.wasm")):
         raise SystemExit(f"no viewer pack in {VIEWER_DIST}: run src/OrbitLiveViewer/build_wasm.sh first")
-    capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port)
+    capture_file, facts = build(args.out, args.stream, args.bundle, args.name, args.port, args.service)
     print(f"site in {args.out}: front page opens captures/{capture_file} ({facts})")
     print(f"serve it:  python3 tools/site/serve.py --dir {args.out} --port 8081")
 

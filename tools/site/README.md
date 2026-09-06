@@ -40,21 +40,21 @@ works, with the viewer's lane walk running single-threaded.
 `site/` is ignored by git; the inputs are.
 
 
-## Served by orbit-service
+## Served by orbit-service (dev only)
 
-`orbit-service` embeds the built `site/` (when one exists at build time)
-and serves it at `/site`, so the landing page, manual and blog are one
-click away from the live viewer (the More menu's "Website & docs"), while
-there is no public site. Build the site, then rebuild the service so the
-embed picks it up:
+`orbit-service` serves a built site at `/site`, straight from disk -- a
+dev convenience while there is no public site, so nothing is baked into
+the binary. Build the site for the service and run the service from the
+repo root:
 
 ```
-python3 tools/site/build_site.py
-touch src/OrbitLiveViewer/crates/orbit-live-server/build.rs
-cargo build -p orbit-service --release
+python3 tools/site/build_site.py --service
+orbit-service --serve 44766     # run from the repo root, where ./site is
 ```
 
-Without a `site/`, `/site` shows a short note instead. Set `ORBIT_SITE_DIR`
-to embed one from elsewhere. The embed adds the site's size to the binary
-(a full viewer copy and the captures), so `rm -rf site/` before building if
-you want the service lean again.
+`--service` builds a site that carries no viewer copy of its own: its
+embeds point at the service's viewer at `/`, and the capture files under
+`site/` are the only large payload. The service finds `./site` in the
+working directory, or `ORBIT_SITE_DIR` if set. The viewer's More menu has
+a "Website & docs" link to `/site`. Nothing is added to the binary, and
+`/site` shows a short note when no site is found.
