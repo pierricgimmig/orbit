@@ -118,7 +118,7 @@ SUDO = False
 
 
 class Service:
-    def __init__(self, port, binary=SERVICE, sudo=None):
+    def __init__(self, port, binary=SERVICE, sudo=None, extra_args=()):
         if not os.path.exists(binary):
             raise Failure(
                 f"{binary} is missing.\nBuild it:  cargo build --release "
@@ -138,7 +138,7 @@ class Service:
             binary = os.path.abspath(binary)
         # sudo relays the SIGTERM `stop` sends, so the service exits either way.
         self.proc = subprocess.Popen(
-            prefix + [binary, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
+            prefix + [binary, *extra_args, "--serve", str(port)], stdout=self.log, stderr=subprocess.STDOUT
         )
         self._wait_ready()
         # The service's own pid: under sudo, `proc` is sudo (and the wrapper
@@ -1209,8 +1209,20 @@ def hook_from_report(run):
 
 
 # Threads, calls per second per thread, calls per thread. 8 x 5 kHz x 5000
-# is 40,000 outer calls in a second, 360,000 scopes, 720,000 probe hits.
+# is 40,000 outer calls in a second, 360,000 scopes, 720,000 probe hits. An
+# optional fourth number makes every thread move to the next CPU every that
+# many calls (`--stress-migrate`), for the migration experiments.
 STRESS = tuple(int(v) for v in os.environ.get("ORBIT_E2E_STRESS", "8,5000,5000").split(","))
+# The uprobe duplicate filter and frame pairing: on unless ORBIT_E2E_DEDUPE=0,
+# which is the "without the fix" run of blog post 20.
+DEDUPE = os.environ.get("ORBIT_E2E_DEDUPE", "1") != "0"
+# Where to save the run's capture as a stream file (the site's embed format),
+# when set; the bundle the checker reads is saved next to it.
+STRESS_STREAM = os.environ.get("ORBIT_E2E_STRESS_STREAM", "")
+# CPUs the workload is confined to (`taskset -c`), e.g. "0-7": more threads
+# than CPUs there means the scheduler preempts and moves them mid-call, the
+# migration the probes mind, while the service keeps the other cores.
+STRESS_CPUS = os.environ.get("ORBIT_E2E_STRESS_CPUS", "")
 
 
 @scenario("dyn-instr-stress",
@@ -1221,10 +1233,14 @@ def dyn_instr_stress(run):
     times on a known number of threads, hooked with uprobes; the exported
     bundle is then checked call for call by check_stress.py. Needs the
     service to run as root (--sudo); unprivileged it records the refusal."""
-    threads, hz, calls = STRESS
+    threads, hz, calls = STRESS[:3]
+    migrate = STRESS[3] if len(STRESS) > 3 else 0
     binary = _build_app("rust")[0]
-    app = Target([binary, "--stress-threads", str(threads), "--stress-hz", str(hz),
-                  "--stress-calls", str(calls), "--wait-go"], stdin=True)
+    command = [binary, "--stress-threads", str(threads), "--stress-hz", str(hz),
+               "--stress-calls", str(calls), "--stress-migrate", str(migrate), "--wait-go"]
+    if STRESS_CPUS:
+        command = ["taskset", "-c", STRESS_CPUS] + command
+    app = Target(command, stdin=True)
     try:
         # Symbols and the three function ids, by name.
         run.service.post("/api/symbols/load", {"pid": app.pid})
@@ -1246,6 +1262,7 @@ def dyn_instr_stress(run):
             "pid": app.pid, "sampling": False, "context_switches": True, "thread_states": True,
             "dynamic_instrumentation_method": "kernel_uprobes",
             "instrumented_functions": [{"function_id": i} for i in ids.values()],
+            "uprobe_duplicate_filter": DEDUPE,
         })
         message = ""
         deadline = time.time() + 15
@@ -1262,22 +1279,34 @@ def dyn_instr_stress(run):
         check("instrumenting 3 of 3" in message, f"not every function armed: {message}")
         app.go()
         out = app.wait(timeout=180)
-        done = re.search(r"stress done: threads=(\d+) calls=(\d+) outer=(\d+) middle=(\d+) inner=(\d+) in ([\d.]+)s", out)
+        done = re.search(r"stress done: threads=(\d+) calls=(\d+) outer=(\d+) middle=(\d+) inner=(\d+) migrations=(\d+) in ([\d.]+)s", out)
         check(done, f"the program did not report what it made: {out[-300:]!r}")
         # The reorder window is 100 ms; give the last hits time to pair.
         time.sleep(0.8)
         run.stop_capture()
         status = run.service.get("/api/status")
         line = status.get("instrumentation", "")
-        counts = re.search(r"(\d+) calls; (\d+) duplicate entries dropped, (\d+) entries with no return discarded, (\d+) returns with no entry dropped", line)
-        check(counts, f"no pairing counts on the status line: {line!r}")
-        calls_seen, dup, discarded, orphans = (int(v) for v in counts.groups())
+        if DEDUPE:
+            counts = re.search(r"(\d+) calls; (\d+) duplicate entries dropped, (\d+) entries with no return discarded, (\d+) returns with no entry dropped", line)
+            check(counts, f"no pairing counts on the status line: {line!r}")
+            calls_seen, dup, discarded, orphans = (int(v) for v in counts.groups())
+        else:
+            counts = re.search(r"(\d+) calls; filter off, (\d+) migration duplicates went through", line)
+            check(counts, f"no filter-off counts on the status line: {line!r}")
+            calls_seen, dup = (int(v) for v in counts.groups())
+            discarded = orphans = 0
         lost_records = int(m.group(1)) if (m := re.search(r"(\d+) records lost by the kernel", line)) else 0
         healed = dup + discarded + orphans
         # The bundle, call for call.
         probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
         check(probe.returncode == 0, f"{PYARROW_PYTHON} has no pyarrow; set ORBIT_E2E_PYARROW_PYTHON")
         path = _export_bundle(run, "stress.orbit.zip")
+        if STRESS_STREAM:
+            stream = run.service.get("/api/capture/export?format=stream")
+            check(isinstance(stream, bytes) and len(stream) > 1000, "the stream export is empty")
+            with open(STRESS_STREAM, "wb") as handle:
+                handle.write(stream)
+            shutil.copy(path, os.path.splitext(STRESS_STREAM)[0] + ".orbit.zip")
         result = subprocess.run(
             [PYARROW_PYTHON, os.path.join(HERE, "check_stress.py"), path,
              "--pid", str(app.pid), "--threads", str(threads), "--calls", str(calls)],
@@ -1287,12 +1316,14 @@ def dyn_instr_stress(run):
         verdict = json.loads(result.stdout)
         expected_total = sum(verdict["expected"].values())
         run.perf["stress"] = {
-            "threads": threads, "hz": hz, "calls": calls, "seconds": float(done.group(6)),
+            "threads": threads, "hz": hz, "calls": calls, "migrate_every": migrate,
+            "migrations": int(done.group(6)), "dedupe": DEDUPE, "cpus": STRESS_CPUS, "seconds": float(done.group(7)),
             "expected": verdict["expected"], "observed": verdict["observed"],
             "missing": verdict["missing"], "calls_on_status_line": calls_seen,
             "duplicates_dropped": dup, "unclosed_discarded": discarded, "orphan_returns": orphans,
             "records_lost": lost_records, "depth_wrong": verdict["depth_wrong_total"],
             "not_contained": verdict["not_contained_total"], "durations": verdict["durations"],
+            "migrations_seen": verdict.get("migrations_seen", 0),
             "status_line": line,
         }
         # What must hold whatever the kernel lost.

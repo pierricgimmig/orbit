@@ -16,3 +16,4 @@ path = "src/main.rs"
 
 [dependencies]
 orbit-api = { path = "../orbit-api" }
+libc = "0.2"

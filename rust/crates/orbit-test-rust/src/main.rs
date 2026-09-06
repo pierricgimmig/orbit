@@ -18,7 +18,7 @@
 //! number of times at a known rate on a known number of threads, so a
 //! capture that hooks them can be checked call for call.
 //!
-//!     OrbitTestRust --stress-threads N --stress-hz F --stress-calls K [--wait-go]
+//!     OrbitTestRust --stress-threads N --stress-hz F --stress-calls K [--stress-migrate M] [--wait-go]
 //!
 //! Each thread calls `orbit_stress_outer` K times, F times a second; every
 //! outer calls `orbit_stress_middle` twice and every middle calls
@@ -108,13 +108,37 @@ fn arg_u64(name: &str) -> Option<u64> {
     std::env::args().skip_while(|a| a != name).nth(1).and_then(|s| s.parse().ok())
 }
 
+/// Pins the calling thread to one CPU. What `--stress-migrate` does between
+/// calls: a migration the kernel is told to make, at a known place in the
+/// call sequence, so a capture can count the hits around it.
+fn pin_to_cpu(cpu: usize) {
+    // SAFETY: a zeroed cpu_set_t is a valid empty set; CPU_SET writes within
+    // it; sched_setaffinity reads only what it is given.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(cpu, &mut set);
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+    }
+}
+
 /// One stress thread: `calls` outer calls at `hz`, paced by a spin-wait so
-/// the rate holds at frequencies a sleep could not.
-fn stress_thread(index: u64, calls: u64, hz: u64) -> u64 {
+/// the rate holds at frequencies a sleep could not. With `migrate_every`
+/// above zero the thread moves to the next CPU every that many calls,
+/// starting from its own index, so N threads walk the CPUs in lockstep
+/// and every migration is at a known call.
+fn stress_thread(index: u64, calls: u64, hz: u64, migrate_every: u64, cpus: usize) -> u64 {
     let period = Duration::from_nanos(if hz > 0 { 1_000_000_000 / hz } else { 0 });
     let mut next = Instant::now();
     let mut acc = index;
+    let mut cpu = index as usize % cpus.max(1);
+    if migrate_every > 0 {
+        pin_to_cpu(cpu);
+    }
     for i in 0..calls {
+        if migrate_every > 0 && i > 0 && i % migrate_every == 0 {
+            cpu = (cpu + 1) % cpus.max(1);
+            pin_to_cpu(cpu);
+        }
         acc = orbit_stress_outer(acc.wrapping_add(i));
         if hz > 0 {
             next += period;
@@ -126,8 +150,13 @@ fn stress_thread(index: u64, calls: u64, hz: u64) -> u64 {
     acc
 }
 
-fn stress_main(threads: u64, hz: u64, calls: u64, wait_go: bool) {
-    println!("OrbitTestRust pid={} stress threads={threads} hz={hz} calls={calls}", std::process::id());
+fn stress_main(threads: u64, hz: u64, calls: u64, migrate_every: u64, wait_go: bool) {
+    // SAFETY: sysconf is always safe to call.
+    let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as usize;
+    println!(
+        "OrbitTestRust pid={} stress threads={threads} hz={hz} calls={calls} migrate_every={migrate_every} cpus={cpus}",
+        std::process::id()
+    );
     if wait_go {
         let mut line = String::new();
         let _ = std::io::stdin().read_line(&mut line);
@@ -137,7 +166,7 @@ fn stress_main(threads: u64, hz: u64, calls: u64, wait_go: bool) {
         .map(|i| {
             std::thread::Builder::new()
                 .name(format!("stress-{i}"))
-                .spawn(move || stress_thread(i, calls, hz))
+                .spawn(move || stress_thread(i, calls, hz, migrate_every, cpus))
                 .expect("spawn")
         })
         .collect();
@@ -146,8 +175,9 @@ fn stress_main(threads: u64, hz: u64, calls: u64, wait_go: bool) {
         acc ^= w.join().unwrap_or(0);
     }
     let outer = threads * calls;
+    let migrations = if migrate_every > 0 { threads * ((calls.saturating_sub(1)) / migrate_every) } else { 0 };
     println!(
-        "OrbitTestRust stress done: threads={threads} calls={calls} outer={outer} middle={} inner={} in {:.2}s (acc {acc:x})",
+        "OrbitTestRust stress done: threads={threads} calls={calls} outer={outer} middle={} inner={} migrations={migrations} in {:.2}s (acc {acc:x})",
         outer * 2,
         outer * 6,
         started.elapsed().as_secs_f64()
@@ -158,8 +188,9 @@ fn main() {
     if let Some(threads) = arg_u64("--stress-threads") {
         let hz = arg_u64("--stress-hz").unwrap_or(1000);
         let calls = arg_u64("--stress-calls").unwrap_or(1000);
+        let migrate_every = arg_u64("--stress-migrate").unwrap_or(0);
         let wait_go = std::env::args().any(|a| a == "--wait-go");
-        stress_main(threads.max(1), hz, calls, wait_go);
+        stress_main(threads.max(1), hz, calls, migrate_every, wait_go);
         return;
     }
     let seconds: u64 = std::env::args()

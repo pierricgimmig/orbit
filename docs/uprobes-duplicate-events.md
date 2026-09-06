@@ -211,3 +211,45 @@ tell apart: the next call from the same site at the same slot on another
 CPU with the return in between lost looks exactly like the migration
 duplicate; the C++ rule takes it, and the two calls merge into one span.
 Bounded, and rare, and the counts say when it happened.
+
+## Follow-up: into the kernel, and a blog post with two captures (2026-09-06)
+
+Blog post 20, "Ghosts on Migration", is written from this investigation, with
+two real captures embedded (`docs/blog/captures/ghosts-{off,on}.orbit.stream`):
+the same Box3D workload, four functions hooked, oversubscribed onto few cores,
+with the filter off (41% of `b3World_Step` scopes wrongly nested, 8 of 24
+threads) and on (0%). Reproduce with `ORBIT_E2E_DEDUPE=0` /`=1` and
+`ORBIT_E2E_STRESS_CPUS`/`ORBIT_E2E_STRESS_SLEEP` on `dyn-instr-stress`, or the
+scratch scripts `box3d_full.py` / `embed2.py`.
+
+**Raw hits confirm loss, not duplication.** The service can dump every hit
+before pairing (`--uprobe-dump <path>`, or `ORBIT_UPROBE_DUMP`): timestamp,
+tid, cpu, function, entry/return, sp, ip. Walking a thread's hits by stack
+frame, every nesting break is a *missing* hit -- an entry above an open frame
+(lost return) or a return with nothing open at its frame (lost entry) -- and
+never two entries sharing an sp. On ~1.7 M hits: hundreds of losses, zero
+`(sp,ip,cpu)` duplicates. The C++ migration-duplicate rule drops nothing on
+this box (`filter off, 0 migration duplicates went through`, every run).
+
+**Where the kernel drops a return.** `prepare_uretprobe` in
+`kernel/events/uprobes.c` (v7.0) gives up silently in three places, each a
+`goto free` that records the entry but never the return: no XOL area
+(`!get_xol_area()`), the nesting limit (`utask->depth >= MAX_URETPROBE_DEPTH`),
+and -- the one that matches a migration -- the return-address hijack failing
+(`arch_uretprobe_hijack_return_addr(...) == -1`), i.e. the kernel could not
+write the trampoline onto the user stack at that instant. Delivery is per-CPU
+(`__uprobe_perf_func` -> `this_cpu_ptr(call->perf_events)`). The arming edge
+adds more: probes installed on a running process see returns whose entries
+predate the probe, and vice versa, clustered right after arming -- which is
+where the synthetic captures on kernel 7.0 put most of their losses.
+
+**Not pinned:** the exact x86-64 line that loses a *steady-state* hit at
+migration. The migration signature in the original real capture (every depth
+change 10-20 us after resume on another core) matches the class the arm64
+kprobes series "fix XOL preemption window" describes -- per-CPU probe state
+split across a migration inside the single-step window -- but that is arm64
+kprobes, not x86-64 uprobes, and I could not reproduce the clean steady-state
+signature on this box (the scheduler here rarely migrates a busy thread; the
+losses concentrate at arming). The fix does not depend on which path it is: it
+assumes any hit can be lost and pairs by frame so one loss costs one scope,
+not the rest of the thread.

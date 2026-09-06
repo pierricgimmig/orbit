@@ -157,6 +157,11 @@ pub struct UprobeSession {
     newest_seen_ns: u64,
     /// Whether the `(sp, ip, cpu)` filter drops what it flags, or only counts.
     duplicate_filter: bool,
+    /// `ORBIT_UPROBE_DUMP=<path>`: every hit as one text line before any
+    /// pairing (timestamp, tid, cpu, function, entry/return, sp, ip), for
+    /// looking at what the kernel delivered around a lost hit.
+    dump: Option<std::io::BufWriter<std::fs::File>>,
+    names: HashMap<u64, String>,
     /// Per thread, the last entry that was let through: `(sp, ip, cpu)`.
     /// At most one, as in the C++ -- it is the last entry, not a shadow
     /// stack. Taken on the next entry and on every return.
@@ -198,6 +203,19 @@ impl UprobeSession {
             pending: Vec::new(),
             newest_seen_ns: 0,
             duplicate_filter,
+            dump: std::env::var_os("ORBIT_UPROBE_DUMP").and_then(|path| {
+                match std::fs::File::create(&path) {
+                    Ok(f) => {
+                        eprintln!("orbit-service: dumping raw uprobe hits to {}", path.to_string_lossy());
+                        Some(std::io::BufWriter::new(f))
+                    }
+                    Err(e) => {
+                        eprintln!("orbit-service: could not open uprobe dump {}: {e}", path.to_string_lossy());
+                        None
+                    }
+                }
+            }),
+            names: hooks.iter().map(|h| (h.function_id, h.name.clone())).collect(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),
@@ -328,6 +346,20 @@ impl UprobeSession {
                     cpu: sample.cpu,
                 };
                 self.newest_seen_ns = self.newest_seen_ns.max(hit.timestamp_ns);
+                if let Some(dump) = self.dump.as_mut() {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        dump,
+                        "{} {} {} {} {} {:#x} {:#x}",
+                        hit.timestamp_ns,
+                        hit.tid,
+                        hit.cpu,
+                        self.names.get(&hit.function_id).map(String::as_str).unwrap_or("?"),
+                        if hit.is_return { "ret" } else { "entry" },
+                        hit.sp,
+                        hit.ip
+                    );
+                }
                 self.pending.push(hit);
             }
         }
@@ -501,6 +533,8 @@ mod tests {
             pending: Vec::new(),
             newest_seen_ns: 0,
             duplicate_filter: true,
+            dump: None,
+            names: HashMap::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),

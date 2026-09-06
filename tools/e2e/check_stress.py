@@ -20,6 +20,7 @@ import json
 import sys
 import zipfile
 
+SCHEDULING_SLICE = 3
 API_SCOPE = 1
 TREE = [("orbit_stress_outer", 0, 1), ("orbit_stress_middle", 1, 2), ("orbit_stress_inner", 2, 6)]
 NAMES = {name: (depth, per_outer) for name, depth, per_outer in TREE}
@@ -89,17 +90,28 @@ def analyse(rows, threads, calls):
 
 
 def rows_from_bundle(path, pid):
+    """The hooked scopes of `pid`, and how often its threads changed CPU:
+    consecutive scheduler slices of one thread on different CPUs, which is
+    the migration the probes mind (docs/uprobes-duplicate-events.md)."""
     import pyarrow.parquet as pq
     with zipfile.ZipFile(path) as z:
-        table = pq.read_table(io.BytesIO(z.read("events.parquet")),
-                              columns=["start_ns", "duration_ns", "pid", "tid", "kind", "depth", "name"])
-    cols = {c: table.column(c).to_pylist() for c in table.column_names}
+        table = pq.read_table(io.BytesIO(z.read("events.parquet")))
+    wanted = ["start_ns", "duration_ns", "pid", "tid", "kind", "depth", "name", "cpu"]
+    cols = {c: table.column(c).to_pylist() for c in wanted if c in table.column_names}
     rows = []
+    slices = {}
     for i in range(table.num_rows):
-        if cols["kind"][i] != API_SCOPE or cols["pid"][i] != pid:
+        if cols["pid"][i] != pid:
             continue
-        rows.append((cols["tid"][i], cols["name"][i], cols["depth"][i], cols["start_ns"][i], cols["duration_ns"][i]))
-    return rows
+        if cols["kind"][i] == API_SCOPE:
+            rows.append((cols["tid"][i], cols["name"][i], cols["depth"][i], cols["start_ns"][i], cols["duration_ns"][i]))
+        elif cols["kind"][i] == SCHEDULING_SLICE and "cpu" in cols:
+            slices.setdefault(cols["tid"][i], []).append((cols["start_ns"][i], cols["cpu"][i]))
+    migrations = 0
+    for tid, s in slices.items():
+        s.sort()
+        migrations += sum(1 for a, b in zip(s, s[1:]) if a[1] != b[1])
+    return rows, migrations
 
 
 def self_test():
@@ -144,7 +156,9 @@ def main():
         return 0
     if not (args.bundle and args.pid and args.threads and args.calls):
         ap.error("bundle, --pid, --threads and --calls are required")
-    verdict = analyse(rows_from_bundle(args.bundle, args.pid), args.threads, args.calls)
+    rows, migrations = rows_from_bundle(args.bundle, args.pid)
+    verdict = analyse(rows, args.threads, args.calls)
+    verdict["migrations_seen"] = migrations
     print(json.dumps(verdict))
     return 0
 

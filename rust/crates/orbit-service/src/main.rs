@@ -130,6 +130,14 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--uprobe-dump" => {
+                // Every raw probe hit to a file, for looking at what the
+                // kernel delivered around a lost one (uprobes.rs). A flag
+                // rather than only the env var because sudo strips the env.
+                if let Some(path) = iter.next() {
+                    std::env::set_var("ORBIT_UPROBE_DUMP", path);
+                }
+            }
             "--wire" => {
                 let v = iter.next().unwrap_or_default();
                 match orbit_live_server::WireFormat::parse(&v) {
