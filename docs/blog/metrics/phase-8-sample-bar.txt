@@ -1,0 +1,32 @@
+Phase 8: the sample bar was rendering the whole time, in the wrong colour
+
+Measured 2026-09-01 on Linux 7.0.0-30-generic, 32 threads.
+Target: a C program with three CPU-bound threads (main + 2 pthreads).
+
+Symptom: no visible per-sample tick row, as C++ Orbit has.
+
+Cause: orbit-live-event's event_color had no arm for kind::SAMPLE, so ticks fell
+through to the thread-scope arm and were painted the same colour as the flame
+graph directly beneath them. palette_color -- a legacy helper the renderer does
+not call -- did have the right colour, which is why the constant existed and the
+row still did not read.
+
+After adding the arm, same capture, 3 seconds, /api/timeline over the full range
+at width 1200:
+
+  sample records read          9,302
+  parsed                       9,302
+  short register sets              0
+  ticks rendered (#ECEFF1)     8,960
+  distinct tick rows               3    (one per thread)
+  tick height                    8 px
+  tick width                     1 px
+
+Three rows for three threads is the check that matters: the ticks lane by
+(pid, tid) and sit directly under each thread's state bar, which is where C++
+Orbit puts them.
+
+A first attempt to reproduce this used a target that slept between iterations
+and produced 23 samples in 3 seconds. That number was correct -- the process was
+using about 0.1% of a core, and PERF_COUNT_SW_CPU_CLOCK samples CPU time, not
+wall time. Worth recording because it briefly looked like a second bug.

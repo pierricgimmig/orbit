@@ -6,19 +6,20 @@
 
 #if _WIN32
 #include "PdbFileDia.h"
+#else
+#include "ObjectFileBackend.h"
 #endif
-
-#include "PdbFileLlvm.h"
 
 namespace orbit_object_utils {
 
 ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFile(const std::filesystem::path& file_path,
                                                        const ObjectFileInfo& object_file_info) {
 #if _WIN32
-  // To workaround a limitation in LLVM's pdb parsing code, we use the DIA SDK directly on Windows.
+  // Windows reads PDBs through the DIA SDK, which is more capable than any
+  // portable reader and is already a Windows-only dependency.
   return PdbFileDia::CreatePdbFile(file_path, object_file_info);
 #else
-  return PdbFileLlvm::CreatePdbFile(file_path, object_file_info);
+  return CreatePdbFileRust(file_path, object_file_info);
 #endif
 }
 

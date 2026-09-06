@@ -1,0 +1,19 @@
+A/B benchmark: PerfEventQueue backends, gate 4 of docs/rust-port-plan.html.
+
+Workload: 16 ordered streams plus ~3% unordered events, pushes and pops
+interleaved as PerfEventProcessor does. 2,048,000 events per run, three
+runs per backend, one binary.
+
+  cpp   63.0 / 68.9 / 72.0 ns per event
+  rust  77.4 / 78.0 / 79.1 ns per event   (~15-20% slower)
+
+Checksums are identical in every run: the two backends pop the events in
+exactly the same order. The gap is architectural: three FFI calls per
+event lifecycle that cannot inline, plus the slab that keeps events on
+the C++ side. Prefetching pops in batches would remove the calls but
+breaks the semantics: a push may legally deliver an event older than
+anything prefetched, and popped events cannot be pushed back.
+
+Per gate 4, the default therefore stays cpp. The Rust implementation is
+correctness-validated (identical checksums, all three test modes, the
+sabotage check) and stays in tree behind ORBIT_PERF_MERGE_BACKEND.

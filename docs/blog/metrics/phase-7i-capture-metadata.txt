@@ -1,0 +1,60 @@
+Phase 7i -- machine metadata in every capture (2026-08-31)
+==========================================================
+
+What: every capture now opens with a metadata block, so a trace is
+interpretable long after the machine it came from is gone. "Is 4 ms slow?"
+is unanswerable without knowing what it ran on.
+
+Two new pod events, written at the HEAD of the stream:
+  SystemInfo -- capture start on both clocks (UNIX epoch and CLOCK_MONOTONIC,
+    so event timestamps can be placed on a wall clock), hostname, kernel
+    release, CPU model, physical cores, logical threads, total RAM, page size.
+  GpuInfo    -- one per GPU: PCI vendor/device ids, VRAM total, model name,
+    driver version.
+
+Where the data comes from
+-------------------------
+- SystemInfo: /proc/cpuinfo, /proc/meminfo, /proc/sys/kernel/{hostname,
+  osrelease}, sysconf. Plain file reads, no libraries -- works unchanged in
+  the fully static binary.
+- GpuInfo: two sources that are MERGED into one record per device. sysfs
+  (/sys/class/drm/card*/device) supplies the PCI ids and, on amdgpu, VRAM;
+  the NVML helper supplies the model name, VRAM and driver version that
+  sysfs cannot know. The merge keeps the best field from each side, so a
+  capture carries exactly one complete GpuInfo per GPU rather than a partial
+  record from each source.
+
+Verified on this machine (real values, static binary)
+-----------------------------------------------------
+  SystemInfo: host=rixbox kernel=7.0.0-30-generic
+              cpu=13th Gen Intel(R) Core(TM) i9-13900KF
+              cores=24 threads=32 ram=91 GiB page=4096
+  GpuInfo[0]: vendor=0x10de device=0x2684 vram=24564 MiB
+              name="NVIDIA GeForce RTX 4090" driver="595.84"
+  counts: SystemInfo 1, GpuInfo 1, CallstackSample 41, InternedCallstack 8,
+          SchedulingSlice 2955, GpuMetrics 6; clean EOF.
+
+Note the cores/threads split is real: 24 physical cores (8 P + 16 E on this
+part) and 32 threads, counted from distinct (physical id, core id) pairs
+rather than assuming SMT everywhere.
+
+Without a telemetry helper (the AMD case, or any machine with no GPU
+library), the metadata is still there from sysfs alone:
+  SystemInfo: cpu=... cores=24 ram=91 GiB
+  GpuInfo: vendor=0x10de dev=0x2684 vram=0 MiB name="NVIDIA"
+VRAM reads 0 because only amdgpu publishes it in sysfs; the vendor and PCI
+ids are always present.
+
+A design detail worth recording
+-------------------------------
+The first implementation wrote sysfs GpuInfo immediately and the helper's
+GpuInfo whenever it arrived, which produced TWO GpuInfo events for one GPU --
+each half-complete. The capture head is now assembled separately and
+prepended when the stream is written, which both guarantees the metadata sits
+at the head and gives the merge somewhere to happen.
+
+Parsing is split from file reading so it is tested against fixture text
+rather than whatever this machine happens to be: seven unit tests cover the
+model/cores/threads extraction (including the no-core-id fallback and the
+two-socket case where the same core id appears twice), MemTotal conversion,
+hex PCI id parsing, and vendor naming.

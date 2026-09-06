@@ -5,8 +5,6 @@
 #ifndef OBJECT_UTILS_OBJECT_FILE_H_
 #define OBJECT_UTILS_OBJECT_FILE_H_
 
-#include <llvm/Object/Binary.h>
-#include <llvm/Object/ObjectFile.h>
 #include <stdint.h>
 
 #include <filesystem>

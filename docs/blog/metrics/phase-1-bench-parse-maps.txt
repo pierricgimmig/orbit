@@ -1,0 +1,4 @@
+iterations   30000, 5 rounds
+cpp          8.222 us/parse (median)
+rust         4.700 us/parse (median)
+speedup      1.75x

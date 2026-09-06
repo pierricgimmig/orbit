@@ -8,9 +8,9 @@
 #include <absl/memory/memory.h>
 #include <cvconst.h>
 #include <diacreate.h>
-#include <llvm/Demangle/Demangle.h>
 #include <winerror.h>
 
+#include "Demangle.h"
 #include "Introspection/Introspection.h"
 #include "ObjectUtils/PdbUtilsDia.h"
 #include "OrbitBase/ExecutablePath.h"

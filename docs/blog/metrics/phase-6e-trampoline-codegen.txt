@@ -1,0 +1,43 @@
+Phase 6e -- trampoline code generation (2026-08-31)
+===================================================
+
+What: the fixed machine-code sequences of a trampoline, ported to
+orbit-trampoline::codegen -- twin of the Append*Code emitters in
+Trampoline.cpp. On entry the trampoline saves every register the payload
+might clobber (nine GP registers, then ymm0-15 or xmm0-15 depending on AVX,
+with the stack aligned to 32 bytes), calls the entry payload with the
+return address / function id / stack pointer / return-trampoline address,
+then restores and jumps back into the relocated prologue. The return
+trampoline mirrors this around the exit payload and returns to the original
+caller. The repetitive vector save/restore is generated from the register
+index rather than written out sixteen times.
+
+How it is verified
+------------------
+Two ways:
+1. Golden-byte unit tests transcribed verbatim from Trampoline.cpp -- the
+   C++ emits these exact constants, so the goldens ARE the spec (both AVX
+   and SSE paths).
+2. trampoline_codegen_differential.cpp: thin same-TU wrappers expose the
+   C++ emitters (Emit*ForDifferential), and the driver compares every stage
+   (backup, restore, call-to-entry-payload, jump-back over five offsets,
+   the whole exit trampoline) byte for byte against the Rust, passing the
+   host's AVX detection to both. IDENTICAL (avx=1 on this host). Sabotage:
+   swapping two GP-push opcodes -> DIVERGENT.
+
+A note in the interest of honesty
+---------------------------------
+The C++ edits for this milestone are purely additive: five wrapper
+functions plus their declarations (43 insertions, 0 deletions), none called
+by the production instrumentation path -- the trampoline bytes the real
+CreateTrampoline emits are unchanged. The end-to-end suite
+(InstrumentProcessTest) has one timing-flaky case,
+ExitPayloadDoesNotUseX87Fpu, that fails ~1 in 5 with "PTRACE_SETREGSET ...
+No such process" -- the traced sample child racing to exit before the
+register restore. It flakes independently of these changes (the production
+code path is byte-identical) and is inherent to end-to-end ptrace tests.
+
+Remaining for Phase 6: the CreateTrampoline orchestration (disassemble and
+relocate the prologue with 6d, splice in the 6e code blocks, write the
+jumps) and InstrumentProcess above it -- assembly of pieces already ported,
+verified end-to-end against a payload library.

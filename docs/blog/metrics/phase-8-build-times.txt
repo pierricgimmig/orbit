@@ -1,0 +1,43 @@
+Cold build: C++ OrbitService vs Rust orbit-service (2026-08-31)
+===============================================================
+
+Same machine (i9-13900KF, 24 cores / 32 threads). Both compile from scratch;
+neither includes fetching dependencies.
+
+  C++  bazel --output_base=/tmp/ob_cold2 build --disk_cache= \
+            //src/Service:OrbitService
+       wall 148.5 s (2:28.56), critical path 73.7 s, 4506 actions
+
+  Rust CARGO_TARGET_DIR=<fresh> cargo build --release
+            (rust/crates/orbit-service)
+       wall 10.7 s, 1052% CPU, 116 crates
+
+  ratio 13.9x
+
+  Rust incremental (touch one source file): 5.0 s
+
+Method notes
+------------
+- The C++ build used a private output base so it neither used nor polluted
+  the developer's cache, with --disk_cache= to force a cold action graph.
+  External repositories were already fetched, so this measures compiling.
+- The Rust build used a fresh CARGO_TARGET_DIR with a warm crates.io
+  registry, for the same reason. 112 rlibs and 271 MB of target dir confirm
+  it was not a no-op.
+
+Earlier data point, same direction
+----------------------------------
+Deleting six LLVM libraries from ObjectUtils (phase-2h) took that target's
+cold build from 158.7 s to 104.6 s, -34%, before any of the service existed.
+
+Caveats recorded in post 13
+---------------------------
+- Not the same program: the C++ service carries gRPC, the symbol services and
+  dynamic instrumentation that the Rust one has not reached. Part of the gap
+  is less code doing less.
+- Bazel buys hermeticity and remote caching that cargo does not; with a warm
+  remote cache in CI the C++ figure would drop substantially. This is the
+  local from-scratch experience.
+- The Rust service grew during the session (the viewer UI server pulled in
+  axum/tokio, taking the static binary from 865 KB to ~12 MB) and the build
+  stayed near 11 s -- but this is a reading to retake, not a trophy.

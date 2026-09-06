@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use orbit_live_event::{kind, LiveEvent, LIVE_EVENT_SIZE};
 use orbit_live_protocol::{decode_all, LiveFrame, VERSION};
 use orbit_live_ring::read_spill_file;
@@ -30,7 +28,6 @@ fn ev(i: u64) -> LiveEvent {
 #[test]
 fn snapshot_frames_are_decodable_hello_status_and_events() {
     let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
     svc.intern_string("main");
     svc.push_events(&[ev(1), ev(2), ev(3)]);
     let mut bytes = Vec::new();
@@ -139,85 +136,6 @@ fn frame_body_is_16_byte_header_plus_exact_rgba() {
 }
 
 #[test]
-fn self_scopes_are_ignored_when_disabled() {
-    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 1_000,
-        depth: 0,
-    }]);
-    assert!(svc.ring().snapshot().1.is_empty());
-    assert!(!svc.self_profile_enabled());
-}
-
-#[test]
-fn self_scopes_join_the_same_ring_at_the_live_edge() {
-    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
-    use std::sync::atomic::Ordering;
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
-    svc.push_events(&[ev(50)]);
-    svc.enable_self_profile();
-    svc.capturing.store(true, Ordering::Relaxed);
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 80,
-        depth: 0,
-    }]);
-    let snap = svc.ring().snapshot().1;
-    let self_ev = snap
-        .iter()
-        .find(|e| e.pid == VIEWER_PID)
-        .expect("viewer pid on the ring");
-    let demo_end = ev(50).start_ns + ev(50).duration_ns;
-    assert_eq!(self_ev.start_ns, demo_end);
-    assert_eq!(self_ev.kind, kind::API_SCOPE);
-    assert_eq!(self_ev.name_id, NAME_FRAME);
-}
-
-#[test]
-fn push_events_emits_server_scope_only_when_self_profile_is_on() {
-    use orbit_live_event::dev::{NAME_PUSH, NAME_RASTER, SERVICE_PID};
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
-    svc.push_events(&[ev(1)]);
-    let _ = svc.rasterize_frame(Some(0), Some(40), 32);
-    assert!(!svc.ring().snapshot().1.iter().any(|e| e.pid == SERVICE_PID));
-
-    svc.enable_self_profile();
-    svc.push_events(&(2..80).map(ev).collect::<Vec<_>>());
-    let _ = svc.rasterize_frame(Some(0), Some(800), 64);
-    let snap = svc.ring().snapshot().1;
-    assert!(
-        snap.iter().any(|e| e.pid == SERVICE_PID
-            && e.tid == 4
-            && (e.name_id == NAME_PUSH || e.name_id == NAME_RASTER)),
-        "expected a service PushEvents or Rasterize scope"
-    );
-}
-
-#[test]
-fn self_names_are_interned_for_the_rail() {
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.enable_self_profile();
-    let intern = svc.intern.lock();
-    assert_eq!(intern.get(1), Some("ui"));
-    assert_eq!(intern.get(30_000), Some("Frame"));
-    assert_eq!(intern.get(4), Some("server"));
-}
-
-#[test]
 fn demo_thread_names_are_interned_for_the_rail() {
     let svc = LiveService::new(small_cfg()).unwrap();
     svc.intern_id(100, "Main");
@@ -304,211 +222,6 @@ fn demo_emits_three_processes_not_self_pids() {
 }
 
 #[test]
-fn self_scopes_stamp_to_demo_clock_not_wall() {
-    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.enable_self_profile();
-    svc.note_live_end(50_000_000);
-    svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 1_000,
-        depth: 0,
-    }]);
-    let self_ev = svc
-        .ring()
-        .snapshot()
-        .1
-        .into_iter()
-        .find(|e| e.pid == VIEWER_PID)
-        .expect("viewer scope");
-    assert_eq!(self_ev.start_ns, 50_000_000);
-}
-
-#[test]
-fn successive_self_scopes_do_not_overlap_when_live_edge_is_frozen() {
-    use orbit_live_event::dev::{RelScope, NAME_FRAME, NAME_NET, VIEWER_PID};
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.enable_self_profile();
-    svc.note_live_end(10_000);
-    svc.capturing.store(true, std::sync::atomic::Ordering::Relaxed);
-    let mk = |name, dur| RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: name,
-        start_rel_ns: 0,
-        duration_ns: dur,
-        depth: 0,
-    };
-    svc.apply_self_scopes(&[mk(NAME_FRAME, 1_000)]);
-    svc.apply_self_scopes(&[mk(NAME_NET, 400)]);
-    let mut self_evs: Vec<_> = svc
-        .ring()
-        .snapshot()
-        .1
-        .into_iter()
-        .filter(|e| e.pid == VIEWER_PID && e.tid == 1 && e.depth == 0)
-        .collect();
-    self_evs.sort_by_key(|e| e.start_ns);
-    assert_eq!(self_evs.len(), 2);
-    assert_eq!(self_evs[0].start_ns, 10_000);
-    assert_eq!(self_evs[0].end_ns(), 11_000);
-    assert_eq!(self_evs[1].start_ns, 11_000);
-    assert!(
-        self_evs[0].end_ns() <= self_evs[1].start_ns,
-        "two depth-0 scopes on the same tid must not overlap"
-    );
-}
-
-#[test]
-fn live_edge_is_demo_end_not_self_newest() {
-    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.enable_self_profile();
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 80_000_000,
-        depth: 0,
-    }]);
-    assert_eq!(svc.live_end_ns(), 0, "self must not move live_edge");
-    svc.push_events(&[ev(5)]);
-    let demo_end = ev(5).end_ns();
-    assert_eq!(svc.live_end_ns(), demo_end);
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 1_000,
-        depth: 0,
-    }]);
-    assert_eq!(svc.live_end_ns(), demo_end);
-}
-
-#[test]
-fn capture_started_resets_self_cursor_onto_demo_t() {
-    use orbit_live_event::dev::{RelScope, NAME_FRAME, VIEWER_PID};
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.enable_self_profile();
-    svc.note_live_end(80_000_000);
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 1_000,
-        depth: 0,
-    }]);
-    svc.mark_capture_started(1, 1_000_000);
-    assert_eq!(svc.live_end_ns(), 1_000_000);
-    svc.apply_self_scopes(&[RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 500,
-        depth: 0,
-    }]);
-    let last = svc
-        .ring()
-        .snapshot()
-        .1
-        .into_iter()
-        .rev()
-        .find(|e| e.pid == VIEWER_PID)
-        .expect("viewer scope after reset");
-    assert_eq!(last.start_ns, 1_000_000);
-}
-
-#[test]
-fn self_batches_after_demo_ticks_stay_on_demo_clock() {
-    use orbit_live_event::dev::{
-        RelScope, DEMO_ORIGIN_NS, DEMO_TICK_NS, NAME_FRAME, VIEWER_PID,
-    };
-
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.enable_self_profile();
-    let n = 8u64;
-    let mut demo_t = DEMO_ORIGIN_NS;
-    svc.mark_capture_started(1, demo_t);
-    for i in 0..n {
-        demo_t = DEMO_ORIGIN_NS + (i + 1) * DEMO_TICK_NS;
-        svc.push_events(&[LiveEvent {
-            start_ns: demo_t,
-            duration_ns: DEMO_TICK_NS,
-            tid: 100,
-            pid: 1,
-            kind: kind::API_SCOPE,
-            depth: 0,
-            extra: 0,
-            _pad: 0,
-            name_id: 1,
-        }]);
-    }
-    let mk = || RelScope {
-        pid: VIEWER_PID,
-        tid: 1,
-        name_id: NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 5_000_000,
-        depth: 0,
-    };
-    svc.apply_self_scopes(&[mk()]);
-    svc.apply_self_scopes(&[mk()]);
-    let self_evs: Vec<_> = svc
-        .ring()
-        .snapshot()
-        .1
-        .into_iter()
-        .filter(|e| e.pid == VIEWER_PID)
-        .collect();
-    let hi = demo_t.saturating_add(2 * DEMO_TICK_NS);
-    assert_eq!(self_evs.len(), 2);
-    for e in &self_evs {
-        assert!(
-            e.start_ns >= DEMO_ORIGIN_NS && e.start_ns <= hi,
-            "self {} outside [{}, {hi}] demo_t={demo_t}",
-            e.start_ns,
-            DEMO_ORIGIN_NS
-        );
-    }
-}
-
-#[test]
-fn timeline_cache_skips_rebuild_when_view_and_data_gen_match() {
-    let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
-    svc.push_events(&[ev(1), ev(2)]);
-    let a = svc.cached_index();
-    let b = svc.cached_index();
-    assert!(Arc::ptr_eq(&a, &b), "index cache must reuse the same Arc");
-    svc.enable_self_profile();
-    svc.apply_self_scopes(&[orbit_live_event::dev::RelScope {
-        pid: orbit_live_event::dev::VIEWER_PID,
-        tid: 1,
-        name_id: orbit_live_event::dev::NAME_FRAME,
-        start_rel_ns: 0,
-        duration_ns: 10,
-        depth: 0,
-    }]);
-    let c = svc.cached_index();
-    assert!(
-        Arc::ptr_eq(&b, &c),
-        "self-only pushes must not immediately rebuild the index"
-    );
-}
-
-#[test]
 fn capture_start_json_includes_sampling_and_hooks() {
     let body = crate::http::StartBody {
         pid: 42,
@@ -520,9 +233,12 @@ fn capture_start_json_includes_sampling_and_hooks() {
         unwinding: "dwarf".into(),
         dynamic_instrumentation_method: "user_space".into(),
         instrumented_functions: vec![crate::http::InstrumentedFnRef { function_id: 7 }],
+        show_all_processes: false,
+        uprobe_duplicate_filter: true,
     };
     let json = body.to_json();
     assert!(json.contains("\"pid\":42"));
+    assert!(json.contains("\"show_all_processes\":false"));
     assert!(json.contains("\"samples_per_second\":1000"));
     assert!(json.contains("\"unwinding\":\"dwarf\""));
     assert!(json.contains("\"function_id\":7"));
@@ -555,7 +271,6 @@ fn capture_stop_without_hooks_stops_demo() {
 #[test]
 fn sample_stack_ingest_paints_named_function_calls() {
     let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
     let root = svc.intern_string("main");
     let leaf = svc.intern_string("foo::Bar");
     let evs = svc
@@ -576,7 +291,6 @@ fn sample_stack_ingest_paints_named_function_calls() {
 #[test]
 fn function_call_ingest_uses_interned_pretty_name() {
     let svc = LiveService::new(small_cfg()).unwrap();
-    svc.disable_self_profile();
     let name_id = svc.intern_string("HookMe");
     let ev = svc
         .pairer
@@ -586,4 +300,72 @@ fn function_call_ingest_uses_interned_pretty_name() {
     let snap = svc.ring().snapshot().1;
     assert_eq!(snap[0].name_id, name_id);
     assert_eq!(svc.intern.lock().get(snap[0].name_id), Some("HookMe"));
+}
+
+#[test]
+fn thread_and_process_names_are_replayed_to_a_late_subscriber() {
+    use orbit_live_protocol::{decode_frame, LiveFrame};
+    let svc = crate::LiveService::new(crate::ServerConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        ring_buffer_bytes: 1 << 20,
+        spill_path: None,
+        wire: crate::WireFormat::default(),
+    })
+    .unwrap();
+    svc.set_thread_name(7, 70, "Worker-1");
+    svc.set_process_name(7, "game");
+    let mut seen_thread = false;
+    let mut seen_process = false;
+    for bytes in svc.hello_and_snapshot_frames() {
+        let (frame, _) = decode_frame(&bytes).unwrap();
+        match frame {
+            LiveFrame::ThreadName { pid, tid, name } => {
+                assert_eq!((pid, tid, name.as_str()), (7, 70, "Worker-1"));
+                seen_thread = true;
+            }
+            LiveFrame::ProcessName { pid, name } => {
+                assert_eq!((pid, name.as_str()), (7, "game"));
+                seen_process = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(seen_thread && seen_process);
+    let (threads, processes) = svc.capture_names();
+    assert_eq!(threads, vec![((7, 70), "Worker-1".to_string())]);
+    assert_eq!(processes, vec![(7, "game".to_string())]);
+    svc.clear_names();
+    assert!(svc.capture_names().0.is_empty());
+}
+
+#[test]
+fn nothing_from_before_the_capture_start_reaches_the_ring() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    // The handler's provisional start, then the loop's real one.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.mark_capture_started(7, 1_000);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    // A later provisional 0 (a second Record) does not forget the clock.
+    svc.mark_capture_started(7, 0);
+    assert_eq!(svc.capture_start_ns(), 1_000);
+    svc.push_event(ev(50)); // start 500: before
+    svc.push_events(&[ev(90), ev(100), ev(200)]); // 900 before, 1000 and 2000 in
+    assert_eq!(svc.stats().events_live, 2);
+    assert_eq!(svc.dropped_before_start(), 2);
+    assert_eq!(svc.stats().oldest_start_ns, 1_000);
+    // A scope opened before the capture and closed inside it is not paired.
+    svc.ingest_scope_start(7, 1, 900, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 2, "the straddling scope was refused");
+    assert_eq!(svc.dropped_before_start(), 3);
+    svc.ingest_scope_start(7, 1, 1_100, 0, 3);
+    svc.ingest_scope_stop(7, 1, 1_500);
+    assert_eq!(svc.stats().events_live, 3, "a scope inside the capture lands");
+    // Clear forgets the clock; a capture with no known start guards nothing.
+    svc.clear_capture().unwrap();
+    assert_eq!(svc.capture_start_ns(), 0);
+    svc.push_event(ev(50));
+    assert_eq!(svc.stats().events_live, 1);
+    assert_eq!(svc.dropped_before_start(), 0);
 }

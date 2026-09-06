@@ -1,0 +1,34 @@
+Phase 5b -- UprobesReturnAddressManager on Rust (2026-08-31)
+============================================================
+
+What: the first of the two libunwindstack-welded classes, ported. The weld
+turned out to be thin: the class's only libunwindstack dependency is one
+predicate ("is this instruction pointer in the [uprobes] map or a return
+trampoline?"), so the Rust twin (orbit-tracing-state::return_addresses)
+takes the predicate as a closure and the maps lookup stays where the maps
+object lives. Everything else -- per-tid hijack stacks, reverse-order stack
+patching so tail-call duplicates resolve to the original return address,
+the three discard conditions for unexplainable callchains -- is pure logic,
+ported quirk for quirk.
+
+How it is verified
+------------------
+- The unedited C++ suite (19 tests) now runs as a dual-backend target:
+  UprobesReturnAddressManagerTests (rust) / Cpp / Both, sharing
+  ORBIT_TRACING_STATE_BACKEND. Both-mode runs both implementations on
+  copies and ORBIT_FATALs on any output difference.
+- Sabotage: removing the tail-call duplicate skip fails exactly the
+  rust-exercising targets; Cpp stays green.
+- Six Rust unit tests pin the same semantics natively.
+
+Hurdle worth recording: the first run of the rust target crashed in the
+FFI, not the logic -- test stacks can be empty, and an empty std::vector's
+data() is NULL, which Rust's slice::from_raw_parts_mut rejects even for
+length zero. The C++ never noticed because its early-return happens before
+the memcpy. The FFI now maps (null, 0) to an empty slice.
+
+Default: rust, like the rest of the tracing state. The facade keeps the
+virtual interface, so the visitor tests' mocks work unchanged.
+
+Remaining welded class: LeafFunctionCallManager, which needs CFI queries
+(HasFramePointerSet) -- that is orbit-unwind territory, not a predicate.

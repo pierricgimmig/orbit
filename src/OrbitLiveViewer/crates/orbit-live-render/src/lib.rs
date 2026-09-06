@@ -41,14 +41,14 @@ mod lod;
 mod par;
 mod shaders;
 pub use lod::{
+    collect_instances_cached, ListingCache,ThreadFocus, 
     apply_highlight_flags, choose_lod, choose_lod_first8, choose_lod_hint, collect_instances,
     collect_instances_layout, collect_instances_layout_opts, drop_index_for_y, empty_column_color,
     instance_for_event, lane_gap, lane_height, leaf_label, pick_column_event, pick_instance_at,
     reorder_insert, sample_lod_lanes, sort_thread_leaves, stack_height, stack_height_keys,
     stacked_layout, sync_lane_order, value_lanes_in_view, CollectOpts, InstanceFrame,
     ScopeInstance, ScopePick, TimelineLod, YCull, FLAG_DIMMED, FLAG_HOVER, FLAG_NONE,
-    FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX, Y_CULL_PAD,
-};
+    FLAG_SELECTED, FLAG_SIBLING, INSTANCE_MIN_PX, Y_CULL_PAD, FLAG_INACTIVE, FLAG_SAME_PID};
 pub use par::{is_parallel, parallelism, set_wasm_pool_threads, WorkerSpan};
 pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 
@@ -63,6 +63,9 @@ pub use shaders::{BLIT_RECT_WGSL, BLIT_WGSL, INSTANCE_WGSL};
 pub struct Lane {
     events: Vec<LiveEvent>,
     ends_sorted: bool,
+    /// Bumped by every insert and every retain that removed something: the
+    /// listing cache's way to know a lane is exactly what it listed before.
+    version: u64,
 }
 
 impl Default for Lane {
@@ -70,6 +73,7 @@ impl Default for Lane {
         Self {
             events: Vec::new(),
             ends_sorted: true,
+            version: 0,
         }
     }
 }
@@ -87,7 +91,13 @@ impl Lane {
         self.events.is_empty()
     }
 
+    /// Changes whenever the events do.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
     pub fn insert(&mut self, event: LiveEvent) {
+        self.version = self.version.wrapping_add(1);
         let i = if self
             .events
             .last()
@@ -115,6 +125,19 @@ impl Lane {
     pub fn extend<I: IntoIterator<Item = LiveEvent>>(&mut self, events: I) {
         for e in events {
             self.insert(e);
+        }
+    }
+
+    /// Drop every event the predicate rejects, keeping start order.
+    pub fn retain<F: FnMut(&LiveEvent) -> bool>(&mut self, mut f: F) {
+        let before = self.events.len();
+        self.events.retain(|e| f(e));
+        if self.events.len() != before {
+            self.version = self.version.wrapping_add(1);
+            // Removing events can only restore end order, never break it, but
+            // a lane that was already unsorted may now be sorted -- recheck so
+            // it does not stay on the linear fallback forever.
+            self.ends_sorted = self.ends_are_sorted();
         }
     }
 
@@ -268,14 +291,76 @@ impl Lane {
 #[derive(Clone, Debug, Default)]
 pub struct TrackIndex {
     lanes: BTreeMap<LaneKey, Lane>,
+    /// Bumped whenever the *set* of lanes changes -- a lane appears, or
+    /// lanes are dropped -- and not on every event. The track strip keys its
+    /// per-thread lane catalogue on this, so a live stream of events into
+    /// existing lanes costs it nothing.
+    lane_gen: u64,
+    /// Running total, so `event_count` is a read rather than a walk over every
+    /// lane (it is consulted several times per frame).
+    events: usize,
+    /// Running time bounds, maintained on insert, so `time_bounds` is a read.
+    /// It used to walk every event of every lane, and was called once per
+    /// WebSocket batch -- on a busy live capture that was most of the drain.
+    bounds: Bounds,
+}
+
+/// Min/max over all events and over "real" ones -- a zero-width mark at t=0
+/// (Chrome metadata leftovers, missing-`ts` instants) must not stretch the
+/// capture to the origin when a later cluster exists.
+#[derive(Clone, Copy, Debug)]
+struct Bounds {
+    min_all: u64,
+    max_all: u64,
+    min_real: u64,
+    max_real: u64,
+    any_real: bool,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Bounds { min_all: u64::MAX, max_all: 0, min_real: u64::MAX, max_real: 0, any_real: false }
+    }
+}
+
+impl Bounds {
+    fn add(&mut self, e: &LiveEvent) {
+        let start = e.start_ns;
+        let end = e.end_ns();
+        self.min_all = self.min_all.min(start);
+        self.max_all = self.max_all.max(end);
+        // The viewer's own rows (its self-profile, the server's) are placed
+        // on the capture clock wherever the live edge happens to be, and
+        // they keep arriving between captures. They are not the capture:
+        // letting them into the real bounds stretched the navigable range
+        // seconds before a capture's first event.
+        let own = orbit_live_event::dev::is_self_pid(e.pid);
+        if !own && (start > 0 || e.duration_ns > 1) {
+            self.any_real = true;
+            self.min_real = self.min_real.min(start);
+            self.max_real = self.max_real.max(end);
+        }
+    }
 }
 
 impl TrackIndex {
     pub fn insert(&mut self, event: LiveEvent) {
-        self.lanes
-            .entry(event.lane_key())
-            .or_default()
-            .insert(event);
+        use std::collections::btree_map::Entry;
+        let lane = match self.lanes.entry(event.lane_key()) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                self.lane_gen = self.lane_gen.wrapping_add(1);
+                e.insert(Lane::default())
+            }
+        };
+        lane.insert(event);
+        self.events += 1;
+        self.bounds.add(&event);
+    }
+
+    /// Changes only when a lane is added or removed. See the field.
+    pub fn lane_gen(&self) -> u64 {
+        self.lane_gen
     }
 
     pub fn extend<I: IntoIterator<Item = LiveEvent>>(&mut self, events: I) {
@@ -286,6 +371,34 @@ impl TrackIndex {
 
     pub fn clear(&mut self) {
         self.lanes.clear();
+        self.events = 0;
+        self.bounds = Bounds::default();
+        self.lane_gen = self.lane_gen.wrapping_add(1);
+    }
+
+    /// Drop every event the predicate rejects, and any lane left empty.
+    ///
+    /// An empty lane is not a lane: `TrackStrip` builds the thread rows from
+    /// [`Self::lanes`], so leaving one behind keeps a row (and its height) on
+    /// screen with nothing in it.
+    pub fn retain<F: FnMut(&LiveEvent) -> bool>(&mut self, mut f: F) {
+        for lane in self.lanes.values_mut() {
+            lane.retain(&mut f);
+        }
+        let before = self.lanes.len();
+        self.lanes.retain(|_, lane| !lane.is_empty());
+        if self.lanes.len() != before {
+            self.lane_gen = self.lane_gen.wrapping_add(1);
+        }
+        self.events = self.lanes.values().map(Lane::len).sum();
+        // Dropping events can move either bound; rescan (retain is rare).
+        let mut b = Bounds::default();
+        for lane in self.lanes.values() {
+            for e in &lane.events {
+                b.add(e);
+            }
+        }
+        self.bounds = b;
     }
 
     pub fn lane_count(&self) -> usize {
@@ -293,7 +406,7 @@ impl TrackIndex {
     }
 
     pub fn event_count(&self) -> usize {
-        self.lanes.values().map(Lane::len).sum()
+        self.events
     }
 
     pub fn lanes(&self) -> impl Iterator<Item = (LaneKey, &Lane)> {
@@ -305,33 +418,13 @@ impl TrackIndex {
     }
 
     pub fn time_bounds(&self) -> Option<(u64, u64)> {
-        // Min/max of real timed events. A zero-width mark at t=0 (Chrome
-        // metadata leftovers, missing-`ts` instants) must not stretch the
-        // capture to the origin when a later cluster exists.
-        let mut min_all = u64::MAX;
-        let mut max_all = 0u64;
-        let mut min_real = u64::MAX;
-        let mut max_real = 0u64;
-        let mut any_real = false;
-        for lane in self.lanes.values() {
-            for e in &lane.events {
-                let start = e.start_ns;
-                let end = e.end_ns();
-                min_all = min_all.min(start);
-                max_all = max_all.max(end);
-                if start > 0 || e.duration_ns > 1 {
-                    any_real = true;
-                    min_real = min_real.min(start);
-                    max_real = max_real.max(end);
-                }
-            }
-        }
-        if min_all == u64::MAX {
+        let b = &self.bounds;
+        if b.min_all == u64::MAX {
             None
-        } else if any_real {
-            Some((min_real, max_real.max(min_real + 1)))
+        } else if b.any_real {
+            Some((b.min_real, b.max_real.max(b.min_real + 1)))
         } else {
-            Some((min_all, max_all.max(min_all + 1)))
+            Some((b.min_all, b.max_all.max(b.min_all + 1)))
         }
     }
 
@@ -658,6 +751,7 @@ pub fn generate_nested_scopes(
 
 #[cfg(test)]
 mod tests {
+    use super::{FLAG_INACTIVE, FLAG_SAME_PID, ThreadFocus};
     use super::*;
     use orbit_live_event::{named_scope_color, thread_scope_color};
     #[cfg(not(debug_assertions))]
@@ -807,6 +901,42 @@ mod tests {
         let (a, b) = idx.time_bounds().expect("bounds");
         assert_eq!(a, 0);
         assert_eq!(b, 25_000);
+    }
+
+    #[test]
+    fn retain_drops_events_and_the_lanes_they_emptied() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(0, 10, 0, 1));
+        idx.insert(scope(20, 10, 0, 2));
+        idx.insert(LiveEvent {
+            pid: 2,
+            ..scope(40, 10, 0, 3)
+        });
+        assert_eq!(idx.lane_count(), 2);
+        idx.retain(|e| e.pid != 1);
+        assert_eq!(idx.event_count(), 1);
+        // An empty lane still builds a row in the track strip, so it must go
+        // with its last event.
+        assert_eq!(idx.lane_count(), 1);
+        assert!(idx.lanes().all(|(k, _)| k.pid == 2));
+    }
+
+    #[test]
+    fn retain_keeps_lane_lookups_answering() {
+        let mut idx = TrackIndex::default();
+        // A long scope with a 1 ns instant inside it: ends are out of order,
+        // so the lane is on the duration-aware linear fallback. Dropping the
+        // instant must leave the lane searchable, not stuck mid-state.
+        idx.insert(scope(0, 1_000, 1, 1));
+        let mut instant = scope(10, 1, 1, 2);
+        instant.pid = 2;
+        idx.insert(instant);
+        let key = idx.lanes().next().expect("lane").0;
+        idx.retain(|e| e.pid != 2);
+        let lane = idx.lane(key).expect("lane");
+        assert!(lane.ends_are_sorted());
+        assert_eq!(lane.first_ending_after(10), 0);
+        assert_eq!(lane.overlapping(10, 11).map(|e| e.start_ns), Some(0));
     }
 
     #[test]
@@ -978,8 +1108,9 @@ mod tests {
         assert!(BLIT_WGSL.contains("textureSampleLevel"));
         assert!(BLIT_RECT_WGSL.contains("uni.dest"));
         assert!(INSTANCE_WGSL.contains("sd_rounded_box"));
-        assert!(INSTANCE_WGSL.contains("rounded_box_shadow"));
-        assert!(INSTANCE_WGSL.contains("madebyevan.com"));
+        // The drop shadow was removed (87680c10b): the 6px quad expansion
+        // it needed was pure overdraw on a 72-core scheduler track.
+        assert!(!INSTANCE_WGSL.contains("rounded_box_shadow"));
         assert!(INSTANCE_WGSL.contains("SIBLING_RGB"));
         assert!(INSTANCE_WGSL.contains("SELECTED_RGB"));
         assert!(INSTANCE_WGSL.contains("if sibling"));
@@ -1164,8 +1295,7 @@ mod tests {
                 extra: 0,
             }),
             None,
-            None,
-        );
+            None, ThreadFocus::default());
         assert_eq!(insts[1].flags, FLAG_SELECTED);
         assert_eq!(insts[0].flags, FLAG_SIBLING);
     }
@@ -1194,7 +1324,7 @@ mod tests {
         b.start_ns = 40;
         let mut insts = vec![a, b];
         let ids = std::collections::HashSet::from([7u32]);
-        apply_highlight_flags(&mut insts, None, None, Some(&ids));
+        apply_highlight_flags(&mut insts, None, None, Some(&ids), ThreadFocus::default());
         assert_eq!(insts[0].flags, FLAG_NONE);
         assert_eq!(insts[1].flags, FLAG_DIMMED);
         apply_highlight_flags(
@@ -1210,8 +1340,7 @@ mod tests {
                 extra: 0,
             }),
             None,
-            Some(&ids),
-        );
+            Some(&ids), ThreadFocus::default());
         assert_eq!(insts[0].flags, FLAG_SELECTED);
         assert_eq!(insts[1].flags, FLAG_DIMMED, "other names stay dimmed");
         insts[1].name_id = 7;
@@ -1229,8 +1358,7 @@ mod tests {
                 extra: 0,
             }),
             None,
-            Some(&ids),
-        );
+            Some(&ids), ThreadFocus::default());
         assert_eq!(insts[0].flags, FLAG_SELECTED);
         assert_eq!(insts[1].flags, FLAG_SIBLING);
     }
@@ -1279,5 +1407,58 @@ mod tests {
         let p = frame.pixels[0];
         assert_eq!(bytes[0], ((p >> 16) & 0xFF) as u8);
         assert_eq!(bytes[3], ((p >> 24) & 0xFF) as u8);
+    }
+    #[test]
+    fn a_selected_thread_greys_the_rest_and_lightens_its_process_on_the_scheduler() {
+        let mk = |pid: u32, tid: u32, kind: u8| ScopeInstance {
+            x: 0.0, y: 0.0, w: 10.0, h: 4.0, color: 0xFF80_8080, radius: 1.0,
+            name_id: 1, start_ns: 0, duration_ns: 10, pid, tid, kind, depth: 0, extra: 0,
+            flags: FLAG_NONE,
+        };
+        let mut insts = vec![
+            mk(1, 10, kind::SCHEDULING_SLICE), // selected thread, on a core
+            mk(1, 11, kind::SCHEDULING_SLICE), // same process, other thread
+            mk(5, 50, kind::SCHEDULING_SLICE), // another process (2 and 3 are the viewer's own)
+            mk(1, 11, kind::API_SCOPE),        // another thread's scope
+            mk(1, 10, kind::API_SCOPE),        // the selected thread's scope
+        ];
+        let focus = ThreadFocus { selected: Some((1, 10)), target_pid: Some(1) };
+        apply_highlight_flags(&mut insts, None, None, None, focus);
+        assert_eq!(insts[0].flags, FLAG_NONE, "selected thread keeps its colour");
+        assert_eq!(insts[1].flags, FLAG_SAME_PID);
+        assert_eq!(insts[2].flags, FLAG_INACTIVE);
+        assert_eq!(insts[3].flags, FLAG_NONE, "other threads' scopes keep their colour: only the scheduler greys");
+        assert_eq!(insts[4].flags, FLAG_NONE);
+        // No selection: the target process is active, others grey.
+        let focus = ThreadFocus { selected: None, target_pid: Some(1) };
+        apply_highlight_flags(&mut insts, None, None, None, focus);
+        assert_eq!(insts[1].flags, FLAG_NONE);
+        assert_eq!(insts[2].flags, FLAG_INACTIVE);
+        // No target either: everything active.
+        apply_highlight_flags(&mut insts, None, None, None, ThreadFocus::default());
+        assert!(insts.iter().all(|i| i.flags == FLAG_NONE));
+    }
+
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn the_viewers_own_rows_do_not_define_the_captures_bounds() {
+        let mut index = TrackIndex::default();
+        let mut own = LiveEvent { start_ns: 1_000, duration_ns: 500, tid: 1, pid: orbit_live_event::dev::VIEWER_PID, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 1 };
+        index.insert(own);
+        // Only the viewer's rows: they are the fallback bounds.
+        assert_eq!(index.time_bounds(), Some((1_000, 1_500)));
+        let real = LiveEvent { start_ns: 5_000_000, duration_ns: 100, tid: 7, pid: 7, kind: 1, depth: 0, extra: 0, _pad: 0, name_id: 2 };
+        index.insert(real);
+        // A real event: the bounds are the capture's, whatever the viewer's
+        // rows say, before or after.
+        assert_eq!(index.time_bounds(), Some((5_000_000, 5_000_100)));
+        own.start_ns = 9_000_000;
+        index.insert(own);
+        assert_eq!(index.time_bounds(), Some((5_000_000, 5_000_100)));
     }
 }

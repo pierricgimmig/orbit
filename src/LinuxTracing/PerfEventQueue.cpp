@@ -6,8 +6,10 @@
 
 #include <absl/meta/type_traits.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "OrbitBase/Logging.h"
@@ -16,7 +18,7 @@
 
 namespace orbit_linux_tracing {
 
-void PerfEventQueue::PushEvent(PerfEvent&& event) {
+void PerfEventQueueCpp::PushEvent(PerfEvent&& event) {
   const PerfEventOrderedStream order = event.ordered_stream;
   if (order == PerfEventOrderedStream::kNone) {
     priority_queue_of_events_not_ordered_in_stream_.push(std::move(event));
@@ -40,12 +42,12 @@ void PerfEventQueue::PushEvent(PerfEvent&& event) {
   }
 }
 
-bool PerfEventQueue::HasEvent() const {
+bool PerfEventQueueCpp::HasEvent() const {
   return !heap_of_queues_of_events_ordered_in_stream_.empty() ||
          !priority_queue_of_events_not_ordered_in_stream_.empty();
 }
 
-const PerfEvent& PerfEventQueue::TopEvent() {
+const PerfEvent& PerfEventQueueCpp::TopEvent() {
   // As we effectively have two priority queues, get the older event between the two events at the
   // top of the two queues. In case those two events have the exact same timestamp, return the one
   // at the top of priority_queue_of_events_not_ordered_in_stream_ (and do the same in PopEvent).
@@ -64,7 +66,7 @@ const PerfEvent& PerfEventQueue::TopEvent() {
              : priority_queue_of_events_not_ordered_in_stream_.top();
 }
 
-void PerfEventQueue::PopEvent() {
+void PerfEventQueueCpp::PopEvent() {
   // Without this, popping an empty queue reaches
   // heap_of_queues_of_events_ordered_in_stream_.front() on an empty vector, which is undefined
   // behaviour rather than a check failure. PerfEventQueueTest relies on this dying.
@@ -96,7 +98,7 @@ void PerfEventQueue::PopEvent() {
   MoveDownFrontOfHeapOfQueues();
 }
 
-void PerfEventQueue::MoveDownFrontOfHeapOfQueues() {
+void PerfEventQueueCpp::MoveDownFrontOfHeapOfQueues() {
   if (heap_of_queues_of_events_ordered_in_stream_.empty()) {
     return;
   }
@@ -126,7 +128,7 @@ void PerfEventQueue::MoveDownFrontOfHeapOfQueues() {
   }
 }
 
-void PerfEventQueue::MoveUpBackOfHeapOfQueues() {
+void PerfEventQueueCpp::MoveUpBackOfHeapOfQueues() {
   if (heap_of_queues_of_events_ordered_in_stream_.empty()) {
     return;
   }
@@ -142,6 +144,164 @@ void PerfEventQueue::MoveUpBackOfHeapOfQueues() {
               heap_of_queues_of_events_ordered_in_stream_[current_index]);
     current_index = parent_index;
   }
+}
+
+}  // namespace orbit_linux_tracing
+
+// ------------------------------------------------------------------ facade
+
+namespace orbit_linux_tracing {
+
+namespace {
+
+// PerfEventOrderedStream's kind values match the FFI's constants; a static
+// assert in PerfEventOrderedStream.h would be circular, so pin them here.
+static_assert(kOrbitPerfMergeStreamNone == 0);
+static_assert(kOrbitPerfMergeStreamFileDescriptor == 1);
+static_assert(kOrbitPerfMergeStreamThreadId == 2);
+
+}  // namespace
+
+PerfEventQueue::Backend PerfEventQueue::SelectedBackend() {
+  static const Backend backend = [] {
+    const char* value = getenv("ORBIT_PERF_MERGE_BACKEND");
+    if (value == nullptr) return Backend::kRust;
+    const std::string_view choice{value};
+    if (choice == "cpp") return Backend::kCpp;
+    if (choice == "both") return Backend::kBoth;
+    if (choice != "rust" && !choice.empty()) {
+      ORBIT_ERROR("Unrecognised ORBIT_PERF_MERGE_BACKEND=\"%s\"; using \"rust\"", choice);
+    }
+    return Backend::kRust;
+  }();
+  return backend;
+}
+
+PerfEventQueue::PerfEventQueue() : backend_{SelectedBackend()} {
+  if (backend_ != Backend::kCpp) {
+    rust_.reset(orbit_perf_merge_new());
+  }
+}
+
+uint64_t PerfEventQueue::StoreInSlab(PerfEvent&& event) {
+  if (!free_slab_slots_.empty()) {
+    const uint64_t handle = free_slab_slots_.back();
+    free_slab_slots_.pop_back();
+    slab_[handle].emplace(std::move(event));
+    return handle;
+  }
+  slab_.emplace_back(std::move(event));
+  return slab_.size() - 1;
+}
+
+const PerfEvent& PerfEventQueue::SlabAt(uint64_t handle) {
+  ORBIT_CHECK(handle < slab_.size() && slab_[handle].has_value());
+  return *slab_[handle];
+}
+
+void PerfEventQueue::FreeSlabAt(uint64_t handle) {
+  ORBIT_CHECK(handle < slab_.size() && slab_[handle].has_value());
+  slab_[handle].reset();
+  free_slab_slots_.push_back(handle);
+}
+
+void PerfEventQueue::PushEvent(PerfEvent&& event) {
+  if (backend_ == Backend::kCpp) {
+    cpp_.PushEvent(std::move(event));
+    return;
+  }
+
+  const uint64_t timestamp = event.timestamp;
+  const uint8_t stream_kind = event.ordered_stream.order_type_for_ffi();
+  const int32_t stream_value = event.ordered_stream.order_value_for_ffi();
+
+  if (backend_ == Backend::kBoth) {
+    // The C++ twin only orders, so it gets a dummy carrying the same key
+    // rather than a copy of the real event -- some payloads are not copyable.
+    cpp_.PushEvent(ForkPerfEvent{
+        .timestamp = timestamp,
+        .ordered_stream = event.ordered_stream,
+    });
+  }
+
+  const uint64_t handle = StoreInSlab(std::move(event));
+  // 0 here is the fundamental-assumption violation -- an event older than its
+  // stream's newest -- on which the C++ implementation dies too.
+  ORBIT_CHECK(orbit_perf_merge_push(rust_.get(), stream_kind, stream_value, timestamp, handle) !=
+              0);
+  ++rust_size_;
+  cached_top_handle_.reset();
+}
+
+bool PerfEventQueue::HasEvent() const {
+  switch (backend_) {
+    case Backend::kCpp:
+      return cpp_.HasEvent();
+    case Backend::kRust:
+      return rust_size_ != 0;
+    case Backend::kBoth: {
+      const bool rust = rust_size_ != 0;
+      const bool cpp = cpp_.HasEvent();
+      if (rust != cpp) {
+        ORBIT_FATAL("PerfEventQueue backends disagree in HasEvent: cpp=%d rust=%d",
+                    static_cast<int>(cpp), static_cast<int>(rust));
+      }
+      return rust;
+    }
+  }
+  ORBIT_UNREACHABLE();
+}
+
+const PerfEvent& PerfEventQueue::TopEvent() {
+  if (backend_ == Backend::kCpp) {
+    return cpp_.TopEvent();
+  }
+
+  uint64_t handle = 0;
+  if (cached_top_handle_.has_value()) {
+    handle = *cached_top_handle_;
+  } else {
+    ORBIT_CHECK(orbit_perf_merge_top(rust_.get(), &handle) != 0);
+    cached_top_handle_ = handle;
+  }
+  const PerfEvent& event = SlabAt(handle);
+
+  if (backend_ == Backend::kBoth) {
+    // Handles are not comparable across the two -- the twin holds dummies --
+    // but the merge's contract is the timestamp order, and equal-timestamp
+    // pops are allowed to interleave differently.
+    const uint64_t cpp_timestamp = cpp_.TopEvent().timestamp;
+    if (cpp_timestamp != event.timestamp) {
+      ORBIT_FATAL("PerfEventQueue backends disagree in TopEvent: cpp=%u rust=%u", cpp_timestamp,
+                  event.timestamp);
+    }
+  }
+  return event;
+}
+
+void PerfEventQueue::PopEvent() {
+  if (backend_ == Backend::kCpp) {
+    cpp_.PopEvent();
+    return;
+  }
+
+  uint64_t handle = 0;
+  // Popping an empty queue is a caller error; the C++ implementation dies on
+  // it, and PerfEventQueueTest relies on this dying.
+  ORBIT_CHECK(orbit_perf_merge_pop(rust_.get(), &handle) != 0);
+  --rust_size_;
+  cached_top_handle_.reset();
+
+  if (backend_ == Backend::kBoth) {
+    const uint64_t cpp_timestamp = cpp_.TopEvent().timestamp;
+    if (cpp_timestamp != SlabAt(handle).timestamp) {
+      ORBIT_FATAL("PerfEventQueue backends disagree in PopEvent: cpp=%u rust=%u", cpp_timestamp,
+                  SlabAt(handle).timestamp);
+    }
+    cpp_.PopEvent();
+  }
+
+  FreeSlabAt(handle);
 }
 
 }  // namespace orbit_linux_tracing

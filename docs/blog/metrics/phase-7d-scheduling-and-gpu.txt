@@ -1,0 +1,47 @@
+Phase 7d -- scheduling made live, and GPU tracing (2026-08-31)
+==============================================================
+
+Scheduling: now working in the service
+--------------------------------------
+The ContextSwitchManager logic was ported and unit-tested in Phase 3, and a
+synthetic vertical slice in 7b, but the running service produced zero
+scheduling slices -- it never read context-switch records. Now it does:
+  - orbit-perf-records gains parse_context_switch: reads PERF_RECORD_SWITCH /
+    PERF_RECORD_SWITCH_CPU_WIDE (the sample_id from the tail, the switch-out
+    direction from the misc bit).
+  - orbit-service opens one context-switch ring PER CPU (pid = -1, system-
+    wide), the way real Orbit captures scheduling, and drives the
+    ContextSwitchManager: switch-in records open a slice on a core,
+    switch-out records close it into a pod SchedulingSlice.
+
+Hurdle worth recording: a per-task context-switch ring (pid = self, cpu =-1)
+returns EINVAL, but a per-CPU ring (pid = -1, cpu = i) opens fine at
+perf_event_paranoid <= 0. Per-CPU is also the correct design (it sees every
+thread scheduled on the core), so the service opens per-CPU rings. At
+paranoid > 0 they do not open and scheduling is skipped with a message --
+same privilege boundary as the C++.
+
+Result (static musl binary, self-capture, 400 ms):
+  189 CallstackSample, 52 InternedCallstack, 1346 SchedulingSlice, clean EOF.
+Scheduling works end to end: perf_event_open -> context-switch records ->
+ContextSwitchManager -> pod SchedulingSlice, all Rust, no FFI.
+
+GPU tracing: added
+------------------
+orbit-tracing-state::gpu ports GpuTracepointVisitor: a GPU command-buffer
+submission arrives as three amdgpu tracepoint events (amdgpu_cs_ioctl,
+amdgpu_sched_run_job, dma_fence_signaled), correlated by (context, seqno,
+timeline) into a GpuJob. Ported faithfully: the inferred hardware-start time
+(the schedule time, pushed back to the previous job's dma-signal when the
+queue is still busy) and the depth assignment that stacks overlapping jobs on
+separate timeline rows with 1 ms of slack. A pod GpuJob event carries it.
+
+Verification: unit tests cover the three-event correlation in any arrival
+order, incomplete keys emitting nothing, the busy-queue hardware-start
+push-back, and overlapping-job depth assignment. The pod GpuJob round-trips.
+Live capture needs the amdgpu tracepoints (root + an AMD GPU), which this
+machine does not have; the correlation is the verifiable core, exactly as the
+C++ GpuTracepointVisitorTest tests it without a GPU.
+
+The service now captures three event kinds -- sampled callstacks, scheduling
+slices, and (where the hardware allows) GPU jobs -- all as pod bytes.

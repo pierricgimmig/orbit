@@ -1,0 +1,41 @@
+Phase 6b -- register state, syscall injection, tracee memory (2026-08-31)
+=========================================================================
+
+What: the middle layer of user-space instrumentation, ported to
+orbit-ptrace. Three pieces:
+  - RegisterState (registers.rs): PTRACE_GETREGSET/SETREGSET of the general
+    purpose registers (NT_PRSTATUS) and the extended state (NT_X86_XSTATE,
+    kept as an opaque blob -- the injector only touches GP registers, and
+    the XSTATE size comes free from the length PTRACE_GETREGSET writes back,
+    so no cpuid).
+  - syscall_in_tracee (syscall.rs): back up registers and the first 8 bytes
+    of a borrowed executable region, write the two-byte `syscall` (0f 05),
+    point rip at it with args in the SysV syscall registers (rdi rsi rdx r10
+    r8 r9), single-step, read rax, restore. A Drop guard restores registers
+    and memory on every exit path.
+  - MemoryInTracee (memory_in_tracee.rs): mmap/munmap/mprotect in the tracee
+    through the injector; create writable, ensure_executable/writable, free.
+
+How it is verified
+------------------
+1. Live end-to-end (Rust unit test): attach to a spinning child, mmap a
+   page in it, write+read a marker, flip exec and back, munmap, confirm the
+   page is gone. This is the entire AllocateInTracee mechanism working
+   against a real tracee, in Rust.
+2. Behavioral differential (tracee_memory_differential.cpp): the C++
+   MemoryInTracee and the Rust MemoryInTracee each run the full lifecycle
+   against an identical spinning child; every observable outcome (alloc
+   succeeds, non-zero address, marker round-trips, mprotect transitions,
+   page gone after free) must agree. IDENTICAL across 5 rounds x 2 children.
+   Addresses themselves are ASLR-random and not compared -- behavior is.
+   Sabotage: mapping syscall arg 3 to r8 instead of r10 (wrong mmap
+   flags/fd) -> DIVERGENT.
+
+Design note: this is the first ported piece that WRITES to a live process's
+registers and executes code in it. The Drop-guard restore is the safety
+property the C++ gets from its shared_ptr deleters; a panic or early error
+mid-injection still puts the tracee's registers and the borrowed bytes back.
+
+Remaining for Phase 6: the disassembler-dependent giant, Trampoline.cpp
+(1288 lines of x86-64 instruction relocation), plus InjectLibraryInTracee
+and InstrumentProcess that sit on top of it.

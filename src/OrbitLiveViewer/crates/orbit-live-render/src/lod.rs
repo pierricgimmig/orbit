@@ -3,6 +3,9 @@
 
 use orbit_live_event::{chrome, kind, InternTable, LaneKey, LiveEvent};
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::{par, Lane, TrackIndex};
 
 pub const INSTANCE_MIN_PX: f32 = 4.0;
@@ -45,6 +48,10 @@ impl YCull {
 pub struct CollectOpts {
     pub y_cull: Option<YCull>,
     pub early_out: bool,
+    /// Walk the lanes on the calling thread instead of the pool. The caller
+    /// decides from its own measurements: on a small window the hand-off to
+    /// the workers and the join cost far more than the walk they parallelise.
+    pub inline: bool,
 }
 
 impl Default for CollectOpts {
@@ -52,6 +59,7 @@ impl Default for CollectOpts {
         Self {
             y_cull: None,
             early_out: true,
+            inline: false,
         }
     }
 }
@@ -61,6 +69,7 @@ impl CollectOpts {
         Self {
             y_cull: None,
             early_out: false,
+            inline: false,
         }
     }
 }
@@ -86,6 +95,65 @@ pub const FLAG_HOVER: f32 = 1.0;
 pub const FLAG_SELECTED: f32 = 2.0;
 pub const FLAG_SIBLING: f32 = 3.0;
 pub const FLAG_DIMMED: f32 = 4.0;
+/// Not the selected thread (or not the target process): the flat grey C++
+/// Orbit paints every timer outside the selection with.
+pub const FLAG_INACTIVE: f32 = 5.0;
+/// A scheduler slice of another thread of the selected thread's process: a
+/// lighter grey, so the process's other threads still read on the cores.
+pub const FLAG_SAME_PID: f32 = 6.0;
+
+/// Which threads are drawn in colour. This is C++ Orbit's rule
+/// (`SchedulerTrack::IsTimerActive`, `ThreadTrack::GetTimerColor`): with a
+/// thread selected only that thread is active; with none, every thread of
+/// the target process is -- or every thread, when the capture has no target.
+/// The viewer's own tracks are always active; they are not part of the
+/// capture.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThreadFocus {
+    /// `(pid, tid)` of the selected thread.
+    pub selected: Option<(u32, u32)>,
+    pub target_pid: Option<u32>,
+}
+
+impl ThreadFocus {
+    /// Whether a thread track's scopes draw in colour: only the selected
+    /// thread's when one is selected, everyone's otherwise. The target
+    /// process plays no part here -- C++ Orbit shows only the target's
+    /// threads, so its "active" test never met another process's track;
+    /// this viewer shows the service and every instrumented process too,
+    /// and greying them whenever a capture has a target left most of the
+    /// screen grey with nothing selected.
+    pub fn active_on_track(&self, pid: u32, tid: u32) -> bool {
+        if orbit_live_event::dev::is_self_pid(pid) {
+            return true;
+        }
+        self.selected.is_none_or(|(_, t)| t == tid)
+    }
+
+    /// Whether a scheduler slice draws in colour: `SchedulerTrack::IsTimerActive`
+    /// -- the selected thread's slices, or with none selected the target
+    /// process's (every process's when the capture has no target).
+    pub fn active_on_scheduler(&self, pid: u32, tid: u32) -> bool {
+        if orbit_live_event::dev::is_self_pid(pid) {
+            return true;
+        }
+        match self.selected {
+            Some((_, t)) => tid == t,
+            None => self.target_pid.is_none_or(|p| p == pid),
+        }
+    }
+
+    /// Another thread of the selected thread's process.
+    pub fn same_pid(&self, pid: u32) -> bool {
+        self.selected.is_some_and(|(p, _)| p == pid)
+    }
+
+    /// Nothing is narrowed: every thread active, as when no capture target
+    /// and no selection exist.
+    pub fn is_all(&self) -> bool {
+        self.selected.is_none() && self.target_pid.is_none()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScopeInstance {
@@ -166,19 +234,83 @@ impl ScopePick {
     }
 }
 
+/// Clock readings around the sequential parts of a listing, so the viewer
+/// can name them in its self-profile. All on `orbit_live_event::dev::now_ns`,
+/// the same clock as the worker spans.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ListingTiming {
+    pub dispatch_t0_ns: u64,
+    pub dispatch_t1_ns: u64,
+    pub flatten_t0_ns: u64,
+    pub flatten_t1_ns: u64,
+    pub sort_t0_ns: u64,
+    pub sort_t1_ns: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct InstanceFrame {
+    pub timing: ListingTiming,
     pub width: f32,
     pub height: f32,
     pub lanes: Vec<LaneKey>,
     pub instances: Vec<ScopeInstance>,
     pub worker_spans: Vec<crate::WorkerSpan>,
     pub lanes_kept: u32,
+    /// Lanes whose row came out of the [`ListingCache`] instead of a walk.
+    pub lanes_reused: u32,
+}
+
+/// What one lane's listing depended on. Same key, same instances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowKey {
+    lane_gen: u64,
+    version: u64,
+    t0: u64,
+    t1: u64,
+    width_bits: u32,
+    y_bits: u32,
+    early_out: bool,
+    intern_len: usize,
+}
+
+/// Per-lane listing rows from the previous frame (TODO item 21). During a
+/// live capture with the window still -- Follow off, or the capture paused
+/// in view -- only the lanes that received events since the last frame
+/// change; the rest of the frame is the same rows again. The walk reuses
+/// them: a lane whose events, window, width and y are unchanged hands back
+/// the row it produced last time, and only the changed lanes are walked.
+/// A moving window (Follow) keys every row anew, so nothing is reused and
+/// nothing is lost: the cost is one hash probe per lane.
+#[derive(Default)]
+pub struct ListingCache {
+    rows: HashMap<LaneKey, (RowKey, Arc<Vec<ScopeInstance>>)>,
+}
+
+impl ListingCache {
+    pub fn clear(&mut self) {
+        self.rows.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+}
+
+enum Row {
+    Reused(Arc<Vec<ScopeInstance>>),
+    Fresh(Vec<ScopeInstance>),
 }
 
 pub fn lane_height(key: LaneKey) -> f32 {
     match key.kind {
         kind::THREAD_STATE => 10.0,
+        // A tick strip, not a lane of boxes: it carries no text, so it only
+        // needs to be tall enough to read as a bar of marks.
+        kind::SAMPLE => 8.0,
         kind::SCHEDULING_SLICE => 12.0,
         kind::VALUE => 38.0,
         _ => 20.0,
@@ -200,7 +332,10 @@ pub fn sort_thread_leaves(lanes: &mut [LaneKey]) {
 fn leaf_rank(kind_id: u8) -> u8 {
     match kind_id {
         kind::THREAD_STATE => 0,
-        kind::SCHEDULING_SLICE => 1,
+        // Directly under the state bar: both answer "what was this thread
+        // doing", at a glance, before any stack detail.
+        kind::SAMPLE => 1,
+        kind::SCHEDULING_SLICE => 2,
         kind::API_SCOPE => 2,
         kind::FUNCTION_CALL => 3,
         kind::API_TRACK => 4,
@@ -212,6 +347,7 @@ fn leaf_rank(kind_id: u8) -> u8 {
 pub fn leaf_label(key: LaneKey) -> String {
     match key.kind {
         kind::THREAD_STATE => "state".into(),
+        kind::SAMPLE => "samples".into(),
         kind::SCHEDULING_SLICE => format!("Core {}", key.extra),
         kind::FUNCTION_CALL => "calls".into(),
         kind::API_TRACK => "async".into(),
@@ -516,6 +652,7 @@ mod value_lod_tests {
             CollectOpts {
                 y_cull: Some(YCull::new(y0, y0 + h0)),
                 early_out: true,
+                inline: false,
             },
         );
         assert_eq!(culled.instances.len(), 1);
@@ -539,6 +676,7 @@ mod value_lod_tests {
             CollectOpts {
                 y_cull: None,
                 early_out: true,
+                inline: false,
             },
         );
         assert_eq!(wide.instances.len(), 1);
@@ -595,6 +733,7 @@ mod value_lod_tests {
             CollectOpts {
                 y_cull: Some(YCull::new(80.0, 200.0)),
                 early_out: true,
+                inline: false,
             },
         );
         assert!(inst.instances.iter().all(|i| i.kind != kind::VALUE));
@@ -682,6 +821,22 @@ pub fn collect_instances_layout_opts(
     intern: Option<&InternTable>,
     opts: CollectOpts,
 ) -> InstanceFrame {
+    collect_instances_cached(index, t0, t1, width, layout, intern, opts, None)
+}
+
+/// [`collect_instances_layout_opts`] reusing last frame's rows for the lanes
+/// that did not change; see [`ListingCache`].
+#[allow(clippy::too_many_arguments)]
+pub fn collect_instances_cached(
+    index: &TrackIndex,
+    t0: u64,
+    t1: u64,
+    width: f32,
+    layout: &[(LaneKey, f32)],
+    intern: Option<&InternTable>,
+    opts: CollectOpts,
+    cache: Option<&mut ListingCache>,
+) -> InstanceFrame {
     let keys: Vec<LaneKey> = layout.iter().map(|(k, _)| *k).collect();
     let height = layout
         .last()
@@ -689,27 +844,50 @@ pub fn collect_instances_layout_opts(
         .unwrap_or(0.0);
     if width <= 0.0 || t1 <= t0 {
         return InstanceFrame {
+            timing: ListingTiming::default(),
             width,
             height,
             lanes: keys,
             instances: Vec::new(),
             worker_spans: Vec::new(),
             lanes_kept: 0,
+            lanes_reused: 0,
         };
     }
     let span = (t1 - t0) as f64;
-    let (parts, worker_spans) = par::map_collect_lanes(layout, |&(key, y)| {
+    let now = orbit_live_event::dev::now_ns;
+    let mut timing = ListingTiming { dispatch_t0_ns: now(), ..ListingTiming::default() };
+    let lane_gen = index.lane_gen();
+    let intern_len = intern.map(InternTable::len).unwrap_or(0);
+    let row_key = |y: f32, lane: &Lane| RowKey {
+        lane_gen,
+        version: lane.version(),
+        t0,
+        t1,
+        width_bits: width.to_bits(),
+        y_bits: y.to_bits(),
+        early_out: opts.early_out,
+        intern_len,
+    };
+    // The walk reads the cache; the writes wait until it is over.
+    let reads: Option<&ListingCache> = cache.as_deref();
+    let walk = |&(key, y): &(LaneKey, f32)| {
         if key.kind == kind::VALUE {
-            return Vec::new();
+            return Row::Fresh(Vec::new());
         }
         let h = lane_height(key);
         if let Some(cull) = opts.y_cull {
             if !cull.hits(y, h + lane_gap(key)) {
-                return Vec::new();
+                return Row::Fresh(Vec::new());
             }
         }
         let mut row = Vec::new();
         if let Some(lane) = index.lane(key) {
+            if let Some((k, cached)) = reads.and_then(|c| c.rows.get(&key)) {
+                if *k == row_key(y, lane) {
+                    return Row::Reused(Arc::clone(cached));
+                }
+            }
             push_lane_instances(
                 lane,
                 t0,
@@ -723,18 +901,76 @@ pub fn collect_instances_layout_opts(
                 &mut row,
             );
         }
-        row
-    });
-    let lanes_kept = parts.iter().filter(|p| !p.is_empty()).count() as u32;
-    let mut instances: Vec<ScopeInstance> = parts.into_iter().flatten().collect();
-    sort_instances_longer_on_top(&mut instances);
+        // Painter's order is settled here, per lane, on whichever thread
+        // walked the lane. Instances only ever overlap within one lane row,
+        // so a global sort over every instance of the frame -- which was
+        // the listing's single largest sequential step on a big capture --
+        // bought nothing a per-lane sort does not.
+        sort_instances_longer_on_top(&mut row);
+        Row::Fresh(row)
+    };
+    let (parts, worker_spans): (Vec<Row>, Vec<par::WorkerSpan>) = if opts.inline {
+        (layout.iter().map(walk).collect(), Vec::new())
+    } else {
+        par::map_collect_lanes(layout, walk)
+    };
+    timing.dispatch_t1_ns = now();
+    let row_len = |r: &Row| match r {
+        Row::Reused(v) => v.len(),
+        Row::Fresh(v) => v.len(),
+    };
+    let lanes_kept = parts.iter().filter(|p| row_len(p) > 0).count() as u32;
+    let lanes_reused = parts.iter().filter(|p| matches!(p, Row::Reused(_))).count() as u32;
+    timing.flatten_t0_ns = now();
+    let total: usize = parts.iter().map(row_len).sum();
+    // The flatten is a copy into a fresh buffer either way: the frame's
+    // instances leave for the GPU upload and are not seen again. What the
+    // cache saves is the walk, which the bench times on its own.
+    let mut instances: Vec<ScopeInstance> = Vec::with_capacity(total);
+    let mut fresh: Vec<(LaneKey, f32, Arc<Vec<ScopeInstance>>)> = Vec::new();
+    for ((key, y), part) in layout.iter().zip(parts) {
+        match part {
+            Row::Reused(v) => instances.extend_from_slice(&v),
+            Row::Fresh(v) => {
+                instances.extend_from_slice(&v);
+                if cache.is_some() && key.kind != kind::VALUE {
+                    fresh.push((*key, *y, Arc::new(v)));
+                }
+            }
+        }
+    }
+    if let Some(cache) = cache {
+        // Rows of lanes no longer laid out go; a culled lane was listed
+        // empty and is not worth a slot either.
+        cache.rows.retain(|k, _| layout.iter().any(|(lk, _)| lk == k));
+        for (key, y, row) in fresh {
+            let culled = opts
+                .y_cull
+                .map(|c| !c.hits(y, lane_height(key) + lane_gap(key)))
+                .unwrap_or(false);
+            if let Some(lane) = index.lane(key) {
+                if culled {
+                    cache.rows.remove(&key);
+                } else {
+                    cache.rows.insert(key, (row_key(y, lane), row));
+                }
+            }
+        }
+    }
+    timing.flatten_t1_ns = now();
+    // Nothing left to sort globally; the timing stays so the self-profile
+    // shows the step at its new cost.
+    timing.sort_t0_ns = now();
+    timing.sort_t1_ns = now();
     InstanceFrame {
+        timing,
         width,
         height,
         lanes: keys,
         instances,
         worker_spans,
         lanes_kept,
+        lanes_reused,
     }
 }
 
@@ -785,8 +1021,10 @@ pub fn pick_instance_at(instances: &[ScopeInstance], x: f32, y: f32) -> Option<u
 }
 
 /// Painter's algorithm: shorter first so longer scopes cover 1 px ticks.
+/// Applied per lane (see the collect walk); picking does not depend on
+/// order, it takes the longest instance under the cursor.
 fn sort_instances_longer_on_top(instances: &mut [ScopeInstance]) {
-    instances.sort_by(|a, b| a.duration_ns.cmp(&b.duration_ns));
+    instances.sort_unstable_by_key(|i| i.duration_ns);
 }
 
 /// Pixel-column pick: lane under `y`, then the overlapping event at `x`.
@@ -824,9 +1062,33 @@ pub fn apply_highlight_flags(
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
     search: Option<&std::collections::HashSet<u32>>,
+    focus: ThreadFocus,
 ) {
     for inst in instances.iter_mut() {
         let mut f = FLAG_NONE;
+        if inst.kind == kind::SCHEDULING_SLICE {
+            let active = focus.active_on_scheduler(inst.pid, inst.tid);
+            // The scheduler track, as C++ Orbit's SchedulerTrack::GetTimerColor
+            // orders it: hover, then the selected timer, then everything
+            // outside the selection in grey -- a lighter grey for the
+            // selected process's other threads -- then the thread colour.
+            if hover.is_some_and(|h| h.matches_instance(inst)) {
+                f = FLAG_HOVER;
+            } else if selected.is_some_and(|s| s.matches_instance(inst)) {
+                f = FLAG_SELECTED;
+            } else if !active {
+                f = if focus.same_pid(inst.pid) { FLAG_SAME_PID } else { FLAG_INACTIVE };
+            } else if search.is_some_and(|ids| !ids.contains(&inst.name_id)) {
+                f = FLAG_DIMMED;
+            }
+            inst.flags = f;
+            continue;
+        }
+        // Thread tracks keep their colours whatever thread is selected: the
+        // selection is read off the scheduler, where the selected thread's
+        // slices stay in colour and every other thread's go grey. Greying
+        // the other threads' scopes too hid the very thing a selection is
+        // for, comparing what this thread did against the others.
         if let Some(ids) = search {
             if !ids.contains(&inst.name_id) {
                 f = FLAG_DIMMED;
@@ -1113,5 +1375,166 @@ mod sparse_lod_tests {
             1,
             "pixel-column pick must also prefer the longer scope"
         );
+    }
+}
+
+#[cfg(test)]
+mod thread_focus_tests {
+    use super::ThreadFocus;
+
+    #[test]
+    fn the_target_greys_the_scheduler_but_not_other_processes_thread_tracks() {
+        // A capture of pid 7 with nothing selected: every thread track is
+        // in colour, the scheduler shows only pid 7's slices in colour.
+        let f = ThreadFocus { selected: None, target_pid: Some(7) };
+        assert!(f.active_on_track(7, 70) && f.active_on_track(9, 90));
+        assert!(f.active_on_scheduler(7, 70) && !f.active_on_scheduler(9, 90));
+        // A thread selected: only it, on both.
+        let f = ThreadFocus { selected: Some((9, 90)), target_pid: Some(7) };
+        assert!(f.active_on_track(9, 90) && !f.active_on_track(7, 70) && !f.active_on_track(9, 91));
+        assert!(f.active_on_scheduler(9, 90) && !f.active_on_scheduler(7, 70));
+        assert!(f.same_pid(9) && !f.same_pid(7));
+        // No target, nothing selected: everything.
+        let f = ThreadFocus::default();
+        assert!(f.active_on_track(9, 90) && f.active_on_scheduler(9, 90) && f.is_all());
+        // The viewer's own rows never grey.
+        let f = ThreadFocus { selected: Some((9, 90)), target_pid: Some(7) };
+        assert!(f.active_on_track(orbit_live_event::dev::VIEWER_PID, 1));
+    }
+}
+
+#[cfg(test)]
+mod listing_cache_tests {
+    use super::*;
+    use crate::TrackIndex;
+
+    fn scope(start: u64, dur: u64, tid: u32, name: u32) -> LiveEvent {
+        LiveEvent {
+            start_ns: start,
+            duration_ns: dur,
+            tid,
+            pid: 1,
+            kind: kind::API_SCOPE,
+            depth: 0,
+            extra: 0,
+            _pad: 0,
+            name_id: name,
+        }
+    }
+
+    fn index(lanes: u32, per_lane: u64) -> TrackIndex {
+        let mut idx = TrackIndex::default();
+        for tid in 1..=lanes {
+            for i in 0..per_lane {
+                idx.insert(scope(i * 1_000, 600, tid, 1 + (i % 7) as u32));
+            }
+        }
+        idx
+    }
+
+    fn layout_of(idx: &TrackIndex) -> Vec<(LaneKey, f32)> {
+        let mut keys: Vec<LaneKey> = idx.lanes().map(|(k, _)| k).collect();
+        sort_thread_leaves(&mut keys);
+        stacked_layout(&keys, 0.0)
+    }
+
+    #[test]
+    fn unchanged_lanes_come_back_from_the_cache_and_changed_ones_are_walked() {
+        let mut idx = index(6, 200);
+        let layout = layout_of(&idx);
+        let (t0, t1, w) = (0u64, 200_000u64, 2000.0f32);
+        let opts = CollectOpts { inline: true, ..CollectOpts::default() };
+        let plain = collect_instances_layout_opts(&idx, t0, t1, w, &layout, None, opts);
+        let mut cache = ListingCache::default();
+        let first = collect_instances_cached(&idx, t0, t1, w, &layout, None, opts, Some(&mut cache));
+        assert_eq!(first.lanes_reused, 0, "nothing to reuse on the first frame");
+        assert_eq!(first.instances, plain.instances);
+        assert_eq!(cache.len(), 6);
+        let second = collect_instances_cached(&idx, t0, t1, w, &layout, None, opts, Some(&mut cache));
+        assert_eq!(second.lanes_reused, 6, "a still frame reuses every lane");
+        assert_eq!(second.instances, plain.instances);
+        // One lane receives an event: that lane is walked, the others are not.
+        idx.insert(scope(199_500, 100, 3, 9));
+        let plain2 = collect_instances_layout_opts(&idx, t0, t1, w, &layout, None, opts);
+        let third = collect_instances_cached(&idx, t0, t1, w, &layout, None, opts, Some(&mut cache));
+        assert_eq!(third.lanes_reused, 5);
+        assert_eq!(third.instances, plain2.instances);
+        assert!(third.instances.len() > second.instances.len());
+        // A moved window reuses nothing and is still right.
+        let moved = collect_instances_cached(&idx, t0 + 1, t1 + 1, w, &layout, None, opts, Some(&mut cache));
+        assert_eq!(moved.lanes_reused, 0);
+        let plain3 = collect_instances_layout_opts(&idx, t0 + 1, t1 + 1, w, &layout, None, opts);
+        assert_eq!(moved.instances, plain3.instances);
+        // A lane leaving the layout leaves the cache.
+        let fewer: Vec<(LaneKey, f32)> = layout[..4].to_vec();
+        let _ = collect_instances_cached(&idx, t0 + 1, t1 + 1, w, &fewer, None, opts, Some(&mut cache));
+        assert_eq!(cache.len(), 4);
+    }
+
+    #[test]
+    fn a_culled_lane_is_not_cached_and_a_visible_one_is() {
+        let idx = index(4, 50);
+        let layout = layout_of(&idx);
+        let cull = YCull::new(0.0, lane_height(layout[0].0) * 0.5);
+        let opts = CollectOpts { y_cull: Some(cull), inline: true, ..CollectOpts::default() };
+        let mut cache = ListingCache::default();
+        let f = collect_instances_cached(&idx, 0, 60_000, 500.0, &layout, None, opts, Some(&mut cache));
+        assert_eq!(f.lanes_kept, 1);
+        assert_eq!(cache.len(), 1);
+        let g = collect_instances_cached(&idx, 0, 60_000, 500.0, &layout, None, opts, Some(&mut cache));
+        assert_eq!(g.lanes_reused, 1);
+        assert_eq!(g.instances, f.instances);
+    }
+
+    /// `cargo test --release -p orbit-live-render listing_cache_bench -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn listing_cache_bench() {
+        let lanes = 200u32;
+        let per_lane = 5_000u64;
+        let mut idx = index(lanes, per_lane);
+        let layout = layout_of(&idx);
+        // Two windows: the tail of the capture at a zoom where scopes are
+        // instanced (a few px each), and the whole capture, which is what
+        // a zoomed-out still view lists (the viewer would pick the column
+        // LOD there; this is the listing's worst case).
+        for (label, visible) in [("500 events/lane in view", 500u64), ("every event in view", per_lane)] {
+            let (t0, t1, w) = ((per_lane - visible) * 1_000, per_lane * 1_000 + 60_000, 2000.0f32);
+            let rounds = 100u64;
+            let opts = CollectOpts::default();
+            let mut cache = ListingCache::default();
+            let mut next = per_lane * 1_000;
+            let (mut plain_ns, mut cached_ns) = (0u128, 0u128);
+            let (mut plain_walk, mut cached_walk) = (0u64, 0u64);
+            let mut reused = 0u64;
+            let mut prims = 0usize;
+            for _ in 0..rounds {
+                // Two hot lanes receive 50 events each between frames.
+                for i in 0..50 {
+                    idx.insert(scope(next + i * 10, 5, 1, 3));
+                    idx.insert(scope(next + i * 10, 5, 2, 4));
+                }
+                next += 500;
+                let a = std::time::Instant::now();
+                let p = collect_instances_layout_opts(&idx, t0, t1, w, &layout, None, opts);
+                plain_ns += a.elapsed().as_nanos();
+                plain_walk += p.timing.dispatch_t1_ns - p.timing.dispatch_t0_ns;
+                let b = std::time::Instant::now();
+                let c = collect_instances_cached(&idx, t0, t1, w, &layout, None, opts, Some(&mut cache));
+                cached_ns += b.elapsed().as_nanos();
+                cached_walk += c.timing.dispatch_t1_ns - c.timing.dispatch_t0_ns;
+                assert_eq!(p.instances.len(), c.instances.len());
+                reused += c.lanes_reused as u64;
+                prims = c.instances.len();
+            }
+            println!(
+                "listing_cache_bench [{label}]: {lanes} lanes x {per_lane} events, 2 hot lanes, {prims} instances per frame, {rounds} frames\n  plain  {:.3} ms/frame (walk {:.3} ms)\n  cached {:.3} ms/frame (walk {:.3} ms, {} lanes reused per frame)",
+                plain_ns as f64 / rounds as f64 / 1e6,
+                plain_walk as f64 / rounds as f64 / 1e6,
+                cached_ns as f64 / rounds as f64 / 1e6,
+                cached_walk as f64 / rounds as f64 / 1e6,
+                reused / rounds
+            );
+        }
     }
 }

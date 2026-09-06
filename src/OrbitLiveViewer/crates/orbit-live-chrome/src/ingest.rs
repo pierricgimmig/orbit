@@ -858,7 +858,11 @@ impl ChromeIngestor {
     ) -> Vec<LiveEvent> {
         const DURATION_NS: u64 = 1_000;
         self.note_thread(pid, tid);
-        frames
+        // One tick on the thread's sample bar, named by the leaf, as the
+        // service emits for a live capture -- the bar is what a sample
+        // selection is dragged across, so a loaded trace gets one too.
+        let leaf = frames.last().copied();
+        let mut out: Vec<LiveEvent> = frames
             .into_iter()
             .enumerate()
             .map(|(depth, name_id)| LiveEvent {
@@ -872,7 +876,21 @@ impl ChromeIngestor {
                 _pad: color_mode::AUTO_THREAD,
                 name_id,
             })
-            .collect()
+            .collect();
+        if let Some(name_id) = leaf {
+            out.push(LiveEvent {
+                start_ns,
+                duration_ns: DURATION_NS,
+                tid,
+                pid,
+                kind: kind::SAMPLE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id,
+            });
+        }
+        out
     }
 
     fn walk_stack_frame(&mut self, id: &str) -> Vec<u32> {

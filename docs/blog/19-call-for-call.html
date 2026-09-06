@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>Call for Call</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+</head><body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 19</p>
+    <h1>Call for Call</h1>
+    <p class="dek">A stress test for dynamic instrumentation that knows exactly what the program did &mdash; how many calls, on which threads, nested how &mdash; and holds the capture to it, scope for scope. Written after a capture of Box3D showed every hooked thread one level too deep, and the fix for that turned out to fix the wrong bug first.</p>
+    <p class="byline">The test is <code>dyn-instr-stress</code> in <a href="../e2e/report.html">the e2e suite</a>; the program is <code>OrbitTestRust --stress-*</code>, the checker <code>tools/e2e/check_stress.py</code>. It needs the service to run as root, and its numbers go in <a href="metrics/phase-16-dynamic-instrumentation-stress.txt">metrics/phase-16-dynamic-instrumentation-stress.txt</a> as the runs come in</p>
+
+    <div class="stats">
+      <div class="stat"><b>3</b><span>Functions, hooked by name, in a fixed tree</span></div>
+      <div class="stat"><b>8 &times; 5&nbsp;kHz &times; 5,000</b><span>Threads, calls per second per thread, calls per thread</span></div>
+      <div class="stat"><b>360,000</b><span>Scopes the capture must hold, at three known depths</span></div>
+      <div class="stat"><b>720,000</b><span>Probe hits in one second</span></div>
+      <div class="stat"><b>1 equation</b><span>Missing scopes = hits the pairing reported healing</span></div>
+      <div class="stat"><b>0</b><span>Extra scopes, outer scopes under anything, threads unaccounted</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Post 14 got a uprobe to fire. Post 15 got it to fire on every core. Neither said whether the scopes that came out were <em>right</em>, and a capture of Box3D with four functions hooked answered that on its own: the main thread's scopes sat one level too deep from second seven to the end, and on four worker threads runs of joints sat at depth zero, outside the solver task that had called them. Ghosts. The obvious suspect was the kernel duplicating uprobe hits on thread migration, which C++ Orbit works around with a stack-pointer filter, and that filter was ported first. It dropped nothing. Lining every depth change up with the scheduler slices showed the opposite problem: at about one migration in ten the kernel <em>lost</em> a hit, an entry or a return, never doubled one. The pairing now uses the stack frame every hit carries to heal that, and this post is about the test that says whether it does.</p>
+
+  <h2 id="tree">A program that knows what it did</h2>
+
+  <p><code>OrbitTestRust</code>, the same binary the manual-instrumentation tour uses, has a second mode with no manual scopes in it at all. Three plain functions, kept out of line and out of tail position so that every call is a real entry and a real return at its own stack frame:</p>
+
+  <pre><code>orbit_stress_outer(x)   calls orbit_stress_middle twice
+orbit_stress_middle(x)  calls orbit_stress_inner three times
+orbit_stress_inner(x)   eight multiply-adds, black-boxed</code></pre>
+
+  <p><code>--stress-threads N --stress-hz F --stress-calls K</code> spawns N threads that each call <code>outer</code> K times at F calls a second, paced by a spin-wait because a sleep cannot hold 5&nbsp;kHz. So the capture must contain exactly N&times;K outer scopes at depth 0, 2&times;N&times;K middle at depth 1 and 6&times;N&times;K inner at depth 2, every middle inside an outer and every inner inside a middle, on N threads and no others. With <code>--wait-go</code> the program prints its pid and waits for a line on stdin before it starts, so the probes are armed before the first call and no call is in flight when the capture stops. Its last line of output says what it made.</p>
+
+  <h2 id="harness">The harness</h2>
+
+  <p>The scenario loads the program's symbols, finds the three functions by name in the service's index, starts a capture with the three ids and the uprobe method, and polls the status line until the service says <code>instrumenting 3 of 3 functions</code>. Only then does it send the go line. When the program exits it waits out the pairing's 100&nbsp;ms reorder window, stops the capture, reads the status line again &mdash; which since the frame pairing says <code>N calls; a duplicate entries dropped, b entries with no return discarded, c returns with no entry dropped</code>, plus any records the kernel reported lost &mdash; exports the bundle and hands it to <code>check_stress.py</code>.</p>
+
+  <p>The checker reads the events table with pyarrow, keeps the hooked scopes of the target pid, sorts each thread's by start, and walks them with a stack: for every scope it records the depth the timeline gave it against the depth the tree says, whether the scope on top of the stack is its parent and ends after it, and a count per function and per thread. It prints one JSON object; the scenario asserts on it.</p>
+
+  <h2 id="asserts">What must hold</h2>
+
+  <p>The kernel loses hits; the test cannot demand that nothing is missing. What it can demand is that the capture never contains something that did not happen, and that everything that is missing was <em>reported</em> missing. Six checks, in the order they would fail:</p>
+
+  <ol>
+    <li>Every thread has scopes, and no thread that does not exist does.</li>
+    <li>No function has more scopes than calls. A duplicate hit that got through would show here.</li>
+    <li>No outer scope sits inside any other scope. An outer at depth one means an entry that never closed.</li>
+    <li>The status line's call count equals the number of scopes in the bundle: the service and the file agree.</li>
+    <li><b>Missing scopes = duplicates dropped + unclosed entries discarded + orphan returns dropped.</b> Every hit the kernel loses costs exactly one scope and exactly one count in one of those three columns; if the pairing ever hides a loss (a ghost) or invents one, the two sides differ.</li>
+    <li>Scopes at the wrong depth, and scopes outside their parent, number at most eight per lost hit: an outer's two middles and six inners can sit one level off until the loss is healed, and no more.</li>
+  </ol>
+
+  <p>A seventh check is a ceiling rather than an equality: under one percent of scopes lost, so a kernel that started dropping hits by the thousand would fail the run rather than merely be noted.</p>
+
+  <p>The fifth check is the one worth the post. Before the frame pairing, a lost return left an entry open until the capture ended; the bundle was short one scope and the status line said nothing, and everything after it on that thread was a level too deep. Now the discarded entry is a number, and the number has to match the hole. The same equation catches the opposite mistake, a pairing that discards live entries: the bundle would be short by more than the line admits.</p>
+
+  <h2 id="running">Running it</h2>
+
+  <pre><code>python3 tools/e2e/orbit_e2e.py --only dyn-instr-stress --sudo --no-shots
+ORBIT_E2E_STRESS=16,20000,20000 python3 tools/e2e/orbit_e2e.py --only dyn-instr-stress --sudo --no-shots</code></pre>
+
+  <p><code>--sudo</code> runs the service through <code>sudo -n</code>, which fails fast rather than prompting. Arming uprobes needs <code>CAP_SYS_ADMIN</code>: the kernel's uprobe PMU checks that capability in <code>perf_uprobe_event_init</code> before <code>perf_event_paranoid</code> is consulted, and it does not accept <code>CAP_PERFMON</code>, which every other perf path honours &mdash; a process holding only that one gets <code>EACCES</code> from the minimal uprobe attr, which this post's first draft, and the service's own refusal message, had wrong. Without the capability the scenario passes as a skip and says so, in 0.6&nbsp;s. On the machine below the privileged runs go through a small root-owned wrapper (<code>tools/sudo</code>) that a sudoers rule allows without a password and that hands the service <code>CAP_SYS_ADMIN</code>, <code>CAP_PERFMON</code> and <code>CAP_DAC_READ_SEARCH</code> under the user's own uid; the manual says what that is worth in security terms. <code>ORBIT_E2E_STRESS</code> sets threads, rate and calls; the default is the 8&nbsp;&times;&nbsp;5,000&nbsp;&times;&nbsp;5,000 of the masthead, a second of work. The checker needs pyarrow, from <code>ORBIT_E2E_PYARROW_PYTHON</code> like the Python reader scenario.</p>
+
+  <h2 id="results">Results</h2>
+
+  <p>Five configurations, one second of work each, on a 32-core Linux 7.0 box; every number is in <a href="metrics/phase-16-dynamic-instrumentation-stress.txt">the metrics file</a> with the per-function duration spread.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead><tr><th>threads &times; Hz &times; calls</th><th>scopes</th><th>missing</th><th>loss</th><th>dup / unclosed / orphan</th><th>kernel lost</th><th>wrong depth</th></tr></thead>
+      <tbody>
+        <tr><td>8 &times; 5,000 &times; 5,000</td><td class="v">360,000</td><td class="v bump">0</td><td class="v bump">0.000%</td><td class="v">1 / 0 / 0</td><td class="v">0</td><td class="v">0</td></tr>
+        <tr><td>16 &times; 5,000 &times; 5,000</td><td class="v">720,000</td><td class="v bump">0</td><td class="v bump">0.000%</td><td class="v">0 / 0 / 0</td><td class="v">0</td><td class="v">0</td></tr>
+        <tr><td>16 &times; 10,000 &times; 10,000</td><td class="v">1,440,000</td><td class="v">15,465</td><td class="v">1.07%</td><td class="v">0 / 70 / 13</td><td class="v">30,847</td><td class="v">15</td></tr>
+        <tr><td>8 &times; 20,000 &times; 20,000</td><td class="v">1,440,000</td><td class="v">228,992</td><td class="v">15.9%</td><td class="v">1 / 445 / 188</td><td class="v">457,351</td><td class="v">208</td></tr>
+        <tr><td>16 &times; 20,000 &times; 20,000</td><td class="v">2,880,000</td><td class="v">1,314,739</td><td class="v">45.7%</td><td class="v">0 / 488 / 302</td><td class="v">2,584,248</td><td class="v">331</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The first two rows are the ones the test was written for, and they are clean: 720,000 scopes, 1.44&nbsp;million probe hits, every call seen once, at its depth, inside its parent, with nothing for the pairing to heal. The Box3D capture had predicted a few tens of migration losses per 360,000; the stress program's threads hardly migrate, and the one thing the pairing did in two runs was drop a single re-reported entry, at zero missing, which is the number that decides the duplicate filter's future: one real re-report in 720,000 hits, and no sibling taken for one.</p>
+
+  <p>That one duplicate also refined check&nbsp;5. A dropped duplicate costs a scope only when the filter misjudged a real call, so the hole is bounded below by the unclosed and orphan counts and above by those plus the duplicates, rather than equal to their sum.</p>
+
+  <p>The last three rows are the second regression class from the list below, met for real. From 1.44&nbsp;million scopes a second, 2.9&nbsp;million hits, the kernel reports <code>PERF_RECORD_LOST</code>: the per-CPU rings (256&nbsp;KB each at the time) overflow before the single drain thread, on a 5&nbsp;ms poll, gets back to them. What the kernel drops never reaches the pairing, which is why its own counts stay in the hundreds while the hole runs to a million, and why the check only holds the floor once records are lost and leaves the verdict to the one-percent ceiling. The shape of the loss is instructive: the same 1.44&nbsp;million on 8 threads at 20&nbsp;kHz loses fifteen times more than on 16 threads at 10&nbsp;kHz, because a thread at 20&nbsp;kHz pours 360,000 hits a second into one CPU's ring, which fills in about 40&nbsp;ms. The millisecond maxima in those rows are pairing artefacts across a hole, not slow calls. Bigger rings were the follow-up: raising the ring to 4&nbsp;MB (post&nbsp;20's sibling change) moved the clean ceiling to about 1.44&nbsp;million scopes a second, and the pairing itself never fell behind a ring that had not overflowed.</p>
+
+  <p>The same session ran the other uprobe scenarios privileged for the first time: <code>instrumentation</code> (63,613 hooked spans on OrbitTestRust, longest 3.39&nbsp;ms), <code>hook-from-report</code> (a Box3D function armed from the Flat report's context menu), <code>thread-states</code> and <code>self-instrumentation</code>, all passing.</p>
+
+  <h2 id="catch">What it would catch</h2>
+
+  <p>Three regressions this test exists for. A pairing that pops by count again (the plain stack): the first lost return puts a thread a level too deep and checks 3, 5 and 6 fail at once. A ring too small for the rate, which the sweep above met at 1.44&nbsp;million scopes a second: <code>PERF_RECORD_LOST</code> counts appear on the status line, thousands of scopes go missing in bursts, and the one-percent ceiling fails. And the duplicate rule taking a real sibling for a migration duplicate: two calls merge into one, which is one scope missing and one <code>duplicate entries dropped</code> &mdash; the bound still holds, and the run's note says how often it happened, which is the number that decides whether that rule should stay.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 19 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="18-bytes-on-the-wire-bytes-on-disk.html">&larr; Post 18</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

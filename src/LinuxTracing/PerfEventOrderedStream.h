@@ -41,6 +41,13 @@ class PerfEventOrderedStream {
     return !(lhs == rhs);
   }
 
+  // The raw key, for mirroring this stream across the FFI into the Rust merge
+  // queue (see PerfEventQueue.cpp). The values match kOrbitPerfMergeStream*.
+  // Ordering logic should keep using equality; these exist for that one
+  // boundary.
+  [[nodiscard]] uint8_t order_type_for_ffi() const { return static_cast<uint8_t>(order_type_); }
+  [[nodiscard]] int32_t order_value_for_ffi() const { return order_value_; }
+
  private:
   enum class OrderType {
     kNotOrdered = 0,

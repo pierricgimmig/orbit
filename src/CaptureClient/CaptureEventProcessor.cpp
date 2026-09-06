@@ -9,7 +9,6 @@
 #include <absl/hash/hash.h>
 #include <absl/meta/type_traits.h>
 #include <google/protobuf/stubs/port.h>
-#include <llvm/Demangle/Demangle.h>
 
 #include <algorithm>
 #include <string>
@@ -30,6 +29,7 @@
 #include "ClientData/TracepointEventInfo.h"
 #include "ClientData/TracepointInfo.h"
 #include "ClientProtos/capture_data.pb.h"
+#include "Demangle.h"
 #include "GrpcProtos/capture.pb.h"
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/tracepoint.pb.h"
@@ -591,7 +591,7 @@ void CaptureEventProcessorForListener::ProcessAddressInfo(const AddressInfo& add
 
   LinuxAddressInfo linux_address_info{address_info.absolute_address(),
                                       address_info.offset_in_function(), module_name,
-                                      llvm::demangle(function_name)};
+                                      orbit_demangle::Demangle(function_name)};
   capture_listener_->OnAddressInfo(linux_address_info);
 }
 

@@ -1,0 +1,34 @@
+Phase 4c (milestone 2) -- the event loop (2026-08-31)
+=====================================================
+
+What: TracerImpl's orchestration, ported to rust/crates/orbit-collector:
+round-robin draining in batches of 5 so no buffer starves while another
+overflows, the 5 ms idle sleep, and PerfEventProcessor's discipline -- buffer
+records, process only those older than the 333 ms delay so late arrivals
+from other buffers can still be ordered in, discard and count stragglers
+older than the newest processed timestamp. The constants are the C++
+constants; the slab-and-handles shape that Phase 3 designed FOR the FFI
+boundary is kept because it was the right design anyway -- except now the
+merge queue, the slab, and the payloads are all one language, zero FFI.
+
+This is the first piece of the port where the ported crates COMPOSE:
+orbit-collector calls orbit-perf-ring, orbit-perf-records and
+orbit-perf-merge natively. The per-event toll that post 07 priced does not
+exist on this path.
+
+How it is verified
+------------------
+- OrderedProcessor unit tests mirror PerfEventProcessorTest's semantics:
+  cross-stream ordering, the delay gate, straggler discarding, slab reuse.
+- A live self-observation test: two kernel buffers (mmap_task + stack
+  sampler at 5 kHz) on the test thread, a workload interleaving mmaps and
+  CPU burn, and every record must leave the loop in global timestamp order
+  with its timestamp matching what record_timestamp reads. Both record kinds
+  must appear; zero records without timestamps.
+
+bazel test //rust:orbit_collector_test -> pass (5 tests).
+
+Deliberately not here yet: the unwinding visitors (Phase 5) and the
+transport (Phase 7). The sched pipeline runs on sched tracepoints, whose ids
+are root-gated on this machine; the whole-capture differential against C++
+TracerImpl (milestone 4d) is a sudo run.

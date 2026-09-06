@@ -38,6 +38,9 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+atomics,+bulk-memory,+mutabl
   -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size \
   -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base"
 export CARGO_PROFILE_RELEASE_PANIC=abort
+# The build the viewer reports about itself (More menu, the wordmark's
+# tooltip, window.__orbit_sel.build): what a running page was built from.
+export ORBIT_VIEWER_BUILD="$(date -u +%Y-%m-%dT%H:%MZ) $(git -C "$(dirname "$0")" rev-parse --short HEAD 2>/dev/null || echo nogit)"
 
 echo "Building wasm pack with ${NIGHTLY} -Z build-std + --features wasm-threads"
 rustup run "$NIGHTLY" cargo build \
@@ -77,6 +80,11 @@ stamp_orbit_js_header() {
 stamp_orbit_js_header "$ROOT/viewer-dist/orbit_live_viewer.js"
 while IFS= read -r -d '' f; do
   stamp_orbit_js_header "$f"
+  # wasm-bindgen-rayon's worker helper still calls the module's init with
+  # positional arguments, which the generated `__wbg_init` warns about on
+  # every worker start (one line per pool thread in the console). The
+  # object form is what it wants.
+  sed -i 's/await pkg\.default(data\.module, data\.memory);/await pkg.default({ module_or_path: data.module, memory: data.memory });/' "$f"
 done < <(find "$ROOT/viewer-dist/snippets" -name '*.js' -print0 2>/dev/null || true)
 
 echo "Wrote $ROOT/viewer-dist/orbit_live_viewer.js and .wasm"

@@ -1,0 +1,16 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-scope-ring"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# libc only, for shm_open/mmap and the clock. The producer path must not pull
+# in anything that could allocate or take a lock behind our back.
+[dependencies]
+libc = "0.2"

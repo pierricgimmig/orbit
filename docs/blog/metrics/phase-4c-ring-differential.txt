@@ -1,0 +1,49 @@
+Phase 4c (milestone 1) -- the Rust ring buffer (2026-08-31)
+===========================================================
+
+What: perf_event_open, the event attributes, and the mmap ring-buffer
+consumer, ported to rust/crates/orbit-perf-ring from PerfEventOpen.{h,cpp}
+and PerfEventRingBuffer.cpp. Rust now owns the kernel interface end to end
+for the ported kinds (mmap_task, stack_sample, callchain_sample,
+context_switch): builds perf_event_attr itself (VER8 layout, hand-laid flag
+bits), makes the syscall, maps the ring, and speaks the acquire/release
+tail/head protocol. Unsafe is confined to a 100-line sys module; the wrap
+arithmetic is a pure function unit-tested against synthetic rings.
+
+How it is verified
+------------------
+rust/tools/differential/perf_ring_differential.cpp: one child workload, two
+watchers -- a C++-opened PerfEventRingBuffer and a Rust-opened orbit-perf-ring
+buffer. The kernel delivers the same mmap/fork/exit records to both, so
+after normalizing per-buffer fields (timestamps, stream ids) the sequences
+must match record for record. Both raw streams are rendered by the same
+Phase 4b dump functions: the parser agreement is 4b's theorem; under test
+here is everything between perf_event_open and the raw bytes. Sampling
+buffers can't be sequence-compared (independent clocks), so for those the
+check is: the Rust buffer produces samples and every one parses.
+
+Results (perf_event_paranoid = -1, x86_64, 12 runs)
+---------------------------------------------------
+deterministic records   600 vs 600   0 mismatches, order preserved
+rust stack samples     1512          0 parse failures
+verdict: IDENTICAL in all 12 runs
+
+Sabotage check: dropping the mmap_data attr bit on the Rust side made the
+anonymous rw mappings vanish from its stream -- DIVERGENT at record 0;
+reverting restored IDENTICAL. (The wrong-bit run also shows what the
+normalization does NOT hide: exec flags and lengths diverged immediately.)
+
+Hurdles worth recording
+-----------------------
+- perf_event_open's pid argument is a THREAD id. The crate's self-
+  observation test watched std::process::id() while the cargo test harness
+  ran it on a worker thread: green example binary, red test, zero records.
+  The C++ never hits this because TracerImpl uses pid=-1 with per-cpu
+  buffers. Fixed with gettid().
+- First external crate on the service side: libc (the syscall layer has to
+  come from somewhere). @orbit_crates repin via CARGO_BAZEL_REPIN=1 went
+  without a fight. The dependency tally in the blog moves from "zero
+  external crates for the tracing path" to "one, libc, 0 transitive deps".
+
+Remaining for 4c: the event loop itself (TracerImpl's open-per-cpu /
+poll / drain-in-timestamp-order orchestration) on top of these rings.

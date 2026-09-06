@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>One Lost Return</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+
+<style>
+  figure { margin: 0.5rem 0; background: var(--surface); border: 1px solid var(--line); padding: 1.35rem 1.35rem 1rem; }
+  figcaption { font-family: var(--display); font-size: 0.8rem; line-height: 1.45; color: var(--muted); margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+  .embed { background: #0b0c0e; border: 1px solid var(--line); }
+  .embed iframe { display: block; width: 100%; height: 640px; border: 0; }
+  .embed-head { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.7rem; }
+  .embed-head.off { color: var(--accent-deep); } .embed-head.on { color: var(--hold); }
+  @media (max-width: 720px) { .embed iframe { height: 460px; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+</head><body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 20</p>
+    <h1>One Lost Return, Ten Thousand Ghosts</h1>
+    <p class="dek">A hooked function kept appearing nested inside itself, tens of thousands of times. The first theory was a kernel that duplicates uprobe hits on thread migration. It was wrong, and so was the second theory, and the mistake that produced the second one is the most useful part of the story. The real cause is one lost return per thread, at the instant instrumentation is switched on, turned into a landslide by pairing entries to returns by counting them.</p>
+    <p class="byline">The pairing is in <code>rust/crates/orbit-service/src/uprobes.rs</code>, behind the <b>Dedupe</b> pill (<code>uprobe_duplicate_filter</code>). Two real captures are embedded below, the same workload one switch apart; drag to pan, wheel over the ruler to zoom, open a thread to read the depths.</p>
+    <div class="stats">
+      <div class="stat"><b>73,944</b><span>Entry hits the kernel delivered, one capture</span></div>
+      <div class="stat"><b>73,894</b><span>Return hits &mdash; 50 fewer, all accounted for</span></div>
+      <div class="stat"><b>6</b><span>Threads that lost a return, each at its very first call</span></div>
+      <div class="stat"><b>16,174</b><span>Ghost scopes those six losses became, paired by count</span></div>
+      <div class="stat"><b>0</b><span>Ghosts once paired by stack frame</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Hook four Box3D functions with kernel uprobes, run the physics on more threads than the machine has cores, and the timeline fills with scopes that cannot be right. <code>b3World_Step</code>, the outermost call, appears nested inside another <code>b3World_Step</code>, and inside that one another, on some threads a couple of levels deep and never coming back up. The function calls no copy of itself. Something is wrong, and the profiler is stating it with a straight face, complete with durations and a call tree.</p>
+
+  <h2 id="see-it">See it</h2>
+
+  <p>Two captures of the same workload, four functions hooked. The only difference is one switch. Open a thread in each and read the depth of <code>b3World_Step</code>: in the first it is often one or two levels down, a scope inside a scope of the same name; in the second it is always at the top, where it belongs.</p>
+
+  <figure class="wide">
+    <p class="embed-head off">Paired by count &mdash; ghosts</p>
+    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/ghosts-off.orbit.stream&collapse=scheduler" title="Box3D capture, count-based pairing" loading="lazy"></iframe></div>
+    <figcaption>Around 40% of <b>b3World_Step</b> scopes sit below depth 0, on the threads that lost a return. The sampling report on the right is correct; only the instrumented scopes are wrong.</figcaption>
+  </figure>
+
+  <figure class="wide">
+    <p class="embed-head on">Paired by frame &mdash; clean</p>
+    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/ghosts-on.orbit.stream&collapse=scheduler" title="Box3D capture, frame-based pairing" loading="lazy"></iframe></div>
+    <figcaption>Same workload, same four hooks, one switch flipped. Every <b>b3World_Step</b> at depth 0.</figcaption>
+  </figure>
+
+  <p>These are the real capture frames a connecting viewer would receive, opened with no service behind them. Dynamic instrumentation is what makes the bug visible at all: a sampling profiler counts a miscounted call as a rounding error, but instrumentation draws every call as a box at the depth it ran, so one accounting mistake is a box in the wrong place, and it stays there for the eye to catch.</p>
+
+  <h2 id="lore">The theory everyone starts with</h2>
+
+  <p>C++ Orbit has a workaround for this exact symptom. Its <code>UprobesUnwindingVisitor</code> keeps, per thread, the stack pointer, instruction pointer and CPU of the last uprobe, and drops an incoming entry that repeats the last one's <code>sp</code> and <code>ip</code> from a different CPU, under a comment that reads, in part, <em>&ldquo;on thread migration, uprobe events can sometimes be duplicated.&rdquo;</em> Orbit opens its probes per CPU, so one hit surfacing in two CPUs' ring buffers is plausible, and the fix has worked for years. The rule was ported to the Rust service line for line. On the ghost capture it dropped nothing &mdash; not a few, zero &mdash; and every run since reports the same: <code>filter off, 0 migration duplicates went through</code>. Whatever this was, it was not a duplicated stack pointer.</p>
+
+  <h2 id="mistake">The mistake worth telling</h2>
+
+  <p>The service can write every probe hit to a file before any pairing (<code>--uprobe-dump</code>): timestamp, thread, CPU, function, entry or return, and the stack pointer and instruction pointer the sample carries. I walked a thread's hits keeping a stack of open frames by their stack pointer, flagged every break in the nesting, and found losses everywhere &mdash; hundreds of them, entries and returns, and a first draft of this post that said the kernel loses about one hit in ten, correlated with thread migration.</p>
+
+  <p>That draft was wrong, and it was wrong for a dull reason. The dump is written in the order the per-CPU rings are drained, not the order the hits happened. A thread's entry and the return of the call before it can come off two different CPU rings microseconds apart and land in the file out of order. The service does not pair them in that order &mdash; it holds hits for 100&nbsp;ms and sorts them by timestamp first &mdash; but my analysis did not, so it saw phantom breaks in the nesting wherever the file order and the true order disagreed. One line, sorting each thread's hits by timestamp before the walk, deleted about 500 of the 513 anomalies. The 258 &ldquo;lost entries&rdquo; became zero. The correlation with migration went with them.</p>
+
+  <h2 id="truth">What the sorted hits say</h2>
+
+  <p>Sorted, the same 73,944-entry capture is almost perfectly balanced: 73,944 entries, 73,894 returns. The 50-hit gap is functions still running when the capture stopped. The genuine anomalies mid-capture number eight, in six threads, and they share a property the file order had hidden:</p>
+
+  <div class="table-wrap"><pre><code>entries delivered            73,944
+returns delivered            73,894     (50 open at capture end)
+anomalies, timestamp-sorted       8     (all lost returns)
+  ...their position         first 1% of each thread's hits
+kernel duplicates                 0
+</code></pre></div>
+
+  <p>Every one of the eight is a lost return, and every one is at the very start of its thread. Two consecutive <code>b3World_Step</code> entries appear at the same stack pointer, on the same CPU, milliseconds apart, with no return between them: the first call's return never arrived. There are no duplicates, on this box, at all.</p>
+
+  <h2 id="cascade">How six losses become sixteen thousand ghosts</h2>
+
+  <p>Eight lost returns cannot draw sixteen thousand ghost boxes on their own. The multiplier is the pairing. With the filter off, entries and returns are matched by counting: an entry pushes a level, a return pops one. That has no way to notice a missing return. Drop one, and the entry it belonged to never closes; the next call opens inside it, and the one after that inside <em>that</em>, and every scope on the thread is a level too deep for the rest of the capture. Simulating count-based pairing on the raw hits reproduces the bundle exactly &mdash; 16,187 ghosts against the capture's 16,174 &mdash; and it makes no difference whether the hits are fed in file order or timestamp order. Six threads that each lost their first return account for all of it.</p>
+
+  <p>Frame-based pairing does not count; it reads the stack pointer every hit carries. A nested call sits strictly below its caller's frame, and a return leaves exactly the frame its entry opened. So an entry that lands at or above a frame still marked open proves that frame's return was lost: the stale frame is closed, and the new call opens at the right depth. On the same raw hits, in either order, this gives zero ghosts. It is the same idea the C++ visitor uses; its rule fires on the missing-return case, which its own comment names first (<em>&ldquo;MISSING URETPROBE OR DUPLICATE UPROBE&rdquo;</em>), and the migration-duplicate reading was always the second half of an or.</p>
+
+  <h2 id="why">Why a return goes missing, and why at the start</h2>
+
+  <p>A uretprobe is not a breakpoint at the return address; it is a hijack. When the entry fires, the kernel rewrites the return address on the user stack to point at a trampoline. Instrument a process that is already running and its threads are mid-loop, and the first call caught after the probes arm does not get a clean hijack &mdash; its return goes to the real address, not the trampoline, and no return event is produced. That is not a kernel bug. It is the unavoidable edge of switching instrumentation on over a running program, and it shows up exactly where the data puts it: the first call of each affected thread.</p>
+
+  <p>The proof is one line of the previous post's stress test. That test arms the probes and <em>then</em> starts its worker threads, so no call is ever in flight when a probe lands, and it records 720,000 scopes in a second with nothing lost and nothing at the wrong depth. Box3D loses a handful of returns because it is already looping when we hook it. Same hooks, same kernel; the only difference is whether a call was in flight at the moment of arming.</p>
+
+  <h2 id="honest">What is proven</h2>
+
+  <p>The kernel is not losing hits at any meaningful rate: entries and returns balance to a hundredth of a percent, and there are no duplicates. The ghosts are a handful of returns lost at the arming edge, each one turned into a thread-long landslide by pairing that counts instead of looking at the frame. Pairing by the stack pointer bounds each loss to the single scope it actually damaged and gets every other depth right, which is the 40%-to-nothing the two captures show. The migration duplicate the C++ code guards against did not appear once here; the guard costs nothing and stays, in case a kernel ever does double, but it is not what was wrong. And the first version of this post, which blamed the kernel for losses it never made, was an artifact of reading hits in the order they were drained rather than the order they occurred &mdash; a good reminder that the fix for a profiler bug can start with a bug in how you read the profile.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 20 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="19-call-for-call.html">&larr; Post 19</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

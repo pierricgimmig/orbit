@@ -1,0 +1,1290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Two Backends, One Test Suite</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #14685a;
+    --accent-deep: #0d4c41;
+    --accent-wash: #dfece7;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #52c4a8;
+      --accent-deep: #7ed8c0;
+      --accent-wash: #12302a;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #52c4a8;
+    --accent-deep: #7ed8c0;
+    --accent-wash: #12302a;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* --------------------------------------------------------- file tree */
+
+  pre.tree {
+    font-size: 0.78rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+  }
+
+  pre.tree b { color: var(--accent-deep); font-weight: 600; }
+  pre.tree i { color: var(--muted); font-style: normal; }
+
+  /* --------------------------------------------------------- checklist */
+
+  .checklist {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.05rem 1.2rem;
+  }
+
+  .checklist h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.8rem;
+    font-weight: 500;
+  }
+
+  .checklist ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    font-size: 0.93rem;
+    line-height: 1.5;
+  }
+
+  .checklist li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.7rem;
+    align-items: start;
+    color: var(--ink-soft);
+  }
+
+  .checklist li::before {
+    content: "";
+    width: 0.72rem;
+    height: 0.72rem;
+    margin-top: 0.34rem;
+    border: 1.5px solid var(--line-strong);
+    background: var(--ground);
+  }
+
+  .checklist li b { color: var(--ink); font-weight: 600; }
+
+  /* ------------------------------------------------------------ gates */
+
+  .gate {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.15rem;
+  }
+
+  .gate .num {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--accent);
+    padding-top: 0.1rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .gate h3 {
+    font-family: var(--display);
+    font-size: 1.02rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.01em;
+  }
+
+  .gate p { margin: 0; font-size: 0.94rem; }
+  .gate p + p { margin-top: 0.45rem; }
+  .gate > :not(.num) { grid-column: 2; }
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Implementation plan &middot; Linux first</p>
+    <h1>Two Backends, One Test Suite</h1>
+    <p class="dek">A staged Rust port that keeps every line of C++ in place, runs the existing gtest suites against both implementations, and aborts loudly the moment they disagree.</p>
+    <p class="byline">Target: <code>//src/ModuleUtils</code>, <code>//src/ObjectUtils</code>, the pure-logic half of <code>//src/LinuxTracing</code> &middot; nothing deleted before the end</p>
+
+    <div class="stats">
+      <div class="stat"><b>73</b><span>Lines in the pilot</span></div>
+      <div class="stat"><b>66</b><span>Tests that must keep passing</span></div>
+      <div class="stat"><b>3</b><span>Backends, one factory</span></div>
+      <div class="stat"><b>4</b><span>Verification gates</span></div>
+      <div class="stat"><b>1</b><span>Dependent of deps:llvm</span></div>
+      <div class="stat"><b>0</b><span>C++ files deleted</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">The whole plan rests on one property of this codebase, which I checked before writing anything else: <strong>every test in <code>ObjectUtilsTests</code> constructs its object through a factory function and asserts only through an abstract interface.</strong> <code>ElfFileImpl</code> lives in an anonymous namespace; no test can see it. That means the existing 659-line <code>ElfFileTest.cpp</code> is already an implementation-independent conformance suite, and a Rust implementation can be dropped behind <code>CreateElfFile()</code> and judged by it without editing a single test.</p>
+
+  <nav class="toc wide" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#mechanism">The mechanism: one factory, three backends</a></li>
+      <li><a href="#gates">Four verification gates</a></li>
+      <li><a href="#layout">Where the Rust lives</a></li>
+      <li><a href="#phase0">Phase 0 — scaffolding</a></li>
+      <li><a href="#phase1">Phase 1 — the 73-line pilot</a></li>
+      <li><a href="#phase2">Phase 2 — ObjectUtils, and deleting LLVM</a></li>
+      <li><a href="#phase3">Phase 3 — the pure-logic half of LinuxTracing</a></li>
+      <li><a href="#endgame">The endgame — phases 4 to 8, to full Rust</a></li>
+      <li><a href="#goals">How each goal gets measured</a></li>
+      <li><a href="#blog">The log, and what counts as proof</a></li>
+      <li><a href="#risks">What can go wrong</a></li>
+      <li><a href="#first">The first pull request</a></li>
+    </ol>
+  </nav>
+
+  <div class="verdict">
+    <dt>Shape</dt>
+    <dd>Rust implementations live in a new top-level <code>rust/</code> workspace. The C++ stays exactly where it is, compiled, tested, and default-on, until a phase is finished and proven.</dd>
+    <dt>Switch</dt>
+    <dd>One environment variable — <code>ORBIT_OBJECT_BACKEND=cpp|rust|both</code> — selects the implementation at runtime. <code>both</code> runs the two side by side and <code>ORBIT_CHECK</code>s that they agree.</dd>
+    <dt>Gate</dt>
+    <dd>No phase merges until the existing suite passes in all three modes, a differential run over a real binary corpus produces zero diffs, and the Rust path is at least as fast as the C++ one.</dd>
+    <dt>Record</dt>
+    <dd>Every phase is written up in <a href="blog/index.html"><code>docs/blog/</code></a> as it happens, with every number traceable to a committed snapshot. Numbers that get worse are reported too.</dd>
+    <dt>Prize</dt>
+    <dd><strong>Taken.</strong> <code>//bazel/deps:llvm</code> is gone &mdash; zero dependents, both patches deleted, the version pin that existed only because the registry had nothing newer removed. Phase 2 is complete: ELF, PE/COFF and PDB all read by Rust, verified against 16.3 million symbols with zero structural disagreements. What it cost is three rendering differences totalling well under a percent, and the loss of the comparison mode itself. See <a href="blog/05-llvm-is-gone.html">post 05</a>.</dd>
+  </div>
+
+  <!-- ==================================================== mechanism -->
+
+  <h2 id="mechanism">The mechanism: one factory, three backends</h2>
+
+  <p>The obvious way to do this is to build a second copy of each test target linked against the Rust library. It works, but it only proves that both implementations pass the same assertions — not that they produce the same <em>answers</em>. Two implementations can both satisfy <code>EXPECT_EQ(symbols.size(), 4)</code> and still disagree about every address.</p>
+
+  <p>So instead: keep one factory, and give it a third mode that runs both and compares.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 424" role="img" aria-label="Three cc_test targets share identical sources and test data, differing only in an environment variable. All three call the same CreateElfFile factory, which dispatches on ORBIT_OBJECT_BACKEND to one of three paths: the existing C++ implementation over LLVM, a Rust implementation over the object and gimli crates, or a comparing implementation that runs both, diffs the resulting protobuf with MessageDifferencer, aborts on mismatch, and returns the C++ answer.">
+        <defs>
+          <marker id="d1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="d1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <text x="8" y="18" font-size="10" font-family="monospace" fill="var(--muted)">SAME srcs · SAME testdata · SAME env except one line</text>
+        <text x="392" y="18" font-size="10" font-family="monospace" fill="var(--muted)">ONE factory, three paths</text>
+
+        <!-- test targets -->
+        <rect x="8" y="34" width="170" height="82" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="22" y="54" font-size="11" font-weight="600" fill="currentColor">:ObjectUtilsTests</text>
+        <text x="22" y="72" font-size="9.5" font-family="monospace" fill="var(--muted)">BACKEND=cpp</text>
+        <text x="22" y="90" font-size="9.5" fill="currentColor">the suite as it exists today</text>
+        <text x="22" y="105" font-size="9.5" fill="var(--muted)">66 test cases</text>
+
+        <rect x="8" y="172" width="170" height="82" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="22" y="192" font-size="11" font-weight="600" fill="var(--accent)">:ObjectUtilsTestsRust</text>
+        <text x="22" y="210" font-size="9.5" font-family="monospace" fill="var(--muted)">BACKEND=rust</text>
+        <text x="22" y="228" font-size="9.5" fill="currentColor">same 66 assertions,</text>
+        <text x="22" y="243" font-size="9.5" fill="currentColor">Rust doing the work</text>
+
+        <rect x="8" y="310" width="170" height="92" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1.5"/>
+        <text x="22" y="330" font-size="11" font-weight="600" fill="var(--warn)">:ObjectUtilsTestsBoth</text>
+        <text x="22" y="348" font-size="9.5" font-family="monospace" fill="var(--muted)">BACKEND=both</text>
+        <text x="22" y="366" font-size="9.5" fill="currentColor">the one that actually</text>
+        <text x="22" y="381" font-size="9.5" fill="currentColor">proves equivalence</text>
+
+        <!-- dispatcher -->
+        <rect x="206" y="34" width="150" height="368" fill="var(--surface-2)" stroke="currentColor" stroke-width="1.5"/>
+        <text x="281" y="196" font-size="12" font-weight="600" text-anchor="middle" fill="currentColor">CreateElfFile()</text>
+        <text x="281" y="214" font-size="9.5" text-anchor="middle" fill="var(--muted)">unchanged signature</text>
+        <text x="281" y="232" font-size="9.5" text-anchor="middle" fill="var(--muted)">unchanged callers</text>
+        <text x="281" y="256" font-size="9" font-family="monospace" text-anchor="middle" fill="currentColor">switch (SelectedBackend())</text>
+
+        <line x1="180" y1="75" x2="204" y2="75" stroke="currentColor" stroke-width="1.2" marker-end="url(#d1)"/>
+        <line x1="180" y1="213" x2="204" y2="213" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#d1a)"/>
+        <line x1="180" y1="356" x2="204" y2="356" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#d1)"/>
+
+        <line x1="358" y1="75" x2="386" y2="75" stroke="currentColor" stroke-width="1.2" marker-end="url(#d1)"/>
+        <line x1="358" y1="213" x2="386" y2="213" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#d1a)"/>
+        <line x1="358" y1="356" x2="386" y2="356" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#d1)"/>
+
+        <!-- lane 1: cpp -->
+        <rect x="390" y="34" width="382" height="82" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="404" y="54" font-size="11" font-weight="600" fill="currentColor">ElfFileImpl&lt;ElfT&gt; — today's code, untouched</text>
+        <text x="404" y="72" font-size="9.5" fill="currentColor">llvm::object · llvm::DebugInfoDWARF · llvm::Symbolize · llvm::Demangle</text>
+        <text x="404" y="90" font-size="9.5" fill="var(--muted)">921 lines in src/ObjectUtils/ElfFile.cpp, moved behind CreateElfFileCpp()</text>
+        <text x="404" y="106" font-size="9.5" fill="var(--muted)">this is the reference answer for the whole plan</text>
+
+        <!-- lane 2: rust -->
+        <rect x="390" y="172" width="382" height="82" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="404" y="192" font-size="11" font-weight="600" fill="var(--accent)">RustElfFile — a C++ subclass over a C ABI</text>
+        <text x="404" y="210" font-size="9.5" fill="currentColor">rust/crates/orbit-object · object · gimli · addr2line · cpp_demangle</text>
+        <text x="404" y="228" font-size="9.5" fill="var(--muted)">un-ported methods delegate to a held CreateElfFileCpp() instance,</text>
+        <text x="404" y="243" font-size="9.5" fill="var(--muted)">so this lane is green from the first commit and gets more Rust each one</text>
+
+        <!-- lane 3: both -->
+        <rect x="390" y="310" width="382" height="92" fill="var(--warn-wash)" stroke="var(--warn)" stroke-width="1.5"/>
+        <text x="404" y="330" font-size="11" font-weight="600" fill="var(--warn)">ComparingElfFile — calls both, on every call</text>
+        <text x="404" y="348" font-size="9.5" fill="currentColor">MessageDifferencer over ModuleSymbols · exact compare on scalars</text>
+        <text x="404" y="364" font-size="9.5" fill="currentColor">mismatch → ORBIT_CHECK fails with both values printed</text>
+        <text x="404" y="382" font-size="9.5" fill="var(--muted)">returns the C++ answer, so this mode can only abort — never change behaviour</text>
+      </svg>
+    </div>
+    <figcaption><b>The third mode is the point.</b> Modes one and two prove the Rust implementation satisfies the same assertions. Mode three proves it produces the same bytes, on every call the suite makes, including the ones no assertion inspects. All three targets are generated from the same <code>srcs</code>, <code>data</code> and <code>testdata</code> glob — the only difference is one entry in <code>env</code>.</figcaption>
+  </figure>
+
+  <p>Three small things make this work, and none of them touches a test:</p>
+
+  <ol>
+    <li><strong>Split the headers into their own target.</strong> <code>ObjectUtilsInterface</code> carries <code>include/ObjectUtils/*.h</code> and nothing else, so the Rust shim can implement <code>ElfFile</code> without depending on the LLVM implementation. Pure BUILD refactor, no source change.</li>
+    <li><strong>Rename the existing factory to <code>CreateElfFileCpp()</code></strong> in an internal header, and add a ~60-line <code>Backend.cpp</code> whose <code>CreateElfFile()</code> dispatches. The public signature in <code>include/ObjectUtils/ElfFile.h</code> does not change, so all 16 dependents keep compiling untouched.</li>
+    <li><strong>Default to <code>cpp</code>.</strong> An unset variable means today's behaviour, exactly. Nothing in production changes until a phase is finished and the default is flipped deliberately.</li>
+  </ol>
+
+  <div class="note">
+    <span class="note-label">Why the strangler, not a big-bang subclass</span>
+    <p><code>RustElfFile</code> holds a <code>std::unique_ptr&lt;ElfFile&gt;</code> built by <code>CreateElfFileCpp()</code> and overrides methods one at a time. On the first commit it might override three of eleven and delegate the rest. That keeps <code>:ObjectUtilsTestsRust</code> passing from day one, makes every commit independently mergeable, and turns "is the port finished" into a countable question: how many methods still delegate. When the count reaches zero the delegate is removed and <code>ElfFile.cpp</code> can be deleted.</p>
+  </div>
+
+  <!-- ==================================================== gates -->
+
+  <h2 id="gates">Four verification gates</h2>
+
+  <p>Each is cheap to run, runs in CI, and catches a different class of mistake. A phase is not done until all four are green.</p>
+
+  <div class="gate wide">
+    <span class="num">1</span>
+    <h3>Conformance — the existing suite, three ways</h3>
+    <p><code>bazel test //src/ObjectUtils:all</code> runs the same 66 test cases three times. This catches anything the original authors thought worth asserting, which for <code>ElfFileTest</code> is a lot: load bias with and without program headers, <code>.eh_frame</code> versus <code>.debug_frame</code>, compressed debug sections, inlined line info, and the exact error strings.</p>
+    <p><strong>Discipline this imposes:</strong> the Rust backend must reproduce Orbit's own error text verbatim, because eight assertions match on it — for example <code>"Unable to get load bias of ELF file: \"%s\". No executable PT_LOAD segment found."</code>. All eight are Orbit's strings, not LLVM's, so this is bounded work rather than an impossible constraint. Never surface an <code>object</code> or <code>gimli</code> error where a test expects an Orbit one.</p>
+  </div>
+
+  <div class="gate wide">
+    <span class="num">2</span>
+    <h3>Differential — a real corpus, not a curated one</h3>
+    <p>A <code>symbol_dump</code> tool that takes a path and writes <code>ModuleSymbols</code> as text proto, plus a <code>sh_test</code> that runs it under <code>cpp</code> and <code>rust</code> over every ELF it can find and diffs the pair. Corpus: the 34 files in <code>src/ObjectUtils/testdata</code>, plus everything Bazel just built in <code>bazel-bin</code>, plus <code>/usr/lib/x86_64-linux-gnu/*.so*</code> when present.</p>
+    <p><strong>Why this and not just gate 1:</strong> the curated testdata is a dozen small binaries chosen to exercise specific code paths. A real <code>libQt5Core.so</code> or a stripped-and-debuglinked <code>libc</code> exercises combinations nobody wrote a test for. This is where <code>object</code>-versus-LLVM disagreements about odd section layouts will actually show up.</p>
+  </div>
+
+  <div class="gate wide">
+    <span class="num">3</span>
+    <h3>Fuzz parity — the property the fuzzer was already for</h3>
+    <p><code>ElfFileLoadSymbolsFuzzer.cpp</code> already exists and calls <code>CreateElfFileFromBuffer</code> on arbitrary bytes. Point it at <code>both</code> mode: now it is not just "does this crash" but "do the two implementations agree, or fail in the same way, on malformed input". Both implementations must reject the same buffers.</p>
+    <p><strong>Note:</strong> the fuzzer is a CMake-era file with no Bazel target. Part of this phase is giving it one — worth doing regardless of the port.</p>
+  </div>
+
+  <div class="gate wide">
+    <span class="num">4</span>
+    <h3>Performance — measured, not assumed</h3>
+    <p>Criterion benches inside the Rust crate for micro-level work, plus an A/B harness that loads symbols from the same corpus N times under each backend and reports wall time and peak RSS. Because the backend is an environment variable, that is one binary run twice — no separate build.</p>
+    <p><strong>Pass criterion:</strong> Rust is not slower on <code>LoadDebugSymbols</code> for a large module, and does not use more peak RSS. If it is slower, the phase does not merge until it isn't — "correctness first, performance later" is how a port quietly becomes a regression.</p>
+  </div>
+
+  <!-- ==================================================== layout -->
+
+  <h2 id="layout">Where the Rust lives</h2>
+
+  <p>A new top-level <code>rust/</code> workspace, deliberately separate from <code>src/OrbitLiveViewer</code>. Two reasons: the symbol parsers should not share a lockfile with a tokio-and-wgpu dependency tree, and keeping the new work in one directory is what makes the side-by-side comparison legible.</p>
+
+  <pre class="tree wide"><code>rust/
+├── <b>Cargo.toml</b>            <i>workspace root; resolved by crate_universe as @orbit_crates</i>
+├── Cargo.lock
+├── rust-toolchain.toml    <i>pinned; independent of OrbitLiveViewer's 1.88</i>
+├── BUILD.bazel            <i>rust_library / rust_test / rust_static_library per crate</i>
+├── README.md              <i>what lives here, and the backend switch</i>
+│
+├── crates/
+│   ├── <b>orbit-maps/</b>          <i>Phase 1 — /proc/pid/maps parsing</i>
+│   ├── <b>orbit-object/</b>        <i>Phase 2 — ELF, COFF, PDB; object · gimli · addr2line</i>
+│   ├── <b>orbit-demangle/</b>      <i>Phase 2 — Itanium + MSVC demangling</i>
+│   └── <b>orbit-perf-merge/</b>    <i>Phase 3 — ordered stream merge, thread state, uprobe maps</i>
+│
+├── ffi/                   <i>thin #[no_mangle] extern "C" layers, one per crate</i>
+│   ├── orbit-maps-ffi/
+│   ├── orbit-object-ffi/
+│   └── orbit-perf-merge-ffi/
+│       └── include/       <i>the .h each one exports, hand-written like pyspy_ffi.h</i>
+│
+├── shims/                 <i>C++ that implements Orbit's existing interfaces over the FFI</i>
+│   ├── ModuleUtilsRust/
+│   └── ObjectUtilsRust/   <i>RustElfFile, RustCoffFile, ComparingElfFile</i>
+│
+└── tools/
+    ├── symbol_dump/       <i>gate 2 — dumps ModuleSymbols as text proto</i>
+    └── ab_bench/          <i>gate 4 — same binary, two backends, wall time + peak RSS</i></code></pre>
+
+  <p>The C++ shims live under <code>rust/</code> rather than beside the module they serve. That is slightly unusual, and it is the right trade here: it keeps <code>src/ObjectUtils</code> at one new file (<code>Backend.cpp</code>) and one changed <code>BUILD.bazel</code>, so <code>git diff</code> on the C++ tree stays readable for the whole port.</p>
+
+  <div class="note warn">
+    <span class="note-label">One thing to decide before Phase 0</span>
+    <p>A third <code>crate_universe</code> repository (<code>@crates</code> for py-spy, <code>@live_crates</code> for the viewer, <code>@orbit_crates</code> for this) is one more lockfile to keep current. The alternative — folding these crates into the existing viewer workspace — couples the symbol parser's dependency resolution to eframe's. I would take the third repository, but it is worth being deliberate about, because merging them later is harder than splitting them now.</p>
+  </div>
+
+  <!-- ==================================================== phase 0 -->
+
+  <h2 id="phase0">Phase 0 — scaffolding</h2>
+
+  <p>No behaviour change, no Rust logic. This phase exists so that Phase 1 is a single small commit rather than a single large one.</p>
+
+  <ul>
+    <li><code>rust/</code> workspace, <code>rust-toolchain.toml</code>, <code>@orbit_crates</code> wired into <code>MODULE.bazel</code> next to the two that already exist.</li>
+    <li>A <code>orbit_dual_backend_test()</code> Starlark macro in <code>bazel/</code>: given a <code>cc_test</code>'s attributes and a backend variable name, it emits the three targets so no BUILD file repeats itself three times.</li>
+    <li>A no-op Rust crate with one FFI function and one <code>rust_test</code>, linked into a throwaway <code>cc_test</code>, to prove the toolchain end to end before any real code depends on it.</li>
+    <li>CI: add the new targets to <code>.github/workflows/build-and-test.yml</code>. They should be gating from the first commit — a non-gating conformance suite is not a gate.</li>
+  </ul>
+
+  <!-- ==================================================== phase 1 -->
+
+  <h2 id="phase1">Phase 1 — the 73-line pilot</h2>
+
+  <p><code>orbit_module_utils::ParseMaps</code> is the smallest real thing in the tree that is worth porting, and it is close to a perfect first target:</p>
+
+  <pre><code><span class="c">// src/ModuleUtils/include/ModuleUtils/ReadLinuxMaps.h</span>
+[[nodiscard]] std::vector&lt;LinuxMemoryMapping&gt; <span class="k">ParseMaps</span>(std::string_view proc_pid_maps_content);</code></pre>
+
+  <p>A pure function. Text in, five integers and a string out, per row. No I/O, no allocation policy to match, no error type to reproduce — it cannot fail, it just returns fewer rows. 73 lines of implementation, 89 lines of test, four test cases. If the machinery from Phase 0 works, this lands in a day; if it doesn't, it fails cheaply and visibly.</p>
+
+  <p>It is also genuinely on the hot path — <code>ReadModules</code> parses the whole maps file for every process listed, and the process list is polled — so it gives gate 4 something real to measure on the first try.</p>
+
+  <p><strong>FFI shape:</strong> one call in, one flat buffer out. Rust returns a count plus a pointer to an array of <code>{ start, end, perms, offset, inode, path_offset, path_len }</code> and a separate string blob; the shim walks it once building <code>std::vector&lt;LinuxMemoryMapping&gt;</code>, then frees. No per-row allocation across the boundary, no ownership subtleties, and it is the same pattern every later crate will use.</p>
+
+  <!-- ==================================================== phase 2 -->
+
+  <h2 id="phase2">Phase 2 — ObjectUtils, and deleting LLVM</h2>
+
+  <p>This is the phase with the payoff. I checked the dependency graph specifically: <strong><code>//bazel/deps:llvm</code> has exactly one dependent in the entire tree</strong>, and it is <code>//src/ObjectUtils</code>. There is one other LLVM include anywhere — <code>llvm/Demangle/Demangle.h</code> in <code>CaptureClient/CaptureEventProcessor.cpp</code>, which does not even declare the dependency and picks it up transitively.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 322" role="img" aria-label="Before, six LLVM libraries are reached through bazel deps llvm, which has exactly one declared dependent, src ObjectUtils, plus one undeclared transitive include from CaptureClient. ObjectUtils in turn has sixteen dependents. After, LLVM is gone and four pure-Rust crates take its place behind the same ObjectUtils interface, leaving all sixteen dependents unchanged.">
+        <defs>
+          <marker id="l1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+          </marker>
+          <marker id="l1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <text x="8" y="16" font-size="10.5" font-family="monospace" fill="var(--muted)">TODAY</text>
+        <text x="404" y="16" font-size="10.5" font-family="monospace" fill="var(--accent)">AFTER PHASE 2h</text>
+        <line x1="390" y1="24" x2="390" y2="312" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+
+        <!-- BEFORE -->
+        <rect x="8" y="28" width="220" height="92" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="22" y="48" font-size="11.5" font-weight="600" fill="currentColor">//bazel/deps:llvm</text>
+        <text x="22" y="66" font-size="9.5" fill="currentColor">Object · Symbolize · DebugInfoDWARF</text>
+        <text x="22" y="80" font-size="9.5" fill="currentColor">DebugInfoPDB · DebugInfoCodeView · Demangle</text>
+        <text x="22" y="98" font-size="9.5" fill="var(--warn)">2 patches · pinned at 17.0.4 · ~40s of the cold build</text>
+        <text x="22" y="112" font-size="9.5" fill="var(--muted)">registry has nothing newer</text>
+
+        <line x1="118" y1="122" x2="118" y2="150" stroke="currentColor" stroke-width="1.3" marker-end="url(#l1)"/>
+        <text x="126" y="140" font-size="9.5" fill="currentColor">1 declared dependent</text>
+
+        <rect x="8" y="152" width="220" height="52" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="118" y="174" font-size="11.5" font-weight="600" text-anchor="middle" fill="currentColor">//src/ObjectUtils</text>
+        <text x="118" y="192" font-size="9.5" text-anchor="middle" fill="currentColor">4,425 lines · ElfFile, CoffFile, PdbFileLlvm</text>
+
+        <line x1="248" y1="74" x2="300" y2="74" stroke="currentColor" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#l1)"/>
+        <rect x="240" y="86" width="140" height="44" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="310" y="104" font-size="9.5" text-anchor="middle" fill="currentColor">CaptureEventProcessor.cpp</text>
+        <text x="310" y="118" font-size="9" text-anchor="middle" fill="var(--warn)">includes Demangle.h, undeclared</text>
+
+        <line x1="118" y1="206" x2="118" y2="234" stroke="currentColor" stroke-width="1.3" marker-end="url(#l1)"/>
+        <rect x="8" y="236" width="220" height="52" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="118" y="258" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">16 dependents</text>
+        <text x="118" y="276" font-size="9.5" text-anchor="middle" fill="var(--muted)">LinuxTracing · Symbols · ClientData · ProcessService …</text>
+
+        <!-- AFTER -->
+        <rect x="404" y="28" width="220" height="92" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.5"/>
+        <text x="514" y="70" font-size="11.5" text-anchor="middle" fill="var(--muted)">//bazel/deps:llvm</text>
+        <text x="514" y="88" font-size="9.5" text-anchor="middle" fill="var(--muted)">no dependents · deleted</text>
+        <line x1="414" y1="36" x2="614" y2="112" stroke="var(--hold)" stroke-width="1.6"/>
+        <line x1="614" y1="36" x2="414" y2="112" stroke="var(--hold)" stroke-width="1.6"/>
+
+        <rect x="640" y="28" width="132" height="92" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="706" y="48" font-size="10.5" font-weight="600" text-anchor="middle" fill="var(--accent)">@orbit_crates</text>
+        <text x="706" y="66" font-size="9.5" text-anchor="middle" fill="currentColor">object</text>
+        <text x="706" y="80" font-size="9.5" text-anchor="middle" fill="currentColor">gimli · addr2line</text>
+        <text x="706" y="94" font-size="9.5" text-anchor="middle" fill="currentColor">pdb</text>
+        <text x="706" y="110" font-size="9.5" text-anchor="middle" fill="currentColor">cpp_demangle · msvc-demangler</text>
+
+        <line x1="706" y1="122" x2="706" y2="150" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#l1a)"/>
+        <line x1="640" y1="178" x2="590" y2="178" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#l1a)"/>
+
+        <rect x="640" y="152" width="132" height="52" fill="none" stroke="var(--accent)" stroke-width="1.2"/>
+        <text x="706" y="174" font-size="10" font-weight="600" text-anchor="middle" fill="var(--accent)">rust/crates/orbit-object</text>
+        <text x="706" y="191" font-size="9.5" text-anchor="middle" fill="currentColor">+ orbit-demangle</text>
+
+        <rect x="404" y="152" width="186" height="52" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="497" y="174" font-size="11.5" font-weight="600" text-anchor="middle" fill="currentColor">//src/ObjectUtils</text>
+        <text x="497" y="192" font-size="9.5" text-anchor="middle" fill="currentColor">same headers, same factory functions</text>
+
+        <line x1="497" y1="206" x2="497" y2="234" stroke="currentColor" stroke-width="1.3" marker-end="url(#l1)"/>
+        <rect x="404" y="236" width="186" height="52" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <text x="497" y="258" font-size="11" font-weight="600" text-anchor="middle" fill="currentColor">the same 16 dependents</text>
+        <text x="497" y="276" font-size="9.5" text-anchor="middle" fill="var(--accent)">not one line changed</text>
+
+        <text x="404" y="308" font-size="9.5" fill="var(--muted)">CaptureEventProcessor's demangle call moves to the shim's C ABI — a one-line change and a declared dep.</text>
+      </svg>
+    </div>
+    <figcaption><b>The reason this phase is worth doing is a graph property, not a language preference.</b> LLVM sits behind a single edge. Every other consumer reaches it through <code>ObjectUtils</code>'s abstract interface, which does not change. That makes "delete LLVM" a bounded, verifiable outcome rather than an aspiration — and it is the single largest dependency in the tree.</figcaption>
+  </figure>
+
+  <h3>Sub-stages, and the tests each one lights up</h3>
+
+  <p>Each row is a mergeable commit. <code>:ObjectUtilsTestsRust</code> and <code>:ObjectUtilsTestsBoth</code> stay green throughout, because everything not yet ported still delegates to C++.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Stage</th><th>What moves to Rust</th><th>Crates</th><th>Tests it takes over</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="v">2a</td>
+          <td>ELF metadata: build id, soname, load bias, executable segment offset, image size, object segments, <code>Is64Bit</code>, <code>HasDebugInfo</code>, <code>HasDynsym</code></td>
+          <td class="v">object</td>
+          <td>LoadBias… (+Static), ObjectSegments (+Static), CalculateLoadBiasNoProgramHeaders, GetBuildId, GetFilePath, CreateFromBuffer, FileDoesNotExist, HasDebugInfo, DoesNotHaveDebugInfo, HasDynsym, GetSonameSmoke, GetNameForFileWithoutSoname</td>
+        </tr>
+        <tr>
+          <td class="v">2b</td>
+          <td>Symbol tables: <code>LoadDebugSymbols</code>, <code>LoadSymbolsFromDynsym</code>, <code>HasDebugSymbols</code>, demangling</td>
+          <td class="v">object · cpp_demangle</td>
+          <td>LoadDebugSymbols, HasDebugSymbols, LoadSymbolsFromDynsym (+Fails), CompressedDebugInfo</td>
+        </tr>
+        <tr>
+          <td class="v">2c</td>
+          <td>Unwind ranges as symbols — <code>.eh_frame</code> and <code>.debug_frame</code> FDE walking</td>
+          <td class="v">gimli</td>
+          <td>LoadEhOrDebugFrameEntriesAsSymbolsFrom{EhFrame,DebugFrame}, LoadDynamicLinkingSymbolsAndUnwindRanges… (both), LoadPatchableFunctionEntry… (both)</td>
+        </tr>
+        <tr>
+          <td class="v bump">2d</td>
+          <td>DWARF line tables and declaration locations &mdash; <strong>done</strong></td>
+          <td class="v">gimli · addr2line</td>
+          <td>Reworked onto <code>gimli</code> directly, dropping <code>addr2line</code>, which let LLVM's own rules be applied: <code>getFileNameByIndex</code> for paths, and the inlining rule where <code>GetLineInfo</code> reports the outermost frame's call site while <code>GetDeclarationLocationOfFunction</code> reports the innermost DIE. All 1,235 line numbers match; 2 source paths render differently. See <a href="blog/05-llvm-is-gone.html">post 05</a>.</td>
+        </tr>
+        <tr>
+          <td class="v">2e</td>
+          <td><code>.gnu_debuglink</code> section and its CRC</td>
+          <td class="v">object</td>
+          <td>HasNoGnuDebugLink, HasGnuDebugLink, CalculateDebuglinkChecksum{Valid,NotFound}</td>
+        </tr>
+        <tr>
+          <td class="v">2f</td>
+          <td>PE/COFF: export table, exception table, PDB debug directory, build id from PDB info</td>
+          <td class="v">object</td>
+          <td>all 17 <code>CoffFile</code> cases</td>
+        </tr>
+        <tr>
+          <td class="v bump">2g</td>
+          <td>PDB reading &mdash; <strong>done</strong></td>
+          <td class="v">pdb · msvc-demangler</td>
+          <td>The CodeView type-name renderer was reimplemented after all &mdash; <code>TypeNameComputer</code> plus <code>TypeIndex::simpleTypeName</code>, about two hundred lines. <code>PdbFileTest</code> turns out to specify it, one construct per symbol, and all of them pass. 12,420 PDB symbols compared; one <code>vtordisp</code> thunk name differs.</td>
+        </tr>
+        <tr>
+          <td class="v bump">2h</td>
+          <td><strong>Done.</strong> <code>//bazel/deps:llvm</code> has zero dependents, both LLVM patches are deleted, and the cold build of <code>ObjectUtils</code> fell 34% (158.7s to 104.6s, critical path 68.3s to 48.3s). <code>ObjectUtils</code> lost 2,191 implementation lines. <a href="blog/metrics/phase-2h-cold-build.txt">Timing</a>.</td>
+          <td class="v">—</td>
+          <td>full <code>bazel test //...</code>, plus a cold-build timing before and after</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note hold">
+    <span class="note-label">2g is the long pole, and it is not optional</span>
+    <p>It would be convenient if PDB reading were Windows-only, but it isn't. <code>CreateSymbolsFile</code> tries <code>CreatePdbFile</code> unconditionally on Linux, and <code>SymbolsFileTest</code> asserts on the failure message — because Orbit does Wine/Proton mixed-callstack profiling and has to read PE and PDB for Windows modules running under Proton on a Linux host. So LLVM cannot be deleted until the <code>pdb</code> crate covers what <code>PdbFileLlvm</code> does. That crate is mature for symbol and address lookup, which is all Orbit asks of it, but this is the stage most likely to need a fallback — and the fallback is ugly: keeping LLVM for one library.</p>
+  </div>
+
+  <!-- ==================================================== phase 3 -->
+
+  <h2 id="phase3">Phase 3 — the pure-logic half of LinuxTracing</h2>
+
+  <div class="note hold">
+    <span class="note-label">Outcome: stopped by gate 4, as this section predicted</span>
+    <p>Two classes were ported and validated &mdash; <code>PerfEventQueue</code> (slab-and-handles FFI) and <code>ThreadStateManager</code> (pure integers) &mdash; and both measured slower: ~20% on a 63&nbsp;ns baseline and ~2.4&times; on a 13&nbsp;ns one, with identical checksums throughout. The toll of an opaque cross-language call is fixed per event, so the smaller the function, the larger the relative loss, and the five remaining classes are all smaller. Defaults stay C++; the Rust stays in tree behind <code>ORBIT_PERF_MERGE_BACKEND</code> and <code>ORBIT_THREAD_STATES_BACKEND</code>; the rest of the phase is deliberately not ported. What could reopen it: cross-language LTO, or moving the boundary to the wire format. See <a href="blog/06-the-gate-says-no.html">post 06</a> and <a href="blog/metrics/phase-3-verdict.txt">the verdict</a>.</p>
+    <p><strong>Reopened by decision.</strong> The project owner overruled the gate: everything portable is ported and defaults to Rust, the toll is accepted and priced (~2% of a core at a million sched events per second), and the C++ twins stay behind their switches until cross-language LTO or the wire-format boundary removes it. Only the two libunwindstack-welded classes stay C++, on the dependency boundary the analysis drew from the start. See <a href="blog/07-overruled.html">post 07</a> and <a href="blog/metrics/phase-3-reopened.txt">the accepted costs</a>.</p>
+  </div>
+
+  <p>Seven classes in <code>src/LinuxTracing</code> do no I/O, open no file descriptors, and touch no kernel interface. They are algorithms with unusually good test coverage — <strong>1,355 lines of implementation against 3,053 lines of test</strong>, a ratio of better than two to one.</p>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Class</th><th>Impl</th><th>Test</th><th>What it does</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>PerfEventQueue</code></td><td class="v">220</td><td class="v">422</td><td>Heap-of-queues merge of per-CPU streams into one timestamp order</td></tr>
+        <tr><td><code>ThreadStateManager</code></td><td class="v">334</td><td class="v">593</td><td>Per-thread state machine over sched tracepoints</td></tr>
+        <tr><td><code>LeafFunctionCallManager</code></td><td class="v">238</td><td class="v">596</td><td>Frame-pointer fixup for leaf frames</td></tr>
+        <tr><td><code>UprobesReturnAddressManager</code></td><td class="v">227</td><td class="v">799</td><td>Stitches return addresses displaced by uprobes</td></tr>
+        <tr><td><code>ContextSwitchManager</code></td><td class="v">122</td><td class="v">256</td><td>Pairs switch-in and switch-out into slices</td></tr>
+        <tr><td><code>UprobeAddressMap</code></td><td class="v">122</td><td class="v">182</td><td>Address range bookkeeping</td></tr>
+        <tr><td><code>UprobesFunctionCallManager</code></td><td class="v">92</td><td class="v">205</td><td>Entry/exit pairing into function calls</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The FFI here is different in kind from Phase 2, and worth thinking about before starting rather than during. These classes sit on the hot path and traffic in <code>PerfEvent</code>, a large C++ variant. Copying it across a boundary per event would swamp any gain.</p>
+
+  <p><strong>The shape that works:</strong> the Rust side never sees a <code>PerfEvent</code>. It owns only the ordering keys — <code>(timestamp, stream_id, u64 handle)</code> — and the C++ side keeps the events in a slab, passing indices. <code>PerfEventQueue</code> becomes a Rust data structure over three integers per element, which is what it actually is; the payload never moves. Same for the state managers, which key on <code>(tid, timestamp, state)</code>.</p>
+
+  <p>This phase is also where gate 4 earns its keep, because it is the one place where a Rust port could plausibly be <em>slower</em> — an FFI call per event is not free, and the batching has to be designed rather than discovered.</p>
+
+  <!-- ==================================================== endgame -->
+
+  <h2 id="endgame">The endgame — phases 4 to 8, to full Rust</h2>
+
+  <div class="note">
+    <span class="note-label">Direction set 2026-08-31</span>
+    <p>The goal is now explicit: <strong>no C++ in the service.</strong> The batching question answered itself along the way &mdash; buffering events across the FFI boundary to amortize the toll is a miniature of the wire-format boundary, so rather than build the miniature and throw it away, the plan goes straight to the real one. The per-event toll accepted in <a href="blog/07-overruled.html">post 07</a> is deleted by Phase 4 as a side effect, not patched.</p>
+  </div>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>What moves</th><th>What it deletes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>4 &mdash; the collector</strong></td><td><code>PerfEventRecords</code>, <code>PerfEventReaders</code>, <code>PerfEventRingBuffer</code>, <code>PerfEventOpen</code>, the <code>TracerImpl</code> event loop and its visitors: Rust owns the ring buffers and calls the five Phase&nbsp;3 crates natively</td><td>Every per-event FFI crossing, and with it the accepted toll</td></tr>
+        <tr><td><strong>5 &mdash; the unwinder</strong></td><td><code>framehop</code> + the <code>gimli</code>/<code>object</code> crates already in tree replace libunwindstack; <code>LeafFunctionCallManager</code>, <code>UprobesReturnAddressManager</code>, <code>UprobesUnwindingVisitor</code> follow</td><td>libunwindstack &mdash; the largest third-party C++ dependency since LLVM, and the weld that kept two classes C++</td></tr>
+        <tr><td><strong>6 &mdash; instrumentation</strong></td><td><code>UserSpaceInstrumentation</code>: ptrace, tracee allocation, trampoline injection via the <code>nix</code> crate</td><td>The last kernel-interface C++</td></tr>
+        <tr><td><strong>7 &mdash; the service shell</strong></td><td><code>LinuxCaptureService</code>, <code>ProducerEventProcessor</code>, the small services, transport moves from gRPC/protobuf to the pod-style wire format, <code>main()</code></td><td>gRPC and protobuf from the service side</td></tr>
+        <tr><td><strong>8 &mdash; deletion</strong></td><td>Residual C++ test coverage is translated into the Rust suites, which until this point were forbidden to replace the C++ oracles</td><td>The C++ twins, the facades, the entire <code>rust/ffi</code> layer, the retired tests</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Ordering rationale: the collector goes first because it is the only phase that pays a debt already on the books (the toll), and because its wire format is a prerequisite for Phase&nbsp;7. The unwinder goes second because it unblocks the two welded classes and because a shipping precedent exists &mdash; <a href="https://github.com/mstange/samply">samply</a> is an all-Rust Linux profiler built on framehop, so Phase&nbsp;5 is engineering, not research. Phases 6 and 7 have no ordering constraint between them. Phase&nbsp;8 is last by construction: the C++ tests are the parity oracle, and translating them earlier would destroy the guarantee they exist to provide.</p>
+
+  <div class="note">
+    <span class="note-label">Progress, 2026-08-31</span>
+    <p>4a and 4b are done and committed; 4c has its first two milestones done (the ring buffer with its cross-watcher differential, and the event loop composing the ported crates FFI-free). The sched-tracepoint pipeline and the 4d whole-capture differential are root-gated on the development machine and wait for a <code>sudo</code> run. See <a href="blog/08-moving-the-boundary.html">post 08</a>.</p>
+    <p><strong>Phase 5 is done through 5c.</strong> <code>orbit-unwind</code> (framehop + object) holds frames identical with libunwindstack on 12,000 live samples, and both formerly-welded classes — <code>UprobesReturnAddressManager</code> and <code>LeafFunctionCallManager</code> — now run their logic on Rust by default behind the shared switch, engines reached through callbacks. libunwindstack stays linked until Phase 8, by design. See <a href="blog/09-the-weld-comes-apart.html">post 09</a>.</p>
+    <p><strong>Phase 6 is ported through 6d.</strong> <code>orbit-ptrace</code> holds the substrate (attach, tracee memory, register backup, syscall injection, MemoryInTracee), and <code>orbit-trampoline</code> holds placement, the instruction relocator (byte-for-byte identical with the C++ across 888,154 real instructions, on iced-x86), the fixed code sequences, and the whole-trampoline builder (93,696 trampolines byte-identical over real function starts). Every algorithmic and code-gen part of instrumentation is ported and byte-verified; only InstrumentProcess (live installation, driven by the service request) remains, and it is verified end-to-end. See <a href="blog/10-into-the-tracee.html">post 10</a>.</p>
+    <p><strong>Phase 7 has started.</strong> The pod capture wire format (<code>orbit-wire</code>) is built and measured &mdash; 4.79&times; faster to parse than protobuf at 1.69&times; the bytes, zero dependencies, round-trip tested over 200,000 events &mdash; and the first all-Rust vertical slice runs sched-switch records through the ported <code>ContextSwitchManager</code> into pod <code>SchedulingSlice</code> events with no FFI on the path. What remains is the rest of the event types, the service shell (<code>LinuxCaptureService</code>, <code>ProducerEventProcessor</code>, <code>main</code>), and <code>InstrumentProcess</code>. See <a href="blog/11-dead-simple.html">post 11</a>.</p>
+  </div>
+
+  <h3>Phase 4 milestones, each with its own differential</h3>
+
+  <ol>
+    <li><strong>4a &mdash; record layouts.</strong> The packed ring-buffer record structs in a <code>orbit-perf-records</code> crate, with a cross-language layout parity test: a C++ test compares <code>sizeof</code>/<code>offsetof</code> of every struct in <code>PerfEventRecords.h</code> against the sizes the Rust crate exports. Layout <em>is</em> the spec for a wire parser; this is the cheapest differential in the whole plan.</li>
+    <li><strong>4b &mdash; the reader.</strong> Ring-buffer byte streams parsed by both sides: identical raw bytes in, identical parsed records out.</li>
+    <li><strong>4c &mdash; the loop.</strong> <code>perf_event_open</code>, the mmap ring buffers, and the <code>TracerImpl</code> event loop in Rust, calling the Phase&nbsp;3 crates natively.</li>
+    <li><strong>4d &mdash; whole-capture differential.</strong> C++ tracer and Rust tracer run against the same workload; event streams compared modulo the noise a real kernel injects. This is gate&nbsp;2 scaled up from symbols to captures.</li>
+  </ol>
+
+  <!-- ==================================================== goals -->
+
+  <h2 id="goals">How each goal gets measured</h2>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Goal</th><th>Instrument</th><th>Pass criterion</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Correctness</strong></td>
+          <td>Gates 1–3: three test modes, differential corpus, fuzz parity</td>
+          <td>66/66 in all three modes; zero diffs across the corpus; both backends reject the same malformed buffers</td>
+        </tr>
+        <tr>
+          <td><strong>Performance</strong></td>
+          <td><code>rust/tools/ab_bench</code> — same binary, <code>BACKEND=cpp</code> then <code>rust</code>; criterion for the crate internals</td>
+          <td>No regression in wall time or peak RSS on <code>LoadDebugSymbols</code> for a large module. Record the numbers in the commit message, not just "looks fine".</td>
+        </tr>
+        <tr>
+          <td><strong>Ease of build</strong></td>
+          <td>Cold <code>bazel build //src/OrbitService</code> with an empty disk cache, before and after 2h</td>
+          <td>LLVM's compile leaves the critical path; <code>bazel/patches/</code> loses both LLVM patches; no version pin that exists only because the registry has nothing newer</td>
+        </tr>
+        <tr>
+          <td><strong>Shrinking dependencies</strong></td>
+          <td><code>bazel query 'deps(//src/OrbitService)' | wc -l</code>, recorded at each phase boundary</td>
+          <td><code>//bazel/deps:llvm</code> reaches zero dependents and is removed from <code>MODULE.bazel</code>. Report the target-count delta.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Record all four at every phase boundary, in the commit. A port that cannot show its numbers is indistinguishable from a rewrite that felt good.</p>
+
+  <!-- ==================================================== blog -->
+
+  <h2 id="blog">The log, and what counts as proof</h2>
+
+  <p>Every phase is written up in <a href="blog/index.html"><code>docs/blog/</code></a> as it happens. The posts are not a summary written afterwards — they are the record, and the discipline they impose on the work is the point: a phase is not finished until its numbers are reproducible by someone else.</p>
+
+  <p>Four rules, chosen because each one is a way the write-up could otherwise become worthless:</p>
+
+  <ol>
+    <li><strong>No claim without a committed number.</strong> Every figure a post cites comes from a script in <code>scripts/</code> whose output is checked in under <code>docs/blog/metrics/</code>. A reader can re-run it and disagree.</li>
+    <li><strong>The C++ test files are never edited.</strong> They are the specification. A port that adjusts its own exam has not passed anything — and this is the single easiest corner to cut, because a failing assertion always looks like it might be the test's fault.</li>
+    <li><strong>Numbers that get worse get reported.</strong> A strangler port makes the tree bigger before it makes it smaller. Hiding that would make the good numbers worth less, and the first post already reports a dependency count going up by 56 and a module gaining 137 lines.</li>
+    <li><strong>Every hurdle is written down</strong>, including the ones that are self-inflicted. Post 01 records eight, of which two were bugs in the new code and one was a bug in a new test.</li>
+  </ol>
+
+  <h3>The two instruments</h3>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>Command</th><th>Output</th><th>What it records</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="v">scripts/port_metrics.sh --bazel</td>
+          <td class="v">docs/blog/metrics/&lt;phase&gt;.json</td>
+          <td>Implementation and test lines per module; Rust lines in tree; <code>deps()</code> target counts and distinct external repositories for <code>ObjectUtils</code>, <code>ModuleUtils</code> and <code>OrbitService</code>; gtest case counts; <code>bazel_dep</code> and patch counts; LLVM's dependent count; and the tally of hand-rolled std equivalents — <code>ErrorMessageOr</code> uses, <code>absl::Mutex</code> versus <code>GUARDED_BY</code>, and the line count of the <code>OrbitBase</code> headers that <code>std</code> makes redundant</td>
+        </tr>
+        <tr>
+          <td class="v">scripts/bench_parse_maps.sh</td>
+          <td class="v">docs/blog/metrics/&lt;phase&gt;-bench-*.txt</td>
+          <td>A/B timing: one binary, two backends, alternating rounds so a warming CPU cannot favour whichever runs first, median reported. One of these per ported module</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The baseline snapshot was taken <em>before</em> any Rust existed, on the commit the branch was cut from. That is what makes every later delta meaningful, and it is the one measurement that cannot be retaken.</p>
+
+  <div class="note">
+    <span class="note-label">The claims this is designed to be able to prove</span>
+    <p><strong>Fewer dependencies:</strong> <code>deps(//src/ObjectUtils)</code> was <strong>5,843</strong> targets across <strong>17</strong> external repositories at baseline; <code>deps(//src/Service:OrbitService)</code> was <strong>22,220</strong> across <strong>334</strong>. Phase 2h should move all four numbers down, and <code>//bazel/deps:llvm</code>'s dependent count from 1 to 0.</p>
+    <p><strong>Fewer lines:</strong> tracked per module, and expected to rise during a phase and fall at its end when the C++ is deleted. Reporting the rise is what makes the fall believable.</p>
+    <p><strong>No re-implemented error types:</strong> <code>ErrorMessageOr</code> appears <strong>1,352</strong> times and exists because C++ had no <code>Result</code>; the <code>OrbitBase</code> headers that <code>std</code>, <code>tokio</code> or <code>rayon</code> would provide come to <strong>2,963</strong> lines. Both counts are in every snapshot, so the reduction is a measurement rather than an assertion.</p>
+    <p><strong>Faster, or at least not slower:</strong> one A/B benchmark per ported module, with the mechanism explained in the post. A number without a mechanism is a coincidence.</p>
+  </div>
+
+  <h3>Post index</h3>
+
+  <div class="table-wrap wide">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Post</th><th>Phase</th><th>Headline result</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="v">01</td>
+          <td><a href="blog/01-the-first-73-lines.html">The First 73 Lines</a></td>
+          <td class="v">1 — ParseMaps</td>
+          <td>1.75&times; faster, zero dependencies, 4 C++ tests green on both backends, and the sabotage experiment proving the comparing mode really compares</td>
+        </tr>
+        <tr>
+          <td class="v muted">02</td>
+          <td>ObjectUtils metadata &mdash; <em>pending</em></td>
+          <td class="v">2a</td>
+          <td>&mdash;</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ==================================================== risks -->
+
+  <h2 id="risks">What can go wrong</h2>
+
+  <p><strong><code>object</code> and <code>gimli</code> are not LLVM.</strong> They are excellent and they are what the Firefox profiler and Sentry run on, but they are not bug-for-bug identical. The likely friction points are already named by the test suite: <code>CompressedDebugInfo</code> (the Bazel port had to patch LLVM just to turn zlib on for <code>SHF_COMPRESSED</code>), <code>LineInfoInlining</code> (inlined frames in DWARF line tables), and DWARF 5 forms. Gate 2 over a real corpus is how these surface early rather than in a user's capture.</p>
+
+  <p><strong>Error strings are load-bearing.</strong> Eight assertions match on exact Orbit error text. That is a small, bounded requirement, but it is easy to forget until CI fails — and easier still to "fix" by editing the test, which would quietly destroy the value of gate 1. The rule: <em>the test file is never edited during a port.</em> If a test seems wrong, that is a separate commit, made against the C++ backend, before the port touches it.</p>
+
+  <p><strong><code>both</code> mode has a cost.</strong> Running two implementations on every call roughly doubles the work in that suite. That is fine for a test target and would not be fine anywhere near production, so the mode must be reachable only via the environment variable and never become a default.</p>
+
+  <p><strong>The PDB stage may not land.</strong> Covered above. If <code>pdb</code> cannot reproduce <code>PdbFileLlvm</code>, LLVM survives for one library and the build-time win mostly evaporates while the correctness and dependency wins remain. Worth deciding in advance whether that outcome is acceptable, because it changes what "finished" means for Phase 2.</p>
+
+  <p><strong>The C++ never gets deleted.</strong> The failure mode of a strangler is that both implementations live forever and every change has to be made twice. The countermeasure is the delegation counter: it is a number, it should only ever go down, and when it reaches zero the deletion commit is already written.</p>
+
+  <!-- ==================================================== first -->
+
+  <h2 id="first">The first pull request</h2>
+
+  <p>Scoped so it either works or fails visibly, in about a day, with no Rust logic in it at all beyond a parser that four existing tests already specify.</p>
+
+  <div class="checklist wide">
+    <h3>PR 1 — scaffolding plus the pilot</h3>
+    <ol>
+      <li><b>Create <code>rust/</code></b> — workspace, <code>rust-toolchain.toml</code>, <code>@orbit_crates</code> in <code>MODULE.bazel</code>, a README explaining the backend switch.</li>
+      <li><b>Add <code>bazel/dual_backend.bzl</code></b> — the <code>orbit_dual_backend_test()</code> macro that emits the three <code>cc_test</code> targets from one set of attributes.</li>
+      <li><b>Write <code>rust/crates/orbit-maps</code></b> — <code>parse_maps(&amp;str) -&gt; Vec&lt;Mapping&gt;</code>, plus Rust unit tests ported from <code>ReadLinuxMapsTest.cpp</code> so the crate stands alone.</li>
+      <li><b>Write <code>rust/ffi/orbit-maps-ffi</code></b> — one <code>extern "C"</code> entry point, flat output buffer plus string blob, one free function, a hand-written header in the <code>pyspy_ffi.h</code> idiom.</li>
+      <li><b>Write <code>rust/shims/ModuleUtilsRust</code></b> — <code>ParseMapsRust()</code> returning <code>std::vector&lt;LinuxMemoryMapping&gt;</code>.</li>
+      <li><b>Add <code>src/ModuleUtils/Backend.cpp</code></b> — <code>ParseMaps()</code> dispatches on <code>ORBIT_MAPS_BACKEND</code>; <code>both</code> compares element-wise and <code>ORBIT_CHECK</code>s. Default <code>cpp</code>.</li>
+      <li><b>Emit the three test targets</b> for <code>ReadLinuxMapsTest.cpp</code> and add all three to CI as gating.</li>
+      <li><b>Add <code>rust/tools/ab_bench</code></b> with one case: parse a large real <code>/proc/self/maps</code> N times under each backend, print wall time and peak RSS. Paste the numbers in the PR description.</li>
+    </ol>
+  </div>
+
+  <p>If that PR is green in all three modes and the benchmark does not regress, everything after it is the same moves at larger scale. If it isn't, the problem is in the machinery rather than in 73 lines of maps parsing, and it is worth finding out there.</p>
+
+  <p>Say the word and I'll start on it. My suggestion is to do PR 1 exactly as scoped — resist adding <code>ObjectUtils</code> to it, because the point of PR 1 is to be small enough that when something breaks it is obvious which of the eight items broke it.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Line counts, test-case counts and dependency edges measured against the working tree at 92aa0cc7e.<br>
+    Related: <a href="rust-service-port.html">Should OrbitService Be Rust?</a> &middot; <a href="bazel-port.html">Orbit on Bazel</a>
+  </div>
+</footer>
+
+</body>
+</html>

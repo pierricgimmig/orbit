@@ -21,3 +21,12 @@ third_party/py-spy-ffi/target/
 /bazel-*
 src/OrbitLiveViewer/target/
 src/OrbitLiveViewer/crates/*/target/
+
+# Rust build output (rust/ and src/OrbitLiveViewer/ Cargo workspaces).
+target/
+
+# py-spy is a submodule in upstream; do not track it as a gitlink here.
+third_party/py-spy/
+
+# The built web site (tools/site/build_site.py)
+/site/

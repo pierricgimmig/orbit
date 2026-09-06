@@ -64,6 +64,11 @@ pub fn install(ctx: &egui::Context) {
     style.spacing.interact_size.y = 24.0;
     style.spacing.scroll.bar_width = 6.0;
     style.spacing.scroll.handle_min_length = 20.0;
+    // Solid bars, not egui's floating ones. A floating bar shows and grows
+    // on hover, and at the timeline's right edge the report splitter's grab
+    // zone sits on top of it: hover there and the two took turns claiming
+    // the pointer, the bar appearing and vanishing every other frame.
+    style.spacing.scroll.floating = false;
     ctx.set_style(style);
 }
 

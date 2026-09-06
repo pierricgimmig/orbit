@@ -14,7 +14,7 @@ fn parse_args() -> ServerConfig {
         bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HTTP_PORT)),
         ring_buffer_bytes: DEFAULT_RING_BYTES,
         spill_path: None,
-        dev_self_profile: orbit_live_server::env_dev_self(),
+        wire: orbit_live_server::env_wire(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -36,8 +36,10 @@ fn parse_args() -> ServerConfig {
                     cfg.spill_path = Some(PathBuf::from(p));
                 }
             }
-            "--dev-self-profile" | "--dev_self_profile" => {
-                cfg.dev_self_profile = true;
+            "--wire" => {
+                let v = args.next().expect("missing wire format: raw, packed or deflate");
+                cfg.wire = orbit_live_server::WireFormat::parse(&v)
+                    .unwrap_or_else(|| panic!("unknown wire format {v:?}: use raw, packed or deflate"));
             }
             "--help" | "-h" => {
                 print_help();
@@ -78,10 +80,7 @@ fn print_help() {
          \n\
          Open http://127.0.0.1:<port>/ and click Demo, or ?dev=1 / Dev in the\n\
          transport bar to profile the viewer. ORBIT_LIVE_DEV=1 is the same as\n\
-         --dev-self-profile. OrbitService can also register control hooks.\n\
-         GET /traces/theverge_trace.json serves the catapult Chrome demo\n\
-         (cached; ORBIT_LIVE_THEVERGE_PATH overrides). The viewer theverge\n\
-         pill loads that URL — it does not start the Demo producer."
+         --dev-self-profile. OrbitService can also register control hooks."
     );
 }
 

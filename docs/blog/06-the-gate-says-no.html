@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>The Gate Says No</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 06</p>
+    <h1>The Gate Says No</h1>
+    <p class="dek">Phase 3 ported two classes, benchmarked both, and stopped — because the numbers said to, and the whole point of writing the gates down in advance was to obey them when they do.</p>
+    <p class="byline">Phase 3 &middot; <a href="metrics/phase-3-verdict.txt">the verdict</a> &middot; <a href="metrics/phase-3a-bench-perf-merge.txt">perf-merge bench</a></p>
+
+    <div class="stats">
+      <div class="stat"><b>2</b><span>Classes ported</span></div>
+      <div class="stat"><b>~20%</b><span>Slower: merge queue</span></div>
+      <div class="stat"><b>2.4&times;</b><span>Slower: state machine</span></div>
+      <div class="stat"><b>100%</b><span>Checksum agreement</span></div>
+      <div class="stat"><b>0</b><span>Defaults flipped</span></div>
+      <div class="stat"><b>5</b><span>Classes not ported</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">Phase 2 ended with LLVM deleted and every number pointing the right way. Phase 3 — the seven pure-logic classes in <code>LinuxTracing</code> — was supposed to be the easy encore: excellent test coverage, no I/O, algorithms with the C++ as their own specification. It is instead the phase where gate 4 finally fired, and this post is the write-up of a stop.</p>
+
+  <h2 id="ported">What got ported, and how well</h2>
+
+  <p>Two classes, chosen from opposite ends of the FFI-shape spectrum on purpose.</p>
+
+  <p><strong><code>PerfEventQueue</code></strong> — the heap-of-queues timestamp merge. <code>PerfEvent</code> is a large C++ variant that must never cross the boundary, so the Rust side owns only <code>(stream, timestamp, handle)</code> keys and the facade keeps events in a stable-reference slab the handles index. The hand-written heap was replicated comparison for comparison — that code <em>is</em> the spec — with one documented strengthening: equal-timestamp unordered events pop FIFO where <code>std::priority_queue</code> leaves the order unspecified.</p>
+
+  <p><strong><code>ThreadStateManager</code></strong> — the per-thread sched state machine. Pure integers in, one small struct out; no slab, no handles, the cheapest FFI shape there is. Every quirk reproduced deliberately: stale initial states replaced by older tracepoints, wakeups of runnable threads disregarded, runnable adjusted to running on switch-out, no callstack status on a switch-out slice. The crate returns warnings as data and the facade owns the <code>ORBIT_ERROR</code> strings, so even the log lines stay byte-identical.</p>
+
+  <p>Correctness held everywhere it has all along: all three backend modes pass the unedited test suites, the sabotage checks fail exactly the targets they should, and every benchmark run of both backends produced <strong>identical checksums</strong> — the implementations pop the same events and emit the same slices, always.</p>
+
+  <h2 id="numbers">And then the benchmarks</h2>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead>
+        <tr><th>Class</th><th>FFI shape</th><th>cpp</th><th>rust</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>PerfEventQueue</code></td>
+          <td>slab + handles, 3 calls/event</td>
+          <td class="v">63&ndash;72 ns/event</td>
+          <td class="v up">77&ndash;79 ns/event</td>
+          <td class="v up">~15&ndash;20% slower</td>
+        </tr>
+        <tr>
+          <td><code>ThreadStateManager</code></td>
+          <td>integers only, 1 call/event</td>
+          <td class="v">11.8&ndash;12.8 ns/transition</td>
+          <td class="v up">30.3&ndash;33.3 ns/transition</td>
+          <td class="v up">~2.4&times; slower</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two optimisation rounds went into each before those numbers settled: an FxHash-style hasher replacing SipHash (thread ids do not need DoS resistance), entry-API single-hash pushes, O(1) stream removal, a C++-side size counter making <code>HasEvent</code> free, a cached top handle. They moved the merge queue from 27% slower to 20% and the state machine from 3&times; to 2.4&times;. The floor underneath is not optimisable from inside:</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+      <svg viewBox="0 0 780 250" role="img" aria-label="Two bars comparing where time goes. The C++ path is a single inlined call into a small function, about 13 nanoseconds total for the state machine. The Rust path pays an opaque cross-language call that cannot inline, an outcome struct copied through memory, and the function itself — the toll is fixed, so the smaller the function, the larger the relative loss.">
+        <text x="8" y="18" font-size="10.5" font-family="monospace" fill="var(--muted)">where a transition's nanoseconds go &middot; ThreadStateManager</text>
+
+        <text x="8" y="52" font-size="11" font-weight="600" fill="currentColor">cpp</text>
+        <rect x="60" y="38" width="130" height="22" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="70" y="53" font-size="10" fill="currentColor">map lookup + logic, inlined</text>
+        <text x="200" y="53" font-size="10.5" font-family="monospace" fill="var(--accent)">~13 ns</text>
+
+        <text x="8" y="102" font-size="11" font-weight="600" fill="currentColor">rust</text>
+        <rect x="60" y="88" width="90" height="22" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.4"/>
+        <text x="66" y="103" font-size="9.5" fill="currentColor">opaque call</text>
+        <rect x="150" y="88" width="70" height="22" fill="var(--hold-wash)" stroke="var(--hold)" stroke-width="1.4"/>
+        <text x="156" y="103" font-size="9.5" fill="currentColor">48B copy</text>
+        <rect x="220" y="88" width="130" height="22" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="230" y="103" font-size="10" fill="currentColor">the same logic</text>
+        <text x="360" y="103" font-size="10.5" font-family="monospace" fill="var(--hold)">~31 ns</text>
+
+        <line x1="8" y1="130" x2="772" y2="130" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+
+        <text x="8" y="154" font-size="10.5" fill="currentColor">The toll — a call that cannot inline across languages, plus marshalling — is roughly <tspan font-weight="600">fixed per event</tspan>.</text>
+        <text x="8" y="172" font-size="10.5" fill="currentColor">Against the merge queue's 63&nbsp;ns of real work it costs ~20%. Against the state machine's 13&nbsp;ns it costs 2.4&times;.</text>
+        <text x="8" y="196" font-size="10.5" fill="currentColor">The five unported Phase&nbsp;3 classes — <tspan font-family="monospace" font-size="9.5">ContextSwitchManager, UprobeAddressMap, UprobesFunctionCallManager,</tspan></text>
+        <text x="8" y="211" font-size="10.5" fill="currentColor"><tspan font-family="monospace" font-size="9.5">UprobesReturnAddressManager, LeafFunctionCallManager</tspan> — are all <tspan font-weight="600">smaller</tspan> per call than these two.</text>
+        <text x="8" y="234" font-size="10.5" fill="var(--hold)">The trend line does not need five more measurements.</text>
+      </svg>
+    </div>
+    <figcaption><b>The relative toll grows as the function shrinks.</b> Phase 2 never felt this because its unit of work was a file, not an event: one FFI call per ELF parse amortises to nothing. Phase 3's unit of work is a tracepoint, and there is no amortising a boundary you cross millions of times a second.</figcaption>
+  </figure>
+
+  <h2 id="verdict">The verdict, and why it is the plan working</h2>
+
+  <p>The plan wrote this gate down before any of Phase 3 existed: <em>"correctness first, performance later is how a port quietly becomes a regression"</em> — and, about this exact phase: <em>"this is the one place where a Rust port could plausibly be slower — an FFI call per event is not free."</em> The original analysis called for a measured experiment before any commitment. This was it.</p>
+
+  <ul>
+    <li><strong>No defaults flip.</strong> Both classes keep <code>cpp</code> as the default; the Rust stays in tree, validated, behind <code>ORBIT_PERF_MERGE_BACKEND</code> and <code>ORBIT_THREAD_STATES_BACKEND</code>.</li>
+    <li><strong>The five remaining classes are not ported.</strong> Porting them would produce five more validated-but-never-default dual implementations: maintenance cost with no path to deletion, and — unlike Phase 2 — no dependency win, because Phase 3 deletes nothing external.</li>
+    <li><strong>The batching escape hatch is closed by semantics</strong>, not laziness: prefetching pops in bulk would remove the calls, but a push may legally deliver an event older than anything prefetched, and popped events cannot be pushed back.</li>
+  </ul>
+
+  <div class="note">
+    <span class="note-label">What could reopen it</span>
+    <p>Two things, both named in the verdict file. Cross-language LTO — clang with linker-plugin LTO can inline Rust into C++ callers, which would erase most of the fixed toll; the CI toolchain is gcc today. Or moving the language boundary to where the original analysis wanted it all along: the <a href="../rust-service-port.html">wire format</a>. A Rust collector speaking the protocol has no per-event FFI, because there is no C++ on the other side of the call. Rust islands inside a C++ pipeline were always the second-best shape; now there is a number on exactly how much second-best costs.</p>
+  </div>
+
+  <h2 id="ledger">The port, closed out</h2>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>Outcome</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 &mdash; <code>ParseMaps</code></td><td class="down">Ported, default Rust, 1.75&times; faster, zero dependencies</td></tr>
+        <tr><td>2 &mdash; <code>ObjectUtils</code></td><td class="down">Fully ported, LLVM deleted, cold build &minus;34%, verified against 16.3M symbols</td></tr>
+        <tr><td>3 &mdash; <code>LinuxTracing</code> pure logic</td><td class="up">Two classes ported and validated; gate 4 measured both slower; defaults stay C++; five classes not ported, by the numbers</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>A log that only ever reported green would be advertising. The gates were written down when everything was going well precisely so that this post could be short, specific, and final: the merge queue and the state machine work, they are provably equivalent to the C++, and they are slower, so the C++ keeps the job. Six posts in, that is the first sentence of its kind — and the instruments that produced it are the same ones that justified deleting LLVM.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 06 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="05-llvm-is-gone.html">&larr; Post 05</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

@@ -9,7 +9,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn mime_for(name: &str) -> &'static str {
-    if name.ends_with(".html") {
+    if name.ends_with(".png") {
+        "image/png"
+    } else if name.ends_with(".ico") {
+        "image/x-icon"
+    } else if name.ends_with(".html") {
         "text/html; charset=utf-8"
     } else if name.ends_with(".js") {
         "application/javascript; charset=utf-8"

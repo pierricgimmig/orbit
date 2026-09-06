@@ -1,0 +1,56 @@
+Phase 7k -- serve mode: drive captures from the viewer UI (2026-08-31)
+======================================================================
+
+What: `orbit-service` with no arguments now brings up the WASM live viewer
+and waits, so a capture is started and stopped from the UI instead of the
+command line:
+
+    $ orbit-service
+
+      Orbit live viewer:  http://127.0.0.1:44766/
+
+      Pick a process in the Capture strip and press Record.
+
+The important design decision: it REUSES orbit-live-server, the same crate
+the C++ OrbitService embeds, rather than growing a second HTTP server and a
+second copy of the API contract. The viewer is unchanged and unaware which
+service is behind it.
+
+The integration is the ControlHooks seam that crate already exposes:
+  list_processes_json -> real enumeration of /proc (pid, comm, exe path)
+  start_capture       -> spawns our real capture thread for the chosen pid
+  stop_capture        -> stops it
+  load_symbols /      -> honest "not implemented in the Rust service yet"
+  symbols_status /       rather than empty results that look like success
+  search_functions
+
+Captured scheduling slices are pushed into the viewer's ring as LiveEvents.
+The mapping is direct because the shapes already agree: a slice becomes a
+SCHEDULING_SLICE on (pid, tid) with the core in `extra`.
+
+Verified live
+-------------
+  GET  /              -> 200, viewer HTML served
+  GET  /api/status    -> 200
+  GET  /api/processes -> real list from /proc ([{pid,name,cpu,path},...])
+  POST /api/capture/start {"pid":N} -> 200, capture thread starts
+  after 3 s on a busy target:
+      capturing=true  produced=27  events_live=27  dropped=0
+      span 2.79 s of real scheduling slices in the ring
+  POST /api/capture/stop -> capture thread stops
+
+A wrong test worth recording: the first attempt posted {"pid":0} to capture
+everything and saw produced=0. That was the test being wrong, not the code --
+the server rejects pid 0 with BAD_REQUEST before the hook runs, so no capture
+was ever started. Re-run against a real busy pid, events flowed immediately.
+Reading produced=0 as "the integration is broken" would have sent me digging
+in the wrong place.
+
+Honest limits
+-------------
+- Only scheduling slices reach the timeline so far. Sampled callstacks are
+  captured by the file-writing mode but are not yet converted into ring
+  events (they need interning into the viewer's name table); the file mode
+  remains the way to get them today.
+- Symbolization is not wired in, so the hooks say so explicitly.
+- The default port (44766) matches the C++ service, so the URL is familiar.

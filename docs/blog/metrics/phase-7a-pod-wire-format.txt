@@ -1,0 +1,48 @@
+Phase 7a -- the pod capture wire format (2026-08-31)
+====================================================
+
+What: the "dead simple pod style" transport the project owner asked for from
+the start, replacing protobuf/gRPC for the high-frequency capture events.
+orbit-wire encodes each event as a one-byte tag plus its fields in a fixed
+little-endian layout -- no field tags, no varints, no wire-type nibbles, no
+generated code, no protobuf runtime. Variable parts (a callstack's pcs, a
+function call's registers, an interned string) are length-prefixed. Zero
+dependencies. Covers the hot-path events: SchedulingSlice, CallstackSample,
+FunctionCall, InternedCallstack, InternedString.
+
+How it is verified
+------------------
+- Round-trip unit tests: every event type, empty arrays included, encodes
+  and decodes back to the identical value; truncation at every byte offset
+  is an error, never a panic; an unknown tag is an error.
+- wire_size_differential.cpp: 200,000 representative events built BOTH as
+  protobuf ProducerCaptureEvents (length-delimited, as the current transport
+  frames them) and via orbit-wire with identical field values, comparing
+  size and parse speed, and confirming the pod stream round-trips (decodes
+  back to the same 200,000 events).
+
+Results (x86_64, 200,000 events)
+--------------------------------
+protobuf bytes    8,723,860
+pod bytes        14,755,472   (pod is 1.69x LARGER)
+parse protobuf    1273.5 ns/event
+parse pod          266.0 ns/event  (pod is 4.79x FASTER)
+round trip        200,000 / 200,000  OK
+
+The honest tradeoff
+-------------------
+The pod format is NOT smaller -- protobuf's varints compress small integers
+(a tid of ~2000 in two bytes, a core in one) that the fixed layout spends
+four or eight bytes on. What the pod format buys is a ~4.8x faster parse and
+zero dependencies / zero generated code / trivial emit-and-walk. On the
+capture hot path the bottleneck is decode CPU as the collector emits
+millions of events per second, not the bandwidth of a local socket or file
+(which compresses well besides). This is the right trade there; if bandwidth
+ever dominates, varint-encoding just the small integer fields would recover
+most of the size while keeping the format simple -- a measured future
+option, not a default.
+
+This is the wire-format boundary named back in post 07 as the way to erase
+the per-event FFI toll: with the collector (Phase 4) already FFI-free and
+this format as its output, events cross language boundaries once, in bulk,
+as pod bytes -- never per-event.

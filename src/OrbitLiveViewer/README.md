@@ -39,13 +39,9 @@ Open `http://<host>:44766/`.
 ## Open a Chrome trace
 
 Drag a Chrome Trace Event Format file onto the canvas, or click **Open**
-(Ctrl/Cmd+O). The **theverge** pill (next to Open, not the Demo producer)
-loads catapult `theverge_trace.json` from same-origin
-`GET /traces/theverge_trace.json` — first miss downloads and caches the
-public 54,370,856 B fixture; later hits stream the cache. Set
-`ORBIT_LIVE_THEVERGE_PATH` to a local file to skip the download. The JSON
-is not in git and not `include_bytes`’d into the WASM pack. Accepted
-manual files: `.json`, `.json.gz`, `.gz`, and a `.zip` that holds one JSON.
+(Ctrl/Cmd+O). Accepted files: `.json`, `.json.gz`, `.gz`, and a `.zip`
+that holds one JSON. (The catapult `theverge_trace.json` fixture in the
+tables below was the load-test file; the pill that fetched it is gone.)
 Same-origin `/?trace=/path.json` fetches that path. Loading **does not
 start Demo** — it replaces the session with a capture-like
 machine/process/thread tree from `pid`/`tid` metadata.

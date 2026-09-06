@@ -1,0 +1,175 @@
+// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#ifndef ORBIT_OBJECT_FFI_H_
+#define ORBIT_OBJECT_FFI_H_
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Opaque owner of an ELF parse result. Free with orbit_elf_free.
+typedef struct OrbitElfMetadata OrbitElfMetadata;
+
+// One PT_LOAD segment, mirroring ModuleInfo::ObjectSegment.
+typedef struct {
+  uint64_t offset_in_file;
+  uint64_t size_in_file;
+  uint64_t address;
+  uint64_t size_in_memory;
+} OrbitObjectSegment;
+
+// The scalar facts, fetched in one call rather than one accessor each.
+typedef struct {
+  uint8_t is_64_bit;
+  uint8_t has_symtab;
+  uint8_t has_dynsym;
+  uint8_t has_debug_info;
+  uint8_t has_patchable_function_entries;
+  uint8_t has_gnu_debuglink;
+  uint32_t gnu_debuglink_crc32;
+  uint64_t load_bias;
+  uint64_t executable_segment_offset;
+  uint64_t executable_segment_size;
+  uint64_t image_size;
+} OrbitElfFacts;
+
+// Parses `len` bytes at `data`. Rust never opens the file; the caller maps it,
+// which keeps I/O on the C++ side and matches what LLVM does today.
+//
+// On success returns a handle to release with orbit_elf_free. On failure
+// returns NULL and, when error_out is non-NULL, stores a NUL-terminated
+// message to release with orbit_elf_free_error.
+OrbitElfMetadata* orbit_elf_parse(const uint8_t* data, size_t len, const char* file_path,
+                                  char** error_out);
+
+// Accessors. All tolerate NULL. Returned pointers stay valid until
+// orbit_elf_free is called on the same handle. Strings are NUL-terminated.
+void orbit_elf_facts(const OrbitElfMetadata* handle, OrbitElfFacts* out);
+const char* orbit_elf_build_id(const OrbitElfMetadata* handle);
+const char* orbit_elf_soname(const OrbitElfMetadata* handle);
+const char* orbit_elf_gnu_debuglink_path(const OrbitElfMetadata* handle);
+size_t orbit_elf_segment_count(const OrbitElfMetadata* handle);
+const OrbitObjectSegment* orbit_elf_segments(const OrbitElfMetadata* handle);
+
+void orbit_elf_free(OrbitElfMetadata* handle);
+void orbit_elf_free_error(char* message);
+
+// ---------------------------------------------------------------- symbols
+
+// Opaque owner of a symbol table. Free with orbit_elf_symbols_free.
+typedef struct OrbitElfSymbols OrbitElfSymbols;
+
+// One entry of ModuleSymbols::symbol_infos. name_offset/name_len index into
+// the blob from orbit_elf_symbol_names; names are NOT NUL-terminated.
+typedef struct {
+  uint64_t address;
+  uint64_t size;
+  uint64_t name_offset;
+  uint64_t name_len;
+  uint8_t is_hotpatchable;
+} OrbitElfSymbol;
+
+// table selects what to read:
+//   0  .symtab                       (LoadDebugSymbols)
+//   1  .dynsym                       (LoadSymbolsFromDynsym)
+//   2  .debug_frame / .eh_frame FDEs (LoadEhOrDebugFrameEntriesAsSymbols)
+// NULL on failure, with a message in error_out to release with
+// orbit_elf_free_error.
+OrbitElfSymbols* orbit_elf_load_symbols(const uint8_t* data, size_t len, uint32_t table,
+                                        char** error_out);
+
+size_t orbit_elf_symbol_count(const OrbitElfSymbols* handle);
+const OrbitElfSymbol* orbit_elf_symbol_array(const OrbitElfSymbols* handle);
+const char* orbit_elf_symbol_names(const OrbitElfSymbols* handle);
+size_t orbit_elf_symbol_names_len(const OrbitElfSymbols* handle);
+void orbit_elf_symbols_free(OrbitElfSymbols* handle);
+
+// -------------------------------------------------------------- PE / COFF
+
+// Opaque owner of a PE parse result. Free with orbit_coff_free.
+typedef struct OrbitCoffMetadata OrbitCoffMetadata;
+
+typedef struct {
+  uint8_t is_64_bit;
+  uint8_t has_pdb_debug_info;
+  uint32_t pdb_age;
+  uint64_t image_base;
+  uint64_t base_of_code;
+  uint64_t size_of_image;
+  uint8_t pdb_guid[16];  // valid only when has_pdb_debug_info is non-zero
+} OrbitCoffFacts;
+
+OrbitCoffMetadata* orbit_coff_parse(const uint8_t* data, size_t len, const char* file_path,
+                                    char** error_out);
+void orbit_coff_facts(const OrbitCoffMetadata* handle, OrbitCoffFacts* out);
+const char* orbit_coff_pdb_file_path(const OrbitCoffMetadata* handle);
+size_t orbit_coff_section_count(const OrbitCoffMetadata* handle);
+const OrbitObjectSegment* orbit_coff_sections(const OrbitCoffMetadata* handle);
+void orbit_coff_free(OrbitCoffMetadata* handle);
+
+// Reads a PE symbol set, using the same result type as the ELF loaders below.
+// table is 0 for the Export Table, 1 for the Exception Table, 2 for the COFF
+// symbol table, 3 for DWARF subprogram DIEs (whose size field carries
+// high_pc - low_pc). Release with orbit_elf_symbols_free.
+OrbitElfSymbols* orbit_coff_load_symbols(const uint8_t* data, size_t len, uint32_t table,
+                                         char** error_out);
+
+// Whether the image has an Export Table data directory.
+uint8_t orbit_coff_has_export_table(const uint8_t* data, size_t len);
+
+// CoffFileImpl::HasDebugSymbols.
+uint8_t orbit_coff_has_debug_symbols(const uint8_t* data, size_t len);
+
+// --------------------------------------------------------------------- PDB
+
+typedef struct {
+  uint8_t guid[16];
+  uint32_t age;
+} OrbitPdbInfo;
+
+// Reads a PDB's GUID and age. Returns 1 on success, 0 on failure with a
+// message in error_out to release with orbit_elf_free_error.
+uint8_t orbit_pdb_info(const uint8_t* data, size_t len, OrbitPdbInfo* out, char** error_out);
+
+// Demangles an MSVC name, the '?'-prefixed arm of llvm::demangle. Returns NULL
+// when the name is not MSVC-mangled or cannot be demangled, in which case the
+// caller keeps the name as it is. Release a non-NULL result with
+// orbit_elf_free_error.
+char* orbit_demangle_msvc(const char* name);
+
+// Whether the PDB has the DBI stream CreatePdbFile requires.
+uint8_t orbit_pdb_has_dbi_stream(const uint8_t* data, size_t len);
+
+// Reads a PDB's function symbols. Sizes still unknown come back as UINT64_MAX,
+// which is SymbolsFile::kUnknownSymbolSize. Release with
+// orbit_elf_symbols_free.
+OrbitElfSymbols* orbit_pdb_load_symbols(const uint8_t* data, size_t len, uint64_t image_base,
+                                        char** error_out);
+
+// -------------------------------------------------------------- line info
+
+// Resolves `address` to a source location. Returns the source file as a
+// NUL-terminated string to release with orbit_elf_free_error, writing the line
+// number to line_out. Returns NULL on failure, with a message in error_out to
+// release the same way.
+char* orbit_elf_line_info(const uint8_t* data, size_t len, uint64_t address, uint32_t* line_out,
+                          char** error_out);
+
+// ElfFileImpl::GetDeclarationLocationOfFunction, same result shape.
+char* orbit_elf_declaration_location(const uint8_t* data, size_t len, uint64_t address,
+                                     uint32_t* line_out, char** error_out);
+
+// Running .gnu_debuglink CRC-32, so a large file can be checksummed in chunks
+// exactly as CalculateDebuglinkChecksum does. Start with previous = 0.
+uint32_t orbit_elf_crc32_continue(uint32_t previous, const uint8_t* data, size_t len);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  // ORBIT_OBJECT_FFI_H_

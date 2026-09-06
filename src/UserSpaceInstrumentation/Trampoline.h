@@ -64,6 +64,20 @@ namespace orbit_user_space_instrumentation {
 // error if the difference is too large.
 [[nodiscard]] ErrorMessageOr<int32_t> AddressDifferenceAsInt32(uint64_t a, uint64_t b);
 
+// Fixed code emitters, exposed for the cross-language code-generation
+// differential (Phase 6e). Each returns the exact bytes the trampoline
+// builder emits for that stage.
+[[nodiscard]] std::vector<uint8_t> EmitBackupCodeForDifferential();
+[[nodiscard]] std::vector<uint8_t> EmitRestoreCodeForDifferential();
+[[nodiscard]] std::vector<uint8_t> EmitCallToEntryPayloadForDifferential(
+    uint64_t entry_payload_address, uint64_t return_trampoline_address);
+[[nodiscard]] std::vector<uint8_t> EmitJumpBackCodeForDifferential(int32_t offset);
+[[nodiscard]] std::vector<uint8_t> EmitExitTrampolineForDifferential(uint64_t exit_payload_address);
+[[nodiscard]] ErrorMessageOr<std::vector<uint8_t>> BuildTrampolineForDifferential(
+    uint64_t function_address, const std::vector<uint8_t>& function, uint64_t trampoline_address,
+    uint64_t entry_payload_address, uint64_t return_trampoline_address,
+    uint64_t* address_after_prologue_out);
+
 // Merely serves as a return value for the function below.
 struct RelocatedInstruction {
   // Machine code of the relocated instruction. Might contain multiple instructions to emulate what

@@ -1,0 +1,70 @@
+Phase 8: dynamic instrumentation from the web UI
+Measured 2026-09-01T07:05:23Z on Linux 7.0.0-30-generic, 32 threads
+Commit: aefb0c1ff
+
+Kernel uprobe PMU
+  /sys/bus/event_source/devices/uprobe/type            = 9
+  /sys/bus/event_source/devices/uprobe/format/retprobe = config:0
+  /proc/sys/kernel/perf_event_paranoid                 = -1
+  CapEff of this shell                                 = 0000000000000000
+
+Target: a C program with two noinline functions in a loop (scratch build)
+  pid 588922
+
+POST /api/symbols/load  then  GET /api/symbols/status
+  {"error":"","function_count":2303,"module_count":3,"status":"ready"}
+
+GET /api/functions/search?q=orbit_
+  {
+      "functions": [
+          {
+              "function_id": 167074785908005,
+              "module": "hooktarget",
+              "name": "orbit_inner_work",
+              "size": 59
+          },
+          {
+              "function_id": 176834803981046,
+              "module": "hooktarget",
+              "name": "orbit_outer_work",
+              "size": 15
+          }
+      ],
+      "pid": 588922,
+      "status": "ready"
+  }
+
+POST /api/capture/start with both function ids, then GET /api/status
+  instrumentation = no hooks armed: uprobes need CAP_PERFMON. Run the service with sudo, or: sudo setcap cap_perfmon,cap_sys_ptrace+ep <orbit-service>
+
+Service stderr for that capture
+  orbit-service: indexed 2303 functions across 3 modules for pid 588922
+  orbit-service: armed 0 of 2 hooks (0 probes)
+  orbit-service: hook not armed -- orbit_inner_work: Permission denied (os error 13)
+  orbit-service: hook not armed -- orbit_outer_work: Permission denied (os error 13)
+  orbit-service: no hooks armed: uprobes need CAP_PERFMON. Run the service with sudo, or: sudo setcap cap_perfmon,cap_sys_ptrace+ep <orbit-service>
+  orbit-service: 0 instrumented calls recorded
+
+Objdump of the target, to check the offsets the index reported
+  00000000000011c0 <orbit_inner_work>:
+  00000000000011fb <orbit_outer_work>:
+
+  Its PT_LOAD segments, so the vaddr-to-file-offset arithmetic is checkable:
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x000710 0x000710 R   0x1000
+  LOAD           0x001000 0x0000000000001000 0x0000000000001000 0x00025d 0x00025d R E 0x1000
+  LOAD           0x002000 0x0000000000002000 0x0000000000002000 0x000170 0x000170 R   0x1000
+  LOAD           0x002da0 0x0000000000003da0 0x0000000000003da0 0x000270 0x000288 RW  0x1000
+  The executable segment has p_offset == p_vaddr here, so both functions'
+  file offsets equal their symbol addresses (0x11c0 and 0x11fb). That is the
+  easy case; file_offset_of exists for the ones where it is not.
+
+Tests
+  orbit-service:   test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+  orbit-perf-ring: test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+Not measured, and why
+  Probes firing. perf_uprobe_event_init in the kernel requires CAP_PERFMON
+  before it consults perf_event_paranoid, so no setting of paranoid makes an
+  unprivileged uprobe possible. This machine had no sudo available at the time
+  of the run. What is shown above is the refusal being EACCES rather than
+  ENODEV or EINVAL, which establishes that the attr reached the uprobe PMU.

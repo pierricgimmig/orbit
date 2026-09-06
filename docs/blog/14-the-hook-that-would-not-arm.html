@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>The Hook That Would Not Arm</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 14</p>
+    <h1>The Hook That Would Not Arm</h1>
+    <p class="dek">Dynamic instrumentation, driven from the web UI: type a function name, tick it, record, and watch its calls appear as spans. Everything works except the part that needs a capability this machine could not grant.</p>
+    <p class="byline">Reported with the gap left in</p>
+
+    <div class="stats">
+      <div class="stat"><b>2,303</b><span>Functions indexed</span></div>
+      <div class="stat"><b>3</b><span>Modules read</span></div>
+      <div class="stat"><b>2</b><span>Probes per hook</span></div>
+      <div class="stat"><b>100 ms</b><span>Reorder window</span></div>
+      <div class="stat"><b>0</b><span>Probes armed</span></div>
+      <div class="stat"><b>EACCES</b><span>The reason</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">A profiler that only samples tells you where time tends to go. Dynamic instrumentation tells you what actually happened: this function, this call, these nanoseconds. Orbit has always had both, and the Rust port had neither half of the second one wired to the UI. Wiring it took an afternoon. Proving it took longer than that, and then stopped short.</p>
+
+  <h2 id="already">The half that already existed</h2>
+
+  <p>The pleasant surprise was that the viewer already spoke the entire protocol. Its capture strip has a hook picker: it asks the service to load symbols, polls until they are ready, searches function names as you type, and puts the ids you tick into the capture request alongside a <code>dynamic_instrumentation_method</code>. All of it was written when the viewer was talking to the C++ service.</p>
+
+  <p>What the Rust service answered was three stubs. <code>load_symbols</code> returned "not implemented in the Rust service yet"; the status endpoint reported <code>unavailable</code>; the search returned an empty list. So the picker rendered, greyed out, forever waiting for symbols that were never going to arrive. The work was entirely on the service side, which is a good position to be in: the contract was already fixed, and there was nothing to design.</p>
+
+  <h2 id="offsets">The one part that is not symbolization</h2>
+
+  <p>Indexing functions is nearly the same job the sampler already does — read <code>/proc/&lt;pid&gt;/maps</code>, load each mapped ELF's symbol table — except keyed by name instead of by address. One thing is genuinely different, and it is the thing worth being careful about.</p>
+
+  <p>A uprobe is not placed at a virtual address. It is placed at a byte offset into a <em>file</em>: the kernel finds the inode, and every process that maps that file gets the breakpoint. So a function's ELF symbol address has to be walked back through whichever <code>PT_LOAD</code> segment contains it. For the test target's executable segment that arithmetic is a no-op, because the linker put <code>p_offset</code> and <code>p_vaddr</code> at the same value:</p>
+
+  <figure class="wide">
+    <pre><code>LOAD 0x001000 0x0000000000001000 ... 0x00025d 0x00025d R E
+LOAD 0x002da0 0x0000000000003da0 ... 0x000270 0x000288 RW</code></pre>
+    <figcaption>The two interesting segments of the test binary. The first is the easy case. The second is why the conversion exists.</figcaption>
+  </figure>
+
+  <p>The second segment shows both reasons not to assume. Its file offset and its virtual address differ by 0x1000. And its size in memory (<code>0x288</code>) exceeds its size in the file (<code>0x270</code>) — that tail is <code>.bss</code>, which exists when the program runs but has no bytes in the file at all. An address landing there has no file offset, and asking for one has to return nothing rather than a plausible-looking number.</p>
+
+  <p>The reason to spend a tested function on twelve lines of arithmetic is the failure mode. Get this wrong and nothing complains: the kernel accepts the offset, writes a breakpoint into the middle of some unrelated instruction, and the target either produces nonsense or crashes far away from the mistake. There is no error to read. So the conversion is its own function with its own tests, including one that pins the <code>.bss</code> tail to <code>None</code>.</p>
+
+  <h2 id="pertask">Per task, not per CPU</h2>
+
+  <p>Orbit's C++ opens uprobes on every CPU in the cpuset. That has a known consequence, documented in this port a day earlier while chasing a different question: when a thread migrates mid-probe, one logical hit can surface in two per-CPU ring buffers, and <code>UprobesUnwindingVisitor</code> carries a <code>(sp, ip, cpu)</code> filter to throw the second one away. The underlying mechanism appears to be the execute-out-of-line preemption window, though that part remains a strong inference rather than a confirmed kernel bug.</p>
+
+  <p>The Rust collector opens probes per task instead, with <code>inherit</code> set so threads created later are covered too. A thread has exactly one buffer wherever it runs, so the duplicate cannot be constructed, and the filter did not need to be ported. The cost is file descriptors — two per hook per thread — which is why the number of hooks is capped at sixteen rather than left open.</p>
+
+  <p>Trading one problem for another is the honest description, though, because per-task probes create a different one. Entry and exit now live on <em>separate rings</em>, and there is no ordering between two rings drained microseconds apart. A naive loop will hand you a function's exit before its entry and then compute a duration by subtracting a timestamp that has not arrived yet. So hits are buffered and paired in timestamp order behind a 100 ms horizon — the same delayed-ordering idea the collector's main loop uses, in miniature. Two of the unit tests exist purely to pin that: one feeds the exit first, one checks that nothing is paired before the window has passed.</p>
+
+  <h2 id="wall">The wall</h2>
+
+  <p>Then it did not work.</p>
+
+  <figure class="wide">
+    <pre><code>orbit-service: indexed 2303 functions across 3 modules for pid 588922
+orbit-service: armed 0 of 2 hooks (0 probes)
+orbit-service: hook not armed -- orbit_inner_work: Permission denied (os error 13)
+orbit-service: hook not armed -- orbit_outer_work: Permission denied (os error 13)</code></pre>
+    <figcaption>Everything up to the syscall is right. The syscall says no.</figcaption>
+  </figure>
+
+  <p>The reflex here is to reach for <code>perf_event_paranoid</code>, which is the knob that governs almost everything else in this port. It was already at <code>-1</code>, the most permissive setting there is, and it made no difference — because for this PMU it is not consulted. In the kernel, <code>perf_uprobe_event_init</code> checks <code>perfmon_capable()</code> and returns <code>-EACCES</code> before <code>perf_event_paranoid</code> enters the picture at all. Tracing PMUs are gated on the capability, full stop. On a machine with no <code>sudo</code> available, there is no arrangement of settings that opens a uprobe.</p>
+
+  <p>So the feature is unproven in the way that matters: no probe has been observed to fire, and no span produced by one has been drawn. That is the honest state of it.</p>
+
+  <h2 id="eacces">What a refusal is still evidence of</h2>
+
+  <p>It is not nothing, though, and it is worth being precise about which part is established. The uprobe PMU has no fixed type number — the kernel assigns it at boot and publishes it in sysfs, here as <code>9</code>. A wrong type number comes back <code>ENODEV</code>. A malformed <code>perf_event_attr</code> comes back <code>EINVAL</code>. What came back was <code>EACCES</code>, which is the answer from inside the uprobe PMU's own initializer.</p>
+
+  <p>That establishes routing and rejects two whole classes of mistake. It says nothing whatsoever about whether the offset lands on an instruction boundary, or whether the pairing works against real kernel timestamps. There is now a test that asserts exactly this much and no more: if the process happens to be privileged it checks that probes armed, and otherwise it checks that the refusal was <code>EACCES</code> rather than something that would indicate a bad attr. A test that claims less than the feature does is more useful than one that pretends.</p>
+
+  <h2 id="visible">Making the failure visible</h2>
+
+  <p>The worse outcome than a hook that does not arm is a hook that does not arm <em>quietly</em>. From the UI, an unarmed probe and a function that simply never ran look identical: an empty track. Someone would reasonably conclude the profiler was broken, or that their function was dead code.</p>
+
+  <p>So the arming outcome now travels back to the browser. The service carries a one-line instrumentation status, <code>/api/status</code> reports it, and the viewer prints it under the hook picker — muted when functions were armed, amber when they were not:</p>
+
+  <figure class="wide">
+    <pre><code>no hooks armed: uprobes need CAP_PERFMON. Run the service with sudo,
+or: sudo setcap cap_perfmon,cap_sys_ptrace+ep &lt;orbit-service&gt;</code></pre>
+    <figcaption>The message names the fix that works, and omits the one that does not.</figcaption>
+  </figure>
+
+  <p>The omission is deliberate. Every other permissions message in this service mentions <code>perf_event_paranoid</code>, because for every other feature it is the answer. Mentioning it here would send a reader down a dead end for an afternoon, which is worse than saying less.</p>
+
+  <h2 id="rest">What is still missing</h2>
+
+  <ul>
+    <li><strong>User-space trampolines.</strong> The viewer offers two methods, and Orbit's default is the trampoline-based one, which is far cheaper than a uprobe because it does not trap into the kernel per call. The relocation and placement machinery is ported; installing it into a live process is not. A request for that method is honoured through uprobes and says so in the log rather than silently substituting.</li>
+    <li><strong>Probes firing.</strong> Everything above the syscall is tested; the syscall itself is blocked here. This wants one run on a machine with <code>CAP_PERFMON</code> before anyone calls it working.</li>
+    <li><strong>Arguments and return values.</strong> The pairing carries slots for both, because the ported <code>FunctionCallManager</code> has them. Nothing fills them yet.</li>
+  </ul>
+
+  <h2 id="close">A note on stopping here</h2>
+
+  <p>The tempting move at this point is to write "dynamic instrumentation: done" and let the next person discover the gap. The whole value of keeping these numbers in a file is that it makes that move harder. <code>docs/blog/metrics/phase-8-dynamic-instrumentation.txt</code> has the sysfs values, the JSON the endpoints returned, the program headers of the target so the offset arithmetic is checkable by hand, and a closing section headed "Not measured, and why". A feature that is nine-tenths verified is worth more than one described as finished, as long as the missing tenth is named.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 14 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="13-fourteen-times.html">&larr; Post 13</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

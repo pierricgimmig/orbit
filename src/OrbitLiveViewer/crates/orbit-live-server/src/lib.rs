@@ -2,34 +2,59 @@
 
 pub mod demo;
 pub mod http;
-pub mod theverge;
 
-use std::cell::Cell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
-use orbit_live_event::dev::{
-    align_self_cursor, batch_span, render_worker_label, render_worker_tid, stamp_batch_from,
-    RelScope, NAME_CHROME, NAME_COLLECT_LANE, NAME_FRAME, NAME_LOD, NAME_NET, NAME_PAYLOAD,
-    NAME_PRIMITIVE_LISTING, NAME_PUSH, NAME_RASTER, NAME_RASTER_LANE, NAME_TIMELINE_API,
-    NAME_TRACKS, RENDER_WORKER_COUNT, SERVICE_PID, TID_NET, TID_RENDER, TID_SERVER, TID_UI,
-};
 use orbit_live_event::{InternTable, LiveEvent, ScopePairer};
+pub use orbit_live_protocol::{decode_frame, encode_event_batch_with, WireFormat};
 use orbit_live_protocol::{encode_frame, LiveFrame, VERSION};
-use orbit_live_render::{TrackIndex, WorkerSpan};
+use orbit_live_render::TrackIndex;
 use orbit_live_ring::{EventRing, RingStats, SharedRing};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
 
-thread_local! {
-    static IN_SELF: Cell<bool> = const { Cell::new(false) };
-}
+/// One selected time window for a sampling report: `(start_ns, end_ns, tid)`,
+/// `tid` narrowing to a single thread when present. A report aggregates over a
+/// slice of these -- the multi-select union.
+pub type SampleRangeSpec = (u64, u64, Option<u32>);
+
 
 pub const DEFAULT_HTTP_PORT: u16 = 44766;
 pub const DEFAULT_RING_BYTES: u64 = 64 * 1024 * 1024;
+
+/// How the embedding service instruments this server's work -- one scope
+/// per WebSocket send, one per event-batch encode -- without this crate
+/// depending on the service's API crate (the two live in different Cargo
+/// workspaces, and Bazel's crate universe cannot follow a path dependency
+/// out of a workspace). The service installs `orbit_api::scope` and
+/// `orbit_api::value` here at start-up; a server with nothing installed
+/// measures nothing.
+pub struct Instrument {
+    /// Opens a scope; dropping the box closes it.
+    pub scope: fn(&'static str) -> Box<dyn std::any::Any + Send>,
+    /// One sample on a value lane.
+    pub value: fn(&'static str, f64),
+}
+
+static INSTRUMENT: std::sync::OnceLock<Instrument> = std::sync::OnceLock::new();
+
+/// Installs the instrumentation; a second call is ignored.
+pub fn set_instrument(instrument: Instrument) {
+    let _ = INSTRUMENT.set(instrument);
+}
+
+pub(crate) fn scope(name: &'static str) -> Option<Box<dyn std::any::Any + Send>> {
+    INSTRUMENT.get().map(|i| (i.scope)(name))
+}
+
+pub(crate) fn value(name: &'static str, value: f64) {
+    if let Some(i) = INSTRUMENT.get() {
+        (i.value)(name, value);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -38,7 +63,9 @@ pub struct ServerConfig {
     pub spill_path: Option<PathBuf>,
     /// `--dev-self-profile` / `ORBIT_LIVE_DEV=1`. Self-profile is on by default;
     /// the viewer Dev pill / `?dev=0` still toggles via `/api/self/*`.
-    pub dev_self_profile: bool,
+    /// How event batches go out on the WebSocket. `--wire raw|packed|deflate`
+    /// / `ORBIT_LIVE_WIRE`; packed by default.
+    pub wire: WireFormat,
 }
 
 impl Default for ServerConfig {
@@ -47,13 +74,30 @@ impl Default for ServerConfig {
             bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_HTTP_PORT)),
             ring_buffer_bytes: DEFAULT_RING_BYTES,
             spill_path: None,
-            dev_self_profile: false,
+            wire: WireFormat::default(),
         }
     }
 }
 
-pub fn env_dev_self() -> bool {
-    matches!(std::env::var("ORBIT_LIVE_DEV").ok().as_deref(), Some("1"))
+/// The kind and size of a decoded frame, for tools that only count.
+pub enum LiveFrameRef {
+    EventBatch(usize),
+    Other,
+}
+
+pub fn frame_len(frame: &LiveFrame) -> LiveFrameRef {
+    match frame {
+        LiveFrame::EventBatch { events } => LiveFrameRef::EventBatch(events.len()),
+        _ => LiveFrameRef::Other,
+    }
+}
+
+/// `ORBIT_LIVE_WIRE`, or the default when unset or unknown.
+pub fn env_wire() -> WireFormat {
+    std::env::var("ORBIT_LIVE_WIRE")
+        .ok()
+        .and_then(|v| WireFormat::parse(&v))
+        .unwrap_or_default()
 }
 
 /// Optional hooks so OrbitService can list processes, load symbols, and
@@ -67,6 +111,12 @@ pub struct ControlHooks {
     pub symbols_status_json: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
     pub search_functions_json:
         std::sync::Arc<dyn Fn(u32, &str, u32) -> Result<String, String> + Send + Sync>,
+    /// The code views: a function of a process disassembled with its
+    /// source lines, a source file a disassembly named, and an example
+    /// disassembly of the service's own binary.
+    pub disassemble_json: std::sync::Arc<dyn Fn(u32, u64) -> Result<String, String> + Send + Sync>,
+    pub source_json: std::sync::Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>,
+    pub example_disassembly_json: std::sync::Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
 }
 
 pub struct LiveService {
@@ -77,30 +127,91 @@ pub struct LiveService {
     live_tx: broadcast::Sender<Vec<u8>>,
     pub capturing: AtomicBool,
     pub demo: AtomicBool,
-    pub self_profile: AtomicBool,
     pub hooks: Mutex<Option<ControlHooks>>,
+    /// One line about dynamic instrumentation for the capture in progress:
+    /// how many functions were armed, or why none were. The viewer shows it
+    /// under the hook picker, because a hook that was ticked but never armed
+    /// is otherwise indistinguishable from a function that simply never ran.
+    pub instrumentation_status: Mutex<String>,
+    /// Optional: aggregates sampled callstacks over a time range into a
+    /// sampling report. Set separately from `ControlHooks` so a service that
+    /// does not sample (or predates this) needs no change.
+    #[allow(clippy::type_complexity)]
+    pub sampling_report:
+        Mutex<Option<std::sync::Arc<dyn Fn(&[SampleRangeSpec]) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the same samples as a call tree, top-down or bottom-up.
+    /// Separate from `sampling_report` because it takes a mode.
+    #[allow(clippy::type_complexity)]
+    pub sampling_tree:
+        Mutex<Option<std::sync::Arc<dyn Fn(&[SampleRangeSpec], &str) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the report and tree over every sample inside any instance of
+    /// one scope (by name id). Set by the service, which has the ring.
+    #[allow(clippy::type_complexity)]
+    pub sampling_report_scope:
+        Mutex<Option<std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>>>,
+    #[allow(clippy::type_complexity)]
+    pub sampling_tree_scope:
+        Mutex<Option<std::sync::Arc<dyn Fn(u32, &str) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the modules of the selected process and their symbol counts.
+    #[allow(clippy::type_complexity)]
+    pub modules_json:
+        Mutex<Option<std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: the whole capture serialized for download, in the named
+    /// format (`"ipc"` for an Arrow IPC file, `"parquet"` for Parquet). Set by
+    /// the service, which owns the encoder (and its arrow dependency) so this
+    /// crate need not.
+    /// The second argument is a time window: `Some((t0, t1))` asks for the
+    /// slice of the capture inside it, `None` for the whole capture.
+    #[allow(clippy::type_complexity)]
+    pub capture_export: Mutex<
+        Option<std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<Vec<u8>, String> + Send + Sync>>,
+    >,
+    /// Optional: opens a self-contained capture (`.orbit.zip` bytes) as the
+    /// current capture, replacing what the ring holds. Returns a short JSON
+    /// summary. Set by the service, which owns the decoder.
+    #[allow(clippy::type_complexity)]
+    pub capture_import:
+        Mutex<Option<std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: a scope opened, closed or stamped by an agent over HTTP
+    /// (`POST /api/scope`), on a named track. The service owns the clock
+    /// and the ring, so it handles it. See [`AgentScope`].
+    #[allow(clippy::type_complexity)]
+    pub agent_scope:
+        Mutex<Option<std::sync::Arc<dyn Fn(AgentScope) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: what the service does before the ring is emptied by
+    /// `/api/capture/clear` -- refuse while capturing, drop its sample
+    /// store. The ring, names and viewers are the server's own business.
+    #[allow(clippy::type_complexity)]
+    pub capture_clear: Mutex<Option<std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>>>,
+    /// Optional: opens a bundle from a path on the service's machine,
+    /// whole or cut to a window by the file's own row-group statistics.
+    #[allow(clippy::type_complexity)]
+    pub capture_open:
+        Mutex<Option<std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<String, String> + Send + Sync>>>,
+    /// Thread and process names the producer told us, replayed to every
+    /// subscriber after the intern table so a reopened capture labels its
+    /// tracks without the process being alive.
+    names: Mutex<CaptureNames>,
     demo_stop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    self_names: AtomicBool,
     /// Incremented on non-self `push_events` (demo / capture). Timeline cache key.
     data_gen: AtomicU64,
-    /// Incremented on self-profile pushes. Does not bust the timeline cache.
-    self_gen: AtomicU64,
     /// Capture/demo clock, ignoring self-profile events on the ring.
     live_end_ns: AtomicU64,
-    /// Next free ns on the self-profile axis. Only moves forward.
-    self_cursor_ns: AtomicU64,
-    /// `live_edge` at the last self-scope placement, so a frozen producer clock
-    /// can be told apart from an axis that jumped backwards.
-    self_edge_ns: AtomicU64,
+    /// When the current capture began on the capture clock, 0 until the
+    /// capture loop says. Every event pushed while it is set must start at
+    /// or after it; the ones that do not are dropped and counted, so a
+    /// scope drained from an app's ring that was open before Record, or an
+    /// agent's back-dated timestamp, cannot put anything left of the start.
+    capture_start_ns: AtomicU64,
+    dropped_before_start: AtomicU64,
+    /// The pid the running (or last) capture targets; 0 when none.
+    capture_pid: AtomicU64,
     index_cache: Mutex<Option<CachedIndex>>,
     pub(crate) timeline_cache: Mutex<Option<CachedTimeline>>,
-    last_timeline_prof: Mutex<Option<Instant>>,
 }
 
 struct CachedIndex {
     data_gen: u64,
-    self_gen: u64,
-    built_at: Instant,
     index: Arc<TrackIndex>,
 }
 
@@ -119,12 +230,41 @@ pub(crate) struct CachedTimeline {
 // bytes crate - need to add dependency. I'll use Vec<u8> + broadcast instead.
 // Actually I used bytes::Bytes without adding bytes dep. Let me use Arc<[u8]>.
 
+/// One request on the agent scope interface: what to do on which track.
+/// Tracks are named by the caller ("agent", "ci", a tool's name) and each
+/// is one thread of the agents process in the viewer. A missing timestamp
+/// means "now" on the service's clock.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentScope {
+    pub track: String,
+    pub action: AgentAction,
+    pub timestamp_ns: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AgentAction {
+    /// Opens a scope; nests under the track's open scopes.
+    Start { name: String },
+    /// Closes the track's innermost open scope.
+    Stop,
+    /// A zero-length mark.
+    Instant { name: String },
+    /// A point on a value lane of that name.
+    Value { name: String, value: f64 },
+}
+
+/// Thread and process names of the current capture.
+#[derive(Default)]
+struct CaptureNames {
+    threads: std::collections::HashMap<(u32, u32), String>,
+    processes: std::collections::HashMap<u32, String>,
+}
+
 impl LiveService {
     pub fn new(config: ServerConfig) -> Result<Arc<Self>, String> {
         let ring = EventRing::with_bytes(config.ring_buffer_bytes, config.spill_path.as_deref())
             .map_err(|e| e.to_string())?;
         let (live_tx, _) = broadcast::channel(256);
-        let self_on = true;
         let svc = Arc::new(Self {
             config: Mutex::new(config),
             ring: Mutex::new(Arc::new(ring)),
@@ -133,175 +273,163 @@ impl LiveService {
             live_tx,
             capturing: AtomicBool::new(false),
             demo: AtomicBool::new(false),
-            self_profile: AtomicBool::new(self_on),
             hooks: Mutex::new(None),
+            instrumentation_status: Mutex::new(String::new()),
+            sampling_report: Mutex::new(None),
+            sampling_tree: Mutex::new(None),
+            sampling_report_scope: Mutex::new(None),
+            sampling_tree_scope: Mutex::new(None),
+            modules_json: Mutex::new(None),
+            capture_export: Mutex::new(None),
+            capture_import: Mutex::new(None),
+            capture_open: Mutex::new(None),
+            capture_clear: Mutex::new(None),
+            agent_scope: Mutex::new(None),
+            names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
-            self_names: AtomicBool::new(false),
             data_gen: AtomicU64::new(0),
-            self_gen: AtomicU64::new(0),
             live_end_ns: AtomicU64::new(0),
-            self_cursor_ns: AtomicU64::new(0),
-            self_edge_ns: AtomicU64::new(0),
+            capture_start_ns: AtomicU64::new(0),
+            dropped_before_start: AtomicU64::new(0),
+            capture_pid: AtomicU64::new(0),
             index_cache: Mutex::new(None),
             timeline_cache: Mutex::new(None),
-            last_timeline_prof: Mutex::new(None),
         });
-        if self_on {
-            svc.ensure_self_names();
-        }
         Ok(svc)
     }
 
-    pub fn self_profile_enabled(&self) -> bool {
-        self.self_profile.load(Ordering::Relaxed)
+    /// Installs the sampling-report aggregator used by
+    /// `GET /api/sampling/report`.
+    #[allow(clippy::type_complexity)]
+    pub fn set_instrumentation_status(&self, status: impl Into<String>) {
+        *self.instrumentation_status.lock() = status.into();
     }
 
-    pub fn enable_self_profile(&self) {
-        self.self_profile.store(true, Ordering::Relaxed);
-        self.ensure_self_names();
+    pub fn instrumentation_status(&self) -> String {
+        self.instrumentation_status.lock().clone()
     }
 
-    pub fn disable_self_profile(&self) {
-        self.self_profile.store(false, Ordering::Relaxed);
+    #[allow(clippy::type_complexity)]
+    pub fn set_sampling_tree(
+        &self,
+        tree: std::sync::Arc<dyn Fn(&[SampleRangeSpec], &str) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_tree.lock() = Some(tree);
     }
 
-    fn ensure_self_names(&self) {
-        if self.self_names.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        self.intern_id(TID_UI, "ui");
-        self.intern_id(TID_RENDER, "render");
-        self.intern_id(TID_NET, "net");
-        self.intern_id(TID_SERVER, "server");
-        self.intern_id(NAME_FRAME, "Frame");
-        self.intern_id(NAME_NET, "Net");
-        self.intern_id(NAME_TRACKS, "Tracks");
-        self.intern_id(NAME_LOD, "ChooseLod");
-        self.intern_id(NAME_PAYLOAD, "TimelinePayload");
-        self.intern_id(NAME_CHROME, "Chrome");
-        self.intern_id(NAME_PUSH, "PushEvents");
-        self.intern_id(NAME_RASTER, "Rasterize");
-        self.intern_id(NAME_TIMELINE_API, "TimelineApi");
-        self.intern_id(NAME_PRIMITIVE_LISTING, "PrimitiveListing");
-        self.intern_id(NAME_COLLECT_LANE, "CollectLane");
-        self.intern_id(NAME_RASTER_LANE, "RasterLane");
-        for i in 0..RENDER_WORKER_COUNT {
-            self.intern_id(render_worker_tid(i), render_worker_label(i));
-        }
+    #[allow(clippy::type_complexity)]
+    pub fn set_modules_json(
+        &self,
+        modules: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.modules_json.lock() = Some(modules);
     }
 
-    pub fn apply_worker_spans(&self, spans: &[WorkerSpan]) {
-        if spans.is_empty() || !self.self_profile_enabled() {
-            return;
-        }
-        let t0 = spans.iter().map(|s| s.t0_ns).min().unwrap_or(0);
-        let scopes: Vec<RelScope> = spans
-            .iter()
-            .map(|s| RelScope {
-                pid: SERVICE_PID,
-                tid: s.tid,
-                name_id: s.name_id,
-                start_rel_ns: s.t0_ns.saturating_sub(t0),
-                duration_ns: s.t1_ns.saturating_sub(s.t0_ns).max(1),
-                depth: 0,
-            })
-            .collect();
-        self.apply_self_scopes(&scopes);
+    pub fn set_capture_export(
+        &self,
+        export: std::sync::Arc<
+            dyn Fn(&str, Option<(u64, u64)>) -> Result<Vec<u8>, String> + Send + Sync,
+        >,
+    ) {
+        *self.capture_export.lock() = Some(export);
     }
 
-    /// Demo/capture end only. Ignores ring `newest_end` (pid 2/3 self-profile).
-    fn live_edge_ns(&self) -> u64 {
-        self.live_end_ns()
+    pub fn set_agent_scope(&self, hook: std::sync::Arc<dyn Fn(AgentScope) -> Result<String, String> + Send + Sync>) {
+        *self.agent_scope.lock() = Some(hook);
     }
 
-    /// Allocate `[cursor, cursor+span)` on the self-profile axis.
-    ///
-    /// `None` when the producer clock has stopped and the window ahead of the
-    /// live edge is full: snapping back there would restamp this batch over
-    /// scopes already in the ring. Mirrors `dev::place_self_batch`.
-    fn take_self_origin(&self, span: u64, live_edge: u64) -> Option<u64> {
-        if span == 0 {
-            return Some(self.self_cursor_ns.load(Ordering::Relaxed));
-        }
-        let mut cursor = self.self_cursor_ns.load(Ordering::Relaxed);
-        loop {
-            let frozen = self.self_edge_ns.load(Ordering::Relaxed) == live_edge;
-            // Frozen producer clock: march forward rather than snapping back
-            // onto scopes already in the ring. Dropping the batch would stop
-            // self-profiling entirely while the service sits idle.
-            let origin = if frozen {
-                cursor.max(live_edge)
-            } else {
-                align_self_cursor(cursor, live_edge)
-            };
-            let next = origin.saturating_add(span);
-            match self.self_cursor_ns.compare_exchange_weak(
-                cursor,
-                next,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.self_edge_ns.store(live_edge, Ordering::Relaxed);
-                    return Some(origin);
-                }
-                Err(actual) => cursor = actual,
-            }
-        }
+    pub fn set_capture_clear(&self, clear: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>) {
+        *self.capture_clear.lock() = Some(clear);
     }
 
-    /// Insert viewer/service [`RelScope`]s as real [`LiveEvent`]s on the ring.
-    pub fn apply_self_scopes(&self, scopes: &[RelScope]) {
-        if !self.self_profile.load(Ordering::Relaxed) || scopes.is_empty() {
-            return;
-        }
-        if IN_SELF.with(Cell::get) {
-            return;
-        }
-        self.ensure_self_names();
-        let span = batch_span(scopes);
-        let live_edge = self.live_edge_ns();
-        if span == 0 || live_edge == 0 {
-            return;
-        }
-        let Some(origin) = self.take_self_origin(span, live_edge) else {
-            return;
+    /// Empties the capture: ring and names gone, every viewer told to start
+    /// from nothing (a capture that started and finished at once, with no
+    /// clock), and the status pushed.
+    pub fn clear_capture(&self) -> Result<(), String> {
+        self.clear_ring()?;
+        self.clear_names();
+        self.capturing.store(false, Ordering::Relaxed);
+        self.capture_start_ns.store(0, Ordering::Relaxed);
+        self.dropped_before_start.store(0, Ordering::Relaxed);
+        self.capture_pid.store(0, Ordering::Relaxed);
+        self.live_end_ns.store(0, Ordering::Relaxed);
+        self.broadcast_frame(&LiveFrame::CaptureStarted { pid: 0, start_ns: 0 });
+        self.broadcast_frame(&LiveFrame::CaptureFinished);
+        self.broadcast_status();
+        Ok(())
+    }
+
+    pub fn set_capture_open(
+        &self,
+        open: std::sync::Arc<dyn Fn(&str, Option<(u64, u64)>) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.capture_open.lock() = Some(open);
+    }
+
+    pub fn set_capture_import(
+        &self,
+        import: std::sync::Arc<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.capture_import.lock() = Some(import);
+    }
+
+    /// Names a thread for every viewer, now and for late subscribers.
+    pub fn set_thread_name(&self, pid: u32, tid: u32, name: &str) {
+        self.names.lock().threads.insert((pid, tid), name.to_string());
+        self.broadcast_frame(&LiveFrame::ThreadName { pid, tid, name: name.to_string() });
+    }
+
+    /// Names a process for every viewer, now and for late subscribers.
+    pub fn set_process_name(&self, pid: u32, name: &str) {
+        self.names.lock().processes.insert(pid, name.to_string());
+        self.broadcast_frame(&LiveFrame::ProcessName { pid, name: name.to_string() });
+    }
+
+    /// Forgets the names of the previous capture.
+    pub fn clear_names(&self) {
+        *self.names.lock() = CaptureNames::default();
+    }
+
+    /// The names known so far: `((pid, tid), name)` threads and `(pid, name)`
+    /// processes, sorted.
+    pub fn capture_names(&self) -> (Vec<((u32, u32), String)>, Vec<(u32, String)>) {
+        let names = self.names.lock();
+        let mut threads: Vec<_> = names.threads.iter().map(|(k, v)| (*k, v.clone())).collect();
+        threads.sort();
+        let mut processes: Vec<_> = names.processes.iter().map(|(k, v)| (*k, v.clone())).collect();
+        processes.sort();
+        (threads, processes)
+    }
+
+    /// Empties the ring, keeping its size and spill path: what an import does
+    /// before it fills it with the opened capture.
+    pub fn clear_ring(&self) -> Result<(), String> {
+        let (bytes, spill) = {
+            let cfg = self.config.lock();
+            (cfg.ring_buffer_bytes, cfg.spill_path.clone())
         };
-        let events = stamp_batch_from(scopes, origin);
-        if events.is_empty() {
-            return;
-        }
-        let prev = IN_SELF.with(|c| {
-            let p = c.get();
-            c.set(true);
-            p
-        });
-        self.push_events(&events);
-        IN_SELF.with(|c| c.set(prev));
+        self.replace_ring(bytes, spill)
     }
 
-    pub fn emit_server_scope(&self, name_id: u32, duration_ns: u64) {
-        if !self.self_profile.load(Ordering::Relaxed) || duration_ns == 0 {
-            return;
-        }
-        self.apply_self_scopes(&[RelScope {
-            pid: SERVICE_PID,
-            tid: TID_SERVER,
-            name_id,
-            start_rel_ns: 0,
-            duration_ns,
-            depth: 0,
-        }]);
+    pub fn set_sampling_report_scope(
+        &self,
+        report: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_report_scope.lock() = Some(report);
     }
 
-    fn with_server_scope<R>(&self, name_id: u32, f: impl FnOnce() -> R) -> R {
-        if !self.self_profile.load(Ordering::Relaxed) {
-            return f();
-        }
-        let t0 = Instant::now();
-        let r = f();
-        self.emit_server_scope(name_id, t0.elapsed().as_nanos() as u64);
-        r
+    pub fn set_sampling_tree_scope(
+        &self,
+        tree: std::sync::Arc<dyn Fn(u32, &str) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_tree_scope.lock() = Some(tree);
+    }
+
+    pub fn set_sampling_report(
+        &self,
+        report: std::sync::Arc<dyn Fn(&[SampleRangeSpec]) -> Result<String, String> + Send + Sync>,
+    ) {
+        *self.sampling_report.lock() = Some(report);
     }
 
     pub fn set_hooks(&self, hooks: ControlHooks) {
@@ -340,40 +468,77 @@ impl LiveService {
     }
 
     pub fn push_event(&self, event: LiveEvent) {
+        if self.before_capture_start(&event) {
+            self.dropped_before_start.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.ring().push(event);
-        self.broadcast_frame(&LiveFrame::EventBatch {
-            events: vec![event],
-        });
+        self.broadcast_events(std::slice::from_ref(&event));
+    }
+
+    /// True for an event that starts before the current capture did.
+    fn before_capture_start(&self, event: &LiveEvent) -> bool {
+        let start = self.capture_start_ns.load(Ordering::Relaxed);
+        start > 0 && event.start_ns < start
+    }
+
+    /// When the current capture began, 0 when unknown.
+    pub fn capture_start_ns(&self) -> u64 {
+        self.capture_start_ns.load(Ordering::Relaxed)
+    }
+
+    /// Events refused for starting before the capture, since it began.
+    pub fn dropped_before_start(&self) -> u64 {
+        self.dropped_before_start.load(Ordering::Relaxed)
+    }
+
+    /// Sends a batch to the live viewers, encoding straight from the slice.
+    /// With nobody subscribed there is nothing to send, so nothing is encoded
+    /// either -- a capture with no viewer attached should cost the ring push
+    /// and no more.
+    fn broadcast_events(&self, events: &[LiveEvent]) {
+        if self.live_tx.receiver_count() == 0 {
+            return;
+        }
+        // Encoding is its own scope: the packed and deflate formats cost
+        // CPU here, the sends cost it in every viewer's ws task.
+        let _encode = crate::scope("encode events");
+        let _ = self.live_tx.send(encode_event_batch_with(events, self.wire()));
+    }
+
+    /// The batch format this server sends.
+    pub fn wire(&self) -> WireFormat {
+        self.config.lock().wire
     }
 
     pub fn push_events(&self, events: &[LiveEvent]) {
         if events.is_empty() {
             return;
         }
-        let in_self = IN_SELF.with(Cell::get);
-        let profile = self.self_profile.load(Ordering::Relaxed) && !in_self;
-        let t0 = profile.then(Instant::now);
-        self.ring().push_many(events);
-        if in_self {
-            self.self_gen.fetch_add(1, Ordering::Relaxed);
+        let kept: Vec<LiveEvent>;
+        let events = if events.iter().any(|e| self.before_capture_start(e)) {
+            kept = events.iter().copied().filter(|e| !self.before_capture_start(e)).collect();
+            self.dropped_before_start
+                .fetch_add((events.len() - kept.len()) as u64, Ordering::Relaxed);
+            if kept.is_empty() {
+                return;
+            }
+            kept.as_slice()
         } else {
-            self.data_gen.fetch_add(1, Ordering::Relaxed);
-            let mut end = 0u64;
-            for e in events {
-                if !orbit_live_event::dev::is_self_pid(e.pid) {
-                    end = end.max(e.end_ns());
-                }
-            }
-            if end > 0 {
-                self.note_live_end(end);
+            events
+        };
+        self.ring().push_many(events);
+        self.data_gen.fetch_add(1, Ordering::Relaxed);
+        let mut end = 0u64;
+        for e in events {
+            if !orbit_live_event::dev::is_self_pid(e.pid) {
+                end = end.max(e.end_ns());
             }
         }
-        self.broadcast_frame(&LiveFrame::EventBatch {
-            events: events.to_vec(),
-        });
-        if let Some(t0) = t0 {
-            self.emit_server_scope(NAME_PUSH, t0.elapsed().as_nanos() as u64);
+        if end > 0 {
+            self.note_live_end(end);
         }
+        self.broadcast_events(events);
     }
 
     pub fn note_live_end(&self, end_ns: u64) {
@@ -396,6 +561,13 @@ impl LiveService {
         color_rgba: u32,
         name_id: u32,
     ) {
+        // A start from before the capture would pair with a stop inside it
+        // into a scope straddling the start; it is not this capture's.
+        let start = self.capture_start_ns.load(Ordering::Relaxed);
+        if start > 0 && timestamp_ns < start {
+            self.dropped_before_start.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.pairer
             .lock()
             .on_scope_start(pid, tid, timestamp_ns, color_rgba, name_id);
@@ -407,11 +579,26 @@ impl LiveService {
         }
     }
 
+    /// A capture began. The HTTP handler calls this with `start_ns` 0 the
+    /// moment the request is accepted; the capture loop calls it again with
+    /// the real clock once it has one, and that is the value the guard on
+    /// every push uses. A 0 never overwrites a real start.
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
         self.capturing.store(true, Ordering::Relaxed);
-        self.self_cursor_ns.store(start_ns, Ordering::Relaxed);
+        if pid > 0 {
+            self.capture_pid.store(pid as u64, Ordering::Relaxed);
+        }
+        if start_ns > 0 {
+            self.capture_start_ns.store(start_ns, Ordering::Relaxed);
+            self.dropped_before_start.store(0, Ordering::Relaxed);
+        }
         self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
+    }
+
+    /// The pid of the running or last capture; 0 when there is none.
+    pub fn capture_pid(&self) -> u32 {
+        self.capture_pid.load(Ordering::Relaxed) as u32
     }
 
     pub fn mark_capture_finished(&self) {
@@ -424,6 +611,24 @@ impl LiveService {
     }
 
     pub fn hello_and_snapshot_frames(&self) -> Vec<Vec<u8>> {
+        self.hello_and_snapshot_frames_in(None)
+    }
+
+    /// The whole capture as one byte string of wire frames: what a viewer
+    /// receives when it connects, ended by `CaptureFinished` so a viewer
+    /// opening it from a file fits the view. A static web page serves this
+    /// next to the viewer pack and needs no service. With `window`, only the
+    /// events starting inside it.
+    pub fn capture_stream(&self, window: Option<(u64, u64)>) -> Vec<u8> {
+        let mut out = Vec::new();
+        for frame in self.hello_and_snapshot_frames_in(window) {
+            out.extend_from_slice(&frame);
+        }
+        out.extend_from_slice(&encode_frame(&LiveFrame::CaptureFinished));
+        out
+    }
+
+    pub fn hello_and_snapshot_frames_in(&self, window: Option<(u64, u64)>) -> Vec<Vec<u8>> {
         use orbit_live_event::LIVE_EVENT_SIZE;
         let mut frames = vec![encode_frame(&LiveFrame::Hello {
             version: VERSION,
@@ -438,15 +643,30 @@ impl LiveService {
                 }));
             }
         }
+        {
+            let names = self.names.lock();
+            for ((pid, tid), name) in names.threads.iter() {
+                frames.push(encode_frame(&LiveFrame::ThreadName {
+                    pid: *pid,
+                    tid: *tid,
+                    name: name.clone(),
+                }));
+            }
+            for (pid, name) in names.processes.iter() {
+                frames.push(encode_frame(&LiveFrame::ProcessName { pid: *pid, name: name.clone() }));
+            }
+        }
         let stats = self.stats();
         frames.push(encode_frame(&self.status_frame(&stats)));
-        let (_, events) = self.ring().snapshot();
+        let (_, mut events) = self.ring().snapshot();
+        if let Some((a, b)) = window {
+            events.retain(|e| e.start_ns >= a && e.start_ns <= b);
+        }
         if !events.is_empty() {
             // Chunk so one WS message stays reasonable.
+            let wire = self.wire();
             for chunk in events.chunks(2048) {
-                frames.push(encode_frame(&LiveFrame::EventBatch {
-                    events: chunk.to_vec(),
-                }));
+                frames.push(encode_event_batch_with(chunk, wire));
             }
         }
         frames
@@ -473,12 +693,9 @@ impl LiveService {
 
     pub fn cached_index(&self) -> Arc<TrackIndex> {
         let data = self.data_gen.load(Ordering::Relaxed);
-        let selfg = self.self_gen.load(Ordering::Relaxed);
         let mut cache = self.index_cache.lock();
         if let Some(c) = cache.as_ref() {
-            if c.data_gen == data
-                && (c.self_gen == selfg || c.built_at.elapsed() < Duration::from_millis(250))
-            {
+            if c.data_gen == data {
                 return Arc::clone(&c.index);
             }
         }
@@ -488,8 +705,6 @@ impl LiveService {
         let index = Arc::new(index);
         *cache = Some(CachedIndex {
             data_gen: data,
-            self_gen: selfg,
-            built_at: Instant::now(),
             index: Arc::clone(&index),
         });
         index
@@ -501,33 +716,12 @@ impl LiveService {
         t1: Option<u64>,
         width: usize,
     ) -> orbit_live_render::RasterizedFrame {
-        self.with_server_scope(NAME_RASTER, || {
-            let index = self.cached_index();
-            let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
-            let t0 = t0.unwrap_or(auto0);
-            let t1 = t1.unwrap_or(auto1.max(t0 + 1));
-            let intern = self.intern.lock();
-            let frame = index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern));
-            drop(intern);
-            self.apply_worker_spans(&frame.worker_spans);
-            frame
-        })
-    }
-
-    /// Sampled TimelineApi scopes — never on a cache hit, at most every 250ms.
-    pub fn maybe_emit_timeline_scope(&self, duration_ns: u64) {
-        if !self.self_profile_enabled() || duration_ns == 0 {
-            return;
-        }
-        let mut last = self.last_timeline_prof.lock();
-        if let Some(t0) = *last {
-            if t0.elapsed() < Duration::from_millis(250) {
-                return;
-            }
-        }
-        *last = Some(Instant::now());
-        drop(last);
-        self.emit_server_scope(NAME_TIMELINE_API, duration_ns);
+        let index = self.cached_index();
+        let (auto0, auto1) = index.time_bounds().unwrap_or((0, 1));
+        let t0 = t0.unwrap_or(auto0);
+        let t1 = t1.unwrap_or(auto1.max(t0 + 1));
+        let intern = self.intern.lock();
+        index.rasterize_pixel(t0, t1, width.max(1), Some(&*intern))
     }
 
     pub fn replace_ring(&self, bytes: u64, spill: Option<PathBuf>) -> Result<(), String> {

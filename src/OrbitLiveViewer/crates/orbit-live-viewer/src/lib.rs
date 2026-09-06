@@ -16,12 +16,16 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 mod app;
 #[cfg(feature = "egui")]
 mod chrome_load;
+mod code;
 #[cfg(feature = "egui")]
 mod dev;
+mod live;
+mod local_report;
 #[cfg(feature = "egui")]
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;
+mod self_pane;
 #[cfg(feature = "egui")]
 mod theme;
 #[cfg(feature = "egui")]
@@ -156,7 +160,11 @@ impl LiveViewer {
             LiveFrame::CaptureStarted { .. } => {
                 self.index.clear();
             }
-            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } | LiveFrame::Status { .. } => {}
+            LiveFrame::CaptureFinished
+            | LiveFrame::Hello { .. }
+            | LiveFrame::Status { .. }
+            | LiveFrame::ThreadName { .. }
+            | LiveFrame::ProcessName { .. } => {}
         }
     }
 }
@@ -225,7 +233,9 @@ pub fn mark_wasm_pool_ready(n: u32) {
 pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
     install_wasm_clock();
-    eframe::WebLogger::init(log::LevelFilter::Info).ok();
+    // Warnings and errors only: eframe's own info lines ("event handlers
+    // installed.") are noise in a user's console.
+    eframe::WebLogger::init(log::LevelFilter::Warn).ok();
     eframe::WebRunner::new()
         .start(
             canvas,

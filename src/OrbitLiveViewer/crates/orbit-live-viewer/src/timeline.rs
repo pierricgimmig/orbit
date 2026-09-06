@@ -10,7 +10,7 @@ use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use orbit_live_event::dev::{
-    NAME_DIM_SEARCH, NAME_PLACE_EXTENT, NAME_PUNCH_DRAG, NAME_RASTER_WALK, NAME_REMAP_THEME,
+    NAME_DIM_SEARCH, NAME_PLACE_EXTENT, NAME_PUNCH_DRAG, NAME_RASTER_WALK,
     NAME_TO_RGBA8, TID_RENDER,
 };
 use orbit_live_event::{chrome, LaneKey};
@@ -21,6 +21,9 @@ use orbit_live_render::{
 use std::collections::HashMap;
 
 pub const INSTANCE_STRIDE: u64 = 48;
+/// Where the flag word sits in a packed instance: after x, y, w, h, the four
+/// colour channels and the radius (`pack_instances`).
+pub const INSTANCE_FLAGS_OFFSET: u64 = 36;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuDirtyKey {
@@ -42,6 +45,10 @@ pub struct GpuDirtyKey {
     pub selected: Option<(u32, u64)>,
     pub hover: Option<(u32, u64)>,
     pub search: u64,
+    /// The thread focus (selected thread, target process): a flags-only
+    /// change, like hover.
+    pub thread_sel: Option<(u32, u32)>,
+    pub target: Option<u32>,
 }
 
 pub fn quant_px(v: f32) -> i32 {
@@ -80,7 +87,12 @@ pub fn upload_mode(prev: Option<&GpuDirtyKey>, next: &GpuDirtyKey) -> UploadMode
     {
         return UploadMode::Full;
     }
-    if p.selected != next.selected || p.hover != next.hover || p.search != next.search {
+    if p.selected != next.selected
+        || p.hover != next.hover
+        || p.search != next.search
+        || p.thread_sel != next.thread_sel
+        || p.target != next.target
+    {
         return UploadMode::Flags;
     }
     UploadMode::Skip
@@ -133,6 +145,12 @@ pub enum TimelinePayload {
     Instanced {
         instances: Vec<ScopeInstance>,
     },
+    /// Hover, selection or search moved and nothing else: only these
+    /// instances' flag words change, written in place -- 4 bytes each
+    /// instead of the whole buffer repacked and re-sent.
+    Flags {
+        changes: Vec<(u32, f32)>,
+    },
 }
 
 impl TimelinePayload {
@@ -151,6 +169,7 @@ impl TimelinePayload {
         overlay: &[ScopeInstance],
         search: Option<&std::collections::HashSet<u32>>,
         punch: Option<(u32, u32)>,
+        focus: orbit_live_render::ThreadFocus,
         intern: Option<&orbit_live_event::InternTable>,
         scale: f32,
         y_cull: Option<YCull>,
@@ -175,6 +194,7 @@ impl TimelinePayload {
                     CollectOpts {
                         y_cull,
                         early_out: true,
+                        inline: false,
                     },
                 );
                 for inst in &mut frame.instances {
@@ -216,21 +236,23 @@ impl TimelinePayload {
                     let _dim = dev.scope(TID_RENDER, NAME_DIM_SEARCH);
                     dim_raster_pixels(index, &mut raster, t0, t1, ids);
                 }
+                if !focus.is_all() {
+                    let _dim = dev.scope(TID_RENDER, NAME_DIM_SEARCH);
+                    grey_raster_outside_focus(index, &mut raster, t0, t1, focus);
+                }
                 let raster_spans = std::mem::take(&mut raster.worker_spans);
                 let (origin, _) = {
                     let _place = dev.scope(TID_RENDER, NAME_PLACE_EXTENT);
                     raster.placed_extent(layout, scale)
                 };
                 // Single-threaded, one write per pixel of the whole timeline.
-                let (mut rgba, height) = {
+                // `to_rgba8_placed` already writes the track colour as
+                // transparent; the theme remap that followed it was a second
+                // full pass over the buffer that changed nothing.
+                let (rgba, height) = {
                     let _rgba = dev.scope(TID_RENDER, NAME_TO_RGBA8);
                     raster.to_rgba8_placed(layout, scale)
                 };
-                // A second full pass over the same buffer.
-                {
-                    let _remap = dev.scope(TID_RENDER, NAME_REMAP_THEME);
-                    crate::theme::remap_rgba8(&mut rgba);
-                }
                 let overlay = overlay
                     .iter()
                     .cloned()
@@ -328,6 +350,49 @@ pub fn snap_instances_to_layout(instances: &mut Vec<ScopeInstance>, layout: &[(L
     }
 }
 
+/// The pixel-column LOD's version of the thread focus: every pixel whose
+/// event belongs to a thread outside the focus goes the C++ inactive grey,
+/// or the lighter same-process grey on the scheduler rows.
+fn grey_raster_outside_focus(
+    index: &TrackIndex,
+    raster: &mut orbit_live_render::RasterizedFrame,
+    t0: u64,
+    t1: u64,
+    focus: orbit_live_render::ThreadFocus,
+) {
+    if raster.width == 0 || t1 <= t0 {
+        return;
+    }
+    let dt = (t1 - t0) as f64 / raster.width as f64;
+    for (row, key) in raster.lanes.iter().enumerate() {
+        let Some(lane) = index.lane(*key) else {
+            continue;
+        };
+        let scheduler = key.kind == orbit_live_event::kind::SCHEDULING_SLICE;
+        // Only the scheduler reads the selection: a thread's own rows keep
+        // their colours whichever thread is selected.
+        if !scheduler {
+            continue;
+        }
+        let dest = &mut raster.pixels[row * raster.width..(row + 1) * raster.width];
+        for (x, px) in dest.iter_mut().enumerate() {
+            if *px == orbit_live_event::chrome::TRACK {
+                continue;
+            }
+            let col0 = t0.saturating_add((x as f64 * dt) as u64);
+            let col1 = t0
+                .saturating_add(((x + 1) as f64 * dt) as u64)
+                .max(col0 + 1);
+            if let Some(e) = lane.overlapping(col0, col1) {
+                if !focus.active_on_scheduler(e.pid, e.tid) {
+                    let level = if focus.same_pid(e.pid) { 140 } else { 100 };
+                    *px = crate::theme::grey_argb(*px, level);
+                }
+            }
+        }
+    }
+}
+
 fn dim_raster_pixels(
     index: &TrackIndex,
     raster: &mut orbit_live_render::RasterizedFrame,
@@ -367,20 +432,25 @@ pub enum TimelineLayer {
     Overlay,
 }
 
+/// `slot` picks which of the two GPU timelines this draw targets: 0 is the
+/// capture, 1 is the viewer's self-profile pane. Each keeps its own instance
+/// buffers, so `TimelinePayload::Keep` on one never shows the other's data.
 pub fn paint_callback(
     rect: egui::Rect,
     payload: TimelinePayload,
     view: ViewUniforms,
+    slot: u8,
 ) -> PaintCallback {
-    paint_callback_layer(rect, payload, view, TimelineLayer::Base)
+    paint_callback_layer(rect, payload, view, TimelineLayer::Base, slot)
 }
 
 pub fn paint_overlay_callback(
     rect: egui::Rect,
     payload: TimelinePayload,
     view: ViewUniforms,
+    slot: u8,
 ) -> PaintCallback {
-    paint_callback_layer(rect, payload, view, TimelineLayer::Overlay)
+    paint_callback_layer(rect, payload, view, TimelineLayer::Overlay, slot)
 }
 
 fn paint_callback_layer(
@@ -388,6 +458,7 @@ fn paint_callback_layer(
     payload: TimelinePayload,
     view: ViewUniforms,
     layer: TimelineLayer,
+    slot: u8,
 ) -> PaintCallback {
     Callback::new_paint_callback(
         rect,
@@ -395,6 +466,7 @@ fn paint_callback_layer(
             payload,
             view,
             layer,
+            slot,
         },
     )
 }
@@ -403,6 +475,7 @@ struct TimelineCallback {
     payload: TimelinePayload,
     view: ViewUniforms,
     layer: TimelineLayer,
+    slot: u8,
 }
 
 impl CallbackTrait for TimelineCallback {
@@ -414,12 +487,15 @@ impl CallbackTrait for TimelineCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         callback_resources: &mut CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(gpu) = callback_resources.get_mut::<TimelineGpuSlot>() {
+        let t0 = upload_clock_ns();
+        if let Some(slots) = callback_resources.get_mut::<TimelineGpuSlot>() {
+            let gpu = slots.get_mut(self.slot);
             if self.layer == TimelineLayer::Base && !matches!(self.payload, TimelinePayload::Keep) {
                 gpu.clear_overlay();
             }
             gpu.upload(device, queue, &self.payload, self.view, self.layer);
         }
+        GPU_PREPARE_NS.fetch_add(upload_clock_ns().saturating_sub(t0), Ordering::Relaxed);
         Vec::new()
     }
 
@@ -437,10 +513,38 @@ impl CallbackTrait for TimelineCallback {
         if sw > 0 && sh > 0 {
             render_pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
         }
-        if let Some(gpu) = callback_resources.get::<TimelineGpuSlot>() {
-            gpu.draw(render_pass, self.layer);
+        // The scissor is the callback's own rect (the timeline body) cut by
+        // the ui clip, not the ui clip alone: instances are listed for a
+        // window wider than the view, and what sits left or right of the
+        // body must not paint over the header rail or the report.
+        let vp = info.viewport_in_pixels();
+        let clip = info.clip_rect_in_pixels();
+        let x0 = vp.left_px.max(clip.left_px).max(0);
+        let y0 = vp.top_px.max(clip.top_px).max(0);
+        let x1 = (vp.left_px + vp.width_px).min(clip.left_px + clip.width_px).min(sw as i32);
+        let y1 = (vp.top_px + vp.height_px).min(clip.top_px + clip.height_px).min(sh as i32);
+        if x1 <= x0 || y1 <= y0 {
+            return;
         }
+        render_pass.set_scissor_rect(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32);
+        let t0 = upload_clock_ns();
+        if let Some(slots) = callback_resources.get::<TimelineGpuSlot>() {
+            slots.get(self.slot).draw(render_pass, self.layer);
+        }
+        GPU_PAINT_NS.fetch_add(upload_clock_ns().saturating_sub(t0), Ordering::Relaxed);
     }
+}
+
+/// CPU time spent in the egui-wgpu callbacks since the last `take`, summed
+/// over every callback of the frame (base and overlay layers, both
+/// timelines). Like the upload stats, written after `App::update` returns
+/// and read one frame late.
+static GPU_PREPARE_NS: AtomicU64 = AtomicU64::new(0);
+static GPU_PAINT_NS: AtomicU64 = AtomicU64::new(0);
+
+/// (prepare ns, paint ns) accumulated since the previous call.
+pub fn take_gpu_times() -> (u64, u64) {
+    (GPU_PREPARE_NS.swap(0, Ordering::Relaxed), GPU_PAINT_NS.swap(0, Ordering::Relaxed))
 }
 
 /// TypeMap slot for [`TimelineGpu`].
@@ -448,21 +552,26 @@ impl CallbackTrait for TimelineCallback {
 /// wgpu types are `!Send`/`!Sync` on wasm32+atomics, but egui-wgpu's
 /// `CallbackResources` requires `Send + Sync`. GPU objects stay on the UI
 /// thread; rayon workers only run CPU collect/raster.
-pub struct TimelineGpuSlot(pub TimelineGpu);
+pub struct TimelineGpuSlot {
+    /// [capture timeline, self-profile timeline]. Two, so the self-profile
+    /// pane is drawn by the same code with its own buffers.
+    slots: [TimelineGpu; 2],
+}
 
 unsafe impl Send for TimelineGpuSlot {}
 unsafe impl Sync for TimelineGpuSlot {}
 
-impl std::ops::Deref for TimelineGpuSlot {
-    type Target = TimelineGpu;
-    fn deref(&self) -> &TimelineGpu {
-        &self.0
+impl TimelineGpuSlot {
+    pub fn new(capture: TimelineGpu, self_profile: TimelineGpu) -> Self {
+        TimelineGpuSlot { slots: [capture, self_profile] }
     }
-}
 
-impl std::ops::DerefMut for TimelineGpuSlot {
-    fn deref_mut(&mut self) -> &mut TimelineGpu {
-        &mut self.0
+    pub fn get(&self, slot: u8) -> &TimelineGpu {
+        &self.slots[usize::from(slot.min(1))]
+    }
+
+    pub fn get_mut(&mut self, slot: u8) -> &mut TimelineGpu {
+        &mut self.slots[usize::from(slot.min(1))]
     }
 }
 
@@ -472,13 +581,19 @@ pub struct TimelineGpu {
     inst_pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     blit_layout: wgpu::BindGroupLayout,
-    blit_uni: wgpu::Buffer,
-    inst_uni: wgpu::Buffer,
-    inst_bind: wgpu::BindGroup,
     base: GpuDrawLayer,
     overlay: GpuDrawLayer,
 }
 
+/// One layer's draw state **and its own view uniforms**.
+///
+/// The uniforms must not be shared. `egui_wgpu` runs `prepare` for every
+/// callback in the frame before it runs any `paint`, so a single buffer holds
+/// whatever the *last* callback wrote by the time the first one draws. Lifting
+/// a track adds the overlay callback, whose view is the whole body rect; the
+/// base blit then drew the pixel-column raster stretched over the full body
+/// instead of into its placed extent, which put every lane under the wrong
+/// header until the drag ended.
 struct GpuDrawLayer {
     instance_buf: Option<wgpu::Buffer>,
     instance_cap: u64,
@@ -488,10 +603,33 @@ struct GpuDrawLayer {
     column_w: u32,
     column_h: u32,
     column_bind: Option<wgpu::BindGroup>,
+    blit_uni: wgpu::Buffer,
+    inst_uni: wgpu::Buffer,
+    inst_bind: wgpu::BindGroup,
 }
 
 impl GpuDrawLayer {
-    fn empty() -> Self {
+    fn new(device: &wgpu::Device, inst_layout: &wgpu::BindGroupLayout, label: &str) -> Self {
+        let blit_uni = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&format!("orbit-blit-uni-{label}")),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inst_uni = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&format!("orbit-inst-uni-{label}")),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inst_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("orbit-inst-bind-{label}")),
+            layout: inst_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: inst_uni.as_entire_binding(),
+            }],
+        });
         Self {
             instance_buf: None,
             instance_cap: 0,
@@ -500,7 +638,21 @@ impl GpuDrawLayer {
             column_w: 0,
             column_h: 0,
             column_bind: None,
+            blit_uni,
+            inst_uni,
+            inst_bind,
         }
+    }
+
+    /// Drop what this layer draws, keeping its uniform buffers and bind group.
+    fn reset(&mut self) {
+        self.instance_buf = None;
+        self.instance_cap = 0;
+        self.instance_count = 0;
+        self.column_tex = None;
+        self.column_w = 0;
+        self.column_h = 0;
+        self.column_bind = None;
     }
 }
 
@@ -645,37 +797,13 @@ impl TimelineGpu {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        let blit_uni = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("orbit-blit-uni"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let inst_uni = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("orbit-inst-uni"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let inst_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("orbit-inst-bind"),
-            layout: &inst_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: inst_uni.as_entire_binding(),
-            }],
-        });
-
         Self {
             blit_pipeline,
             inst_pipeline,
             sampler,
             blit_layout,
-            blit_uni,
-            inst_uni,
-            inst_bind,
-            base: GpuDrawLayer::empty(),
-            overlay: GpuDrawLayer::empty(),
+            base: GpuDrawLayer::new(device, &inst_layout, "base"),
+            overlay: GpuDrawLayer::new(device, &inst_layout, "overlay"),
         }
     }
 
@@ -694,7 +822,7 @@ impl TimelineGpu {
     }
 
     fn clear_overlay(&mut self) {
-        self.overlay = GpuDrawLayer::empty();
+        self.overlay.reset();
     }
 
     fn upload(
@@ -705,21 +833,24 @@ impl TimelineGpu {
         view: ViewUniforms,
         layer: TimelineLayer,
     ) {
-        queue.write_buffer(
-            &self.blit_uni,
-            0,
-            &pack_blit_uniforms(view.viewport, view.dest),
-        );
-        queue.write_buffer(
-            &self.inst_uni,
-            0,
-            &pack_inst_uniforms(view.viewport, view.origin, view.time),
-        );
+        {
+            let slot = self.layer_mut(layer);
+            queue.write_buffer(
+                &slot.blit_uni,
+                0,
+                &pack_blit_uniforms(view.viewport, view.dest),
+            );
+            queue.write_buffer(
+                &slot.inst_uni,
+                0,
+                &pack_inst_uniforms(view.viewport, view.origin, view.time),
+            );
+        }
 
         match payload {
             TimelinePayload::Keep => {}
             TimelinePayload::Empty => {
-                *self.layer_mut(layer) = GpuDrawLayer::empty();
+                self.layer_mut(layer).reset();
             }
             TimelinePayload::Pixel {
                 rgba,
@@ -748,6 +879,19 @@ impl TimelineGpu {
                     slot.column_h = 0;
                 }
                 self.upload_instances(device, queue, instances, layer);
+            }
+            TimelinePayload::Flags { changes } => {
+                let slot = self.layer_mut(layer);
+                if let Some(buf) = &slot.instance_buf {
+                    let t0 = upload_clock_ns();
+                    for (i, flags) in changes {
+                        let offset = u64::from(*i) * INSTANCE_STRIDE + INSTANCE_FLAGS_OFFSET;
+                        if offset + 4 <= slot.instance_cap {
+                            queue.write_buffer(buf, offset, &flags.to_le_bytes());
+                        }
+                    }
+                    record_instance_upload(upload_clock_ns().saturating_sub(t0), changes.len() as u64 * 4);
+                }
             }
         }
     }
@@ -831,7 +975,7 @@ impl TimelineGpu {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.blit_uni.as_entire_binding(),
+                    resource: self.layer(layer).blit_uni.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -899,7 +1043,7 @@ impl TimelineGpu {
         if let Some(buf) = &slot.instance_buf {
             if slot.instance_count > 0 {
                 pass.set_pipeline(&self.inst_pipeline);
-                pass.set_bind_group(0, &self.inst_bind, &[]);
+                pass.set_bind_group(0, &slot.inst_bind, &[]);
                 pass.set_vertex_buffer(0, buf.slice(..));
                 pass.draw(0..6, 0..slot.instance_count);
             }
@@ -976,11 +1120,24 @@ pub fn pack_instances(instances: &[ScopeInstance]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{kind, named_scope_color, LiveEvent};
     use orbit_live_render::{
         choose_lod, collect_instances_layout, stacked_layout, TrackIndex, INSTANCE_MIN_PX,
     };
+
+    #[test]
+    fn the_flags_word_sits_at_the_documented_offset() {
+        let mut inst = ScopeInstance {
+            x: 1.0, y: 2.0, w: 10.0, h: 16.0, color: 0xFFE7_4435, radius: 3.0, name_id: 1,
+            start_ns: 0, duration_ns: 1, pid: 1, tid: 1, kind: 1, depth: 0, extra: 0, flags: 0.0,
+        };
+        inst.flags = 3.0;
+        let bytes = pack_instances(&[inst]);
+        let off = INSTANCE_FLAGS_OFFSET as usize;
+        assert_eq!(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()), 3.0);
+    }
 
     #[test]
     fn pack_instances_is_48_bytes_each() {
@@ -1082,11 +1239,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         let TimelinePayload::Pixel {
             rgba,
             width,
@@ -1141,11 +1298,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
     }
 
@@ -1307,11 +1464,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         let TimelinePayload::Pixel { height, .. } = pixel else {
             panic!("expected pixel payload for the remaining thread");
         };
@@ -1333,11 +1490,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(
             matches!(gone, TimelinePayload::Empty),
             "empty rest layout must not rebuild index lanes and re-paint hidden scopes"
@@ -1375,11 +1532,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(p, TimelinePayload::Empty));
         let (inst, _) = TimelinePayload::from_index(
             &idx,
@@ -1392,11 +1549,11 @@ mod tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(inst, TimelinePayload::Empty));
     }
 
@@ -1421,6 +1578,8 @@ mod tests {
             selected: None,
             hover: None,
             search: 0,
+            thread_sel: None,
+            target: None,
         };
         assert_eq!(upload_mode(None, &base), UploadMode::Full);
         assert_eq!(upload_mode(Some(&base), &base), UploadMode::Skip);
@@ -1459,6 +1618,8 @@ mod tests {
 
 #[cfg(test)]
 mod blit_align_tests {
+    #[allow(unused_imports)]
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{kind, LiveEvent};
     use orbit_live_render::{lane_height, stacked_layout, TrackIndex};
@@ -1503,11 +1664,11 @@ mod blit_align_tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             scale,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         let TimelinePayload::Pixel { height, place, .. } = p else {
             panic!("expected pixel payload");
         };
@@ -1591,6 +1752,8 @@ fn upload_clock_ns() -> u64 {
 
 #[cfg(test)]
 mod worker_span_tests {
+    #[allow(unused_imports)]
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{kind, LiveEvent};
     use orbit_live_render::{stacked_layout, TrackIndex};
@@ -1631,11 +1794,11 @@ mod worker_span_tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &crate::dev::DevFrame::begin(false),
-        );
+            &crate::dev::DevFrame::begin(false));
         assert!(matches!(p, TimelinePayload::Pixel { .. }));
         assert!(
             !spans.is_empty(),
@@ -1647,6 +1810,8 @@ mod worker_span_tests {
 
 #[cfg(test)]
 mod span_pipeline_tests {
+    #[allow(unused_imports)]
+    use orbit_live_render::ThreadFocus;
     use super::*;
     use orbit_live_event::{dev::is_render_worker_tid, kind, LiveEvent};
     use orbit_live_render::{stacked_layout, TrackIndex};
@@ -1688,11 +1853,11 @@ mod span_pipeline_tests {
             &[],
             None,
             None,
+            ThreadFocus::default(),
             None,
             1.0,
             None,
-            &dev,
-        );
+            &dev);
         assert!(!spans.is_empty(), "the walk produced no spans at all");
         dev.absorb_worker_spans(&spans);
         let scopes = dev.finish();

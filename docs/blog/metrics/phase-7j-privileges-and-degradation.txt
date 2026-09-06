@@ -1,0 +1,67 @@
+Phase 7j -- privilege diagnostics and non-privileged mode (2026-08-31)
+======================================================================
+
+Two changes, both about what happens when the kernel says no.
+
+1. The service no longer dies without perf access
+--------------------------------------------------
+It used to `exit(2)` when perf_event_open failed, when the ring could not be
+enabled, or when the target's maps were unreadable. All three now degrade:
+the feature is dropped, the capture continues, and the process exits 0.
+
+This matters because the capture's other sources need no privileges at all:
+machine metadata (/proc, /sys) and GPU telemetry (NVML through the helper)
+work for any user. A capture that cannot sample is still a useful capture --
+and it is now produced instead of refused.
+
+Measured, tracing pid 1 (root-owned, not traceable by this user):
+  before: exit 2, no output file
+  after : exit 0, valid capture containing
+          SystemInfo 1, GpuInfo 1, SchedulingSlice 2063  (clean EOF)
+  plus a plain statement of what was missing:
+    "ran in reduced mode -- no stack samples. The capture still contains
+     machine metadata."
+
+2. Diagnostics that say what is wrong AND how to fix it
+-------------------------------------------------------
+A bare EACCES from perf_event_open is useless to a user. The new privileges
+module reports the machine's actual state, which capture features that state
+permits, and the exact commands to enable the rest:
+
+  perf access on this machine:
+    kernel.perf_event_paranoid = -1
+    running as root            = no
+    CAP_PERFMON                = no
+    CAP_SYS_ADMIN              = no
+    CAP_SYS_PTRACE             = no
+
+  capture features:
+    sampling this process         available   (needs paranoid <= 2)
+    sampling another user's          DENIED   (also needs CAP_SYS_PTRACE)
+    system-wide scheduling        available   (needs paranoid <= 0)
+
+  to enable the denied features, pick ONE:
+    1) sudo setcap cap_perfmon,cap_sys_ptrace+ep <this binary's real path>
+    2) sudo sysctl -w kernel.perf_event_paranoid=0   (+ how to persist it)
+    3) sudo <this binary> ...
+
+The binary's real path is substituted, so the command can be pasted as-is.
+The setcap advice carries the two caveats that actually bite: cap_perfmon
+needs Linux 5.8+ (older kernels want cap_sys_admin), and file capabilities
+are ignored on a nosuid mount.
+
+A gap caught while testing
+--------------------------
+The first version only offered remediation when sampling-this-process or
+system-wide were denied. On this machine (paranoid = -1) both are allowed,
+yet tracing another user's process is still denied for want of
+CAP_SYS_PTRACE -- so the user was told "DENIED" and given no fix. The
+early-return now covers all three features. Being told what is broken
+without being told how to repair it is the failure mode this phase exists to
+remove.
+
+Verification: 21 unit tests, including the paranoid level table (-1/0/1/2/3),
+root and CAP_PERFMON/CAP_SYS_ADMIN bypasses, the ptrace requirement for other
+users, an unreadable paranoid file being treated optimistically (attempt the
+capture, let the kernel decide), and the report naming both the problem and
+every remediation. Plus the live degraded run above.

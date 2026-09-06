@@ -1,0 +1,140 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+load("//bazel:copts.bzl", "ORBIT_COPTS")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "elf_corpus",
+    srcs = ["elf_corpus.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//rust/shims/ObjectUtilsRust",
+        "//src/ObjectUtils",
+        "//src/OrbitBase",
+    ],
+)
+
+cc_binary(
+    name = "perf_reader_differential",
+    srcs = ["perf_reader_differential.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_perf_records_ffi",
+        "//src/LinuxTracing",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:strings",
+    ],
+)
+
+cc_binary(
+    name = "perf_ring_differential",
+    srcs = ["perf_ring_differential.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_perf_ring_ffi",
+        "//src/LinuxTracing",
+        "@abseil-cpp//absl/strings:strings",
+    ],
+)
+
+cc_binary(
+    name = "stack_unwind_differential",
+    srcs = ["stack_unwind_differential.cpp"],
+    copts = ORBIT_COPTS + [
+        "-Isrc/LinuxTracing",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_unwind_ffi",
+        "//src/LinuxTracing",
+    ],
+)
+
+cc_binary(
+    name = "executable_region_differential",
+    srcs = ["executable_region_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_ptrace_ffi",
+        "//src/UserSpaceInstrumentation",
+    ],
+)
+
+cc_binary(
+    name = "tracee_memory_differential",
+    srcs = ["tracee_memory_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_ptrace_ffi",
+        "//src/UserSpaceInstrumentation",
+    ],
+)
+
+cc_binary(
+    name = "trampoline_placement_differential",
+    srcs = ["trampoline_placement_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_trampoline_ffi",
+        "//src/UserSpaceInstrumentation",
+    ],
+)
+
+cc_binary(
+    name = "relocate_instruction_differential",
+    srcs = ["relocate_instruction_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_trampoline_ffi",
+        "//src/UserSpaceInstrumentation",
+        "@capstone//:capstone",
+    ],
+)
+
+cc_binary(
+    name = "trampoline_codegen_differential",
+    srcs = ["trampoline_codegen_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_trampoline_ffi",
+        "//src/UserSpaceInstrumentation",
+    ],
+)
+
+cc_binary(
+    name = "trampoline_builder_differential",
+    srcs = ["trampoline_builder_differential.cpp"],
+    copts = ORBIT_COPTS + ["-Isrc/UserSpaceInstrumentation"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//rust:orbit_trampoline_ffi",
+        "//src/UserSpaceInstrumentation",
+        "@capstone//:capstone",
+    ],
+)
+
+cc_binary(
+    name = "wire_size_differential",
+    srcs = ["wire_size_differential.cpp"],
+    copts = ORBIT_COPTS,
+    deps = [
+        "//rust:orbit_wire_ffi",
+        "//src/GrpcProtos",
+        "@protobuf",
+    ],
+)

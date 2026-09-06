@@ -1,0 +1,58 @@
+{
+  "generated_utc": "2026-08-31T04:15:29Z",
+  "commit": "a434b5b62",
+  "branch": "rust-port-object-utils",
+  "bazel_queried": true,
+
+  "loc": {
+    "cpp_impl_total": 111611,
+    "cpp_test_total": 65325,
+    "rust_total": 74403,
+    "rust_first_party": 22456,
+    "by_module": {
+      "ModuleUtils":              { "impl": 694,   "test": 608 },
+      "ObjectUtils":              { "impl": 3999,   "test": 1366 },
+      "Symbols":                  { "impl": 650,       "test": 847 },
+      "LinuxTracing":             { "impl": 10017,  "test": 9189 },
+      "CaptureFile":              { "impl": 1456,   "test": 894 },
+      "OrbitBase":                { "impl": 5477,     "test": 4880 },
+      "UserSpaceInstrumentation": { "impl": 4704, "test": 3511 }
+    }
+  },
+
+  "reimplemented_std": {
+    "comment": "C++ constructs Rust's std or a mainstream crate provides directly",
+    "error_message_or_uses": 1419,
+    "orbit_check_uses": 1260,
+    "std_optional_uses": 765,
+    "absl_mutex_uses": 357,
+    "guarded_by_annotations": 74,
+    "orbit_base_std_equivalent_headers_loc": 2963
+  },
+
+  "strangler": {
+    "comment": "Methods in the Rust shims still forwarding to C++. Only ever goes down; zero means the C++ implementation can be deleted.",
+    "rust_elf_file_delegating_methods": 2,
+    "rust_elf_file_total_overrides": 39
+  },
+
+  "tests": {
+    "cpp_test_files": 296,
+    "cases_module_utils": 27,
+    "cases_object_utils": 68,
+    "cases_linux_tracing": 186
+  },
+
+  "dependencies": {
+    "bazel_dep_count": 14,
+    "third_party_dirs": 22,
+    "llvm_dependents": 1,
+    "llvm_include_sites": 9,
+    "bazel_patches": 3,
+    "deps_object_utils": 8943,
+    "deps_module_utils": 8962,
+    "deps_orbit_service": 23007,
+    "ext_repos_object_utils": 100,
+    "ext_repos_orbit_service": 354
+  }
+}

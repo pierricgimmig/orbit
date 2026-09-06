@@ -1,0 +1,49 @@
+Phase 6d -- instruction relocation, the hardest single file (2026-08-31)
+========================================================================
+
+What: RelocateInstruction, the core of Trampoline.cpp, ported to
+rust/crates/orbit-trampoline::relocate. Moving a function's prologue to a
+trampoline breaks anything encoded relative to the instruction pointer;
+this rewrites those and copies everything else verbatim:
+  - RIP-relative memory operands (modrm & 0xC7 == 0x05): keep the
+    instruction, adjust the 32-bit displacement to the same absolute target.
+  - jmp rel8/rel32: emulate with jmp [rip+0] + an 8-byte absolute address.
+  - jcc rel8 and rel32: invert the condition, jump over a jmp-to-absolute.
+  - call: rejected by design (relocating one would turn a whole tree of
+    callees' samples into unwinding errors).
+  - loop/loope/loopne/jrcxz: rejected (compilers do not emit them).
+
+The C++ decodes with capstone; the Rust decodes with iced-x86 (pure Rust,
+one transitive dep: lazy_static) but EMITS THE SAME BYTES -- the emission
+mirrors the C++ hand-written sequences, not iced's re-encoder, so the two
+are byte-comparable. iced supplies instruction length, RIP-relative
+detection (memory_base == RIP), and the displacement/immediate offsets; a
+small prefix skipper finds the opcode byte for condition inversion.
+
+How it is verified
+------------------
+relocate_instruction_differential.cpp disassembles the differential binary's
+OWN executable pages (up to 4 MB of real compiler output) with capstone and,
+for every instruction, relocates it with both RelocateInstruction and the
+Rust port at the same (old, new) addresses, comparing the emitted bytes and
+the absolute-address position exactly. Instructions the C++ rejects must be
+rejected by Rust too.
+
+Results (x86_64)
+----------------
+instructions   962,605
+compared       888,154   byte-for-byte identical, 0 mismatches
+both_rejected   74,451   calls and loops, rejected by both
+mismatches           0
+verdict: IDENTICAL
+
+Sabotage: inverting the jcc condition with 0x02 instead of 0x01 diverged on
+44,026 instructions. Restored -> IDENTICAL. This is the largest corpus in
+the whole port after the ELF differential, and it is real machine code, not
+synthetic.
+
+This closes the hardest single file. What remains for Phase 6 is the
+trampoline BUILDER (CreateTrampoline: backup/payload-call/restore code
+emission, prologue moving, writing the jumps) and InstrumentProcess on top
+-- fixed byte emission plus the live plumbing already ported in 6a/6b, best
+verified end-to-end (InstrumentProcessTest level) against a payload library.

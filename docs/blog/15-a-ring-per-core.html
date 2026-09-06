@@ -1,0 +1,1032 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>A Ring Per Core</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+</head><body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 15</p>
+    <h1>A Ring Per Core</h1>
+    <p class="dek">Manual instrumentation has to cost almost nothing or people turn it off. Here is the write path, measured honestly at sixteen nanoseconds a scope, the two places the obvious design is unsound, what rseq is and what it would actually be worth, and the bug that only appeared when someone asked the right question.</p>
+    <p class="byline">Design notes, with the corrections left in</p>
+
+    <div class="stats">
+      <div class="stat"><b>15.9 ns</b><span>Per scope</span></div>
+      <div class="stat"><b>7.0 ns</b><span>Ring alone</span></div>
+      <div class="stat"><b>0</b><span>Locks</span></div>
+      <div class="stat"><b>32 B</b><span>Per record</span></div>
+      <div class="stat"><b>128</b><span>Rings, capped</span></div>
+      <div class="stat"><b>25</b><span>Tests</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">A profiler's manual instrumentation is the feature people use most and trust least. Every <code>ORBIT_SCOPE</code> in a hot loop is a bet that the measurement costs less than the thing being measured, and the moment that bet stops paying, the macros get commented out and the profiler stops being used. So the write path is the whole design. Everything else &mdash; ordering, merging, nesting &mdash; is the consumer's problem, and the consumer is allowed to be slow.</p>
+
+  <h2 id="shape">The shape of it</h2>
+
+  <p>An instrumented process writes events into its own shared-memory segment. The service maps that segment, drains it, merges it into one globally ordered stream, and hands it to the timeline. The two sides never talk, never synchronise, and never block each other.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+    <svg viewBox="0 0 760 300" role="img" aria-label="Architecture: a process writes to per-core rings in shared memory; the service drains and merges them into one ordered stream.">
+      <defs>
+        <marker id="a15" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect x="8" y="20" width="210" height="260" fill="var(--surface-2)" stroke="var(--line)"/>
+      <text x="113" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">instrumented process</text>
+      <g font-size="11" fill="var(--ink-soft)">
+        <rect x="26" y="58" width="76" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="64" y="75" text-anchor="middle">thread A</text>
+        <rect x="26" y="92" width="76" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="64" y="109" text-anchor="middle">thread B</text>
+        <rect x="26" y="126" width="76" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="64" y="143" text-anchor="middle">thread C</text>
+        <rect x="26" y="160" width="76" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="64" y="177" text-anchor="middle">thread D</text>
+      </g>
+      <text x="113" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">ring = cpu_id % ring_count</text>
+      <text x="113" y="232" text-anchor="middle" font-size="10.5" fill="var(--muted)">depth from thread-local storage</text>
+
+      <rect x="248" y="20" width="200" height="260" fill="var(--accent-wash)" stroke="var(--accent)"/>
+      <text x="348" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">/dev/shm/orbit-scopes-&lt;pid&gt;</text>
+      <g font-size="11" fill="var(--ink-soft)">
+        <rect x="266" y="58" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="74" text-anchor="middle">ring 0 &nbsp;(core 0)</text>
+        <rect x="266" y="88" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="104" text-anchor="middle">ring 1 &nbsp;(core 1)</text>
+        <rect x="266" y="118" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="134" text-anchor="middle">ring 2 &nbsp;(core 2)</text>
+        <text x="348" y="158" text-anchor="middle" fill="var(--muted)">&#8942;</text>
+        <rect x="266" y="166" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="182" text-anchor="middle">ring K-1</text>
+      </g>
+      <text x="348" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">one per core, capped at 128</text>
+      <text x="348" y="232" text-anchor="middle" font-size="10.5" fill="var(--muted)">writer read-write, reader read-only</text>
+
+      <rect x="478" y="20" width="274" height="260" fill="var(--surface-2)" stroke="var(--line)"/>
+      <text x="615" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">orbit-service</text>
+      <g font-size="11" fill="var(--ink-soft)">
+        <rect x="496" y="58" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="75" text-anchor="middle">drain: copy each committed prefix</text>
+        <rect x="496" y="94" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="111" text-anchor="middle">merge: min-heap over K cursors</text>
+        <rect x="496" y="130" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="147" text-anchor="middle">hold back past the horizon</text>
+        <rect x="496" y="166" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="183" text-anchor="middle">one dense, ordered buffer</text>
+      </g>
+      <text x="615" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">allowed to be slow: producers never wait</text>
+
+      <line x1="220" y1="122" x2="244" y2="122" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#a15)"/>
+      <line x1="450" y1="122" x2="474" y2="122" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#a15)"/>
+    </svg>
+    </div>
+    <figcaption>Threads write to whichever ring their current core owns. The service maps the same pages read-only and never writes into the process it is observing.</figcaption>
+  </figure>
+
+  <p>One ring per <em>core</em>, not per thread. A thread-per-ring design is simpler and genuinely single-producer, but it scales with something you do not control: a process with four thousand threads gets four thousand rings, and the merge becomes a four-thousand-way heap. Cores are a number you know at startup and can cap.</p>
+
+  <h2 id="record">Thirty-two bytes</h2>
+
+  <p>The record is fixed width, which is what makes a claim a single index bump rather than a variable-length reservation. Names are interned ids, not strings, for the same reason: a scope must cost a handful of stores, never a copy.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+    <svg viewBox="0 0 720 150" role="img" aria-label="A 64-byte slot: 8-byte sequence stamp, 8-byte pending timestamp, and a 32-byte event.">
+      <g font-size="10.5" font-family="var(--mono)">
+        <rect x="10" y="30" width="110" height="42" fill="var(--accent-wash)" stroke="var(--accent)"/>
+        <text x="65" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">seq</text>
+        <text x="65" y="64" text-anchor="middle" fill="var(--muted)">8 B atomic</text>
+
+        <rect x="120" y="30" width="120" height="42" fill="var(--warn-wash)" stroke="var(--warn)"/>
+        <text x="180" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">pending_ns</text>
+        <text x="180" y="64" text-anchor="middle" fill="var(--muted)">8 B atomic</text>
+
+        <rect x="240" y="30" width="90" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="285" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">timestamp</text>
+        <text x="285" y="64" text-anchor="middle" fill="var(--muted)">8 B</text>
+
+        <rect x="330" y="30" width="90" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="375" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">scope_id</text>
+        <text x="375" y="64" text-anchor="middle" fill="var(--muted)">8 B</text>
+
+        <rect x="420" y="30" width="60" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="450" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">tid</text>
+        <text x="450" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
+
+        <rect x="480" y="30" width="60" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="510" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">name_id</text>
+        <text x="510" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
+
+        <rect x="540" y="30" width="90" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="585" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">kind, depth</text>
+        <text x="585" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
+
+        <rect x="630" y="30" width="80" height="42" fill="var(--surface)" stroke="var(--line)" stroke-dasharray="3 3"/>
+        <text x="670" y="55" text-anchor="middle" fill="var(--muted)">reserved</text>
+      </g>
+      <line x1="10" y1="88" x2="240" y2="88" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="125" y="104" text-anchor="middle" font-size="11" fill="var(--accent-deep)">the handshake</text>
+      <line x1="240" y1="88" x2="710" y2="88" stroke="var(--line-strong)" stroke-width="1.5"/>
+      <text x="475" y="104" text-anchor="middle" font-size="11" fill="var(--muted)">32-byte event, plain stores</text>
+      <text x="360" y="128" text-anchor="middle" font-size="11" fill="var(--muted)">one slot = one 64-byte cache line, so a claim never straddles two</text>
+    </svg>
+    </div>
+    <figcaption>The slot is exactly a cache line. Two atomics carry the handshake; the rest is the payload and is written with ordinary stores.</figcaption>
+  </figure>
+
+  <h2 id="write">The write path</h2>
+
+  <p>Six stores and one atomic add. No lock, no compare-and-swap loop, no allocation, no syscall, no branch on a queue being full.</p>
+
+  <figure class="wide">
+    <pre><code>pub fn push(&amp;self, ring: usize, event: ScopeEvent) {
+    let claim = self.ring_header(ring).write_cursor.fetch_add(1, Relaxed);
+    let slot = self.slot(ring, claim);
+    slot.pending_ns.store(event.timestamp_ns, Release);   // announce
+    unsafe { std::ptr::write_volatile(slot.event.get(), event) };
+    slot.seq.store(claim + 1, Release);                   // publish
+}</code></pre>
+    <figcaption>The entire producer. <code>fetch_add</code> hands out a slot index that belongs to exactly one caller, so the payload needs no further synchronisation.</figcaption>
+  </figure>
+
+  <p>The cursor only ever increases; it never wraps back. A slot index is <code>claim % slots_per_ring</code>, and the claim number doubles as the sequence stamp, so a consumer can always tell a slot's current occupant from the one that occupied it a lap ago.</p>
+
+  <h3>Where the time actually goes</h3>
+
+  <p>An earlier version of this post said the ring cost about ten nanoseconds an event and that "a good half of that is the clock read". The second half of that sentence was wrong, and wrong in the way benchmarks usually are: the benchmark pushed a pre-built event with a constant timestamp, so it never read the clock at all. Here is the same write path taken apart properly.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>Cost</th><th>ns</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>push, ring only</td><td class="v">6.98</td><td>claim, announce, payload, publish</td></tr>
+        <tr><td><strong>push + clock read</strong></td><td class="v bump">15.93</td><td><strong>what a scope actually costs</strong></td></tr>
+        <tr><td>clock read alone</td><td class="v">9.37</td><td>59% of a real scope</td></tr>
+        <tr><td>atomic <code>fetch_add</code></td><td class="v">4.33</td><td></td></tr>
+        <tr><td>plain increment</td><td class="v">0.18</td><td>what rseq would buy</td></tr>
+        <tr><td>atomic premium</td><td class="v hold-t">4.14</td><td>26% of a real scope</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two things fall out of that table, and both are more interesting than the number I first reported.</p>
+
+  <p>The atomic claim is <strong>4.14 ns, a quarter of a real scope</strong>. That is a much better case for <code>rseq</code> than the dismissal a few paragraphs down originally implied &mdash; it is not "one instruction", it is a lock-prefixed read-modify-write against a plain increment, and the ratio is twenty-four to one.</p>
+
+  <p>But the clock read is <strong>9.37 ns, more than half</strong>. Optimising the atomic while leaving that untouched is the wrong order of work. <code>clock_gettime</code> through the vDSO already reads the timestamp counter internally; what costs the nine nanoseconds is the vDSO's own generality. Reading <code>rdtscp</code> directly and converting with the same calibration the kernel publishes is the larger prize, and it is the one I would take first.</p>
+
+  <h2 id="preemption">Where the obvious design is unsound</h2>
+
+  <p>The natural way to write this is a per-core <em>single</em>-producer ring: a thread reads its core id, and since only one thread runs on a core at a time, only one thread is ever writing to that core's ring. No atomic needed at all &mdash; a plain store into the next slot.</p>
+
+  <p>That reasoning is exactly right in the kernel and exactly wrong in userspace, and the difference is preemption.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+    <svg viewBox="0 0 720 210" role="img" aria-label="Timeline showing thread A reading core id 3, being preempted, resuming on core 7, and writing into ring 3 while thread B is also writing to ring 3.">
+      <text x="8" y="22" font-size="11.5" font-weight="600" fill="var(--ink)">thread A</text>
+      <line x1="90" y1="34" x2="700" y2="34" stroke="var(--line-strong)"/>
+      <circle cx="130" cy="34" r="5" fill="var(--accent)"/>
+      <text x="130" y="22" text-anchor="middle" font-size="10.5" fill="var(--accent-deep)">reads cpu_id &rarr; 3</text>
+      <rect x="180" y="26" width="300" height="16" fill="var(--hold-wash)" stroke="var(--hold)"/>
+      <text x="330" y="38" text-anchor="middle" font-size="10.5" fill="var(--hold)">descheduled</text>
+      <circle cx="560" cy="34" r="5" fill="var(--warn)"/>
+      <text x="600" y="26" font-size="10.5" fill="var(--warn)">resumes on core 7,</text>
+      <text x="600" y="40" font-size="10.5" fill="var(--warn)">writes to ring 3</text>
+
+      <text x="8" y="98" font-size="11.5" font-weight="600" fill="var(--ink)">thread B</text>
+      <line x1="90" y1="110" x2="700" y2="110" stroke="var(--line-strong)"/>
+      <circle cx="300" cy="110" r="5" fill="var(--accent)"/>
+      <text x="300" y="98" text-anchor="middle" font-size="10.5" fill="var(--accent-deep)">starts on core 3, reads cpu_id &rarr; 3</text>
+      <circle cx="540" cy="110" r="5" fill="var(--warn)"/>
+      <text x="540" y="128" text-anchor="middle" font-size="10.5" fill="var(--warn)">writes to ring 3</text>
+
+      <rect x="500" y="150" width="200" height="44" fill="var(--hold-wash)" stroke="var(--hold)"/>
+      <text x="600" y="168" text-anchor="middle" font-size="11" font-weight="600" fill="var(--hold)">two producers, one ring</text>
+      <text x="600" y="184" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">a plain store loses an event</text>
+    </svg>
+    </div>
+    <figcaption>The window is between reading the core id and storing into the ring. Nothing in userspace closes it.</figcaption>
+  </figure>
+
+  <h3>What rseq is, since it is the real answer</h3>
+
+  <p><strong>Restartable sequences</strong> are a Linux mechanism, merged in 4.18, for exactly this problem: letting userspace run a short critical section that is guaranteed to have executed entirely on one CPU, without a lock and without a syscall.</p>
+
+  <p>You register a small structure with the kernel through the <code>rseq</code> syscall &mdash; glibc 2.35 and later does this for every thread automatically and exposes it as <code>__rseq_abi</code>. Inside it, the kernel keeps a field that always holds the id of the CPU the thread is currently on, updated on every migration. That alone is useful: reading your CPU id becomes a thread-local load instead of a <code>sched_getcpu()</code> call.</p>
+
+  <p>The clever part is the second half. You also register a <em>critical section descriptor</em>: a start address, an end address, and an <em>abort</em> address. While the thread's instruction pointer is inside that range, the kernel promises that if the thread is preempted or migrated, it will not simply resume where it left off &mdash; it will jump to the abort handler instead. So you write the sequence as "read the CPU id, compute the slot, store", and if anything interrupts you anywhere in the middle, you land in the abort path and start over. What you get is an atomic-free, lock-free critical section with true per-CPU exclusivity, which is precisely the guarantee the naive design assumed it already had.</p>
+
+  <p>It is what makes genuinely per-CPU userspace data structures possible, and it is why allocators like tcmalloc use it for their per-CPU caches. It needs the critical section written so it can be restarted from the top with no side effects, and on most architectures wants a hand-written assembly sequence with the abort handler placed by the linker behind a specific signature.</p>
+
+  <p>I first wrote that this was "a lot of machinery, and a hard dependency on one operating system, to save one instruction". The measurement above says the saving is 4.14 ns, a quarter of a scope, so "one instruction" was a bad way to put it. And the operating-system objection is weaker than it sounds for most of this port &mdash; the service is Linux-only throughout, tracepoints and uprobes and <code>/proc</code> and all.</p>
+
+  <p>It is not weak <em>here</em>, though, and the reason is worth stating because it is easy to miss: this is the one part of Orbit that does not run in Orbit. The producer is compiled into the profiled application, which may well be a game shipping on Windows. So a portable path has to exist regardless, and the question is not "rseq or the atomic" but "rseq <em>and</em> the atomic, chosen at compile time". That is a perfectly reasonable thing to build &mdash; it is just two write paths to keep correct instead of one, and the second one has to be there either way.</p>
+
+  <p>So the rings are multi-producer instead, and the slot is claimed with a relaxed <code>fetch_add</code>. Uncontended that is about twenty cycles; contended it is the one thing on a cache line that two cores are fighting over, which is why the per-core sharding still matters even though it is no longer a correctness argument. It stopped being a correctness argument and became a contention argument, and it is still worth having.</p>
+
+  <p>There is a test for this, and it is the kind worth writing: eight threads pushing to <em>one</em> ring, then a check that every producer's events all survived with a slot of their own. Replace the <code>fetch_add</code> with a plain increment and it fails immediately.</p>
+
+  <h2 id="release">The one fence</h2>
+
+  <p>The design brief said "no atomics, no CAS, no fences on the write path". Two of those survive. The third needs a qualification that costs nothing on the machine most people are reading this on, and one instruction elsewhere.</p>
+
+  <p>The payload stores can be plain. The store that <em>publishes</em> the slot cannot: without release ordering, the compiler or the processor may make the sequence stamp visible before the bytes it vouches for, and a consumer reads a slot the producer has not finished writing. On x86-64 the hardware does not reorder stores with other stores, so a release store compiles to an ordinary <code>mov</code> and the claim is literally true. On aarch64 it is one <code>stlr</code>. This codebase targets both, so the honest version of the claim is: <em>no fences where the hardware gives them to you for free, and one instruction where it does not</em>.</p>
+
+  <h2 id="merge">Drain, then merge</h2>
+
+  <p>The consumer copies each ring's committed prefix out in one pass, then merges the snapshots. That split is the reason a slow consumer never stalls a producer: producers keep writing into the rings while the merge chews on a copy.</p>
+
+  <p>The merge itself is the textbook k-way merge &mdash; a min-heap over K cursors keyed by timestamp, pop the earliest, advance that cursor, push the new head, O(log K) per event. Nothing here is a linked list. It is a <code>BinaryHeap</code> over a flat <code>Vec</code>, a <code>VecDeque</code> per ring, and slices that are plain arrays; the "Rust hates linked lists" complaint is about pointer-chasing node allocation, and this design does none.</p>
+
+  <h3>The horizon, and why an idle core nearly broke it</h3>
+
+  <p>You cannot emit an event as soon as you see it. A ring you have not looked at yet might hold something older, and once you have emitted a later event you can never insert an earlier one in front of it. The rule is: hold every event until <em>every</em> ring has proven it cannot still produce something older. Call each ring's proof its <strong>frontier</strong>, and the horizon is the minimum across all of them.</p>
+
+  <p>Stated as "wait until every ring has produced something past it", that rule never terminates. Most cores are idle most of the time, and an idle core produces nothing, ever. The first version of this deadlocked on a machine with thirty-two cores and three busy threads.</p>
+
+  <p>The fix keeps the property without inventing an arbitrary window. A ring with nothing in flight <em>cannot</em> produce anything older than the moment you looked at it, because timestamps are read at write time. So its frontier is the drain timestamp, and the window for an idle ring is zero.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+    <svg viewBox="0 0 720 250" role="img" aria-label="Three rings with events at various timestamps, a horizon line at the slowest frontier, and events beyond it held back.">
+      <g font-size="11" fill="var(--ink-soft)">
+        <text x="8" y="46" font-weight="600" fill="var(--ink)">ring 0</text>
+        <text x="8" y="96" font-weight="600" fill="var(--ink)">ring 1</text>
+        <text x="8" y="146" font-weight="600" fill="var(--ink)">ring 2</text>
+      </g>
+      <line x1="70" y1="40" x2="700" y2="40" stroke="var(--line)"/>
+      <line x1="70" y1="90" x2="700" y2="90" stroke="var(--line)"/>
+      <line x1="70" y1="140" x2="700" y2="140" stroke="var(--line)"/>
+
+      <g font-size="10" font-family="var(--mono)">
+        <circle cx="120" cy="40" r="7" fill="var(--accent)"/><text x="120" y="26" text-anchor="middle" fill="var(--muted)">10</text>
+        <circle cx="250" cy="40" r="7" fill="var(--accent)"/><text x="250" y="26" text-anchor="middle" fill="var(--muted)">40</text>
+        <circle cx="470" cy="40" r="7" fill="var(--line-strong)"/><text x="470" y="26" text-anchor="middle" fill="var(--muted)">70</text>
+        <circle cx="600" cy="40" r="7" fill="var(--line-strong)"/><text x="600" y="26" text-anchor="middle" fill="var(--muted)">95</text>
+
+        <circle cx="175" cy="90" r="7" fill="var(--accent)"/><text x="175" y="76" text-anchor="middle" fill="var(--muted)">20</text>
+
+        <circle cx="215" cy="140" r="7" fill="var(--accent)"/><text x="215" y="126" text-anchor="middle" fill="var(--muted)">30</text>
+        <circle cx="240" cy="140" r="7" fill="var(--accent)"/><text x="240" y="126" text-anchor="middle" fill="var(--muted)">35</text>
+        <rect x="256" y="132" width="18" height="16" fill="var(--hold-wash)" stroke="var(--hold)"/>
+        <text x="300" y="145" font-size="10.5" fill="var(--hold)">producer mid-write</text>
+      </g>
+
+      <line x1="278" y1="12" x2="278" y2="196" stroke="var(--hold)" stroke-width="2" stroke-dasharray="5 4"/>
+      <text x="278" y="212" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--hold)">horizon</text>
+      <text x="278" y="228" text-anchor="middle" font-size="10.5" fill="var(--muted)">= min frontier, set by ring 2</text>
+
+      <text x="120" y="176" font-size="10.5" fill="var(--accent-deep)">emitted: 10, 20, 30, 35</text>
+      <text x="470" y="176" font-size="10.5" fill="var(--muted)">held: 40, 70, 95 &mdash; ring 2 could still publish something older</text>
+      <text x="640" y="96" font-size="10.5" fill="var(--muted)">idle: frontier = now</text>
+      <text x="640" y="46" font-size="10.5" fill="var(--muted)">idle: frontier = now</text>
+    </svg>
+    </div>
+    <figcaption>Rings 0 and 1 have nothing in flight, so their frontier is the moment of the drain and they hold nobody up. Ring 2 has a producer mid-write, and everything at or after its pending timestamp waits.</figcaption>
+  </figure>
+
+  <h2 id="bug">The bug that a question found</h2>
+
+  <p>Everything above was written, tested and committed. Then came the question: <em>if a thread migrates between entering a scope and leaving it, so the start lands in one ring and the stop in another, is the merge still valid?</em></p>
+
+  <p>The answer is yes, and it is worth saying why, because it is the part of the design that does the most work for the least cleverness. Starts and stops are matched by <code>(tid, scope_id)</code> &mdash; never by ring, never by adjacency, never by cross-core timestamp order. Depth comes from thread-local storage, which follows the thread across cores. The merge keys on timestamp alone and does not know or care which ring an event came from. Migration makes the sharding imperfect, which is a contention problem, not a correctness one.</p>
+
+  <p>But going to check that took me to the frontier calculation, which was wrong.</p>
+
+  <p>Multi-producer rings have a consequence I had written down and not followed through: <strong>claim order is not timestamp order</strong>. Two producers can read the clock in one order and claim slots in the other. Which means a ring can hold a <em>committed</em> event that is newer than a <em>pending</em> one sitting behind it:</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+    <svg viewBox="0 0 720 230" role="img" aria-label="Producer A reads the clock at 100 and stalls; producer B reads at 105 and commits into an earlier slot; the consumer wrongly emits 105.">
+      <text x="8" y="26" font-size="11.5" font-weight="600" fill="var(--ink)">producer A</text>
+      <line x1="100" y1="38" x2="700" y2="38" stroke="var(--line-strong)"/>
+      <circle cx="150" cy="38" r="5" fill="var(--accent)"/>
+      <text x="150" y="26" text-anchor="middle" font-size="10.5" fill="var(--accent-deep)">clock &rarr; 100</text>
+      <rect x="165" y="30" width="215" height="16" fill="var(--hold-wash)" stroke="var(--hold)"/>
+      <text x="272" y="42" text-anchor="middle" font-size="10" fill="var(--hold)">descheduled</text>
+      <circle cx="400" cy="38" r="5" fill="var(--warn)"/>
+      <text x="452" y="30" font-size="10.5" fill="var(--warn)">claims slot 1,</text>
+      <text x="452" y="44" font-size="10.5" fill="var(--warn)">stalls again</text>
+
+      <text x="8" y="86" font-size="11.5" font-weight="600" fill="var(--ink)">producer B</text>
+      <line x1="100" y1="98" x2="700" y2="98" stroke="var(--line-strong)"/>
+      <circle cx="230" cy="98" r="5" fill="var(--accent)"/>
+      <text x="230" y="86" text-anchor="middle" font-size="10.5" fill="var(--accent-deep)">clock &rarr; 105</text>
+      <circle cx="300" cy="98" r="5" fill="var(--accent)"/>
+      <text x="330" y="116" font-size="10.5" fill="var(--ink-soft)">claims slot 0, commits</text>
+
+      <rect x="100" y="140" width="270" height="34" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+      <text x="235" y="161" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--ink)">slot 0: committed, ts = 105</text>
+      <rect x="370" y="140" width="270" height="34" fill="var(--hold-wash)" stroke="var(--hold)"/>
+      <text x="505" y="161" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--hold)">slot 1: pending, ts = 100</text>
+
+      <text x="360" y="200" text-anchor="middle" font-size="11" fill="var(--warn)">"last committed timestamp" says the frontier is 105 &mdash; so 105 is emitted,</text>
+      <text x="360" y="216" text-anchor="middle" font-size="11" fill="var(--warn)">and 100 arrives afterwards. Out of order, which is the one forbidden outcome.</text>
+    </svg>
+    </div>
+    <figcaption>Physically realisable, and not rare in principle: it needs only a producer descheduled between reading the clock and claiming a slot.</figcaption>
+  </figure>
+
+  <p>The fix is the second atomic in the slot. A producer announces its timestamp immediately after claiming and before writing the payload, so a consumer that finds a slot in flight has an <em>exact</em> lower bound on what is still coming, and holds the stream just short of it instead of guessing from whatever happens to be committed behind it. That is the <code>pending_ns</code> field in the layout above, and the reason there are two atomics per slot rather than one.</p>
+
+  <p>The cost was one release store: 9.7 ns an event became 10.2. The test builds that interleaving deterministically, and I checked it in both directions &mdash; with the old rule it fails and prints the event it wrongly emitted; with the new one it passes. A test that has only ever been seen to pass is not evidence.</p>
+
+  <p>One residual case is not fixed, and I would rather say so than round it off. If a producer is descheduled inside the two instructions <em>between</em> the claim and the announcement, there is no sound lower bound available, so the stream holds where it is rather than guessing. That is a stall, not a reordering, and it clears on the next pass &mdash; but it is a stall, and pretending the window is zero would be a lie.</p>
+
+  <h2 id="clock">Why not the TSC</h2>
+
+  <p>A timestamp counter read is faster than <code>clock_gettime</code>, and at ten nanoseconds an event the clock is a meaningful share of the cost. It is still the wrong choice here, and not for the usual reasons about invariant TSC or cross-socket skew.</p>
+
+  <p>Manual scopes have to appear on the same timeline as scheduling slices, thread states and sampled callstacks, all of which arrive from <code>perf</code> stamped with <code>CLOCK_MONOTONIC</code>. Two clocks means two timelines that cannot be interleaved, and a scope that cannot be lined up against the context switch that interrupted it has lost most of its value. The vDSO makes <code>clock_gettime</code> a function call rather than a syscall, which is what makes this affordable at all.</p>
+
+  <p>This is also the shape of a bug found earlier in this port, in a different module: a timestamp taken from a clock that counted from its own first call rather than absolute <code>CLOCK_MONOTONIC</code>. Everything downstream looked several decades out. Clocks are worth being pedantic about.</p>
+
+  <h2 id="untrusted">The reader assumes the writer is hostile</h2>
+
+  <p>The segment is written by another process that may be buggy, mid-crash, or simply a different build. So the reader maps it <strong>read-only</strong> &mdash; a consumer must not be able to corrupt the process it is observing &mdash; and validates every field of the header against the mapped length before reading a single event: magic, version, record size, ring count in range, slot count a power of two, and the described layout actually fitting in the file.</p>
+
+  <p>The magic is stored <em>last</em>, with release ordering, so a reader that opens the segment while the writer is still initialising it sees "not initialised" and retries rather than mapping garbage at plausible-looking dimensions. Overflow is handled the same way: if a producer laps the consumer, the drain detects it from the sequence stamps, skips to the oldest slot still resident, and reports how many events were lost. Losing events under sustained overload is correct behaviour for a design whose first rule is that producers never wait. Lying about it would not be.</p>
+
+  <h2 id="left">What is not built yet</h2>
+
+  <ul>
+    <li><strong>The C API.</strong> None of this is reachable from an instrumented program yet. That is the <code>ORBIT_SCOPE</code> macro, the interned name table, and the thread-local depth counter and scope-id counter.</li>
+    <li><strong>A second process.</strong> The shared-memory path is exercised by a writer and a reader in one process. Two processes is the next test, and the one that would catch a layout that only agrees with itself.</li>
+    <li><strong>Service integration.</strong> Merged events need to become <code>API_SCOPE</code> events on the timeline, which is a small piece of work once the stream exists.</li>
+    <li><strong>Nesting reconstruction.</strong> The design is settled &mdash; a map from <code>(tid, scope_id)</code> to the open start &mdash; but it is not written.</li>
+  </ul>
+
+  <p>The numbers in this post are in <code>docs/blog/metrics/scope-rings.txt</code>, and the twenty-five tests are in <code>rust/crates/orbit-scope-ring</code>.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 15 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="14-the-hook-that-would-not-arm.html">&larr; Post 14</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

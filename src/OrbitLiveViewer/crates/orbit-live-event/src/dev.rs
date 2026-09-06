@@ -1,26 +1,20 @@
-//! Dogfood identity for self-profiling the live viewer / service.
+//! The viewer's self-profile identity: the pid its own frame scopes carry
+//! on the Self pane's timeline, the thread ids of its UI, render, net and
+//! worker threads, and the names of every phase it times.
 //!
-//! Reserved pids (demo already uses `pid = 1`):
-//! - [`VIEWER_PID`] `orbit-live-viewer` — WASM/egui `ui` / `render` / `net`
-//! - [`SERVICE_PID`] `orbit-live-service` — native HTTP / ring
-//!
-//! Product choice **A**: self scopes share the active capture ring. Batches are
-//! sequential on the capture clock (`self_cursor_ns`): each occupies
-//! `[cursor, cursor+span)` and the cursor only moves forward. A live demo or
-//! capture may *align* the cursor to demo/capture `live_edge` (not ring
-//! `newest_end` that includes pid 2/3) so they stay on one axis, but two
-//! frames never share an `end`. If the cursor runs more than two demo ticks
-//! ahead of that edge it snaps back. Events are ordinary [`LiveEvent`]s
-//! (32 bytes).
-//! Record starts demo + self-profile; `?dev=0` / `/api/self/stop` keep
-//! self-profile off.
+//! [`VIEWER_PID`] is reserved (`orbit-live-viewer`); `demo` already uses
+//! `pid = 1`. The Self pane keeps these scopes on a timeline of its own;
+//! they never enter a capture's ring.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{color_mode, kind, InternTable, LiveEvent};
+use crate::InternTable;
 
-pub const VIEWER_PID: u32 = 2;
-pub const SERVICE_PID: u32 = 3;
+/// The viewer's own self-profile pid. High, like the agent's pid, so it
+/// can never be a real process: it was 2, and on a machine capturing every
+/// process that is kthreadd, which the timeline then labelled
+/// orbit-live-viewer.
+pub const VIEWER_PID: u32 = 0x5E1F_0002;
 
 /// Spoofed remote-demo pids. LiveEvent has no machine field — the rail maps
 /// pid ranges. Do not reuse 2/3.
@@ -57,12 +51,10 @@ impl MachineId {
 }
 
 pub const VIEWER_NAME: &str = "orbit-live-viewer";
-pub const SERVICE_NAME: &str = "orbit-live-service";
 
 pub const TID_UI: u32 = 1;
 pub const TID_RENDER: u32 = 2;
 pub const TID_NET: u32 = 3;
-pub const TID_SERVER: u32 = 4;
 pub const TID_STATS: u32 = 5;
 /// First native render-worker tid (`render-w0` … `render-w31`).
 pub const TID_RENDER_W0: u32 = 10;
@@ -74,9 +66,6 @@ pub const NAME_TRACKS: u32 = 30_002;
 pub const NAME_LOD: u32 = 30_003;
 pub const NAME_PAYLOAD: u32 = 30_004;
 pub const NAME_CHROME: u32 = 30_005;
-pub const NAME_PUSH: u32 = 30_007;
-pub const NAME_RASTER: u32 = 30_008;
-pub const NAME_TIMELINE_API: u32 = 30_009;
 pub const NAME_DRAIN_NET: u32 = 30_010;
 pub const NAME_TICK_FOLLOW: u32 = 30_011;
 pub const NAME_PAINT_HEADERS: u32 = 30_012;
@@ -125,6 +114,37 @@ pub const NAME_WORKER_SPANS: u32 = 30_042;
 pub const NAME_SPANS_DROPPED: u32 = 30_043;
 /// Collect + place the capture-global Scheduler core lanes.
 pub const NAME_SCHEDULER: u32 = 30_044;
+/// Inside `PrimitiveListing`, the three things the worker lanes do not show:
+/// the parallel section as the main thread sees it (dispatch to join --
+/// worker wake-up latency lives in the gap between this and the first
+/// `CollectLane`), the flatten of every lane's pieces into one buffer, and
+/// the sort of all instances.
+pub const NAME_LISTING_DISPATCH: u32 = 30_045;
+pub const NAME_LISTING_FLATTEN: u32 = 30_046;
+pub const NAME_LISTING_SORT: u32 = 30_047;
+/// Pool latency as two values: from dispatch to the first worker starting,
+/// and from the last worker finishing to the join returning.
+pub const NAME_POOL_WAKE_US: u32 = 30_048;
+pub const NAME_POOL_TAIL_US: u32 = 30_049;
+/// 1 while the listing walks lanes inline, 0 while it uses the pool.
+pub const NAME_LISTING_INLINE: u32 = 30_050;
+/// The browser's frame period (egui's dt), and what of it fell outside the
+/// `Frame` scope: eframe's own tessellation, the WebGPU submit, the browser
+/// compositor -- everything the viewer's scopes cannot see.
+pub const NAME_FRAME_PERIOD_US: u32 = 30_051;
+pub const NAME_OUTSIDE_FRAME_US: u32 = 30_052;
+/// CPU time inside the egui-wgpu callbacks, the previous frame's: `prepare`
+/// (buffer and texture writes) and `paint` (the draw calls). They run after
+/// `App::update` returns, so they are read one frame late.
+pub const NAME_GPU_PREPARE_US: u32 = 30_053;
+pub const NAME_GPU_PAINT_US: u32 = 30_054;
+/// The Self pane's own timeline draw, so its listing and upload nest under
+/// one scope instead of doubling the capture timeline's counts.
+pub const NAME_SELF_TIMELINE: u32 = 30_055;
+/// The sampling report side panel (egui layout of its rows) and the Self
+/// pane as a whole, the two UI costs that were hiding inside `Frame`.
+pub const NAME_REPORT_PANEL: u32 = 30_056;
+pub const NAME_SELF_PANE: u32 = 30_057;
 
 /// Relative scope from a client frame. Server remaps onto the capture clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,21 +157,14 @@ pub struct RelScope {
     pub depth: u8,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RelScopeBatch {
-    #[serde(default)]
-    pub scopes: Vec<RelScope>,
-}
-
 pub fn is_self_pid(pid: u32) -> bool {
-    pid == VIEWER_PID || pid == SERVICE_PID
+    pid == VIEWER_PID
 }
 
 pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(TID_UI, "ui");
     intern.insert_id(TID_RENDER, "render");
     intern.insert_id(TID_NET, "net");
-    intern.insert_id(TID_SERVER, "server");
     intern.insert_id(TID_STATS, "stats");
     intern.insert_id(NAME_FRAME, "Frame");
     intern.insert_id(NAME_NET, "Net");
@@ -159,9 +172,6 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_LOD, "ChooseLod");
     intern.insert_id(NAME_PAYLOAD, "TimelinePayload");
     intern.insert_id(NAME_CHROME, "Chrome");
-    intern.insert_id(NAME_PUSH, "PushEvents");
-    intern.insert_id(NAME_RASTER, "Rasterize");
-    intern.insert_id(NAME_TIMELINE_API, "TimelineApi");
     intern.insert_id(NAME_DRAIN_NET, "DrainNet");
     intern.insert_id(NAME_TICK_FOLLOW, "TickFollow");
     intern.insert_id(NAME_PAINT_HEADERS, "PaintHeaders");
@@ -197,6 +207,19 @@ pub fn intern_self_names(intern: &mut InternTable) {
     intern.insert_id(NAME_WORKER_SPANS, "worker_spans");
     intern.insert_id(NAME_SPANS_DROPPED, "spans_dropped");
     intern.insert_id(NAME_SCHEDULER, "Scheduler");
+    intern.insert_id(NAME_LISTING_DISPATCH, "PoolDispatch");
+    intern.insert_id(NAME_LISTING_FLATTEN, "ListingFlatten");
+    intern.insert_id(NAME_LISTING_SORT, "ListingSort");
+    intern.insert_id(NAME_POOL_WAKE_US, "pool_wake_us");
+    intern.insert_id(NAME_POOL_TAIL_US, "pool_tail_us");
+    intern.insert_id(NAME_LISTING_INLINE, "listing_inline");
+    intern.insert_id(NAME_FRAME_PERIOD_US, "frame_period_us");
+    intern.insert_id(NAME_OUTSIDE_FRAME_US, "outside_frame_us");
+    intern.insert_id(NAME_GPU_PREPARE_US, "gpu_prepare_us");
+    intern.insert_id(NAME_GPU_PAINT_US, "gpu_paint_us");
+    intern.insert_id(NAME_SELF_TIMELINE, "SelfTimeline");
+    intern.insert_id(NAME_REPORT_PANEL, "ReportPanel");
+    intern.insert_id(NAME_SELF_PANE, "SelfPane");
     intern_render_worker_names(intern);
 }
 
@@ -304,122 +327,10 @@ pub fn primitive_listing_name() -> &'static str {
     "PrimitiveListing"
 }
 
-/// Inclusive span of a relative batch (`max(start_rel + duration)`).
-pub fn batch_span(scopes: &[RelScope]) -> u64 {
-    scopes
-        .iter()
-        .filter(|s| s.duration_ns > 0)
-        .map(|s| s.start_rel_ns.saturating_add(s.duration_ns))
-        .max()
-        .unwrap_or(0)
-}
-
-/// Place relative scopes so they start at `origin_ns` on the capture axis.
-pub fn stamp_batch_from(scopes: &[RelScope], origin_ns: u64) -> Vec<LiveEvent> {
-    scopes
-        .iter()
-        .filter(|s| s.duration_ns > 0)
-        .map(|s| LiveEvent {
-            start_ns: origin_ns.saturating_add(s.start_rel_ns),
-            duration_ns: s.duration_ns,
-            tid: s.tid,
-            pid: s.pid,
-            kind: kind::API_SCOPE,
-            depth: s.depth,
-            extra: 0,
-            _pad: color_mode::AUTO_NAME,
-            name_id: s.name_id,
-        })
-        .collect()
-}
-
-/// Place a relative scope on the capture axis so it ends at `end_ns`.
-pub fn stamp_batch(scopes: &[RelScope], end_ns: u64) -> Vec<LiveEvent> {
-    let span = batch_span(scopes);
-    stamp_batch_from(scopes, end_ns.saturating_sub(span))
-}
-
 /// Demo producer origin (`demo.rs` `t`). First Tick and first Frame share this.
 pub const DEMO_ORIGIN_NS: u64 = 1_000_000;
 /// Demo sim step. Wall and capture both advance 20 ms per tick.
 pub const DEMO_TICK_NS: u64 = 20_000_000;
-/// If self runs more than two demo ticks ahead of producer `t`, snap back.
-pub const SELF_AHEAD_SNAP_NS: u64 = 2 * DEMO_TICK_NS;
-
-/// Align `cursor` onto demo/capture `live_edge` (never newest_end of pid 2/3).
-/// No producer clock (`live_edge == 0`) → stay at 0 so we do not walk an
-/// independent axis. Catch up when behind; snap back when ahead by >2 ticks.
-/// Within one tick, keep `cursor` so sequential frames do not overlap.
-pub fn align_self_cursor(cursor: u64, live_edge: u64) -> u64 {
-    if live_edge == 0 {
-        return 0;
-    }
-    if cursor < live_edge {
-        live_edge
-    } else if cursor > live_edge.saturating_add(SELF_AHEAD_SNAP_NS) {
-        live_edge
-    } else {
-        cursor
-    }
-}
-
-/// Sequential self-profile placement on the producer clock only.
-/// Empty when `live_edge == 0` (no demo/capture axis yet).
-/// Where the next self-profile batch goes, plus the producer edge it was
-/// placed against. The edge is remembered so a cursor sitting far ahead can be
-/// told apart from a cursor that simply marched there while the axis stood
-/// still -- the two need opposite handling.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SelfCursor {
-    /// Start of the next batch on the capture axis.
-    pub next_ns: u64,
-    /// `live_edge` at the last placement. Zero before the first one.
-    pub edge_ns: u64,
-}
-
-impl SelfCursor {
-    /// Re-pin both halves to a fresh capture origin.
-    pub fn reset_to(&mut self, origin_ns: u64) {
-        self.next_ns = origin_ns;
-        self.edge_ns = 0;
-    }
-}
-
-pub fn place_self_batch(
-    cursor: &mut SelfCursor,
-    scopes: &[RelScope],
-    live_edge: u64,
-) -> Vec<LiveEvent> {
-    let span = batch_span(scopes);
-    if span == 0 || live_edge == 0 {
-        return Vec::new();
-    }
-    let frozen = live_edge == cursor.edge_ns;
-    cursor.edge_ns = live_edge;
-    if frozen {
-        // Producer clock stopped: capture stopped, demo paused. Keep laying
-        // batches end to end from wherever the cursor is.
-        //
-        // `align_self_cursor` would snap back to `live_edge` once the cursor
-        // ran a window ahead of it, restamping this batch on top of scopes
-        // already in the index -- the pile of overlapping self scopes just past
-        // the capture end, rewritten every frame. Marching forward instead
-        // keeps them non-overlapping.
-        //
-        // Dropping the batch also stops the overlap, but it stops
-        // self-profiling altogether while the viewer sits idle, which is
-        // exactly when profiling it is interesting.
-        cursor.next_ns = cursor.next_ns.max(live_edge);
-    } else {
-        // The axis moved: re-pin to it, including the snap back that rescues a
-        // cursor left far ahead by an axis that jumped backwards.
-        cursor.next_ns = align_self_cursor(cursor.next_ns, live_edge);
-    }
-    let events = stamp_batch_from(scopes, cursor.next_ns);
-    cursor.next_ns = cursor.next_ns.saturating_add(span);
-    events
-}
-
 /// Default **on**. `?dev=0` / `false` / `off` force off. `?dev=1` / `?self=1`
 /// / bare `?dev` stay on. Other query keys do not disable.
 pub fn query_enables_dev(search: &str) -> bool {
@@ -459,152 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn stamp_batch_pins_to_live_edge() {
-        let scopes = [RelScope {
-            pid: VIEWER_PID,
-            tid: TID_UI,
-            name_id: NAME_FRAME,
-            start_rel_ns: 0,
-            duration_ns: 1_000,
-            depth: 0,
-        }];
-        let ev = stamp_batch(&scopes, 10_000);
-        assert_eq!(ev.len(), 1);
-        assert_eq!(ev[0].pid, VIEWER_PID);
-        assert_eq!(ev[0].start_ns, 9_000);
-        assert_eq!(ev[0].duration_ns, 1_000);
-        assert_eq!(ev[0].kind, kind::API_SCOPE);
-    }
-
-    #[test]
-    fn successive_place_self_batch_does_not_overlap_on_frozen_edge() {
-        let a = RelScope {
-            pid: VIEWER_PID,
-            tid: TID_UI,
-            name_id: NAME_FRAME,
-            start_rel_ns: 0,
-            duration_ns: 1_000,
-            depth: 0,
-        };
-        let b = RelScope {
-            pid: VIEWER_PID,
-            tid: TID_UI,
-            name_id: NAME_FRAME,
-            start_rel_ns: 0,
-            duration_ns: 800,
-            depth: 0,
-        };
-        let mut cursor = SelfCursor::default();
-        let first = place_self_batch(&mut cursor, &[a.clone()], 50_000);
-        let second = place_self_batch(&mut cursor, &[b.clone()], 50_000);
-        assert_eq!(first[0].start_ns, 50_000);
-        assert_eq!(first[0].end_ns(), 51_000);
-        assert_eq!(second[0].start_ns, 51_000);
-        assert_eq!(second[0].end_ns(), 51_800);
-        assert!(first[0].end_ns() <= second[0].start_ns);
-        assert_eq!(cursor.next_ns, 51_800);
-        let third = place_self_batch(&mut cursor, &[a], 40_000);
-        assert_eq!(
-            third[0].start_ns, 51_800,
-            "live_edge must not rewind the cursor"
-        );
-    }
-
-    #[test]
-    fn align_self_cursor_snaps_back_when_50ms_ahead() {
-        assert_eq!(align_self_cursor(10_000, 50_000), 50_000);
-        assert_eq!(
-            align_self_cursor(10_000_000 + SELF_AHEAD_SNAP_NS, 10_000_000),
-            10_000_000 + SELF_AHEAD_SNAP_NS
-        );
-        assert_eq!(
-            align_self_cursor(10_000_000 + SELF_AHEAD_SNAP_NS + 1, 10_000_000),
-            10_000_000
-        );
-        assert_eq!(align_self_cursor(80_000_000, 0), 0);
-        assert!(place_self_batch(
-            &mut SelfCursor { next_ns: 80_000_000, edge_ns: 0 },
-            &[RelScope {
-                pid: VIEWER_PID,
-                tid: TID_UI,
-                name_id: NAME_FRAME,
-                start_rel_ns: 0,
-                duration_ns: 1_000,
-                depth: 0,
-            }],
-            0
-        )
-        .is_empty());
-        let mut cursor = SelfCursor { next_ns: 80_000_000, edge_ns: 0 };
-        let ev = place_self_batch(
-            &mut cursor,
-            &[RelScope {
-                pid: VIEWER_PID,
-                tid: TID_UI,
-                name_id: NAME_FRAME,
-                start_rel_ns: 0,
-                duration_ns: 1_000,
-                depth: 0,
-            }],
-            10_000_000,
-        );
-        assert_eq!(ev[0].start_ns, 10_000_000);
-        assert_eq!(cursor.next_ns, 10_001_000);
-    }
-
-    fn frame_scope(dur: u64) -> RelScope {
-        RelScope {
-            pid: VIEWER_PID,
-            tid: TID_UI,
-            name_id: NAME_FRAME,
-            start_rel_ns: 0,
-            duration_ns: dur,
-            depth: 0,
-        }
-    }
-
-    #[test]
-    fn self_batches_stay_on_demo_clock_after_n_ticks() {
-        let n = 8u64;
-        let demo_t0 = DEMO_ORIGIN_NS;
-        let mut demo_t = demo_t0;
-        for _ in 0..n {
-            demo_t += DEMO_TICK_NS;
-        }
-        let mut cursor = SelfCursor { next_ns: DEMO_ORIGIN_NS, edge_ns: 0 };
-        let first = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
-        let second = place_self_batch(&mut cursor, &[frame_scope(5_000_000)], demo_t);
-        let hi = demo_t.saturating_add(2 * DEMO_TICK_NS);
-        for ev in first.iter().chain(second.iter()) {
-            assert!(
-                ev.start_ns >= demo_t0 && ev.start_ns <= hi,
-                "self {} outside [{demo_t0}, {hi}] (demo_t={demo_t})",
-                ev.start_ns
-            );
-        }
-        assert!(!first.is_empty());
-        assert!(!second.is_empty());
-        assert!(first[0].end_ns() <= second[0].start_ns);
-    }
-
-    #[test]
-    fn demo_restart_resets_self_origin() {
-        let mut cursor = SelfCursor { next_ns: 80_000_000, edge_ns: 0 };
-        let _ = place_self_batch(&mut cursor, &[frame_scope(1_000)], 80_000_000);
-        cursor.reset_to(DEMO_ORIGIN_NS);
-        let ev = place_self_batch(&mut cursor, &[frame_scope(1_000)], DEMO_ORIGIN_NS);
-        assert_eq!(ev[0].start_ns, DEMO_ORIGIN_NS);
-    }
-
-    #[test]
     fn reserved_pids_are_not_demo() {
         assert_ne!(VIEWER_PID, 1);
-        assert_ne!(SERVICE_PID, 1);
         assert_ne!(VIEWER_PID, 10);
-        assert_ne!(SERVICE_PID, 11);
-        assert_ne!(VIEWER_PID, SERVICE_PID);
         assert!(is_self_pid(VIEWER_PID));
-        assert!(is_self_pid(SERVICE_PID));
         assert!(!is_self_pid(1));
         assert!(!is_self_pid(REMOTE_DEMO_PID));
         assert_eq!(MachineId::from_pid(1), MachineId::Local);
@@ -612,7 +381,6 @@ mod tests {
         assert_eq!(MachineId::from_pid(REMOTE_DEMO_PID), MachineId::Remote);
         assert_eq!(MachineId::from_pid(REMOTE_RENDER_PID), MachineId::Remote);
         assert_ne!(REMOTE_DEMO_PID, VIEWER_PID);
-        assert_ne!(REMOTE_RENDER_PID, SERVICE_PID);
     }
 
     #[test]
@@ -657,55 +425,5 @@ mod tests {
         set_now_hook(|| 1);
         let after = now_ns();
         assert!(after >= before, "native now_ns must keep using Instant");
-    }
-}
-
-#[cfg(test)]
-mod frozen_edge_tests {
-    use super::*;
-
-    fn frame(dur: u64) -> RelScope {
-        RelScope {
-            pid: VIEWER_PID,
-            tid: TID_UI,
-            name_id: NAME_FRAME,
-            start_rel_ns: 0,
-            duration_ns: dur,
-            depth: 0,
-        }
-    }
-
-    /// Capture stopped: `live_edge` stops advancing but the viewer keeps
-    /// rendering, so batches keep arriving. They must not pile back on top of
-    /// each other once the ahead-of-edge window is full.
-    #[test]
-    fn frozen_live_edge_does_not_restamp_over_placed_scopes() {
-        let live_edge = 10_000_000u64;
-        let mut cursor = SelfCursor { next_ns: live_edge, edge_ns: 0 };
-        let batch = [frame(2_000_000)]; // 2 ms of self scopes per frame
-        let mut starts = Vec::new();
-        for _ in 0..40 {
-            for ev in place_self_batch(&mut cursor, &batch, live_edge) {
-                starts.push(ev.start_ns);
-            }
-        }
-        assert_eq!(
-            starts.len(),
-            40,
-            "a frozen producer clock must not stop self-profiling"
-        );
-        let mut sorted = starts.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(
-            sorted.len(),
-            starts.len(),
-            "self scopes were stamped at a start_ns that was already used: \
-             the cursor wrapped back to live_edge and overwrote earlier batches"
-        );
-        assert!(
-            starts.windows(2).all(|w| w[1] > w[0]),
-            "start_ns must be monotonic while the producer clock is frozen"
-        );
     }
 }

@@ -1,0 +1,33 @@
+Phase 14: what sending to a viewer costs the service
+====================================================
+
+Every WebSocket frame the live server sends is now a scope on the service's
+own timeline, named for what the frame carries, with the frame's size on a
+value lane. Measured 2026-09-05 on the dev box (32 cores), headless Chrome
+as the one viewer, target orbit-e2e-box3d --threads 3, 5 s capture, sampling
+at 1 kHz with DWARF unwinding and context switches, packed wire.
+
+Live tab, service rows, whole capture (screenshot v-send-scopes.png):
+
+  scope                 count   total       avg         min         max
+  capture pass            720   3.831 s     5.321 ms    5.184 ms    11.217 ms
+  read samples            721   100.288 ms  139.095 us  76.223 us   350.391 us
+  drain scope rings       720   38.720 ms   53.778 us   21.775 us   139.179 us
+  read context switches   721   15.599 ms   21.635 us   3.076 us    167.382 us
+  unwind                11509   13.193 ms   1.146 us    151 ns      56.376 us
+  push to viewer          721   11.923 ms   16.536 us   7.165 us    61.116 us
+  encode events           721   9.648 ms    13.380 us   2.297 us    38.812 us
+  ws send events          721   7.677 ms    10.648 us   1.413 us    53.840 us
+  symbolize             11509   6.991 ms    607 ns      58 ns       44.760 us
+  ws send string          165   1.740 ms    10.544 us   572 ns      54.727 us
+  ws send name             36   37.328 us   1.036 us    592 ns      10.612 us
+
+Reading: one event batch per 5 ms capture pass; encoding it (packed) costs
+13 us and handing it to the socket 11 us, so a viewer costs the service
+about 25 us per pass, 0.5% of the pass, at 398 KB/s on the wire. The capture
+pass itself is the 5 ms sleep between polls; the work inside it is the
+170 us of read samples + drain + context switches. Interned strings go out
+once each (165 over the capture) at the same 10 us as an event batch.
+
+Not measured: more than one viewer, the deflate wire, a slow network where
+the sink's send would block (the scope would show it).

@@ -8,19 +8,24 @@ use eframe::egui::{
 };
 use orbit_live_chrome::{ArgKey, FlowEdge};
 use orbit_live_event::dev::{
-    intern_self_names, is_self_pid, place_self_batch, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
+    NAME_FRAME_PERIOD_US, NAME_GPU_PAINT_US, NAME_GPU_PREPARE_US, NAME_OUTSIDE_FRAME_US, NAME_REPORT_PANEL,
+    NAME_SELF_PANE, NAME_SELF_TIMELINE,
+};
+use orbit_live_event::dev::{
+    intern_self_names, is_self_pid, DEMO_ORIGIN_NS, NAME_APPLY_HL, NAME_CHROME,
     NAME_CLIP_LABELS, NAME_COLLECT_DRAG, NAME_DRAIN_NET, NAME_FPS, NAME_FRAME, NAME_HANDLE_INPUT,
     NAME_LANES_KEPT, NAME_LOD, NAME_NET, NAME_N_PRIMS, NAME_PAINT_CALLBACK, NAME_PAINT_HEADERS,
     NAME_PAYLOAD, NAME_POOL_THREADS, NAME_PRIMITIVE_LISTING, NAME_RASTERIZE, NAME_SCALE_PPP,
     NAME_SCHEDULER, NAME_SHIFT_INST, NAME_SPANS_DROPPED, NAME_SPLIT_DRAG, NAME_TICK_FOLLOW,
     NAME_TRACKS, NAME_UPLOAD, NAME_UPLOAD_INST_BYTES, NAME_UPLOAD_INST_US, NAME_WASM_MEM,
-    NAME_WORKER_SPANS, SERVICE_NAME, SERVICE_PID, TID_NET, TID_RENDER, TID_STATS, TID_UI,
-    VIEWER_NAME, VIEWER_PID,
+    NAME_WORKER_SPANS, NAME_LISTING_DISPATCH, NAME_LISTING_FLATTEN, NAME_LISTING_SORT, NAME_POOL_WAKE_US,
+    NAME_POOL_TAIL_US, NAME_LISTING_INLINE, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_PID,
 };
 use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
 use orbit_live_protocol::{decode_frame, LiveFrame};
-use orbit_live_render::{
-    apply_highlight_flags, choose_lod_hint, collect_instances_layout_opts, instance_for_event,
+use orbit_live_render::{ThreadFocus, 
+    apply_highlight_flags, choose_lod_hint, collect_instances_cached, collect_instances_layout_opts,
+    instance_for_event,
     lane_height, leaf_label, pick_column_event, pick_instance_at, value_lanes_in_view, CollectOpts,
     ScopeInstance, ScopePick, TrackIndex, YCull, FLAG_HOVER, FLAG_SELECTED, INSTANCE_MIN_PX,
     Y_CULL_PAD,
@@ -54,6 +59,8 @@ const TIME_SLIDER_H: f32 = 13.0;
 const TIME_SLIDER_MIN_THUMB: f32 = 8.0;
 /// `CaptureWindow` overlay: Color(0,0,0,128).
 const MEASURE_DIM: Color32 = Color32::from_black_alpha(128);
+/// Translucent fill marking a committed multi-select band (accent, low alpha).
+const MEASURE_FILL: Color32 = Color32::from_rgba_premultiplied(0x2C, 0x3B, 0x47, 0x50);
 const RADIUS: f32 = theme::RADIUS;
 /// `TimeGraph::ZoomTime` `kIncrementalZoomTimeRatio`.
 const ZOOM_TIME_RATIO: f64 = 0.1;
@@ -74,6 +81,29 @@ const VSCROLL_ARROW: f32 = 0.05;
 const VSCROLL_PAGE: f32 = 0.9;
 /// Capture process list: `/api/processes` about once a second, not every frame.
 const PROCESS_POLL_S: f64 = 1.0;
+/// Minimum spacing of sampling-report requests while a selection drag is live.
+const REPORT_DRAG_THROTTLE_S: f64 = 0.2;
+/// How long without a status answer before the link dot turns red. Status is
+/// polled four times a second, so this is many misses, not one.
+const LINK_STALE_S: f64 = 2.0;
+const LINK_GREEN: Color32 = Color32::from_rgb(0x4C, 0xC0, 0x6A);
+const LINK_AMBER: Color32 = Color32::from_rgb(0xD9, 0xA4, 0x3B);
+const LINK_RED: Color32 = Color32::from_rgb(0xE0, 0x4A, 0x3F);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinkState {
+    Connecting,
+    Connected,
+    Lost,
+}
+/// How often the primitive listing re-measures the mode it is not using.
+const LISTING_PROBE_FRAMES: u32 = 90;
+/// The self-profile pane keeps this much of the viewer's own past.
+const SELF_TIMELINE_RETAIN_NS: u64 = 60_000_000_000;
+/// The self-profile pane's surfaces: a teal-dark canvas and rail, distinct
+/// from the capture's near-black, so the two timelines never read as one.
+const SELF_PANE_CANVAS: Color32 = Color32::from_rgb(0x10, 0x1A, 0x20);
+const SELF_PANE_RAIL: Color32 = Color32::from_rgb(0x14, 0x1E, 0x25);
 
 /// Native Orbit `ProcessListWidget` filter: case-insensitive substring on
 /// pid / name / path (`QSortFilterProxyModel::setFilterFixedString`).
@@ -98,7 +128,7 @@ fn should_poll_processes(list_empty: bool, capture_open: bool, now: f64, last: f
     (list_empty || capture_open) && now - last >= PROCESS_POLL_S
 }
 
-fn c32(argb: u32) -> Color32 {
+pub(crate) fn c32(argb: u32) -> Color32 {
     Color32::from_rgba_unmultiplied(
         ((argb >> 16) & 0xFF) as u8,
         ((argb >> 8) & 0xFF) as u8,
@@ -277,6 +307,7 @@ fn view_time_at(t0: f64, t1: f64, frac: f64) -> f64 {
 /// stays put. `t0` is allowed to go negative: clamping it to 0 (or recentering
 /// like native `SetMinMax`) expands only one side and walks the lock. Span
 /// clamps keep that same pivot.
+#[cfg(test)]
 fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64) {
     if zoom_delta == 0 {
         return (t0, t1);
@@ -293,6 +324,7 @@ fn zoom_time(t0: f64, t1: f64, zoom_delta: i32, center_ratio: f64) -> (f64, f64)
 ///
 /// Same rebuild as `zoom_time`: `t_mouse` stays at `frac` so the pointer
 /// time does not walk. `t0` may go negative.
+#[cfg(test)]
 fn zoom_time_by_scale(t0: f64, t1: f64, scale: f64, center_ratio: f64) -> (f64, f64) {
     zoom_time_by_scale_limited(t0, t1, scale, center_ratio, ZOOM_MAX_NS)
 }
@@ -327,12 +359,16 @@ fn zoom_time_by_scale_limited(
 fn fit_content_window(min_ns: f64, max_ns: f64) -> (f64, f64) {
     let lo = min_ns.min(max_ns);
     let hi = min_ns.max(max_ns);
-    if hi > lo {
-        (lo, hi)
-    } else {
-        (lo, lo + 1.0)
-    }
+    // Never narrower than a microsecond. Content of one instant (the first
+    // event of a capture still arriving, a single sample) used to fit to a
+    // 1 ns window, and at 10^14 ns a tick step under a nanosecond is below
+    // an f64 ulp: the ruler's `t += step` never advanced and the viewer
+    // spun forever on the next paint.
+    (lo, hi.max(lo + MIN_FIT_SPAN_NS))
 }
+
+/// The narrowest window Home fits to.
+const MIN_FIT_SPAN_NS: f64 = 1_000.0;
 
 /// Zoom-out ceiling: the capture itself. A shorter cluster must not open
 /// out to the 60 s default (or any 1.1× pad) of empty time.
@@ -533,22 +569,91 @@ pub struct OrbitLiveApp {
     got_status: bool,
     http_ok: bool,
     ws_ok: bool,
-    ws_queue: Vec<Vec<u8>>,
+    /// egui time at the start of this frame, for anything that needs "now"
+    /// outside a place with a context.
+    now_s: f64,
+    /// Event-stream throughput: the inbox's cumulative byte count at the last
+    /// reading, the bytes gathered in the current window, when the window
+    /// began, and the smoothed rate shown next to the fps.
+    ws_bytes_seen: u64,
+    ws_window_bytes: u64,
+    ws_window_start_s: f64,
+    ws_rate_bps: f32,
+    /// When the last /api/status answer arrived; the link is only "connected"
+    /// while these keep coming.
+    last_status_seen_s: f64,
+    last_ws_retry_s: f64,
+    ws_queue: std::collections::VecDeque<Vec<u8>>,
     lod_label: &'static str,
     has_gpu: bool,
     tracks: TrackStrip,
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
+    selected_thread: Option<(u32, u32)>,
+    /// True while the self pane's timeline is drawing, so its rows stay out
+    /// of the `__orbit_ui` readout.
+    in_self_pane: bool,
+    /// The flame graph's zoom: the path (child indices from the roots) of
+    /// the bar a double-click made the root; empty when showing everything.
+    flame_zoom: Vec<usize>,
+    /// The report panel's function filter: rows whose name or module does
+    /// not contain it are not shown, and a tree opens along the paths to
+    /// the rows that do. C++ Orbit's filter box over the sampling report.
+    report_filter: String,
+    /// Frames still to repaint after a layout-changing event with no input
+    /// behind it -- a stream file's end, which opens the report panel. The
+    /// frame that uploads the instances in the new geometry must also be
+    /// presented, and an idle page presents nothing more on its own.
+    settle_frames: u8,
+    /// The largest instance count uploaded so far, and whether the next
+    /// frame must upload again. The first upload that grows the GPU buffer
+    /// is not what the frame draws (a fresh buffer's first write, on the web
+    /// backend, shows up one submit late): the page sat blank after a stream
+    /// loaded until something else re-uploaded. Uploading once more the
+    /// frame after growth is the fix, and costs a cached re-list.
+    uploaded_prims_max: usize,
+    reupload_next_frame: bool,
+    /// What the last timeline payload decided, for `window.__orbit_sel`:
+    /// a harness can see the LOD, the counts, the dest rect and the upload
+    /// mode without reading pixels.
+    draw_readout: String,
+    /// When the capture began, from `CaptureStarted`; 0 until the service
+    /// says. Published so a harness can check nothing precedes it.
+    capture_start_ns: u64,
+    /// The page opened a capture file (`?capture=<url>`) and has no
+    /// service: nothing is polled, and the pills that need one are not
+    /// shown. The static web site's mode.
+    static_capture: Option<String>,
+    /// Last frame's per-lane listing rows (TODO item 21); swapped with the
+    /// self pane's like the rest of the timeline state.
+    listing_cache: orbit_live_render::ListingCache,
+    /// What `window.__orbit_ui` last said.
+    ui_readout: String,
+    /// What `window.__orbit_sel` last said, so it is only rewritten when the
+    /// selection actually changes.
+    sel_readout: String,
     last_instances: Vec<ScopeInstance>,
     last_layout: Vec<(LaneKey, f32)>,
     last_instanced_window: Option<(u64, u64, u32)>,
+    /// The window the instances were listed for when it is wider than the
+    /// view: `(t0, t1, width in points, the view span it was built for)`.
+    /// A pan that stays inside it is a uniform change, not a re-walk.
+    overscan_window: Option<(u64, u64, f32, u64)>,
+    /// How far into the listing window the view's left edge sits, in
+    /// points; 0 when the listing is the view.
+    listing_pan_pts: f32,
+    /// The pointer's x over the timeline body this frame, in body points:
+    /// the cursor line and the value readouts follow it.
+    hover_body_x: Option<f32>,
+    /// The view span of the previous frame: overscan is only worth listing
+    /// once the span holds still (a zoom changes it every frame).
+    last_view_span: Option<u64>,
     last_dirty: Option<GpuDirtyKey>,
     last_lod: orbit_live_render::TimelineLod,
     /// Dest of the last painted frame; `TimelinePayload::Keep` reuses it.
     last_view: Option<ViewUniforms>,
     clip_labels: ClipLabelCache,
     skip_clip_labels: bool,
-    self_cursor: orbit_live_event::dev::SelfCursor,
     /// Demo/capture end only. Not ring newest_end (pid 2/3).
     live_edge_ns: u64,
     slider_grab: Option<f32>,
@@ -566,8 +671,6 @@ pub struct OrbitLiveApp {
     compact: bool,
     light_canvas: bool,
     advanced: bool,
-    dev: bool,
-    dev_locked_off: bool,
     recording: bool,
     visible_count: u32,
     draw_label: String,
@@ -581,10 +684,125 @@ pub struct OrbitLiveApp {
     vscroll: VScrollInertia,
     vscroll_max: f32,
     measure: Option<TimeMeasure>,
+    /// Committed multi-select windows (shift-drag adds; a plain drag replaces).
+    /// The report and trees aggregate over their union plus any in-progress drag.
+    sample_sels: Vec<TimeMeasure>,
+    /// The sampling report for the current selection, and the range it covers,
+    /// so an unchanged selection is not refetched every frame.
+    sampling: Option<crate::net::SamplingReport>,
+    /// The committed selection the report reflects, as `(start, end, tid)`
+    /// windows. Empty means the whole capture. Cached so an unchanged
+    /// selection is not refetched each frame.
+    sampling_ranges: Vec<(u64, u64, Option<u32>)>,
+    /// When the report was last requested, to throttle requests mid-drag.
+    last_report_request_s: f64,
+    /// Set when the selection was made on one thread's sample bar.
+    /// Which of the four report views is showing.
+    report_tab: ReportTab,
+    tree: Option<crate::net::SamplingTree>,
+    /// Expanded tree nodes, keyed by their path of child indices. Kept per
+    /// tab so switching top-down/bottom-up does not carry one view's
+    /// expansion into the other's very different shape.
+    tree_expanded: std::collections::HashSet<String>,
+    /// The tree tabs' slider, as C++ Orbit's CallTreeWidget has it: nodes
+    /// over this share of the samples arrive expanded. 0 opens everything.
+    tree_expand_threshold: f32,
+    /// When a sample's callstack was last copied, for the "copied" note.
+    callstack_copied_at: f64,
+    modules: Option<crate::net::ModulesJson>,
+    /// Previous frame's capturing flag, to catch the moment a capture stops.
+    was_capturing: bool,
+    /// A `?report=` deep link asks for the reports once the service answers.
+    pending_report_request: bool,
+    /// A `?collapse=scheduler` deep link, applied on the first status so the
+    /// track strip exists to fold.
+    pending_collapse_scheduler: bool,
     measure_dragging: bool,
+    /// A primary-button drag that began on a sample bar: it selects samples
+    /// instead of panning, for as long as the button is down.
+    sample_drag: bool,
+    /// Samples inside the current selection, counted from the viewer's own
+    /// index, so a selection reads back immediately and without a service.
+    local_sample_count: u64,
     idle_skip_chrome: bool,
     last_n_prims: u32,
     last_n_lanes_kept: u32,
+    last_n_lanes_reused: u32,
+    last_pool_wake_us: f32,
+    last_pool_tail_us: f32,
+    /// Whether the primitive listing walks lanes inline or on the pool, and
+    /// the running wall time of each mode (us) that decides it. See
+    /// `tune_listing_mode`.
+    listing_inline: bool,
+    /// This frame's period (egui's dt) and the previous frame's GPU callback
+    /// CPU time, for the self profile's value lanes.
+    frame_period_s: f32,
+    last_gpu_prepare_us: f32,
+    last_gpu_paint_us: f32,
+    listing_frames: u32,
+    listing_inline_ema_us: Option<f32>,
+    listing_pool_ema_us: Option<f32>,
+    self_profile: crate::self_pane::SelfProfile,
+    self_pane_open: bool,
+    /// A capture bundle was posted to the service; the next CaptureFinished
+    /// is its arrival, and the view fits to it.
+    import_pending: bool,
+    /// The opened capture's CaptureStarted has arrived; the first Status
+    /// saying "not capturing" after it means its data is all here.
+    import_started: bool,
+    /// Hello frames seen: one per socket, plus one per server-side resync.
+    hello_count: u64,
+    /// The report panel is open by the user's hand, not just by a selection.
+    report_open: bool,
+    /// The splitter was dragged to the right edge: the panel is hidden and
+    /// a tab on the edge brings it back.
+    report_collapsed: bool,
+    /// A width to force on the panel next frame (restoring from an edge).
+    report_w_override: Option<f32>,
+    /// The panel's width last frame, for the readout.
+    report_w_last: f32,
+    /// The report panel's width as the user dragged it; None until then
+    /// (a share of the screen). The panel is sized exactly to this and
+    /// resized by the viewer's own handle, on the panel's side of the edge:
+    /// egui's resize grab straddles the edge and sat over the timeline's
+    /// scrollbar, and the two took turns owning the hover.
+    report_w_user: Option<f32>,
+    /// A splitter drag in progress: where inside the handle the press
+    /// landed, so the panel edge tracks the pointer without a jump.
+    report_splitter_grab: Option<f32>,
+    /// egui's pointer state as JSON, for the harness: what a synthetic drag
+    /// actually reached.
+    pointer_readout: String,
+    /// The UI knobs window (row spacing and the like) is open.
+    show_tweaks: bool,
+    ui_tweaks: UiTweaks,
+    /// The Live table over the whole capture, fed as events arrive.
+    live_all: crate::live::LiveTable,
+    /// The Live table over the current selection, rebuilt from the index
+    /// when the selection or the data changes.
+    live_sel: crate::live::LiveTable,
+    live_sel_ranges: Vec<(u64, u64, Option<u32>)>,
+    live_sel_events_seen: u64,
+    live_sel_computed_s: f64,
+    /// The Live row whose histogram is shown.
+    live_focus: Option<u32>,
+    /// A right-click on a scope: the pick and where the menu goes.
+    scope_menu: Option<(ScopePick, Pos2)>,
+    /// The menu was opened this frame: the click that opened it must not
+    /// count as a click outside it.
+    scope_menu_fresh: bool,
+    /// The report is over every instance of this scope (name id, name)
+    /// rather than a time selection.
+    scope_report: Option<(u32, String)>,
+    /// The self-profile pane's own timeline state. Drawn by the same
+    /// `timeline()` as the capture: its fields are swapped into place for
+    /// the duration of the pane's draw and swapped back after.
+    self_tl: TimelineState,
+    /// Which GPU timeline the current draw targets (0 capture, 1 self).
+    gpu_slot: u8,
+    /// `(canvas, rail)` colours to draw with instead of the theme's, so the
+    /// self-profile pane reads as its own surface.
+    canvas_override: Option<(Color32, Color32)>,
     capture_open: bool,
     process_filter: String,
     opt_api: bool,
@@ -594,11 +812,35 @@ pub struct OrbitLiveApp {
     sample_period_ms: String,
     unwind_dwarf: bool,
     user_space_hooks: bool,
+    /// The kernel-side duplicate-uprobe filter; off to see the ghosts.
+    uprobe_duplicate_filter: bool,
+    /// Off by default: see StartBody::show_all_processes.
+    show_all_processes: bool,
     symbols: SymbolsStatusJson,
-    hook_query: String,
-    hook_hits: Vec<FunctionHit>,
+    /// Every function the service indexed for `functions_pid`, for the
+    /// Functions view.
+    functions: Vec<FunctionHit>,
+    functions_pid: Option<u32>,
+    functions_requested: bool,
+    /// List every function, not the first 500 matches.
+    functions_show_all: bool,
+    /// Flat report sort: column index (hooked, self, incl, function, module) and descending.
+    flat_sort: (u8, bool),
+    /// The code views' state: the source document, the disassembly, how
+    /// they read, the rows built from them, and what went wrong.
+    code_doc: Option<crate::code::CodeDoc>,
+    code_disasm: Option<crate::code::Disassembly>,
+    code_mode: crate::code::CodeMode,
+    code_rows: Vec<crate::code::CodeRow>,
+    /// (mode, doc identity, disassembly identity) the rows were built for.
+    code_rows_key: (u8, usize, u64),
+    code_error: String,
+    code_loading: bool,
+    /// Row to scroll into view once, after a load.
+    code_scroll_to: Option<usize>,
+    /// Functions view sort: column index (hooked, function, size, module) and descending.
+    functions_sort: (u8, bool),
     selected_hooks: Vec<FunctionHit>,
-    last_hook_query: String,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
     /// Chrome-trace file session (not Demo, not the 64 MB ring).
@@ -624,26 +866,421 @@ struct TimeMeasure {
     start_ns: u64,
     stop_ns: u64,
     label_y: f32,
+    /// The thread whose sample bar the drag began on, if it began on one.
+    ///
+    /// Orbit's `CallstackThreadBar::SelectCallstacks` selects the callstack
+    /// events *of that tid* in the range; only the all-threads bar selects
+    /// across the process. Dragging anywhere else keeps the process-wide
+    /// meaning, which is what the ruler and the empty space below tracks do.
+    sample_tid: Option<u32>,
+}
+
+/// The four ways Orbit lets you read a capture's samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReportTab {
+    /// Flat: one row per function, self and inclusive. Answers "what is hot".
+    Flat,
+    /// Callers above callees, grouped by thread. Answers "what does this
+    /// program do".
+    TopDown,
+    /// Callees above callers. Answers "what should I fix", which is why
+    /// Orbit opens on it once you know a function is hot.
+    BottomUp,
+    /// The modules the target mapped, and how many symbols each gave up.
+    Modules,
+    /// The top-down tree as a flame graph: width is inclusive samples,
+    /// nesting is the call path. Linked to the timeline both ways: a bar
+    /// click highlights every instance of that function, the selected
+    /// scope on the timeline outlines its bars (TODO item 17).
+    Flame,
+    /// Orbit's Live tab: every scope seen so far with count, total, average,
+    /// min, max and standard deviation, plus what the samples are doing --
+    /// updated as the capture runs, computed in the viewer from its own
+    /// index, no request to the service.
+    Live,
+    /// Every function of the selected process, with a hooked column: C++
+    /// Orbit's Functions view, where dynamic instrumentation is chosen.
+    Functions,
+    /// The code views: a source file, a function's disassembly, or the
+    /// two interleaved (TODO item 30).
+    Code,
+}
+
+impl ReportTab {
+    /// The `?report=` values, matching the API's mode strings where they
+    /// overlap so one vocabulary covers both.
+    fn from_query(value: &str) -> Option<ReportTab> {
+        match value {
+            "flat" => Some(ReportTab::Flat),
+            "top_down" | "topdown" => Some(ReportTab::TopDown),
+            "bottom_up" | "bottomup" => Some(ReportTab::BottomUp),
+            "modules" => Some(ReportTab::Modules),
+            "live" => Some(ReportTab::Live),
+            "flame" => Some(ReportTab::Flame),
+            "functions" => Some(ReportTab::Functions),
+            "code" => Some(ReportTab::Code),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ReportTab::Flat => "Flat",
+            ReportTab::TopDown => "Top-down",
+            ReportTab::BottomUp => "Bottom-up",
+            ReportTab::Modules => "Modules",
+            ReportTab::Live => "Live",
+            ReportTab::Flame => "Flame",
+            ReportTab::Functions => "Functions",
+            ReportTab::Code => "Code",
+        }
+    }
+
+    fn mode(self) -> &'static str {
+        match self {
+            ReportTab::BottomUp => "bottom_up",
+            _ => "top_down",
+        }
+    }
+}
+
+/// Everything `timeline()` reads and writes that belongs to one timeline
+/// rather than to the app: the index, the window, the track strip, the GPU
+/// dirty key, the selection. The capture's lives directly on the app (it
+/// always did); the self-profile pane's lives in one of these and is swapped
+/// into the app's fields while the pane draws, so both are drawn by one
+/// `timeline()` with no second copy of the code.
+pub struct TimelineState {
+    index: TrackIndex,
+    t0: f64,
+    t1: f64,
+    follow: bool,
+    tracks: TrackStrip,
+    selected: Option<ScopePick>,
+    hover: Option<ScopePick>,
+    selected_thread: Option<(u32, u32)>,
+    last_instances: Vec<ScopeInstance>,
+    last_layout: Vec<(LaneKey, f32)>,
+    last_instanced_window: Option<(u64, u64, u32)>,
+    /// The window the instances were listed for when it is wider than the
+    /// view: `(t0, t1, width in points, the view span it was built for)`.
+    /// A pan that stays inside it is a uniform change, not a re-walk.
+    overscan_window: Option<(u64, u64, f32, u64)>,
+    /// How far into the listing window the view's left edge sits, in
+    /// points; 0 when the listing is the view.
+    listing_pan_pts: f32,
+    /// The pointer's x over the timeline body this frame, in body points:
+    /// the cursor line and the value readouts follow it.
+    hover_body_x: Option<f32>,
+    /// The view span of the previous frame: overscan is only worth listing
+    /// once the span holds still (a zoom changes it every frame).
+    last_view_span: Option<u64>,
+    last_dirty: Option<GpuDirtyKey>,
+    last_lod: orbit_live_render::TimelineLod,
+    last_view: Option<ViewUniforms>,
+    clip_labels: ClipLabelCache,
+    live_edge_ns: u64,
+    slider_grab: Option<f32>,
+    visible_count: u32,
+    draw_label: String,
+    visible_cache: Option<(u64, u64, u64, i32, u32)>,
+    lane_scroll: f32,
+    pending_vscroll: Option<f32>,
+    vscroll: VScrollInertia,
+    vscroll_max: f32,
+    measure: Option<TimeMeasure>,
+    sample_sels: Vec<TimeMeasure>,
+    measure_dragging: bool,
+    content_t0: Option<f64>,
+    content_t1: Option<f64>,
+    user_set_view: bool,
+    /// Last frame's per-lane listing rows, reused for the lanes that did
+    /// not change (TODO item 21).
+    listing_cache: orbit_live_render::ListingCache,
+}
+
+impl TimelineState {
+    fn fresh() -> Self {
+        TimelineState {
+            index: TrackIndex::default(),
+            t0: 0.0,
+            t1: FOLLOW_NS,
+            follow: true,
+            tracks: TrackStrip::default(),
+            selected: None,
+            hover: None,
+            selected_thread: None,
+            last_instances: Vec::new(),
+            last_layout: Vec::new(),
+            last_instanced_window: None,
+            overscan_window: None,
+            listing_pan_pts: 0.0,
+            hover_body_x: None,
+            last_view_span: None,
+            last_dirty: None,
+            last_lod: orbit_live_render::TimelineLod::PixelColumns,
+            last_view: None,
+            clip_labels: ClipLabelCache::default(),
+            live_edge_ns: 0,
+            slider_grab: None,
+            visible_count: 0,
+            draw_label: String::new(),
+            visible_cache: None,
+            lane_scroll: 0.0,
+            pending_vscroll: None,
+            vscroll: VScrollInertia::default(),
+            vscroll_max: 0.0,
+            measure: None,
+            sample_sels: Vec::new(),
+            measure_dragging: false,
+            content_t0: None,
+            content_t1: None,
+            user_set_view: false,
+            listing_cache: orbit_live_render::ListingCache::default(),
+        }
+    }
+}
+
+impl OrbitLiveApp {
+    /// Exchanges the app's timeline fields with `other`'s. Called twice
+    /// around the self pane's draw: in, then out.
+    fn swap_timeline_state(&mut self, other: &mut TimelineState) {
+        std::mem::swap(&mut self.index, &mut other.index);
+        std::mem::swap(&mut self.t0, &mut other.t0);
+        std::mem::swap(&mut self.t1, &mut other.t1);
+        std::mem::swap(&mut self.follow, &mut other.follow);
+        std::mem::swap(&mut self.tracks, &mut other.tracks);
+        std::mem::swap(&mut self.selected, &mut other.selected);
+        std::mem::swap(&mut self.hover, &mut other.hover);
+        std::mem::swap(&mut self.selected_thread, &mut other.selected_thread);
+        std::mem::swap(&mut self.last_instances, &mut other.last_instances);
+        std::mem::swap(&mut self.last_layout, &mut other.last_layout);
+        std::mem::swap(&mut self.last_instanced_window, &mut other.last_instanced_window);
+        std::mem::swap(&mut self.overscan_window, &mut other.overscan_window);
+        std::mem::swap(&mut self.listing_pan_pts, &mut other.listing_pan_pts);
+        std::mem::swap(&mut self.hover_body_x, &mut other.hover_body_x);
+        std::mem::swap(&mut self.last_view_span, &mut other.last_view_span);
+        std::mem::swap(&mut self.last_dirty, &mut other.last_dirty);
+        std::mem::swap(&mut self.last_lod, &mut other.last_lod);
+        std::mem::swap(&mut self.last_view, &mut other.last_view);
+        std::mem::swap(&mut self.clip_labels, &mut other.clip_labels);
+        std::mem::swap(&mut self.live_edge_ns, &mut other.live_edge_ns);
+        std::mem::swap(&mut self.slider_grab, &mut other.slider_grab);
+        std::mem::swap(&mut self.visible_count, &mut other.visible_count);
+        std::mem::swap(&mut self.draw_label, &mut other.draw_label);
+        std::mem::swap(&mut self.visible_cache, &mut other.visible_cache);
+        std::mem::swap(&mut self.lane_scroll, &mut other.lane_scroll);
+        std::mem::swap(&mut self.pending_vscroll, &mut other.pending_vscroll);
+        std::mem::swap(&mut self.listing_cache, &mut other.listing_cache);
+        std::mem::swap(&mut self.vscroll, &mut other.vscroll);
+        std::mem::swap(&mut self.vscroll_max, &mut other.vscroll_max);
+        std::mem::swap(&mut self.measure, &mut other.measure);
+        std::mem::swap(&mut self.sample_sels, &mut other.sample_sels);
+        std::mem::swap(&mut self.measure_dragging, &mut other.measure_dragging);
+        std::mem::swap(&mut self.content_t0, &mut other.content_t0);
+        std::mem::swap(&mut self.content_t1, &mut other.content_t1);
+        std::mem::swap(&mut self.user_set_view, &mut other.user_set_view);
+    }
+
+    fn canvas_color(&self) -> Color32 {
+        self.canvas_override
+            .map(|(c, _)| c)
+            .unwrap_or_else(|| theme::timeline_canvas(self.light_canvas))
+    }
+
+    /// Which threads draw in colour: the selected thread if one is
+    /// selected (by its header, or through a selected scope), else the
+    /// capture's target process, else everything. C++ Orbit's rule.
+    fn thread_focus(&self) -> ThreadFocus {
+        let target = self
+            .selected_pid
+            .filter(|_| !self.status.demo && self.trace_name.is_none());
+        thread_focus_from(self.selected_thread, self.selected, target)
+    }
+
+    /// Hands the selection to the page as `window.__orbit_sel`, so a harness
+    /// driving the viewer headless can check what a click selected without
+    /// reading pixels. Written only when it changes.
+    fn publish_selection(&mut self) {
+        let focus = self.thread_focus();
+        let text = format!(
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{}}}",
+            match self.selected_thread {
+                Some((p, t)) => format!("[{p},{t}]"),
+                None => "null".to_string(),
+            },
+            match self.selected {
+                Some(s) => format!("[{},{},{}]", s.pid, s.tid, s.kind),
+                None => "null".to_string(),
+            },
+            match focus.selected {
+                Some((p, t)) => format!("[{p},{t}]"),
+                None => "null".to_string(),
+            },
+            self.measure.is_some(),
+            self.sample_ranges()
+                .iter()
+                .map(|(a, b, tid)| match tid {
+                    Some(t) => format!("[{a},{b},{t}]"),
+                    None => format!("[{a},{b},null]"),
+                })
+                .collect::<Vec<_>>()
+                .join(","),
+            self.report_open,
+            self.show_tweaks,
+            self.report_tab.label(),
+            self.hello_count,
+            self.status.wire,
+            self.ws_rate_bps,
+            self.report_w_last,
+            self.report_collapsed,
+            match &self.scope_menu {
+                Some((pick, _)) => format!("[{},{},{}]", pick.pid, pick.tid, pick.kind),
+                None => "null".to_string(),
+            },
+            match &self.scope_report {
+                Some((id, name)) => format!("[{id},{name:?}]"),
+                None => "null".to_string(),
+            },
+            self.t0,
+            self.t1,
+            match self.content_span() {
+                Some((a, b)) => format!("[{a:.0},{b:.0}]"),
+                None => "null".to_string(),
+            },
+            self.index.event_count(),
+            self.selected_hooks
+                .iter()
+                .map(|h| h.function_id.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            self.capture_start_ns,
+            self.report_filter,
+            self.last_n_prims,
+            self.flame_zoom.len(),
+            match self.selected_pid { Some(p) => p.to_string(), None => "null".to_string() },
+            self.recording || self.status.capturing,
+            self.pointer_readout.clone(),
+            VIEWER_BUILD,
+            if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
+            format!(
+                "{{\"mode\":\"{}\",\"rows\":{},\"source\":{:?},\"disasm\":{:?},\"instructions\":{},\"error\":{:?},\"loading\":{}}}",
+                self.code_mode.label(),
+                self.code_rows.len(),
+                self.code_doc.as_ref().map(|d| d.path.as_str()).unwrap_or(""),
+                self.code_disasm.as_ref().map(|d| d.function.name.as_str()).unwrap_or(""),
+                self.code_disasm.as_ref().map(|d| d.lines.len()).unwrap_or(0),
+                self.code_error,
+                self.code_loading,
+            ),
+        );
+        if text == self.sel_readout {
+            return;
+        }
+        self.sel_readout = text;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__orbit_sel"),
+                &wasm_bindgen::JsValue::from_str(&self.sel_readout),
+            );
+        }
+    }
+
+    /// Hands this frame's pill and track-row rectangles to the page as
+    /// `window.__orbit_ui`, a JSON list of `[label, x, y, w, h]`.
+    fn publish_ui_rects(&mut self) {
+        let text = take_ui_rects_json();
+        if text == self.ui_readout {
+            return;
+        }
+        self.ui_readout = text;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(
+                &win,
+                &wasm_bindgen::JsValue::from_str("__orbit_ui"),
+                &wasm_bindgen::JsValue::from_str(&self.ui_readout),
+            );
+        }
+    }
+
+    /// Drops the scope pick, the selected thread and the measure: what
+    /// Escape and a click on nothing do.
+    fn clear_selection(&mut self) {
+        self.selected = None;
+        self.selected_thread = None;
+        self.measure = None;
+        self.scope_menu = None;
+        if self.scope_report.take().is_some() {
+            self.sampling_ranges.clear();
+            self.request_reports();
+        }
+    }
+
+    fn rail_color(&self) -> Color32 {
+        self.canvas_override.map(|(_, r)| r).unwrap_or(theme::RAIL)
+    }
+
+    /// Picks inline vs. pool for the next primitive listing from what each
+    /// actually cost. `wall_us` is this frame's walk, dispatch to join, in the
+    /// mode that was used. Each mode keeps a running average; every
+    /// `LISTING_PROBE_FRAMES` the other mode runs once so its average stays
+    /// current, and the cheaper one wins. On a small window the pool's
+    /// hand-off and join cost many times the walk they parallelise, on a big
+    /// one the workers win by a lot; measuring is the only way to know which
+    /// window this is.
+    fn tune_listing_mode(&mut self, wall_us: f32) {
+        let mix = |ema: &mut Option<f32>| {
+            *ema = Some(match *ema {
+                Some(e) => e * 0.8 + wall_us * 0.2,
+                None => wall_us,
+            })
+        };
+        if self.listing_inline {
+            mix(&mut self.listing_inline_ema_us);
+        } else {
+            mix(&mut self.listing_pool_ema_us);
+        }
+        self.listing_frames = self.listing_frames.wrapping_add(1);
+        let probe = self.listing_frames % LISTING_PROBE_FRAMES == 0;
+        self.listing_inline = match (self.listing_inline_ema_us, self.listing_pool_ema_us) {
+            // Each mode unmeasured until tried once.
+            (None, _) => true,
+            (_, None) => false,
+            (Some(inline), Some(pool)) => {
+                let cheaper_inline = inline < pool;
+                if probe {
+                    !cheaper_inline
+                } else {
+                    cheaper_inline
+                }
+            }
+        };
+    }
 }
 
 impl OrbitLiveApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         fonts::install(&cc.egui_ctx);
         apply_orbit_visuals(&cc.egui_ctx);
+        // Half a second between the clicks of a double-click (the desktop
+        // default on Windows and GNOME; egui's 0.3 s is tight over a slow frame).
+        cc.egui_ctx.options_mut(|o| o.input_options.max_double_click_delay = 0.5);
         let intern = InternTable::default();
-        let dev_locked_off = crate::dev::query_dev_locked_off_from_location();
-        let dev = false;
-        let net = Net::connect();
-        net.stop_self();
+        let static_capture = crate::dev::query_capture_url_from_location();
+        let net = match &static_capture {
+            Some(url) => Net::from_capture_url(url),
+            None => Net::connect(),
+        };
         let mut has_gpu = false;
         if let Some(rs) = &cc.wgpu_render_state {
             let mut renderer = rs.renderer.write();
-            renderer
-                .callback_resources
-                .insert(TimelineGpuSlot(TimelineGpu::init(
-                    &rs.device,
-                    rs.target_format,
-                )));
+            renderer.callback_resources.insert(TimelineGpuSlot::new(
+                TimelineGpu::init(&rs.device, rs.target_format),
+                TimelineGpu::init(&rs.device, rs.target_format),
+            ));
             has_gpu = true;
         }
         Self {
@@ -669,21 +1306,33 @@ impl OrbitLiveApp {
             got_status: false,
             http_ok: false,
             ws_ok: false,
-            ws_queue: Vec::new(),
+            now_s: 0.0,
+            ws_bytes_seen: 0,
+            ws_window_bytes: 0,
+            ws_window_start_s: -1.0,
+            ws_rate_bps: 0.0,
+            last_status_seen_s: -1.0,
+            last_ws_retry_s: -1.0,
+            ws_queue: std::collections::VecDeque::new(),
             lod_label: "",
             has_gpu,
             tracks: TrackStrip::default(),
             selected: None,
             hover: None,
+            selected_thread: None,
+            sel_readout: String::new(),
             last_instances: Vec::new(),
             last_layout: Vec::new(),
             last_instanced_window: None,
+            overscan_window: None,
+            listing_pan_pts: 0.0,
+            hover_body_x: None,
+            last_view_span: None,
             last_dirty: None,
             last_lod: orbit_live_render::TimelineLod::PixelColumns,
             last_view: None,
             clip_labels: ClipLabelCache::default(),
             skip_clip_labels: false,
-            self_cursor: Default::default(),
             live_edge_ns: 0,
             slider_grab: None,
             fps_ema: 0.0,
@@ -699,8 +1348,6 @@ impl OrbitLiveApp {
             compact: false,
             light_canvas: false,
             advanced: false,
-            dev,
-            dev_locked_off,
             recording: false,
             visible_count: 0,
             draw_label: String::new(),
@@ -714,11 +1361,64 @@ impl OrbitLiveApp {
             vscroll: VScrollInertia::default(),
             vscroll_max: 0.0,
             measure: None,
+            sample_sels: Vec::new(),
+            sampling: None,
+            sampling_ranges: Vec::new(),
+            last_report_request_s: 0.0,
+            report_tab: crate::dev::query_report_tab_from_location()
+                .and_then(|v| ReportTab::from_query(&v))
+                .unwrap_or(ReportTab::Flat),
+            tree: None,
+            tree_expanded: std::collections::HashSet::new(),
+            tree_expand_threshold: 0.0,
+            callstack_copied_at: -10.0,
+            modules: None,
+            was_capturing: false,
+            pending_report_request: crate::dev::query_report_tab_from_location().is_some(),
+            pending_collapse_scheduler: crate::dev::query_collapse_scheduler_from_location(),
             measure_dragging: false,
+            sample_drag: false,
+            local_sample_count: 0,
             idle_skip_chrome: false,
             last_n_prims: 0,
             last_n_lanes_kept: 0,
-            capture_open: true,
+            last_n_lanes_reused: 0,
+            last_pool_wake_us: 0.0,
+            last_pool_tail_us: 0.0,
+            listing_inline: false,
+            frame_period_s: 0.0,
+            last_gpu_prepare_us: 0.0,
+            last_gpu_paint_us: 0.0,
+            listing_frames: 0,
+            listing_inline_ema_us: None,
+            listing_pool_ema_us: None,
+            self_profile: crate::self_pane::SelfProfile::default(),
+            self_pane_open: false,
+            import_pending: false,
+            import_started: false,
+            hello_count: 0,
+            report_open: false,
+            report_collapsed: false,
+            report_w_override: None,
+            report_w_last: 0.0,
+            report_w_user: None,
+            report_splitter_grab: None,
+            pointer_readout: "null".to_string(),
+            show_tweaks: false,
+            ui_tweaks: UiTweaks::load(),
+            live_all: crate::live::LiveTable::default(),
+            live_sel: crate::live::LiveTable::default(),
+            live_sel_ranges: Vec::new(),
+            live_sel_events_seen: 0,
+            live_sel_computed_s: 0.0,
+            live_focus: None,
+            scope_menu: None,
+            scope_menu_fresh: false,
+            scope_report: None,
+            self_tl: TimelineState::fresh(),
+            gpu_slot: 0,
+            canvas_override: None,
+            capture_open: false,
             process_filter: String::new(),
             opt_api: true,
             opt_csw: true,
@@ -726,12 +1426,25 @@ impl OrbitLiveApp {
             opt_sampling: true,
             sample_period_ms: "1.0".into(),
             unwind_dwarf: true,
-            user_space_hooks: true,
+            user_space_hooks: false,
+            uprobe_duplicate_filter: true,
+            show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
-            hook_query: String::new(),
-            hook_hits: Vec::new(),
+            functions: Vec::new(),
+            functions_pid: None,
+            functions_requested: false,
+            functions_show_all: false,
+            flat_sort: (1, true),
+            code_doc: None,
+            code_disasm: None,
+            code_mode: crate::code::CodeMode::Both,
+            code_rows: Vec::new(),
+            code_rows_key: (255, 0, 0),
+            code_error: String::new(),
+            code_loading: false,
+            code_scroll_to: None,
+            functions_sort: (1, false),
             selected_hooks: Vec::new(),
-            last_hook_query: String::new(),
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
             trace_load: None,
@@ -739,6 +1452,17 @@ impl OrbitLiveApp {
             content_t0: None,
             content_t1: None,
             user_set_view: false,
+            in_self_pane: false,
+            static_capture: static_capture.clone(),
+            capture_start_ns: 0,
+            settle_frames: 0,
+            uploaded_prims_max: 0,
+            reupload_next_frame: false,
+            draw_readout: String::new(),
+            report_filter: String::new(),
+            flame_zoom: Vec::new(),
+            listing_cache: orbit_live_render::ListingCache::default(),
+            ui_readout: String::new(),
             trace_args: HashMap::new(),
             trace_flows: Vec::new(),
             thread_names: HashMap::new(),
@@ -780,9 +1504,13 @@ impl OrbitLiveApp {
     /// Recompute packed Ys in the same frame as a collapse / hide click so
     /// the draw path does not paint last frame's lanes for one more tick.
     fn relayout_tracks(&mut self) {
-        let filter = self
-            .selected_pid
-            .filter(|_| self.status.capturing && !self.status.demo);
+        // No narrowing to the selected process: the service decides which
+        // processes get rows (the target and what it spawned, itself, and
+        // every instrumented process), and it only sends those. Narrowing
+        // here hid all but the target until the capture stopped -- other
+        // instrumented processes and orbit-service's own track appeared only
+        // when Stop lifted the filter.
+        let filter: Option<u32> = None;
         self.tracks.tick(0.0, &self.index, filter);
         self.mark_layout_changed();
     }
@@ -791,7 +1519,7 @@ impl OrbitLiveApp {
         live_repaint(
             self.recording || self.status.demo || self.trace_load.is_some(),
             self.status.capturing,
-            self.tracks.dragging(),
+            self.tracks.any_dragging(),
             self.selected.is_some(),
         ) || self.vscroll.is_coasting()
     }
@@ -800,22 +1528,18 @@ impl OrbitLiveApp {
         self.clear_file_trace();
         self.error.clear();
         if self.status.hooks {
-            let Some(pid) = self.selected_pid else {
-                self.error = "Select a process in the capture strip.".into();
-                return;
-            };
+            // No selection is a capture without a target: the scheduler, the
+            // service, and every instrumented process.
+            let pid = self.selected_pid.unwrap_or(0);
             self.recording = true;
+            // The capture clock is the target's, and nothing here knows it
+            // yet -- `CaptureStarted` brings it.
+            self.live_edge_ns = DEMO_ORIGIN_NS;
             self.net.start_capture(&self.capture_start(pid));
         } else {
             self.recording = true;
-            self.self_cursor.reset_to(DEMO_ORIGIN_NS);
             self.live_edge_ns = DEMO_ORIGIN_NS;
             self.net.start_demo();
-        }
-        if !self.dev_locked_off {
-            intern_self_names(&mut self.intern);
-            self.dev = true;
-            self.net.start_self();
         }
         self.follow = true;
     }
@@ -824,26 +1548,46 @@ impl OrbitLiveApp {
         self.clear_file_trace();
         self.error.clear();
         self.recording = true;
-        self.self_cursor.reset_to(DEMO_ORIGIN_NS);
         self.live_edge_ns = DEMO_ORIGIN_NS;
         self.net.start_demo();
-        if !self.dev_locked_off {
-            intern_self_names(&mut self.intern);
-            self.dev = true;
-            self.net.start_self();
-        }
         self.follow = true;
+    }
+
+    /// The Clear pill: a view with nothing in it, here and on the service.
+    fn clear_everything(&mut self) {
+        if self.recording {
+            self.stop_record();
+        }
+        self.clear_file_trace();
+        self.index.clear();
+        self.live_all.clear();
+        self.live_sel.clear();
+        self.intern = InternTable::default();
+        self.clear_selection();
+        self.sample_sels.clear();
+        self.sampling_ranges.clear();
+        self.sampling = None;
+        self.tree = None;
+        self.live_edge_ns = 0;
+        self.t0 = 0.0;
+        self.t1 = FOLLOW_NS;
+        self.user_set_view = false;
+        self.net.clear_capture();
+        self.needs_repaint = true;
     }
 
     fn stop_record(&mut self) {
         self.recording = false;
         self.net.stop_capture();
         self.net.stop_demo();
-        self.dev = false;
-        self.net.stop_self();
     }
 
     fn process_display_name(&self, pid: u32) -> String {
+        // The viewer's and the server's own rows, which no process list
+        // names: their pids are synthetic.
+        if pid == VIEWER_PID {
+            return orbit_live_event::dev::VIEWER_NAME.to_string();
+        }
         self.processes
             .iter()
             .find(|p| p.pid == pid)
@@ -916,6 +1660,16 @@ impl OrbitLiveApp {
         )
     }
 
+    /// Zero of the ruler: the start of what is on screen, so labels read as
+    /// capture time. Falls back to the ring's oldest event when there is no
+    /// content cluster yet.
+    fn timeline_origin_ns(&self) -> f64 {
+        match self.content_span() {
+            Some((a, _)) => a,
+            None => self.status.oldest_start_ns as f64,
+        }
+    }
+
     fn fit_to_content(&mut self) {
         if let Some((a, b)) = self.content_span() {
             let (t0, t1) = fit_content_window(a, b);
@@ -970,11 +1724,13 @@ impl OrbitLiveApp {
     fn begin_trace_load(&mut self, load: TraceLoad) {
         self.stop_record();
         self.index.clear();
+        self.live_all.clear();
         self.intern = InternTable::default();
         self.tracks = TrackStrip::default();
         self.selected = None;
         self.hover = None;
         self.measure = None;
+        self.sample_sels.clear();
         self.follow = false;
         self.trace_args.clear();
         self.trace_flows.clear();
@@ -1021,7 +1777,14 @@ impl OrbitLiveApp {
         {
             let file = self.pending_file.lock().ok().and_then(|mut g| g.take());
             if let Some(file) = file {
-                self.begin_trace_load(chrome_load::start_wasm_file(file));
+                if is_bundle_name(&file.name()) {
+                    // An Orbit capture: the service opens it and streams it
+                    // back like a capture, names and samples included.
+                    self.import_pending = true;
+                    self.net.import_capture_file(file);
+                } else {
+                    self.begin_trace_load(chrome_load::start_wasm_file(file));
+                }
             }
         }
         let evs = {
@@ -1040,6 +1803,7 @@ impl OrbitLiveApp {
         let n = evs.len();
         for ev in evs {
             self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
+            self.live_all.push(&ev);
             self.index.insert(ev);
         }
         self.merge_trace_metadata();
@@ -1098,6 +1862,16 @@ impl OrbitLiveApp {
         } else {
             f.name.clone()
         };
+        if is_bundle_name(&name) {
+            match &f.bytes {
+                Some(bytes) => {
+                    self.import_pending = true;
+                    self.net.import_capture(bytes.to_vec());
+                }
+                None => self.error = format!("{name}: open captures from the web viewer"),
+            }
+            return;
+        }
         if !chrome_load::is_trace_name(&name) {
             self.error = format!("Not a Chrome trace: {name}");
             return;
@@ -1148,6 +1922,8 @@ impl OrbitLiveApp {
                 "kernel_uprobes".into()
             },
             instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
+            show_all_processes: self.show_all_processes,
+            uprobe_duplicate_filter: self.uprobe_duplicate_filter,
         }
     }
 
@@ -1262,23 +2038,6 @@ impl OrbitLiveApp {
         };
     }
 
-    fn merge_self_processes(&mut self) {
-        if !self.dev && !self.status.self_profile {
-            return;
-        }
-        for (pid, name) in [(VIEWER_PID, VIEWER_NAME), (SERVICE_PID, SERVICE_NAME)] {
-            if !self.processes.iter().any(|p| p.pid == pid) {
-                self.processes.push(ProcessJson {
-                    pid,
-                    name: name.into(),
-                    cpu: 0.0,
-                    path: String::new(),
-                });
-            }
-        }
-        self.merge_trace_processes();
-    }
-
     fn merge_trace_processes(&mut self) {
         for p in &self.trace_processes {
             if let Some(exist) = self.processes.iter_mut().find(|x| x.pid == p.pid) {
@@ -1293,19 +2052,43 @@ impl OrbitLiveApp {
 
     fn apply_status(&mut self, s: StatusJson) {
         self.got_status = true;
+        self.last_status_seen_s = self.now_s;
+        // A capture started from the API (not this viewer) still names its
+        // target: the Functions view and the hook menu need a process.
+        if s.target_pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
+            self.selected_pid = Some(s.target_pid);
+        }
         self.ring_bytes = s.ring_bytes.to_string();
         if let Some(p) = &s.spill_path {
             self.spill_path = p.clone();
         }
-        if s.self_profile && !self.dev {
-            intern_self_names(&mut self.intern);
-            self.dev = true;
-        }
         if s.live_end_ns > 0 {
             self.live_edge_ns = self.live_edge_ns.max(s.live_end_ns);
         }
+        let capturing = s.capturing;
         self.status = s;
+        // A deep-linked report has no capture-stop transition to ride on, so
+        // it asks once, as soon as the service is talking.
+        if self.pending_report_request {
+            self.pending_report_request = false;
+            self.show_whole_capture_report();
+            self.net.get_modules(self.selected_pid.unwrap_or(0));
+        }
+        if self.pending_collapse_scheduler {
+            self.pending_collapse_scheduler = false;
+            if !self.tracks.collapsed(crate::tracks::RowId::Scheduler) {
+                self.tracks.toggle(crate::tracks::RowId::Scheduler);
+                self.relayout_tracks();
+            }
+        }
         self.error.clear();
+        // The moment recording stops, show the aggregate over everything just
+        // recorded. Orbit does the same: a finished capture with no selection
+        // should answer a question, not sit blank waiting to be dragged on.
+        if self.was_capturing && !capturing {
+            self.show_whole_capture_report();
+        }
+        self.was_capturing = capturing;
     }
 
     fn apply_process_list(&mut self, incoming: Vec<ProcessJson>) {
@@ -1325,18 +2108,86 @@ impl OrbitLiveApp {
         let inbox = self.net.take();
         self.http_ok = inbox.http_ok;
         self.ws_ok = inbox.ws_ok;
+        // Throughput over half-second windows, smoothed, so the chip reads
+        // as a rate rather than a flicker of per-frame batch sizes.
+        self.ws_window_bytes += inbox.bytes_in.saturating_sub(self.ws_bytes_seen);
+        self.ws_bytes_seen = inbox.bytes_in;
+        if self.ws_window_start_s < 0.0 {
+            self.ws_window_start_s = self.now_s;
+        }
+        let elapsed = self.now_s - self.ws_window_start_s;
+        if elapsed >= 0.5 {
+            let rate = self.ws_window_bytes as f64 / elapsed;
+            self.ws_rate_bps = self.ws_rate_bps * 0.5 + rate as f32 * 0.5;
+            self.ws_window_bytes = 0;
+            self.ws_window_start_s = self.now_s;
+        }
         if let Some(s) = inbox.status {
             self.apply_status(s);
         }
         if let Some(p) = inbox.processes {
             self.apply_process_list(p);
         }
+        if let Some(r) = inbox.sampling {
+            self.sampling = Some(r);
+        }
+        if let Some(t) = inbox.tree {
+            // Open along the hot path, the way C++ Orbit's tree arrives:
+            // every node over the slider's share of the samples.
+            self.tree_expanded = expandable_paths_over(&t.roots, self.tree_expand_threshold);
+            self.tree = Some(t);
+            self.flame_zoom.clear();
+        }
+        if let Some(m) = inbox.modules {
+            self.modules = Some(m);
+        }
+        if let Some(result) = inbox.disassembly {
+            self.code_loading = false;
+            match result {
+                Ok(d) => {
+                    // The function's own file, when the line table names one
+                    // and it is not what is open already, for the two to be
+                    // read together.
+                    let want = if !d.function.file.is_empty() { d.function.file.clone() } else { d.files.first().cloned().unwrap_or_default() };
+                    let have = self.code_doc.as_ref().map(|doc| doc.path.clone()).unwrap_or_default();
+                    if !want.is_empty() && want != have {
+                        self.net.get_source(&want);
+                    }
+                    let has_lines = d.lines.iter().any(|l| l.line > 0);
+                    self.code_mode = if has_lines { crate::code::CodeMode::Both } else { crate::code::CodeMode::Disassembly };
+                    self.code_disasm = Some(d);
+                    self.code_error.clear();
+                    self.code_scroll_to = Some(0);
+                    self.report_tab = ReportTab::Code;
+                    self.report_open = true;
+                    if self.report_collapsed {
+                        self.report_collapsed = false;
+                        self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                    }
+                }
+                Err(e) => self.code_error = e,
+            }
+            self.needs_repaint = true;
+        }
+        if let Some(result) = inbox.source {
+            match result {
+                Ok(f) => {
+                    self.code_doc = Some(crate::code::CodeDoc::new(&f.path, &f.text));
+                    self.code_error.clear();
+                }
+                Err(e) => self.code_error = e,
+            }
+            self.needs_repaint = true;
+        }
         if let Some(s) = inbox.symbols {
             self.symbols = s;
         }
-        if let Some(hits) = inbox.function_hits {
-            self.hook_hits = hits.functions;
+        if let Some(list) = inbox.function_list {
+            self.functions_pid = Some(list.pid);
+            self.functions = list.functions;
+            self.functions_requested = false;
         }
+        let _ = inbox.function_hits;
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
             let seeded_into_empty = self.processes.is_empty();
             for (pid, name) in [
@@ -1357,7 +2208,7 @@ impl OrbitLiveApp {
                 self.selected_pid = Some(1);
             }
         }
-        self.merge_self_processes();
+        self.merge_trace_processes();
         if let Some(tl) = inbox.timeline {
             self.service_timeline = Some(tl);
             self.service_frame = None;
@@ -1370,12 +2221,13 @@ impl OrbitLiveApp {
         }
         self.ws_queue.extend(inbox.frames);
         let mut ingested = 0usize;
-        while !self.ws_queue.is_empty() {
-            let next_len = self.ws_queue[0].len();
+        while let Some(next_len) = self.ws_queue.front().map(Vec::len) {
             if ingested > 0 && ingested + next_len > 1024 * 1024 {
                 break;
             }
-            let bytes = self.ws_queue.remove(0);
+            let Some(bytes) = self.ws_queue.pop_front() else {
+                break;
+            };
             ingested = ingested.saturating_add(bytes.len());
             self.ingest(&bytes);
         }
@@ -1383,15 +2235,20 @@ impl OrbitLiveApp {
 
     fn ingest(&mut self, bytes: &[u8]) {
         self.leftover.extend_from_slice(bytes);
+        // Decode by offset and drain once. Draining after every frame moved
+        // the whole remaining buffer each time: a burst of a thousand small
+        // batches in one chunk was a thousand memmoves of the chunk.
+        let mut off = 0usize;
         loop {
-            match decode_frame(&self.leftover) {
+            match decode_frame(&self.leftover[off..]) {
                 Ok((frame, n)) => {
                     self.apply_frame(frame);
-                    self.leftover.drain(..n);
+                    off += n;
                 }
                 Err(_) => break,
             }
         }
+        self.leftover.drain(..off);
     }
 
     fn apply_frame(&mut self, frame: LiveFrame) {
@@ -1401,14 +2258,10 @@ impl OrbitLiveApp {
                     return;
                 }
                 for ev in events {
-                    // Viewer scopes are inserted locally on the capture clock
-                    // so a lagged WS (demo flood) cannot hide pid 2.
-                    if self.dev && ev.pid == VIEWER_PID {
-                        continue;
-                    }
                     if !is_self_pid(ev.pid) {
                         self.live_edge_ns = self.live_edge_ns.max(ev.end_ns());
                     }
+                    self.live_all.push(&ev);
                     self.index.insert(ev);
                 }
                 self.refresh_content_bounds();
@@ -1416,19 +2269,29 @@ impl OrbitLiveApp {
             LiveFrame::InternedString { id, text } => {
                 self.intern.insert_id(id, &text);
             }
-            LiveFrame::CaptureStarted { start_ns, .. } => {
+            LiveFrame::CaptureStarted { pid, start_ns } => {
+                if self.import_pending {
+                    self.import_started = true;
+                }
+                // A capture started elsewhere (the API, an agent) names its
+                // target: with nothing picked here, that is the process the
+                // symbols, the hooks and the Functions view are about.
+                if pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
+                    self.selected_pid = Some(pid);
+                }
+                self.user_set_view = false;
                 self.clear_file_trace();
                 self.index.clear();
+                self.live_all.clear();
                 self.selected = None;
                 self.hover = None;
                 self.measure = None;
-                let origin = if start_ns > 0 {
-                    start_ns
-                } else {
-                    DEMO_ORIGIN_NS
-                };
-                self.self_cursor.reset_to(origin);
-                self.live_edge_ns = origin;
+                self.sample_sels.clear();
+                // `start_ns == 0` means "a capture is starting, its clock is
+                // not known yet": the real CLOCK_MONOTONIC origin comes with
+                // the service's own `CaptureStarted`.
+                self.capture_start_ns = start_ns;
+                self.live_edge_ns = if start_ns > 0 { start_ns } else { DEMO_ORIGIN_NS };
             }
             LiveFrame::Status {
                 capturing,
@@ -1456,11 +2319,79 @@ impl OrbitLiveApp {
                     ring_bytes,
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
-                    self_profile: self.status.self_profile,
+                    target_pid: self.status.target_pid,
+                    service_pid: self.status.service_pid,
                     hooks: self.status.hooks,
+                    // This frame is the WebSocket's stats push, which carries
+                    // no control state; keep what /api/status last said.
+                    instrumentation: self.status.instrumentation.clone(),
+                    wire: self.status.wire.clone(),
                 });
+                // An opened capture is all here once the service reports it
+                // finished: show the whole of it.
+                if self.import_started && !capturing {
+                    self.import_started = false;
+                    self.import_pending = false;
+                    self.follow = false;
+                    self.fit_to_content();
+                    self.needs_repaint = true;
+                }
             }
-            LiveFrame::CaptureFinished | LiveFrame::Hello { .. } => {}
+            // The viewer's own tracks use pids 2 and 3 as sentinels; on a
+            // real machine those are kthreadd and pool_workqueue_release,
+            // whose names must not land on the viewer's rows.
+            LiveFrame::ThreadName { pid, .. } | LiveFrame::ProcessName { pid, .. } if is_self_pid(pid) => {}
+            LiveFrame::ThreadName { pid, tid, name } => {
+                self.thread_names.insert((pid, tid), name);
+            }
+            LiveFrame::ProcessName { pid, name } => {
+                match self.trace_processes.iter_mut().find(|p| p.pid == pid) {
+                    Some(p) => p.name = name,
+                    None => self.trace_processes.push(ProcessJson {
+                        pid,
+                        name,
+                        cpu: 0.0,
+                        path: "capture".into(),
+                    }),
+                }
+            }
+            LiveFrame::CaptureFinished => {
+                // A capture that just stopped fits the view to what it
+                // holds, as C++ Orbit does when recording ends -- unless
+                // the user had already taken the view somewhere. An opened
+                // bundle fits on its Status, and an empty ring has nothing
+                // to fit.
+                if !self.user_set_view && !self.import_pending && self.index.event_count() > 0 {
+                    self.follow = false;
+                    self.fit_to_content();
+                    self.needs_repaint = true;
+                }
+                // A stream file ends with this frame and no status ever
+                // comes: this is where its report is computed, and where a
+                // `?report=` deep link is honoured.
+                if self.static_capture.is_some() {
+                    self.pending_report_request = false;
+                    self.show_whole_capture_report();
+                    self.settle_frames = 6;
+                }
+            }
+            LiveFrame::Hello { .. } => {
+                self.hello_count += 1;
+                // A Hello is the start of a full snapshot -- a fresh socket,
+                // or the server starting a lagging viewer over -- and every
+                // event that follows is the ring entire. Drop what is held so
+                // nothing is counted twice; a loaded file is not the ring's
+                // and stays.
+                if !self.file_trace_active() {
+                    self.index.clear();
+                    self.live_all.clear();
+                    self.thread_names.clear();
+                    self.trace_processes.clear();
+                    self.hover = None;
+                    self.refresh_content_bounds();
+                    self.needs_repaint = true;
+                }
+            }
         }
     }
 
@@ -1503,12 +2434,12 @@ impl OrbitLiveApp {
                 self.stop_record();
             }
         } else {
-            let record_ok = !self.status.hooks || self.selected_pid.is_some();
+            let record_ok = true;
             let resp = pill(ui, "Rec", false).on_hover_text(if self.status.hooks {
                 if self.selected_pid.is_some() {
                     "Start a real OrbitService capture of the selected process"
                 } else {
-                    "Select a process in the capture strip first"
+                    "Capture with no target: the scheduler, orbit-service, and every instrumented process"
                 }
             } else {
                 "No OrbitService hooks — Record starts the demo producer"
@@ -1521,7 +2452,7 @@ impl OrbitLiveApp {
 
     fn transport_open(&mut self, ui: &mut Ui) {
         if pill(ui, "Open", false)
-            .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+            .on_hover_text("Open a saved Orbit capture (.orbit.zip) or a Chrome trace (.json / .json.gz) — or drop the file on the page")
             .clicked()
         {
             #[cfg(target_arch = "wasm32")]
@@ -1551,7 +2482,7 @@ impl OrbitLiveApp {
         }
         if ui
             .button("Open…")
-            .on_hover_text("Load a Chrome Trace Event Format file (.json / .json.gz)")
+            .on_hover_text("Open a saved Orbit capture (.orbit.zip) or a Chrome trace (.json / .json.gz) — or drop the file on the page")
             .clicked()
         {
             #[cfg(target_arch = "wasm32")]
@@ -1562,20 +2493,9 @@ impl OrbitLiveApp {
             }
             ui.close();
         }
-        let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
         if ui
-            .selectable_label(theverge_on, chrome_load::THEVERGE_LABEL)
-            .on_hover_text(
-                "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
-            )
-            .clicked()
-        {
-            self.begin_trace_load(chrome_load::start_theverge());
-            ui.close();
-        }
-        if ui
-            .selectable_label(self.capture_open, "Capture")
-            .on_hover_text("Process, sampling, and hooks")
+            .selectable_label(self.capture_open, "Settings")
+            .on_hover_text("The process, what to collect, unwinding, hooks, the interface")
             .clicked()
         {
             self.capture_open = !self.capture_open;
@@ -1586,8 +2506,34 @@ impl OrbitLiveApp {
             self.follow = !self.follow;
         }
         ui.separator();
-        self.paint_search(ui);
+        if ui
+            .selectable_label(self.capture_open, "UI knobs")
+            .on_hover_text("Row spacing, track density and the like: in the settings")
+            .clicked()
+        {
+            self.capture_open = true;
+            self.capture_user = true;
+            ui.close();
+        }
         ui.separator();
+        // The website (landing, manual, dev blog) is served by the service
+        // at /site while there is no public site yet.
+        if self.static_capture.is_none() {
+            if ui
+                .button("Website & docs")
+                .on_hover_text("The landing page, manual and dev blog, served by orbit-service")
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("/site/index.html"));
+                ui.close();
+            }
+            ui.separator();
+        }
+        ui.label(
+            RichText::new(format!("viewer build {VIEWER_BUILD}"))
+                .font(FontId::monospace(10.5))
+                .color(theme::MUTED),
+        );
         if ui
             .selectable_label(self.light_canvas, "Paper")
             .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
@@ -1652,9 +2598,10 @@ impl OrbitLiveApp {
             );
         }
         let link = format!(
-            "{}  {}",
+            "{}  {}{}",
             if self.http_ok { "http" } else { "http…" },
-            if self.ws_ok { "ws" } else { "ws…" }
+            if self.ws_ok { "ws" } else { "ws…" },
+            if self.status.wire.is_empty() { String::new() } else { format!(" {}", self.status.wire) }
         );
         ui.label(
             RichText::new(link)
@@ -1671,6 +2618,7 @@ impl OrbitLiveApp {
     fn transport_narrow_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
+            self.paint_link_dot(ui);
             self.transport_record(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
@@ -1689,11 +2637,62 @@ impl OrbitLiveApp {
         });
     }
 
+    /// Green while the service answers; red once it stops -- the WebSocket
+    /// closed, an HTTP poll failed, or no status has arrived for a while.
+    /// Amber only before the first answer, so a page that is still opening
+    /// does not start out red.
+    fn link_state(&self) -> LinkState {
+        let fresh = self.last_status_seen_s >= 0.0
+            && self.now_s - self.last_status_seen_s < LINK_STALE_S;
+        if self.ws_ok && self.http_ok && fresh {
+            LinkState::Connected
+        } else if !self.got_status && self.now_s < LINK_STALE_S {
+            LinkState::Connecting
+        } else {
+            LinkState::Lost
+        }
+    }
+
+    fn paint_link_dot(&self, ui: &mut Ui) {
+        if let Some(url) = &self.static_capture {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            ui.painter().circle_filled(rect.center(), 4.0, LINK_GREEN);
+            resp.on_hover_text(format!("Capture file {url} — no service"));
+            return;
+        }
+        let state = self.link_state();
+        let (color, what) = match state {
+            LinkState::Connected => (LINK_GREEN, "Connected to the service"),
+            LinkState::Connecting => (LINK_AMBER, "Connecting to the service…"),
+            LinkState::Lost => (LINK_RED, "Lost the service"),
+        };
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 4.0, color);
+        if state == LinkState::Lost {
+            // A ring so the red reads as "broken", not just a colour change.
+            ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.0, color));
+        }
+        let mut detail = String::new();
+        if self.last_status_seen_s >= 0.0 {
+            detail.push_str(&format!(
+                "last status {:.1} s ago",
+                (self.now_s - self.last_status_seen_s).max(0.0)
+            ));
+        } else {
+            detail.push_str("no status yet");
+        }
+        detail.push_str(if self.ws_ok { "; event stream open" } else { "; event stream closed, retrying" });
+        resp.on_hover_text(format!("{what} — {detail}"));
+    }
+
     fn transport(&mut self, ui: &mut Ui) {
         if self.chrome_collapsed() || self.was_narrow {
             self.transport_narrow_bar(ui);
             return;
         }
+        // Clusters, left to right: the mark and the link; the capture's
+        // verbs (Record, Open, Save, Clear); the panels (Capture, Report,
+        // Self); Follow; the search; the stats; the rest behind "…".
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.label(
@@ -1703,66 +2702,71 @@ impl OrbitLiveApp {
                     .extra_letter_spacing(1.6)
                     .color(theme::TEXT),
             );
-            ui.add_space(12.0);
-            {
+            ui.add_space(2.0);
+            self.paint_link_dot(ui);
+            vsep(ui);
+            let has_service = self.static_capture.is_none();
+            if has_service {
                 let recording = self.recording || self.status.demo || self.status.capturing;
-                if recording {
-                    if pill(ui, "Stop", true)
-                        .on_hover_text(if self.status.hooks && !self.status.demo {
-                            "Stop capture"
-                        } else {
-                            "Stop demo"
-                        })
-                        .clicked()
-                    {
-                        self.stop_record();
+                let tip = if recording {
+                    if self.status.hooks && !self.status.demo { "Stop capture" } else { "Stop demo" }
+                } else if self.status.hooks {
+                    if self.selected_pid.is_some() {
+                        "Start a capture of the selected process"
+                    } else {
+                        "Capture with no target: the scheduler, orbit-service, and every instrumented process"
                     }
                 } else {
-                    let record_ok = !self.status.hooks || self.selected_pid.is_some();
-                    let resp = pill(ui, "Record", false).on_hover_text(if self.status.hooks {
-                        if self.selected_pid.is_some() {
-                            "Start a real OrbitService capture of the selected process"
-                        } else {
-                            "Select a process in the capture strip first"
-                        }
+                    "No OrbitService hooks — Record starts the demo producer"
+                };
+                if record_button(ui, recording).on_hover_text(format!("{tip} (X)")).clicked() {
+                    if recording {
+                        self.stop_record();
                     } else {
-                        "No OrbitService hooks — Record starts the demo producer"
-                    });
-                    if resp.clicked() && record_ok {
                         self.start_record();
                     }
                 }
-            }
-            if !self.status.hooks || !self.status.capturing {
-                if pill(ui, "Demo", self.status.demo)
-                    .on_hover_text("Dummy scopes (no OrbitService attach)")
+                self.transport_open(ui);
+                self.transport_save(ui);
+                if icon_button(ui, "Clear", "Empty the capture: every event, on the service and here", paint_clear_icon).clicked() {
+                    self.clear_everything();
+                }
+                if icon_button(ui, "Settings", "Settings: the process, what to collect, unwinding, hooks, the interface", paint_gear_icon)
                     .clicked()
                 {
-                    if self.status.demo || self.recording {
-                        self.stop_record();
-                    } else {
-                        self.start_demo_path();
-                    }
+                    self.capture_open = !self.capture_open;
+                    self.capture_user = true;
+                }
+            } else if let Some(url) = &self.static_capture {
+                let name = url.rsplit('/').next().unwrap_or(url);
+                ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED))
+                    .on_hover_text("This page shows a saved capture; there is no service behind it");
+            }
+            vsep(ui);
+            if pill(ui, "Report", self.report_open)
+                .on_hover_text("The report panel: Live scope statistics, the sampling report, the functions")
+                .clicked()
+            {
+                self.report_open = !self.report_open;
+                if self.report_open && (self.report_collapsed || self.report_w_last < REPORT_COLLAPSE_W) {
+                    self.report_collapsed = false;
+                    self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                }
+                if self.report_open && self.sampling_ranges.is_empty() && self.sampling.is_none() {
+                    self.report_tab = ReportTab::Live;
                 }
             }
-            self.transport_open(ui);
-            let theverge_on = self.trace_name.as_deref() == Some(chrome_load::THEVERGE_FILE_NAME);
-            if pill(ui, chrome_load::THEVERGE_LABEL, theverge_on)
-                .on_hover_text(
-                    "Load catapult theverge_trace.json (same-origin Chrome file, not the Demo producer)",
-                )
+            if pill(ui, "Self", self.self_pane_open)
+                .on_hover_text("Profile the viewer itself, in its own pane — independent of any capture")
                 .clicked()
             {
-                self.begin_trace_load(chrome_load::start_theverge());
+                self.self_pane_open = !self.self_pane_open;
             }
-            if pill(ui, "Capture", self.capture_open)
-                .on_hover_text("Process, sampling, and hooks")
+            vsep(ui);
+            if pill(ui, "Follow", self.follow)
+                .on_hover_text("Keep the newest events in view while capturing (space)")
                 .clicked()
             {
-                self.capture_open = !self.capture_open;
-                self.capture_user = true;
-            }
-            if pill(ui, "Follow", self.follow).clicked() {
                 self.follow = !self.follow;
             }
             ui.add_space(6.0);
@@ -1774,21 +2778,79 @@ impl OrbitLiveApp {
                 if fullscreen_pill(ui, self.fullscreen).clicked() {
                     self.set_fullscreen(ui.ctx(), !self.fullscreen);
                 }
-                if shape_pill(ui, self.compact, "Track density", paint_density_icon).clicked() {
-                    self.compact = !self.compact;
-                    self.compact_user = true;
-                }
-                if pill(ui, "Paper", self.light_canvas)
-                    .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
-                    .clicked()
-                {
-                    self.light_canvas = !self.light_canvas;
-                }
-                if shape_pill(ui, self.advanced, "Inspector", paint_inspector_icon).clicked() {
-                    self.advanced = !self.advanced;
-                }
+                self.transport_more(ui);
             });
         });
+    }
+
+    /// Save as a small menu: the whole capture, the selected slice when
+    /// there is one, or the stream a web page embeds.
+    fn transport_save(&mut self, ui: &mut Ui) {
+        let save = icon_button(ui, "Save", "Download the capture", paint_save_icon);
+        let slice = self.selection_span();
+        egui::Popup::menu(&save).show(|ui| {
+            ui.set_min_width(240.0);
+            if ui
+                .button("Capture (.orbit.zip)")
+                .on_hover_text("Events, samples and names in one file; drop it back on the viewer to open it")
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("/api/capture/export?format=bundle"));
+                ui.close();
+            }
+            let slice_item = ui.add_enabled(slice.is_some(), egui::Button::new("Selected slice (.orbit.zip)"));
+            if slice_item.on_hover_text("The selected time range as a capture of its own").clicked() {
+                if let Some((a, b)) = slice {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                        "/api/capture/export?format=bundle&t0={a}&t1={b}"
+                    )));
+                }
+                ui.close();
+            }
+            if ui
+                .button("Stream for a web page (.orbit.stream)")
+                .on_hover_text("What a connecting viewer receives, as a file; the viewer opens it with ?capture=<url> and no service")
+                .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab("/api/capture/export?format=stream"));
+                ui.close();
+            }
+        });
+    }
+
+    /// The symbols pill: what the service has indexed for the selected
+    /// process, and a click to (re)load it. Loading also starts on its own
+    /// when a process is selected; this is for the eye and for a retry.
+    fn paint_symbols_pill(&mut self, ui: &mut Ui) {
+        let ready = self.symbols.status == "ready";
+        let label = if self.selected_pid.is_none() {
+            "Symbols".to_string()
+        } else {
+            self.symbol_status_line()
+        };
+        let resp = pill(ui, &label, ready).on_hover_text(match self.symbols.status.as_str() {
+            "ready" => "Symbols are loaded; click to reload them",
+            "loading" => "Loading the process's symbols",
+            "error" => "Symbol loading failed; click to retry",
+            _ => "Load the selected process's symbols (function names for hooks and reports)",
+        });
+        note_ui_rect("Symbols", resp.rect);
+        if resp.clicked() {
+            if let Some(pid) = self.selected_pid {
+                self.loaded_symbol_pid = Some(pid);
+                self.symbols = SymbolsStatusJson { pid, status: "loading".into(), ..Default::default() };
+                self.functions.clear();
+                self.functions_pid = None;
+                self.net.load_symbols(pid);
+            }
+        }
+        if !self.symbols.error.is_empty() && self.symbols.status == "error" {
+            ui.label(
+                RichText::new(&self.symbols.error)
+                    .font(FontId::monospace(10.5))
+                    .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
+            );
+        }
     }
 
     fn symbol_status_line(&self) -> String {
@@ -1882,26 +2944,20 @@ impl OrbitLiveApp {
         });
     }
 
-    fn capture_strip(&mut self, ui: &mut Ui) {
+    /// The process row, always in the main UI under the transport: which
+    /// process the capture is about is not a setting to go looking for.
+    fn process_row(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
-            ui.label(
-                RichText::new("PROCESS")
-                    .family(fonts::medium())
-                    .size(9.5)
-                    .extra_letter_spacing(1.2)
-                    .color(theme::MUTED),
-            );
+            section_label(ui, "PROCESS");
             self.paint_process_picker(ui, "orbit_processes_strip");
-            if icon_pill(ui, "↻", "Refresh process list").clicked() {
+            // Plain words: the font has no glyph for a refresh arrow and drew
+            // a question mark in its place.
+            if pill(ui, "Refresh", false).on_hover_text("Re-read the process list").clicked() {
                 self.last_process_request = ui.input(|i| i.time);
                 self.net.get_processes();
             }
-            ui.label(
-                RichText::new(self.symbol_status_line())
-                    .font(FontId::monospace(10.5))
-                    .color(theme::MUTED),
-            );
+            self.paint_symbols_pill(ui);
             if !self.status.hooks {
                 ui.label(
                     RichText::new("Record starts Demo — no OrbitService hooks")
@@ -1910,9 +2966,14 @@ impl OrbitLiveApp {
                 );
             }
         });
-        ui.add_space(4.0);
+    }
+
+    /// The capture settings: what to collect, how to unwind, hooks and
+    /// what is hooked. Inside the Settings window.
+    fn capture_strip(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
+            section_label(ui, "COLLECT");
             if pill(ui, "CSW", self.opt_csw)
                 .on_hover_text("Context switches / Scheduler track")
                 .clicked()
@@ -1950,111 +3011,283 @@ impl OrbitLiveApp {
                     .font(FontId::monospace(10.5))
                     .color(theme::MUTED),
             );
-            if pill(ui, "DWARF", self.unwind_dwarf)
-                .on_hover_text("DWARF unwind (default)")
+            vsep(ui);
+            section_label(ui, "UNWIND");
+            if let Some(i) = segmented(ui, "orbit_unwind", &["DWARF", "FP"], usize::from(!self.unwind_dwarf)) {
+                self.unwind_dwarf = i == 0;
+            }
+            vsep(ui);
+            section_label(ui, "HOOKS");
+            if let Some(i) = segmented(ui, "orbit_hook_method", &["Uprobes", "User-space"], usize::from(self.user_space_hooks)) {
+                self.user_space_hooks = i == 1;
+            }
+            if pill(ui, "Dedupe", self.uprobe_duplicate_filter)
+                .on_hover_text(
+                    "Drop the duplicate entry the kernel reports when a thread migrates inside a uprobe \
+                     (same stack and instruction pointer, another CPU), and an entry above the last one's \
+                     stack. Off shows the ghost scopes it removes; the count is on the status line either way.",
+                )
                 .clicked()
             {
-                self.unwind_dwarf = true;
+                self.uprobe_duplicate_filter = !self.uprobe_duplicate_filter;
             }
-            if pill(ui, "FP", !self.unwind_dwarf)
-                .on_hover_text("Frame-pointer unwind")
-                .clicked()
-            {
-                self.unwind_dwarf = false;
-            }
-            if pill(ui, "User-space", self.user_space_hooks)
-                .on_hover_text("Dynamic instrumentation: user-space (default)")
-                .clicked()
-            {
-                self.user_space_hooks = true;
-            }
-            if pill(ui, "Uprobes", !self.user_space_hooks)
-                .on_hover_text("Dynamic instrumentation: kernel uprobes")
-                .clicked()
-            {
-                self.user_space_hooks = false;
-            }
-            if self.opt_csw {
-                ui.label(
-                    RichText::new("CSW needs root (./wasm.sh)")
-                        .font(FontId::monospace(10.0))
-                        .color(theme::MUTED),
-                );
-            }
+            ui.label(
+                RichText::new(if self.user_space_hooks {
+                    "trampolines are not ported yet; uprobes are armed"
+                } else {
+                    "needs CAP_PERFMON"
+                })
+                .font(FontId::monospace(10.0))
+                .color(theme::MUTED),
+            );
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.add_space(8.0);
-            ui.label(
-                RichText::new("HOOK")
-                    .family(fonts::medium())
-                    .size(9.5)
-                    .extra_letter_spacing(1.2)
-                    .color(theme::MUTED),
-            );
-            let ready = self.symbols.status == "ready";
-            let resp = ui.add_enabled(
-                ready,
-                egui::TextEdit::singleline(&mut self.hook_query)
-                    .id_salt("orbit_hook_search")
-                    .desired_width(220.0)
-                    .hint_text(if ready {
-                        "function name"
+            section_label(ui, "HOOKED");
+            // Which functions are hooked lives in the Functions view (every
+            // symbol of the process, a hooked column), as in C++ Orbit, and
+            // in the sampling report's right-click. This line only counts.
+            let n = self.selected_hooks.len();
+            let text = match n {
+                0 => "no functions hooked".to_string(),
+                1 => "1 function hooked".to_string(),
+                n => format!("{n} functions hooked"),
+            };
+            ui.label(RichText::new(text).font(FontId::monospace(10.5)).color(theme::MUTED));
+            if pill(ui, "Functions", self.report_open && self.report_tab == ReportTab::Functions)
+                .on_hover_text("Every function of the selected process, with a hooked column")
+                .clicked()
+            {
+                self.report_open = true;
+                self.report_collapsed = false;
+                self.report_tab = ReportTab::Functions;
+            }
+            if n > 0 && pill(ui, "Unhook all", false).clicked() {
+                self.selected_hooks.clear();
+            }
+            // What actually happened to the hooked functions. Uprobes need
+            // CAP_PERFMON, so "nothing was armed" is a normal outcome that has
+            // to read as a fixable permissions problem, not an empty track.
+            if !self.status.instrumentation.is_empty() {
+                let armed = self.status.instrumentation.starts_with("instrumenting");
+                // Records the kernel dropped mean an incomplete capture -- the
+                // ring overflowed -- so it reads amber even when hooks armed,
+                // not the muted grey of a clean run.
+                let lossy = self.status.instrumentation.contains("records lost");
+                ui.label(
+                    RichText::new(&self.status.instrumentation).size(11.0).color(if armed && !lossy {
+                        theme::MUTED
                     } else {
-                        "symbols not ready"
-                    })
-                    .font(FontId::monospace(11.0))
-                    .background_color(theme::INPUT),
-            );
-            if ready && resp.changed() {
-                self.last_hook_query.clear();
+                        Color32::from_rgb(0xFF, 0xB3, 0x00)
+                    }),
+                );
             }
-            let selected = std::mem::take(&mut self.selected_hooks);
-            let mut drop = None;
-            for (i, hook) in selected.iter().enumerate() {
-                if pill(ui, &short_fn(&hook.name), true)
-                    .on_hover_text(&hook.name)
-                    .clicked()
-                {
-                    drop = Some(i);
-                }
-            }
-            let mut selected = selected;
-            if let Some(i) = drop {
-                selected.remove(i);
-            }
-            self.selected_hooks = selected;
         });
-        if self.symbols.status == "ready"
-            && !self.hook_hits.is_empty()
-            && !self.hook_query.is_empty()
-        {
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(52.0);
-                let hits = self.hook_hits.clone();
-                for hit in hits {
-                    if self
-                        .selected_hooks
-                        .iter()
-                        .any(|h| h.function_id == hit.function_id)
-                    {
-                        continue;
-                    }
-                    if pill(ui, &short_fn(&hit.name), false)
-                        .on_hover_text(format!("{}\n{}", hit.name, hit.module))
-                        .clicked()
-                    {
-                        self.selected_hooks.push(hit);
-                    }
-                }
-            });
-        }
-        if !self.symbols.error.is_empty() && self.symbols.status == "error" {
+    }
+
+    /// The Functions view: every function the service indexed for the
+    /// selected process, with a hooked column, the report filter box
+    /// narrowing it. Ticking a row hooks it for the next Record, exactly as
+    /// the sampling report's right-click does.
+    fn function_rows(&mut self, ui: &mut Ui) {
+        let font = self.ui_tweaks.report_font;
+        let Some(pid) = self.selected_pid else {
+            ui.label(RichText::new("Select a process to list its functions.").color(theme::MUTED).size(font));
+            return;
+        };
+        if self.symbols.status != "ready" {
             ui.label(
-                RichText::new(&self.symbols.error)
-                    .size(11.0)
-                    .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
+                RichText::new(format!("Symbols for pid {pid}: {}", self.symbol_status_line()))
+                    .color(theme::MUTED)
+                    .size(font),
             );
+            return;
+        }
+        if self.functions_pid != Some(pid) {
+            ui.label(RichText::new("Listing functions…").color(theme::MUTED).size(font));
+            return;
+        }
+        self.hooked_hint(ui);
+        let filter = self.report_filter.trim().to_lowercase();
+        let mut rows: Vec<usize> = self
+            .functions
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| filter.is_empty() || contains_ci(&f.name, &filter) || contains_ci(&f.module, &filter))
+            .map(|(i, _)| i)
+            .collect();
+        {
+            let (sort_col, sort_desc) = self.functions_sort;
+            let hooked_ids: HashSet<u64> = self.selected_hooks.iter().map(|h| h.function_id).collect();
+            let functions = &self.functions;
+            // The list arrives alphabetical; only another column costs a sort.
+            if sort_col != 1 || sort_desc {
+                rows.sort_by(|&a, &b| {
+                    let (fa, fb) = (&functions[a], &functions[b]);
+                    let ord = match sort_col {
+                        0 => hooked_ids
+                            .contains(&fa.function_id)
+                            .cmp(&hooked_ids.contains(&fb.function_id))
+                            .then(fb.name.cmp(&fa.name)),
+                        1 => cmp_ci(&fa.name, &fb.name),
+                        2 => fa.size.cmp(&fb.size).then(fb.name.cmp(&fa.name)),
+                        _ => cmp_ci(&fa.module, &fb.module).then(fb.name.cmp(&fa.name)),
+                    };
+                    if sort_desc { ord.reverse() } else { ord }
+                });
+            }
+        }
+        const MAX_ROWS: usize = 500;
+        let capped = !self.functions_show_all && rows.len() > MAX_ROWS;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(if capped {
+                    format!("{} of {} functions match; the first {MAX_ROWS} are listed", rows.len(), self.functions.len())
+                } else {
+                    format!("{} of {} functions", rows.len(), self.functions.len())
+                })
+                .color(theme::MUTED)
+                .size(font - 0.5),
+            );
+            if rows.len() > MAX_ROWS
+                && pill(ui, "Show all", self.functions_show_all)
+                    .on_hover_text("Every matching row; only the rows in view are laid out")
+                    .clicked()
+            {
+                self.functions_show_all = !self.functions_show_all;
+            }
+        });
+        let shown = if capped { &rows[..MAX_ROWS] } else { &rows[..] };
+        // Laid out by hand: only the rows inside the clip rect become
+        // widgets, the rest are one allocation above and one below, so a
+        // 50,000-row list costs what a screenful does.
+        let row_h = font + self.ui_tweaks.report_row_gap + 6.0;
+        let col_gap = self.ui_tweaks.report_col_gap;
+        let widths = [22.0f32, 0.0, 64.0, 170.0]; // hooked, function (rest), size, module
+        let avail_w = ui.available_width().max(300.0);
+        let name_w = (avail_w - widths[0] - widths[2] - widths[3] - 3.0 * col_gap).max(120.0);
+        // Header: each column sorts on click.
+        let functions_sort = self.functions_sort;
+        let mut sort_click: Option<u8> = None;
+        ui.horizontal(|ui| {
+            for (i, (h, w)) in [("hooked", widths[0]), ("function", name_w), ("size", widths[2]), ("module", widths[3])]
+                .iter()
+                .enumerate()
+            {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(*w, row_h), Sense::click());
+                let active = functions_sort.0 == i as u8;
+                let text_w = ui.painter()
+                    .text(
+                        r.left_center(),
+                        Align2::LEFT_CENTER,
+                        *h,
+                        FontId::new(font - 0.5, FontFamily::Proportional),
+                        if active { theme::TEXT } else { theme::MUTED },
+                    )
+                    .width();
+                if active {
+                    paint_sort_arrow(ui, Pos2::new(r.left() + text_w + 8.0, r.center().y), functions_sort.1);
+                }
+                note_ui_rect(&format!("sort:{h}"), r);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    sort_click = Some(i as u8);
+                }
+                ui.add_space(col_gap);
+            }
+        });
+        if let Some(col) = sort_click {
+            toggle_sort(&mut self.functions_sort, col, col == 0 || col == 2);
+            self.needs_repaint = true;
+        }
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
+        let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(shown.len());
+        let first = first.min(last);
+        if first > 0 {
+            ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
+        }
+        let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
+        for (n, &i) in shown[first..last].iter().enumerate() {
+            let f = &self.functions[i];
+            let hooked = self.is_hooked(f.function_id);
+            let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
+            if (first + n) % 2 == 1 {
+                ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+            }
+            let mut x = row_rect.left();
+            // hooked
+            let check_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[0], row_h));
+            let check = ui.interact(check_rect, ui.id().with(("fnhook", i)), Sense::click());
+            let box_r = Rect::from_center_size(check_rect.center(), Vec2::splat(12.0));
+            ui.painter().rect(
+                box_r,
+                2.0,
+                if hooked { theme::ACCENT } else { theme::INPUT },
+                Stroke::new(1.0, if hooked { theme::ACCENT } else { theme::MUTED }),
+                StrokeKind::Inside,
+            );
+            if hooked {
+                ui.painter().line_segment(
+                    [Pos2::new(box_r.left() + 3.0, box_r.center().y), Pos2::new(box_r.center().x, box_r.bottom() - 3.0)],
+                    Stroke::new(1.5, theme::CANVAS),
+                );
+                ui.painter().line_segment(
+                    [Pos2::new(box_r.center().x, box_r.bottom() - 3.0), Pos2::new(box_r.right() - 2.0, box_r.top() + 3.0)],
+                    Stroke::new(1.5, theme::CANVAS),
+                );
+            }
+            note_ui_rect(&format!("hook:{}", f.name), check_rect);
+            if check.clicked() {
+                actions.push((
+                    if hooked { HookAction::Unhook } else { HookAction::Hook },
+                    f.function_id,
+                    f.name.clone(),
+                    f.module.clone(),
+                ));
+            }
+            x += widths[0] + col_gap;
+            // function
+            let name_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(name_w, row_h));
+            let label = ui.interact(name_rect, ui.id().with(("fnname", i)), Sense::click());
+            ui.painter().text(
+                name_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&f.name, name_w - 4.0, font),
+                FontId::new(font, FontFamily::Proportional),
+                if hooked { theme::ACCENT } else { theme::TEXT },
+            );
+            note_ui_rect(&format!("fn:{}", f.name), name_rect);
+            if let Some(action) = hook_menu(&label, f.function_id, hooked) {
+                actions.push((action, f.function_id, f.name.clone(), f.module.clone()));
+            }
+            x += name_w + col_gap;
+            // size
+            let size_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[2], row_h));
+            ui.painter().text(
+                size_rect.left_center(),
+                Align2::LEFT_CENTER,
+                f.size.to_string(),
+                FontId::monospace(font),
+                theme::MUTED,
+            );
+            x += widths[2] + col_gap;
+            // module
+            let module_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[3], row_h));
+            ui.painter().text(
+                module_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&f.module, widths[3] - 4.0, font - 0.5),
+                FontId::new(font - 0.5, FontFamily::Proportional),
+                theme::MUTED,
+            );
+        }
+        if last < shown.len() {
+            ui.allocate_exact_size(Vec2::new(avail_w, (shown.len() - last) as f32 * row_h), Sense::hover());
+        }
+        for (action, id, name, module) in actions {
+            self.apply_hook_action(action, id, &name, &module);
         }
     }
 
@@ -2067,8 +3300,8 @@ impl OrbitLiveApp {
                     status: "loading".into(),
                     ..Default::default()
                 };
-                self.hook_hits.clear();
-                self.hook_query.clear();
+                self.functions.clear();
+                self.functions_pid = None;
                 self.net.load_symbols(pid);
             }
             if self.status.hooks
@@ -2078,18 +3311,15 @@ impl OrbitLiveApp {
                 self.last_symbol_poll = now;
                 self.net.get_symbols_status(pid);
             }
-            let q = self.hook_query.trim().to_string();
+            // The Functions view's list, once symbols are ready and the tab
+            // wants it.
             if self.symbols.status == "ready"
-                && q != self.last_hook_query
-                && now - self.last_symbol_poll > 0.15
+                && self.report_tab == ReportTab::Functions
+                && self.functions_pid != Some(pid)
+                && !self.functions_requested
             {
-                self.last_hook_query = q.clone();
-                self.last_symbol_poll = now;
-                if q.is_empty() {
-                    self.hook_hits.clear();
-                } else {
-                    self.net.search_functions(pid, &q, 16);
-                }
+                self.functions_requested = true;
+                self.net.list_functions(pid);
             }
         }
     }
@@ -2224,11 +3454,28 @@ impl OrbitLiveApp {
     fn timeline(&mut self, ui: &mut Ui, dt: f32, dev: &DevFrame) {
         self.tracks.scale = if self.compact { 0.72 } else { 1.0 };
         self.refresh_search();
-        let filter = self
-            .selected_pid
-            .filter(|_| self.status.capturing && !self.status.demo);
+        // No narrowing to the selected process: the service decides which
+        // processes get rows (the target and what it spawned, itself, and
+        // every instrumented process), and it only sends those. Narrowing
+        // here hid all but the target until the capture stopped -- other
+        // instrumented processes and orbit-service's own track appeared only
+        // when Stop lifted the filter.
+        let filter: Option<u32> = None;
         {
             let _tracks = dev.scope(TID_UI, NAME_TRACKS);
+            // Who goes where: the target first, then the instrumented
+            // processes by how much they said, then the service and the
+            // viewer's own rows last and folded.
+            self.tracks.order_hints = if self.in_self_pane {
+                // The Self pane's timeline is about the viewer: its rows lead
+                // and arrive open.
+                crate::tracks::OrderHints { target: Some(VIEWER_PID), service: None }
+            } else {
+                crate::tracks::OrderHints {
+                    target: self.selected_pid.filter(|p| *p > 0).or((self.status.target_pid > 0).then_some(self.status.target_pid)),
+                    service: (self.status.service_pid > 0).then_some(self.status.service_pid),
+                }
+            };
             {
                 let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
                 self.tracks.sync(&self.index, filter);
@@ -2242,7 +3489,7 @@ impl OrbitLiveApp {
         let header_w = self.header_w;
         let header_cut = time_rect.with_max_x(time_rect.left() + header_w);
         let ruler = time_rect.with_min_x(time_rect.left() + header_w);
-        ui.painter().rect_filled(header_cut, 0.0, theme::RAIL);
+        ui.painter().rect_filled(header_cut, 0.0, self.rail_color());
         ui.painter().text(
             header_cut.left_center() + Vec2::new(12.0, 0.0),
             Align2::LEFT_CENTER,
@@ -2250,15 +3497,6 @@ impl OrbitLiveApp {
             FontId::new(9.5, fonts::medium()),
             theme::MUTED,
         );
-        if (self.dev || self.status.self_profile) && header_w >= 140.0 {
-            ui.painter().text(
-                header_cut.left_center() + Vec2::new(62.0, 0.0),
-                Align2::LEFT_CENTER,
-                "DEV",
-                FontId::new(9.5, fonts::medium()),
-                theme::ACCENT,
-            );
-        }
         if self.tracks.hidden_count() > 0 {
             let all = Rect::from_center_size(
                 Pos2::new(header_cut.right() - 28.0, header_cut.center().y),
@@ -2282,10 +3520,10 @@ impl OrbitLiveApp {
             }
             hit.on_hover_text("Show all threads");
         }
-        paint_timebar(ui, ruler, self.t0, self.t1);
+        paint_timebar(ui, ruler, self.t0, self.t1, self.timeline_origin_ns());
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false, dt);
-        self.handle_measure(&ruler_resp, ruler, false);
+        self.handle_measure(&ruler_resp, ruler, false, PointerButton::Secondary, false);
         if ruler_resp.double_clicked() {
             self.fit_to_content();
             self.needs_repaint = true;
@@ -2298,14 +3536,14 @@ impl OrbitLiveApp {
             hairline(),
         );
 
-        egui::TopBottomPanel::bottom("orbit_time_slider")
+        egui::TopBottomPanel::bottom(egui::Id::new("orbit_time_slider").with(self.gpu_slot))
             .exact_height(TIME_SLIDER_H)
             .resizable(false)
             .show_separator_line(false)
-            .frame(Frame::new().fill(theme::RAIL).inner_margin(0))
+            .frame(Frame::new().fill(self.rail_color()).inner_margin(0))
             .show_inside(ui, |ui| {
                 let bar = ui.max_rect();
-                ui.painter().rect_filled(bar, 0.0, theme::RAIL);
+                ui.painter().rect_filled(bar, 0.0, self.rail_color());
                 let track = bar.with_min_x(bar.left() + header_w);
                 self.handle_time_slider(ui, track);
             });
@@ -2320,9 +3558,13 @@ impl OrbitLiveApp {
         // scroll; the body claims primary drag for time + touch Y.
         let mut scroll_source = ScrollSource::ALL;
         scroll_source.mouse_wheel = false;
+        // egui's own bar is hidden and the viewer draws its own below: a
+        // bar whose look follows the pointer's position, not the hit test,
+        // so the report splitter next to it can never take turns with it.
         let mut scroll = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .id_salt("orbit_lanes")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .scroll_source(scroll_source);
         if let Some(y) = self.pending_vscroll.take() {
             scroll = scroll.vertical_scroll_offset(y);
@@ -2333,15 +3575,23 @@ impl OrbitLiveApp {
             let head = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + header_w, rect.max.y));
             let body = Rect::from_min_max(Pos2::new(rect.min.x + header_w, rect.min.y), rect.max);
 
-            ui.painter().rect_filled(head, 0.0, theme::RAIL);
+            ui.painter().rect_filled(head, 0.0, self.rail_color());
+            // Registered before the header rows, so every header widget sits
+            // on top of it: a click that reaches this hit no header, and a
+            // click on nothing cancels the selection.
+            if ui.interact(head, ui.id().with("orbit_rail_empty"), Sense::click()).clicked() {
+                self.clear_selection();
+            }
             ui.painter()
-                .rect_filled(body, 0.0, theme::timeline_canvas(self.light_canvas));
+                .rect_filled(body, 0.0, self.canvas_color());
             paint_quiet_grid(ui, body, self.t0, self.t1, self.light_canvas);
             ui.painter()
                 .line_segment([head.right_top(), head.right_bottom()], hairline());
-            if self.tracks.dragging() {
+            if self.tracks.any_dragging() {
                 if let Some(p) = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) {
-                    self.tracks.update_drag(p.y - head.top());
+                    let ry = p.y - head.top();
+                    self.tracks.update_drag(ry);
+                    self.tracks.update_header_drag(ry);
                     self.tracks.tick(0.0, &self.index, filter);
                 }
             }
@@ -2394,10 +3644,29 @@ impl OrbitLiveApp {
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
-                self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true, dt);
+                // A left drag that starts on a thread's sample bar selects
+                // those samples -- the white ticks are the thing you drag
+                // across -- and the timeline does not pan underneath it.
+                // Anywhere else, a left drag pans as before.
+                if body_resp.drag_started_by(PointerButton::Primary) && self.report_splitter_grab.is_none() {
+                    self.sample_drag = body_resp
+                        .interact_pointer_pos()
+                        .and_then(|p| self.sample_lane_at_y(p.y - body.top()))
+                        .is_some();
+                }
+                if !self.sample_drag {
+                    self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true, dt);
+                }
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y, dt);
                 self.handle_pick(&body_resp, body, t0, t1, width);
-                self.handle_measure(&body_resp, body, true);
+                if self.sample_drag {
+                    self.handle_measure(&body_resp, body, true, PointerButton::Primary, true);
+                } else {
+                    self.handle_measure(&body_resp, body, true, PointerButton::Secondary, false);
+                }
+                if body_resp.drag_stopped() {
+                    self.sample_drag = false;
+                }
             }
 
             let dropping = ui.input(|i| !i.raw.hovered_files.is_empty());
@@ -2421,7 +3690,7 @@ impl OrbitLiveApp {
                 && self.trace_load.is_none();
             if empty {
                 paint_empty(ui, body, dropping);
-                paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
+                paint_selection_overlay(ui, body, self.t0, self.t1, &self.sample_sels, self.measure, true, &|_| None);
                 self.refresh_scope_stats(t0, t1, Some(y_cull));
                 return;
             }
@@ -2454,17 +3723,24 @@ impl OrbitLiveApp {
                     }
                     // Keep redraws last frame's texture, so it must keep last
                     // frame's dest or the blit jumps between LOD rects.
-                    TimelinePayload::Keep => {
+                    TimelinePayload::Keep if self.last_lod != orbit_live_render::TimelineLod::Instanced => {
                         let mut v = self.last_view.unwrap_or(view_body);
                         v.time = now;
                         v
                     }
                     _ => view_body,
                 };
+                let mut view = view;
+                if self.last_lod == orbit_live_render::TimelineLod::Instanced {
+                    // The instances are in listing-window points; the view
+                    // starts `listing_pan_pts` into that window.
+                    view.origin[0] -= self.listing_pan_pts * ppp;
+                }
                 self.last_view = Some(view);
+                self.paint_sample_bars(ui, body, Some(y_cull));
                 {
                     let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
-                    ui.painter().add(paint_callback(body, payload, view));
+                    ui.painter().add(paint_callback(body, payload, view, self.gpu_slot));
                 }
                 if self.last_lod == orbit_live_render::TimelineLod::Instanced
                     && !self.skip_clip_labels
@@ -2475,6 +3751,7 @@ impl OrbitLiveApp {
                         body,
                         &self.intern,
                         &self.last_instances,
+                        -self.listing_pan_pts,
                         if lifting {
                             ClipLabelSet::Rest
                         } else {
@@ -2492,7 +3769,7 @@ impl OrbitLiveApp {
                     if let Some(fg) = overlay {
                         let _cb = dev.scope(TID_RENDER, NAME_PAINT_CALLBACK);
                         ui.painter()
-                            .add(paint_overlay_callback(body, fg, view_body));
+                            .add(paint_overlay_callback(body, fg, view_body, self.gpu_slot));
                     }
                     if self.last_lod == orbit_live_render::TimelineLod::Instanced
                         && !self.skip_clip_labels
@@ -2503,6 +3780,7 @@ impl OrbitLiveApp {
                             body,
                             &self.intern,
                             &self.last_instances,
+                            -self.listing_pan_pts,
                             ClipLabelSet::Dragged,
                             self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
                             &mut self.clip_labels,
@@ -2520,7 +3798,11 @@ impl OrbitLiveApp {
                     &self.intern,
                     self.tracks.scale,
                     Some(y_cull),
+                    self.hover_body_x,
                 );
+                if let Some(x) = self.hover_body_x {
+                    paint_cursor_line(ui, body, x);
+                }
                 paint_playhead(
                     ui,
                     body,
@@ -2529,7 +3811,16 @@ impl OrbitLiveApp {
                     self.live_edge_ns as f64,
                     self.light_canvas,
                 );
-                paint_measure_overlay(ui, body, self.t0, self.t1, self.measure, true);
+                paint_selection_overlay(
+                    ui,
+                    body,
+                    self.t0,
+                    self.t1,
+                    &self.sample_sels,
+                    self.measure,
+                    true,
+                    &|tid| self.sample_bar_screen_band(body, tid),
+                );
                 paint_flow_arrows(
                     ui,
                     body,
@@ -2539,8 +3830,16 @@ impl OrbitLiveApp {
                     &self.trace_flows,
                     self.tracks.scale,
                 );
-                if let Some(h) = self.hover {
-                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h);
+                // A graph lane already writes its value at the cursor line;
+                // the tooltip on top of that said the same thing twice.
+                if let Some(h) = self.hover.filter(|h| h.kind != kind::VALUE) {
+                    let stack = if h.kind == kind::SAMPLE {
+                        sample_callstack(&self.index, &self.intern, h)
+                    } else {
+                        Vec::new()
+                    };
+                    let copied = self.now_s - self.callstack_copied_at < 1.5;
+                    show_scope_tooltip(ui, &self.intern, &self.processes, &self.trace_args, h, &stack, copied);
                 }
             } else {
                 ui.painter().text(
@@ -2559,6 +3858,7 @@ impl OrbitLiveApp {
         if self.pending_vscroll.is_none() {
             self.lane_scroll = out.state.offset.y;
         }
+        self.paint_lane_scrollbar(ui, lanes_rect, height, avail.y);
         self.skip_clip_labels = false;
 
         // Deferred on purpose. A right-drag inside the lane area updates
@@ -2568,12 +3868,33 @@ impl OrbitLiveApp {
         // the ruler's white line trailed the lane area's by one frame for the
         // whole drag. Painting it here reads the same `self.measure` the lane
         // overlay just used, whichever region the drag started in.
-        paint_measure_overlay(ui, ruler, self.t0, self.t1, self.measure, false);
+        paint_selection_overlay(ui, ruler, self.t0, self.t1, &self.sample_sels, self.measure, false, &|_| None);
         let fps_area = Rect::from_min_max(
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
         );
-        paint_fps_chip(ui, fps_area, self.fps_ema);
+        let fps_w = paint_fps_chip(ui, fps_area, self.fps_ema, self.ws_rate_bps);
+        // What is narrowing the view, and how to undo it, next to the fps:
+        // the grey of a thread selection and the dim of a name filter look
+        // alike, and neither shows anywhere else.
+        let mut right = fps_area.right() - fps_w - 12.0;
+        if self.search_active() || !self.search.is_empty() {
+            let text = format!("filter \u{201c}{}\u{201d}", self.search);
+            let (w, clicked) = paint_focus_chip(ui, fps_area, right, &text, "orbit_filter_chip");
+            if clicked {
+                self.search.clear();
+                self.live_focus = None;
+            }
+            right -= w + 6.0;
+        }
+        if let Some((pid, tid)) = self.thread_focus().selected {
+            let name = self.thread_display_name(pid, tid);
+            let text = format!("thread {tid} {name}");
+            let (_, clicked) = paint_focus_chip(ui, fps_area, right, &text, "orbit_thread_chip");
+            if clicked {
+                self.clear_selection();
+            }
+        }
     }
 
     fn paint_headers(
@@ -2602,6 +3923,19 @@ impl OrbitLiveApp {
                 Pos2::new(head.left(), head.top() + row.y),
                 Vec2::new(head.width(), row.height.max(1.0)),
             );
+            // Every row goes in the readout, on screen or not, so a harness
+            // sees the whole layout; a row below the fold has a y past the
+            // canvas, which is its cue to scroll or collapse something.
+            if !self.in_self_pane {
+                let label = match row.id {
+                    RowId::Scheduler => "row:scheduler".to_string(),
+                    RowId::Machine(_) => "row:machine".to_string(),
+                    RowId::Process(p) => format!("row:process:{p}"),
+                    RowId::Thread(t) => format!("row:thread:{}:{}", t.pid, t.tid),
+                    RowId::Lane(l) => format!("row:lane:{}:{}:{}", l.pid, l.tid, l.kind),
+                };
+                note_ui_rect(&label, r);
+            }
             if !header_row_intersects_clip(r.min.y, r.height(), clip.min.y, clip.max.y) {
                 continue;
             }
@@ -2612,9 +3946,7 @@ impl OrbitLiveApp {
                 let band = Rect::from_min_max(
                     Pos2::new(head.left(), r.top()),
                     Pos2::new(
-                        if self.light_canvas
-                            || matches!(row.id, RowId::Machine(_) | RowId::Scheduler)
-                        {
+                        if self.light_canvas || matches!(row.id, RowId::Machine(_)) {
                             r.right()
                         } else {
                             body.right()
@@ -2714,9 +4046,11 @@ impl OrbitLiveApp {
             RowId::Scheduler => {
                 let n = TrackStrip::scheduler_core_count_in(&self.index);
                 let label = format!("Scheduler ({n} cores)");
+                // Indented like a Process: the scheduler is a child of its
+                // machine, not a peer of one.
                 if !interactive {
                     ui.painter().text(
-                        Pos2::new(r.left() + 22.0, r.center().y),
+                        Pos2::new(r.left() + 30.0, r.center().y),
                         Align2::LEFT_CENTER,
                         label,
                         FontId::new(11.0, fonts::medium()),
@@ -2725,12 +4059,12 @@ impl OrbitLiveApp {
                     return;
                 }
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 8.0, open, ("s", 0u32, 0u32)) {
+                if chevron(ui, r, 16.0, open, ("s", 0u32, 0u32)) {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
                 }
                 ui.painter().text(
-                    Pos2::new(r.left() + 22.0, r.center().y),
+                    Pos2::new(r.left() + 30.0, r.center().y),
                     Align2::LEFT_CENTER,
                     label,
                     FontId::new(11.0, fonts::medium()),
@@ -2751,9 +4085,28 @@ impl OrbitLiveApp {
                     return;
                 }
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32)) {
+                let (toggled, m_resp, m_reorder) =
+                    draggable_header(ui, r, 8.0, open, ("m", m.sort_key() as u32, 0u32));
+                if toggled {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
+                }
+                let m_drag = self.tracks.is_dragging_machine(m);
+                paint_handle_dots(
+                    ui.painter(),
+                    Rect::from_min_size(Pos2::new(r.left() + 2.0, r.top()), Vec2::new(10.0, r.height())),
+                    m_drag,
+                );
+                if let Some(p) = m_reorder {
+                    self.tracks.begin_machine_drag(m, p.y - head.top());
+                }
+                if m_resp.dragged() {
+                    if let Some(p) = m_resp.interact_pointer_pos() {
+                        self.tracks.update_header_drag(p.y - head.top());
+                    }
+                }
+                if m_resp.drag_stopped() {
+                    self.tracks.end_header_drag();
                 }
                 ui.painter().text(
                     Pos2::new(r.left() + 22.0, r.center().y),
@@ -2775,9 +4128,29 @@ impl OrbitLiveApp {
                     return;
                 }
                 let open = !self.tracks.collapsed(row.id);
-                if chevron(ui, r, 16.0, open, ("p", pid, 0u32)) {
+                let (toggled, p_resp, p_reorder) = draggable_header(ui, r, 16.0, open, ("p", pid, 0u32));
+                if toggled {
                     self.tracks.toggle(row.id);
                     self.relayout_tracks();
+                }
+                let p_drag = self.tracks.is_dragging_process(pid);
+                if !tight {
+                    paint_handle_dots(
+                        ui.painter(),
+                        Rect::from_min_size(Pos2::new(r.left() + 2.0, r.top()), Vec2::new(12.0, r.height())),
+                        p_drag,
+                    );
+                }
+                if let Some(p) = p_reorder {
+                    self.tracks.begin_process_drag(pid, p.y - head.top());
+                }
+                if p_resp.dragged() {
+                    if let Some(p) = p_resp.interact_pointer_pos() {
+                        self.tracks.update_header_drag(p.y - head.top());
+                    }
+                }
+                if p_resp.drag_stopped() {
+                    self.tracks.end_header_drag();
                 }
                 let name = self.process_display_name(pid);
                 let proc_label = if tight {
@@ -2865,7 +4238,20 @@ impl OrbitLiveApp {
                     Pos2::new(title.right() - 12.0, title.center().y),
                     Vec2::splat(14.0),
                 );
-                let resp = ui.interact(r, ui.id().with(("th", th.pid, th.tid)), Sense::drag());
+                let resp = ui.interact(r, ui.id().with(("th", th.pid, th.tid)), Sense::click_and_drag());
+                if resp.clicked() {
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        if !chevron_hit.contains(p) && !hide.contains(p) {
+                            // Click the header to select the thread (again to
+                            // release), as clicking a thread track does in
+                            // C++ Orbit.
+                            let me = (th.pid, th.tid);
+                            self.selected_thread =
+                                if self.selected_thread == Some(me) { None } else { Some(me) };
+                            self.selected = None;
+                        }
+                    }
+                }
                 if resp.drag_started() {
                     if let Some(p) = resp.interact_pointer_pos() {
                         if !chevron_hit.contains(p) && !hide.contains(p) {
@@ -3012,10 +4398,35 @@ impl OrbitLiveApp {
         let rest_layout = self.tracks.rest_layout();
         let drag_layout = self.tracks.drag_layout();
         let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
+        // The listing window. Zoomed in, and once the span holds still, the
+        // instances are listed for a window half a view wider on each side;
+        // a pan that stays inside it changes one uniform (the origin) and
+        // walks nothing. A zoom, a drag or the pixel LOD list the view.
+        // t0 and t1 are f64 in the view and the span drifts by a nanosecond
+        // between frames; a few ns of play is not a zoom.
+        let view_span = t1.saturating_sub(t0).max(1);
+        let span_held = self.last_view_span.is_some_and(|s| s.abs_diff(view_span) <= 4);
+        self.last_view_span = Some(view_span);
+        let (lt0, lt1, lwidth) = if lod == orbit_live_render::TimelineLod::Instanced && dragged.is_none() && span_held {
+            match self.overscan_window {
+                Some((a, b, w, span)) if span.abs_diff(view_span) <= 4 && t0 >= a && t1 <= b => (a, b, w),
+                _ => {
+                    let a = t0.saturating_sub(view_span / 2);
+                    let b = t1.saturating_add(view_span / 2);
+                    let w = width * ((b - a) as f64 / view_span as f64) as f32;
+                    self.overscan_window = Some((a, b, w, view_span));
+                    (a, b, w)
+                }
+            }
+        } else {
+            self.overscan_window = None;
+            (t0, t1, width)
+        };
+        self.listing_pan_pts = if lt1 > lt0 { (t0 - lt0) as f64 as f32 / (lt1 - lt0) as f32 * lwidth } else { 0.0 };
         let next_key = GpuDirtyKey {
-            t0,
-            t1,
-            width_bits: width.to_bits(),
+            t0: lt0,
+            t1: lt1,
+            width_bits: lwidth.to_bits(),
             scroll_q: y_cull.map(|c| quant_px(c.y0)).unwrap_or(0),
             view_h_q: y_cull.map(|c| quant_px(c.y1 - c.y0)).unwrap_or(0),
             dest_x_q: quant_px(body.min.x),
@@ -3038,8 +4449,30 @@ impl OrbitLiveApp {
             } else {
                 0
             },
+            thread_sel: self.thread_focus().selected,
+            target: self.thread_focus().target_pid,
         };
+        if std::mem::take(&mut self.reupload_next_frame) {
+            self.last_dirty = None;
+        }
         let mode = upload_mode(self.last_dirty.as_ref(), &next_key);
+        self.draw_readout = format!(
+            "{{\"lod\":{},\"mode\":\"{:?}\",\"t0\":{},\"t1\":{},\"width\":{:.0},\"dest\":[{},{},{},{}],\"cull\":[{},{}],\"scroll\":{},\"events\":{},\"layout_gen\":{}}}",
+            next_key.lod,
+            mode,
+            next_key.t0,
+            next_key.t1,
+            width,
+            next_key.dest_x_q,
+            next_key.dest_y_q,
+            next_key.dest_w_q,
+            next_key.dest_h_q,
+            next_key.cull_y0_q,
+            next_key.cull_y1_q,
+            next_key.scroll_q,
+            next_key.events,
+            next_key.layout_gen
+        );
         self.last_dirty = Some(next_key);
         if mode == UploadMode::Skip && dragged.is_none() {
             let _up = dev.scope(TID_RENDER, NAME_UPLOAD);
@@ -3053,8 +4486,21 @@ impl OrbitLiveApp {
             let _up = dev.scope(TID_RENDER, NAME_UPLOAD);
             let mut instances = self.last_instances.clone();
             let search = self.search_active().then_some(&self.search_ids);
-            apply_highlight_flags(&mut instances, self.selected, self.hover, search);
+            apply_highlight_flags(&mut instances, self.selected, self.hover, search, self.thread_focus());
+            // Only the flag words that moved go to the GPU: a hover touches
+            // two instances, not the whole buffer. A thread focus or a
+            // search can touch most of them, and then one write is cheaper.
+            let changes: Vec<(u32, f32)> = instances
+                .iter()
+                .zip(self.last_instances.iter())
+                .enumerate()
+                .filter(|(_, (new, old))| new.flags.to_bits() != old.flags.to_bits())
+                .map(|(i, (new, _))| (i as u32, new.flags))
+                .collect();
             self.last_instances = instances.clone();
+            if changes.len() * 8 <= instances.len() {
+                return (TimelinePayload::Flags { changes }, None);
+            }
             scale_instances_ppp(&mut instances, ppp);
             return (TimelinePayload::Instanced { instances }, None);
         }
@@ -3062,7 +4508,7 @@ impl OrbitLiveApp {
             let mut overlay = Vec::new();
             if lod == orbit_live_render::TimelineLod::Instanced {
                 let d = self.tracks.scale;
-                let window = (t0, t1, width.to_bits());
+                let window = (lt0, lt1, lwidth.to_bits());
                 let mut instances = std::mem::take(&mut self.last_instances);
                 let can_shift = y_cull.is_none()
                     && self.last_instanced_window == Some(window)
@@ -3082,21 +4528,45 @@ impl OrbitLiveApp {
                     // measurement of their own; splitting them needs scopes
                     // inside collect_instances_layout_opts, not out here.
                     let _listing = dev.scope(TID_RENDER, NAME_PRIMITIVE_LISTING);
-                    let mut frame = collect_instances_layout_opts(
+                    let mut frame = collect_instances_cached(
                         &self.index,
-                        t0,
-                        t1,
-                        width,
+                        lt0,
+                        lt1,
+                        lwidth,
                         &rest_layout,
                         Some(&self.intern),
                         CollectOpts {
                             y_cull,
                             early_out: true,
+                            inline: self.listing_inline,
                         },
+                        Some(&mut self.listing_cache),
                     );
                     dev.absorb_worker_spans(&frame.worker_spans);
+                    // The parts of the listing the worker lanes do not show.
+                    let tm = frame.timing;
+                    dev.record_span(TID_RENDER, NAME_LISTING_DISPATCH, tm.dispatch_t0_ns, tm.dispatch_t1_ns);
+                    dev.record_span(TID_RENDER, NAME_LISTING_FLATTEN, tm.flatten_t0_ns, tm.flatten_t1_ns);
+                    dev.record_span(TID_RENDER, NAME_LISTING_SORT, tm.sort_t0_ns, tm.sort_t1_ns);
+                    // Pool latency: dispatch to first worker start, last
+                    // worker end to join. Zero when the walk ran inline.
+                    let first = frame.worker_spans.iter().map(|w| w.t0_ns).min();
+                    let last = frame.worker_spans.iter().map(|w| w.t1_ns).max();
+                    self.last_pool_wake_us = first
+                        .map(|f| f.saturating_sub(tm.dispatch_t0_ns) as f32 / 1e3)
+                        .unwrap_or(0.0);
+                    self.last_pool_tail_us = last
+                        .map(|l| tm.dispatch_t1_ns.saturating_sub(l) as f32 / 1e3)
+                        .unwrap_or(0.0);
+                    self.tune_listing_mode(tm.dispatch_t1_ns.saturating_sub(tm.dispatch_t0_ns) as f32 / 1e3);
                     self.last_n_prims = frame.instances.len() as u32;
+                    if frame.instances.len() > self.uploaded_prims_max {
+                        self.uploaded_prims_max = frame.instances.len();
+                        self.reupload_next_frame = true;
+                        self.needs_repaint = true;
+                    }
                     self.last_n_lanes_kept = frame.lanes_kept;
+                    self.last_n_lanes_reused = frame.lanes_reused;
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
@@ -3106,7 +4576,7 @@ impl OrbitLiveApp {
                 let search = self.search_active().then_some(&self.search_ids);
                 {
                     let _hl = dev.scope(TID_RENDER, NAME_APPLY_HL);
-                    apply_highlight_flags(&mut instances, self.selected, self.hover, search);
+                    apply_highlight_flags(&mut instances, self.selected, self.hover, search, self.thread_focus());
                 }
                 let (mut bg, mut fg) = if dragged.is_some() {
                     let _split = dev.scope(TID_RENDER, NAME_SPLIT_DRAG);
@@ -3126,15 +4596,20 @@ impl OrbitLiveApp {
                         CollectOpts {
                             y_cull,
                             early_out: true,
+                            inline: false,
                         },
                     );
                     for inst in &mut frame.instances {
                         inst.h *= d;
                     }
-                    apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search);
+                    apply_highlight_flags(&mut frame.instances, self.selected, self.hover, search, self.thread_focus());
                     fg = frame.instances;
                 }
-                self.last_instances = bg.iter().cloned().chain(fg.iter().cloned()).collect();
+                // Keeps its allocation from frame to frame; collecting anew
+                // faulted in a fresh buffer the size of the frame every time.
+                self.last_instances.clear();
+                self.last_instances.extend_from_slice(&bg);
+                self.last_instances.extend_from_slice(&fg);
                 self.last_layout = rest_layout;
                 self.last_instanced_window = Some(window);
                 {
@@ -3193,6 +4668,7 @@ impl OrbitLiveApp {
                     &overlay,
                     self.search_active().then_some(&self.search_ids),
                     None,
+                    self.thread_focus(),
                     Some(&self.intern),
                     self.tracks.scale,
                     y_cull,
@@ -3214,6 +4690,7 @@ impl OrbitLiveApp {
                     CollectOpts {
                         y_cull,
                         early_out: true,
+                        inline: false,
                     },
                 );
                 let d = self.tracks.scale;
@@ -3328,7 +4805,7 @@ impl OrbitLiveApp {
                 self.apply_pan_window(t0, t1);
             }
         }
-        if response.drag_started_by(PointerButton::Primary) {
+        if response.drag_started_by(PointerButton::Primary) && self.report_splitter_grab.is_none() {
             // Click or a new drag grabs the list immediately (kills a coast).
             self.vscroll.cancel();
             let y_drag = vscroll_from_primary_drag(ctx.input(|i| i.any_touches()), self.was_narrow);
@@ -3371,6 +4848,56 @@ impl OrbitLiveApp {
 
     /// Wheel Y + leftover flick coast. Time zoom / time pan stay in
     /// `handle_time_nav`; this only moves the track list.
+    /// The track list's vertical scrollbar, drawn by the viewer. Its
+    /// colour follows the pointer's position and its own drag, never
+    /// egui's hover state: egui's bar and the report splitter beside it
+    /// each claimed the hover on alternate frames, and the bar flickered.
+    fn paint_lane_scrollbar(&mut self, ui: &mut Ui, lanes: Rect, content_h: f32, view_h: f32) {
+        const BAR_W: f32 = 6.0;
+        if content_h <= view_h + 0.5 || view_h <= 0.0 {
+            return;
+        }
+        let track = Rect::from_min_max(
+            Pos2::new(lanes.right() - BAR_W, lanes.top()),
+            Pos2::new(lanes.right(), lanes.bottom()),
+        );
+        let handle_h = (track.height() * (view_h / content_h)).clamp(20.0, track.height());
+        let travel = (track.height() - handle_h).max(0.0);
+        let max_off = (content_h - view_h).max(1.0);
+        let top = track.top() + travel * (self.lane_scroll / max_off).clamp(0.0, 1.0);
+        let handle = Rect::from_min_size(
+            Pos2::new(track.left() + 1.0, top),
+            Vec2::new(BAR_W - 2.0, handle_h),
+        );
+        let resp = ui.interact(track, ui.id().with("orbit_lane_scrollbar"), Sense::click_and_drag());
+        if resp.dragged() && travel > 0.0 && self.report_splitter_grab.is_none() {
+            let next = self.lane_scroll + resp.drag_delta().y * max_off / travel;
+            self.pending_vscroll = Some(clamp_offset(next, self.vscroll_max));
+            self.needs_repaint = true;
+        } else if resp.clicked() {
+            if let Some(p) = resp.interact_pointer_pos() {
+                if !handle.contains(p) {
+                    let page = if p.y < handle.top() { -view_h } else { view_h };
+                    self.pending_vscroll = Some(clamp_offset(self.lane_scroll + page, self.vscroll_max));
+                    self.needs_repaint = true;
+                }
+            }
+        }
+        let over = ui
+            .input(|i| i.pointer.latest_pos())
+            .is_some_and(|p| track.contains(p));
+        let painter = ui.painter();
+        painter.rect_filled(track, 0.0, theme::RAIL);
+        let color = if resp.dragged() {
+            theme::ACCENT
+        } else if over {
+            theme::TEXT
+        } else {
+            theme::MUTED
+        };
+        painter.rect_filled(handle, 2.0, color);
+    }
+
     fn handle_vscroll_gestures(&mut self, ctx: &Context, lanes: Rect, ruler: Rect, dt: f32) {
         let (pressed, press_pos, scroll, zoom, ctrl_like, pinch, steal_keys) = ctx.input(|i| {
             (
@@ -3536,6 +5063,14 @@ impl OrbitLiveApp {
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
         }
+        // X starts and stops a capture, as the Record button does.
+        if self.static_capture.is_none() && ctx.input(|i| i.key_pressed(Key::X) && i.modifiers.is_none()) {
+            if self.recording || self.status.demo || self.status.capturing {
+                self.stop_record();
+            } else {
+                self.start_record();
+            }
+        }
         if ctx.input(|i| i.key_pressed(Key::Home)) {
             self.fit_to_content();
             self.needs_repaint = true;
@@ -3549,11 +5084,13 @@ impl OrbitLiveApp {
             }
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            if self.search_active() || !self.search.is_empty() {
-                self.search.clear();
-            } else {
-                self.selected = None;
-            }
+            // Everything that narrows the view goes at once: the name
+            // filter (a Live row, a flame bar, "Highlight every instance"
+            // all set it) and the thread or scope selection. Two presses
+            // for the two was a puzzle when the grey looked like one thing.
+            self.search.clear();
+            self.live_focus = None;
+            self.clear_selection();
         }
         let (a, d, left, right, up, down, w, s) = ctx.input(|i| {
             (
@@ -3652,12 +5189,35 @@ impl OrbitLiveApp {
     }
 
     fn handle_pick(&mut self, response: &egui::Response, rect: Rect, t0: u64, t1: u64, width: f32) {
+        if response.clicked_by(PointerButton::Secondary) {
+            // A right click on a scope opens its menu; on anything else it
+            // drops the measure and the sample selection, as it always has.
+            // Picked at the pointer, not from `self.hover`: the button was
+            // down between press and release, and egui hides the hover then.
+            let pick = response
+                .interact_pointer_pos()
+                .and_then(|p| self.pick_at(p.x - rect.left(), p.y - rect.top(), t0, t1, width))
+                .filter(|p| pick_selects_thread(*p));
+            match (pick, response.interact_pointer_pos()) {
+                (Some(pick), Some(pos)) => {
+                    self.scope_menu = Some((pick, pos));
+                    self.scope_menu_fresh = true;
+                }
+                _ => {
+                    self.measure = None;
+                    self.sample_sels.clear();
+                    self.measure_dragging = false;
+                }
+            }
+        }
         let Some(pos) = response.hover_pos() else {
             self.hover = None;
+            self.hover_body_x = None;
             return;
         };
         let x = pos.x - rect.left();
         let y = pos.y - rect.top();
+        self.hover_body_x = Some(x);
         self.hover = self.pick_at(x, y, t0, t1, width);
         if response.double_clicked() {
             // CaptureWindow::SelectTimer + TimeGraph::Zoom (1.1 × duration).
@@ -3666,30 +5226,80 @@ impl OrbitLiveApp {
                 self.zoom_to_scope(pick);
             }
         } else if response.clicked() {
-            self.selected = self.hover;
-            if self.hover.is_none() {
-                self.measure = None;
+            match self.hover {
+                // A click on nothing releases everything.
+                None => self.clear_selection(),
+                Some(pick) => {
+                    self.selected = Some(pick);
+                    // A thread scope selects its thread (through
+                    // `selected`), so a header-selected thread steps aside.
+                    // Anything else -- a scheduler slice, a thread state, a
+                    // sample tick -- is inspected without moving the focus.
+                    if pick_selects_thread(pick) {
+                        self.selected_thread = None;
+                    }
+                    // A click on a sample tick puts its callstack on the
+                    // clipboard, leaf first, one frame a line.
+                    if pick.kind == kind::SAMPLE {
+                        let stack = sample_callstack(&self.index, &self.intern, pick);
+                        if !stack.is_empty() {
+                            response.ctx.copy_text(stack.join("\n"));
+                            self.callstack_copied_at = self.now_s;
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn handle_measure(&mut self, response: &egui::Response, rect: Rect, label_here: bool) {
+    /// Selection by drag. `button` is Secondary for the classic right-drag
+    /// measure anywhere, Primary when a left drag began on a sample bar.
+    /// `per_thread` scopes the selection to the track under the pointer: a
+    /// left drag on one thread's sample bar does, a right drag (all threads)
+    /// does not.
+    fn handle_measure(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        label_here: bool,
+        button: PointerButton,
+        per_thread: bool,
+    ) {
         if !rect.is_positive() {
             return;
         }
-        if response.drag_started_by(PointerButton::Secondary) {
+        if response.drag_started_by(button) && self.report_splitter_grab.is_none() {
             if let Some(p) = response.interact_pointer_pos() {
+                let mods = response.ctx.input(|i| i.modifiers);
+                // Shift adds to the selection; Ctrl is the zoom gesture and
+                // leaves the selection be. A plain drag starts a fresh one.
+                if !mods.shift && !(mods.ctrl || mods.command) {
+                    self.sample_sels.clear();
+                }
                 let t = time_at_x(p.x, rect, self.t0, self.t1);
+                // The button, not the location, decides the scope. A left
+                // drag on a sample bar (`per_thread`) selects that one
+                // thread's samples, drawn on its bar; a right drag anywhere
+                // -- ruler, bar or empty space -- selects every thread's, the
+                // process-wide measure. C++ Orbit's per-thread SelectCallstacks
+                // is the left-on-bar gesture; the ruler is process-wide.
+                let sample_tid = if per_thread && label_here {
+                    let y = p.y - rect.top();
+                    self.sample_lane_at_y(y).or_else(|| self.thread_at_y(y))
+                } else {
+                    None
+                };
                 self.measure = Some(TimeMeasure {
                     start_ns: t,
                     stop_ns: t,
                     label_y: p.y,
+                    sample_tid,
                 });
                 self.measure_dragging = true;
                 self.follow = false;
             }
         }
-        if self.measure_dragging && response.dragged_by(PointerButton::Secondary) {
+        if self.measure_dragging && response.dragged_by(button) {
             if let Some(p) = response.interact_pointer_pos() {
                 if let Some(m) = &mut self.measure {
                     m.stop_ns = time_at_x(p.x, rect, self.t0, self.t1);
@@ -3713,13 +5323,83 @@ impl OrbitLiveApp {
                     let b = m.start_ns.max(m.stop_ns) as f64;
                     self.apply_zoom_window(a, b.max(a + 1.0));
                     self.measure = None;
+                } else {
+                    // Commit the drag into the selection set. A plain drag
+                    // already cleared the set at drag-start, so it replaces;
+                    // a shift drag left it, so it adds.
+                    self.sample_sels.push(m);
+                    self.measure = None;
                 }
             }
         }
-        if response.clicked_by(PointerButton::Secondary) {
-            self.measure = None;
-            self.measure_dragging = false;
+        // The right click itself is handled in `handle_pick`, which can pick
+        // at the pointer: while a button is down egui reports no hover, so
+        // the pick under the release is not `self.hover`.
+    }
+
+    /// The tid of the sample bar at body-local `y`, if that is what is there.
+    ///
+    /// Deliberately only SAMPLE lanes: dragging over a thread's flame graph or
+    /// its state bar is not the same gesture as dragging over its sample bar,
+    /// and quietly scoping the report from either would make the selection
+    /// mean different things in places that look alike.
+    /// A shade for the sample bar's background, a touch off the canvas so
+    /// the bar reads as its own strip (C++ Orbit gives it a lighter row).
+    /// Nudged toward mid-grey, which lifts a dark canvas and settles a light
+    /// one, so it works in both themes.
+    fn sample_bar_color(&self) -> Color32 {
+        let c = self.canvas_color();
+        let mix = |v: u8| -> u8 {
+            let target = if self.light_canvas { 0u8 } else { 255u8 };
+            ((v as f32) * 0.88 + (target as f32) * 0.12) as u8
+        };
+        Color32::from_rgb(mix(c.r()), mix(c.g()), mix(c.b()))
+    }
+
+    /// Fills each thread's sample lane with `sample_bar_color`, a strip behind
+    /// the white sample ticks. Drawn before the timeline callback so the ticks
+    /// sit on top.
+    fn paint_sample_bars(&self, ui: &Ui, body: Rect, y_cull: Option<YCull>) {
+        let scale = self.tracks.scale.max(0.01);
+        let color = self.sample_bar_color();
+        let painter = ui.painter_at(body);
+        for (k, y) in self.tracks.layout() {
+            if k.kind != kind::SAMPLE {
+                continue;
+            }
+            let h = lane_height(*k) * scale;
+            if y_cull.is_some_and(|c| !c.hits(*y, h)) {
+                continue;
+            }
+            let top = body.top() + *y;
+            let bar = Rect::from_min_max(Pos2::new(body.left(), top), Pos2::new(body.right(), top + h));
+            painter.rect_filled(bar, 0.0, color);
+            note_ui_rect(&format!("sample_bar:{}:{}", k.pid, k.tid), bar);
         }
+    }
+
+    /// The on-screen top and bottom of `tid`'s sample lane, for confining a
+    /// per-thread selection to the bar it was dragged on (C++ Orbit draws the
+    /// selection right on the thread's sample bar).
+    fn sample_bar_screen_band(&self, body: Rect, tid: u32) -> Option<(f32, f32)> {
+        let scale = self.tracks.scale.max(0.01);
+        self.tracks.layout().iter().find_map(|(k, y)| {
+            (k.kind == kind::SAMPLE && k.tid == tid).then(|| {
+                let top = body.top() + *y;
+                (top, top + lane_height(*k) * scale)
+            })
+        })
+    }
+
+    fn sample_lane_at_y(&self, y: f32) -> Option<u32> {
+        let scale = self.tracks.scale.max(0.01);
+        self.tracks.layout().iter().find_map(|(key, lane_y)| {
+            if key.kind != kind::SAMPLE {
+                return None;
+            }
+            let h = lane_height(*key) * scale;
+            (y >= *lane_y && y < *lane_y + h).then_some(key.tid)
+        })
     }
 
     fn pick_at(&self, x: f32, y: f32, t0: u64, t1: u64, width: f32) -> Option<ScopePick> {
@@ -3738,12 +5418,18 @@ impl OrbitLiveApp {
         if self.last_lod == orbit_live_render::TimelineLod::Instanced
             && !self.last_instances.is_empty()
         {
-            return pick_instance_at(&self.last_instances, x, y)
+            return pick_instance_at(&self.last_instances, x + self.listing_pan_pts, y)
                 .map(|i| ScopePick::from_instance(&self.last_instances[i]));
         }
+        // The live layout, not `last_layout`: that one is only refreshed by
+        // the instanced path, so at the column level it still described the
+        // rows as they were the last time the view was zoomed in. After a
+        // collapse or a scroll the thread rows had moved and every click on
+        // a scope band picked nothing; the scheduler, at the top and
+        // unmoved, still worked, which hid it.
         pick_column_event(
             &self.index,
-            &self.last_layout,
+            self.tracks.layout(),
             t0,
             t1,
             width,
@@ -3753,6 +5439,1085 @@ impl OrbitLiveApp {
         )
         .map(ScopePick::from_event)
         .filter(|p| p.kind != kind::VALUE)
+    }
+
+    /// Asks the service for a report whenever the selection changes. An
+    /// unchanged selection is not refetched, so dragging the view around does
+    /// not hammer the endpoint.
+    /// The committed selections plus any in-progress drag, as report windows.
+    /// Empty means the whole capture.
+    fn sample_ranges(&self) -> Vec<(u64, u64, Option<u32>)> {
+        self.sample_sels
+            .iter()
+            .copied()
+            .chain(self.measure)
+            .filter(|m| m.start_ns != m.stop_ns)
+            .map(|m| {
+                (
+                    m.start_ns.min(m.stop_ns),
+                    m.start_ns.max(m.stop_ns),
+                    m.sample_tid,
+                )
+            })
+            .collect()
+    }
+
+    fn refresh_sampling_report(&mut self, now: f64) {
+        let ranges = self.sample_ranges();
+        if ranges == self.sampling_ranges {
+            return;
+        }
+        // Mid-drag the selection changes every frame, and each change was a
+        // full report and tree round trip -- the service scanned the capture
+        // and the viewer parsed megabytes of JSON, per frame. Hold requests
+        // to a few a second while the button is down; the release always
+        // sends the final selection at once.
+        if self.measure_dragging && now - self.last_report_request_s < REPORT_DRAG_THROTTLE_S {
+            return;
+        }
+        self.last_report_request_s = now;
+        if !ranges.is_empty() {
+            self.scope_report = None;
+        }
+        self.sampling_ranges = ranges;
+        self.local_sample_count = count_samples_in(&self.index, &self.sampling_ranges);
+        self.request_reports();
+    }
+
+    /// Asks for the flat report and the tree over the current scope.
+    ///
+    /// The ranges are the timeline selection; an empty set means the whole
+    /// capture, the aggregate view Orbit shows the moment recording stops --
+    /// before you have selected anything, the answer you want is about
+    /// everything you just recorded.
+    fn request_reports(&mut self) {
+        if self.static_capture.is_some() {
+            self.compute_local_reports();
+            return;
+        }
+        if let Some((name_id, _)) = &self.scope_report {
+            let id = *name_id;
+            self.net.get_sampling_report_scope(id);
+            self.net.get_sampling_tree_scope(id, self.report_tab.mode());
+            return;
+        }
+        self.net.get_sampling_report(&self.sampling_ranges);
+        self.net
+            .get_sampling_tree(&self.sampling_ranges, self.report_tab.mode());
+    }
+
+    /// With no service, the report the service would have sent, from the
+    /// sampled frames the index holds.
+    fn compute_local_reports(&mut self) {
+        let (ranges, scope): (Vec<(u64, u64, Option<u32>)>, String) = match &self.scope_report {
+            Some((id, name)) => (crate::local_report::scope_ranges(&self.index, *id), name.clone()),
+            None => (self.sampling_ranges.clone(), String::new()),
+        };
+        self.sampling = Some(crate::local_report::flat_report(&self.index, &self.intern, &ranges, &scope));
+        let tree = crate::local_report::call_tree(&self.index, &self.intern, &ranges, self.report_tab.mode());
+        self.tree_expanded = expandable_paths_over(&tree.roots, self.tree_expand_threshold);
+        self.tree = Some(tree);
+        self.needs_repaint = true;
+        self.settle_frames = self.settle_frames.max(3);
+    }
+
+    /// The whole-capture aggregate, shown when a capture stops.
+    fn show_whole_capture_report(&mut self) {
+        self.sample_sels.clear();
+        self.measure = None;
+        self.sampling_ranges.clear();
+        self.tree_expanded.clear();
+        self.request_reports();
+    }
+
+    /// The viewer's own frame timing, in a pane of its own. Independent of the
+    /// capture: it draws whatever the last instrumented frame produced, whether
+    /// or not a capture is loaded.
+    fn self_pane(&mut self, ctx: &Context, dt: f32, dev: &DevFrame) {
+        if !self.self_pane_open {
+            return;
+        }
+        egui::TopBottomPanel::bottom("orbit_self_profile")
+            .resizable(true)
+            .default_height(460.0)
+            .min_height(220.0)
+            .frame(
+                Frame::new()
+                    .fill(SELF_PANE_RAIL)
+                    .inner_margin(Margin::symmetric(12, 6))
+                    .stroke(Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                self.self_profile.draw_header(ui, &mut self.self_tl.follow);
+                if self.self_tl.index.event_count() == 0 {
+                    ui.label(
+                        RichText::new("waiting for the first instrumented frame…")
+                            .color(theme::MUTED)
+                            .size(11.0),
+                    );
+                    return;
+                }
+                // The same timeline as the capture, on the pane's own state
+                // and GPU slot, with its own canvas so it reads as another
+                // surface. Swap in, draw, swap out.
+                let mut tl = std::mem::replace(&mut self.self_tl, TimelineState::fresh());
+                self.swap_timeline_state(&mut tl);
+                self.in_self_pane = true;
+                self.gpu_slot = 1;
+                self.canvas_override = Some((SELF_PANE_CANVAS, SELF_PANE_RAIL));
+                // The main follow tick ran on the capture's state; the pane
+                // follows its own live edge.
+                self.tick_follow(dt, false);
+                {
+                    let _self_tl = dev.scope(TID_UI, NAME_SELF_TIMELINE);
+                    self.timeline(ui, dt, dev);
+                }
+                self.canvas_override = None;
+                self.gpu_slot = 0;
+                self.swap_timeline_state(&mut tl);
+                self.in_self_pane = false;
+                self.self_tl = tl;
+            });
+    }
+
+    /// The sampling report for the current selection: self and inclusive
+    /// percentages per function, hottest first, the pair Orbit shows.
+    fn sampling_panel(&mut self, ctx: &Context) {
+        let report = self.sampling.clone();
+        // The panel shows for a selection, and also for a finished capture
+        // with nothing selected -- that is the aggregate view.
+        let has_selection = !self.sampling_ranges.is_empty();
+        if report.is_none()
+            && self.tree.is_none()
+            && self.modules.is_none()
+            && !has_selection
+            && !self.report_open
+        {
+            return;
+        }
+        // A vertical panel to the right of the capture, where C++ Orbit docks
+        // its sampling report: the timeline keeps its full height, and the
+        // report reads top to bottom beside it instead of eating rows off
+        // the bottom of the track list.
+        if self.report_collapsed {
+            self.paint_report_edge_tab(ctx, EdgeTab::PanelHidden);
+            return;
+        }
+        // No minimum: the splitter goes all the way to the right and the
+        // panel collapses (a tab on the edge brings it back), the way it
+        // already went all the way to the left and hid the timeline.
+        // A share of the screen, so a laptop keeps most of its width for the
+        // timeline and a wide monitor gets the report's columns in view.
+        let screen_w = ctx.screen_rect().width();
+        let default_w = (screen_w * SAMPLING_PANEL_SHARE).clamp(320.0, SAMPLING_PANEL_DEFAULT_W);
+        if let Some(w) = self.report_w_override.take() {
+            self.report_w_user = Some(w);
+        }
+        let width = self.report_w_user.unwrap_or(default_w).clamp(0.0, screen_w);
+        // Not egui's resizable panel: its grab zone straddles the edge and
+        // fought the timeline's scrollbar for the hover. The handle below is
+        // the viewer's own, inside the panel's margin.
+        // `exact_width` pins the panel to `width`; a `min_width(0.0)` after
+        // it used to widen the allowed range back down to zero, and the
+        // panel then kept whatever width egui remembered whenever the
+        // splitter asked for a wider one -- narrowing worked, widening
+        // never did.
+        let panel = egui::SidePanel::right("orbit_sampling_report")
+            .resizable(false)
+            .exact_width(width);
+        let inner = panel
+            .frame(
+                Frame::new()
+                    .fill(theme::PANEL)
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .stroke(Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
+                // Wrapped, not a single row: the panel is narrow and the tabs
+                // and the selection text must not run off its right edge.
+                ui.horizontal_wrapped(|ui| {
+                    let title = match (&report, self.report_tab) {
+                        (_, ReportTab::Live) => self.live_title(),
+                        (Some(_), _) => format!("Sampling report — {samples} samples"),
+                        // The tree tabs have their own sample count even
+                        // before (or without) a flat report.
+                        (None, ReportTab::Flame | ReportTab::TopDown | ReportTab::BottomUp)
+                            if self.tree.is_some() =>
+                        {
+                            format!("Call tree — {} samples", self.tree.as_ref().map(|t| t.samples).unwrap_or(0))
+                        }
+                        // No service report (yet, or at all): the viewer can
+                        // still say what the selection holds.
+                        (None, _) => format!(
+                            "{} samples selected — no report from the service",
+                            self.local_sample_count
+                        ),
+                    };
+                    ui.label(RichText::new(title).color(theme::TEXT).size(12.0));
+                    let desc = if self.report_tab == ReportTab::Live {
+                        describe_selection(&self.sampling_ranges)
+                    } else {
+                        self.describe_selection_named()
+                    };
+                    ui.label(RichText::new(desc).color(theme::MUTED).size(11.0));
+                });
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
+                    const TABS: [ReportTab; 8] = [
+                        ReportTab::Live,
+                        ReportTab::Flat,
+                        ReportTab::Flame,
+                        ReportTab::TopDown,
+                        ReportTab::BottomUp,
+                        ReportTab::Modules,
+                        ReportTab::Functions,
+                        ReportTab::Code,
+                    ];
+                    let labels: Vec<&str> = TABS.iter().map(|t| t.label()).collect();
+                    let current = TABS.iter().position(|t| *t == self.report_tab).unwrap_or(0);
+                    if let Some(i) = tab_strip(ui, &labels, current) {
+                        let tab = TABS[i];
+                        if self.report_tab != tab {
+                            let was_tree_mode = self.report_tab.mode();
+                            self.report_tab = tab;
+                            // Switching between top-down and bottom-up needs a
+                            // different tree; switching to or from Flat does not.
+                            if tab.mode() != was_tree_mode || self.tree.is_none() {
+                                self.tree_expanded.clear();
+                                if self.static_capture.is_some() {
+                                    self.compute_local_reports();
+                                } else {
+                                    match &self.scope_report {
+                                        Some((id, _)) => self.net.get_sampling_tree_scope(*id, tab.mode()),
+                                        None => self.net.get_sampling_tree(&self.sampling_ranges, tab.mode()),
+                                    }
+                                }
+                            }
+                            if tab == ReportTab::Modules {
+                                if let Some(pid) = self.selected_pid {
+                                    self.net.get_modules(pid);
+                                }
+                            }
+                        }
+                    }
+                    ui.add_space(8.0);
+                    let filter = ui.add(
+                        egui::TextEdit::singleline(&mut self.report_filter)
+                            .id_salt("orbit_report_filter")
+                            .desired_width(150.0)
+                            .hint_text("filter functions")
+                            .font(FontId::monospace(11.0))
+                            .background_color(theme::INPUT),
+                    );
+                    note_ui_rect("report_filter", filter.rect);
+                    // Escape makes the box surrender focus in the same frame, so
+                    // the key is seen on the frame focus is lost.
+                    if (filter.has_focus() || filter.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape)) {
+                        self.report_filter.clear();
+                    }
+                    if !self.report_filter.is_empty() && icon_pill(ui, "×", "Clear the filter").clicked() {
+                        self.report_filter.clear();
+                    }
+                    // Expand/collapse all, as the native tree's context menu
+                    // offers. Only on the two tree tabs, and here, under the
+                    // tabs, so the title row above them never shifts.
+                    if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
+                        ui.add_space(8.0);
+                        if pill(ui, "Expand all", false)
+                            .on_hover_text("Expand every node of this tree")
+                            .clicked()
+                        {
+                            self.tree_expand_threshold = 0.0;
+                            self.expand_all_tree_nodes();
+                        }
+                        if pill(ui, "Collapse all", false)
+                            .on_hover_text("Collapse every node back to its roots")
+                            .clicked()
+                        {
+                            self.tree_expand_threshold = 100.0;
+                            self.tree_expanded.clear();
+                        }
+                        // The expansion slider of C++ Orbit's call tree: how
+                        // large a node's share of the samples must be for it
+                        // to arrive open. Left, everything; right, only the
+                        // hottest path.
+                        ui.add_space(8.0);
+                        let mut threshold = self.tree_expand_threshold;
+                        // The slider first and the text after it, at a fixed
+                        // width: with the text before the slider, "open all"
+                        // and "open > 12%" were different widths, the slider
+                        // moved under a still pointer, the value followed, the
+                        // text changed back -- a flicker on every press.
+                        let slider = ui
+                            .scope(|ui| {
+                                // The knob is the rail's height / 2.5, and the
+                                // rail is the taller of the Body text and the
+                                // interact height: three quarters of both.
+                                let style = ui.style_mut();
+                                style.spacing.interact_size.y = 13.5;
+                                style.spacing.slider_width = 84.0;
+                                if let Some(body) = style.text_styles.get_mut(&egui::TextStyle::Body) {
+                                    body.size = 10.0;
+                                }
+                                ui.add(egui::Slider::new(&mut threshold, 0.0..=100.0).show_value(false).step_by(1.0))
+                            })
+                            .inner;
+                        note_ui_rect("tree_expand_slider", slider.rect);
+                        if slider.changed() && (threshold - self.tree_expand_threshold).abs() >= 0.5 {
+                            self.tree_expand_threshold = threshold;
+                            if let Some(tree) = &self.tree {
+                                self.tree_expanded = expandable_paths_over(&tree.roots, threshold);
+                            }
+                        }
+                        ui.add_sized(
+                            Vec2::new(78.0, ui.spacing().interact_size.y),
+                            egui::Label::new(
+                                RichText::new(if self.tree_expand_threshold <= 0.0 {
+                                    "open all".to_string()
+                                } else {
+                                    format!("open > {:.0}%", self.tree_expand_threshold)
+                                })
+                                .color(theme::MUTED)
+                                .size(self.ui_tweaks.report_font - 0.5),
+                            ),
+                        );
+                    }
+                });
+                if self.report_tab == ReportTab::Code {
+                    self.code_toolbar(ui);
+                }
+                // Both axes: a call tree or a long function name is wider than
+                // the panel, and the rows are the thing to scroll, not the
+                // panel to widen.
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
+                    .show(ui, |ui| {
+                    match self.report_tab {
+                        ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
+                        ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
+                        ReportTab::Modules => self.module_rows(ui),
+                        ReportTab::Live => self.live_rows(ui),
+                        ReportTab::Flame => self.flame_rows(ui),
+                        ReportTab::Functions => self.function_rows(ui),
+                        ReportTab::Code => self.code_rows(ui),
+                    }
+                });
+            });
+        self.paint_report_splitter(ctx, inner.response.rect, screen_w);
+        self.after_report_panel(ctx, inner.response.rect);
+    }
+
+    /// The report panel's resize handle: a strip on the panel's side of its
+    /// left edge, in a layer of its own above both panels, so neither
+    /// panel's clip nor the timeline's widgets can take the drag from it.
+    /// The handle between the timeline and the report, on the panel's left
+    /// edge, read straight from the pointer like the lane scrollbar: a
+    /// press that lands on it starts the drag, and while the button is
+    /// held the panel's edge follows the pointer. No egui widget, so
+    /// nothing else can claim the press -- the widget version lost it more
+    /// often than it kept it.
+    fn paint_report_splitter(&mut self, ctx: &Context, panel: Rect, screen_w: f32) {
+        // A few points either side of the edge: the line is drawn at the
+        // panel's edge and a hand lands on both sides of it. The timeline's
+        // own drags (pan, selection, the lane scrollbar) stand down while a
+        // splitter drag is on, so the overlap costs nothing.
+        let handle = Rect::from_min_max(
+            Pos2::new(panel.left() - 4.0, panel.top()),
+            Pos2::new(panel.left() + 10.0, panel.bottom()),
+        );
+        let (down, origin, pos) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.latest_pos()));
+        // Read while the button is held, not only on the frame it went
+        // down: the press origin stays put for the whole hold, so a press
+        // frame that ran before this code saw it (the web runner runs a
+        // frame from inside the pointerdown handler) still starts the drag.
+        if down && self.report_splitter_grab.is_none() && origin.is_some_and(|p| handle.contains(p)) {
+            self.report_splitter_grab = origin.map(|p| p.x - panel.left());
+        }
+        if !down {
+            self.report_splitter_grab = None;
+        }
+        let dragging = self.report_splitter_grab.is_some();
+        if let (Some(grab), Some(p)) = (self.report_splitter_grab, pos) {
+            // The panel's right edge is the screen's: its width is what is
+            // left of the screen right of the pointer, less the grab offset.
+            let right = ctx.screen_rect().right();
+            let next = (right - (p.x - grab)).clamp(0.0, screen_w);
+            if (next - panel.width()).abs() >= 0.5 {
+                self.report_w_user = Some(next);
+                self.needs_repaint = true;
+            }
+        }
+        let hovering = pos.is_some_and(|p| handle.contains(p));
+        if hovering || dragging {
+            ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        let active = hovering || dragging;
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("orbit_report_splitter")));
+        let x = panel.left() + 1.0;
+        painter.line_segment(
+            [Pos2::new(x, handle.top()), Pos2::new(x, handle.bottom())],
+            Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
+        );
+        note_ui_rect("report_splitter", handle);
+    }
+
+    /// Notices the splitter at either edge. Under `REPORT_COLLAPSE_W` the
+    /// panel is hidden and an edge tab shows; with less than that left for
+    /// the timeline, a tab on the panel's left edge offers the timeline
+    /// back. Either way the layout is one click from recovered.
+    fn after_report_panel(&mut self, ctx: &Context, rect: Rect) {
+        let w = rect.width();
+        self.report_w_last = w;
+        // egui will not shrink the panel under its content's minimum (the
+        // wrapped tab row, about 90 px), so "all the way right" ends there
+        // with the splitter still held. Collapse once the button is up at
+        // that width, or at once when the pointer is past the right edge.
+        // The screen edge is read before the input lock: egui's context is
+        // one lock, and taking it again inside the closure is a deadlock
+        // that WASM (which cannot park a thread) turns into a panic.
+        // Only on release: while the button is held the panel sits at its
+        // minimum and a pointer that comes back left widens it again. A
+        // collapse mid-drag left the panel gone and the drag with it, and
+        // the edge tab was the only way back.
+        let down = ctx.input(|i| i.pointer.primary_down());
+        if w <= REPORT_COLLAPSE_W && !down && self.report_splitter_grab.is_none() {
+            self.report_collapsed = true;
+            self.needs_repaint = true;
+            return;
+        }
+        if ctx.available_rect().width() < REPORT_COLLAPSE_W {
+            self.paint_report_edge_tab(ctx, EdgeTab::TimelineHidden(rect.left()));
+        }
+    }
+
+    /// A slim tab on a screen edge: a chevron pointing the way the panel
+    /// will move, and a click that restores the default split.
+    fn paint_report_edge_tab(&mut self, ctx: &Context, tab: EdgeTab) {
+        let screen = ctx.screen_rect();
+        let (x, points_left, id, hint) = match tab {
+            EdgeTab::PanelHidden => (screen.right() - EDGE_TAB_W, true, "orbit_report_tab_right", "Show the report panel"),
+            EdgeTab::TimelineHidden(left) => (left, false, "orbit_report_tab_left", "Show the timeline"),
+        };
+        let y = screen.center().y - EDGE_TAB_H / 2.0;
+        egui::Area::new(egui::Id::new(id))
+            .order(egui::Order::Foreground)
+            .fixed_pos(Pos2::new(x, y))
+            .interactable(true)
+            .show(ctx, |ui| {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(EDGE_TAB_W, EDGE_TAB_H), Sense::click());
+                let painter = ui.painter();
+                let fill = if resp.hovered() { theme::ACCENT } else { theme::INPUT };
+                painter.rect_filled(r, 4.0, fill);
+                painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::ACCENT), StrokeKind::Inside);
+                let c = Pos2::new(r.center().x, r.top() + 14.0);
+                let dir = if points_left { -1.0 } else { 1.0 };
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        Pos2::new(c.x - 3.0 * dir, c.y - 5.0),
+                        Pos2::new(c.x + 3.0 * dir, c.y),
+                        Pos2::new(c.x - 3.0 * dir, c.y + 5.0),
+                    ],
+                    if resp.hovered() { theme::PANEL } else { theme::TEXT },
+                    Stroke::NONE,
+                ));
+                let label = if points_left { "report" } else { "timeline" };
+                let galley = painter.layout_no_wrap(
+                    label.to_string(),
+                    FontId::new(10.5, fonts::medium()),
+                    if resp.hovered() { theme::PANEL } else { theme::TEXT },
+                );
+                // Rotated a quarter turn counter-clockwise: the text reads
+                // bottom to top along the tab.
+                let pos = Pos2::new(r.center().x - galley.size().y / 2.0, r.bottom() - 8.0);
+                painter.add(egui::epaint::TextShape::new(pos, galley, theme::TEXT).with_angle(-std::f32::consts::FRAC_PI_2));
+                if resp.on_hover_text(hint).clicked() {
+                    self.report_collapsed = false;
+                    self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                    self.needs_repaint = true;
+                }
+            });
+    }
+
+    fn flat_report_rows(&mut self, ui: &mut Ui, report: Option<&crate::net::SamplingReport>) {
+        let Some(report) = report else { return };
+        if report.samples == 0 {
+            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            return;
+        }
+        self.hooked_hint(ui);
+        let filter = self.report_filter.trim().to_lowercase();
+        let mut rows: Vec<&crate::net::SamplingRow> = report
+            .rows
+            .iter()
+            .filter(|row| filter.is_empty() || contains_ci(&row.name, &filter) || contains_ci(&row.module, &filter))
+            .collect();
+        // Sorted by the column whose header was clicked; the service's own
+        // order (self, descending) until then. Hooked first is how you see
+        // every instrumented function at once, as C++ Orbit's report sorts.
+        let hooked_ids: HashSet<u64> = self.selected_hooks.iter().map(|h| h.function_id).collect();
+        let (sort_col, sort_desc) = self.flat_sort;
+        rows.sort_by(|a, b| {
+            let ord = match sort_col {
+                0 => hooked_ids
+                    .contains(&a.function_id)
+                    .cmp(&hooked_ids.contains(&b.function_id))
+                    .then(a.self_count.cmp(&b.self_count)),
+                1 => a.self_count.cmp(&b.self_count),
+                2 => a.inclusive_count.cmp(&b.inclusive_count),
+                3 => cmp_ci(&a.name, &b.name),
+                _ => cmp_ci(&a.module, &b.module).then(a.name.cmp(&b.name)),
+            };
+            if sort_desc { ord.reverse() } else { ord }
+        });
+        if !filter.is_empty() {
+            ui.label(
+                RichText::new(format!("{} of {} functions match", rows.len(), report.rows.len()))
+                    .color(theme::MUTED)
+                    .size(self.ui_tweaks.report_font - 0.5),
+            );
+        }
+        // Laid out by hand, like the Functions view: only the rows inside
+        // the clip rect become widgets. The egui grid of 200 rows cost
+        // 0.8 ms every frame, forty percent of an idle frame, and a report
+        // has more rows than that on any real capture.
+        let font = self.ui_tweaks.report_font;
+        let bar_w = self.ui_tweaks.report_bar_w;
+        let col_gap = self.ui_tweaks.report_col_gap;
+        let row_h = font + self.ui_tweaks.report_row_gap + 6.0;
+        let avail_w = ui.available_width().max(300.0);
+        let widths = [22.0f32, bar_w, bar_w, 0.0, 150.0]; // hooked, self, incl, function (rest), module
+        let name_w = (avail_w - widths[0] - widths[1] - widths[2] - widths[4] - 4.0 * col_gap).max(120.0);
+        let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
+        let mut sort_click: Option<u8> = None;
+        let flat_sort = self.flat_sort;
+        ui.horizontal(|ui| {
+            for (i, (h, w)) in [
+                ("hooked", widths[0]),
+                ("self", widths[1]),
+                ("incl", widths[2]),
+                ("function", name_w),
+                ("module", widths[4]),
+            ]
+            .iter()
+            .enumerate()
+            {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(*w, row_h), Sense::click());
+                let active = flat_sort.0 == i as u8;
+                let text_w = ui
+                    .painter()
+                    .text(
+                        r.left_center(),
+                        Align2::LEFT_CENTER,
+                        *h,
+                        FontId::new(font - 0.5, FontFamily::Proportional),
+                        if active { theme::TEXT } else { theme::MUTED },
+                    )
+                    .width();
+                if active {
+                    paint_sort_arrow(ui, Pos2::new(r.left() + text_w + 8.0, r.center().y), flat_sort.1);
+                }
+                note_ui_rect(&format!("sort:{h}"), r);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    sort_click = Some(i as u8);
+                }
+                ui.add_space(col_gap);
+            }
+        });
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
+        let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(rows.len());
+        let first = first.min(last);
+        if first > 0 {
+            ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
+        }
+        for (n, row) in rows[first..last].iter().enumerate() {
+            let hooked = hooked_ids.contains(&row.function_id) && row.function_id != 0;
+            let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
+            if (first + n) % 2 == 1 {
+                ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+            }
+            let mut x = row_rect.left();
+            // hooked: a painted box, like the Functions view; rows with no
+            // function id (no file offset) show none.
+            let check_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[0], row_h));
+            if row.function_id != 0 {
+                let check = ui.interact(check_rect, ui.id().with(("rephook", first + n)), Sense::click());
+                paint_hook_box(ui, check_rect, hooked);
+                if check.clicked() {
+                    actions.push((
+                        if hooked { HookAction::Unhook } else { HookAction::Hook },
+                        row.function_id,
+                        row.name.clone(),
+                        row.module.clone(),
+                    ));
+                }
+            }
+            note_ui_rect(&format!("hook:{}", row.name), check_rect);
+            x += widths[0] + col_gap;
+            // self and inclusive, as bars with the number on them
+            for (pct, strong, w) in [(row.self_percent, true, widths[1]), (row.inclusive_percent, false, widths[2])] {
+                let bar = Rect::from_min_size(Pos2::new(x, row_rect.center().y - 7.0), Vec2::new(w, 14.0));
+                paint_percent_bar(ui, bar, pct as f64, strong);
+                x += w + col_gap;
+            }
+            // function
+            let name_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(name_w, row_h));
+            let label = ui.interact(name_rect, ui.id().with(("repname", first + n)), Sense::click());
+            ui.painter().text(
+                name_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&row.name, name_w - 4.0, font),
+                FontId::new(font, FontFamily::Proportional),
+                if hooked { theme::ACCENT } else { theme::TEXT },
+            );
+            note_ui_rect(&format!("report:{}", row.name), name_rect);
+            if let Some(action) = hook_menu(&label, row.function_id, hooked) {
+                actions.push((action, row.function_id, row.name.clone(), row.module.clone()));
+            }
+            x += name_w + col_gap;
+            // module
+            let module_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[4], row_h));
+            ui.painter().text(
+                module_rect.left_center(),
+                Align2::LEFT_CENTER,
+                truncate_to_width(&row.module, widths[4] - 4.0, font - 0.5),
+                FontId::new(font - 0.5, FontFamily::Proportional),
+                theme::MUTED,
+            );
+        }
+        if last < rows.len() {
+            ui.allocate_exact_size(Vec2::new(avail_w, (rows.len() - last) as f32 * row_h), Sense::hover());
+        }
+        for (action, id, name, module) in actions {
+            self.apply_hook_action(action, id, &name, &module);
+        }
+        if let Some(col) = sort_click {
+            // Numbers and the hooked tick read best largest first, names
+            // alphabetically; a second click on the same header flips it.
+            toggle_sort(&mut self.flat_sort, col, col <= 2);
+            self.needs_repaint = true;
+        }
+    }
+
+    /// The Code tab: a toolbar (how it reads, what is open, the examples)
+    /// and the rows, laid out by hand and only for the rows in view, with
+    /// a gutter of line numbers or addresses. C++ Orbit's `Viewer`, minus
+    /// the sample heatmap for now.
+    fn code_toolbar(&mut self, ui: &mut Ui) {
+        use crate::code::CodeMode;
+        let font = self.ui_tweaks.report_font;
+        let mut load_example: Option<u8> = None;
+        ui.horizontal(|ui| {
+            let modes = [CodeMode::Source, CodeMode::Disassembly, CodeMode::Both];
+            let labels: Vec<&str> = modes.iter().map(|m| m.label()).collect();
+            let current = modes.iter().position(|m| *m == self.code_mode).unwrap_or(2);
+            if let Some(i) = segmented(ui, "orbit_code_mode", &labels, current) {
+                self.code_mode = modes[i];
+            }
+            ui.add_space(8.0);
+            let examples = pill(ui, "Examples", false).on_hover_text("Code to look at with nothing captured");
+            egui::Popup::menu(&examples).show(|ui| {
+                let rust = ui.button("Rust: uprobes.rs (this repository)");
+                note_ui_rect("code:example:rust", rust.rect);
+                if rust.clicked() {
+                    load_example = Some(0);
+                    ui.close();
+                }
+                let cpp = ui.button("C++: UprobesUnwindingVisitor.cpp (this repository)");
+                note_ui_rect("code:example:cpp", cpp.rect);
+                if cpp.clicked() {
+                    load_example = Some(1);
+                    ui.close();
+                }
+                let asm = ui.button("Disassembly: a function of the running orbit-service, with its source");
+                note_ui_rect("code:example:asm", asm.rect);
+                if asm.clicked() {
+                    load_example = Some(2);
+                    ui.close();
+                }
+            });
+            ui.add_space(8.0);
+            let what = match (&self.code_disasm, &self.code_doc) {
+                (Some(d), _) => format!("{}  {}  {} instructions", d.function.name, d.function.module, d.lines.len()),
+                (None, Some(doc)) => format!("{}  {}  {} lines", doc.name(), doc.lang.label(), doc.lines.len()),
+                (None, None) => "Right-click a function in a report for its disassembly, or open an example.".to_string(),
+            };
+            ui.label(RichText::new(what).font(FontId::monospace(font - 0.5)).color(theme::MUTED));
+            if self.code_loading {
+                ui.label(RichText::new("loading…").font(FontId::monospace(font - 0.5)).color(theme::ACCENT));
+            }
+        });
+        match load_example {
+            Some(0) => {
+                let doc = crate::code::CodeDoc::new(crate::code::EXAMPLE_RUST_PATH, crate::code::EXAMPLE_RUST);
+                self.code_scroll_to = Some(doc.first_body_line());
+                self.code_doc = Some(doc);
+                self.code_disasm = None;
+                self.code_mode = CodeMode::Source;
+                self.code_error.clear();
+            }
+            Some(1) => {
+                let doc = crate::code::CodeDoc::new(crate::code::EXAMPLE_CPP_PATH, crate::code::EXAMPLE_CPP);
+                self.code_scroll_to = Some(doc.first_body_line());
+                self.code_doc = Some(doc);
+                self.code_disasm = None;
+                self.code_mode = CodeMode::Source;
+                self.code_error.clear();
+            }
+            Some(2) => {
+                self.net.get_example_disassembly();
+                self.code_loading = true;
+                self.code_error.clear();
+            }
+            _ => {}
+        }
+        if !self.code_error.is_empty() {
+            ui.label(RichText::new(&self.code_error).font(FontId::monospace(font - 0.5)).color(Color32::from_rgb(0xE5, 0x73, 0x73)));
+        }
+        if let Some(d) = &self.code_disasm {
+            let src = match &self.code_doc {
+                Some(doc) if d.files.iter().any(|f| *f == doc.path) => doc.name().to_string(),
+                _ if d.files.is_empty() => "no line table in the module: disassembly only".to_string(),
+                _ => "source not loaded".to_string(),
+            };
+            ui.label(
+                RichText::new(format!("{}  {:#x}  {} bytes  {}{}", d.arch, d.function.address, d.function.size, src, if d.truncated { "  (cut)" } else { "" }))
+                    .font(FontId::monospace(font - 1.0))
+                    .color(theme::MUTED),
+            );
+        }
+    }
+
+    fn code_rows(&mut self, ui: &mut Ui) {
+        use crate::code::{token_color, CodeMode, CodeRow, Language, TokenKind};
+        let font = self.ui_tweaks.report_font;
+        // Rows, rebuilt when what they are built from changes.
+        let key = (
+            self.code_mode as u8,
+            self.code_doc.as_ref().map(|d| d.lines.len() ^ (d.path.len() << 20)).unwrap_or(0),
+            self.code_disasm.as_ref().map(|d| d.function.address ^ (d.lines.len() as u64) << 40).unwrap_or(0),
+        );
+        if key != self.code_rows_key {
+            self.code_rows = crate::code::build_rows(self.code_mode, self.code_doc.as_ref(), self.code_disasm.as_ref());
+            self.code_rows_key = key;
+        }
+        if self.code_rows.is_empty() {
+            return;
+        }
+        let mono = FontId::monospace(font);
+        let row_h = font + 5.0;
+        let gutter_w = 64.0;
+        let avail_w = ui.available_width().max(300.0);
+        let clip = ui.clip_rect();
+        let top = ui.cursor().top();
+        if let Some(row) = self.code_scroll_to.take() {
+            let y = top + row as f32 * row_h;
+            ui.scroll_to_rect(Rect::from_min_size(Pos2::new(clip.left(), y), Vec2::new(1.0, row_h)), Some(egui::Align::TOP));
+        }
+        let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
+        let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(self.code_rows.len());
+        let first = first.min(last);
+        if first > 0 {
+            ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
+        }
+        let pointer = ui.ctx().pointer_hover_pos();
+        // The widest line in view sets the horizontal extent, so the scroll
+        // area can scroll sideways to the end of a long line.
+        let mut widest = avail_w;
+        for i in first..last {
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
+            let painter = ui.painter();
+            let hovered = pointer.is_some_and(|p| rect.contains(p));
+            let row = &self.code_rows[i];
+            let is_annotation = matches!(row, CodeRow::Source { .. } | CodeRow::Note { .. }) && self.code_mode == CodeMode::Both;
+            if is_annotation {
+                painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2C, 0x2F, 0x33));
+            } else if hovered {
+                painter.rect_filled(rect, 0.0, theme::TRACK_ALT);
+            }
+            let text_x = rect.left() + gutter_w + 8.0;
+            match row {
+                CodeRow::Source { line } => {
+                    let Some(doc) = &self.code_doc else { continue };
+                    painter.text(
+                        Pos2::new(rect.left() + gutter_w - 4.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        (line + 1).to_string(),
+                        FontId::monospace(font - 1.0),
+                        theme::MUTED,
+                    );
+                    let text = &doc.lines[*line];
+                    let spans = doc.spans(*line);
+                    let mut job = egui::text::LayoutJob::default();
+                    for s in spans {
+                        job.append(&text[s.start..s.end], 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(s.kind), ..Default::default() });
+                    }
+                    let galley = ui.fonts(|f| f.layout_job(job));
+                    widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
+                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+                }
+                CodeRow::Asm { index } => {
+                    let Some(d) = &self.code_disasm else { continue };
+                    let ins = &d.lines[*index];
+                    painter.text(
+                        Pos2::new(rect.left() + gutter_w - 4.0, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        format!("{:x}", ins.address),
+                        FontId::monospace(font - 1.0),
+                        token_color(TokenKind::Address),
+                    );
+                    let mut job = egui::text::LayoutJob::default();
+                    // The bytes, dim, then the instruction, then the call
+                    // target as a comment.
+                    let bytes = format!("{:<24}", ins.bytes);
+                    job.append(&bytes, 0.0, egui::TextFormat { font_id: FontId::monospace(font - 1.5), color: Color32::from_rgb(0x5A, 0x60, 0x66), ..Default::default() });
+                    let (spans, _) = crate::code::lex_line(Language::Asm, &ins.text, Default::default());
+                    for s in spans {
+                        job.append(&ins.text[s.start..s.end], 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(s.kind), ..Default::default() });
+                    }
+                    if !ins.target.is_empty() {
+                        job.append(&format!("   ; {}", ins.target), 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(TokenKind::Comment), ..Default::default() });
+                    }
+                    if self.code_mode == CodeMode::Both {
+                        if let Some(tail) = crate::code::other_file_tail(ins, self.code_doc.as_ref()) {
+                            job.append(&format!("   {tail}"), 0.0, egui::TextFormat { font_id: FontId::monospace(font - 1.5), color: Color32::from_rgb(0x5A, 0x60, 0x66), ..Default::default() });
+                        }
+                    }
+                    let galley = ui.fonts(|f| f.layout_job(job));
+                    widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
+                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+                }
+                CodeRow::Note { text } => {
+                    painter.text(
+                        Pos2::new(text_x, rect.center().y),
+                        Align2::LEFT_CENTER,
+                        text,
+                        FontId::monospace(font - 1.0),
+                        theme::MUTED,
+                    );
+                }
+            }
+        }
+        if last < self.code_rows.len() {
+            ui.allocate_exact_size(Vec2::new(avail_w, (self.code_rows.len() - last) as f32 * row_h), Sense::hover());
+        }
+        if widest > avail_w {
+            // Claim the width so ScrollArea::both offers the sideways scroll.
+            ui.allocate_exact_size(Vec2::new(widest, 0.0), Sense::hover());
+        }
+    }
+
+    fn is_hooked(&self, function_id: u64) -> bool {
+        function_id != 0 && self.selected_hooks.iter().any(|h| h.function_id == function_id)
+    }
+
+    /// Hooks or unhooks one function picked from a report row. The hook
+    /// list is the capture row's: the pill appears there, and the next
+    /// Record arms it, the way C++ Orbit's "Hook" in the sampling report
+    /// works.
+    fn apply_hook_action(&mut self, action: HookAction, function_id: u64, name: &str, module: &str) {
+        match action {
+            HookAction::Hook => {
+                if !self.is_hooked(function_id) {
+                    self.selected_hooks.push(FunctionHit {
+                        function_id,
+                        name: name.to_string(),
+                        module: module.to_string(),
+                        size: 0,
+                    });
+                }
+            }
+            HookAction::Unhook => self.selected_hooks.retain(|h| h.function_id != function_id),
+            HookAction::Disassemble => {
+                if let Some(pid) = self.selected_pid.filter(|p| *p > 0) {
+                    self.net.get_disassembly(pid, function_id);
+                    self.code_loading = true;
+                    self.code_error.clear();
+                    self.report_tab = ReportTab::Code;
+                }
+            }
+        }
+        self.needs_repaint = true;
+    }
+
+    /// The line above a report that says what is hooked and what to do
+    /// about it: hooks arm on the next Record, not on the capture in view.
+    fn hooked_hint(&self, ui: &mut Ui) {
+        // Always one line, so hooking a row does not shift the rows under
+        // it: with nothing hooked the line says so, in the muted colour.
+        let n = self.selected_hooks.len();
+        let (text, color) = if n == 0 {
+            ("no functions hooked — tick a row to instrument it on the next Record".to_string(), theme::MUTED)
+        } else if self.status.capturing {
+            (format!("{n} function(s) hooked — they arm on the next Record"), theme::ACCENT)
+        } else {
+            (format!("{n} function(s) hooked — press Record to instrument them"), theme::ACCENT)
+        };
+        ui.label(RichText::new(text).color(color).size(self.ui_tweaks.report_font - 0.5));
+    }
+
+    /// Marks every node of the current tree expanded.
+    ///
+    /// Walks the tree that was actually delivered, so this cannot expand past
+    /// the serialization caps -- the service already truncated at 24 levels
+    /// and 24 children per node, and there is nothing below that to open.
+    fn expand_all_tree_nodes(&mut self) {
+        let Some(tree) = self.tree.clone() else { return };
+        self.tree_expanded = all_expandable_paths(&tree.roots);
+    }
+
+    /// One row per node, indented by depth, with a click target on the
+    /// expander. Rendered from a clone so the expansion set stays mutable
+    /// while the tree is read.
+    fn call_tree_rows(&mut self, ui: &mut Ui) {
+        let Some(tree) = self.tree.clone() else {
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            return;
+        };
+        if tree.samples == 0 {
+            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            return;
+        }
+        let mut tree_actions: Vec<(HookAction, u64, String, String)> = Vec::new();
+        self.hooked_hint(ui);
+        egui::Grid::new("orbit_call_tree_rows")
+            .num_columns(5)
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["inclusive", "self", "of parent", "function", "module"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                }
+                ui.end_row();
+                // Explicit stack rather than recursion: the borrow of the
+                // expansion set has to end before the next row is drawn.
+                let mut stack: Vec<(crate::net::TreeNodeJson, usize, String)> = tree
+                    .roots
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(i, n)| (n.clone(), 0usize, i.to_string()))
+                    .collect();
+                let mut drawn = 0usize;
+                let filter = self.report_filter.trim().to_lowercase();
+                while let Some((node, depth, path)) = stack.pop() {
+                    if drawn >= 500 {
+                        break;
+                    }
+                    // With a filter, only the paths to matching nodes are
+                    // drawn, and they are drawn open.
+                    if !filter.is_empty() && !tree_node_matches(&node, &filter) {
+                        continue;
+                    }
+                    drawn += 1;
+                    let expandable = !node.children.is_empty();
+                    let expanded = self.tree_expanded.contains(&path) || !filter.is_empty();
+                    // Inclusive as a bar, the way the native Inclusive column
+                    // paints it: the shape of the hot path is visible down the
+                    // column without reading a single number.
+                    percent_bar(ui, node.inclusive_percent, true, self.ui_tweaks.report_bar_w);
+                    ui.label(
+                        RichText::new(if node.exclusive > 0 {
+                            format!("{}", node.exclusive)
+                        } else {
+                            String::new()
+                        })
+                        .color(theme::MUTED)
+                        .monospace()
+                        .size(self.ui_tweaks.report_font),
+                    );
+                    percent_bar(ui, node.of_parent_percent, false, self.ui_tweaks.report_bar_w);
+                    let mut toggle = false;
+                    ui.horizontal(|ui| {
+                        ui.add_space(depth as f32 * self.ui_tweaks.report_indent);
+                        // A painted triangle, not a glyph: the font atlas has
+                        // no chevron and renders one as a replacement box.
+                        toggle |= inline_chevron(ui, expandable.then_some(expanded));
+                        let is_thread = node.kind == "thread";
+                        let label = ui.add(
+                            egui::Label::new(
+                                RichText::new(&node.name)
+                                    .color(if is_thread { theme::MUTED } else { theme::TEXT })
+                                    .size(self.ui_tweaks.report_font),
+                            )
+                            .sense(egui::Sense::click()),
+                        );
+                        let label = label.on_hover_text(if node.address != 0 {
+                            format!("{}\n{}\n{:#x}", node.name, node.module, node.address)
+                        } else {
+                            node.name.clone()
+                        });
+                        if expandable && label.clicked() {
+                            toggle = true;
+                        }
+                        if !is_thread {
+                            note_ui_rect(&format!("tree:{}", node.name), label.rect);
+                            let hooked = self.is_hooked(node.function_id);
+                            if let Some(action) = hook_menu(&label, node.function_id, hooked) {
+                                tree_actions.push((action, node.function_id, node.name.clone(), node.module.clone()));
+                            }
+                        }
+                    });
+                    if toggle {
+                        if expanded {
+                            self.tree_expanded.remove(&path);
+                        } else {
+                            self.tree_expanded.insert(path.clone());
+                        }
+                    }
+                    ui.label(RichText::new(&node.module).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                    ui.end_row();
+
+                    if expanded {
+                        for (i, child) in node.children.iter().enumerate().rev() {
+                            stack.push((child.clone(), depth + 1, format!("{path}/{i}")));
+                        }
+                    }
+                }
+            });
+        for (action, id, name, module) in tree_actions {
+            self.apply_hook_action(action, id, &name, &module);
+        }
+    }
+
+    fn module_rows(&mut self, ui: &mut Ui) {
+        let Some(modules) = self.modules.clone() else {
+            ui.label(
+                RichText::new("No modules loaded — pick a process and load symbols.")
+                    .color(theme::MUTED)
+                    .size(self.ui_tweaks.report_font),
+            );
+            return;
+        };
+        egui::Grid::new("orbit_module_rows")
+            .num_columns(3)
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["symbols", "module", "path"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                }
+                ui.end_row();
+                let filter = self.report_filter.trim().to_lowercase();
+                for row in modules
+                    .modules
+                    .iter()
+                    .filter(|m| filter.is_empty() || contains_ci(&m.name, &filter) || contains_ci(&m.path, &filter))
+                {
+                    ui.label(
+                        RichText::new(row.function_count.to_string())
+                            .color(theme::TEXT)
+                            .monospace()
+                            .size(self.ui_tweaks.report_font),
+                    );
+                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    ui.label(RichText::new(&row.path).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                    ui.end_row();
+                }
+            });
     }
 
     fn nudge_selection(&mut self, dir: isize) {
@@ -3795,6 +6560,450 @@ impl OrbitLiveApp {
         ));
     }
 
+    /// The Live table in force: the selection's when there is one, else
+    /// the whole capture's, kept incrementally.
+    fn live_table(&mut self) -> &crate::live::LiveTable {
+        let ranges = self.sample_ranges();
+        if ranges.is_empty() {
+            return &self.live_all;
+        }
+        let events = self.index.event_count() as u64;
+        let now = self.now_s;
+        let stale = self.live_sel_ranges != ranges
+            || (self.live_sel_events_seen != events && now - self.live_sel_computed_s >= LIVE_STATS_MIN_INTERVAL_S);
+        if stale {
+            self.live_sel = crate::live::LiveTable::from_events(
+                self.index.lanes().flat_map(|(_, lane)| lane.events().iter()),
+                &ranges,
+            );
+            self.live_sel_ranges = ranges;
+            self.live_sel_events_seen = events;
+            self.live_sel_computed_s = now;
+        }
+        &self.live_sel
+    }
+
+    fn live_title(&mut self) -> String {
+        let t = self.live_table();
+        let (scopes, samples, span) = (t.scope_count(), t.samples, t.span_ns());
+        let rate = if span > 0 && samples > 0 {
+            format!(", {:.0}/s", samples as f64 / (span as f64 / 1e9))
+        } else {
+            String::new()
+        };
+        format!("Live — {scopes} scopes, {samples} samples{rate}")
+    }
+
+    /// The Live tab: C++ Orbit's live functions table, one row per scope
+    /// name with running statistics, and the histogram of the selected row.
+    fn live_rows(&mut self, ui: &mut Ui) {
+        let font = self.ui_tweaks.report_font;
+        let (rows, sample_threads): (Vec<crate::live::LiveRow>, Vec<(u32, u64)>) = {
+            let t = self.live_table();
+            (t.sorted_rows().into_iter().cloned().collect(), t.sample_threads())
+        };
+        if !sample_threads.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("samples by thread:").color(theme::MUTED).size(font - 0.5));
+                for (tid, n) in sample_threads.iter().take(12) {
+                    let name = self.thread_label_by_tid(*tid);
+                    ui.label(RichText::new(format!("{name} {n}")).color(theme::TEXT).size(font - 0.5));
+                }
+            });
+            ui.add_space(4.0);
+        }
+        if rows.is_empty() {
+            ui.label(RichText::new("No scopes yet.").color(theme::MUTED).size(font));
+            return;
+        }
+        if self.recording {
+            self.needs_repaint = true;
+        }
+        // The focused row's histogram sits above the table, where it is in
+        // view whichever row was clicked.
+        if let Some(id) = self.live_focus {
+            let row = { self.live_table().row(id).cloned() };
+            if let Some(row) = row {
+                let name = self.intern.get(id).unwrap_or("?").to_string();
+                ui.label(
+                    RichText::new(format!("{name} — {} calls, duration histogram (log scale)", row.count))
+                        .color(theme::TEXT)
+                        .size(font),
+                );
+                paint_histogram(ui, &row.hist, font);
+                ui.add_space(8.0);
+            }
+        }
+        let mut clicked: Option<u32> = None;
+        egui::Grid::new("orbit_live_rows")
+            .num_columns(9)
+            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
+            .striped(true)
+            .show(ui, |ui| {
+                for h in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"] {
+                    ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
+                }
+                ui.end_row();
+                let filter = self.report_filter.trim().to_lowercase();
+                for r in rows
+                    .iter()
+                    .filter(|r| filter.is_empty() || self.intern.get(r.name_id).is_some_and(|n| contains_ci(n, &filter)))
+                    .take(300)
+                {
+                    let focused = self.live_focus == Some(r.name_id);
+                    let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
+                    ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font));
+                    let label = ui.add(
+                        egui::Label::new(
+                            RichText::new(&name)
+                                .color(if focused { theme::ACCENT } else { theme::TEXT })
+                                .size(font),
+                        )
+                        .sense(Sense::click()),
+                    );
+                    note_ui_rect(&format!("live:{name}"), label.rect);
+                    if label.on_hover_text("Click for the duration histogram; the timeline highlights this scope").clicked() {
+                        clicked = Some(r.name_id);
+                    }
+                    for v in [
+                        r.count.to_string(),
+                        display_time_ns(r.total_ns),
+                        display_time_ns(r.avg_ns()),
+                        display_time_ns(r.min_ns),
+                        display_time_ns(r.max_ns),
+                        display_time_ns(r.std_dev_ns()),
+                    ] {
+                        ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
+                    }
+                    ui.label(RichText::new(self.module_of_name(&name)).color(theme::MUTED).size(font - 0.5));
+                    ui.end_row();
+                }
+            });
+        if let Some(id) = clicked {
+            if self.live_focus == Some(id) {
+                self.live_focus = None;
+                self.search.clear();
+            } else {
+                self.live_focus = Some(id);
+                // Linked to the timeline the way the search box is: every
+                // instance of this scope lights up, the rest dims.
+                self.search = self.intern.get(id).unwrap_or("").to_string();
+            }
+        }
+    }
+
+    /// The Flame tab: the top-down tree drawn as nested bars, width
+    /// proportional to inclusive samples. Hover names a bar with its
+    /// samples and share; a click highlights that function's instances on
+    /// the timeline (and again to clear); the timeline's selected scope
+    /// outlines the bars with its name.
+    #[allow(deprecated)] // show_tooltip_at_pointer: the bars are painted, not widgets
+    fn flame_rows(&mut self, ui: &mut Ui) {
+        let font = self.ui_tweaks.report_font;
+        let Some(tree) = self.tree.clone() else {
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(font));
+            return;
+        };
+        if tree.mode != "top_down" || tree.samples == 0 {
+            if tree.samples == 0 {
+                ui.label(RichText::new("No samples here.").color(theme::MUTED).size(font));
+            } else {
+                ui.label(RichText::new("Fetching the top-down tree…").color(theme::MUTED).size(font));
+            }
+            return;
+        }
+        // A double-click zooms to that bar's subtree; a double-click on the
+        // zoomed root, or on nothing, zooms back out.
+        let mut zoomed_roots: Vec<crate::net::TreeNodeJson> = Vec::new();
+        let zoom_target = flame_node_at(&tree.roots, &self.flame_zoom).cloned();
+        let (roots, zoomed): (&[crate::net::TreeNodeJson], bool) = match zoom_target {
+            Some(node) if !self.flame_zoom.is_empty() => {
+                zoomed_roots.push(node);
+                (&zoomed_roots, true)
+            }
+            _ => (&tree.roots, false),
+        };
+        if zoomed {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("zoomed to {}", roots[0].name))
+                        .color(theme::MUTED)
+                        .size(font - 0.5),
+                );
+                if pill(ui, "Zoom out", false).on_hover_text("Back to the whole tree (or double-click the root bar)").clicked() {
+                    self.flame_zoom.clear();
+                }
+            });
+        }
+        let width = ui.available_width().max(200.0);
+        let bars = flame_layout(roots, width);
+        let depth = bars.iter().map(|b| b.depth).max().unwrap_or(0) + 1;
+        let row_h = (font + 7.0).max(16.0);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, depth as f32 * row_h), Sense::hover());
+        let painter = ui.painter_at(rect);
+        let pointer = ui.ctx().pointer_hover_pos();
+        let selected_name = self.selected.and_then(|p| self.intern.get(p.name_id)).map(str::to_string);
+        let mut hovered: Option<&FlameBar> = None;
+        let mut clicked: Option<String> = None;
+        let (click, double) = ui.input(|i| {
+            (i.pointer.primary_clicked(), i.pointer.button_double_clicked(egui::PointerButton::Primary))
+        });
+        let mut zoom_change: Option<Vec<usize>> = None;
+        for bar in &bars {
+            let r = Rect::from_min_size(
+                Pos2::new(rect.left() + bar.x, rect.top() + bar.depth as f32 * row_h),
+                Vec2::new(bar.w.max(1.0), row_h - 1.0),
+            );
+            let base = if bar.is_thread {
+                theme::INPUT
+            } else {
+                let c = theme::display_argb(orbit_live_event::named_scope_color(bar.name.as_bytes(), bar.depth as u8));
+                Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+            };
+            let is_hover = pointer.is_some_and(|p| r.contains(p));
+            let dim = self.search_active() && !bar.name.contains(self.search.as_str());
+            let fill = if is_hover {
+                theme::ACCENT
+            } else if dim {
+                Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 60)
+            } else {
+                base
+            };
+            painter.rect_filled(r, 2.0, fill);
+            if !bar.is_thread {
+                note_ui_rect(&format!("flame:{}", bar.name), r);
+            }
+            if selected_name.as_deref() == Some(bar.name.as_str()) {
+                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT), StrokeKind::Inside);
+            }
+            if bar.w > 24.0 {
+                let text = truncate_to_width(&bar.name, bar.w - 6.0, font - 1.0);
+                painter.text(
+                    Pos2::new(r.left() + 3.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    text,
+                    FontId::new(font - 1.0, fonts::medium()),
+                    if is_hover || bar.is_thread { theme::TEXT } else { theme::PANEL },
+                );
+            }
+            if is_hover {
+                hovered = Some(bar);
+                if double {
+                    // The zoomed root itself: back out one level. Anything
+                    // else: make it the root.
+                    zoom_change = Some(if zoomed && bar.depth == 0 {
+                        let mut up = self.flame_zoom.clone();
+                        up.pop();
+                        up
+                    } else if zoomed {
+                        let mut down = self.flame_zoom.clone();
+                        down.extend(bar.path.iter().skip(1));
+                        down
+                    } else {
+                        bar.path.clone()
+                    });
+                } else if click {
+                    clicked = Some(bar.name.clone());
+                }
+            }
+        }
+        if double && hovered.is_none() && pointer.is_some_and(|p| rect.contains(p)) {
+            zoom_change = Some(Vec::new());
+        }
+        if let Some(z) = zoom_change {
+            self.flame_zoom = z;
+            self.needs_repaint = true;
+            clicked = None;
+            // The first click of the pair already toggled the search filter
+            // to this bar: a double-click means zoom, not filter.
+            if let Some(bar) = hovered {
+                if self.search == bar.name {
+                    self.search.clear();
+                }
+            }
+        }
+        if let Some(bar) = hovered {
+            let text = format!("{}\n{} samples, {:.1}% of the selection", bar.name, bar.samples, bar.percent);
+            egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), egui::Id::new("orbit_flame_tip"), |ui| {
+                ui.label(RichText::new(text).size(font));
+            });
+        }
+        if let Some(name) = clicked {
+            if !name.is_empty() {
+                if self.search == name {
+                    self.search.clear();
+                } else {
+                    self.search = name;
+                }
+            }
+        }
+    }
+
+    /// A thread's name by tid alone, for rows that carry no pid.
+    fn thread_label_by_tid(&self, tid: u32) -> String {
+        self.thread_names
+            .iter()
+            .find(|((_, t), _)| *t == tid)
+            .map(|(_, n)| n.clone())
+            .or_else(|| self.intern.get(tid).map(str::to_string))
+            .unwrap_or_else(|| tid.to_string())
+    }
+
+    /// The module a function name belongs to, when a symbol search or a
+    /// report has said; empty for manual scopes.
+    fn module_of_name(&self, name: &str) -> String {
+        self.sampling
+            .as_ref()
+            .and_then(|r| r.rows.iter().find(|row| row.name == name).map(|row| row.module.clone()))
+            .unwrap_or_default()
+    }
+
+    /// The right-click menu on a scope: a sampling report over every
+    /// instance of that scope (TODO item 9).
+    fn paint_scope_menu(&mut self, ctx: &Context) {
+        let Some((pick, pos)) = self.scope_menu else { return };
+        let name = self.intern.get(pick.name_id).unwrap_or("scope").to_string();
+        let mut close = false;
+        let resp = egui::Area::new(egui::Id::new("orbit_scope_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                Frame::popup(ui.style()).fill(theme::PANEL).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.label(RichText::new(&name).color(theme::TEXT).size(11.5));
+                    ui.label(
+                        RichText::new(format!("{} on thread {}", display_time_ns(pick.duration_ns), pick.tid))
+                            .color(theme::MUTED)
+                            .size(10.5),
+                    );
+                    ui.add_space(4.0);
+                    let report_item = ui.button("Sampling report for this scope");
+                    note_ui_rect("menu:report", report_item.rect);
+                    if report_item.clicked() {
+                        self.sample_sels.clear();
+                        self.measure = None;
+                        self.sampling_ranges.clear();
+                        self.scope_report = Some((pick.name_id, name.clone()));
+                        self.report_open = true;
+                        if matches!(self.report_tab, ReportTab::Live | ReportTab::Modules) {
+                            self.report_tab = ReportTab::Flat;
+                        }
+                        self.request_reports();
+                        close = true;
+                    }
+                    let highlight_item = ui.button("Highlight every instance");
+                    note_ui_rect("menu:highlight", highlight_item.rect);
+                    if highlight_item.clicked() {
+                        self.search = name.clone();
+                        close = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        let fresh = std::mem::replace(&mut self.scope_menu_fresh, false);
+        if close || (!fresh && resp.response.clicked_elsewhere()) || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.scope_menu = None;
+        }
+    }
+
+    /// `describe_selection`, with the thread named when one is selected.
+    fn describe_selection_named(&self) -> String {
+        if let Some((_, name)) = &self.scope_report {
+            let instances = self.sampling.as_ref().map(|r| r.range_count).unwrap_or(0);
+            return format!("scope {name}, {instances} instances");
+        }
+        let text = describe_selection(&self.sampling_ranges);
+        if let [(_, _, Some(tid))] = self.sampling_ranges.as_slice() {
+            // A range names only its tid; the thread table is keyed by
+            // (pid, tid), and the pid is whichever process owns that tid.
+            let name = self
+                .thread_names
+                .iter()
+                .find(|((_, t), _)| t == tid)
+                .map(|(_, n)| n.clone())
+                .or_else(|| self.intern.get(*tid).map(str::to_string));
+            if let Some(name) = name {
+                return text.replacen(&format!("thread {tid}"), &format!("thread {tid} {name}"), 1);
+            }
+        }
+        text
+    }
+
+    /// The span of the current selection, `(start, end)` in capture
+    /// nanoseconds, over every committed range and the drag in progress.
+    fn selection_span(&self) -> Option<(u64, u64)> {
+        selection_span(&self.sample_ranges())
+    }
+
+    /// The thread whose track (header or any lane) is at `y`, for a
+    /// selection that should cover that thread's samples alone. The
+    /// scheduler, machine and process rows and the empty space give `None`:
+    /// every thread, as C++ Orbit's SelectCallstacks does when the pick is
+    /// not a thread track.
+    fn thread_at_y(&self, y: f32) -> Option<u32> {
+        match self.tracks.hit_at_y(y)? {
+            RowId::Thread(t) => Some(t.tid),
+            RowId::Lane(k) if !k.is_scheduler() && !is_self_pid(k.pid) => Some(k.tid),
+            _ => None,
+        }
+    }
+
+    /// The UI knobs window: what the report rows look like, live.
+    /// The settings, one window behind the gear: the process and its
+    /// symbols, what to collect, unwinding, hooks and what is hooked, then
+    /// the interface knobs. What used to be a strip across the top and a
+    /// second window for the knobs.
+    fn tweaks_window(&mut self, ctx: &Context) {
+        if !self.capture_open || self.static_capture.is_some() {
+            return;
+        }
+        let before = self.ui_tweaks;
+        let mut open = self.capture_open;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(760.0)
+            .default_pos(Pos2::new(12.0, 48.0))
+            .frame(Frame::window(&ctx.style()).fill(theme::RAIL))
+            .show(ctx, |ui| {
+                self.capture_strip(ui);
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    section_label(ui, "INTERFACE");
+                });
+                let t = &mut self.ui_tweaks;
+                ui.label(RichText::new("Sampling report").color(theme::MUTED).size(10.5));
+                ui.add(egui::Slider::new(&mut t.report_row_gap, 0.0..=16.0).text("row gap"));
+                ui.add(egui::Slider::new(&mut t.report_col_gap, 4.0..=40.0).text("column gap"));
+                ui.add(egui::Slider::new(&mut t.report_font, 8.0..=18.0).text("font size"));
+                ui.add(egui::Slider::new(&mut t.report_bar_w, 20.0..=160.0).text("bar width"));
+                ui.add(egui::Slider::new(&mut t.report_indent, 4.0..=32.0).text("tree indent"));
+                ui.add_space(6.0);
+                ui.label(RichText::new("Tracks").color(theme::MUTED).size(10.5));
+                let mut scale = self.tracks.scale;
+                if ui.add(egui::Slider::new(&mut scale, 0.5..=2.0).text("track scale")).changed() {
+                    self.tracks.scale = scale;
+                    self.relayout_tracks();
+                }
+                ui.add_space(6.0);
+                if ui.button("Reset").clicked() {
+                    self.ui_tweaks = UiTweaks::default();
+                }
+            });
+        if !open {
+            self.capture_user = true;
+        }
+        self.capture_open = open;
+        if self.ui_tweaks != before {
+            self.ui_tweaks.save();
+        }
+    }
+
     fn tick_follow(&mut self, dt: f32, hold_window: bool) {
         if !self.follow || self.live_edge_ns == 0 || hold_window {
             return;
@@ -3804,6 +7013,15 @@ impl OrbitLiveApp {
         let k = 1.0 - (-dt / 0.10).exp();
         self.t0 += (target_t0 - self.t0) * k as f64;
         self.t1 += (target_t1 - self.t1) * k as f64;
+        // The ease converges but never arrives: a few nanoseconds a frame
+        // for a second after the edge stops moving, each one a new window
+        // and a full listing and upload of a still picture. Under an eighth
+        // of a pixel, land.
+        let px_ns = (self.t1 - self.t0).max(1.0) / self.view_width.max(1) as f64;
+        if (target_t0 - self.t0).abs() < px_ns * 0.125 && (target_t1 - self.t1).abs() < px_ns * 0.125 {
+            self.t0 = target_t0;
+            self.t1 = target_t1;
+        }
         if let Some((c0, c1)) = self.content_span() {
             let (t0, t1) = clamp_window_contain(self.t0, self.t1, c0, c1);
             self.t0 = t0;
@@ -3814,7 +7032,23 @@ impl OrbitLiveApp {
 
 impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let devf = DevFrame::begin(self.dev);
+        self.now_s = ctx.input(|i| i.time);
+        self.pointer_readout = ctx.input(|i| {
+            let p = &i.pointer;
+            format!(
+                "{{\"down\":{},\"pressed\":{},\"pos\":{},\"origin\":{},\"dragging\":{},\"grab\":{},\"w_user\":{}}}",
+                p.primary_down(),
+                p.primary_pressed(),
+                p.latest_pos().map(|q| format!("[{:.0},{:.0}]", q.x, q.y)).unwrap_or("null".into()),
+                p.press_origin().map(|q| format!("[{:.0},{:.0}]", q.x, q.y)).unwrap_or("null".into()),
+                p.is_decidedly_dragging(),
+                self.report_splitter_grab.map(|g| (g as i32).to_string()).unwrap_or("null".into()),
+                self.report_w_user.map(|w| (w as i32).to_string()).unwrap_or("null".into())
+            )
+        });
+        // The self-profile pane needs the same scopes the track injection does,
+        // so a frame is instrumented when either wants it.
+        let devf = DevFrame::begin(self.self_pane_open);
         {
             let _frame_scope = devf.scope(TID_UI, NAME_FRAME);
             let interaction = ctx.input(|i| {
@@ -3848,6 +7082,12 @@ impl eframe::App for OrbitLiveApp {
             let dt_raw = ctx.input(|i| i.stable_dt);
             let dt = dt_raw.clamp(0.0, 0.05);
             self.note_fps(dt_raw);
+            self.frame_period_s = ctx.input(|i| i.unstable_dt);
+            {
+                let (prepare_ns, paint_ns) = crate::timeline::take_gpu_times();
+                self.last_gpu_prepare_us = prepare_ns as f32 / 1_000.0;
+                self.last_gpu_paint_us = paint_ns as f32 / 1_000.0;
+            }
             self.apply_layout(ctx);
             self.sync_fullscreen(ctx);
             self.take_dropped_traces(ctx);
@@ -3881,17 +7121,32 @@ impl eframe::App for OrbitLiveApp {
                     self.tick_follow(dt, hold_window);
                 }
                 let now = ctx.input(|i| i.time);
-                if now - self.last_status_request > 0.25 {
+                let has_service = self.static_capture.is_none();
+                if has_service && now - self.last_status_request > 0.25 {
                     self.last_status_request = now;
                     self.net.get_status();
+                }
+                // A closed WebSocket is retried every couple of seconds, so a
+                // restarted service picks the page back up on its own.
+                if has_service && !self.ws_ok && now - self.last_ws_retry_s > 2.0 {
+                    self.last_ws_retry_s = now;
+                    self.net.reconnect_ws_if_closed();
+                }
+                // Symbols for the selected process, their status while they
+                // load, and the hook search: every frame, throttled inside.
+                // This used to run only while the socket was down, so a
+                // selected process never had its symbols loaded.
+                if has_service {
                     self.tick_capture_net(now);
                 }
-                if should_poll_processes(
-                    self.processes.is_empty(),
-                    self.capture_open,
-                    now,
-                    self.last_process_request,
-                ) {
+                if has_service
+                    && should_poll_processes(
+                        self.processes.is_empty(),
+                        self.capture_open,
+                        now,
+                        self.last_process_request,
+                    )
+                {
                     self.last_process_request = now;
                     self.net.get_processes();
                 }
@@ -3937,20 +7192,17 @@ impl eframe::App for OrbitLiveApp {
                     )
                     .show(ctx, |ui| self.transport(ui));
 
-                if self.capture_open && !self.chrome_collapsed() {
-                    egui::TopBottomPanel::top("orbit_capture_strip")
-                        .exact_height(if self.hook_hits.is_empty() || self.hook_query.is_empty() {
-                            86.0
-                        } else {
-                            118.0
-                        })
+
+                if self.static_capture.is_none() && !self.chrome_collapsed() {
+                    egui::TopBottomPanel::top("orbit_process_row")
+                        .exact_height(30.0)
                         .frame(
                             Frame::new()
                                 .fill(theme::RAIL)
-                                .inner_margin(Margin::symmetric(4, 6))
+                                .inner_margin(Margin::symmetric(4, 3))
                                 .stroke(Stroke::NONE),
                         )
-                        .show(ctx, |ui| self.capture_strip(ui));
+                        .show(ctx, |ui| self.process_row(ui));
                 }
 
                 if self.advanced {
@@ -3980,10 +7232,28 @@ impl eframe::App for OrbitLiveApp {
                     .show(ctx, |_| {});
             }
 
+            self.refresh_sampling_report(ctx.input(|i| i.time));
+            {
+                let _report = devf.scope(TID_UI, NAME_REPORT_PANEL);
+                self.sampling_panel(ctx);
+            }
+            self.tweaks_window(ctx);
+            self.paint_scope_menu(ctx);
+            {
+                let _pane = devf.scope(TID_UI, NAME_SELF_PANE);
+                self.self_pane(ctx, dt, &devf);
+            }
+            self.publish_selection();
+
             egui::CentralPanel::default()
                 .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
                 .show(ctx, |ui| self.timeline(ui, dt, &devf));
+            self.publish_ui_rects();
 
+            if self.settle_frames > 0 {
+                self.settle_frames -= 1;
+                ctx.request_repaint();
+            }
             if self.wants_live_repaint() || self.needs_repaint {
                 self.needs_repaint = false;
                 ctx.request_repaint();
@@ -3992,88 +7262,99 @@ impl eframe::App for OrbitLiveApp {
             }
         }
         let devf_counts = devf.worker_span_counts();
+        let devf_origin = devf.origin_ns().unwrap_or(0);
         let scopes = devf.finish();
-        if self.dev && !scopes.is_empty() {
+        if self.self_pane_open && !scopes.is_empty() {
             intern_self_names(&mut self.intern);
-            let live_edge = self.live_edge_ns;
-            let placed = place_self_batch(&mut self.self_cursor, &scopes, live_edge);
-            let sample_t = placed
-                .first()
-                .map(|e| e.start_ns)
-                .unwrap_or(live_edge)
-                .max(1);
-            for ev in placed {
-                self.index.insert(ev);
+            self.self_profile.push_frame(
+                &scopes,
+                devf_origin,
+                crate::self_pane::FrameStats {
+                    fps: self.fps_ema.max(0.0),
+                    prims: self.last_n_prims,
+                    lanes_kept: self.last_n_lanes_kept,
+                    lanes_reused: self.last_n_lanes_reused,
+                    pool_threads: orbit_live_render::parallelism() as u32,
+                    worker_kept: devf_counts.0,
+                    worker_dropped: devf_counts.1,
+                    frame_period_us: self.frame_period_s * 1e6,
+                    outside_us: (self.frame_period_s * 1e6
+                        - self.self_profile.last_frame_span_ns() as f32 / 1e3)
+                        .max(0.0),
+                    gpu_prepare_us: self.last_gpu_prepare_us,
+                    gpu_paint_us: self.last_gpu_paint_us,
+                },
+            );
+            // The pane's timeline: this frame's scopes on their absolute
+            // clock (the frame origin plus each scope's offset), one lane
+            // per viewer thread, plus the fps as a value lane. Kept to the
+            // last minute.
+            let live_edge = &mut self.self_tl.live_edge_ns;
+            for sc in &scopes {
+                let ev = LiveEvent {
+                    start_ns: devf_origin.saturating_add(sc.start_rel_ns),
+                    duration_ns: sc.duration_ns.max(1),
+                    tid: sc.tid,
+                    pid: VIEWER_PID,
+                    kind: kind::API_SCOPE,
+                    depth: sc.depth,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: sc.name_id,
+                };
+                *live_edge = (*live_edge).max(ev.end_ns());
+                self.self_tl.index.insert(ev);
             }
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_FPS,
-                self.fps_ema.max(0.0),
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_N_PRIMS,
-                self.last_n_prims as f32,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_LANES_KEPT,
-                self.last_n_lanes_kept as f32,
-            ));
-            // One frame behind: the wgpu prepare phase that does the upload
-            // runs after update() returns.
-            // Why worker lanes are or are not there: pool_threads == 1 means no
-            // pool, so the walks are sequential and emit nothing at all.
-            let (kept, dropped) = devf_counts;
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_POOL_THREADS,
-                orbit_live_render::parallelism() as f32,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_WORKER_SPANS,
-                kept as f32,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_SPANS_DROPPED,
-                dropped as f32,
-            ));
             let (up_ns, up_bytes) = crate::timeline::last_instance_upload();
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_UPLOAD_INST_US,
-                up_ns as f32 / 1_000.0,
-            ));
-            self.index.insert(LiveEvent::from_value(
-                sample_t,
-                VIEWER_PID,
-                TID_STATS,
-                NAME_UPLOAD_INST_BYTES,
-                up_bytes as f32,
-            ));
-            if let Some(mem) = wasm_mem_bytes() {
-                let mut ev =
-                    LiveEvent::from_value(sample_t, VIEWER_PID, TID_STATS, NAME_WASM_MEM, mem);
-                ev.extra = 1;
-                self.index.insert(ev);
+            for (name, v) in [
+                (NAME_FPS, self.fps_ema.max(0.0)),
+                (NAME_POOL_WAKE_US, self.last_pool_wake_us),
+                (NAME_POOL_TAIL_US, self.last_pool_tail_us),
+                (NAME_LISTING_INLINE, if self.listing_inline { 1.0 } else { 0.0 }),
+                (NAME_N_PRIMS, self.last_n_prims as f32),
+                (NAME_LANES_KEPT, self.last_n_lanes_kept as f32),
+                (NAME_POOL_THREADS, orbit_live_render::parallelism() as f32),
+                (NAME_WORKER_SPANS, devf_counts.0 as f32),
+                (NAME_SPANS_DROPPED, devf_counts.1 as f32),
+                (NAME_UPLOAD_INST_US, up_ns as f32 / 1_000.0),
+                (NAME_UPLOAD_INST_BYTES, up_bytes as f32),
+                (NAME_FRAME_PERIOD_US, self.frame_period_s * 1e6),
+                (
+                    NAME_OUTSIDE_FRAME_US,
+                    (self.frame_period_s * 1e6 - self.self_profile.last_frame_span_ns() as f32 / 1e3).max(0.0),
+                ),
+                (NAME_GPU_PREPARE_US, self.last_gpu_prepare_us),
+                (NAME_GPU_PAINT_US, self.last_gpu_paint_us),
+                (NAME_WASM_MEM, wasm_mem_bytes().unwrap_or(0.0)),
+            ] {
+                self.self_tl.index.insert(LiveEvent::from_value(
+                    devf_origin.max(1),
+                    VIEWER_PID,
+                    TID_STATS,
+                    name,
+                    v,
+                ));
             }
-            self.net.push_self_scopes(&scopes);
+            if self.self_profile.frames_seen() % 600 == 0 {
+                let cutoff = self.self_tl.live_edge_ns.saturating_sub(SELF_TIMELINE_RETAIN_NS);
+                self.self_tl.index.retain(|e| e.end_ns() >= cutoff);
+            }
+            // Content bounds, so fit-to-capture and the follow clamp know the
+            // pane's extent.
+            if let Some((a, b)) = self.self_tl.index.time_bounds() {
+                if b > a {
+                    self.self_tl.content_t0 = Some(a as f64);
+                    self.self_tl.content_t1 = Some(b as f64);
+                }
+            }
+            {
+                self.self_profile.publish(
+                    &self.intern,
+                    self.index.event_count() as u64,
+                    self.tracks.layout_gen(),
+                    self.index.lane_gen(),
+                );
+            }
         }
     }
 }
@@ -4089,18 +7370,6 @@ fn ui_hairline_sidebar(ctx: &Context, side_w: f32) {
         [Pos2::new(x, screen.top()), Pos2::new(x, screen.bottom())],
         hairline(),
     );
-}
-
-fn short_fn(name: &str) -> String {
-    const MAX: usize = 28;
-    if name.len() <= MAX {
-        return name.to_string();
-    }
-    let mut end = MAX.saturating_sub(1);
-    while end > 0 && !name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &name[..end])
 }
 
 fn section(ui: &mut Ui, label: &str) {
@@ -4133,6 +7402,246 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
     }
 }
 
+/// Case-insensitive substring test; `needle` is already lower-case.
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    hay.to_lowercase().contains(needle)
+}
+
+/// Whether a call-tree node, or anything under it, matches the filter.
+fn tree_node_matches(node: &crate::net::TreeNodeJson, needle: &str) -> bool {
+    contains_ci(&node.name, needle)
+        || contains_ci(&node.module, needle)
+        || node.children.iter().any(|c| tree_node_matches(c, needle))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HookAction {
+    Hook,
+    Unhook,
+    /// Open the function's disassembly, with its source, in the Code tab.
+    Disassemble,
+}
+
+/// The right-click menu of a function in a report: hook it for dynamic
+/// instrumentation, or unhook it. A function the service could not place
+/// in a file (the vDSO, an imported capture) says so instead.
+fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool) -> Option<HookAction> {
+    let mut action = None;
+    label.context_menu(|ui| {
+        if function_id == 0 {
+            ui.label(RichText::new("Not hookable: no file offset for this function").color(theme::MUTED).size(11.0));
+            return;
+        }
+        let item = if hooked {
+            ui.button("Unhook function")
+        } else {
+            ui.button("Hook function for dynamic instrumentation")
+        };
+        note_ui_rect("menu:hook", item.rect);
+        if item.clicked() {
+            action = Some(if hooked { HookAction::Unhook } else { HookAction::Hook });
+            ui.close();
+        }
+        let code = ui.button("Show disassembly and source");
+        note_ui_rect("menu:disassemble", code.rect);
+        if code.clicked() {
+            action = Some(HookAction::Disassemble);
+            ui.close();
+        }
+    });
+    action
+}
+
+/// A thin vertical rule between clusters of controls.
+fn vsep(ui: &mut Ui) {
+    ui.add_space(6.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 18.0), Sense::hover());
+    ui.painter().line_segment(
+        [rect.center_top(), rect.center_bottom()],
+        Stroke::new(1.0, Color32::from_white_alpha(26)),
+    );
+    ui.add_space(6.0);
+}
+
+/// The small-caps label that names a group of controls.
+fn section_label(ui: &mut Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .family(fonts::medium())
+            .size(9.5)
+            .extra_letter_spacing(1.2)
+            .color(theme::MUTED),
+    );
+}
+
+const RECORD_RED: Color32 = Color32::from_rgb(0xE0, 0x4A, 0x4A);
+
+/// An icon-only button: a pill-sized box with a painted glyph. The label
+/// names it for the harness and the tooltip says what it does; the font has
+/// no glyphs for these, so they are drawn.
+fn icon_button(ui: &mut Ui, label: &str, tip: &str, paint: fn(&egui::Painter, Rect, Color32)) -> egui::Response {
+    let resp = ui
+        .add(
+            egui::Button::new(RichText::new(" ").size(1.0))
+                .fill(theme::TRACK)
+                .stroke(Stroke::new(1.0, theme::HAIR))
+                .min_size(Vec2::new(28.0, 22.0))
+                .corner_radius(4),
+        )
+        .on_hover_text(tip);
+    let color = if resp.hovered() { theme::TEXT } else { theme::MUTED };
+    paint(ui.painter(), resp.rect, color);
+    note_ui_rect(label, resp.rect);
+    resp
+}
+
+
+/// The one primary action: a red dot to record, a square on red to stop.
+/// The dot pulses while recording. Also the X key.
+fn record_button(ui: &mut Ui, recording: bool) -> egui::Response {
+    let resp = ui.add(
+        egui::Button::new(RichText::new(" ").size(1.0))
+            .fill(if recording { RECORD_RED } else { theme::TRACK })
+            .stroke(if recording { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+            .min_size(Vec2::new(30.0, 22.0))
+            .corner_radius(4),
+    );
+    let c = resp.rect.center();
+    if recording {
+        let t = ui.input(|i| i.time);
+        let pulse = 0.55 + 0.45 * ((t * 3.0).sin() as f32 * 0.5 + 0.5);
+        ui.painter().rect_filled(
+            Rect::from_center_size(c, Vec2::splat(9.0)),
+            1.5,
+            Color32::from_white_alpha((235.0 * pulse) as u8),
+        );
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    } else {
+        ui.painter().circle_filled(c, 5.0, RECORD_RED);
+        if resp.hovered() {
+            ui.painter().circle_stroke(c, 7.0, Stroke::new(1.0, theme::TEXT));
+        }
+    }
+    note_ui_rect(if recording { "Stop" } else { "Record" }, resp.rect);
+    resp
+}
+
+/// A tray with an arrow pointing down into it.
+fn paint_save_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = Stroke::new(1.5, color);
+    painter.line_segment([Pos2::new(c.x, c.y - 6.0), Pos2::new(c.x, c.y + 2.0)], s);
+    painter.line_segment([Pos2::new(c.x - 3.5, c.y - 1.5), Pos2::new(c.x, c.y + 2.0)], s);
+    painter.line_segment([Pos2::new(c.x + 3.5, c.y - 1.5), Pos2::new(c.x, c.y + 2.0)], s);
+    painter.line_segment([Pos2::new(c.x - 6.0, c.y + 2.0), Pos2::new(c.x - 6.0, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x - 6.0, c.y + 6.0), Pos2::new(c.x + 6.0, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x + 6.0, c.y + 6.0), Pos2::new(c.x + 6.0, c.y + 2.0)], s);
+}
+
+/// A gear: a ring with eight teeth and a hub.
+fn paint_gear_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = Stroke::new(1.5, color);
+    painter.circle_stroke(c, 4.2, s);
+    painter.circle_filled(c, 1.4, color);
+    for i in 0..8 {
+        let a = i as f32 * std::f32::consts::FRAC_PI_4;
+        let (sin, cos) = a.sin_cos();
+        painter.line_segment(
+            [Pos2::new(c.x + cos * 4.6, c.y + sin * 4.6), Pos2::new(c.x + cos * 6.8, c.y + sin * 6.8)],
+            s,
+        );
+    }
+}
+
+/// A bin: lid, body, two slats.
+fn paint_clear_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = Stroke::new(1.5, color);
+    painter.line_segment([Pos2::new(c.x - 6.0, c.y - 4.0), Pos2::new(c.x + 6.0, c.y - 4.0)], s);
+    painter.line_segment([Pos2::new(c.x - 2.0, c.y - 6.5), Pos2::new(c.x + 2.0, c.y - 6.5)], s);
+    painter.line_segment([Pos2::new(c.x - 4.5, c.y - 4.0), Pos2::new(c.x - 3.5, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x + 4.5, c.y - 4.0), Pos2::new(c.x + 3.5, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x - 3.5, c.y + 6.0), Pos2::new(c.x + 3.5, c.y + 6.0)], s);
+    painter.line_segment([Pos2::new(c.x - 1.5, c.y - 1.5), Pos2::new(c.x - 1.2, c.y + 4.0)], s);
+    painter.line_segment([Pos2::new(c.x + 1.5, c.y - 1.5), Pos2::new(c.x + 1.2, c.y + 4.0)], s);
+}
+
+/// Joined buttons for one choice among a few: the selected one is filled.
+/// Returns the index clicked, if any.
+fn segmented(ui: &mut Ui, id: &str, options: &[&str], selected: usize) -> Option<usize> {
+    let mut clicked = None;
+    ui.spacing_mut().item_spacing.x = 0.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let last = options.len().saturating_sub(1);
+        for (i, label) in options.iter().enumerate() {
+            let on = i == selected;
+            let mut radius = egui::CornerRadius::ZERO;
+            if i == 0 {
+                radius.nw = 4;
+                radius.sw = 4;
+            }
+            if i == last {
+                radius.ne = 4;
+                radius.se = 4;
+            }
+            let resp = ui.add(
+                egui::Button::new(
+                    RichText::new(*label)
+                        .family(fonts::medium())
+                        .size(11.0)
+                        .color(if on { theme::CANVAS } else { theme::TEXT }),
+                )
+                .fill(if on { theme::ACCENT } else { theme::TRACK })
+                .stroke(if on { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+                .min_size(Vec2::new(0.0, 22.0))
+                .corner_radius(radius),
+            );
+            note_ui_rect(label, resp.rect);
+            if resp.clicked() && !on {
+                clicked = Some(i);
+            }
+        }
+        let _ = id;
+    });
+    ui.spacing_mut().item_spacing.x = 8.0;
+    clicked
+}
+
+/// Tabs: plain text, the current one in the accent with a rule under it.
+/// Returns the index clicked, if any.
+fn tab_strip(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
+    let mut clicked = None;
+    for (i, label) in labels.iter().enumerate() {
+        let on = i == selected;
+        let resp = ui.add(
+            egui::Button::new(
+                RichText::new(*label)
+                    .family(fonts::medium())
+                    .size(11.0)
+                    .color(if on { theme::ACCENT } else { theme::MUTED }),
+            )
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .min_size(Vec2::new(0.0, 22.0))
+            .corner_radius(0),
+        );
+        if on {
+            let r = resp.rect;
+            ui.painter().line_segment(
+                [Pos2::new(r.left() + 4.0, r.bottom() - 1.0), Pos2::new(r.right() - 4.0, r.bottom() - 1.0)],
+                Stroke::new(2.0, theme::ACCENT),
+            );
+        }
+        note_ui_rect(label, resp.rect);
+        if resp.clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
 fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     let fill = if selected {
         theme::ACCENT
@@ -4140,7 +7649,7 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         theme::TRACK
     };
     let text = if selected { theme::CANVAS } else { theme::TEXT };
-    ui.add(
+    let resp = ui.add(
         egui::Button::new(
             RichText::new(label)
                 .family(fonts::medium())
@@ -4155,7 +7664,123 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         })
         .min_size(Vec2::new(0.0, 22.0))
         .corner_radius(4),
-    )
+    );
+    note_ui_rect(label, resp.rect);
+    resp
+}
+
+thread_local! {
+    /// The pills and track rows painted this frame, by label, for the
+    /// `window.__orbit_ui` readout: the headless harness clicks a button or
+    /// a thread header by name instead of by a pixel position that moves
+    /// whenever the layout does.
+    static UI_RECTS: std::cell::RefCell<Vec<(String, Rect)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What this viewer was built from: the UTC time and the commit, set by
+/// build_wasm.sh (ORBIT_VIEWER_BUILD). Shown in the More menu and on the
+/// wordmark, and published as `build` in window.__orbit_sel, so a stale
+/// page or a stale pack in a service binary is one look away.
+const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
+    Some(build) => build,
+    None => "dev",
+};
+
+fn note_ui_rect(label: &str, rect: Rect) {
+    UI_RECTS.with(|v| v.borrow_mut().push((label.to_string(), rect)));
+}
+
+/// A click on a column header: the same column flips the direction, a new
+/// one takes its natural direction (`desc_first` for numbers and ticks).
+fn toggle_sort(sort: &mut (u8, bool), col: u8, desc_first: bool) {
+    *sort = if sort.0 == col { (col, !sort.1) } else { (col, desc_first) };
+}
+
+/// A small triangle: down for descending, up for ascending.
+fn paint_sort_arrow(ui: &Ui, at: Pos2, desc: bool) {
+    let (w, h) = (3.5, 3.5);
+    let pts = if desc {
+        vec![Pos2::new(at.x - w, at.y - h * 0.5), Pos2::new(at.x + w, at.y - h * 0.5), Pos2::new(at.x, at.y + h * 0.5)]
+    } else {
+        vec![Pos2::new(at.x - w, at.y + h * 0.5), Pos2::new(at.x + w, at.y + h * 0.5), Pos2::new(at.x, at.y - h * 0.5)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(pts, theme::TEXT, Stroke::NONE));
+}
+
+/// Case-insensitive ordering without allocating a lowercase copy per
+/// comparison: a sort of a few thousand rows runs this tens of thousands of
+/// times a frame while the header is clicked.
+fn cmp_ci(a: &str, b: &str) -> std::cmp::Ordering {
+    a.chars()
+        .map(|c| c.to_ascii_lowercase())
+        .cmp(b.chars().map(|c| c.to_ascii_lowercase()))
+}
+
+/// The hooked checkbox of a hand-laid report row: a 12 px box, ticked in
+/// the accent when hooked.
+fn paint_hook_box(ui: &Ui, cell: Rect, hooked: bool) {
+    let box_r = Rect::from_center_size(cell.center(), Vec2::splat(12.0));
+    ui.painter().rect(
+        box_r,
+        2.0,
+        if hooked { theme::ACCENT } else { theme::INPUT },
+        Stroke::new(1.0, if hooked { theme::ACCENT } else { theme::MUTED }),
+        StrokeKind::Inside,
+    );
+    if hooked {
+        ui.painter().line_segment(
+            [Pos2::new(box_r.left() + 3.0, box_r.center().y), Pos2::new(box_r.center().x, box_r.bottom() - 3.0)],
+            Stroke::new(1.5, theme::CANVAS),
+        );
+        ui.painter().line_segment(
+            [Pos2::new(box_r.center().x, box_r.bottom() - 3.0), Pos2::new(box_r.right() - 2.0, box_r.top() + 3.0)],
+            Stroke::new(1.5, theme::CANVAS),
+        );
+    }
+}
+
+/// `percent_bar` painted at a given rect, for rows laid out by hand.
+fn paint_percent_bar(ui: &Ui, rect: Rect, percent: f64, strong: bool) {
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, theme::INPUT);
+    let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
+    if fraction > 0.0 {
+        let mut filled = rect;
+        filled.set_width(rect.width() * fraction);
+        painter.rect_filled(
+            filled,
+            2.0,
+            if strong { Color32::from_rgb(0x3A, 0x54, 0x68) } else { Color32::from_rgb(0x24, 0x2C, 0x36) },
+        );
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{percent:.1}%"),
+        FontId::monospace(10.5),
+        if strong { theme::TEXT } else { theme::MUTED },
+    );
+}
+
+/// Empties this frame's rectangles into a JSON text.
+fn take_ui_rects_json() -> String {
+    let rects = UI_RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()));
+    let mut out = String::from("[");
+    for (i, (label, r)) in rects.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "[{:?},{:.0},{:.0},{:.0},{:.0}]",
+            label,
+            r.left(),
+            r.top(),
+            r.width(),
+            r.height()
+        ));
+    }
+    out.push(']');
+    out
 }
 
 /// CSS px (visual viewport). egui `screen_rect` is points and follows
@@ -4203,6 +7828,7 @@ fn sat_i8(v: f32) -> i8 {
     v.round().clamp(0.0, 120.0) as i8
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn parse_css_px(s: &str) -> f32 {
     s.trim()
         .trim_end_matches("px")
@@ -4345,11 +7971,49 @@ fn set_page_fullscreen(ctx: &Context, on: bool) {
     }
 }
 
-fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32) {
-    if fps <= 0.0 || !area.is_finite() || area.width() < 24.0 {
-        return;
+/// Frame rate and, next to it, what the event stream from the service is
+/// delivering right now.
+/// A chip at the top of the lanes naming something that narrows the view,
+/// with a cross; returns its width and whether it was clicked. `right` is
+/// the x its right edge sits at, so several line up leftwards.
+fn paint_focus_chip(ui: &Ui, area: Rect, right: f32, text: &str, id: &str) -> (f32, bool) {
+    if !area.is_finite() || area.width() < 24.0 {
+        return (0.0, false);
     }
-    let label = format!("{:.0} fps", fps);
+    let font = FontId::monospace(11.0);
+    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), font, theme::TEXT));
+    let pad = Vec2::new(6.0, 3.0);
+    // Room for a painted cross after the text: the WASM font atlas has no
+    // multiplication sign and renders one as a box.
+    const CROSS_W: f32 = 14.0;
+    let size = galley.size() + pad * 2.0 + Vec2::new(CROSS_W, 0.0);
+    let rect = Rect::from_min_size(Pos2::new(right - size.x, area.top() + 6.0), size);
+    if !area.intersects(rect) {
+        return (0.0, false);
+    }
+    let resp = ui.interact(rect, egui::Id::new(id), Sense::click());
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new(id).with("paint"),
+    ));
+    let fill = if resp.hovered() { theme::ACCENT } else { Color32::from_black_alpha(160) };
+    painter.rect_filled(rect, 3.0, fill);
+    painter.rect_stroke(rect, 3.0, Stroke::new(1.0, theme::ACCENT), StrokeKind::Inside);
+    let ink = if resp.hovered() { theme::PANEL } else { theme::TEXT };
+    painter.galley(rect.min + pad, galley, ink);
+    let c = Pos2::new(rect.right() - pad.x - 4.0, rect.center().y);
+    painter.line_segment([Pos2::new(c.x - 3.0, c.y - 3.0), Pos2::new(c.x + 3.0, c.y + 3.0)], Stroke::new(1.3, ink));
+    painter.line_segment([Pos2::new(c.x - 3.0, c.y + 3.0), Pos2::new(c.x + 3.0, c.y - 3.0)], Stroke::new(1.3, ink));
+    let resp = resp.on_hover_text("Click, or press Escape, to show everything again");
+    (size.x, resp.clicked())
+}
+
+/// Paints the fps chip; returns its width so other chips can sit beside it.
+fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) -> f32 {
+    if fps <= 0.0 || !area.is_finite() || area.width() < 24.0 {
+        return 0.0;
+    }
+    let label = format!("{:.0} fps · {}", fps, format_rate(stream_bps));
     let font = FontId::monospace(11.0);
     let galley = ui.fonts(|f| f.layout_no_wrap(label, font, theme::TEXT));
     let pad = Vec2::new(6.0, 3.0);
@@ -4359,7 +8023,7 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32) {
         size,
     );
     if !area.intersects(rect) {
-        return;
+        return 0.0;
     }
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
@@ -4367,6 +8031,19 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32) {
     ));
     painter.rect_filled(rect, 3.0, Color32::from_black_alpha(140));
     painter.galley(rect.min + pad, galley, theme::TEXT);
+    size.x
+}
+
+/// `1.24 MB/s`, `312 KB/s`, `0 B/s` -- the event stream's rate, MB when it
+/// is worth saying in MB.
+fn format_rate(bps: f32) -> String {
+    if bps >= 1_000_000.0 {
+        format!("{:.2} MB/s", bps / 1_000_000.0)
+    } else if bps >= 1_000.0 {
+        format!("{:.0} KB/s", bps / 1_000.0)
+    } else {
+        format!("{:.0} B/s", bps.max(0.0))
+    }
 }
 
 fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
@@ -4422,59 +8099,6 @@ fn paint_fullscreen_icon(painter: &egui::Painter, rect: Rect, compressed: bool, 
     for (origin, dx, dy) in corners {
         painter.line_segment([origin, origin + Vec2::new(dx * arm, 0.0)], stroke);
         painter.line_segment([origin, origin + Vec2::new(0.0, dy * arm)], stroke);
-    }
-}
-
-fn shape_pill(
-    ui: &mut Ui,
-    on: bool,
-    tip: &str,
-    paint: fn(&egui::Painter, Rect, Color32),
-) -> egui::Response {
-    let fill = if on { theme::ACCENT } else { theme::TRACK };
-    let resp = ui
-        .add(
-            egui::Button::new(RichText::new(" ").size(1.0))
-                .fill(fill)
-                .stroke(if on {
-                    Stroke::NONE
-                } else {
-                    Stroke::new(1.0, theme::HAIR)
-                })
-                .min_size(Vec2::new(28.0, 22.0))
-                .corner_radius(4),
-        )
-        .on_hover_text(tip);
-    let color = if on {
-        theme::CANVAS
-    } else if resp.hovered() {
-        theme::TEXT
-    } else {
-        theme::MUTED
-    };
-    paint(ui.painter(), resp.rect, color);
-    resp
-}
-
-fn paint_density_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let stroke = Stroke::new(1.35, color);
-    let c = rect.center();
-    let w = 9.0;
-    for dy in [-3.5_f32, 0.0, 3.5] {
-        painter.line_segment(
-            [
-                Pos2::new(c.x - w * 0.5, c.y + dy),
-                Pos2::new(c.x + w * 0.5, c.y + dy),
-            ],
-            stroke,
-        );
-    }
-}
-
-fn paint_inspector_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let c = rect.center();
-    for dx in [-4.5_f32, 0.0, 4.5] {
-        painter.circle_filled(Pos2::new(c.x + dx, c.y), 1.35, color);
     }
 }
 
@@ -4590,6 +8214,20 @@ fn value_extent(samples: &[(f32, f32)]) -> (f32, f32) {
     (min_v, max_v)
 }
 
+/// The vertical line under the pointer, across every track, as C++ Orbit
+/// draws it: what lines a scope on one thread up with the others.
+fn paint_cursor_line(ui: &Ui, body: Rect, x: f32) {
+    let x = body.left() + x;
+    if x < body.left() || x > body.right() {
+        return;
+    }
+    ui.painter_at(body).line_segment(
+        [Pos2::new(x, body.top()), Pos2::new(x, body.bottom())],
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xEC, 0xEF, 0xF1, 110)),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_value_graphs(
     ui: &Ui,
     body: Rect,
@@ -4600,6 +8238,7 @@ fn paint_value_graphs(
     intern: &InternTable,
     scale: f32,
     y_cull: Option<YCull>,
+    hover_x: Option<f32>,
 ) {
     if t1 <= t0 {
         return;
@@ -4607,26 +8246,37 @@ fn paint_value_graphs(
     let span = (t1 - t0) as f64;
     let painter = ui.painter_at(body);
     let ppp = ui.pixels_per_point();
+    let hover_t = hover_x.map(|x| t0.saturating_add((x.max(0.0) as f64 / body.width().max(1.0) as f64 * span) as u64));
     for &(key, y, h) in &value_lanes_in_view(layout, scale, y_cull) {
         let Some(lane) = index.lane(key) else {
             continue;
         };
+        let events = lane.events();
         let mut samples: Vec<(f32, f32)> = Vec::new();
-        let mut i = lane.first_ending_after(t0);
-        while let Some(e) = lane.events().get(i) {
-            if e.start_ns >= t1 {
-                break;
-            }
+        // From the last sample before the window to the first one after
+        // it: a step graph holds its value until the next sample, so the
+        // curve must enter the window at the value it had, not start at
+        // the first sample inside it -- zoomed out, that was most of a
+        // lane drawn empty.
+        let mut i = lane.first_ending_after(t0).saturating_sub(1);
+        while let Some(e) = events.get(i) {
             if let Some(v) = e.value_f32() {
-                let x =
-                    ((e.start_ns.saturating_sub(t0) as f64 / span) * body.width() as f64) as f32;
+                let x = ((e.start_ns as f64 - t0 as f64) / span * body.width() as f64) as f32;
                 samples.push((x, v));
             }
             i += 1;
+            if e.start_ns >= t1 {
+                break;
+            }
         }
         if samples.is_empty() {
             continue;
         }
+        // The value under the pointer: the last sample at or before it.
+        let hovered = hover_t.and_then(|t| {
+            let at = events.partition_point(|e| e.start_ns <= t);
+            (at > 0).then(|| events[at - 1])
+        });
         let (min_v, max_v) = value_extent(&samples);
         let bucketed = bucket_last_per_device_px(&samples, ppp);
         let color = c32(theme::display_argb(orbit_live_event::named_scope_color(
@@ -4652,6 +8302,36 @@ fn paint_value_graphs(
             let pts: Vec<Pos2> = stepped.iter().map(|&(px, py)| Pos2::new(px, py)).collect();
             painter.add(Shape::line(pts, Stroke::new(VALUE_STROKE_PX, color)));
         }
+        // The readout at the pointer: a dot on the curve where the cursor
+        // line crosses it and the name and value beside it, for every
+        // graph in view.
+        if let (Some(x), Some(e), Some(v)) = (hover_x, hovered, hovered.and_then(|e| e.value_f32())) {
+            let t = (v - min_v) / span_v;
+            let py = body.top() + y + h - pad - t.clamp(0.0, 1.0) * inner_h;
+            let px = body.left() + x;
+            let name = intern.get(e.name_id).unwrap_or("value");
+            let text = format!("{name} {}", format_value(intern, e.name_id, v));
+            let font = FontId::monospace(10.5);
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), theme::TEXT));
+            let w = galley.size().x + 8.0;
+            // Right of the line unless that runs off the body.
+            let left = if px + 8.0 + w > body.right() { px - 8.0 - w } else { px + 8.0 };
+            let top = (py - galley.size().y - 4.0).max(body.top() + y);
+            let bg = Rect::from_min_size(Pos2::new(left, top), Vec2::new(w, galley.size().y + 4.0));
+            painter.rect_filled(bg, 3.0, Color32::from_rgba_unmultiplied(0x12, 0x14, 0x18, 220));
+            painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, theme::TEXT);
+            painter.circle_filled(Pos2::new(px, py), 3.0, color);
+        }
+    }
+}
+
+/// A value as the graph's tooltip and readout show it: bytes for memory
+/// lanes, one decimal for rates, two otherwise.
+fn format_value(intern: &InternTable, name_id: u32, v: f32) -> String {
+    match intern.get(name_id) {
+        Some("wasm_mem") => fmt_bytes(v),
+        Some("fps") => format!("{v:.1}"),
+        _ => format!("{v:.2}"),
     }
 }
 
@@ -4731,6 +8411,419 @@ fn fmt_int(n: u64) -> String {
     out.chars().rev().collect()
 }
 
+/// Every path in a tree that has children, in the same `0/2/1` form the rows
+/// are keyed by.
+///
+/// Walks the tree that was actually delivered, so it cannot expand past the
+/// serialization caps: the service already truncated at 24 levels and 24
+/// children per node, and there is nothing below that to open.
+fn all_expandable_paths(roots: &[crate::net::TreeNodeJson]) -> std::collections::HashSet<String> {
+    expandable_paths_over(roots, -1.0)
+}
+
+/// The paths of every node with children whose inclusive share of the
+/// samples is over `threshold` percent, and whose ancestors all are too:
+/// `ExpandRecursivelyWithThreshold` in C++ Orbit's CallTreeWidget, where
+/// the slider sets the threshold and 0 opens the whole tree.
+fn expandable_paths_over(roots: &[crate::net::TreeNodeJson], threshold: f32) -> std::collections::HashSet<String> {
+    let mut paths = std::collections::HashSet::new();
+    let mut stack: Vec<(&crate::net::TreeNodeJson, String)> =
+        roots.iter().enumerate().map(|(i, n)| (n, i.to_string())).collect();
+    while let Some((node, path)) = stack.pop() {
+        if node.children.is_empty() || node.inclusive_percent as f32 <= threshold {
+            continue;
+        }
+        for (i, child) in node.children.iter().enumerate() {
+            stack.push((child, format!("{path}/{i}")));
+        }
+        paths.insert(path);
+    }
+    paths
+}
+
+/// A chevron that allocates its own space, for use inside a grid cell where
+/// there is no row rectangle to position against.
+///
+/// Same reason as [`chevron`]: the WASM font atlas has no glyph for the
+/// triangles, so drawing them as text renders a replacement box. `open` is
+/// `None` for a leaf, which reserves the same width so sibling labels line up.
+fn inline_chevron(ui: &mut Ui, open: Option<bool>) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), Sense::click());
+    let Some(open) = open else { return false };
+    let c = rect.center();
+    let color = if resp.hovered() { theme::TEXT } else { theme::MUTED };
+    let pts = if open {
+        vec![
+            Pos2::new(c.x - 3.5, c.y - 2.0),
+            Pos2::new(c.x + 3.5, c.y - 2.0),
+            Pos2::new(c.x, c.y + 2.5),
+        ]
+    } else {
+        vec![
+            Pos2::new(c.x - 2.0, c.y - 3.5),
+            Pos2::new(c.x + 2.5, c.y),
+            Pos2::new(c.x - 2.0, c.y + 3.5),
+        ]
+    };
+    ui.painter().add(Shape::convex_polygon(pts, color, Stroke::NONE));
+    resp.clicked()
+}
+
+/// A percentage as a filled bar with the number drawn on top, the way the Qt
+/// UI's `ProgressBarItemDelegate` paints the Inclusive column. Reading down a
+/// column of bars finds the hot path far faster than reading down a column of
+/// numbers.
+fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 14.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, theme::INPUT);
+    let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
+    if fraction > 0.0 {
+        let mut filled = rect;
+        filled.set_width(rect.width() * fraction);
+        // Dimmed accent, so the bar reads as a background the text sits on
+        // rather than competing with it -- the Qt delegate darkens the
+        // palette highlight for the same reason.
+        painter.rect_filled(
+            filled,
+            2.0,
+            if strong {
+                Color32::from_rgb(0x3A, 0x54, 0x68)
+            } else {
+                Color32::from_rgb(0x24, 0x2C, 0x36)
+            },
+        );
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{percent:.1}%"),
+        FontId::monospace(10.5),
+        if strong { theme::TEXT } else { theme::MUTED },
+    );
+}
+
+/// How often the Live tab recomputes while events stream in.
+const LIVE_STATS_MIN_INTERVAL_S: f64 = 0.25;
+
+/// A file the viewer opens as an Orbit capture rather than a Chrome trace.
+fn is_bundle_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(orbit_capture_suffix())
+}
+
+/// `.orbit.zip`, the suffix `orbit-capture` writes. Spelled here so the
+/// viewer does not depend on the arrow crates for one string.
+fn orbit_capture_suffix() -> &'static str {
+    ".orbit.zip"
+}
+
+/// `(start, end)` over a set of `(start, end, tid)` ranges, or `None` when
+/// there are none.
+fn selection_span(ranges: &[(u64, u64, Option<u32>)]) -> Option<(u64, u64)> {
+    let a = ranges.iter().map(|r| r.0).min()?;
+    let b = ranges.iter().map(|r| r.1).max()?;
+    Some((a, b.max(a)))
+}
+
+/// Knobs for how the report rows are laid out. Adjustable live from the UI
+/// pill, kept in the browser's local storage so they survive a reload.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct UiTweaks {
+    report_row_gap: f32,
+    report_col_gap: f32,
+    report_font: f32,
+    report_bar_w: f32,
+    report_indent: f32,
+}
+
+impl Default for UiTweaks {
+    fn default() -> Self {
+        UiTweaks {
+            report_row_gap: 2.0,
+            report_col_gap: 16.0,
+            report_font: 11.0,
+            report_bar_w: 66.0,
+            report_indent: 12.0,
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const UI_TWEAKS_KEY: &str = "orbit_ui_tweaks";
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl UiTweaks {
+    fn to_json(self) -> String {
+        format!(
+            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{}}}"#,
+            self.report_row_gap, self.report_col_gap, self.report_font, self.report_bar_w, self.report_indent
+        )
+    }
+
+    /// A lenient parse: any key missing keeps its default, so an older
+    /// saved set still loads after a knob is added.
+    fn from_json(text: &str) -> UiTweaks {
+        let mut t = UiTweaks::default();
+        let field = |key: &str| -> Option<f32> {
+            let i = text.find(&format!("\"{key}\":"))? + key.len() + 3;
+            let rest = &text[i..];
+            let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
+            rest[..end].trim().parse().ok()
+        };
+        if let Some(v) = field("report_row_gap") {
+            t.report_row_gap = v.clamp(0.0, 16.0);
+        }
+        if let Some(v) = field("report_col_gap") {
+            t.report_col_gap = v.clamp(4.0, 40.0);
+        }
+        if let Some(v) = field("report_font") {
+            t.report_font = v.clamp(8.0, 18.0);
+        }
+        if let Some(v) = field("report_bar_w") {
+            t.report_bar_w = v.clamp(20.0, 160.0);
+        }
+        if let Some(v) = field("report_indent") {
+            t.report_indent = v.clamp(4.0, 32.0);
+        }
+        t
+    }
+
+    fn load() -> UiTweaks {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(text) = web_sys::window()
+                .and_then(|w| w.local_storage().ok().flatten())
+                .and_then(|s| s.get_item(UI_TWEAKS_KEY).ok().flatten())
+            {
+                return UiTweaks::from_json(&text);
+            }
+        }
+        UiTweaks::default()
+    }
+
+    fn save(self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+                let _ = storage.set_item(UI_TWEAKS_KEY, &self.to_json());
+            }
+        }
+    }
+}
+
+/// One bar of the flame graph, in panel pixels.
+#[derive(Clone, Debug, PartialEq)]
+struct FlameBar {
+    x: f32,
+    w: f32,
+    depth: usize,
+    /// Child indices from the roots down to this bar: what a double-click
+    /// zooms to.
+    path: Vec<usize>,
+    name: String,
+    samples: u64,
+    percent: f64,
+    /// A thread root: drawn plain and labelled, never coloured by name.
+    is_thread: bool,
+}
+
+/// The node a zoom path points at: the first index picks a root, the rest
+/// descend through children.
+fn flame_node_at<'a>(roots: &'a [crate::net::TreeNodeJson], path: &[usize]) -> Option<&'a crate::net::TreeNodeJson> {
+    let (first, rest) = path.split_first()?;
+    let mut node = roots.get(*first)?;
+    for i in rest {
+        node = node.children.get(*i)?;
+    }
+    Some(node)
+}
+
+/// Lays the top-down tree out as flame bars across `width` pixels: the
+/// roots share the top row by inclusive samples, each node's children sit
+/// under it in the tree's order. Bars under half a pixel are dropped, so a
+/// million-node tree is a few thousand bars.
+fn flame_layout(roots: &[crate::net::TreeNodeJson], width: f32) -> Vec<FlameBar> {
+    let total: u64 = roots.iter().map(|r| r.inclusive).sum();
+    if total == 0 {
+        return Vec::new();
+    }
+    let scale = width as f64 / total as f64;
+    let mut out = Vec::new();
+    // Reversed so the first root pops first; children likewise.
+    let mut order: Vec<(&crate::net::TreeNodeJson, f64, usize, Vec<usize>)> = Vec::new();
+    let mut x = 0.0f64;
+    for (i, r) in roots.iter().enumerate() {
+        order.push((r, x, 0, vec![i]));
+        x += r.inclusive as f64 * scale;
+    }
+    let mut stack: Vec<(&crate::net::TreeNodeJson, f64, usize, Vec<usize>)> = order.into_iter().rev().collect();
+    while let Some((node, x, depth, path)) = stack.pop() {
+        let w = node.inclusive as f64 * scale;
+        if w < 0.5 {
+            continue;
+        }
+        out.push(FlameBar {
+            x: x as f32,
+            w: w as f32,
+            depth,
+            path: path.clone(),
+            name: node.name.clone(),
+            samples: node.inclusive,
+            percent: 100.0 * node.inclusive as f64 / total as f64,
+            is_thread: node.kind == "thread",
+        });
+        let mut cx = x;
+        let mut children: Vec<(&crate::net::TreeNodeJson, f64, usize, Vec<usize>)> = Vec::new();
+        for (ci, c) in node.children.iter().enumerate() {
+            let mut cpath = path.clone();
+            cpath.push(ci);
+            children.push((c, cx, depth + 1, cpath));
+            cx += c.inclusive as f64 * scale;
+        }
+        stack.extend(children.into_iter().rev());
+    }
+    out
+}
+
+/// `name` cut to what fits in `width` pixels at `font` size, with an
+/// ellipsis; a rough per-character width is enough for a bar label.
+fn truncate_to_width(name: &str, width: f32, font: f32) -> String {
+    let per_char = font * 0.58;
+    let fits = (width / per_char).floor().max(0.0) as usize;
+    if name.chars().count() <= fits {
+        return name.to_string();
+    }
+    if fits < 2 {
+        return String::new();
+    }
+    let mut s: String = name.chars().take(fits - 1).collect();
+    s.push('…');
+    s
+}
+
+/// The duration histogram of one Live row: log-scale buckets, tallest bar
+/// full height, with a few tick labels along the bottom.
+fn paint_histogram(ui: &mut Ui, hist: &[u32; crate::live::HIST_BUCKETS], font: f32) {
+    let first = hist.iter().position(|n| *n > 0).unwrap_or(0).saturating_sub(1);
+    let last = hist.iter().rposition(|n| *n > 0).unwrap_or(0) + 1;
+    let last = last.min(crate::live::HIST_BUCKETS - 1);
+    let buckets = &hist[first..=last];
+    let peak = buckets.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let width = ui.available_width().max(120.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 96.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, theme::INPUT);
+    let plot = rect.shrink2(Vec2::new(6.0, 6.0)).with_max_y(rect.bottom() - 18.0);
+    let bw = plot.width() / buckets.len() as f32;
+    for (i, n) in buckets.iter().enumerate() {
+        if *n == 0 {
+            continue;
+        }
+        let h = plot.height() * (*n as f32 / peak);
+        let x0 = plot.left() + i as f32 * bw;
+        painter.rect_filled(
+            Rect::from_min_max(Pos2::new(x0 + 1.0, plot.bottom() - h), Pos2::new(x0 + bw - 1.0, plot.bottom())),
+            1.0,
+            theme::ACCENT,
+        );
+    }
+    // Tick labels: every few buckets, the bucket's lower bound.
+    let step = (buckets.len() / 5).max(1);
+    for i in (0..buckets.len()).step_by(step) {
+        let x = plot.left() + i as f32 * bw;
+        painter.text(
+            Pos2::new(x, rect.bottom() - 4.0),
+            Align2::LEFT_BOTTOM,
+            display_time_ns(crate::live::hist_bucket_floor_ns(first + i)),
+            FontId::new(font - 2.0, fonts::medium()),
+            theme::MUTED,
+        );
+    }
+}
+
+/// At or under this width the report panel counts as collapsed (its
+/// content cannot get narrower than about 90 px anyway); with less than
+/// this left beside it, the timeline counts as hidden.
+const REPORT_COLLAPSE_W: f32 = 100.0;
+const EDGE_TAB_W: f32 = 18.0;
+const EDGE_TAB_H: f32 = 96.0;
+
+/// Which edge the report splitter reached.
+#[derive(Clone, Copy)]
+enum EdgeTab {
+    /// The panel is collapsed against the right edge.
+    PanelHidden,
+    /// The panel fills the width; its left edge is at this x.
+    TimelineHidden(f32),
+}
+
+/// Starting width of the sampling report panel. Wide enough for the flat
+/// report's two bars, a function name and a module; the user can drag it.
+const SAMPLING_PANEL_DEFAULT_W: f32 = 600.0;
+/// The report panel opens at this share of the screen width, between
+/// 320 px and the default above.
+const SAMPLING_PANEL_SHARE: f32 = 0.34;
+
+/// Whether clicking this pick selects its thread for the scheduler's
+/// colouring: only a scope on a thread track does. A scheduler slice, a
+/// thread-state bar, a sample tick or a value point can be selected and
+/// inspected, but they leave the thread focus where it was.
+fn pick_selects_thread(pick: ScopePick) -> bool {
+    matches!(pick.kind, kind::API_SCOPE | kind::FUNCTION_CALL)
+}
+
+/// The thread focus from the two ways a thread gets selected: its header
+/// (`selected_thread`) or one of its scopes (`selected`). A header
+/// selection wins, and a selected pick that is not a thread scope does not
+/// count.
+fn thread_focus_from(
+    selected_thread: Option<(u32, u32)>,
+    selected: Option<ScopePick>,
+    target_pid: Option<u32>,
+) -> ThreadFocus {
+    let selected = selected_thread.or_else(|| {
+        selected.filter(|p| pick_selects_thread(*p)).map(|p| (p.pid, p.tid))
+    });
+    ThreadFocus { selected, target_pid }
+}
+
+/// A header row that can be dragged to reorder, with a collapse chevron on
+/// it. Returns whether the chevron was clicked, the row's drag response, and
+/// where a reorder drag began this frame -- `None` when nothing started or
+/// when the press landed on the chevron, since egui starts a drag response
+/// on the press itself and a click on the triangle must not lift the row.
+///
+/// The order matters and is the whole point of this function: the row-wide
+/// drag hit is registered first, the chevron second. egui hit-tests
+/// back-to-front, and when the topmost widget under the pointer senses only
+/// drags it swallows the click rather than pass it to a click widget
+/// underneath. With the row registered after the chevron, a click exactly on
+/// the triangle did nothing, and only a click slightly beside it (caught by
+/// the nearest-widget fallback) toggled the row -- which felt like broken
+/// picking. Registered this way round the chevron is on top and takes the
+/// click, and the row still takes a drag from anywhere else on it, which is
+/// the "button on a scroll area" case egui handles as one expects.
+fn draggable_header(
+    ui: &mut Ui,
+    row: Rect,
+    chevron_x: f32,
+    open: bool,
+    id: (&str, u32, u32),
+) -> (bool, egui::Response, Option<Pos2>) {
+    let drag = ui.interact(row, ui.id().with((id, "drag")), Sense::drag());
+    let toggled = chevron(ui, row, chevron_x, open, id);
+    let chev = Rect::from_center_size(
+        Pos2::new(row.left() + chevron_x, row.center().y),
+        Vec2::splat(14.0),
+    );
+    let reorder_from = if drag.drag_started() {
+        drag.interact_pointer_pos().filter(|p| !chev.contains(*p))
+    } else {
+        None
+    };
+    (toggled, drag, reorder_from)
+}
+
 fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> bool {
     let hit = Rect::from_center_size(Pos2::new(row.left() + x, row.center().y), Vec2::splat(14.0));
     let resp = ui.interact(hit, ui.id().with(id), Sense::click());
@@ -4795,7 +8888,7 @@ fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
     painter.text(
         rect.center() + Vec2::new(0.0, 12.0),
         Align2::CENTER_CENTER,
-        "Open, theverge, or drop a Chrome .json  ·  or Record a process",
+        "Open or drop a Chrome .json  ·  or Record a process",
         FontId::new(12.0, FontFamily::Proportional),
         muted(),
     );
@@ -4810,6 +8903,11 @@ fn paint_quiet_grid(ui: &Ui, rect: Rect, t0: f64, t1: f64, light: bool) {
     let span = (t1 - t0).max(1.0);
     let (major, _) = tick_steps(span, rect.width());
     let mut t = (t0 / major).floor() * major;
+    // A step under an ulp of `t` would never advance it: bail rather than
+    // spin (see `fit_content_window`).
+    if !(t + major > t) {
+        return;
+    }
     while t <= t1 {
         let x = rect.left() + ((t - t0) / span) as f32 * rect.width();
         if x >= rect.left() && x <= rect.right() {
@@ -4849,13 +8947,7 @@ fn format_value_pick(intern: &InternTable, pick: ScopePick) -> Option<String> {
         return None;
     }
     let v = f32::from_bits(pick.duration_ns as u32);
-    if intern.get(pick.name_id) == Some("wasm_mem") {
-        return Some(fmt_bytes(v));
-    }
-    if intern.get(pick.name_id) == Some("fps") {
-        return Some(format!("{v:.1}"));
-    }
-    Some(format!("{v:.2}"))
+    Some(format_value(intern, pick.name_id, v))
 }
 
 fn pick_value_at(
@@ -4963,12 +9055,33 @@ fn paint_flow_arrows(
     }
 }
 
+/// The callstack a sample tick carries, leaf first: the sampled frames of
+/// its thread at its timestamp, one lane per depth in the index.
+fn sample_callstack(index: &TrackIndex, intern: &InternTable, pick: ScopePick) -> Vec<String> {
+    let mut frames: Vec<(u8, u32)> = index
+        .lanes()
+        .filter(|(k, _)| k.pid == pick.pid && k.tid == pick.tid && k.kind == kind::FUNCTION_CALL)
+        .filter_map(|(k, lane)| {
+            lane.overlapping(pick.start_ns, pick.start_ns.saturating_add(1))
+                .filter(|e| e.extra == orbit_live_event::extra::SAMPLED_FRAME && e.start_ns == pick.start_ns)
+                .map(|e| (k.depth, e.name_id))
+        })
+        .collect();
+    frames.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+    frames
+        .iter()
+        .map(|(_, id)| intern.get(*id).map(str::to_string).unwrap_or_else(|| format!("#{id}")))
+        .collect()
+}
+
 fn show_scope_tooltip(
     ui: &Ui,
     intern: &InternTable,
     processes: &[ProcessJson],
     args: &HashMap<ArgKey, u32>,
     pick: ScopePick,
+    callstack: &[String],
+    callstack_copied: bool,
 ) {
     let _ = egui::Tooltip::always_open(
         ui.ctx().clone(),
@@ -5012,6 +9125,53 @@ fn show_scope_tooltip(
                     .font(FontId::monospace(11.0))
                     .color(theme::MUTED),
             );
+            return;
+        }
+        if pick.kind == kind::SAMPLE {
+            // A sample: its callstack, leaf first, the way C++ Orbit's
+            // sample bar tooltip reads. The tick's name is the leaf.
+            let tname = intern
+                .get(pick.tid)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{}", pick.tid));
+            ui.label(
+                RichText::new("Callstack sample")
+                    .family(fonts::medium())
+                    .size(12.0)
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(format!("Thread: {tname} [{}]", pick.tid))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            ui.label(
+                RichText::new(if callstack_copied { "copied to the clipboard" } else { "click to copy" })
+                    .font(FontId::monospace(10.5))
+                    .color(if callstack_copied { theme::ACCENT } else { theme::MUTED }),
+            );
+            if callstack.is_empty() {
+                ui.label(
+                    RichText::new("no frames for this sample")
+                        .font(FontId::monospace(11.0))
+                        .color(theme::MUTED),
+                );
+            }
+            const MAX_FRAMES: usize = 40;
+            for (i, frame) in callstack.iter().take(MAX_FRAMES).enumerate() {
+                ui.label(
+                    RichText::new(frame)
+                        .font(FontId::monospace(10.5))
+                        .color(if i == 0 { theme::TEXT } else { theme::MUTED }),
+                );
+            }
+            if callstack.len() > MAX_FRAMES {
+                ui.label(
+                    RichText::new(format!("… {} more", callstack.len() - MAX_FRAMES))
+                        .font(FontId::monospace(10.5))
+                        .color(theme::MUTED),
+                );
+            }
             return;
         }
         let name = intern
@@ -5101,7 +9261,20 @@ fn tick_steps(span_ns: f64, width_px: f32) -> (f64, f64) {
     (major, major / 5.0)
 }
 
-fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
+/// Can a tick label be drawn at `x` without touching the previous one or
+/// running off the end of the bar? Labels are variable width (`"12ms"` next
+/// to `"1.250s"`), so spacing alone cannot guarantee they do not collide;
+/// this is checked per label against what was actually drawn.
+fn label_fits(x: f32, width: f32, last_right: f32, right_edge: f32) -> bool {
+    const GAP_PX: f32 = 6.0;
+    x >= last_right + GAP_PX && x + width <= right_edge - 2.0
+}
+
+/// `origin_ns` is the start of the capture: ruler labels are relative to it,
+/// the way Orbit shows capture time. Without it the labels carry the raw
+/// CLOCK_MONOTONIC value -- time since boot, tens of thousands of seconds --
+/// which is both meaningless to read and wide enough to overlap its neighbour.
+fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64, origin_ns: f64) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
     if t1 <= t0 {
@@ -5110,7 +9283,12 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
     let span = (t1 - t0).max(1.0);
     let (_major, minor) = tick_steps(span, rect.width());
     let mut t = (t0 / minor).floor() * minor;
+    if !(t + minor > t) {
+        return;
+    }
     let mut step_i = ((t / minor).round() as i64).max(0);
+    let font = FontId::new(10.0, FontFamily::Monospace);
+    let mut last_label_right = f32::NEG_INFINITY;
     while t <= t1 {
         let x = rect.left() + ((t - t0) / span) as f32 * rect.width();
         if x >= rect.left() && x <= rect.right() {
@@ -5131,13 +9309,19 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64) {
                 ),
             );
             if is_major {
-                painter.text(
-                    Pos2::new(x + 4.0, rect.top() + 4.0),
-                    Align2::LEFT_TOP,
-                    format_ns(t),
-                    FontId::new(10.0, FontFamily::Monospace),
-                    theme::MUTED,
-                );
+                // Signed, not clamped. Clamping turned every tick left of
+                // `origin_ns` into the same "0ns", which reads as a broken
+                // ruler rather than as "this is before the origin".
+                let text = format_ns(t - origin_ns);
+                let galley = painter.layout_no_wrap(text, font.clone(), theme::MUTED);
+                let label_x = x + 4.0;
+                let width = galley.rect.width();
+                // Drop a label rather than let it overlap: a gap in the ruler
+                // is readable, two numbers on top of each other are not.
+                if label_fits(label_x, width, last_label_right, rect.right()) {
+                    painter.galley(Pos2::new(label_x, rect.top() + 4.0), galley, theme::MUTED);
+                    last_label_right = label_x + width;
+                }
             }
         }
         let next = t + minor;
@@ -5160,67 +9344,172 @@ fn x_at_time(t: u64, rect: Rect, t0: f64, t1: f64) -> f32 {
     rect.left() + (((t as f64 - t0) / span) as f32 * rect.width()).clamp(0.0, rect.width())
 }
 
-/// `CaptureWindow::RenderSelectionOverlay`: dim outside, white edges, duration at drag-end.
-fn paint_measure_overlay(
+/// Draws the committed multi-select bands plus any in-progress drag.
+///
+/// A lone selection keeps the original look -- the area outside it is dimmed
+/// and its edges drawn white. Two or more do not compose that way (dimming
+/// outside each would darken the others), so a multi-band selection is marked
+/// by a translucent fill inside each band instead, with white edges. The
+/// in-progress drag always carries its duration label.
+fn paint_selection_overlay(
     ui: &Ui,
     rect: Rect,
     t0: f64,
     t1: f64,
-    measure: Option<TimeMeasure>,
+    committed: &[TimeMeasure],
+    active: Option<TimeMeasure>,
     draw_label: bool,
+    // The on-screen top/bottom of a thread's sample bar, for a selection that
+    // began on one: it is drawn confined to that bar (C++ Orbit's
+    // per-thread callstack selection), not as a full-height column.
+    sample_band: &dyn Fn(u32) -> Option<(f32, f32)>,
 ) {
-    let Some(m) = measure else {
-        return;
-    };
-    if m.start_ns == m.stop_ns || t1 <= t0 || !rect.is_positive() {
+    if t1 <= t0 || !rect.is_positive() {
         return;
     }
-    let min_t = m.start_ns.min(m.stop_ns);
-    let max_t = m.start_ns.max(m.stop_ns);
-    let x0 = x_at_time(min_t, rect, t0, t1);
-    let x1 = x_at_time(max_t, rect, t0, t1);
-    if (x1 - x0).abs() < 0.5 {
+    let bands: Vec<TimeMeasure> = committed
+        .iter()
+        .copied()
+        .chain(active)
+        .filter(|m| m.start_ns != m.stop_ns)
+        .collect();
+    if bands.is_empty() {
         return;
     }
     let painter = ui.painter_at(rect);
-    if x0 > rect.left() {
-        painter.rect_filled(
-            Rect::from_min_max(rect.min, Pos2::new(x0, rect.bottom())),
-            0.0,
-            MEASURE_DIM,
-        );
-        painter.line_segment(
-            [Pos2::new(x0, rect.top()), Pos2::new(x0, rect.bottom())],
-            Stroke::new(1.0, Color32::WHITE),
-        );
+    let edge_x = |m: &TimeMeasure| {
+        let min_t = m.start_ns.min(m.stop_ns);
+        let max_t = m.start_ns.max(m.stop_ns);
+        (
+            x_at_time(min_t, rect, t0, t1),
+            x_at_time(max_t, rect, t0, t1),
+        )
+    };
+    // Where a band paints vertically: a per-thread selection sits on its
+    // sample bar; anything else spans the whole height.
+    let band_y = |m: &TimeMeasure| -> (f32, f32, bool) {
+        match m.sample_tid.and_then(|t| sample_band(t)) {
+            Some((a, b)) => (a.max(rect.top()), b.min(rect.bottom()), true),
+            None => (rect.top(), rect.bottom(), false),
+        }
+    };
+
+    // The familiar single-selection look -- dim outside, full-height white
+    // edges -- only for a lone process-wide selection. A per-thread one, or
+    // several, are drawn as filled bands instead.
+    let lone_full = bands.len() == 1 && !band_y(&bands[0]).2;
+    if lone_full {
+        let (x0, x1) = edge_x(&bands[0]);
+        if (x1 - x0).abs() >= 0.5 {
+            if x0 > rect.left() {
+                painter.rect_filled(
+                    Rect::from_min_max(rect.min, Pos2::new(x0, rect.bottom())),
+                    0.0,
+                    MEASURE_DIM,
+                );
+            }
+            if x1 < rect.right() {
+                painter.rect_filled(
+                    Rect::from_min_max(Pos2::new(x1, rect.top()), rect.max),
+                    0.0,
+                    MEASURE_DIM,
+                );
+            }
+            for x in [x0, x1] {
+                painter.line_segment(
+                    [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+        }
+    } else {
+        for m in &bands {
+            let (x0, x1) = edge_x(m);
+            if (x1 - x0).abs() < 0.5 {
+                continue;
+            }
+            let (yt, yb, confined) = band_y(m);
+            painter.rect_filled(
+                Rect::from_min_max(Pos2::new(x0, yt), Pos2::new(x1, yb)),
+                0.0,
+                MEASURE_FILL,
+            );
+            for x in [x0, x1] {
+                painter.line_segment(
+                    [Pos2::new(x, yt), Pos2::new(x, yb)],
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+            // Frame a bar-confined band top and bottom so it reads as a
+            // selected strip, the way the C++ bar highlights.
+            if confined {
+                for y in [yt, yb] {
+                    painter.line_segment(
+                        [Pos2::new(x0, y), Pos2::new(x1, y)],
+                        Stroke::new(1.0, Color32::WHITE),
+                    );
+                }
+            }
+        }
     }
-    if x1 < rect.right() {
-        painter.rect_filled(
-            Rect::from_min_max(Pos2::new(x1, rect.top()), rect.max),
-            0.0,
-            MEASURE_DIM,
-        );
-        painter.line_segment(
-            [Pos2::new(x1, rect.top()), Pos2::new(x1, rect.bottom())],
-            Stroke::new(1.0, Color32::WHITE),
-        );
-    }
+
     if draw_label {
-        let text = display_time_ns(max_t.saturating_sub(min_t));
-        let stop_x = x_at_time(m.stop_ns, rect, t0, t1);
-        let y = m.label_y.clamp(rect.top() + 8.0, rect.bottom() - 8.0);
-        let align = if m.stop_ns < m.start_ns {
-            Align2::LEFT_CENTER
-        } else {
-            Align2::RIGHT_CENTER
-        };
-        painter.text(
-            Pos2::new(stop_x, y),
-            align,
-            text,
-            FontId::new(12.0, fonts::medium()),
-            Color32::WHITE,
-        );
+        if let Some(m) = active.filter(|m| m.start_ns != m.stop_ns) {
+            let min_t = m.start_ns.min(m.stop_ns);
+            let max_t = m.start_ns.max(m.stop_ns);
+            let text = display_time_ns(max_t.saturating_sub(min_t));
+            let stop_x = x_at_time(m.stop_ns, rect, t0, t1);
+            let y = m.label_y.clamp(rect.top() + 8.0, rect.bottom() - 8.0);
+            let align = if m.stop_ns < m.start_ns {
+                Align2::LEFT_CENTER
+            } else {
+                Align2::RIGHT_CENTER
+            };
+            painter.text(
+                Pos2::new(stop_x, y),
+                align,
+                text,
+                FontId::new(12.0, fonts::medium()),
+                Color32::WHITE,
+            );
+        }
+    }
+}
+
+/// Samples in the union of `ranges`, from the viewer's own index: a SAMPLE
+/// tick counts when its time falls inside a window and the window's thread
+/// filter (if any) is its thread. Lanes are sorted by start, so each window
+/// is a binary search plus the run inside it.
+fn count_samples_in(index: &TrackIndex, ranges: &[(u64, u64, Option<u32>)]) -> u64 {
+    let mut n = 0u64;
+    for (key, lane) in index.lanes() {
+        if key.kind != kind::SAMPLE {
+            continue;
+        }
+        let ev = lane.events();
+        for &(a, b, tid) in ranges {
+            if tid.is_some_and(|t| t != key.tid) {
+                continue;
+            }
+            let lo = ev.partition_point(|e| e.start_ns < a);
+            let hi = ev.partition_point(|e| e.start_ns <= b);
+            n += hi.saturating_sub(lo) as u64;
+        }
+    }
+    n
+}
+
+/// The report panel's one-line description of what is selected.
+fn describe_selection(ranges: &[(u64, u64, Option<u32>)]) -> String {
+    let total: u64 = ranges.iter().map(|(a, b, _)| b.saturating_sub(*a)).sum();
+    let ms = total as f64 / 1e6;
+    match ranges {
+        [] => "whole capture".to_string(),
+        [(a, b, Some(tid))] => {
+            format!("thread {tid}, {:.1} ms selected", (b.saturating_sub(*a)) as f64 / 1e6)
+        }
+        [(a, b, None)] => format!("over {:.1} ms selected", (b.saturating_sub(*a)) as f64 / 1e6),
+        _ => format!("{} selections, {ms:.1} ms total", ranges.len()),
     }
 }
 
@@ -5341,6 +9630,7 @@ fn paint_clip_labels(
     body: Rect,
     intern: &InternTable,
     instances: &[ScopeInstance],
+    x_shift: f32,
     set: ClipLabelSet,
     dragged: Option<(u32, u32)>,
     cache: &mut ClipLabelCache,
@@ -5380,7 +9670,7 @@ fn paint_clip_labels(
             continue;
         }
         let box_rect = Rect::from_min_size(
-            Pos2::new(body.left() + inst.x, body.top() + inst.y),
+            Pos2::new(body.left() + inst.x + x_shift, body.top() + inst.y),
             Vec2::new(inst.w, inst.h),
         );
         let clip = box_rect.intersect(view);
@@ -5401,14 +9691,16 @@ fn paint_clip_labels(
 }
 
 fn format_ns(t: f64) -> String {
+    let sign = if t < 0.0 { "-" } else { "" };
+    let t = t.abs();
     if t >= 1e9 {
-        format!("{:.3}s", t / 1e9)
+        format!("{sign}{:.3}s", t / 1e9)
     } else if t >= 1e6 {
-        format!("{:.1}ms", t / 1e6)
+        format!("{sign}{:.1}ms", t / 1e6)
     } else if t >= 1e3 {
-        format!("{:.0}µs", t / 1e3)
+        format!("{sign}{:.0}µs", t / 1e3)
     } else {
-        format!("{t:.0}ns")
+        format!("{sign}{t:.0}ns")
     }
 }
 
@@ -5417,7 +9709,7 @@ mod tests {
     use super::*;
     use crate::tracks::TrackStrip;
     use orbit_live_event::{chrome, kind, LiveEvent};
-    use orbit_live_render::collect_instances;
+
 
     fn proc(pid: u32, name: &str, path: &str) -> ProcessJson {
         ProcessJson {
@@ -5528,6 +9820,42 @@ mod tests {
     fn tabular_grouping_uses_commas() {
         assert_eq!(fmt_int(2_000_000), "2,000,000");
         assert_eq!(fmt_int(64), "64");
+    }
+
+    #[test]
+    fn ruler_labels_never_overlap_or_run_off_the_end() {
+        let right = 800.0;
+        // First label always places.
+        assert!(label_fits(10.0, 40.0, f32::NEG_INFINITY, right));
+        // A second one too close to the first is dropped rather than drawn
+        // on top of it.
+        assert!(!label_fits(52.0, 40.0, 50.0, right));
+        // Far enough along, it places again.
+        assert!(label_fits(60.0, 40.0, 50.0, right));
+        // A label that would spill past the bar's end is dropped.
+        assert!(!label_fits(780.0, 40.0, 0.0, right));
+    }
+
+    #[test]
+    fn ruler_labels_left_of_the_origin_are_signed_not_zero() {
+        // Clamping to 0 painted "0ns" on every tick before the origin, which
+        // is what a wrong origin looked like on screen.
+        assert_eq!(format_ns(-1_250_000.0), "-1.2ms");
+        assert_eq!(format_ns(-400.0), "-400ns");
+        assert_eq!(format_ns(0.0), "0ns");
+        assert_ne!(format_ns(-1_250_000.0), format_ns(-2_500_000.0));
+    }
+
+    #[test]
+    fn ruler_labels_are_relative_to_the_capture_origin() {
+        // Raw CLOCK_MONOTONIC is time since boot: tens of thousands of
+        // seconds, which is both unreadable and wide enough to collide.
+        let raw = 137_458_471_912_752.0;
+        assert_eq!(format_ns(raw), "137458.472s");
+        // Measured from the capture origin it is a sane, narrow label.
+        let origin = 137_458_000_000_000.0;
+        assert_eq!(format_ns(raw - origin), "471.9ms");
+        assert!(format_ns(raw - origin).len() < format_ns(raw).len());
     }
 
     #[test]
@@ -5809,6 +10137,183 @@ mod tests {
         assert!(!vscroll_from_primary_drag(false, false));
     }
 
+    #[test]
+    fn stream_rate_reads_in_the_right_unit() {
+        assert_eq!(format_rate(0.0), "0 B/s");
+        assert_eq!(format_rate(312_000.0), "312 KB/s");
+        assert_eq!(format_rate(1_240_000.0), "1.24 MB/s");
+    }
+
+    /// Runs `build` for a few egui frames while a pointer presses and
+    /// releases at `at`, and reports what the widgets saw. Widget rects come
+    /// from the previous frame, so the first frame lays out, the second
+    /// presses, the third releases.
+    fn click_at(at: Pos2, mut build: impl FnMut(&mut Ui) -> (bool, bool)) -> (bool, bool) {
+        use egui::{Event, PointerButton, RawInput};
+        let ctx = egui::Context::default();
+        let mut toggled = false;
+        let mut dragged = false;
+        let frames: [Vec<Event>; 3] = [
+            vec![],
+            vec![
+                Event::PointerMoved(at),
+                Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            vec![Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        ];
+        for events in frames {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (t, d) = build(ui);
+                    toggled |= t;
+                    dragged |= d;
+                });
+            });
+        }
+        (toggled, dragged)
+    }
+
+    fn pick_of_kind(kind: u8, pid: u32, tid: u32) -> ScopePick {
+        ScopePick {
+            name_id: 1,
+            start_ns: 10,
+            duration_ns: 5,
+            pid,
+            tid,
+            kind,
+            depth: 0,
+            extra: 0,
+        }
+    }
+
+    #[test]
+    fn fitting_to_an_instant_gives_a_window_whose_ticks_can_advance() {
+        // 10^14 ns since boot, as CLOCK_MONOTONIC on a machine up for a day.
+        let t = 4.0e14;
+        let (a, b) = fit_content_window(t, t);
+        assert!(b - a >= MIN_FIT_SPAN_NS);
+        let (major, minor) = tick_steps(b - a, 1400.0);
+        assert!(a + major > a && a + minor > a, "ticks must move t at {t}: {major} {minor}");
+        // A real span is untouched.
+        assert_eq!(fit_content_window(100.0, 5_000_000.0), (100.0, 5_000_000.0));
+    }
+
+    #[test]
+    fn a_flame_layout_shares_the_width_by_inclusive_samples_and_nests_children() {
+        use crate::net::TreeNodeJson;
+        let leaf = |name: &str, n: u64| TreeNodeJson { name: name.into(), inclusive: n, ..Default::default() };
+        let roots = vec![
+            TreeNodeJson {
+                kind: "thread".into(),
+                name: "main".into(),
+                inclusive: 75,
+                children: vec![
+                    TreeNodeJson { name: "a".into(), inclusive: 50, children: vec![leaf("b", 25)], ..Default::default() },
+                    leaf("c", 20),
+                ],
+                ..Default::default()
+            },
+            TreeNodeJson { kind: "thread".into(), name: "worker".into(), inclusive: 25, ..Default::default() },
+        ];
+        let bars = flame_layout(&roots, 1000.0);
+        let find = |n: &str| bars.iter().find(|b| b.name == n).unwrap();
+        assert_eq!((find("main").x, find("main").w, find("main").depth), (0.0, 750.0, 0));
+        assert!(find("main").is_thread);
+        assert_eq!((find("worker").x, find("worker").w), (750.0, 250.0));
+        assert_eq!((find("a").x, find("a").w, find("a").depth), (0.0, 500.0, 1));
+        assert_eq!((find("c").x, find("c").w, find("c").depth), (500.0, 200.0, 1));
+        assert_eq!((find("b").x, find("b").w, find("b").depth), (0.0, 250.0, 2));
+        assert!((find("b").percent - 25.0).abs() < 1e-9);
+        // Sub-pixel bars are dropped; an empty tree is no bars.
+        let tiny = vec![TreeNodeJson { name: "t".into(), inclusive: 1_000_000, children: vec![leaf("x", 1)], ..Default::default() }];
+        assert_eq!(flame_layout(&tiny, 1000.0).len(), 1);
+        assert!(flame_layout(&[], 1000.0).is_empty());
+        assert_eq!(truncate_to_width("UpdateTransforms", 40.0, 10.0), "Updat…");
+        assert_eq!(truncate_to_width("Tick", 400.0, 10.0), "Tick");
+    }
+
+    #[test]
+    fn ui_tweaks_round_trip_and_tolerate_missing_keys() {
+        let t = UiTweaks { report_row_gap: 6.5, report_col_gap: 20.0, report_font: 12.0, report_bar_w: 80.0, report_indent: 16.0 };
+        assert_eq!(UiTweaks::from_json(&t.to_json()), t);
+        let partial = UiTweaks::from_json(r#"{"report_row_gap":9}"#);
+        assert_eq!(partial.report_row_gap, 9.0);
+        assert_eq!(partial.report_font, UiTweaks::default().report_font);
+        // Out-of-range values are clamped, garbage keeps the defaults.
+        assert_eq!(UiTweaks::from_json(r#"{"report_font":900}"#).report_font, 18.0);
+        assert_eq!(UiTweaks::from_json("nonsense"), UiTweaks::default());
+    }
+
+    #[test]
+    fn a_selection_span_covers_every_range_and_a_bundle_is_told_by_its_suffix() {
+        assert_eq!(selection_span(&[]), None);
+        assert_eq!(selection_span(&[(50, 60, None), (10, 20, Some(3))]), Some((10, 60)));
+        assert!(is_bundle_name("capture-slice.orbit.zip"));
+        assert!(is_bundle_name("Trace.ORBIT.ZIP"));
+        assert!(!is_bundle_name("trace.json.zip"));
+        assert!(!is_bundle_name("trace.json"));
+    }
+
+    #[test]
+    fn only_a_thread_scope_or_its_header_selects_the_thread() {
+        let target = Some(7);
+        // A scope on a thread track selects that thread.
+        let scope = Some(pick_of_kind(kind::API_SCOPE, 7, 70));
+        assert_eq!(thread_focus_from(None, scope, target).selected, Some((7, 70)));
+        let call = Some(pick_of_kind(kind::FUNCTION_CALL, 7, 71));
+        assert_eq!(thread_focus_from(None, call, target).selected, Some((7, 71)));
+        // A scheduler slice, a thread state, a sample tick or a value do not.
+        for k in [kind::SCHEDULING_SLICE, kind::THREAD_STATE, kind::SAMPLE, kind::VALUE] {
+            let pick = Some(pick_of_kind(k, 7, 72));
+            let focus = thread_focus_from(None, pick, target);
+            assert_eq!(focus.selected, None, "kind {k}");
+            assert_eq!(focus.target_pid, target);
+        }
+        // The header wins over a scope pick, and survives a slice pick.
+        let slice = Some(pick_of_kind(kind::SCHEDULING_SLICE, 7, 72));
+        assert_eq!(thread_focus_from(Some((7, 73)), slice, target).selected, Some((7, 73)));
+        assert_eq!(thread_focus_from(Some((7, 73)), scope, target).selected, Some((7, 73)));
+    }
+
+    #[test]
+    fn a_click_exactly_on_a_draggable_headers_chevron_toggles_it() {
+        let row = Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(200.0, 22.0));
+        let chevron_center = Pos2::new(row.left() + 16.0, row.center().y);
+        let (toggled, reorder) = click_at(chevron_center, |ui| {
+            let (t, _, reorder_from) = draggable_header(ui, row, 16.0, true, ("p", 7, 0));
+            (t, reorder_from.is_some())
+        });
+        assert!(toggled, "the chevron must take a click landing on it");
+        assert!(!reorder, "a click on the chevron must not lift the row");
+    }
+
+    #[test]
+    fn a_click_on_the_rest_of_a_draggable_header_does_not_toggle_it() {
+        let row = Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(200.0, 22.0));
+        let (toggled, reorder) = click_at(Pos2::new(row.left() + 120.0, row.center().y), |ui| {
+            let (t, _, reorder_from) = draggable_header(ui, row, 16.0, true, ("p", 7, 0));
+            (t, reorder_from.is_some())
+        });
+        assert!(!toggled);
+        assert!(reorder, "a press on the row body is where a reorder starts");
+    }
+
+    #[test]
     fn touch_vscroll_follows_the_finger_and_clamps_at_top() {
         // Finger down -> see earlier lanes -> smaller offset.
         assert_eq!(touch_vscroll_target(100.0, 30.0, 1000.0), 70.0);
@@ -6281,139 +10786,37 @@ mod tests {
     }
 
     #[test]
-    fn theverge_first_paint_and_one_zoom_if_present() {
-        let path = "/tmp/chrome-traces/theverge_trace.json";
-        let Ok(bytes) = std::fs::read(path) else {
-            return;
+    fn expand_all_finds_every_node_that_has_children() {
+        use crate::net::TreeNodeJson;
+        let leaf = TreeNodeJson::default();
+        let mid = TreeNodeJson { children: vec![leaf.clone(), leaf.clone()], ..Default::default() };
+        let root = TreeNodeJson { children: vec![mid.clone()], ..Default::default() };
+        let paths = all_expandable_paths(&[root, leaf.clone()]);
+        // "0" (root) and "0/0" (mid) have children; the leaves and the second
+        // root do not, so they are not expandable and get no entry.
+        let mut got: Vec<String> = paths.into_iter().collect();
+        got.sort();
+        assert_eq!(got, vec!["0".to_string(), "0/0".to_string()]);
+    }
+
+    #[test]
+    fn expand_all_on_an_empty_tree_expands_nothing() {
+        assert!(all_expandable_paths(&[]).is_empty());
+    }
+
+    #[test]
+    fn expansion_paths_address_siblings_separately() {
+        use crate::net::TreeNodeJson;
+        let leaf = TreeNodeJson::default();
+        let branch = TreeNodeJson { children: vec![leaf.clone()], ..Default::default() };
+        let root = TreeNodeJson {
+            children: vec![branch.clone(), branch.clone()],
+            ..Default::default()
         };
-        let (ing, evs) = orbit_live_chrome::ingest_collect(&bytes).expect("theverge");
-        let (ca, cb) = ing.content_time_bounds().expect("content");
-        let mut idx = TrackIndex::default();
-        for e in evs {
-            idx.insert(e);
-        }
-        let (ia, ib) = idx.time_bounds().expect("index");
-        assert_eq!(ia, ca);
-        assert_eq!(ib, cb);
-        let span_s = (cb - ca) as f64 / 1e9;
-        assert!(
-            (8.2..8.3).contains(&span_s),
-            "theverge cluster {ca}..{cb} = {span_s} s"
-        );
-        let (t0, t1) = fit_content_window(ia as f64, ib as f64);
-        assert!((t0 - ia as f64).abs() < 1.0 && (t1 - ib as f64).abs() < 1.0);
-        assert!(t0 > 1e14);
-        let (z0, z1) = zoom_time_by_scale_limited(
-            t0,
-            t1,
-            1.0 + ZOOM_TIME_RATIO,
-            0.5,
-            zoom_max_for_capture((ib - ia) as f64),
-        );
-        assert_cursor_time_locked(t0, t1, z0, z1, 0.5);
-        assert!(
-            z0 < ib as f64 && z1 > ia as f64,
-            "zoom-in keeps the cluster"
-        );
-        let (o0, o1) = zoom_time_by_scale_limited(
-            z0,
-            z1,
-            1.0 / (1.0 + ZOOM_TIME_RATIO),
-            0.5,
-            zoom_max_for_capture((ib - ia) as f64),
-        );
-        assert_cursor_time_locked(z0, z1, o0, o1, 0.5);
-        let (o0, o1) = clamp_window_contain(o0, o1, ia as f64, ib as f64);
-        assert!((o0 - ia as f64).abs() < 1.0 && (o1 - ib as f64).abs() < 1.0);
-        let (h0, h1) = fit_content_window(ia as f64, ib as f64);
-        assert!((h0 - ia as f64).abs() < 1.0 && (h1 - ib as f64).abs() < 1.0);
-        eprintln!(
-            "theverge after load t0={t0} t1={t1} span_s={:.6} content={ca}..{cb}",
-            (t1 - t0) / 1e9
-        );
-        eprintln!(
-            "theverge after one zoom-in t0={z0} t1={z1} span_s={:.6}",
-            (z1 - z0) / 1e9
-        );
-        eprintln!(
-            "theverge after Home/fit t0={h0} t1={h1} span_s={:.6}",
-            (h1 - h0) / 1e9
-        );
-
-        let one_ns = idx
-            .lanes()
-            .flat_map(|(_, lane)| lane.events().iter())
-            .filter(|e| e.kind == kind::API_SCOPE && e.duration_ns == 1)
-            .count();
-        let mut shared_lanes = 0u32;
-        for (_, lane) in idx.lanes() {
-            let mut ones = 0u32;
-            let mut longer = 0u32;
-            for e in lane.events() {
-                if e.kind != kind::API_SCOPE {
-                    continue;
-                }
-                if e.duration_ns == 1 {
-                    ones += 1;
-                } else {
-                    longer += 1;
-                }
-            }
-            if ones > 0 && longer > 0 {
-                shared_lanes += 1;
-            }
-        }
-        let width = 1280.0f32;
-        let frame = collect_instances(&idx, t0 as u64, t1 as u64, width, 0.0, None);
-        let mut one_ns_w_max = 0.0f32;
-        let mut one_ns_inst = 0u32;
-        let mut one_ns_w_gt1 = 0u32;
-        for inst in &frame.instances {
-            if inst.kind == kind::API_SCOPE && inst.duration_ns == 1 {
-                one_ns_inst += 1;
-                one_ns_w_max = one_ns_w_max.max(inst.w);
-                if inst.w > 1.0 + 0.01 {
-                    one_ns_w_gt1 += 1;
-                }
-            }
-        }
-        let ns_per_px = (t1 - t0) / width as f64;
-        eprintln!(
-            "theverge fit window {t0}..{t1} width={width} ns/px={ns_per_px:.0} \
-             API_SCOPE duration_ns==1 events={one_ns} instances={one_ns_inst} \
-             max instance.w={one_ns_w_max} w>1px={one_ns_w_gt1} \
-             shared 1ns+longer lanes={shared_lanes}"
-        );
-        assert!(one_ns > 0);
-        assert!(shared_lanes > 0);
-        assert_eq!(
-            one_ns_w_gt1, 0,
-            "1 ns instances must stay 1 px ticks at the default fit, max w={one_ns_w_max}"
-        );
-
-        let mut stolen = 0u32;
-        for inst in &frame.instances {
-            if inst.duration_ns <= 1 {
-                continue;
-            }
-            let cx = inst.x + inst.w * 0.5;
-            let cy = inst.y + inst.h * 0.5;
-            let Some(i) = pick_instance_at(&frame.instances, cx, cy) else {
-                continue;
-            };
-            let hit = &frame.instances[i];
-            if hit.duration_ns == 1
-                && hit.pid == inst.pid
-                && hit.tid == inst.tid
-                && hit.kind == inst.kind
-                && hit.depth == inst.depth
-            {
-                stolen += 1;
-            }
-        }
-        assert_eq!(
-            stolen, 0,
-            "a 1 ns tick must not win pick at the center of a longer same-lane scope"
-        );
+        let paths = all_expandable_paths(&[root]);
+        // Two identical siblings must still be independently expandable, or
+        // opening one would open the other.
+        assert!(paths.contains("0/0"));
+        assert!(paths.contains("0/1"));
     }
 }

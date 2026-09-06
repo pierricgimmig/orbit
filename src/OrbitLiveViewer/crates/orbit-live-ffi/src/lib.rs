@@ -223,6 +223,11 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
                     Ok(r#"{"pid":0,"status":"idle","functions":[]}"#.into())
                 }
             }),
+            // Code views (disassembly/source) are not offered by this C
+            // embedding; the host has no callback for them.
+            disassemble_json: std::sync::Arc::new(|_pid, _fid| Err("code views not available in this embedding".into())),
+            source_json: std::sync::Arc::new(|_path| Err("code views not available in this embedding".into())),
+            example_disassembly_json: std::sync::Arc::new(|| Err("code views not available in this embedding".into())),
         };
         svc.set_hooks(hooks);
     })

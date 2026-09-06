@@ -1,0 +1,21 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+[package]
+name = "orbit-perf-ring-ffi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+# orbit-perf-records-ffi is pulled in so one staticlib carries both symbol
+# sets; linking two Rust staticlibs into one C++ binary duplicates the Rust
+# runtime.
+[dependencies]
+orbit-perf-ring = { path = "../../crates/orbit-perf-ring" }
+orbit-perf-records-ffi = { path = "../orbit-perf-records-ffi" }
