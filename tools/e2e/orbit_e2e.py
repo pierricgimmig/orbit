@@ -1433,8 +1433,21 @@ def sample_bar_select(run):
     )
     # One range, carrying this thread's tid: the selection is per-thread.
     tids = [r[2] for r in ranges if len(r) >= 3]
-    check(tid in tids, f"selection is not scoped to thread {tid}: {ranges}")
-    return f"selected {len(ranges)} range(s) on thread {tid}"
+    check(tid in tids, f"a left-drag on the bar is not scoped to thread {tid}: {ranges}")
+    # A right-drag anywhere is process-wide: its range carries no tid.
+    def rmouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="right", buttons=2)
+    rmouse("mousePressed", x0, cy)
+    for i in range(1, 11):
+        rmouse("mouseMoved", x0 + (x1 - x0) * i / 10, cy)
+        time.sleep(0.02)
+    rmouse("mouseReleased", x1, cy)
+    wide = run.wait_for(
+        lambda: (lambda r: r if r and any(rr[2] is None for rr in r) else None)(run.sel().get("ranges")),
+        "a process-wide right-drag selection", timeout=10,
+    )
+    check(any(rr[2] is None for rr in wide), f"right-drag is not process-wide: {wide}")
+    return f"left-drag scoped to thread {tid}; right-drag process-wide"
 
 
 @scenario("code-views", "Source, disassembly and the two interleaved: the examples, then a Box3D function from the report")

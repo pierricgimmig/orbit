@@ -3506,7 +3506,7 @@ impl OrbitLiveApp {
         paint_timebar(ui, ruler, self.t0, self.t1, self.timeline_origin_ns());
         let ruler_resp = ui.interact(ruler, ui.id().with("orbit_ruler"), Sense::click_and_drag());
         self.handle_time_nav(&ruler_resp, ruler, WheelMode::AlwaysZoom, false, dt);
-        self.handle_measure(&ruler_resp, ruler, false, PointerButton::Secondary);
+        self.handle_measure(&ruler_resp, ruler, false, PointerButton::Secondary, false);
         if ruler_resp.double_clicked() {
             self.fit_to_content();
             self.needs_repaint = true;
@@ -3643,9 +3643,9 @@ impl OrbitLiveApp {
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y, dt);
                 self.handle_pick(&body_resp, body, t0, t1, width);
                 if self.sample_drag {
-                    self.handle_measure(&body_resp, body, true, PointerButton::Primary);
+                    self.handle_measure(&body_resp, body, true, PointerButton::Primary, true);
                 } else {
-                    self.handle_measure(&body_resp, body, true, PointerButton::Secondary);
+                    self.handle_measure(&body_resp, body, true, PointerButton::Secondary, false);
                 }
                 if body_resp.drag_stopped() {
                     self.sample_drag = false;
@@ -5237,12 +5237,16 @@ impl OrbitLiveApp {
 
     /// Selection by drag. `button` is Secondary for the classic right-drag
     /// measure anywhere, Primary when a left drag began on a sample bar.
+    /// `per_thread` scopes the selection to the track under the pointer: a
+    /// left drag on one thread's sample bar does, a right drag (all threads)
+    /// does not.
     fn handle_measure(
         &mut self,
         response: &egui::Response,
         rect: Rect,
         label_here: bool,
         button: PointerButton,
+        per_thread: bool,
     ) {
         if !rect.is_positive() {
             return;
@@ -5256,14 +5260,13 @@ impl OrbitLiveApp {
                     self.sample_sels.clear();
                 }
                 let t = time_at_x(p.x, rect, self.t0, self.t1);
-                // Only the lane area knows about threads; a drag on the ruler
-                // is process-wide by construction. In the lanes, a drag that
-                // starts on a thread's track -- its header, its sample bar,
-                // any of its lanes -- selects that thread's samples alone;
-                // one that starts on the scheduler or in empty space selects
-                // every thread's. C++ Orbit's SelectCallstacks does the same
-                // with the track under the mouse.
-                let sample_tid = if label_here {
+                // The button, not the location, decides the scope. A left
+                // drag on a sample bar (`per_thread`) selects that one
+                // thread's samples, drawn on its bar; a right drag anywhere
+                // -- ruler, bar or empty space -- selects every thread's, the
+                // process-wide measure. C++ Orbit's per-thread SelectCallstacks
+                // is the left-on-bar gesture; the ruler is process-wide.
+                let sample_tid = if per_thread && label_here {
                     let y = p.y - rect.top();
                     self.sample_lane_at_y(y).or_else(|| self.thread_at_y(y))
                 } else {
