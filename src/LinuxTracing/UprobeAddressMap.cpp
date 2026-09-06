@@ -14,7 +14,7 @@
 namespace orbit_linux_tracing {
 
 void UprobeAddressMapCpp::AddFunction(std::string_view file_path, uint64_t file_offset,
-                                   uint64_t function_id) {
+                                      uint64_t function_id) {
   functions_.push_back({std::string{file_path}, file_offset, function_id});
 }
 
@@ -74,8 +74,7 @@ void UprobeAddressMap::AddFunction(std::string_view file_path, uint64_t file_off
     cpp_.AddFunction(file_path, file_offset, function_id);
   }
   if (backend_ != TracingStateBackend::kCpp) {
-    orbit_uprobe_map_add_function(rust_.get(),
-                                  reinterpret_cast<const uint8_t*>(file_path.data()),
+    orbit_uprobe_map_add_function(rust_.get(), reinterpret_cast<const uint8_t*>(file_path.data()),
                                   file_path.size(), file_offset, function_id);
   }
 }

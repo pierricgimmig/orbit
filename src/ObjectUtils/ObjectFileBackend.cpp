@@ -11,15 +11,15 @@
 // To compare against LLVM again, check out the commit before the deletion --
 // the three-backend switch and everything it verified is preserved there.
 
+#include "ObjectFileBackend.h"
+
 #include <stddef.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <utility>
-
-#include "ObjectFileBackend.h"
-#include <cstdint>
 #include <vector>
 
 #include "OrbitBase/File.h"
@@ -46,8 +46,8 @@ ErrorMessageOr<std::unique_ptr<CoffFile>> CreateCoffFile(const std::filesystem::
   return orbit_object_utils_rust::CreateRustCoffFile(file_path, content.data(), content.size());
 }
 
-ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFileRust(
-    const std::filesystem::path& file_path, const ObjectFileInfo& object_file_info) {
+ErrorMessageOr<std::unique_ptr<PdbFile>> CreatePdbFileRust(const std::filesystem::path& file_path,
+                                                           const ObjectFileInfo& object_file_info) {
   OUTCOME_TRY(std::string content, orbit_base::ReadFileToString(file_path));
   return orbit_object_utils_rust::CreateRustPdbFile(file_path, content.data(), content.size(),
                                                     object_file_info.load_bias);

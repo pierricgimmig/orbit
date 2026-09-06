@@ -14,10 +14,9 @@
 #include <memory>
 #include <optional>
 
+#include "GrpcProtos/capture.pb.h"
 #include "TracingStateBackend.h"
 #include "orbit_tracing_state_ffi.h"
-
-#include "GrpcProtos/capture.pb.h"
 
 namespace orbit_linux_tracing {
 

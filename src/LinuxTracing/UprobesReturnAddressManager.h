@@ -10,11 +10,10 @@
 #include <unwindstack/MapInfo.h>
 #include <unwindstack/Maps.h>
 
-#include <stack>
-#include <vector>
-
 #include <cstring>
 #include <memory>
+#include <stack>
+#include <vector>
 
 #include "LibunwindstackMaps.h"
 #include "LinuxTracing/UserSpaceInstrumentationAddresses.h"
@@ -59,8 +58,7 @@ class UprobesReturnAddressManagerCpp {
     }
   }
 
-  void PatchSample(pid_t tid, uint64_t stack_pointer, void* stack_data,
-                           uint64_t stack_size) {
+  void PatchSample(pid_t tid, uint64_t stack_pointer, void* stack_data, uint64_t stack_size) {
     if (!tid_to_stack_of_open_functions_.contains(tid)) {
       return;
     }
@@ -95,7 +93,7 @@ class UprobesReturnAddressManagerCpp {
   // space instrumentation return trampoline. The affected frames are replaced with the return
   // addresses saved by uprobes or user space instrumentation on function entry.
   bool PatchCallchain(pid_t tid, uint64_t* callchain, uint64_t callchain_size,
-                              LibunwindstackMaps* maps) {
+                      LibunwindstackMaps* maps) {
     ORBIT_CHECK(callchain_size > 0);
     ORBIT_CHECK(callchain != nullptr);
     ORBIT_CHECK(maps != nullptr);
@@ -226,7 +224,6 @@ class UprobesReturnAddressManagerCpp {
 
   UserSpaceInstrumentationAddresses* user_space_instrumentation_addresses_;
 };
-
 
 // The manager TracerImpl and the visitors use. Dispatches on
 // ORBIT_TRACING_STATE_BACKEND; see TracingStateBackend.h. The maps lookup

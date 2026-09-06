@@ -6,7 +6,7 @@
 // wrapper. Same scenario as OrbitTestRust, OrbitTestC and OrbitTestPython.
 // Build with build.sh.
 
-#include "orbit.h"
+#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
@@ -18,8 +18,9 @@
 #include <queue>
 #include <string>
 #include <thread>
-#include <unistd.h>
 #include <vector>
+
+#include "orbit.h"
 
 namespace {
 
@@ -28,7 +29,8 @@ std::atomic<bool> g_stop{false};
 void busy(long micros) {
   auto until = std::chrono::steady_clock::now() + std::chrono::microseconds(micros);
   volatile unsigned long x = 1;
-  while (std::chrono::steady_clock::now() < until) x = x * 6364136223846793005UL + 1442695040888963407UL;
+  while (std::chrono::steady_clock::now() < until)
+    x = x * 6364136223846793005UL + 1442695040888963407UL;
 }
 
 struct Job {
@@ -51,8 +53,14 @@ void physics_worker(unsigned index) {
   std::string name = "physics-" + std::to_string(index);
   while (!g_stop.load(std::memory_order_relaxed)) {
     orbit::Scope step(name.data(), name.size());
-    { ORBIT_SCOPE("solve contacts"); busy(700); }
-    { ORBIT_SCOPE("integrate"); busy(300); }
+    {
+      ORBIT_SCOPE("solve contacts");
+      busy(700);
+    }
+    {
+      ORBIT_SCOPE("integrate");
+      busy(300);
+    }
     if (auto job = take_job()) {
       std::string run_name = "run job " + std::to_string(job->index);
       orbit::Scope run(run_name.data(), run_name.size());
@@ -82,20 +90,26 @@ int main(int argc, char** argv) {
   auto started = std::chrono::steady_clock::now();
   auto last = started;
   unsigned frame = 0;
-  auto elapsed = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(); };
+  auto elapsed = [&] {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+  };
   while (seconds == 0 || elapsed() < static_cast<double>(seconds)) {
     ORBIT_SCOPE("frame");
     ORBIT_INSTANT("vsync");
     {
       ORBIT_SCOPE("update");
       busy(2000);
-      std::string detail = "update entities: pass=" + std::to_string(frame % 4) +
-                           " camera=(" + std::to_string(std::sin(frame * 0.7f) * 100.0f) + "," +
-                           std::to_string(std::cos(frame * 0.3f) * 100.0f) + ") budget=16.6ms lod=adaptive";
+      std::string detail = "update entities: pass=" + std::to_string(frame % 4) + " camera=(" +
+                           std::to_string(std::sin(frame * 0.7f) * 100.0f) + "," +
+                           std::to_string(std::cos(frame * 0.3f) * 100.0f) +
+                           ") budget=16.6ms lod=adaptive";
       orbit::Scope detail_scope(detail.data(), detail.size());
       busy(1000);
     }
-    { ORBIT_SCOPE("render"); busy(3000); }
+    {
+      ORBIT_SCOPE("render");
+      busy(3000);
+    }
     {
       // A pre-timestamped GPU span: timers read back after the fact.
       uint64_t gpu_start = orbit_now_ns() - 4000000;

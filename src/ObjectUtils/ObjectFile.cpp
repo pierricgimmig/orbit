@@ -33,8 +33,7 @@ enum class ObjectKind { kElf, kCoff };
 // match on them: an unopenable file reports the errno message, and a file that
 // is neither ELF nor PE reports "The file was not recognized as a valid object
 // file".
-[[nodiscard]] ErrorMessageOr<ObjectKind> ClassifyByMagic(
-    const std::filesystem::path& file_path) {
+[[nodiscard]] ErrorMessageOr<ObjectKind> ClassifyByMagic(const std::filesystem::path& file_path) {
   const std::string path_string = file_path.string();
 
   FILE* file = fopen(path_string.c_str(), "rb");

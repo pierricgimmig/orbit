@@ -4,8 +4,6 @@
 
 #include "CaptureClient/CaptureEventProcessor.h"
 
-#include "Demangle.h"
-
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/hash/hash.h>
@@ -31,6 +29,7 @@
 #include "ClientData/TracepointEventInfo.h"
 #include "ClientData/TracepointInfo.h"
 #include "ClientProtos/capture_data.pb.h"
+#include "Demangle.h"
 #include "GrpcProtos/capture.pb.h"
 #include "GrpcProtos/module.pb.h"
 #include "GrpcProtos/tracepoint.pb.h"

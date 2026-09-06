@@ -11,12 +11,11 @@
 #include <optional>
 #include <stack>
 
-#include "TracingStateBackend.h"
-#include "orbit_tracing_state_ffi.h"
-
 #include "GrpcProtos/capture.pb.h"
 #include "OrbitBase/Logging.h"
 #include "PerfEventRecords.h"
+#include "TracingStateBackend.h"
+#include "orbit_tracing_state_ffi.h"
 
 namespace orbit_linux_tracing {
 
@@ -135,9 +134,9 @@ class UprobesFunctionCallManager {
     }
 
     OrbitFunctionCall ffi_call{};
-    const uint8_t matched = orbit_function_calls_exit(
-        rust_.get(), tid, end_timestamp, return_value.has_value() ? 1 : 0,
-        return_value.value_or(0), &ffi_call);
+    const uint8_t matched =
+        orbit_function_calls_exit(rust_.get(), tid, end_timestamp, return_value.has_value() ? 1 : 0,
+                                  return_value.value_or(0), &ffi_call);
 
     std::optional<orbit_grpc_protos::FunctionCall> result;
     if (matched != 0) {
@@ -161,8 +160,7 @@ class UprobesFunctionCallManager {
 
     if (backend_ == TracingStateBackend::kBoth) {
       if (result.has_value() != cpp_result.has_value() ||
-          (result.has_value() &&
-           result->SerializeAsString() != cpp_result->SerializeAsString())) {
+          (result.has_value() && result->SerializeAsString() != cpp_result->SerializeAsString())) {
         ORBIT_FATAL("UprobesFunctionCallManager backends disagree:\n  cpp:  %s\n  rust: %s",
                     cpp_result.has_value() ? cpp_result->ShortDebugString() : "(none)",
                     result.has_value() ? result->ShortDebugString() : "(none)");
@@ -175,9 +173,7 @@ class UprobesFunctionCallManager {
   TracingStateBackend backend_;
   UprobesFunctionCallManagerCpp cpp_;
   struct ManagerDeleter {
-    void operator()(OrbitFunctionCallManager* manager) const {
-      orbit_function_calls_free(manager);
-    }
+    void operator()(OrbitFunctionCallManager* manager) const { orbit_function_calls_free(manager); }
   };
   std::unique_ptr<OrbitFunctionCallManager, ManagerDeleter> rust_;
 };

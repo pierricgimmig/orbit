@@ -14,10 +14,9 @@
 #include <optional>
 #include <vector>
 
-#include "orbit_thread_states_ffi.h"
-
 #include "GrpcProtos/capture.pb.h"
 #include "absl/container/flat_hash_map.h"
+#include "orbit_thread_states_ffi.h"
 
 namespace orbit_linux_tracing {
 

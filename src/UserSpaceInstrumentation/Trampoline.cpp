@@ -896,8 +896,7 @@ ErrorMessageOr<std::vector<uint8_t>> BuildTrampolineForDifferential(
     return ErrorMessage("cs_open failed");
   }
   cs_option(capstone_handle, CS_OPT_DETAIL, CS_OPT_ON);
-  orbit_base::unique_resource close_handle{&capstone_handle,
-                                           [](csh* handle) { cs_close(handle); }};
+  orbit_base::unique_resource close_handle{&capstone_handle, [](csh* handle) { cs_close(handle); }};
 
   if (CheckForRelativeJumpIntoFirstFiveBytes(function_address, function, capstone_handle)) {
     return ErrorMessage("harmful jump into prologue");
@@ -912,7 +911,8 @@ ErrorMessageOr<std::vector<uint8_t>> BuildTrampolineForDifferential(
   if (address_after_prologue.has_error()) {
     return address_after_prologue.error();
   }
-  auto jump_back = AppendJumpBackCode(address_after_prologue.value(), trampoline_address, trampoline);
+  auto jump_back =
+      AppendJumpBackCode(address_after_prologue.value(), trampoline_address, trampoline);
   if (jump_back.has_error()) {
     return jump_back.error();
   }

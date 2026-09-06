@@ -14,7 +14,7 @@ namespace orbit_linux_tracing {
 using orbit_grpc_protos::SchedulingSlice;
 
 void ContextSwitchManagerCpp::ProcessContextSwitchIn(std::optional<pid_t> pid, pid_t tid,
-                                                  uint16_t core, uint64_t timestamp_ns) {
+                                                     uint16_t core, uint64_t timestamp_ns) {
   // In case of lost out switches, a previous OpenSwitchIn for this core can be already present.
   // Simply overwrite it.
   open_switches_by_core_.emplace(core, OpenSwitchIn{pid, tid, timestamp_ns});
@@ -122,8 +122,7 @@ std::optional<SchedulingSlice> ContextSwitchManager::ProcessContextSwitchOut(
 
   if (backend_ == TracingStateBackend::kBoth) {
     if (result.has_value() != cpp_result.has_value() ||
-        (result.has_value() &&
-         result->SerializeAsString() != cpp_result->SerializeAsString())) {
+        (result.has_value() && result->SerializeAsString() != cpp_result->SerializeAsString())) {
       ORBIT_FATAL("ContextSwitchManager backends disagree:\n  cpp:  %s\n  rust: %s",
                   cpp_result.has_value() ? cpp_result->ShortDebugString() : "(none)",
                   result.has_value() ? result->ShortDebugString() : "(none)");

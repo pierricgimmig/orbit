@@ -6,9 +6,8 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/meta/type_traits.h>
-#include <sys/types.h>
-
 #include <stdlib.h>
+#include <sys/types.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -33,13 +32,13 @@ using orbit_grpc_protos::ThreadStateSlice;
 // larger timestamp) and replace it with the thread state carried by the tracepoint.
 
 void ThreadStateManagerCpp::OnInitialState(uint64_t timestamp_ns, pid_t tid,
-                                        ThreadStateSlice::ThreadState state) {
+                                           ThreadStateSlice::ThreadState state) {
   ORBIT_CHECK(!tid_open_states_.contains(tid));
   tid_open_states_.emplace(tid, OpenState{state, timestamp_ns});
 }
 
 void ThreadStateManagerCpp::OnNewTask(uint64_t timestamp_ns, pid_t tid, pid_t was_created_by_tid,
-                                   pid_t was_created_by_pid) {
+                                      pid_t was_created_by_pid) {
   static constexpr ThreadStateSlice::ThreadState kNewState = ThreadStateSlice::kRunnable;
 
   if (auto open_state_it = tid_open_states_.find(tid);
@@ -53,10 +52,11 @@ void ThreadStateManagerCpp::OnNewTask(uint64_t timestamp_ns, pid_t tid, pid_t wa
                      was_created_by_tid, was_created_by_pid});
 }
 
-std::optional<ThreadStateSlice> ThreadStateManagerCpp::OnSchedWakeup(uint64_t timestamp_ns, pid_t tid,
-                                                                  pid_t was_unblocked_by_tid,
-                                                                  pid_t was_unblocked_by_pid,
-                                                                  bool has_wakeup_callstack) {
+std::optional<ThreadStateSlice> ThreadStateManagerCpp::OnSchedWakeup(uint64_t timestamp_ns,
+                                                                     pid_t tid,
+                                                                     pid_t was_unblocked_by_tid,
+                                                                     pid_t was_unblocked_by_pid,
+                                                                     bool has_wakeup_callstack) {
   static constexpr ThreadStateSlice::ThreadState kNewState = ThreadStateSlice::kRunnable;
 
   auto open_state_it = tid_open_states_.find(tid);
@@ -111,7 +111,7 @@ std::optional<ThreadStateSlice> ThreadStateManagerCpp::OnSchedWakeup(uint64_t ti
 }
 
 std::optional<ThreadStateSlice> ThreadStateManagerCpp::OnSchedSwitchIn(uint64_t timestamp_ns,
-                                                                    pid_t tid) {
+                                                                       pid_t tid) {
   static constexpr ThreadStateSlice::ThreadState kNewState = ThreadStateSlice::kRunning;
 
   auto open_state_it = tid_open_states_.find(tid);
@@ -257,8 +257,7 @@ namespace {
 
 // The comparison in `both` mode is over the serialised protos: every field the
 // C++ sets is either scalar or enum, so byte equality is field equality.
-void CheckSlicesAgree(const char* what,
-                      const std::optional<ThreadStateSlice>& rust,
+void CheckSlicesAgree(const char* what, const std::optional<ThreadStateSlice>& rust,
                       const std::optional<ThreadStateSlice>& cpp) {
   if (rust.has_value() != cpp.has_value()) {
     ORBIT_FATAL("ThreadStateManager backends disagree in %s: cpp %s a slice, rust %s", what,
@@ -414,8 +413,7 @@ std::vector<ThreadStateSlice> ThreadStateManager::OnCaptureFinished(uint64_t tim
     return cpp_.OnCaptureFinished(timestamp_ns);
   }
 
-  const size_t count =
-      orbit_thread_states_capture_finished(rust_.get(), timestamp_ns, nullptr, 0);
+  const size_t count = orbit_thread_states_capture_finished(rust_.get(), timestamp_ns, nullptr, 0);
   std::vector<OrbitThreadStateSlice> ffi_slices(count);
   orbit_thread_states_capture_finished(rust_.get(), timestamp_ns, ffi_slices.data(), count);
 

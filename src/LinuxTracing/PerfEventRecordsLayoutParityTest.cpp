@@ -22,8 +22,8 @@ namespace {
 class LayoutChecker {
  public:
   LayoutChecker(uint32_t kind, size_t cpp_size) : kind_{kind} {
-    EXPECT_EQ(static_cast<int64_t>(cpp_size), orbit_perf_records_struct_size(kind)) << "kind "
-                                                                                    << kind;
+    EXPECT_EQ(static_cast<int64_t>(cpp_size), orbit_perf_records_struct_size(kind))
+        << "kind " << kind;
   }
 
   LayoutChecker& Field(size_t cpp_offset) {
@@ -34,8 +34,8 @@ class LayoutChecker {
   }
 
   ~LayoutChecker() {
-    EXPECT_EQ(static_cast<int64_t>(index_), orbit_perf_records_field_count(kind_)) << "kind "
-                                                                                   << kind_;
+    EXPECT_EQ(static_cast<int64_t>(index_), orbit_perf_records_field_count(kind_))
+        << "kind " << kind_;
   }
 
  private:

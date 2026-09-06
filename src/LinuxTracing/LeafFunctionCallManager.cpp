@@ -19,9 +19,10 @@
 
 namespace orbit_linux_tracing {
 template <typename CallchainPerfEventDataT>
-orbit_grpc_protos::Callstack::CallstackType LeafFunctionCallManagerCpp::PatchCallerOfLeafFunctionImpl(
-    const CallchainPerfEventDataT* event_data, LibunwindstackMaps* current_maps,
-    LibunwindstackUnwinder* unwinder) {
+orbit_grpc_protos::Callstack::CallstackType
+LeafFunctionCallManagerCpp::PatchCallerOfLeafFunctionImpl(const CallchainPerfEventDataT* event_data,
+                                                          LibunwindstackMaps* current_maps,
+                                                          LibunwindstackUnwinder* unwinder) {
   ORBIT_CHECK(event_data != nullptr);
   ORBIT_CHECK(current_maps != nullptr);
   ORBIT_CHECK(unwinder != nullptr);

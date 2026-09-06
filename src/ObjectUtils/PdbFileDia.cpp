@@ -4,14 +4,13 @@
 
 #include "PdbFileDia.h"
 
-#include "Demangle.h"
-
 #include <absl/container/flat_hash_set.h>
 #include <absl/memory/memory.h>
 #include <cvconst.h>
 #include <diacreate.h>
 #include <winerror.h>
 
+#include "Demangle.h"
 #include "Introspection/Introspection.h"
 #include "ObjectUtils/PdbUtilsDia.h"
 #include "OrbitBase/ExecutablePath.h"

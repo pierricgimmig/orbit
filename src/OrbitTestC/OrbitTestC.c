@@ -6,8 +6,6 @@
  * as OrbitTestRust, OrbitTestCpp and OrbitTestPython. Build with build.sh. */
 
 #define _GNU_SOURCE
-#include "orbit.h"
-
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -15,6 +13,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "orbit.h"
 
 static atomic_int g_stop = 0;
 
@@ -57,7 +57,11 @@ static void* physics_worker(void* arg) {
     Job job;
     int have = 0;
     pthread_mutex_lock(&g_job_lock);
-    if (g_job_ready) { job = g_job; g_job_ready = 0; have = 1; }
+    if (g_job_ready) {
+      job = g_job;
+      g_job_ready = 0;
+      have = 1;
+    }
     pthread_mutex_unlock(&g_job_lock);
     if (have) {
       char run_name[32];
@@ -85,7 +89,8 @@ int main(int argc, char** argv) {
   fflush(stdout);
 
   pthread_t workers[3];
-  for (unsigned i = 0; i < 3; ++i) pthread_create(&workers[i], NULL, physics_worker, (void*)(uintptr_t)i);
+  for (unsigned i = 0; i < 3; ++i)
+    pthread_create(&workers[i], NULL, physics_worker, (void*)(uintptr_t)i);
 
   double started = now_s(), last = started;
   unsigned frame = 0;
@@ -96,9 +101,10 @@ int main(int argc, char** argv) {
     orbit_scope update = orbit_start(ORBIT_LIT("update"));
     busy(2000);
     char detail[128];
-    int n = snprintf(detail, sizeof detail,
-                     "update entities: pass=%u camera=(%.1f,%.1f) budget=16.6ms lod=adaptive",
-                     frame % 4, (double)(frame * 7 % 200) - 100.0, (double)(frame * 3 % 200) - 100.0);
+    int n =
+        snprintf(detail, sizeof detail,
+                 "update entities: pass=%u camera=(%.1f,%.1f) budget=16.6ms lod=adaptive",
+                 frame % 4, (double)(frame * 7 % 200) - 100.0, (double)(frame * 3 % 200) - 100.0);
     orbit_scope detail_scope = orbit_start(detail, (size_t)n);
     busy(1000);
     orbit_stop(detail_scope);
@@ -112,11 +118,12 @@ int main(int argc, char** argv) {
     orbit_span_async(ORBIT_LIT("gpu: shadow pass"), gpu_start, gpu_start + 2500000);
 
     if (frame % 8 == 0) {
-      Job job = { frame / 8, 0, 0 };
+      Job job = {frame / 8, 0, 0};
       job.enqueued_at = orbit_instant(ORBIT_LIT("enqueue job"));
       job.async_scope = orbit_start_async(ORBIT_LIT("background job"));
       pthread_mutex_lock(&g_job_lock);
-      g_job = job; g_job_ready = 1;
+      g_job = job;
+      g_job_ready = 1;
       pthread_mutex_unlock(&g_job_lock);
     }
 

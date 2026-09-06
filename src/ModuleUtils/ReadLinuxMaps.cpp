@@ -4,8 +4,6 @@
 
 #include "ModuleUtils/ReadLinuxMaps.h"
 
-#include "ParseMapsBackend.h"
-
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_format.h>
@@ -19,6 +17,7 @@
 
 #include "OrbitBase/Logging.h"
 #include "OrbitBase/ReadFileToString.h"
+#include "ParseMapsBackend.h"
 
 namespace orbit_module_utils {
 

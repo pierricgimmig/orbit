@@ -6,7 +6,6 @@
 #define LINUX_TRACING_LEAF_FUNCTION_CALL_MANAGER_H_
 
 #include <stdint.h>
-
 #include <sys/mman.h>
 
 #include <array>
@@ -231,9 +230,10 @@ class LeafFunctionCallManager {
   }
 
   template <typename CallchainPerfEventDataT>
-  orbit_grpc_protos::Callstack::CallstackType PatchRust(
-      const CallchainPerfEventDataT* event_data, LibunwindstackMaps* current_maps,
-      LibunwindstackUnwinder* unwinder, std::vector<uint64_t>* patched_ips_out) {
+  orbit_grpc_protos::Callstack::CallstackType PatchRust(const CallchainPerfEventDataT* event_data,
+                                                        LibunwindstackMaps* current_maps,
+                                                        LibunwindstackUnwinder* unwinder,
+                                                        std::vector<uint64_t>* patched_ips_out) {
     ORBIT_CHECK(event_data != nullptr);
     ORBIT_CHECK(current_maps != nullptr);
     ORBIT_CHECK(unwinder != nullptr);
@@ -243,9 +243,9 @@ class LeafFunctionCallManager {
     bool patched = false;
     int32_t result = orbit_leaf_patch_caller(
         event_data->GetRegisters().GetInstructionPointer(),
-        event_data->GetRegisters().GetStackPointer(),
-        event_data->GetRegisters().GetFramePointer(), stack_dump_size_, callchain.data(),
-        callchain.size(), &HasFramePointerSetCallback<CallchainPerfEventDataT>,
+        event_data->GetRegisters().GetStackPointer(), event_data->GetRegisters().GetFramePointer(),
+        stack_dump_size_, callchain.data(), callchain.size(),
+        &HasFramePointerSetCallback<CallchainPerfEventDataT>,
         &UnwindOneStepCallback<CallchainPerfEventDataT>,
         &IsExecutableCallback<CallchainPerfEventDataT>, &context, patched_ips.data(), &patched);
     if (patched) {
@@ -264,9 +264,9 @@ class LeafFunctionCallManager {
   }
 
   template <typename CallchainPerfEventDataT>
-  orbit_grpc_protos::Callstack::CallstackType Dispatch(
-      const CallchainPerfEventDataT* event_data, LibunwindstackMaps* current_maps,
-      LibunwindstackUnwinder* unwinder) {
+  orbit_grpc_protos::Callstack::CallstackType Dispatch(const CallchainPerfEventDataT* event_data,
+                                                       LibunwindstackMaps* current_maps,
+                                                       LibunwindstackUnwinder* unwinder) {
     switch (backend_) {
       case TracingStateBackend::kCpp:
         return cpp_.PatchCallerOfLeafFunction(event_data, current_maps, unwinder);
@@ -293,8 +293,7 @@ class LeafFunctionCallManager {
         if (cpp_result != rust_result) {
           ORBIT_FATAL("PatchCallerOfLeafFunction: C++ and Rust backends disagree on the result");
         }
-        if (!rust_patched_ips.empty() &&
-            event_data->CopyOfIpsAsVector() != rust_patched_ips) {
+        if (!rust_patched_ips.empty() && event_data->CopyOfIpsAsVector() != rust_patched_ips) {
           ORBIT_FATAL("PatchCallerOfLeafFunction: C++ and Rust backends disagree on the ips");
         }
         return cpp_result;

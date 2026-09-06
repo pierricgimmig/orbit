@@ -17,8 +17,7 @@ namespace orbit_module_utils {
 // Internal to //src/ModuleUtils. The public entry point is ParseMaps() in
 // ReadLinuxMaps.h, which Backend.cpp implements by dispatching to one of the
 // two backends. See docs/rust-port-plan.html.
-[[nodiscard]] std::vector<LinuxMemoryMapping> ParseMapsCpp(
-    std::string_view proc_pid_maps_content);
+[[nodiscard]] std::vector<LinuxMemoryMapping> ParseMapsCpp(std::string_view proc_pid_maps_content);
 
 enum class MapsBackend { kCpp, kRust, kBoth };
 

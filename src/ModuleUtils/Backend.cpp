@@ -51,16 +51,16 @@ namespace {
 
 [[nodiscard]] bool Equal(const LinuxMemoryMapping& lhs, const LinuxMemoryMapping& rhs) {
   return lhs.start_address() == rhs.start_address() && lhs.end_address() == rhs.end_address() &&
-         lhs.perms() == rhs.perms() && lhs.offset() == rhs.offset() &&
-         lhs.inode() == rhs.inode() && lhs.pathname() == rhs.pathname();
+         lhs.perms() == rhs.perms() && lhs.offset() == rhs.offset() && lhs.inode() == rhs.inode() &&
+         lhs.pathname() == rhs.pathname();
 }
 
 // Aborts with both values printed if the two backends disagree anywhere.
 void CheckBackendsAgree(const std::vector<LinuxMemoryMapping>& cpp_result,
                         const std::vector<LinuxMemoryMapping>& rust_result) {
   if (cpp_result.size() != rust_result.size()) {
-    ORBIT_FATAL("ParseMaps backends disagree on entry count: cpp=%u rust=%u",
-                cpp_result.size(), rust_result.size());
+    ORBIT_FATAL("ParseMaps backends disagree on entry count: cpp=%u rust=%u", cpp_result.size(),
+                rust_result.size());
   }
 
   for (size_t i = 0; i < cpp_result.size(); ++i) {
