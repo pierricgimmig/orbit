@@ -276,6 +276,7 @@ mod tests {
         assert_eq!(a as f64 as u64, a);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn this_process_indexes_its_own_functions() {
         let index = FunctionIndex::for_pid(std::process::id() as i32);
@@ -334,6 +335,7 @@ mod tests {
         assert_eq!(hits[0].name, "malloc", "shortest match first");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn modules_are_listed_with_their_symbol_counts() {
         let index = FunctionIndex::for_pid(std::process::id() as i32);

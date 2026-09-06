@@ -111,6 +111,7 @@ fn arg_u64(name: &str) -> Option<u64> {
 /// Pins the calling thread to one CPU. What `--stress-migrate` does between
 /// calls: a migration the kernel is told to make, at a known place in the
 /// call sequence, so a capture can count the hits around it.
+#[cfg(target_os = "linux")]
 fn pin_to_cpu(cpu: usize) {
     // SAFETY: a zeroed cpu_set_t is a valid empty set; CPU_SET writes within
     // it; sched_setaffinity reads only what it is given.
@@ -119,6 +120,12 @@ fn pin_to_cpu(cpu: usize) {
         libc::CPU_SET(cpu, &mut set);
         libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn pin_to_cpu(_cpu: usize) {
+    // macOS exposes affinity hints, not Linux's pin-to-logical-CPU contract.
+    // Normal manual-instrumentation scenarios do not need CPU pinning.
 }
 
 /// One stress thread: `calls` outer calls at `hz`, paced by a spin-wait so
@@ -189,6 +196,10 @@ fn main() {
         let hz = arg_u64("--stress-hz").unwrap_or(1000);
         let calls = arg_u64("--stress-calls").unwrap_or(1000);
         let migrate_every = arg_u64("--stress-migrate").unwrap_or(0);
+        if cfg!(target_os = "macos") && migrate_every > 0 {
+            eprintln!("--stress-migrate requires Linux CPU affinity");
+            std::process::exit(2);
+        }
         let wait_go = std::env::args().any(|a| a == "--wait-go");
         stress_main(threads.max(1), hz, calls, migrate_every, wait_go);
         return;

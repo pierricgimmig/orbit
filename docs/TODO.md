@@ -98,20 +98,22 @@ theme follows the reader's colour scheme.
 - Static capture binary, backend-swappable via env var, on all three
   platforms. Differential test suite fails the build on any mismatch.
 
-**Status: deferred — needs those machines.** PDB parsing is done. ETW and
-kdebug are handed to a Windows/macOS session in
-`docs/windows-agent-brief.md`, with the verified cross-compile table and
-the acceptance tests. No OS syscall code is written blind here.
+**Status: macOS manual capture implemented; native runtime validation pending.**
+The Mac service serves the viewer, discovers processes/threads and records manual
+instrumentation on Intel and Apple Silicon. See [building_macos.md](building_macos.md).
+Native CI covers both architectures. PDB parsing is done; ETW, macOS sampling,
+scheduling and dynamic hooks remain deferred. Multi-service live aggregation
+needs host identity and clock synchronization before merging Linux/Mac timelines.
 
 ## 8. Shared-memory ring buffer — Windows + macOS
 
-orbit-scope-ring's shm module is Linux-only (shm_open/ftruncate/mmap).
-Add CreateFileMapping (Windows) and the macOS equivalent behind
-target_os gates. Ring logic itself is portable — it just takes a raw
-pointer. Sweep_dead_segments must handle the new naming schemes.
+Linux uses POSIX shm. macOS now uses private per-user file-backed shared
+mappings, discovery and dead-process cleanup, with a fixed 16 KiB control area
+for Intel/Apple Silicon/Rosetta layout compatibility.
 
-**Status: deferred with 7.** `shm.rs` is the only file that fails the
-`x86_64-pc-windows-msvc` check; the brief names it.
+**Status: macOS implemented and cross-checked for both architectures; native CI
+added, runtime results pending.** Windows CreateFileMapping/OpenFileMapping and
+its discovery namespace remain deferred.
 
 ## 9. Scope-scoped sampling report
 

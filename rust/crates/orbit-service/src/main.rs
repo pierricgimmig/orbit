@@ -16,11 +16,15 @@
 //! With no --pid it samples its own busy worker thread, which needs no root
 //! at perf_event_paranoid <= 1.
 
+#[cfg(target_os = "macos")]
+mod macos;
+mod hooks;
 mod code;
 mod functions;
 mod interner;
 mod lan;
 mod names;
+#[cfg(target_os = "linux")]
 mod privileges;
 mod report;
 mod scope_index;
@@ -30,23 +34,37 @@ mod serve;
 mod symbolize;
 mod sysinfo;
 mod telemetry;
+#[cfg(target_os = "linux")]
 mod thread_state;
+#[cfg(target_os = "linux")]
 mod uprobes;
 mod visible;
 
+#[cfg(target_os = "linux")]
 use interner::CallstackInterner;
+#[cfg(target_os = "linux")]
 use telemetry::TelemetryHelper;
+#[cfg(target_os = "linux")]
 use orbit_perf_records::reader::{
     parse_context_switch, parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT,
 };
+#[cfg(target_os = "linux")]
 use orbit_perf_records::{record_type, PerfEventHeader};
+#[cfg(target_os = "linux")]
 use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
+#[cfg(target_os = "linux")]
 use orbit_unwind::unwinder::StartRegs;
+#[cfg(target_os = "linux")]
 use orbit_unwind::ProcessUnwinder;
+#[cfg(target_os = "linux")]
 use orbit_wire::{CallstackType, Event, Writer};
+#[cfg(target_os = "linux")]
 use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
 use std::io::Write;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 struct Args {
     pid: Option<i32>,
@@ -177,6 +195,9 @@ fn parse_args() -> Args {
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]"
                 );
+                if cfg!(target_os = "macos") {
+                    eprintln!("macOS: manual capture only; --out must end in .orbit.zip; --freq-hz is unused");
+                }
                 std::process::exit(0);
             }
             other => eprintln!("orbit-service: ignoring unknown argument {other}"),
@@ -187,11 +208,11 @@ fn parse_args() -> Args {
 
 /// Sampled-register layout for kSampleRegsUserAll on x86_64: ax,bx,cx,dx,
 /// si,di,bp,sp,ip,... so bp=6, sp=7, ip=8.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn start_regs(regs: &[u64]) -> StartRegs {
     StartRegs { ip: regs[8], sp: regs[7], frame_pointer: regs[6], link: 0 }
 }
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 fn start_regs(regs: &[u64]) -> StartRegs {
     StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] }
 }
@@ -210,6 +231,17 @@ fn main() {
 
     let args = parse_args();
 
+    #[cfg(target_os = "macos")]
+    if let Err(error) = macos::capture_file(args) {
+        eprintln!("orbit-service: {error}");
+        std::process::exit(2);
+    }
+    #[cfg(target_os = "linux")]
+    capture_file_linux(args);
+}
+
+#[cfg(target_os = "linux")]
+fn capture_file_linux(args: Args) {
     // Without a target, sample this process's own busy thread.
     let sampling_self = args.pid.is_none();
     let target_tid = args.pid.unwrap_or_else(|| unsafe { libc::gettid() });
@@ -565,6 +597,7 @@ fn main() {
 /// PCI ids come from sysfs (the helper does not report them), while the model
 /// name, VRAM size and driver version come from the helper, which is the only
 /// side that can know them.
+#[cfg(target_os = "linux")]
 fn merge_gpu_info(existing: &mut BTreeMap<u32, Event>, incoming: Event) {
     let Event::GpuInfo {
         device_index,
@@ -629,6 +662,7 @@ fn default_gpu_helper() -> Option<String> {
 }
 
 /// Wall-clock nanoseconds since the UNIX epoch, for anchoring the capture.
+#[cfg(target_os = "linux")]
 fn unix_now_ns() -> u64 {
     let mut timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: clock_gettime into a local.
@@ -649,6 +683,7 @@ pub(crate) fn now_monotonic_ns() -> u64 {
 }
 
 /// Online CPU count, for sizing the self-mode worker pool. Falls back to 4.
+#[cfg(target_os = "linux")]
 pub(crate) fn num_cpus_hint() -> usize {
     // SAFETY: sysconf is always safe to call.
     let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
@@ -657,6 +692,7 @@ pub(crate) fn num_cpus_hint() -> usize {
 
 /// A non-inlinable CPU burn so a self-capture has real stacks to unwind.
 #[inline(never)]
+#[cfg(target_os = "linux")]
 fn burn_cpu(seed: u64) -> u64 {
     let mut acc = seed;
     for i in 0..4096u64 {

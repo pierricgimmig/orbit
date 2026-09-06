@@ -30,3 +30,7 @@ third_party/py-spy/
 
 # The built web site (tools/site/build_site.py)
 /site/
+
+# Packaged macOS service and manual instrumentation SDK
+/dist/macos/
+/dist/macos-universal/

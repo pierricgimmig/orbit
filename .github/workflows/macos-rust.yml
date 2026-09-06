@@ -1,0 +1,51 @@
+name: macos-rust
+
+on:
+  push:
+    branches: [rust]
+  pull_request:
+    branches: [main, rust]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manual-capture:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Explicit architectures: macos-15 is Apple Silicon.
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Test manual API and shared mappings
+        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-api -p orbit-scope-ring
+      - name: Test service
+        run: cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-service/Cargo.toml
+      - name: Build distributable service and SDK
+        run: ./build-service-macos.sh
+      - name: Build and run C and C++ consumers
+        run: |
+          ./src/OrbitTestC/build.sh
+          ./src/OrbitTestCpp/build.sh
+          ./src/OrbitTestC/OrbitTestC --seconds 1
+          ./src/OrbitTestCpp/OrbitTestCpp --seconds 1
+      - name: Smoke test capture and restart
+        run: |
+          python3 -m venv /tmp/orbit-smoke
+          /tmp/orbit-smoke/bin/pip install pyarrow
+          /tmp/orbit-smoke/bin/python tools/e2e/manual_service_smoke.py --service dist/macos/orbit-service --api-lib dist/macos/liborbit_api.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-${{ matrix.runner }}
+          path: dist/macos/

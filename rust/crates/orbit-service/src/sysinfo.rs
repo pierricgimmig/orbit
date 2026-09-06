@@ -88,6 +88,7 @@ fn read_trimmed(path: &str) -> Vec<u8> {
 }
 
 /// Builds the `SystemInfo` event for this machine and moment.
+#[cfg(target_os = "linux")]
 pub fn system_info(capture_start_unix_ns: u64, capture_start_monotonic_ns: u64) -> Event {
     let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
     let (cpu_model, cpu_cores, cpu_threads) = parse_cpuinfo(&cpuinfo);
@@ -104,6 +105,45 @@ pub fn system_info(capture_start_unix_ns: u64, capture_start_monotonic_ns: u64) 
         cpu_threads,
         ram_total_bytes: parse_meminfo_total_bytes(&meminfo),
         page_size_bytes: if page_size > 0 { page_size as u64 } else { 4096 },
+    }
+}
+
+/// Read a public sysctl value without assuming its string or integer width.
+#[cfg(target_os = "macos")]
+fn sysctl(name: &std::ffi::CStr) -> Vec<u8> {
+    let mut len = 0;
+    unsafe {
+        if libc::sysctlbyname(name.as_ptr(), std::ptr::null_mut(), &mut len,
+                             std::ptr::null_mut(), 0) != 0 { return Vec::new(); }
+        let mut value = vec![0u8; len];
+        if libc::sysctlbyname(name.as_ptr(), value.as_mut_ptr().cast(), &mut len,
+                             std::ptr::null_mut(), 0) != 0 { return Vec::new(); }
+        value.truncate(len);
+        value
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn system_info(capture_start_unix_ns: u64, capture_start_monotonic_ns: u64) -> Event {
+    let string = |name| {
+        let mut bytes = sysctl(name);
+        while bytes.last() == Some(&0) { bytes.pop(); }
+        bytes
+    };
+    let number = |name| match sysctl(name).as_slice() {
+        bytes if bytes.len() == 4 => u32::from_ne_bytes(bytes.try_into().unwrap()) as u64,
+        bytes if bytes.len() == 8 => u64::from_ne_bytes(bytes.try_into().unwrap()),
+        _ => 0,
+    };
+    let mut cpu_model = string(c"machdep.cpu.brand_string");
+    if cpu_model.is_empty() { cpu_model = string(c"hw.model"); }
+    Event::SystemInfo {
+        capture_start_unix_ns, capture_start_monotonic_ns,
+        hostname: string(c"kern.hostname"), kernel_release: string(c"kern.osrelease"),
+        cpu_model, cpu_cores: number(c"hw.physicalcpu") as u32,
+        cpu_threads: number(c"hw.logicalcpu") as u32,
+        ram_total_bytes: number(c"hw.memsize"),
+        page_size_bytes: unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as u64,
     }
 }
 

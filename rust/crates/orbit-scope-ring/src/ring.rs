@@ -139,11 +139,18 @@ const _: () = assert!(std::mem::size_of::<Slot>() == CACHE_LINE);
 /// read-write to set `capturing` while mapping the rings read-only, and the
 /// two mappings never overlap a byte of ring data. Page-sized so the rings
 /// that follow begin at a page boundary, which the split mapping needs.
+#[cfg(not(target_os = "macos"))]
 pub fn control_bytes() -> usize {
     // SAFETY: sysconf(_SC_PAGESIZE) is always safe and never fails here.
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
     page.max(CACHE_LINE)
 }
+
+// Fixed across native ARM64, Intel, and Rosetta processes on the same Mac.
+// A 16 KiB control region keeps ring data off the writable control mapping
+// on both 4 KiB and 16 KiB hosts.
+#[cfg(target_os = "macos")]
+pub fn control_bytes() -> usize { 16 * 1024 }
 
 /// Total bytes for a mapping with these dimensions.
 pub fn layout_size(ring_count: usize, slots_per_ring: usize) -> usize {

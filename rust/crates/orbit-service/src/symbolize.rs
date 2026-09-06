@@ -305,6 +305,7 @@ mod tests {
         assert_eq!(find_symbol(&symbols(), 0x0), None);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn this_process_symbolizes_its_own_code() {
         let started = std::time::Instant::now();
@@ -323,6 +324,7 @@ mod tests {
         assert!(!label.starts_with("0x"), "unresolved: {label}");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_vdso_is_a_module_with_names() {
         let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
@@ -341,6 +343,7 @@ mod tests {
         assert_eq!(frame.module, "[vdso]");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_stripped_libc_gets_its_internals_from_the_detached_debug_file() {
         let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
@@ -365,6 +368,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_frames_function_id_is_the_function_indexs_id_for_it() {
         let pid = std::process::id() as i32;
@@ -391,6 +395,7 @@ mod tests {
         assert_eq!(demangle("clock_gettime"), "clock_gettime");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_resolved_frame_carries_its_module_and_address() {
         let symbolizer = Symbolizer::for_pid(std::process::id() as i32);

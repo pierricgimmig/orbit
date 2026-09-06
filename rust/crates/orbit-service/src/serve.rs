@@ -17,22 +17,38 @@
 
 use crate::functions::FunctionIndex;
 use crate::report::{FrameInfo, SampleRange, SampleStore, StoredSample, TreeMode};
+#[cfg(target_os = "linux")]
 use crate::scopes::ScopeSource;
+#[cfg(target_os = "linux")]
 use crate::telemetry::TelemetryHelper;
+#[cfg(target_os = "linux")]
 use crate::thread_state::{Focus, ThreadStateTracer};
-use crate::uprobes::{HookSpec, UprobeSession, MAX_HOOKS};
+use crate::hooks::{HookSpec, MAX_HOOKS};
+#[cfg(target_os = "linux")]
+use crate::uprobes::UprobeSession;
+#[cfg(target_os = "macos")]
+use crate::macos::capture_loop;
+#[cfg(target_os = "linux")]
 use crate::visible::VisibleProcesses;
+#[cfg(target_os = "linux")]
 use crate::symbolize::Symbolizer;
 use orbit_live_event::{kind, thread_state, LiveEvent};
+#[cfg(target_os = "linux")]
 use orbit_thread_states::Slice;
 use orbit_wire::{Event as WireEvent, METRIC_UNKNOWN_U32, METRIC_UNKNOWN_U64};
+#[cfg(target_os = "linux")]
 use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
+#[cfg(target_os = "linux")]
 use orbit_unwind::unwinder::StartRegs;
+#[cfg(target_os = "linux")]
 use orbit_unwind::ProcessUnwinder;
 use std::collections::HashMap;
 use orbit_live_server::{http, ControlHooks, LiveService, ServerConfig};
+#[cfg(target_os = "linux")]
 use orbit_perf_records::reader::parse_context_switch;
+#[cfg(target_os = "linux")]
 use orbit_perf_records::{record_type, ForkExit, PerfEventHeader};
+#[cfg(target_os = "linux")]
 use orbit_tracing_state::context_switches::{ContextSwitchManager, SwitchOut};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -42,6 +58,7 @@ pub const DEFAULT_PORT: u16 = 44766;
 
 /// Name ids for symbolized frames start here, clear of the ids the server
 /// assigns to its own lanes.
+#[cfg(target_os = "linux")]
 const FRAME_NAME_ID_BASE: u32 = 1 << 20;
 
 /// A synthetic pid for machine-wide GPU tracks, so they lane on their own
@@ -145,6 +162,7 @@ fn gpu_events(event: &WireEvent) -> Vec<LiveEvent> {
 
 /// Interns function names into the viewer's table, handing back the id the
 /// LiveEvent carries. The viewer renders the name; we only allocate ids.
+#[cfg(target_os = "linux")]
 struct FrameNames {
     service: Arc<LiveService>,
     store: Arc<SampleStore>,
@@ -152,6 +170,7 @@ struct FrameNames {
     next: u32,
 }
 
+#[cfg(target_os = "linux")]
 impl FrameNames {
     fn new(service: Arc<LiveService>, store: Arc<SampleStore>) -> FrameNames {
         FrameNames { service, store, ids: HashMap::new(), next: FRAME_NAME_ID_BASE }
@@ -231,6 +250,9 @@ impl SymbolState {
 
 /// Starts indexing `pid` unless that has already been done or is under way.
 fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        return Err("Live symbol loading and dynamic hooks are not yet supported on macOS; manual instrumentation is available".into());
+    }
     if pid == 0 {
         return Err("a process must be selected before symbols can be loaded".to_string());
     }
@@ -381,6 +403,7 @@ fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSl
 /// not. The pid comes from `/proc` because a state slice carries only a tid --
 /// a thread that has already exited resolves to nothing and is dropped, which
 /// is correct: there is no row to draw it on.
+#[cfg(target_os = "linux")]
 fn thread_state_event(slice: &Slice, focus: &Focus, visible: &VisibleProcesses) -> Option<LiveEvent> {
     // The focus knows every tracked thread's process; the `/proc` read is
     // only for a capture that tracks everything.
@@ -402,6 +425,7 @@ fn thread_state_event(slice: &Slice, focus: &Focus, visible: &VisibleProcesses) 
 }
 
 /// The process a thread belongs to, from `/proc/self/task` upwards.
+#[cfg(target_os = "linux")]
 fn pid_of_tid(tid: i32) -> Option<u32> {
     let status = std::fs::read_to_string(format!("/proc/{tid}/status")).ok()?;
     for line in status.lines() {
@@ -414,6 +438,7 @@ fn pid_of_tid(tid: i32) -> Option<u32> {
 
 /// Enumerates processes for the viewer's Capture strip. The viewer expects
 /// `[{"pid":N,"name":"...","cpu":F,"path":"..."}]`.
+#[cfg(target_os = "linux")]
 fn list_processes_json() -> Result<String, String> {
     let mut entries = Vec::new();
     let dir = std::fs::read_dir("/proc").map_err(|error| error.to_string())?;
@@ -446,6 +471,9 @@ fn list_processes_json() -> Result<String, String> {
 /// start low, so an id handed out here would be overwritten by an
 /// instrumented process's next name; a hash of the text in the top half
 /// of the id space keeps clear of both, and of the frame ids at 2^21.
+#[cfg(target_os = "macos")]
+fn list_processes_json() -> Result<String, String> { crate::macos::list_processes_json() }
+
 fn agent_name_id(service: &LiveService, name: &str) -> u32 {
     let mut h: u32 = 0x811C_9DC5;
     for b in name.bytes() {
@@ -568,12 +596,14 @@ fn open_bundle(
 /// viewer's ring so it appears on the timeline as it happens.
 /// One thread of the target under sampling: its sampling ring and, when
 /// it could be opened, its task-event ring (fork and exit records).
+#[cfg(target_os = "linux")]
 struct SampledThread {
     tid: i32,
     sample: orbit_perf_ring::RingBuffer,
     task: Option<orbit_perf_ring::RingBuffer>,
 }
 
+#[cfg(target_os = "linux")]
 fn capture_loop(
     service: Arc<LiveService>,
     running: Arc<AtomicBool>,
@@ -1492,6 +1522,10 @@ pub fn run_on(
     let start_running = capture.running.clone();
     let start_pid = capture.target_pid.clone();
     let stop_running = capture.running.clone();
+    // Serialize start/stop through final drain, before reusing the running flag.
+    let worker = Arc::new(Mutex::new(None::<std::thread::JoinHandle<()>>));
+    let start_worker = worker.clone();
+    let stop_worker = worker;
     let start_symbols = symbols.clone();
     let load_state = symbols.clone();
     let status_state = symbols.clone();
@@ -1509,8 +1543,18 @@ pub fn run_on(
                 .ok()
                 .and_then(|value| value.get("pid").and_then(|p| p.as_i64()))
                 .unwrap_or(0) as i32;
+            if cfg!(target_os = "macos") && !hook_request(body).0.is_empty() {
+                return Err("Dynamic hooks are not yet supported on macOS; use manual instrumentation".into());
+            }
+            let mut worker = start_worker.lock().map_err(|_| "capture worker poisoned".to_string())?;
             if start_running.swap(true, Ordering::SeqCst) {
                 return Err("a capture is already running".to_string());
+            }
+            if let Some(previous) = worker.take() {
+                if previous.join().is_err() {
+                    start_running.store(false, Ordering::SeqCst);
+                    return Err("previous capture worker panicked".into());
+                }
             }
             start_pid.store(pid, Ordering::SeqCst);
             // Whatever the viewer ticked in the hook picker. The picker only
@@ -1590,7 +1634,7 @@ pub fn run_on(
             }
             let store = start_store.clone();
             let helper = start_helper.clone();
-            std::thread::Builder::new()
+            let handle = std::thread::Builder::new()
                 .name("orbit-capture".to_string())
                 .spawn(move || {
                     capture_loop(
@@ -1604,12 +1648,20 @@ pub fn run_on(
                         uprobe_duplicate_filter,
                     )
                 })
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| {
+                    start_running.store(false, Ordering::SeqCst);
+                    error.to_string()
+                })?;
+            *worker = Some(handle);
             eprintln!("orbit-service: capture started (pid {pid})");
             Ok(())
         }),
         stop_capture: Arc::new(move || {
+            let mut worker = stop_worker.lock().map_err(|_| "capture worker poisoned".to_string())?;
             stop_running.store(false, Ordering::SeqCst);
+            if let Some(handle) = worker.take() {
+                handle.join().map_err(|_| "capture worker panicked".to_string())?;
+            }
             eprintln!("orbit-service: capture stopped");
             Ok(())
         }),

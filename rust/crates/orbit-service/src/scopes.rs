@@ -74,8 +74,10 @@ pub struct ScopeSource {
     /// Pids tried and not found, with when, so a process that never
     /// instruments is not probed every five milliseconds forever.
     last_probe_ns: HashMap<u32, u64>,
+    next_discovery_ns: u64,
     pub links_seen: u64,
     pub events_pushed: u64,
+    pub events_lost: u64,
 }
 
 impl ScopeSource {
@@ -92,8 +94,10 @@ impl ScopeSource {
             names: NameInterner::starting_at(SCOPE_NAME_ID_BASE),
             segments: Vec::new(),
             last_probe_ns: HashMap::new(),
+            next_discovery_ns: 0,
             links_seen: 0,
             events_pushed: 0,
+            events_lost: 0,
         }
     }
 
@@ -125,6 +129,10 @@ impl ScopeSource {
     /// viewer should not depend on whether it happens to be a descendant of
     /// the target.
     fn discover(&mut self, visible: &mut VisibleProcesses, now_ns: u64) {
+        if now_ns < self.next_discovery_ns {
+            return;
+        }
+        self.next_discovery_ns = now_ns.saturating_add(REOPEN_EVERY_NS);
         // Every process with a segment, whoever it is: manual instrumentation
         // is of interest by definition, target or not. Plus the visible set,
         // whose segments may not exist yet (orbit_init after capture start),
@@ -177,9 +185,13 @@ impl ScopeSource {
     /// One pass: discover, drain, convert. Appends to `batch`.
     pub fn poll(&mut self, visible: &mut VisibleProcesses, now_ns: u64, batch: &mut Vec<LiveEvent>) {
         self.discover(visible, now_ns);
+        self.drain(now_ns, batch);
+    }
+
+    fn drain(&mut self, now_ns: u64, batch: &mut Vec<LiveEvent>) {
         let mut new_names = Vec::new();
         for index in 0..self.segments.len() {
-            let alive = if std::path::Path::new(&format!("/proc/{}", self.segments[index].pid)).exists() {
+            let alive = if orbit_scope_ring::platform::process_alive(self.segments[index].pid) {
                 Producer::Alive
             } else {
                 Producer::Gone
@@ -188,6 +200,7 @@ impl ScopeSource {
                 let segment = &mut self.segments[index];
                 drain_from(segment.reader.rings(), &mut segment.cursors, now_ns, alive)
             };
+            self.events_lost = self.events_lost.saturating_add(pass.dropped);
             // Sort this pass by timestamp before pairing. The rings arrive in
             // ring-index order, but a START and its STOP can be on different
             // rings -- an async scope is started on one thread and stopped on
@@ -304,15 +317,26 @@ impl ScopeSource {
     /// capture is drawn rather than lost, and tells every producer to stop
     /// writing.
     pub fn finish(&mut self, end_ns: u64, batch: &mut Vec<LiveEvent>) {
-        for segment in &mut self.segments {
-            // Stop the producer before the final drain below reads what it
-            // has: once clear, nothing new is written, so the drain is
-            // complete.
+        // Disable new writes, then consume the committed prefix. A producer
+        // already inside a write may still be in flight; this is not a global
+        // quiescence barrier, and unfinished scopes are clipped at end_ns.
+        for segment in &self.segments {
             segment.reader.set_capturing(false);
+        }
+        self.drain(end_ns, batch);
+        for segment in &mut self.segments {
             for (_, open) in segment.open.drain() {
                 batch.push(span(open, end_ns));
                 self.events_pushed += 1;
             }
+        }
+    }
+}
+
+impl Drop for ScopeSource {
+    fn drop(&mut self) {
+        for segment in &self.segments {
+            segment.reader.set_capturing(false);
         }
     }
 }

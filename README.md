@@ -1,5 +1,10 @@
 # ORBIT
 
+On the **Rust branch**, the service now includes macOS manual instrumentation
+and browser viewer hosting for Apple Silicon and Intel. See the
+[macOS build guide](docs/building_macos.md) for setup, validation status and
+features still pending.
+
 <img alt="ORBIT Logo" src="contrib/logos/orbit_logo_simple.png" align="right" width="520" >
 
 Orbit, the **O**pen **R**untime **B**inary **I**nstrumentation **T**ool is a

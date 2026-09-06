@@ -215,6 +215,9 @@ pub fn source_json(path: &str, allow: &SourceAllowList) -> Result<String, String
 /// line table. `orbit_service::uprobes` is the module it looks for, a
 /// function big enough to read; failing that, the largest function.
 pub fn example_disassembly_json(allow: &SourceAllowList) -> Result<String, String> {
+    if cfg!(target_os = "macos") {
+        return Err("Live Mach-O disassembly is not yet supported on macOS".into());
+    }
     static OWN_INDEX: OnceLock<FunctionIndex> = OnceLock::new();
     let index = OWN_INDEX.get_or_init(|| FunctionIndex::for_pid(std::process::id() as i32));
     let exe = std::fs::read_link("/proc/self/exe").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();

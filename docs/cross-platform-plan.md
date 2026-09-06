@@ -7,14 +7,12 @@
 Target platforms: Linux x86-64 (done), Linux aarch64, macOS (x86-64 + Apple
 silicon), Windows x86-64.
 
-The honest constraint up front: this repository's CI, and the machine this was
-developed on, are Linux x86-64. Every claim in this project traces to a
-result that was actually run. I can *compile-check* other targets where a
-cross-toolchain exists, but I cannot run tests on macOS or Windows, and I will
-not commit ETW or kdebug code as "working" that has never been compiled on the
-OS it targets. Those need a runner on the real OS. What follows separates what
-is done and verified, what is written but unverified, and what is
-deliberately left as a roadmap rather than blind code.
+Development runs on Linux x86-64. Native validation must be distinguished from
+cross-compilation: the macOS manual capture backend now compile-checks for both
+Apple targets, and a native Intel/Apple Silicon CI workflow has been added.
+Native runtime results are pending. See [building_macos.md](building_macos.md)
+for the implemented service, SDK, smoke test and current limitations. ETW and
+macOS sampling/scheduling remain roadmap work.
 
 ## Done and verified
 
@@ -38,15 +36,15 @@ everywhere.
 
 **The producer's OS surface is abstracted.** `orbit-scope-ring::platform` is
 the entire non-portable surface of the manual-instrumentation producer: a
-monotonic clock and a thread id. Unix (Linux + macOS) is implemented and
-tested; the macOS arm shares the clock and uses `pthread_threadid_np`. The
+monotonic clock and a thread id. Linux is runtime-tested; macOS compile-checks
+and uses `CLOCK_MONOTONIC` plus `pthread_threadid_np`. The
 Windows arm is written against `QueryPerformanceCounter` and
 `GetCurrentThreadId` -- structurally correct, unverified until a Windows build.
 
 ## Written but unverified (needs the target OS to confirm)
 
-**Windows producer shared memory.** The Unix producer uses POSIX
-`shm_open`/`mmap`, which macOS shares. Windows needs
+**Windows producer shared memory (planned).** Linux uses POSIX shm; macOS uses
+private file-backed shared mappings so the service can discover producers. Windows needs
 `CreateFileMapping`/`MapViewOfFile`/`OpenFileMapping` and a named-object
 namespace instead of `/dev/shm`. This is a contained piece -- the `shm` module
 is ~200 lines -- but it touches the mapping split (the read-only rings plus the

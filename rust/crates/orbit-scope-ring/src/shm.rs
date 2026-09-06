@@ -4,8 +4,8 @@
 
 //! The shared mapping: one segment per instrumented process.
 //!
-//! `/dev/shm/orbit-scopes-<pid>`, created by the process being profiled and
-//! opened read-only by the service. Naming it by pid is what lets the service
+//! A segment in [`segment_directory`], created by the process being profiled
+//! and opened with read-only data and writable capture control by the service. Naming it by pid is what lets the service
 //! discover an instrumented process without the two ever having talked.
 //!
 //! The reader treats the segment as untrusted. It is written by another
@@ -17,6 +17,7 @@
 use crate::event::EVENT_SIZE;
 use crate::ring::{self, Header, Rings, MAGIC, MAX_RINGS, VERSION};
 use std::io;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::atomic::Ordering;
 
 /// What the whole segment costs the profiled process by default.
@@ -55,6 +56,47 @@ pub const DEFAULT_SLOTS_PER_RING: usize =
 /// reports as "not initialised yet" rather than mapping garbage.
 pub const SHM_DIR: &str = "/dev/shm";
 
+/// macOS has no enumerable POSIX-shm directory. Use shared file mappings in
+/// a private per-user directory instead, retaining discovery and crash cleanup.
+pub fn segment_directory() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    { std::path::PathBuf::from(format!("/tmp/orbit-scopes-{}", unsafe { libc::geteuid() })) }
+    #[cfg(not(target_os = "macos"))]
+    { std::path::PathBuf::from(SHM_DIR) }
+}
+
+fn prepare_directory() -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let dir = segment_directory();
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => {},
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {},
+            Err(e) => return Err(e),
+        }
+        let meta = std::fs::symlink_metadata(&dir)?;
+        if !meta.is_dir() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "scope directory must be owned by this user with mode 0700"));
+        }
+    }
+    Ok(())
+}
+
+unsafe fn segment_open(name: &std::ffi::CStr, flags: i32, mode: libc::mode_t) -> i32 {
+    #[cfg(target_os = "macos")]
+    { libc::open(name.as_ptr(), flags | libc::O_NOFOLLOW | libc::O_CLOEXEC, mode as libc::c_uint) }
+    #[cfg(not(target_os = "macos"))]
+    { libc::shm_open(name.as_ptr(), flags | libc::O_CLOEXEC, mode) }
+}
+
+unsafe fn segment_unlink(name: &std::ffi::CStr) -> i32 {
+    #[cfg(target_os = "macos")]
+    { libc::unlink(name.as_ptr()) }
+    #[cfg(not(target_os = "macos"))]
+    { libc::shm_unlink(name.as_ptr()) }
+}
+
 /// The filename, without a leading slash, that `pid`'s segment appears under
 /// in [`SHM_DIR`].
 pub fn shm_file_name(pid: u32) -> String {
@@ -70,13 +112,13 @@ pub fn shm_file_name(pid: u32) -> String {
 pub fn unlink_segment(pid: u32) -> bool {
     let name = shm_name(pid);
     // SAFETY: unlinking a name; the call has no other effect on this process.
-    unsafe { libc::shm_unlink(name.as_ptr()) == 0 }
+    unsafe { segment_unlink(&name) == 0 }
 }
 
 /// Unlinks every Orbit segment in [`SHM_DIR`] whose process no longer exists.
 /// Returns how many were removed. Never touches a live process's segment.
 pub fn sweep_dead_segments() -> usize {
-    let Ok(entries) = std::fs::read_dir(SHM_DIR) else { return 0 };
+    let Ok(entries) = std::fs::read_dir(segment_directory()) else { return 0 };
     let mut removed = 0;
     for entry in entries.flatten() {
         let Some(pid) = entry.file_name().to_str().and_then(pid_from_shm_file_name) else {
@@ -85,7 +127,7 @@ pub fn sweep_dead_segments() -> usize {
         if pid == std::process::id() {
             continue;
         }
-        if !std::path::Path::new(&format!("/proc/{pid}")).exists() && unlink_segment(pid) {
+        if !crate::platform::process_alive(pid) && unlink_segment(pid) {
             removed += 1;
         }
     }
@@ -97,11 +139,11 @@ pub fn sweep_dead_segments() -> usize {
 /// opens all of them -- a span somebody asked for is of interest whatever
 /// process it is in -- so this is the discovery a capture runs each pass.
 pub fn live_segment_pids() -> Vec<u32> {
-    let Ok(entries) = std::fs::read_dir(SHM_DIR) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(segment_directory()) else { return Vec::new() };
     let mut pids: Vec<u32> = entries
         .flatten()
         .filter_map(|e| e.file_name().to_str().and_then(pid_from_shm_file_name))
-        .filter(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists())
+        .filter(|pid| crate::platform::process_alive(*pid))
         .collect();
     pids.sort_unstable();
     pids
@@ -116,6 +158,9 @@ pub fn pid_from_shm_file_name(name: &str) -> Option<u32> {
 }
 
 fn shm_name(pid: u32) -> std::ffi::CString {
+    #[cfg(target_os = "macos")]
+    return std::ffi::CString::new(segment_directory().join(shm_file_name(pid)).to_string_lossy().as_bytes()).unwrap();
+    #[cfg(not(target_os = "macos"))]
     std::ffi::CString::new(format!("/orbit-scopes-{pid}")).expect("no NUL in a formatted pid")
 }
 
@@ -158,6 +203,7 @@ impl ScopeRingWriter {
 
     /// Creates (or replaces) this process's segment.
     pub fn create(ring_count: usize, slots_per_ring: usize) -> io::Result<ScopeRingWriter> {
+        prepare_directory()?;
         let pid = std::process::id();
         let ring_count = ring_count.clamp(1, MAX_RINGS);
         let slots_per_ring = slots_per_ring.max(2).next_power_of_two();
@@ -166,8 +212,8 @@ impl ScopeRingWriter {
 
         // SAFETY: plain syscalls; every failure is checked before use.
         let fd = unsafe {
-            libc::shm_unlink(name.as_ptr()); // a stale segment from a recycled pid
-            libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR | libc::O_EXCL, 0o600)
+            segment_unlink(&name); // a stale segment from a recycled pid
+            segment_open(&name, libc::O_CREAT | libc::O_RDWR | libc::O_EXCL, 0o600)
         };
         if fd < 0 {
             return Err(io::Error::last_os_error());
@@ -175,7 +221,7 @@ impl ScopeRingWriter {
         // SAFETY: fd is open; sized before mapping.
         if unsafe { libc::ftruncate(fd, len as libc::off_t) } != 0 {
             let error = io::Error::last_os_error();
-            unsafe { libc::close(fd) };
+            unsafe { libc::close(fd); segment_unlink(&name); }
             return Err(error);
         }
         // SAFETY: mapping the fd we just sized.
@@ -192,7 +238,9 @@ impl ScopeRingWriter {
         // SAFETY: the mapping holds its own reference to the file.
         unsafe { libc::close(fd) };
         if base == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            unsafe { segment_unlink(&name); }
+            return Err(error);
         }
         let base = base.cast::<u8>();
         // SAFETY: base is a fresh writable mapping of exactly `len` bytes.
@@ -227,7 +275,7 @@ impl ScopeRingWriter {
         let name = shm_name(self.pid);
         // SAFETY: unlinking a name this process created.
         unsafe {
-            libc::shm_unlink(name.as_ptr());
+            segment_unlink(&name);
         }
     }
 }
@@ -258,25 +306,27 @@ unsafe impl Sync for ScopeRingReader {}
 impl ScopeRingReader {
     /// Opens the segment of `pid`, validating everything the producer claims.
     pub fn open(pid: u32) -> io::Result<ScopeRingReader> {
+        prepare_directory()?;
         let name = shm_name(pid);
         // O_RDWR, not O_RDONLY: the rings are still mapped read-only below,
         // but the control page needs a writable mapping so the service can set
         // `capturing`. The segment is mode 0600, so this is same-user only.
         // SAFETY: plain syscall, result checked.
-        let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, 0) };
+        let fd = unsafe { segment_open(&name, libc::O_RDWR, 0) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
+        // Keep one descriptor for both views: reopening by name can race a
+        // producer restart and map the control page of a different segment.
+        let _fd_owner = unsafe { OwnedFd::from_raw_fd(fd) };
         let mut stat: libc::stat = unsafe { std::mem::zeroed() };
         // SAFETY: fd is open, stat is a live local.
         if unsafe { libc::fstat(fd, &mut stat) } != 0 {
             let error = io::Error::last_os_error();
-            unsafe { libc::close(fd) };
             return Err(error);
         }
-        let len = stat.st_size as usize;
+        let len = usize::try_from(stat.st_size).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid segment size"))?;
         if len < ring::CACHE_LINE {
-            unsafe { libc::close(fd) };
             return Err(io::Error::new(io::ErrorKind::InvalidData, "segment is smaller than its header"));
         }
         // Read-only: a buggy consumer must not be able to corrupt the process
@@ -286,7 +336,6 @@ impl ScopeRingReader {
             libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd, 0)
         };
         // SAFETY: the mapping holds its own reference.
-        unsafe { libc::close(fd) };
         if base == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
@@ -302,6 +351,9 @@ impl ScopeRingReader {
             // stored last precisely so this window is visible rather than
             // silently mapped at bogus dimensions. Callers retry.
             return Err(bad("not an Orbit scope segment (or not initialised yet)"));
+        }
+        if header.pid != pid {
+            return Err(bad("scope segment pid mismatch"));
         }
         if header.version != VERSION {
             return Err(bad("scope segment version mismatch"));
@@ -326,24 +378,18 @@ impl ScopeRingReader {
         // A second, writable mapping of the control page alone. It overlaps
         // the read-only mapping's first page, which is harmless: nothing but
         // the header lives there, and the rings begin on the next page.
-        // SAFETY: mapping the same fd; failure is checked. fd was reopened
-        // below because the first was closed after the read-only mapping.
+        // SAFETY: mapping the same open fd; failure is checked.
         let control_len = ring::control_bytes();
-        let ctl_fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_RDWR, 0) };
-        if ctl_fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
         let control_base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
                 control_len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_SHARED,
-                ctl_fd,
+                fd,
                 0,
             )
         };
-        unsafe { libc::close(ctl_fd) };
         if control_base == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
@@ -393,6 +439,7 @@ pub fn now_monotonic_ns() -> u64 {
 /// No longer used to pick a ring -- rings follow threads, which is what made
 /// the design portable. Kept because it is the cheapest way to record which
 /// core a scope ran on, should that ever be wanted.
+#[cfg(target_os = "linux")]
 pub fn current_cpu() -> usize {
     // SAFETY: sched_getcpu takes no arguments and cannot fail meaningfully.
     let cpu = unsafe { libc::sched_getcpu() };
@@ -402,6 +449,9 @@ pub fn current_cpu() -> usize {
         cpu as usize
     }
 }
+
+#[cfg(target_os = "macos")]
+pub fn current_cpu() -> usize { 0 }
 
 #[cfg(test)]
 mod tests {
@@ -430,6 +480,30 @@ mod tests {
         let event = reader.rings().committed(0, 0).expect("the event crossed the boundary");
         assert_eq!(event.timestamp_ns, 1234);
         assert_eq!(event.tid, 7);
+    }
+
+    #[test]
+    fn a_segment_with_the_wrong_pid_is_rejected() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 8).unwrap();
+        // No consumer exists yet; simulate a stale or malformed producer.
+        unsafe { (*writer.mapping.base.cast::<Header>()).pid = writer.pid() + 1; }
+        assert_eq!(ScopeRingReader::open(writer.pid()).err().unwrap().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_segments_are_private_and_have_architecture_independent_offsets() {
+        use std::os::unix::fs::MetadataExt;
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(2, 8).unwrap();
+        let directory = std::fs::symlink_metadata(segment_directory()).unwrap();
+        assert_eq!(directory.mode() & 0o777, 0o700);
+        assert_eq!(directory.uid(), unsafe { libc::geteuid() });
+        let segment = std::fs::metadata(segment_directory().join(shm_file_name(writer.pid()))).unwrap();
+        assert_eq!(segment.mode() & 0o777, 0o600);
+        assert_eq!(ring::control_bytes(), 16 * 1024);
+        assert_eq!(ring::layout_size(2, 8), 16 * 1024 + 2 * 64 + 2 * 8 * 64);
     }
 
     #[test]
@@ -492,7 +566,7 @@ mod tests {
     fn the_writer_creates_a_file_a_watcher_can_see() {
         let _guard = exclusive();
         let writer = ScopeRingWriter::create(2, 8).expect("create");
-        let path = format!("{SHM_DIR}/{}", shm_file_name(writer.pid()));
+        let path = segment_directory().join(shm_file_name(writer.pid())).display().to_string();
         assert!(std::path::Path::new(&path).exists(), "{path} should exist");
         drop(writer);
         assert!(!std::path::Path::new(&path).exists(), "and be unlinked on drop");
@@ -505,11 +579,11 @@ mod tests {
         let mine = ScopeRingWriter::create(2, 8).expect("create");
         // A segment for a pid that certainly does not exist.
         let dead_pid = 4_000_000_000u32 - 7;
-        let name = std::ffi::CString::new(format!("/orbit-scopes-{dead_pid}")).unwrap();
-        let fd = unsafe { libc::shm_open(name.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600) };
+        let name = shm_name(dead_pid);
+        let fd = unsafe { segment_open(&name, libc::O_CREAT | libc::O_RDWR, 0o600) };
         assert!(fd >= 0);
         unsafe { libc::close(fd) };
-        let dead_path = format!("{SHM_DIR}/{}", shm_file_name(dead_pid));
+        let dead_path = segment_directory().join(shm_file_name(dead_pid)).display().to_string();
         assert!(std::path::Path::new(&dead_path).exists());
 
         let removed = sweep_dead_segments();
