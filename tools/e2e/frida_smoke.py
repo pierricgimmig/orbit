@@ -151,7 +151,7 @@ def main():
                     assert len(tids) == 3
                     if not args.no_manual: assert tids == {r['tid'] for r in rows if r['pid'] == pid and r['name'] == 'manual worker'}, 'manual and dynamic thread identities differ'
                 if not args.no_manual: assert any(r['pid'] == pid and r['name'] == 'manual alongside Frida' for r in rows), 'manual segment was replaced'
-                if args.engine == 'frida':
+                if args.engine in ('frida', 'kernel_uprobes'):
                     dynamic = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') in wanted]
                     assert all(r['flags'] & 128 for r in dynamic), 'dynamic provenance lost in export'
                 if mixed:
