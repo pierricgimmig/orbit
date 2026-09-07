@@ -250,7 +250,12 @@ fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), Str
     std::thread::Builder::new()
         .name("orbit-symbols".to_string())
         .spawn(move || {
-            let index = FunctionIndex::for_pid(pid as i32);
+            let index = {
+                // Parent scope for the self-profile; each file loaded nests
+                // under it as "load symbols: <file>".
+                let _indexing = orbit_api::scope("index symbols");
+                FunctionIndex::for_pid(pid as i32)
+            };
             let Ok(mut guard) = state.lock() else { return };
             // A later selection may have superseded this one while it ran.
             if guard.pid != pid {

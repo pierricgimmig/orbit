@@ -871,13 +871,18 @@ pub struct OrbitLiveApp {
     pending_file: chrome_load::PendingFile,
 }
 
-/// A committed rectangle ("marquee") selection: the body-local rectangle to
-/// keep drawing, and the stats to show beside it. The scopes themselves went
-/// straight to the clipboard on release, so only the summary is kept.
+/// A committed rectangle ("marquee") selection: what to keep drawing, and the
+/// stats to show beside it. The scopes themselves went straight to the
+/// clipboard on release, so only the summary is kept. The horizontal extent is
+/// stored as a time span, so the rectangle stays locked to the capture under a
+/// pan or zoom; the vertical extent is body-local, so it tracks the lanes as
+/// they scroll.
 #[derive(Clone, Debug, Default)]
 struct RectResult {
-    /// Body-local rectangle as (x0, y0, x1, y1), left/top first.
-    rect: [f32; 4],
+    t0_ns: u64,
+    t1_ns: u64,
+    y0: f32,
+    y1: f32,
     stats: crate::rect_select::RectStats,
 }
 
@@ -3885,7 +3890,7 @@ impl OrbitLiveApp {
                     self.tracks.scale,
                 );
                 if self.rect_drag.is_some() || self.rect_result.is_some() {
-                    self.paint_rect_select(ui, body);
+                    self.paint_rect_select(ui, body, self.t0, self.t1);
                 }
                 // A graph lane already writes its value at the cursor line;
                 // the tooltip on top of that said the same thing twice.
@@ -3926,6 +3931,9 @@ impl OrbitLiveApp {
         // whole drag. Painting it here reads the same `self.measure` the lane
         // overlay just used, whichever region the drag started in.
         paint_selection_overlay(ui, ruler, self.t0, self.t1, &self.sample_sels, self.measure, false, &|_| None);
+        // The dimension arrows are pinned under the ruler (fixed layer), so a
+        // measured span stays visible however far the lanes are scrolled.
+        self.paint_measure_arrows(ui, ruler, self.t0, self.t1);
         let fps_area = Rect::from_min_max(
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
@@ -4466,7 +4474,23 @@ impl OrbitLiveApp {
         self.last_view_span = Some(view_span);
         let (lt0, lt1, lwidth) = if lod == orbit_live_render::TimelineLod::Instanced && dragged.is_none() && span_held {
             match self.overscan_window {
-                Some((a, b, w, span)) if span.abs_diff(view_span) <= 4 && t0 >= a && t1 <= b => (a, b, w),
+                // Reuse the listed window only while the view still sits inside
+                // it AND the timeline is still the width it was listed for. The
+                // instances are packed into `w` listing points but the view maps
+                // them across the live body width; resizing the report pane
+                // changes the body width with the span held, so a reused `w`
+                // would leave the capture drawn at the old scale until the next
+                // pan or zoom. `w` was built as `width * (b-a)/view_span`, so
+                // `w * view_span / (b-a)` recovers that build width to compare.
+                Some((a, b, w, span))
+                    if span.abs_diff(view_span) <= 4
+                        && t0 >= a
+                        && t1 <= b
+                        && (w as f64 * view_span as f64 / (b - a) as f64 - width as f64).abs()
+                            < 0.5 =>
+                {
+                    (a, b, w)
+                }
                 _ => {
                     let a = t0.saturating_sub(view_span / 2);
                     let b = t1.saturating_add(view_span / 2);
@@ -5337,15 +5361,17 @@ impl OrbitLiveApp {
         }
         if response.drag_stopped() {
             if let Some((a, b)) = self.rect_drag.take() {
-                self.commit_rect_selection(a, b, &response.ctx.clone());
+                self.commit_rect_selection(a, b, body, &response.ctx.clone());
             }
         }
     }
 
     /// Gather the scopes the marquee covers from this frame's on-screen
     /// instances, summarise them, copy the text to the clipboard, and keep the
-    /// rectangle drawn with its stats. `a`/`b` are body-local points.
-    fn commit_rect_selection(&mut self, a: Pos2, b: Pos2, ctx: &egui::Context) {
+    /// rectangle drawn with its stats. `a`/`b` are body-local points; the
+    /// horizontal extent is stored as a time span so the rectangle stays locked
+    /// to the capture under a later pan or zoom.
+    fn commit_rect_selection(&mut self, a: Pos2, b: Pos2, body: Rect, ctx: &egui::Context) {
         // Too small to be a drag: treat it as a click that clears the marquee.
         if (a.x - b.x).abs() < 3.0 && (a.y - b.y).abs() < 3.0 {
             self.rect_result = None;
@@ -5366,16 +5392,26 @@ impl OrbitLiveApp {
             ctx.copy_text(text);
             self.rect_copied_at = self.now_s;
         }
-        let rect = [a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y)];
-        self.rect_result = Some(RectResult { rect, stats });
+        // Body-local x -> absolute -> capture time, so the band re-projects.
+        let t0_ns = time_at_x(body.left() + a.x.min(b.x), body, self.t0, self.t1);
+        let t1_ns = time_at_x(body.left() + a.x.max(b.x), body, self.t0, self.t1);
+        self.rect_result = Some(RectResult {
+            t0_ns,
+            t1_ns,
+            y0: a.y.min(b.y),
+            y1: a.y.max(b.y),
+            stats,
+        });
     }
 
     /// Draw the in-progress or committed marquee and, once committed, its stats.
-    fn paint_rect_select(&self, ui: &Ui, body: Rect) {
+    /// `view_t0`/`view_t1` are the current view span, used to re-project a
+    /// committed selection's time back onto the screen.
+    fn paint_rect_select(&self, ui: &Ui, body: Rect, view_t0: f64, view_t1: f64) {
         let outline = |r: [f32; 4], fill_a: u8| -> Rect {
             let rect = Rect::from_min_max(
-                Pos2::new(body.left() + r[0], body.top() + r[1]),
-                Pos2::new(body.left() + r[2], body.top() + r[3]),
+                Pos2::new(r[0], r[1]),
+                Pos2::new(r[2], r[3]),
             )
             .intersect(body);
             ui.painter().rect(
@@ -5388,9 +5424,22 @@ impl OrbitLiveApp {
             rect
         };
         if let Some((a, b)) = self.rect_drag {
-            outline([a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y)], 40);
+            // In progress: live screen coordinates.
+            outline(
+                [
+                    body.left() + a.x.min(b.x),
+                    body.top() + a.y.min(b.y),
+                    body.left() + a.x.max(b.x),
+                    body.top() + a.y.max(b.y),
+                ],
+                40,
+            );
         } else if let Some(res) = &self.rect_result {
-            let rect = outline(res.rect, 26);
+            // Committed: re-project the time span onto the current view; the
+            // vertical extent tracks the lanes as they scroll.
+            let x0 = x_at_time(res.t0_ns, body, view_t0, view_t1);
+            let x1 = x_at_time(res.t1_ns, body, view_t0, view_t1);
+            let rect = outline([x0, body.top() + res.y0, x1, body.top() + res.y1], 26);
             let mut line = res.stats.one_line();
             if res.stats.count > 0 && self.now_s - self.rect_copied_at < 1.5 {
                 line.push_str("  ·  copied ✓");
@@ -5413,6 +5462,50 @@ impl OrbitLiveApp {
                 StrokeKind::Inside,
             );
             ui.painter().galley(top_left + pad, galley, theme::TEXT);
+        }
+    }
+
+    /// The time-measure dimension arrows, pinned just under the ruler so they
+    /// stay visible however far the lanes are scrolled. `ruler` gives the
+    /// x mapping and the fixed anchor; one arrow per process-wide selection
+    /// (committed or in progress), the duration in the middle.
+    fn paint_measure_arrows(&self, ui: &Ui, ruler: Rect, t0: f64, t1: f64) {
+        if t1 <= t0 || !ruler.is_positive() {
+            return;
+        }
+        let arrow_y = ruler.bottom() + 12.0;
+        let painter = ui.painter();
+        let stroke = Stroke::new(1.5, Color32::WHITE);
+        let bands = self
+            .sample_sels
+            .iter()
+            .copied()
+            .chain(self.measure)
+            .filter(|m| m.sample_tid.is_none() && m.start_ns != m.stop_ns);
+        for m in bands {
+            let lo = m.start_ns.min(m.stop_ns);
+            let hi = m.start_ns.max(m.stop_ns);
+            let x0 = x_at_time(lo, ruler, t0, t1);
+            let x1 = x_at_time(hi, ruler, t0, t1);
+            if (x1 - x0).abs() < 14.0 {
+                continue; // too short (or off-screen) to annotate legibly
+            }
+            let text = display_time_ns(hi.saturating_sub(lo));
+            let mid = (x0 + x1) * 0.5;
+            let galley = painter.layout_no_wrap(text, FontId::new(12.0, fonts::medium()), Color32::WHITE);
+            let half = galley.size().x * 0.5 + 6.0;
+            // The line, broken around the label in the middle.
+            painter.line_segment([Pos2::new(x0, arrow_y), Pos2::new((mid - half).max(x0), arrow_y)], stroke);
+            painter.line_segment([Pos2::new((mid + half).min(x1), arrow_y), Pos2::new(x1, arrow_y)], stroke);
+            // Outward arrowheads and end caps at each edge.
+            let head = 5.0;
+            for (x, dir) in [(x0, 1.0f32), (x1, -1.0f32)] {
+                painter.line_segment([Pos2::new(x, arrow_y), Pos2::new(x + dir * head, arrow_y - head)], stroke);
+                painter.line_segment([Pos2::new(x, arrow_y), Pos2::new(x + dir * head, arrow_y + head)], stroke);
+                painter.line_segment([Pos2::new(x, arrow_y - head), Pos2::new(x, arrow_y + head)], Stroke::new(1.0, Color32::WHITE));
+            }
+            let sz = galley.size();
+            painter.galley(Pos2::new(mid - sz.x * 0.5, arrow_y - sz.y * 0.5), galley, Color32::WHITE);
         }
     }
 
@@ -9675,57 +9768,9 @@ fn paint_selection_overlay(
     }
 
     if draw_label {
-        // A dimension arrow just under the ruler: a double-headed line
-        // spanning each process-wide selection with its duration in the
-        // middle, the way a drawing marks a measured length. Committed
-        // selections keep theirs, so a measure sticks after the drag.
-        let arrow_y = rect.top() + 14.0;
-        for m in bands.iter().filter(|m| m.sample_tid.is_none()) {
-            let (x0, x1) = edge_x(m);
-            if (x1 - x0).abs() < 14.0 {
-                continue; // too short to annotate legibly
-            }
-            let min_t = m.start_ns.min(m.stop_ns);
-            let max_t = m.start_ns.max(m.stop_ns);
-            let text = display_time_ns(max_t.saturating_sub(min_t));
-            let stroke = Stroke::new(1.5, Color32::WHITE);
-            let mid = (x0 + x1) * 0.5;
-            let galley =
-                painter.layout_no_wrap(text, FontId::new(12.0, fonts::medium()), Color32::WHITE);
-            let half = galley.size().x * 0.5 + 6.0;
-            // The line, broken around the label in the middle.
-            painter.line_segment(
-                [Pos2::new(x0, arrow_y), Pos2::new((mid - half).max(x0), arrow_y)],
-                stroke,
-            );
-            painter.line_segment(
-                [Pos2::new((mid + half).min(x1), arrow_y), Pos2::new(x1, arrow_y)],
-                stroke,
-            );
-            // Arrowheads pointing outward at each end.
-            let head = 5.0;
-            for (x, dir) in [(x0, 1.0f32), (x1, -1.0f32)] {
-                painter.line_segment(
-                    [Pos2::new(x, arrow_y), Pos2::new(x + dir * head, arrow_y - head)],
-                    stroke,
-                );
-                painter.line_segment(
-                    [Pos2::new(x, arrow_y), Pos2::new(x + dir * head, arrow_y + head)],
-                    stroke,
-                );
-                // End caps, so a zero-length side still reads as an edge.
-                painter.line_segment(
-                    [Pos2::new(x, arrow_y - head), Pos2::new(x, arrow_y + head)],
-                    Stroke::new(1.0, Color32::WHITE),
-                );
-            }
-            let sz = galley.size();
-            painter.galley(
-                Pos2::new(mid - sz.x * 0.5, arrow_y - sz.y * 0.5),
-                galley,
-                Color32::WHITE,
-            );
-        }
+        // The process-wide dimension arrow is drawn separately, pinned under
+        // the ruler so it stays visible however far the lanes are scrolled
+        // (see `paint_measure_arrows`).
         // A per-thread drag still shows its duration at the cursor, on its bar.
         if let Some(m) = active.filter(|m| m.start_ns != m.stop_ns && m.sample_tid.is_some()) {
             let min_t = m.start_ns.min(m.stop_ns);

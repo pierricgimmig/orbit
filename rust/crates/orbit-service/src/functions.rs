@@ -66,6 +66,11 @@ impl FunctionIndex {
                 continue;
             }
             seen_modules.push(path.to_string());
+            let module = path.rsplit('/').next().unwrap_or(path).to_string();
+            // A self-profile scope per file, named for the symbols file being
+            // loaded, so the cost of indexing each module is visible on the
+            // service's own track.
+            let _load = orbit_api::scope(format!("load symbols: {module}"));
             let Ok(bytes) = std::fs::read(path) else { continue };
             let segments = parse_elf_metadata(&bytes, path)
                 .map(|metadata| metadata.loadable_segments)
@@ -73,7 +78,6 @@ impl FunctionIndex {
             // The detached debug file first, so a distribution's stripped
             // library offers its internal functions too; see symbolize.rs.
             let Ok(symbols) = crate::symbolize::symbol_source(&bytes, Some(path)) else { continue };
-            let module = path.rsplit('/').next().unwrap_or(path).to_string();
             for symbol in symbols {
                 if symbol.address == 0 || symbol.mangled_name.is_empty() {
                     continue;
