@@ -4942,6 +4942,11 @@ impl OrbitLiveApp {
             Pos2::new(lanes.right() - BAR_W, lanes.top()),
             Pos2::new(lanes.right(), lanes.bottom()),
         );
+        // A viewport shorter than the minimum handle has nothing to scrub, and
+        // clamping a min above the track height would panic (min > max).
+        if track.height() < 20.0 {
+            return;
+        }
         let handle_h = (track.height() * (view_h / content_h)).clamp(20.0, track.height());
         let travel = (track.height() - handle_h).max(0.0);
         let max_off = (content_h - view_h).max(1.0);
@@ -9655,7 +9660,8 @@ fn time_at_x(x: f32, rect: Rect, t0: f64, t1: f64) -> u64 {
 
 fn x_at_time(t: u64, rect: Rect, t0: f64, t1: f64) -> f32 {
     let span = (t1 - t0).max(1.0);
-    rect.left() + (((t as f64 - t0) / span) as f32 * rect.width()).clamp(0.0, rect.width())
+    let w = rect.width().max(0.0); // a degenerate rect must not make min > max
+    rect.left() + (((t as f64 - t0) / span) as f32 * w).clamp(0.0, w)
 }
 
 /// Draws the committed multi-select bands plus any in-progress drag.
