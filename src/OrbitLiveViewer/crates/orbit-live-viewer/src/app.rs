@@ -100,6 +100,11 @@ enum LinkState {
 const LISTING_PROBE_FRAMES: u32 = 90;
 /// The self-profile pane keeps this much of the viewer's own past.
 const SELF_TIMELINE_RETAIN_NS: u64 = 60_000_000_000;
+
+/// Fixed height of the Live view's bottom histogram panel: the 96px bars plus
+/// their label and tick row. Fixed so selecting a function never reflows the
+/// table above it (C++ Orbit's layout).
+const LIVE_HISTOGRAM_H: f32 = 132.0;
 /// The self-profile pane's surfaces: a teal-dark canvas and rail, distinct
 /// from the capture's near-black, so the two timelines never read as one.
 const SELF_PANE_CANVAS: Color32 = Color32::from_rgb(0x10, 0x1A, 0x20);
@@ -108,14 +113,12 @@ const SELF_PANE_RAIL: Color32 = Color32::from_rgb(0x14, 0x1E, 0x25);
 /// Native Orbit `ProcessListWidget` filter: case-insensitive substring on
 /// pid / name / path (`QSortFilterProxyModel::setFilterFixedString`).
 fn process_matches_filter(pid: u32, name: &str, path: &str, query: &str) -> bool {
-    let q = query.trim();
-    if q.is_empty() {
-        return true;
-    }
-    let q = q.to_ascii_lowercase();
-    pid.to_string().contains(&q)
-        || name.to_ascii_lowercase().contains(&q)
-        || path.to_ascii_lowercase().contains(&q)
+    // Case-insensitive and multi-token: every whitespace-separated token must
+    // appear somewhere in the pid, name or path. Empty query matches all.
+    let hay = format!("{pid} {name} {path}").to_ascii_lowercase();
+    query
+        .split_whitespace()
+        .all(|token| hay.contains(&token.to_ascii_lowercase()))
 }
 
 /// Keep the current pick across a process-list refresh. If that pid exited,
@@ -721,6 +724,14 @@ pub struct OrbitLiveApp {
     /// A primary-button drag that began on a sample bar: it selects samples
     /// instead of panning, for as long as the button is down.
     sample_drag: bool,
+    /// A Ctrl+left-drag in progress: (start, current) in body-local points.
+    /// While `Some`, that drag draws a rectangle over the scopes instead of
+    /// panning; on release it copies them to the clipboard.
+    rect_drag: Option<(Pos2, Pos2)>,
+    /// The last committed marquee: kept drawn with its stats until cleared.
+    rect_result: Option<RectResult>,
+    /// When the last marquee was copied, for the "copied" flash.
+    rect_copied_at: f64,
     /// Samples inside the current selection, counted from the viewer's own
     /// index, so a selection reads back immediately and without a service.
     local_sample_count: u64,
@@ -860,6 +871,16 @@ pub struct OrbitLiveApp {
     pending_file: chrome_load::PendingFile,
 }
 
+/// A committed rectangle ("marquee") selection: the body-local rectangle to
+/// keep drawing, and the stats to show beside it. The scopes themselves went
+/// straight to the clipboard on release, so only the summary is kept.
+#[derive(Clone, Debug, Default)]
+struct RectResult {
+    /// Body-local rectangle as (x0, y0, x1, y1), left/top first.
+    rect: [f32; 4],
+    stats: crate::rect_select::RectStats,
+}
+
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
 #[derive(Clone, Copy, Debug)]
 struct TimeMeasure {
@@ -991,6 +1012,9 @@ pub struct TimelineState {
     measure: Option<TimeMeasure>,
     sample_sels: Vec<TimeMeasure>,
     measure_dragging: bool,
+    rect_drag: Option<(Pos2, Pos2)>,
+    rect_result: Option<RectResult>,
+    rect_copied_at: f64,
     content_t0: Option<f64>,
     content_t1: Option<f64>,
     user_set_view: bool,
@@ -1033,6 +1057,9 @@ impl TimelineState {
             measure: None,
             sample_sels: Vec::new(),
             measure_dragging: false,
+            rect_drag: None,
+            rect_result: None,
+            rect_copied_at: -10.0,
             content_t0: None,
             content_t1: None,
             user_set_view: false,
@@ -1077,6 +1104,9 @@ impl OrbitLiveApp {
         std::mem::swap(&mut self.measure, &mut other.measure);
         std::mem::swap(&mut self.sample_sels, &mut other.sample_sels);
         std::mem::swap(&mut self.measure_dragging, &mut other.measure_dragging);
+        std::mem::swap(&mut self.rect_drag, &mut other.rect_drag);
+        std::mem::swap(&mut self.rect_result, &mut other.rect_result);
+        std::mem::swap(&mut self.rect_copied_at, &mut other.rect_copied_at);
         std::mem::swap(&mut self.content_t0, &mut other.content_t0);
         std::mem::swap(&mut self.content_t1, &mut other.content_t1);
         std::mem::swap(&mut self.user_set_view, &mut other.user_set_view);
@@ -1104,7 +1134,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1173,6 +1203,17 @@ impl OrbitLiveApp {
                 self.code_error,
                 self.code_loading,
             ),
+            match &self.rect_result {
+                Some(r) => format!(
+                    "{{\"count\":{},\"functions\":{},\"threads\":{},\"total_ns\":{},\"window_ns\":{}}}",
+                    r.stats.count,
+                    r.stats.functions,
+                    r.stats.threads,
+                    r.stats.total_ns,
+                    r.stats.window_ns,
+                ),
+                None => "null".to_string(),
+            },
         );
         if text == self.sel_readout {
             return;
@@ -1378,6 +1419,9 @@ impl OrbitLiveApp {
             pending_collapse_scheduler: crate::dev::query_collapse_scheduler_from_location(),
             measure_dragging: false,
             sample_drag: false,
+            rect_drag: None,
+            rect_result: None,
+            rect_copied_at: -10.0,
             local_sample_count: 0,
             idle_skip_chrome: false,
             last_n_prims: 0,
@@ -3444,7 +3488,7 @@ impl OrbitLiveApp {
         ui.add_space(16.0);
         ui.label(
             RichText::new(
-                "Ruler wheel zoom · Ctrl+wheel zoom · WASD pan/zoom · Home / double-click ruler: fit · space follow",
+                "Ruler wheel zoom · Ctrl+wheel zoom · WASD pan/zoom · Ctrl+drag: select scopes · Home / double-click ruler: fit · space follow",
             )
             .size(10.0)
             .color(theme::MUTED),
@@ -3644,22 +3688,32 @@ impl OrbitLiveApp {
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
-                // A left drag that starts on a thread's sample bar selects
-                // those samples -- the white ticks are the thing you drag
-                // across -- and the timeline does not pan underneath it.
-                // Anywhere else, a left drag pans as before.
-                if body_resp.drag_started_by(PointerButton::Primary) && self.report_splitter_grab.is_none() {
-                    self.sample_drag = body_resp
-                        .interact_pointer_pos()
-                        .and_then(|p| self.sample_lane_at_y(p.y - body.top()))
-                        .is_some();
+                // What a left drag does is decided when it starts. Ctrl held:
+                // draw a rectangle over the scopes (marquee). On a thread's
+                // sample bar: select those samples -- the white ticks are the
+                // thing you drag across. Anywhere else: pan.
+                if body_resp.drag_started_by(PointerButton::Primary)
+                    && self.report_splitter_grab.is_none()
+                {
+                    let ctrl = body_resp.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                    if ctrl {
+                        self.begin_rect_select(&body_resp, body);
+                    } else {
+                        self.sample_drag = body_resp
+                            .interact_pointer_pos()
+                            .and_then(|p| self.sample_lane_at_y(p.y - body.top()))
+                            .is_some();
+                    }
                 }
-                if !self.sample_drag {
+                let marquee = self.rect_drag.is_some();
+                if !self.sample_drag && !marquee {
                     self.handle_time_nav(&body_resp, body, WheelMode::CtrlZoom, true, dt);
                 }
                 self.handle_keys(&body_resp.ctx, body, ruler, avail.y, dt);
                 self.handle_pick(&body_resp, body, t0, t1, width);
-                if self.sample_drag {
+                if marquee {
+                    self.handle_rect_select(&body_resp, body);
+                } else if self.sample_drag {
                     self.handle_measure(&body_resp, body, true, PointerButton::Primary, true);
                 } else {
                     self.handle_measure(&body_resp, body, true, PointerButton::Secondary, false);
@@ -3830,6 +3884,9 @@ impl OrbitLiveApp {
                     &self.trace_flows,
                     self.tracks.scale,
                 );
+                if self.rect_drag.is_some() || self.rect_result.is_some() {
+                    self.paint_rect_select(ui, body);
+                }
                 // A graph lane already writes its value at the cursor line;
                 // the tooltip on top of that said the same thing twice.
                 if let Some(h) = self.hover.filter(|h| h.kind != kind::VALUE) {
@@ -4813,7 +4870,7 @@ impl OrbitLiveApp {
                 self.vscroll.begin_drag();
             }
         }
-        if response.dragged_by(PointerButton::Primary) {
+        if response.dragged_by(PointerButton::Primary) && self.rect_drag.is_none() {
             let drag = response.drag_delta();
             let span = (self.t1 - self.t0).max(1.0);
             let dt = -(drag.x as f64) / rect.width().max(1.0) as f64 * span;
@@ -5091,6 +5148,8 @@ impl OrbitLiveApp {
             self.search.clear();
             self.live_focus = None;
             self.clear_selection();
+            self.rect_drag = None;
+            self.rect_result = None;
         }
         let (a, d, left, right, up, down, w, s) = ctx.input(|i| {
             (
@@ -5249,6 +5308,111 @@ impl OrbitLiveApp {
                     }
                 }
             }
+        }
+    }
+
+    /// Turn the Select (marquee) mode on or off. Leaving it drops any drawn
+    /// rectangle so the timeline pans normally again.
+    /// Begin a Ctrl+left-drag marquee at the pointer. Called from the body
+    /// dispatch the frame the drag starts, so it can pre-empt panning.
+    fn begin_rect_select(&mut self, response: &egui::Response, body: Rect) {
+        if let Some(p) = response.interact_pointer_pos() {
+            let local = Pos2::new(p.x - body.left(), p.y - body.top());
+            self.rect_drag = Some((local, local));
+            self.rect_result = None;
+            self.follow = false;
+        }
+    }
+
+    /// Continue the marquee and, on release, gather the scopes it covers and
+    /// copy them -- with their stats -- to the clipboard. Begun in
+    /// [`Self::begin_rect_select`]; this only runs while a marquee is live.
+    fn handle_rect_select(&mut self, response: &egui::Response, body: Rect) {
+        if response.dragged_by(PointerButton::Primary) {
+            if let Some(p) = response.interact_pointer_pos() {
+                if let Some((_, cur)) = self.rect_drag.as_mut() {
+                    *cur = Pos2::new(p.x - body.left(), p.y - body.top());
+                }
+            }
+        }
+        if response.drag_stopped() {
+            if let Some((a, b)) = self.rect_drag.take() {
+                self.commit_rect_selection(a, b, &response.ctx.clone());
+            }
+        }
+    }
+
+    /// Gather the scopes the marquee covers from this frame's on-screen
+    /// instances, summarise them, copy the text to the clipboard, and keep the
+    /// rectangle drawn with its stats. `a`/`b` are body-local points.
+    fn commit_rect_selection(&mut self, a: Pos2, b: Pos2, ctx: &egui::Context) {
+        // Too small to be a drag: treat it as a click that clears the marquee.
+        if (a.x - b.x).abs() < 3.0 && (a.y - b.y).abs() < 3.0 {
+            self.rect_result = None;
+            return;
+        }
+        let idx = crate::rect_select::scopes_in_rect(
+            &self.last_instances,
+            a.x,
+            a.y,
+            b.x,
+            b.y,
+            self.listing_pan_pts,
+        );
+        let picked: Vec<ScopeInstance> = idx.iter().map(|&i| self.last_instances[i]).collect();
+        let (stats, text) =
+            crate::rect_select::report(&picked, &self.intern, |p, t| self.thread_display_name(p, t));
+        if !text.is_empty() {
+            ctx.copy_text(text);
+            self.rect_copied_at = self.now_s;
+        }
+        let rect = [a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y)];
+        self.rect_result = Some(RectResult { rect, stats });
+    }
+
+    /// Draw the in-progress or committed marquee and, once committed, its stats.
+    fn paint_rect_select(&self, ui: &Ui, body: Rect) {
+        let outline = |r: [f32; 4], fill_a: u8| -> Rect {
+            let rect = Rect::from_min_max(
+                Pos2::new(body.left() + r[0], body.top() + r[1]),
+                Pos2::new(body.left() + r[2], body.top() + r[3]),
+            )
+            .intersect(body);
+            ui.painter().rect(
+                rect,
+                2.0,
+                Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, fill_a),
+                Stroke::new(1.0, theme::ACCENT),
+                StrokeKind::Inside,
+            );
+            rect
+        };
+        if let Some((a, b)) = self.rect_drag {
+            outline([a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y)], 40);
+        } else if let Some(res) = &self.rect_result {
+            let rect = outline(res.rect, 26);
+            let mut line = res.stats.one_line();
+            if res.stats.count > 0 && self.now_s - self.rect_copied_at < 1.5 {
+                line.push_str("  ·  copied ✓");
+            }
+            // A small badge at the rectangle's top-left, kept inside the body.
+            let font = FontId::new(11.0, fonts::medium());
+            let galley = ui.painter().layout_no_wrap(line, font, theme::TEXT);
+            let pad = Vec2::new(6.0, 3.0);
+            let size = galley.size() + pad * 2.0;
+            let top_left = Pos2::new(
+                rect.left().clamp(body.left(), (body.right() - size.x).max(body.left())),
+                (rect.top() - size.y - 2.0).max(body.top() + 2.0),
+            );
+            let badge = Rect::from_min_size(top_left, size);
+            ui.painter().rect(
+                badge,
+                3.0,
+                theme::PANEL,
+                Stroke::new(1.0, theme::ACCENT),
+                StrokeKind::Inside,
+            );
+            ui.painter().galley(top_left + pad, galley, theme::TEXT);
         }
     }
 
@@ -5787,23 +5951,30 @@ impl OrbitLiveApp {
                 if self.report_tab == ReportTab::Code {
                     self.code_toolbar(ui);
                 }
-                // Both axes: a call tree or a long function name is wider than
-                // the panel, and the rows are the thing to scroll, not the
-                // panel to widen.
-                egui::ScrollArea::both()
-                    .auto_shrink([false, false])
-                    .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
-                    .show(ui, |ui| {
-                    match self.report_tab {
-                        ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
-                        ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
-                        ReportTab::Modules => self.module_rows(ui),
-                        ReportTab::Live => self.live_rows(ui),
-                        ReportTab::Flame => self.flame_rows(ui),
-                        ReportTab::Functions => self.function_rows(ui),
-                        ReportTab::Code => self.code_rows(ui),
-                    }
-                });
+                // The Live tab owns its own layout: the histogram is pinned to
+                // the bottom of the view, the table scrolls above it, so
+                // clicking a row never reflows the table (C++ Orbit's layout).
+                if self.report_tab == ReportTab::Live {
+                    self.live_rows(ui);
+                } else {
+                    // Both axes: a call tree or a long function name is wider
+                    // than the panel, and the rows are the thing to scroll, not
+                    // the panel to widen.
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
+                        .show(ui, |ui| {
+                            match self.report_tab {
+                                ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
+                                ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
+                                ReportTab::Modules => self.module_rows(ui),
+                                ReportTab::Live => {}
+                                ReportTab::Flame => self.flame_rows(ui),
+                                ReportTab::Functions => self.function_rows(ui),
+                                ReportTab::Code => self.code_rows(ui),
+                            }
+                        });
+                }
             });
         self.paint_report_splitter(ctx, inner.response.rect, screen_w);
         self.after_report_panel(ctx, inner.response.rect);
@@ -6437,10 +6608,20 @@ impl OrbitLiveApp {
                         // no chevron and renders one as a replacement box.
                         toggle |= inline_chevron(ui, expandable.then_some(expanded));
                         let is_thread = node.kind == "thread";
+                        let hooked = self.is_hooked(node.function_id);
+                        // A hooked function reads in blue in every report, the
+                        // way the flat report already marks it.
+                        let name_color = if is_thread {
+                            theme::MUTED
+                        } else if hooked {
+                            theme::ACCENT
+                        } else {
+                            theme::TEXT
+                        };
                         let label = ui.add(
                             egui::Label::new(
                                 RichText::new(&node.name)
-                                    .color(if is_thread { theme::MUTED } else { theme::TEXT })
+                                    .color(name_color)
                                     .size(self.ui_tweaks.report_font),
                             )
                             .sense(egui::Sense::click()),
@@ -6455,7 +6636,6 @@ impl OrbitLiveApp {
                         }
                         if !is_thread {
                             note_ui_rect(&format!("tree:{}", node.name), label.rect);
-                            let hooked = self.is_hooked(node.function_id);
                             if let Some(action) = hook_menu(&label, node.function_id, hooked) {
                                 tree_actions.push((action, node.function_id, node.name.clone(), node.module.clone()));
                             }
@@ -6619,65 +6799,66 @@ impl OrbitLiveApp {
         if self.recording {
             self.needs_repaint = true;
         }
-        // The focused row's histogram sits above the table, where it is in
-        // view whichever row was clicked.
-        if let Some(id) = self.live_focus {
-            let row = { self.live_table().row(id).cloned() };
-            if let Some(row) = row {
-                let name = self.intern.get(id).unwrap_or("?").to_string();
-                ui.label(
-                    RichText::new(format!("{name} — {} calls, duration histogram (log scale)", row.count))
-                        .color(theme::TEXT)
-                        .size(font),
-                );
-                paint_histogram(ui, &row.hist, font);
-                ui.add_space(8.0);
-            }
-        }
+        // The histogram is pinned to the bottom of the Live view, as in C++
+        // Orbit: its height is fixed, so selecting a function fills this panel
+        // rather than pushing the table around.
+        egui::TopBottomPanel::bottom("orbit_live_histogram")
+            .resizable(false)
+            .exact_height(LIVE_HISTOGRAM_H)
+            .frame(Frame::new().inner_margin(Margin { left: 0, right: 0, top: 6, bottom: 0 }))
+            .show_inside(ui, |ui| {
+                self.draw_live_histogram(ui, font);
+            });
+        // The table fills the space above the histogram and scrolls on its own.
         let mut clicked: Option<u32> = None;
-        egui::Grid::new("orbit_live_rows")
-            .num_columns(9)
-            .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
-            .striped(true)
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
             .show(ui, |ui| {
-                for h in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
-                }
-                ui.end_row();
-                let filter = self.report_filter.trim().to_lowercase();
-                for r in rows
-                    .iter()
-                    .filter(|r| filter.is_empty() || self.intern.get(r.name_id).is_some_and(|n| contains_ci(n, &filter)))
-                    .take(300)
-                {
-                    let focused = self.live_focus == Some(r.name_id);
-                    let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
-                    ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font));
-                    let label = ui.add(
-                        egui::Label::new(
-                            RichText::new(&name)
-                                .color(if focused { theme::ACCENT } else { theme::TEXT })
-                                .size(font),
-                        )
-                        .sense(Sense::click()),
-                    );
-                    note_ui_rect(&format!("live:{name}"), label.rect);
-                    if label.on_hover_text("Click for the duration histogram; the timeline highlights this scope").clicked() {
-                        clicked = Some(r.name_id);
-                    }
-                    for v in [
-                        r.count.to_string(),
-                        display_time_ns(r.total_ns),
-                        display_time_ns(r.avg_ns()),
-                        display_time_ns(r.min_ns),
-                        display_time_ns(r.max_ns),
-                        display_time_ns(r.std_dev_ns()),
-                    ] {
-                        ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
-                    }
-                    ui.label(RichText::new(self.module_of_name(&name)).color(theme::MUTED).size(font - 0.5));
-                    ui.end_row();
-                }
+                egui::Grid::new("orbit_live_rows")
+                    .num_columns(9)
+                    .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for h in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"] {
+                            ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
+                        }
+                        ui.end_row();
+                        let filter = self.report_filter.trim().to_lowercase();
+                        for r in rows
+                            .iter()
+                            .filter(|r| filter.is_empty() || self.intern.get(r.name_id).is_some_and(|n| contains_ci(n, &filter)))
+                            .take(300)
+                        {
+                            let focused = self.live_focus == Some(r.name_id);
+                            let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
+                            ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font));
+                            let label = ui.add(
+                                egui::Label::new(
+                                    RichText::new(&name)
+                                        .color(if focused { theme::ACCENT } else { theme::TEXT })
+                                        .size(font),
+                                )
+                                .sense(Sense::click()),
+                            );
+                            note_ui_rect(&format!("live:{name}"), label.rect);
+                            if label.on_hover_text("Click for the duration histogram; the timeline highlights this scope").clicked() {
+                                clicked = Some(r.name_id);
+                            }
+                            for v in [
+                                r.count.to_string(),
+                                display_time_ns(r.total_ns),
+                                display_time_ns(r.avg_ns()),
+                                display_time_ns(r.min_ns),
+                                display_time_ns(r.max_ns),
+                                display_time_ns(r.std_dev_ns()),
+                            ] {
+                                ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
+                            }
+                            ui.label(RichText::new(self.module_of_name(&name)).color(theme::MUTED).size(font - 0.5));
+                            ui.end_row();
+                        }
+                    });
             });
         if let Some(id) = clicked {
             if self.live_focus == Some(id) {
@@ -6688,6 +6869,35 @@ impl OrbitLiveApp {
                 // Linked to the timeline the way the search box is: every
                 // instance of this scope lights up, the rest dims.
                 self.search = self.intern.get(id).unwrap_or("").to_string();
+            }
+        }
+    }
+
+    /// The Live view's histogram, pinned at the bottom. Shows the selected
+    /// row's duration distribution, or a hint when nothing is selected, so the
+    /// panel is always present and the table never reflows on a click.
+    fn draw_live_histogram(&mut self, ui: &mut Ui, font: f32) {
+        let focused = self.live_focus.and_then(|id| {
+            self.live_table().row(id).cloned().map(|row| (id, row))
+        });
+        match focused {
+            Some((id, row)) => {
+                let name = self.intern.get(id).unwrap_or("?").to_string();
+                ui.label(
+                    RichText::new(format!("{name} — {} calls, duration histogram (log scale)", row.count))
+                        .color(theme::TEXT)
+                        .size(font),
+                );
+                paint_histogram(ui, &row.hist, font);
+            }
+            None => {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new("Click a function above for its duration histogram")
+                            .color(theme::MUTED)
+                            .size(font - 0.5),
+                    );
+                });
             }
         }
     }
@@ -6743,6 +6953,10 @@ impl OrbitLiveApp {
         let painter = ui.painter_at(rect);
         let pointer = ui.ctx().pointer_hover_pos();
         let selected_name = self.selected.and_then(|p| self.intern.get(p.name_id)).map(str::to_string);
+        // Hooked functions read in blue everywhere; the flame bar is coloured
+        // by function, so mark a hooked one with a blue outline instead.
+        let hooked_names: HashSet<&str> =
+            self.selected_hooks.iter().map(|h| h.name.as_str()).collect();
         let mut hovered: Option<&FlameBar> = None;
         let mut clicked: Option<String> = None;
         let (click, double) = ui.input(|i| {
@@ -6775,6 +6989,8 @@ impl OrbitLiveApp {
             }
             if selected_name.as_deref() == Some(bar.name.as_str()) {
                 painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT), StrokeKind::Inside);
+            } else if !bar.is_thread && hooked_names.contains(bar.name.as_str()) {
+                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
             }
             if bar.w > 24.0 {
                 let text = truncate_to_width(&bar.name, bar.w - 6.0, font - 1.0);
@@ -6982,7 +7198,7 @@ impl OrbitLiveApp {
                 ui.add(egui::Slider::new(&mut t.report_col_gap, 4.0..=40.0).text("column gap"));
                 ui.add(egui::Slider::new(&mut t.report_font, 8.0..=18.0).text("font size"));
                 ui.add(egui::Slider::new(&mut t.report_bar_w, 20.0..=160.0).text("bar width"));
-                ui.add(egui::Slider::new(&mut t.report_indent, 4.0..=32.0).text("tree indent"));
+                ui.add(egui::Slider::new(&mut t.report_indent, 0.0..=32.0).text("tree indent"));
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tracks").color(theme::MUTED).size(10.5));
                 let mut scale = self.tracks.scale;
@@ -7403,8 +7619,13 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
 }
 
 /// Case-insensitive substring test; `needle` is already lower-case.
+/// Case-insensitive, multi-token substring test: every whitespace-separated
+/// token in `needle` must appear somewhere in `hay`. `needle` is assumed
+/// already lower-cased (callers lower-case the filter once). An empty needle
+/// matches. So "step world" matches "b3Step_World".
 fn contains_ci(hay: &str, needle: &str) -> bool {
-    hay.to_lowercase().contains(needle)
+    let hay = hay.to_lowercase();
+    needle.split_whitespace().all(|token| hay.contains(token))
 }
 
 /// Whether a call-tree node, or anything under it, matches the filter.
@@ -8543,7 +8764,7 @@ impl Default for UiTweaks {
             report_col_gap: 16.0,
             report_font: 11.0,
             report_bar_w: 66.0,
-            report_indent: 12.0,
+            report_indent: 4.0,
         }
     }
 }
@@ -8583,7 +8804,7 @@ impl UiTweaks {
             t.report_bar_w = v.clamp(20.0, 160.0);
         }
         if let Some(v) = field("report_indent") {
-            t.report_indent = v.clamp(4.0, 32.0);
+            t.report_indent = v.clamp(0.0, 32.0);
         }
         t
     }
@@ -9454,7 +9675,59 @@ fn paint_selection_overlay(
     }
 
     if draw_label {
-        if let Some(m) = active.filter(|m| m.start_ns != m.stop_ns) {
+        // A dimension arrow just under the ruler: a double-headed line
+        // spanning each process-wide selection with its duration in the
+        // middle, the way a drawing marks a measured length. Committed
+        // selections keep theirs, so a measure sticks after the drag.
+        let arrow_y = rect.top() + 14.0;
+        for m in bands.iter().filter(|m| m.sample_tid.is_none()) {
+            let (x0, x1) = edge_x(m);
+            if (x1 - x0).abs() < 14.0 {
+                continue; // too short to annotate legibly
+            }
+            let min_t = m.start_ns.min(m.stop_ns);
+            let max_t = m.start_ns.max(m.stop_ns);
+            let text = display_time_ns(max_t.saturating_sub(min_t));
+            let stroke = Stroke::new(1.5, Color32::WHITE);
+            let mid = (x0 + x1) * 0.5;
+            let galley =
+                painter.layout_no_wrap(text, FontId::new(12.0, fonts::medium()), Color32::WHITE);
+            let half = galley.size().x * 0.5 + 6.0;
+            // The line, broken around the label in the middle.
+            painter.line_segment(
+                [Pos2::new(x0, arrow_y), Pos2::new((mid - half).max(x0), arrow_y)],
+                stroke,
+            );
+            painter.line_segment(
+                [Pos2::new((mid + half).min(x1), arrow_y), Pos2::new(x1, arrow_y)],
+                stroke,
+            );
+            // Arrowheads pointing outward at each end.
+            let head = 5.0;
+            for (x, dir) in [(x0, 1.0f32), (x1, -1.0f32)] {
+                painter.line_segment(
+                    [Pos2::new(x, arrow_y), Pos2::new(x + dir * head, arrow_y - head)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [Pos2::new(x, arrow_y), Pos2::new(x + dir * head, arrow_y + head)],
+                    stroke,
+                );
+                // End caps, so a zero-length side still reads as an edge.
+                painter.line_segment(
+                    [Pos2::new(x, arrow_y - head), Pos2::new(x, arrow_y + head)],
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+            let sz = galley.size();
+            painter.galley(
+                Pos2::new(mid - sz.x * 0.5, arrow_y - sz.y * 0.5),
+                galley,
+                Color32::WHITE,
+            );
+        }
+        // A per-thread drag still shows its duration at the cursor, on its bar.
+        if let Some(m) = active.filter(|m| m.start_ns != m.stop_ns && m.sample_tid.is_some()) {
             let min_t = m.start_ns.min(m.stop_ns);
             let max_t = m.start_ns.max(m.stop_ns);
             let text = display_time_ns(max_t.saturating_sub(min_t));

@@ -852,6 +852,98 @@ def scope_report(run):
     return f"{name!r}: {report['samples']} samples over {report['range_count']} instances"
 
 
+@scenario("rect-select", "The Select marquee copies the scopes it covers and reports their stats")
+def rect_select(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    pid = WeekCapture.pid
+    lanes = _thread_rows(run, pid)
+    x, y, w, h = run.rect("row:scheduler")
+    head_right = x + w  # the header column's right edge: the canvas starts here
+    canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    # Zoom in (W held over the first thread) so the scopes draw as instances a
+    # few pixels wide -- the marquee gathers from those, not from the zoomed-out
+    # pixel columns.
+    first = sorted(lanes.items())[0][1]
+    run.chrome.move(head_right + (canvas_right - head_right) * 0.5, first[1] + first[3] * 0.5)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(2.0)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="w", code="KeyW", windowsVirtualKeyCode=87)
+    time.sleep(0.5)
+    # Ctrl+left-drag draws the marquee (CDP modifier bit 2 == Ctrl).
+    rows = [v for v in sorted(lanes.values()) if v[1] < canvas_h - 40]
+    check(rows, "no thread row is in view to select over")
+    top = rows[0][1] + rows[0][3] * 0.2
+    bot = min(rows[-1][1] + rows[-1][3] * 0.9, canvas_h - 20)
+    x0 = head_right + (canvas_right - head_right) * 0.30
+    x1 = head_right + (canvas_right - head_right) * 0.75
+
+    def mouse(kind, px, py):
+        run.chrome.call(
+            "Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1, modifiers=2
+        )
+
+    mouse("mousePressed", x0, top)
+    for i in range(1, 11):
+        mouse("mouseMoved", x0 + (x1 - x0) * i / 10, top + (bot - top) * i / 10)
+        time.sleep(0.02)
+    run.shot("31-rect-select", settle=0.3)
+    mouse("mouseReleased", x1, bot)
+    rect = run.wait_for(lambda: run.sel().get("rect"), "the committed rectangle selection", timeout=10)
+    check_at_least(rect.get("count", 0), 1, f"scopes inside the marquee: {rect}")
+    check_at_least(rect.get("functions", 0), 1, f"distinct functions in the marquee: {rect}")
+    # Escape clears the marquee.
+    run.chrome.key("Escape")
+    run.wait_for(lambda: run.sel().get("rect") is None, "Escape to clear the marquee")
+    return f"{rect['count']} scopes, {rect['functions']} functions, {rect['threads']} threads"
+
+
+@scenario("time-measure", "A right-drag measures a time span and leaves a dimension arrow")
+def time_measure(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    run.wait_for(lambda: run.sel().get("events"), "events on the timeline")
+    x, y, w, h = run.rect("row:scheduler")
+    head_right = x + w
+    canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+    cy = y + h * 0.5
+    x0 = head_right + (canvas_right - head_right) * 0.35
+    x1 = head_right + (canvas_right - head_right) * 0.65
+
+    def rmouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="right", buttons=2)
+
+    rmouse("mousePressed", x0, cy)
+    for i in range(1, 11):
+        rmouse("mouseMoved", x0 + (x1 - x0) * i / 10, cy)
+        time.sleep(0.02)
+    rmouse("mouseReleased", x1, cy)
+    # A committed, process-wide range (no tid) that sticks after the drag: the
+    # dimension arrow is painted over it.
+    ranges = run.wait_for(lambda: (run.sel().get("ranges") or None), "a committed time measure", timeout=10)
+    wide = [r for r in ranges if len(r) >= 3 and r[2] is None]
+    check(wide, f"a right-drag should leave a process-wide range: {ranges}")
+    run.shot("32-time-measure", settle=1.0)
+    return f"measured {len(wide)} span(s), sticks after release"
+
+
+@scenario("self-pane", "The viewer's Self pane shows frame phases as proper tracks, no mystery graph")
+def self_pane(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.open_viewer()
+    run.click("Self")
+    phases = run.wait_for(lambda: (run.self_phases() or None), "the viewer's self-profile", timeout=15)
+    check(phases.get("phases"), f"the Self pane shows no frame phases: {phases}")
+    run.shot("33-self-pane", settle=1.5)
+    return f"{len(phases.get('phases', []))} phases, {phases.get('fps', 0):.0f} fps"
+
+
 @scenario("live-tab", "The Live tab keeps per-scope statistics and a duration histogram")
 def live_tab(run):
     if run.chrome is None:

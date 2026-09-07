@@ -612,3 +612,68 @@ engine or a port of Gum. See the
 - Compare overhead, footprint, recursive calls, unwinding, and safe
   installation/removal against the existing C++ inline and Rust uprobe
   paths before choosing an engine.
+
+## UX and feature batch (2026-09-07)
+
+The owner's list, verbatim under each heading; `Status` is the port's read.
+
+### 35. Time-measure double-ended arrow
+
+when measuring time on the timeline (right click and drag) we should see
+double ended arrow that spans the selection with the selected time in the
+middle, that should stick, and be placed right under the timeline.
+
+**Status: done (2026-09-07).** A right-drag paints a dimension arrow just under the ruler -- a double-headed line spanning the selection with the duration in the middle -- and it sticks after release. `paint_selection_overlay` in app.rs; e2e `time-measure`, screenshot 32.
+
+### 36. Replace the self-profile's mystery graph track
+
+there's a weird graph track in the self profile, that doesn't seem to make
+any sense, why is it not using the main graph track mechanism, right now,
+it's the first "track" in the self trace, but it's not named and we can't
+hover on it. Please replace by proper track(s) and remove.
+
+**Status: done (2026-09-07).** The custom frame-time sparkline (an unnamed, un-hoverable first "track") is removed; frame time is already carried by the proper `frame_period_us`, `outside_frame_us` and `fps` value lanes, hoverable through the ordinary graph-track mechanism. self_pane.rs; e2e `self-pane`, screenshot 33.
+
+### 37. Sampling report indentation default 4, slider down to 0
+
+make the indentation of the sampling report hierarchy "4" by default, also,
+add the option to go to 0 in the slider in the settings.
+
+**Status: done (2026-09-07).** `report_indent` defaults to 4 and the settings slider now runs 0..=32 (clamp lowered to 0). app.rs.
+
+### 38. Install Orbit from a curl command
+
+in the list of todos, we need to be able to install orbit from a curl
+command, like the llm cli do these days, but let's wait until we have a
+proper website. you can start implementing the feature now even though we
+don't have a site actually.
+
+**Status: done (2026-09-07), pending a public URL.** `tools/install/install.sh` is a POSIX installer (OS/arch detect, optional SHA-256, ~/.local/bin, PATH hint), served at the site root by `build_site.py` and linked from the landing page. Default base URL is a placeholder until the site is live (item 25); overridable with ORBIT_INSTALL_BASE. Smoke-tested.
+
+### 39. Hooked functions highlighted in the sampling report
+
+any hooked function should be highlighted in blue in any sampling report
+
+**Status: done (2026-09-07).** Hooked functions read in blue in every report: flat (already), the top-down and bottom-up trees now colour a hooked name blue, and the flame graph outlines a hooked bar in blue. app.rs; e2e `report-tabs`.
+
+### 40. Histogram at the bottom of the Live view, C++ Orbit layout
+
+the histogram should be at the bottom of the live view, don't change the
+layout when clicking as we have now, we should replicate what orbit cpp
+does for the histogram
+
+**Status: done (2026-09-07).** The Live view owns its layout: the table scrolls above a fixed-height histogram panel pinned to the bottom, so selecting a function fills the panel and never reflows the table (C++ Orbit's layout). app.rs; e2e `live-tab`, screenshot 15.
+
+### 41. Case-insensitive, multi-token filters
+
+filters should be case insensitive and multi-token "step world" should match
+with "b3Step_World" for example
+
+**Status: done (2026-09-07).** Every filter is case-insensitive and multi-token: each whitespace-separated token must appear, in any order, so "step world" matches "b3Step_World". Covers the timeline scope search (`ids_matching`), the report/Live/process filters (`contains_ci`, `process_matches_filter`) and the service function search (`FunctionIndex::search`). Unit tests in each.
+
+### 42. Rectangle-select on Ctrl+left-drag, not a button
+
+select feature should not be a ui button, let's map it to
+ctrl-left-click-and-drag
+
+**Status: done (2026-09-07).** The Select pill is gone; Ctrl+left-drag draws the marquee (wheel still zooms, plain drag still pans). Esc clears it. app.rs; e2e `rect-select` drives it with the Ctrl modifier.

@@ -1,46 +1,15 @@
 # Orbit e2e report
 
-Run 2026-09-04 21:22 at commit `075fdc880` on `rixbox`.
+Run 2026-09-07 08:41 at commit `3f3a1b7ce` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
-| viewer-idle | pass | 9.6s |  |
-| processes | pass | 0.0s |  |
-| symbols | pass | 0.4s |  |
-| function-search | pass | 0.0s |  |
-| capture-scheduling | pass | 20.4s |  |
-| sampling-report | pass | 9.1s |  |
-| call-trees | pass | 9.1s |  |
-| selection-report | pass | 9.1s |  |
-| report-tabs | pass | 61.4s |  |
-| api-rust | pass | 19.1s | 226150 events, 154 links, 1815 pre-start refused |
-| api-c | pass | 19.0s | 229711 events, 153 links, 1135 pre-start refused |
-| api-cpp | pass | 19.1s | 230354 events, 154 links, 1451 pre-start refused |
-| api-python | pass | 19.0s | 118425 events, 113 links, 1601 pre-start refused |
-| self-instrumentation | pass | 18.1s | 2 segment(s), 222806 events, 145 links (not drawn yet) |
-| thread-states | pass | 7.1s | skipped: no scheduling tracepoints (needs CAP_PERFMON) |
-| instrumentation | pass | 6.1s | skipped: no hooks armed: uprobes need CAP_PERFMON |
-| thread-focus | FAIL | 25.3s | timed out waiting for a thread selection |
-| scope-report | FAIL | 10.9s | no right-click on the thread rows landed on a manual scope |
-| live-tab | pass | 10.5s | 300 rows, histogram for 'solve contacts' |
-| flame-tab | pass | 11.0s | ok |
-| save-slice-open | pass | 10.5s | 2134 KB bundle, 224 KB slice, 18790 events reopened |
-| python-reader | pass | 0.9s | 198903 events; 3 agent rows, 1007 value rows |
-| agent-scopes | pass | 18.4s | tracks ['agent'] |
-| service-lanes | pass | 9.4s | 1 value lane(s) under pid 1167570 |
-| clear | pass | 10.2s | ok |
-| wire-and-perf | FAIL | 41.4s | timed out waiting for the self-profile readout |
-| website | pass | 21.4s | 214311 events from a 2551 KB stream, 6.4 s to first events |
-| hook-from-report | pass | 31.8s | hooked 'b3MulW'; arming skipped: no hooks armed: uprobes need CAP_PERFMON |
-| report-filter | pass | 23.4s | 15 of 200 rows match 'b3Mul' |
+| time-measure | pass | 19.2s | measured 1 span(s), sticks after release |
+| self-pane | pass | 11.6s | 22 phases, 36 fps |
 
 ## Numbers
 
-- wire: packed
-- bundle_bytes: 2186155
-- slice_bytes: 230265
-- stream_bytes: 2612519
-- site_first_events_s: 6.4
+(no numbers: the perf scenario did not run)
 
 ## Screenshots
 
@@ -69,3 +38,9 @@ Run 2026-09-04 21:22 at commit `075fdc880` on `rixbox`.
 - `23-static-viewer.png` -- ![](../screenshots/23-static-viewer.png)
 - `24-hook-from-report.png` -- ![](../screenshots/24-hook-from-report.png)
 - `25-report-filter.png` -- ![](../screenshots/25-report-filter.png)
+- `26-code-both.png` -- ![](../screenshots/26-code-both.png)
+- `27-code-source.png` -- ![](../screenshots/27-code-source.png)
+- `30-sample-bar-select.png` -- ![](../screenshots/30-sample-bar-select.png)
+- `31-rect-select.png` -- ![](../screenshots/31-rect-select.png)
+- `32-time-measure.png` -- ![](../screenshots/32-time-measure.png)
+- `33-self-pane.png` -- ![](../screenshots/33-self-pane.png)
