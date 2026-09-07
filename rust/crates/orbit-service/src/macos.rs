@@ -108,14 +108,15 @@ fn native_thread_ids(pid: u32) -> Vec<u64> {
     let Ok(pid) = i32::try_from(pid) else {
         return Vec::new();
     };
-    // SDK proc_info.h flavor; libc exposes proc_pidinfo but not this constant.
-    const PROC_PIDLISTTHREADS: i32 = 6;
+    // XNU proc_info_private.h: selector 28 returns unique kernel thread IDs.
+    // Selector 6 returns pthread handles, which do not match our wire IDs.
+    const PROC_PIDLISTTHREADIDS: i32 = 28;
     let mut capacity = 64;
     while capacity <= 65536 {
         let mut tids = vec![0u64; capacity];
         let size = (tids.len() * 8) as i32;
         let n = unsafe {
-            libc::proc_pidinfo(pid, PROC_PIDLISTTHREADS, 0, tids.as_mut_ptr().cast(), size)
+            libc::proc_pidinfo(pid, PROC_PIDLISTTHREADIDS, 0, tids.as_mut_ptr().cast(), size)
         };
         if n <= 0 {
             return Vec::new();
@@ -150,13 +151,14 @@ pub fn thread_comm(pid: u32, tid: u32) -> Option<String> {
 }
 
 fn native_thread_comm(pid: u32, tid: u64) -> Option<String> {
+    const PROC_PIDTHREADID64INFO: i32 = 15; // SDK proc_info.h; libc omits this selector.
     let pid = i32::try_from(pid).ok()?;
     let mut info: libc::proc_threadinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of_val(&info) as i32;
     let n = unsafe {
         libc::proc_pidinfo(
             pid,
-            libc::PROC_PIDTHREADINFO,
+            PROC_PIDTHREADID64INFO,
             tid,
             (&mut info as *mut libc::proc_threadinfo).cast(),
             size,
@@ -176,14 +178,21 @@ pub fn capture_loop(
     target_pid: i32,
     _store: Arc<SampleStore>,
     gpu_helper: Option<String>,
-    _hooks: Vec<HookSpec>,
+    hooks: Vec<HookSpec>,
     show_all_processes: bool,
     _duplicate_filter: bool,
+    mut frida: Option<crate::frida::FridaSession>,
 ) {
     if gpu_helper.is_some() {
         eprintln!("orbit-service: GPU helper capture is not supported on macOS");
     }
-    service.set_instrumentation_status("macOS: manual instrumentation; CPU sampling, scheduling, and dynamic hooks are not yet available");
+    service.set_instrumentation_status(if frida.is_some() { "Frida: functions armed" } else { "macOS: manual instrumentation; CPU sampling and scheduling are not yet available" });
+    let mut hook_names = std::collections::HashMap::new();
+    for (i, hook) in hooks.iter().enumerate() {
+        let id = (1 << 20) + i as u32;
+        service.intern.lock().insert_id(id, &hook.name);
+        hook_names.insert(hook.function_id, id);
+    }
     service.mark_capture_started(target_pid.max(0) as u32, crate::now_monotonic_ns());
     let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
     visible.add_instrumented(std::process::id());
@@ -206,6 +215,10 @@ pub fn capture_loop(
             let now = crate::now_monotonic_ns();
             visible.maybe_refresh();
             scopes.poll(&mut visible, now, &mut batch);
+            if let Some(session) = frida.as_mut() {
+                session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut batch);
+                service.set_instrumentation_status(session.status());
+            }
             if last_names.elapsed() >= Duration::from_secs(1) {
                 names.refresh(
                     &visible.pids(),
@@ -228,6 +241,11 @@ pub fn capture_loop(
         std::thread::sleep(interval);
     }
     batch.clear();
+    if let Some(session) = frida.as_mut() {
+        session.stop();
+        session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut batch);
+        service.set_instrumentation_status(session.status());
+    }
     scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut batch);
     scopes.finish(crate::now_monotonic_ns(), &mut batch);
     names.refresh(
@@ -277,6 +295,7 @@ pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
         Vec::new(),
         true,
         true,
+        None,
     );
     let _ = timer.join();
     let (_, events) = service.ring().snapshot();

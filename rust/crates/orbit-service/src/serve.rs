@@ -250,9 +250,6 @@ impl SymbolState {
 
 /// Starts indexing `pid` unless that has already been done or is under way.
 fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-        return Err("Live symbol loading and dynamic hooks are not yet supported on macOS; manual instrumentation is available".into());
-    }
     if pid == 0 {
         return Err("a process must be selected before symbols can be loaded".to_string());
     }
@@ -615,6 +612,7 @@ fn capture_loop(
     hooks: Vec<HookSpec>,
     show_all_processes: bool,
     uprobe_duplicate_filter: bool,
+    mut frida: Option<crate::frida::FridaSession>,
 ) {
     // GPU telemetry rides the same helper-process path the file mode uses:
     // the static service cannot dlopen NVML, so a helper streams pod events
@@ -802,8 +800,12 @@ fn capture_loop(
         hook_names.insert(hook.function_id, names.id_for(&hook.name));
     }
     let mut uprobes = {
-      let _phase = orbit_api::scope("arm uprobes");
-      if hooks.is_empty() || !has_target {
+      let _phase = orbit_api::scope("arm instrumentation");
+      if frida.is_some() {
+        service.set_instrumentation_status(format!("Frida: {} functions armed", hooks.len()));
+        visible.add_instrumented(target_pid as u32);
+        None
+      } else if hooks.is_empty() || !has_target {
         service.set_instrumentation_status("");
         None
     } else {
@@ -1199,6 +1201,12 @@ fn capture_loop(
         // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
         // exact spans the target actually executed, and they belong above the
         // sampled flame graph rather than mixed into it.
+        if let Some(session) = frida.as_mut() {
+            let mut events = Vec::new();
+            session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut events);
+            service.push_events(&events);
+            service.set_instrumentation_status(session.status());
+        }
         if let Some(session) = uprobes.as_mut() {
             let _probes = orbit_api::scope("read uprobes");
             for call in session.poll() {
@@ -1293,6 +1301,14 @@ fn capture_loop(
         if refused > 0 {
             eprintln!("orbit-service: {refused} event(s) started before the capture and were dropped");
         }
+    }
+
+    if let Some(session) = frida.as_mut() {
+        session.stop();
+        let mut tail = Vec::new();
+        session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut tail);
+        service.push_events(&tail);
+        service.set_instrumentation_status(session.status());
     }
 
     // Calls held back for reordering would otherwise be lost with the
@@ -1603,8 +1619,9 @@ pub fn run_on(
                 .ok()
                 .and_then(|value| value.get("pid").and_then(|p| p.as_i64()))
                 .unwrap_or(0) as i32;
-            if cfg!(target_os = "macos") && !hook_request(body).0.is_empty() {
-                return Err("Dynamic hooks are not yet supported on macOS; use manual instrumentation".into());
+            let engine = crate::frida::Engine::parse(&hook_request(body).1)?;
+            if cfg!(target_os = "macos") && engine == crate::frida::Engine::Uprobes && !hook_request(body).0.is_empty() {
+                return Err("Kernel uprobes are only available on Linux; select Frida".into());
             }
             let mut worker = start_worker.lock().map_err(|_| "capture worker poisoned".to_string())?;
             if start_running.swap(true, Ordering::SeqCst) {
@@ -1620,7 +1637,7 @@ pub fn run_on(
             // Whatever the viewer ticked in the hook picker. The picker only
             // offers functions once symbols are ready, so an index is there
             // whenever the list is non-empty.
-            let (ids, method) = hook_request(body);
+            let (ids, _method) = hook_request(body);
             let show_all_processes = wants_all_processes(body);
             let uprobe_duplicate_filter = wants_duplicate_filter(body);
             let mut hooks = Vec::new();
@@ -1668,17 +1685,19 @@ pub fn run_on(
                         ids.len()
                     ),
                 }
-                // The trampoline half of Orbit's user-space instrumentation is
-                // not ported, so the request is honoured through uprobes
-                // whichever method was asked for. Saying so beats silently
-                // giving the user something other than what they picked.
-                if method == "user_space" {
-                    eprintln!(
-                        "orbit-service: user-space trampolines are not ported yet; \
-                         instrumenting with kernel uprobes instead"
-                    );
-                }
             }
+            if !ids.is_empty() && hooks.is_empty() {
+                start_running.store(false, Ordering::SeqCst);
+                return Err("No selected functions could be resolved".into());
+            }
+            hooks.truncate(MAX_HOOKS);
+            let frida = if !hooks.is_empty() && engine == crate::frida::Engine::Frida {
+                Some(crate::frida::FridaSession::arm(pid, &hooks).map_err(|error| {
+                    start_running.store(false, Ordering::SeqCst);
+                    start_service.set_instrumentation_status(&error);
+                    error
+                })?)
+            } else { None };
             let service = start_service.clone();
             let running = start_running.clone();
             // A new capture replaces the previous one's samples, so a report
@@ -1706,6 +1725,7 @@ pub fn run_on(
                         hooks,
                         show_all_processes,
                         uprobe_duplicate_filter,
+                        frida,
                     )
                 })
                 .map_err(|error| {

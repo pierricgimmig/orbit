@@ -730,7 +730,7 @@ fn default_unwinding() -> String {
     "dwarf".into()
 }
 fn default_dyn_instr() -> String {
-    "user_space".into()
+    "frida".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

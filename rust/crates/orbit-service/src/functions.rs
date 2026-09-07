@@ -19,8 +19,11 @@
 
 use std::collections::HashMap;
 
+#[cfg(target_os = "linux")]
 use orbit_maps::{parse_maps, PROT_EXEC};
-use orbit_object::{parse_elf_metadata, ObjectSegment};
+#[cfg(target_os = "linux")]
+use orbit_object::parse_elf_metadata;
+use orbit_object::ObjectSegment;
 
 /// One function that can be hooked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +49,7 @@ pub struct FunctionIndex {
 impl FunctionIndex {
     /// Reads every executable mapping of a process and indexes the functions
     /// of the files behind them.
+    #[cfg(target_os = "linux")]
     pub fn for_pid(pid: i32) -> FunctionIndex {
         let Ok(content) = std::fs::read(format!("/proc/{pid}/maps")) else {
             return FunctionIndex { functions: Vec::new(), module_count: 0 };
@@ -84,6 +88,7 @@ impl FunctionIndex {
         FunctionIndex { functions, module_count }
     }
 
+    #[cfg(target_os = "linux")]
     /// Every instrumentable function of one module file. Pure per-module work,
     /// so it runs on a worker thread; the self-profile scope is named for the
     /// file so the cost of each shows on the service's track.
@@ -117,6 +122,22 @@ impl FunctionIndex {
             });
         }
         out
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn for_pid(pid: i32) -> FunctionIndex {
+        let rows = crate::frida::symbols(pid).unwrap_or_else(|e| { eprintln!("orbit-service: {e}"); Vec::new() });
+        let mut functions: Vec<_> = rows.into_iter().filter_map(|row| {
+            let path = row["module_path"].as_str()?.to_string();
+            let offset = row["file_offset"].as_u64()?;
+            Some(InstrumentableFunction { id: function_id(&path, offset),
+                name: pretty_name(row["name"].as_str()?), module: row["module"].as_str()?.to_string(),
+                module_path: path, file_offset: offset, size: row["size"].as_u64().unwrap_or(0) })
+        }).collect();
+        functions.sort_by_key(|f| f.id);
+        functions.dedup_by_key(|f| f.id);
+        let module_count = functions.iter().map(|f| &f.module_path).collect::<std::collections::HashSet<_>>().len();
+        FunctionIndex { functions, module_count }
     }
 
     pub fn len(&self) -> usize {

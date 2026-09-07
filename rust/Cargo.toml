@@ -12,6 +12,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/orbit-frida-transport",
+    "crates/orbit-frida-agent",
     "crates/orbit-api",
     "crates/orbit-test-rust",
     "crates/orbit-collector",

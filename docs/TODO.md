@@ -596,15 +596,17 @@ with a scope's lifetime.
 
 ## Non-urgent backlog
 
-### 34. Evaluate Frida Gum for user-space dynamic instrumentation
+### 34. Frida instrumentation follow-up
 
-**Status: deferred — non-urgent; revisit when time allows.** Evaluate
-Frida Gum through its Rust bindings before considering a custom Rust
-engine or a port of Gum. See the
-[implementation review and Linux alternatives](dynamic-instrumentation-review.md).
+**Status: initial integration implemented; remaining evaluation is non-urgent.**
+Frida Core now handles attachment and Gum native callbacks feed a Rust agent.
+Frida is the default, with Linux uprobes retained explicitly. See
+[the integration guide](frida-instrumentation.md) and the
+[implementation review](dynamic-instrumentation-review.md).
 
-- Prototype native entry/exit callbacks in a Rust recording agent with
-  Gum statically linked; keep kernel uprobes as a fallback.
+- Evaluate replacing the Python/Frida Core control helper with a direct native
+  Core integration if packaging or startup measurements justify it. Recording
+  already runs entirely in native callbacks.
 - Validate Linux x86-64 and AArch64, and assess reuse on Windows through
   an agent DLL. Treat remote injection separately from interception.
 - Verify sensible perf callstacks throughout instrumented spans: recover

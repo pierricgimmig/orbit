@@ -75,10 +75,14 @@ Rosetta producers on the same Mac. Records retain the existing 32-bit thread-ID
 field; macOS thread IDs are reduced to their low 32 bits. Extending that wire
 format is future work for machines that exhaust that namespace.
 
-Process and thread discovery uses the SDK’s libproc interfaces. Producer and service use
-the same host's `CLOCK_MONOTONIC` clock. macOS CPU sampling, scheduler events,
-live Mach-O symbol/disassembly lookup, GPU capture, and dynamic function hooks
-are not implemented. Hook requests return an explicit unsupported error.
+Process and thread discovery uses libproc, including XNU’s private
+`PROC_PIDLISTTHREADIDS` selector to obtain kernel IDs rather than pthread handles.
+If enumeration is unavailable, event recording still works; thread enumeration
+and names may be incomplete. Producer and service use
+the same host's `CLOCK_MONOTONIC` clock. Frida dynamic hooks and Mach-O symbol discovery are now integrated; see
+[Frida instrumentation](frida-instrumentation.md) for attachment requirements
+and validation limits. CPU sampling, scheduler events, live Mach-O disassembly
+and GPU capture are not implemented.
 
 Linux and Mac captures share the viewer protocol and export format. A merged
 live timeline across several services is **not implemented**: it needs host

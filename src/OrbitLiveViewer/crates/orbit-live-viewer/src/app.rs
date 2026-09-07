@@ -1488,7 +1488,7 @@ impl OrbitLiveApp {
             opt_sampling: true,
             sample_period_ms: "1.0".into(),
             unwind_dwarf: true,
-            user_space_hooks: false,
+            user_space_hooks: true,
             uprobe_duplicate_filter: true,
             show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
@@ -1984,7 +1984,7 @@ impl OrbitLiveApp {
                 "frame_pointers".into()
             },
             dynamic_instrumentation_method: if self.user_space_hooks {
-                "user_space".into()
+                "frida".into()
             } else {
                 "kernel_uprobes".into()
             },
@@ -3085,10 +3085,10 @@ impl OrbitLiveApp {
             }
             vsep(ui);
             section_label(ui, "HOOKS");
-            if let Some(i) = segmented(ui, "orbit_hook_method", &["Uprobes", "User-space"], usize::from(self.user_space_hooks)) {
-                self.user_space_hooks = i == 1;
+            if let Some(i) = segmented(ui, "orbit_hook_method", &["Frida", "Uprobes"], usize::from(!self.user_space_hooks)) {
+                self.user_space_hooks = i == 0;
             }
-            if pill(ui, "Dedupe", self.uprobe_duplicate_filter)
+            if !self.user_space_hooks && pill(ui, "Dedupe", self.uprobe_duplicate_filter)
                 .on_hover_text(
                     "Drop the duplicate entry the kernel reports when a thread migrates inside a uprobe \
                      (same stack and instruction pointer, another CPU), and an entry above the last one's \
@@ -3100,9 +3100,9 @@ impl OrbitLiveApp {
             }
             ui.label(
                 RichText::new(if self.user_space_hooks {
-                    "trampolines are not ported yet; uprobes are armed"
+                    "requires permission to attach to the target"
                 } else {
-                    "needs CAP_PERFMON"
+                    "requires Linux uprobe permissions"
                 })
                 .font(FontId::monospace(10.0))
                 .color(theme::MUTED),

@@ -1,0 +1,52 @@
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+name: frida-rust
+on:
+  pull_request:
+    branches: [main, rust]
+  push:
+    branches: [rust, frida-instrumentation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: frida-rust-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  instrumentation:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Test native transport and agent lifecycle
+        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-frida-transport
+      - name: Build service and native libraries
+        run: |
+          cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-service/Cargo.toml
+          cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-api
+      - name: Build target and install test runtime
+        run: |
+          python3 -m venv /tmp/orbit-frida-test
+          /tmp/orbit-frida-test/bin/pip install --only-binary=:all: frida==17.17.0 pyarrow
+          if [ "$(uname -s)" = Darwin ]; then
+            cc -O1 -g -fno-omit-frame-pointer -I rust/crates/orbit-api/include tools/e2e/frida_target.c rust/target/debug/liborbit_api.a -lSystem -liconv -o /tmp/orbit-frida-target
+          else
+            cc -O1 -g -fno-omit-frame-pointer -I rust/crates/orbit-api/include tools/e2e/frida_target.c rust/target/debug/liborbit_api.a -lpthread -ldl -lm -o /tmp/orbit-frida-target
+          fi
+      - name: Verify live attachment, exact spans and restart
+        run: |
+          if [ "$(uname -s)" = Darwin ]; then ext=dylib; else ext=so; fi
+          /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+      - name: Verify startup failure does not block manual capture
+        if: runner.os == 'Linux'
+        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent
+      - name: Verify retained Linux uprobe backend
+        if: runner.os == 'Linux'
+        run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes
