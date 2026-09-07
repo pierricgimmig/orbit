@@ -1,10 +1,11 @@
 # Orbit e2e report
 
-Run 2026-09-07 15:55 at commit `802550d64` on `rixbox`.
+Run 2026-09-07 16:18 at commit `7c10f0303` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
-| capture-scheduling | pass | 20.6s |  |
+| capture-scheduling | pass | 24.9s |  |
+| python-reader | pass | 7.7s | 808163 events; 3 agent rows, 888 value rows; startup scopes present; service threads named ['orbit-capture', 'orbit-http', 'orbit-service'] |
 
 ## Numbers
 

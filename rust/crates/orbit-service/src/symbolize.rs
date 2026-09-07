@@ -134,10 +134,16 @@ impl Symbolizer {
                 vdso: false,
             });
         }
-        let modules: Vec<Module> = crate::par_map(&specs, Self::module_of_spec)
-            .into_iter()
-            .flatten()
-            .collect();
+        // One scope around the whole load: it launches the workers and blocks
+        // here until they return, so its span is the total symbol-loading time.
+        // The per-file "load symbols: <file>" scopes run on the workers under it.
+        let modules: Vec<Module> = {
+            let _total = orbit_api::scope(format!("load symbols ({} modules)", specs.len()));
+            crate::par_map(&specs, Self::module_of_spec)
+                .into_iter()
+                .flatten()
+                .collect()
+        };
         Symbolizer { modules }
     }
 

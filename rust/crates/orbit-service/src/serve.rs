@@ -250,12 +250,9 @@ fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), Str
     std::thread::Builder::new()
         .name("orbit-symbols".to_string())
         .spawn(move || {
-            let index = {
-                // Parent scope for the self-profile; each file loaded nests
-                // under it as "load symbols: <file>".
-                let _indexing = orbit_api::scope("index symbols");
-                FunctionIndex::for_pid(pid as i32)
-            };
+            // FunctionIndex::for_pid emits its own total "load symbols (N
+            // modules)" scope around the parallel per-file loads.
+            let index = FunctionIndex::for_pid(pid as i32);
             let Ok(mut guard) = state.lock() else { return };
             // A later selection may have superseded this one while it ran.
             if guard.pid != pid {
@@ -635,10 +632,9 @@ fn capture_loop(
     // closes it at the stop timestamp, so it spans Record -> Stop and every
     // per-pass scope nests under it.
     let _capture = orbit_api::start("capture");
-    let symbolizer = {
-        let _phase = orbit_api::scope("build symbolizer");
-        if has_target { Symbolizer::for_pid(target_pid) } else { Symbolizer::empty() }
-    };
+    // Symbolizer::for_pid emits its own total "load symbols (N modules)" scope
+    // around the parallel per-file loads; empty() when there is no target.
+    let symbolizer = if has_target { Symbolizer::for_pid(target_pid) } else { Symbolizer::empty() };
     if symbolizer.module_count() > 0 {
         eprintln!(
             "orbit-service: symbolizing {} modules, {} symbols",

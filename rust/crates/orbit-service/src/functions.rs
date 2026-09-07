@@ -68,11 +68,15 @@ impl FunctionIndex {
         // Index each module in parallel: a big split debug file dominates and
         // the modules are independent -- read, parse and symbolize each on its
         // own worker (each also emits its own "load symbols: <file>" scope).
-        let mut functions: Vec<InstrumentableFunction> =
+        // One scope around the whole thing: it launches the workers and blocks
+        // here until they return, so its span is the total symbol-loading time.
+        let mut functions: Vec<InstrumentableFunction> = {
+            let _total = orbit_api::scope(format!("load symbols ({module_count} modules)"));
             crate::par_map(&paths, |path| Self::functions_of_module(path))
                 .into_iter()
                 .flatten()
-                .collect();
+                .collect()
+        };
         // Two symbols can share an address (aliases); the id is the address,
         // so keep one of each to stop a hook being armed twice.
         functions.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.name.cmp(&b.name)));
