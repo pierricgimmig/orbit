@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 """Manual instrumentation smoke test for Linux and macOS (requires pyarrow).
 
 Exercises a separate, late-starting Python producer through the real C ABI,
@@ -95,9 +99,9 @@ def main():
             assert any(p["pid"] == service.pid for p in get("/api/processes"))
             if sys.platform == "darwin":
                 try:
-                    request("/api/capture/start", b'{"pid":0,"instrumented_functions":[{"function_id":1}]}')
+                    request("/api/capture/start", b'{"pid":0,"dynamic_instrumentation_method":"kernel_uprobes","instrumented_functions":[{"function_id":1}]}')
                 except urllib.error.HTTPError as error:
-                    assert b"not yet supported on macOS" in error.read()
+                    assert b"Kernel uprobes are only available on Linux" in error.read()
                 else:
                     raise AssertionError("macOS silently accepted a dynamic hook")
                 assert not get("/api/status")["capturing"]

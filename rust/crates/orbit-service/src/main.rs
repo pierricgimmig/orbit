@@ -19,6 +19,7 @@
 #[cfg(target_os = "macos")]
 mod macos;
 mod hooks;
+mod frida;
 mod code;
 mod functions;
 mod interner;

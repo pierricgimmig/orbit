@@ -34,3 +34,5 @@ third_party/py-spy/
 # Packaged macOS service and manual instrumentation SDK
 /dist/macos/
 /dist/macos-universal/
+
+/dist/frida/

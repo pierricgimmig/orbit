@@ -5,6 +5,9 @@ and browser viewer hosting for Apple Silicon and Intel. See the
 [macOS build guide](docs/building_macos.md) for setup, validation status and
 features still pending.
 
+Dynamic function instrumentation now defaults to **Frida**, with Linux uprobes
+retained as an option. See the [Frida build and runtime guide](docs/frida-instrumentation.md).
+
 <img alt="ORBIT Logo" src="contrib/logos/orbit_logo_simple.png" align="right" width="520" >
 
 Orbit, the **O**pen **R**untime **B**inary **I**nstrumentation **T**ool is a

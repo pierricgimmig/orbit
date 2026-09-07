@@ -1,0 +1,308 @@
+// Copyright (c) 2026 The Orbit Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! Frida Core runs in a helper process; only native callbacks run per target
+//! call. This keeps the service's static-musl build independent of libfrida.
+use crate::hooks::HookSpec;
+use orbit_frida_transport::Transport;
+use orbit_live_event::{kind, LiveEvent};
+use orbit_scope_ring::merge::{drain_from, Cursors, Producer};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
+
+const HELPER: &str = include_str!("../../../../tools/frida/helper.py");
+const SCRIPT: &str = include_str!("../../../../tools/frida/agent.js");
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    Frida,
+    Uprobes,
+}
+impl Engine {
+    pub fn parse(method: &str) -> Result<Self, String> {
+        match method {
+            "" | "frida" | "user_space" => Ok(Self::Frida),
+            "kernel_uprobes" => Ok(Self::Uprobes),
+            _ => Err(format!("unknown instrumentation engine: {method}")),
+        }
+    }
+}
+
+struct Helper {
+    child: Child,
+    input: Option<ChildStdin>,
+    replies: Receiver<serde_json::Value>,
+}
+impl Helper {
+    fn launch(mut config: serde_json::Value) -> Result<Self, String> {
+        config["script"] = SCRIPT.into();
+        let python = std::env::var_os("ORBIT_FRIDA_PYTHON").unwrap_or_else(|| {
+            let beside = std::env::current_exe()
+                .unwrap_or_default()
+                .with_file_name("frida-python")
+                .join("bin/python");
+            if beside.is_file() {
+                beside.into_os_string()
+            } else {
+                "python3".into()
+            }
+        });
+        let mut child = Command::new(python)
+            .args(["-u", "-c", HELPER])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "start Frida helper: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_PYTHON"
+                )
+            })?;
+        let input = child.stdin.take();
+        let stdout = child.stdout.take().unwrap();
+        let (send, replies) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                let result = serde_json::from_str(&line).unwrap_or_else(
+                    |_| serde_json::json!({"error": "invalid Frida helper response"}),
+                );
+                if send.send(result).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut helper = Self {
+            child,
+            input,
+            replies,
+        };
+        writeln!(helper.input.as_mut().unwrap(), "{config}").map_err(|e| e.to_string())?;
+        Ok(helper)
+    }
+    fn response(&self) -> Result<serde_json::Value, String> {
+        let value = self
+            .replies
+            .recv_timeout(Duration::from_secs(30))
+            .map_err(|e| format!("Frida helper did not become ready: {e}"))?;
+        if let Some(error) = value.get("error") {
+            return Err(format!("Frida: {error}"));
+        }
+        if let Some(reason) = value.get("detached") {
+            return Err(format!("Frida detached: {reason}"));
+        }
+        Ok(value)
+    }
+    fn stop(&mut self) -> Result<(), String> {
+        // Closing stdin requests safe detach, also used on early-return errors.
+        self.input.take();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = self.child.try_wait().map_err(|e| e.to_string())? {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("Frida helper exited: {status}"))
+                };
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(
+                    "Frida detach timed out; outstanding target calls may defer cleanup".into(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+impl Drop for Helper {
+    fn drop(&mut self) {
+        self.input.take();
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+pub struct FridaSession {
+    helper: Helper,
+    mapping: Transport,
+    _file: tempfile::NamedTempFile,
+    cursors: Cursors,
+    pid: u32,
+    pub lost: u64,
+    pub calls: u64,
+    pub error: Option<String>,
+    stopped: bool,
+}
+impl FridaSession {
+    pub fn arm(pid: i32, hooks: &[HookSpec]) -> Result<Self, String> {
+        if pid <= 0 || pid as u32 == std::process::id() {
+            return Err("Frida requires a target process other than orbit-service".into());
+        }
+        let name = if cfg!(target_os = "macos") {
+            "liborbit_frida_agent.dylib"
+        } else {
+            "liborbit_frida_agent.so"
+        };
+        let agent = std::env::var_os("ORBIT_FRIDA_AGENT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::current_exe()
+                    .unwrap_or_default()
+                    .with_file_name(name)
+            });
+        let agent = agent.canonicalize().map_err(|e| {
+            format!(
+                "Frida agent {}: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_AGENT",
+                agent.display()
+            )
+        })?;
+        let file = tempfile::Builder::new()
+            .prefix("orbit-frida-")
+            .tempfile_in("/tmp")
+            .map_err(|e| e.to_string())?;
+        let mapping = Transport::create(file.as_file(), pid as u32).map_err(|e| e.to_string())?;
+        // A privileged Linux service must allow its unprivileged target to
+        // open the capture file. No permissions outside this new file change.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
+            let target = std::fs::metadata(format!("/proc/{pid}")).map_err(|e| e.to_string())?;
+            if unsafe { libc::geteuid() } == 0
+                && unsafe { libc::fchown(file.as_file().as_raw_fd(), target.uid(), target.gid()) }
+                    != 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+        }
+        let hooks: Vec<_> = hooks
+            .iter()
+            .map(|h| {
+                serde_json::json!({"function_id":h.function_id,
+            "module_path":h.module_path,"file_offset":h.file_offset,"name":h.name})
+            })
+            .collect();
+        let helper = Helper::launch(
+            serde_json::json!({"pid":pid,"agent":agent,"transport":file.path(),"hooks":hooks}),
+        )?;
+        let ready = helper.response()?;
+        if ready["armed"].as_u64() != Some(hooks.len() as u64) {
+            return Err(format!("Frida did not arm every hook: {ready}"));
+        }
+        let cursors = Cursors::for_rings(mapping.rings().ring_count());
+        Ok(Self {
+            helper,
+            mapping,
+            _file: file,
+            cursors,
+            pid: pid as u32,
+            lost: 0,
+            calls: 0,
+            error: None,
+            stopped: false,
+        })
+    }
+    pub fn poll(&mut self, name_id: impl Fn(u64) -> u32, batch: &mut Vec<LiveEvent>) {
+        if !self.stopped {
+            if let Ok(Some(status)) = self.helper.child.try_wait() {
+                self.error = Some(format!("Frida helper exited during capture: {status}"));
+                self.mapping.disable();
+            }
+        }
+        for reply in self.helper.replies.try_iter() {
+            if reply.get("error").is_some() || (!self.stopped && reply.get("detached").is_some()) {
+                self.error = Some(reply.to_string());
+            }
+        }
+        let producer = if orbit_scope_ring::platform::process_alive(self.pid) {
+            Producer::Alive
+        } else {
+            Producer::Gone
+        };
+        let pass = drain_from(
+            self.mapping.rings(),
+            &mut self.cursors,
+            crate::now_monotonic_ns(),
+            producer,
+        );
+        self.lost += pass.dropped;
+        for slice in pass.slices {
+            for event in slice.events {
+                if event.kind != 0 {
+                    self.lost += 1;
+                    continue;
+                }
+                let id = u64::from_le_bytes(event.text[..8].try_into().unwrap());
+                batch.push(LiveEvent {
+                    start_ns: event.timestamp_ns,
+                    duration_ns: event.scope_id,
+                    tid: event.tid,
+                    pid: self.pid,
+                    kind: kind::API_SCOPE,
+                    depth: event.depth,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: name_id(id),
+                });
+                self.calls += 1;
+            }
+        }
+    }
+    pub fn stop(&mut self) {
+        self.stopped = true;
+        if let Err(e) = self.helper.stop() {
+            self.error = Some(e);
+        }
+        self.mapping.disable();
+    }
+    pub fn status(&self) -> String {
+        format!(
+            "Frida: {} calls, {} lost/invalid records{}",
+            self.calls,
+            self.lost,
+            self.error
+                .as_ref()
+                .map(|e| format!("; {e}"))
+                .unwrap_or_default()
+        )
+    }
+}
+
+impl Drop for FridaSession {
+    fn drop(&mut self) {
+        self.mapping.disable();
+        // EOF asks the helper to detach even if capture startup failed after
+        // hooks were installed. Give cleanup time before Helper's kill backstop.
+        let _ = self.helper.stop();
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn symbols(pid: i32) -> Result<Vec<serde_json::Value>, String> {
+    let mut helper = Helper::launch(serde_json::json!({"pid":pid,"command":"symbols"}))?;
+    let response = helper.response()?;
+    helper.stop()?;
+    response["symbols"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| "Frida returned no symbol list".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn frida_is_default_and_uprobes_remain_explicit() {
+        for method in ["", "frida", "user_space"] {
+            assert_eq!(Engine::parse(method).unwrap(), Engine::Frida);
+        }
+        assert_eq!(Engine::parse("kernel_uprobes").unwrap(), Engine::Uprobes);
+        assert!(Engine::parse("typo").is_err());
+    }
+}
