@@ -71,7 +71,9 @@ are not represented as completed spans. There is no claim that every function
 entry produces an exit. Frida controls callback/trampoline lifetime during
 script teardown; the helper has a bounded shutdown wait and reports failures.
 Concurrent Orbit collectors for one target are refused. Self-hooking the service
-is refused. The existing 16-function limit and 32-bit wire thread IDs remain.
+is refused. Fork-child callbacks are disabled before touching inherited locks
+or the parent’s transport; attaching to such a child requires it to exec first.
+The existing 16-function limit and 32-bit wire thread IDs remain.
 
 ## Platform requirements and current limits
 
@@ -88,7 +90,9 @@ This integration does not bypass SIP or promise attachment to protected system
 processes. Development targets are the initial supported use case. Build the
 agent for the target architecture, including Rosetta when applicable.
 
-Initial end-to-end validation is on Linux x86-64. Native CI covers Linux,
+Initial end-to-end validation is on Linux x86-64. The hosted Mac attachment
+tests run both collector and development target as root to avoid interactive
+task-port authorization prompts; this does not validate unprivileged attachment. Native CI covers Linux,
 Apple Silicon and Intel Macs; ARM Linux and Rosetta runtime validation remain
 pending. Neither exception handling nor sampled callstack fidelity through Gum
 trampolines is certified by these tests. Existing Linux sampling continues, but

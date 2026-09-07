@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
@@ -37,6 +38,11 @@ int main(void) {
   char command[32];
   while (fgets(command, sizeof(command), stdin)) {
     uint64_t manual = orbit_start("manual alongside Frida", 22);
+    pid_t child = fork();
+    if (child == 0) { orbit_frida_test_outer(); _exit(0); }
+    if (child < 0) return 4;
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) return 5;
     pthread_t threads[3];
     for (int i = 0; i < 3; ++i) pthread_create(&threads[i], NULL, worker, NULL);
     for (int i = 0; i < 3; ++i) pthread_join(threads[i], NULL);

@@ -5,7 +5,16 @@
 //! Native callback sink loaded into the target by Frida. No orbit-api globals
 //! or exported manual API symbols: existing manual instrumentation is untouched.
 use orbit_frida_transport::Transport;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{OnceLock, RwLock};
+
+// An injected mapping belongs to one process. A fork inherits both it and
+// possibly-held Rust locks; ignore child callbacks before touching those locks.
+static FORK_CHILD: AtomicBool = AtomicBool::new(false);
+static ATFORK: OnceLock<i32> = OnceLock::new();
+unsafe extern "C" fn after_fork() {
+    FORK_CHILD.store(true, Ordering::Relaxed);
+}
 
 struct Session {
     generation: u32,
@@ -20,6 +29,11 @@ static SESSION: RwLock<Session> = RwLock::new(Session {
 /// The path is supplied by our controlling Frida script and must be C-terminated.
 #[no_mangle]
 pub unsafe extern "C" fn orbit_frida_open(path: *const libc::c_char) -> u32 {
+    if FORK_CHILD.load(Ordering::Relaxed)
+        || *ATFORK.get_or_init(|| libc::pthread_atfork(None, None, Some(after_fork))) != 0
+    {
+        return 0;
+    }
     if path.is_null() {
         return 0;
     }
@@ -54,6 +68,9 @@ pub unsafe extern "C" fn orbit_frida_open(path: *const libc::c_char) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn orbit_frida_close(generation: u32) {
+    if FORK_CHILD.load(Ordering::Relaxed) {
+        return;
+    }
     if let Ok(mut session) = SESSION.write() {
         if generation == session.generation {
             session.mapping = None;
@@ -83,6 +100,9 @@ pub extern "C" fn orbit_frida_record(
     tid: u32,
     depth: u32,
 ) {
+    if FORK_CHILD.load(Ordering::Relaxed) {
+        return;
+    }
     // The read guard keeps the mapping alive through publication. Closing a
     // capture waits for callbacks inside this function, not for target calls
     // that might never return. Old onLeave callbacks cannot enter a new capture.

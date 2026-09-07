@@ -56,7 +56,7 @@ pub fn perf_event_set_output(fd: i32, leader_fd: i32) -> io::Result<()> {
 pub fn perf_event_id(fd: i32) -> io::Result<u64> {
     let mut id: u64 = 0;
     // SAFETY: the kernel writes one u64 through the pointer.
-    if unsafe { libc::ioctl(fd, 0x8008_2407, &mut id as *mut u64) } != 0 {
+    if unsafe { libc::ioctl(fd, 0x8008_2407_u32 as _, &mut id as *mut u64) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(id)
