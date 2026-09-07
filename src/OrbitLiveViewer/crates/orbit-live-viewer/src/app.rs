@@ -603,6 +603,12 @@ pub struct OrbitLiveApp {
     /// not contain it are not shown, and a tree opens along the paths to
     /// the rows that do. C++ Orbit's filter box over the sampling report.
     report_filter: String,
+    /// Function ids selected in a report by a left-drag, for a batch hook
+    /// toggle. Keyed by id so a selection survives a re-sort or re-filter.
+    report_selection: std::collections::HashSet<u64>,
+    /// A left-drag selecting rows in progress: the anchor's y relative to the
+    /// rows' top, and the selection to union with (the prior one under shift).
+    report_drag: Option<(f32, std::collections::HashSet<u64>)>,
     /// Frames still to repaint after a layout-changing event with no input
     /// behind it -- a stream file's end, which opens the report panel. The
     /// frame that uploads the instances in the new geometry must also be
@@ -1509,6 +1515,8 @@ impl OrbitLiveApp {
             reupload_next_frame: false,
             draw_readout: String::new(),
             report_filter: String::new(),
+            report_selection: std::collections::HashSet::new(),
+            report_drag: None,
             flame_zoom: Vec::new(),
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
@@ -3206,6 +3214,7 @@ impl OrbitLiveApp {
             {
                 self.functions_show_all = !self.functions_show_all;
             }
+            self.selection_hook_controls(ui);
         });
         let shown = if capped { &rows[..MAX_ROWS] } else { &rows[..] };
         // Laid out by hand: only the rows inside the clip rect become
@@ -3215,11 +3224,23 @@ impl OrbitLiveApp {
         let col_gap = self.ui_tweaks.report_col_gap;
         let widths = [22.0f32, 0.0, 64.0, 170.0]; // hooked, function (rest), size, module
         let avail_w = ui.available_width().max(300.0);
-        let name_w = (avail_w - widths[0] - widths[2] - widths[3] - 3.0 * col_gap).max(120.0);
+        // A leading, non-sortable index gutter, so the ordinal of the last
+        // row on screen is the count of what the filter currently shows.
+        const INDEX_W: f32 = 48.0;
+        let name_w = (avail_w - INDEX_W - widths[0] - widths[2] - widths[3] - 4.0 * col_gap).max(120.0);
         // Header: each column sorts on click.
         let functions_sort = self.functions_sort;
         let mut sort_click: Option<u8> = None;
         ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::new(INDEX_W, row_h), Sense::hover());
+            ui.painter().text(
+                Pos2::new(r.right() - 4.0, r.center().y),
+                Align2::RIGHT_CENTER,
+                "#",
+                FontId::new(font - 0.5, FontFamily::Proportional),
+                theme::MUTED,
+            );
+            ui.add_space(col_gap);
             for (i, (h, w)) in [("hooked", widths[0]), ("function", name_w), ("size", widths[2]), ("module", widths[3])]
                 .iter()
                 .enumerate()
@@ -3254,6 +3275,14 @@ impl OrbitLiveApp {
         let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
         let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(shown.len());
         let first = first.min(last);
+        // Left-drag anywhere over the rows selects a range; registered before
+        // the rows so a click still reaches each row's hook checkbox.
+        let ordered_ids: Vec<u64> = shown.iter().map(|&i| self.functions[i].function_id).collect();
+        let rows_rect = Rect::from_min_size(
+            Pos2::new(ui.cursor().left(), top),
+            Vec2::new(avail_w, shown.len() as f32 * row_h),
+        );
+        self.handle_row_drag_select(ui, rows_rect, top, row_h, &ordered_ids);
         if first > 0 {
             ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
         }
@@ -3261,11 +3290,25 @@ impl OrbitLiveApp {
         for (n, &i) in shown[first..last].iter().enumerate() {
             let f = &self.functions[i];
             let hooked = self.is_hooked(f.function_id);
+            let selected = self.report_selection.contains(&f.function_id);
             let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
             if (first + n) % 2 == 1 {
                 ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
             }
+            if selected {
+                ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 48));
+            }
             let mut x = row_rect.left();
+            // index: the row's 1-based position in the current (filtered) list
+            let idx_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(INDEX_W, row_h));
+            ui.painter().text(
+                Pos2::new(idx_rect.right() - 4.0, idx_rect.center().y),
+                Align2::RIGHT_CENTER,
+                format!("{}", first + n + 1),
+                FontId::new(font - 0.5, FontFamily::Proportional),
+                theme::MUTED,
+            );
+            x += INDEX_W + col_gap;
             // hooked
             let check_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(widths[0], row_h));
             let check = ui.interact(check_rect, ui.id().with(("fnhook", i)), Sense::click());
@@ -6216,6 +6259,9 @@ impl OrbitLiveApp {
             return;
         }
         self.hooked_hint(ui);
+        if !self.report_selection.is_empty() {
+            ui.horizontal(|ui| self.selection_hook_controls(ui));
+        }
         let filter = self.report_filter.trim().to_lowercase();
         let mut rows: Vec<&crate::net::SamplingRow> = report
             .rows
@@ -6299,14 +6345,25 @@ impl OrbitLiveApp {
         let first = ((clip.top() - top) / row_h).floor().max(0.0) as usize;
         let last = (((clip.bottom() - top) / row_h).ceil().max(0.0) as usize + 1).min(rows.len());
         let first = first.min(last);
+        // Left-drag over the rows selects a range for a batch hook toggle.
+        let ordered_ids: Vec<u64> = rows.iter().map(|r| r.function_id).collect();
+        let rows_rect = Rect::from_min_size(
+            Pos2::new(ui.cursor().left(), top),
+            Vec2::new(avail_w, rows.len() as f32 * row_h),
+        );
+        self.handle_row_drag_select(ui, rows_rect, top, row_h, &ordered_ids);
         if first > 0 {
             ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
         }
         for (n, row) in rows[first..last].iter().enumerate() {
             let hooked = hooked_ids.contains(&row.function_id) && row.function_id != 0;
+            let selected = self.report_selection.contains(&row.function_id) && row.function_id != 0;
             let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
             if (first + n) % 2 == 1 {
                 ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+            }
+            if selected {
+                ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 48));
             }
             let mut x = row_rect.left();
             // hooked: a painted box, like the Functions view; rows with no
@@ -6610,6 +6667,95 @@ impl OrbitLiveApp {
             }
         }
         self.needs_repaint = true;
+    }
+
+    /// Left-drag over a report's rows to select a contiguous range (shift adds
+    /// to the prior selection). `ordered_ids[k]` is the function id of the
+    /// k-th displayed row (0 for a row with none, e.g. a thread node, which is
+    /// not selectable). Registered over the whole rows rect before the per-row
+    /// widgets, so a click still reaches a row's checkbox and only a click on
+    /// empty space clears the selection.
+    fn handle_row_drag_select(&mut self, ui: &Ui, rows_rect: Rect, top: f32, row_h: f32, ordered_ids: &[u64]) {
+        if ordered_ids.is_empty() || row_h <= 0.0 {
+            return;
+        }
+        let resp = ui.interact(rows_rect, ui.id().with("orbit_report_row_select"), Sense::click_and_drag());
+        let shift = ui.input(|i| i.modifiers.shift);
+        if resp.drag_started() {
+            if let Some(p) = resp.interact_pointer_pos() {
+                let base = if shift { self.report_selection.clone() } else { std::collections::HashSet::new() };
+                self.report_drag = Some((p.y - top, base));
+            }
+        }
+        if let Some((anchor_rel, base)) = self.report_drag.clone() {
+            if let Some(p) = resp.interact_pointer_pos() {
+                let n = ordered_ids.len() as isize;
+                let a = ((anchor_rel / row_h).floor() as isize).clamp(0, n - 1);
+                let b = (((p.y - top) / row_h).floor() as isize).clamp(0, n - 1);
+                let (lo, hi) = (a.min(b) as usize, a.max(b) as usize);
+                let mut sel = base;
+                for &id in &ordered_ids[lo..=hi] {
+                    if id != 0 {
+                        sel.insert(id);
+                    }
+                }
+                self.report_selection = sel;
+            }
+        }
+        if resp.drag_stopped() {
+            self.report_drag = None;
+            self.needs_repaint = true;
+        }
+        // A plain click on empty row space clears the selection.
+        if resp.clicked() && !shift {
+            self.report_selection.clear();
+        }
+    }
+
+    /// Whether every selected function is currently hooked (so the batch button
+    /// unhooks rather than hooks).
+    fn selection_all_hooked(&self) -> bool {
+        !self.report_selection.is_empty() && self.report_selection.iter().all(|id| self.is_hooked(*id))
+    }
+
+    /// Hook every selected function, or unhook them all if they already are.
+    fn toggle_hooks_for_selection(&mut self) {
+        let ids: Vec<u64> = self.report_selection.iter().copied().collect();
+        if ids.is_empty() {
+            return;
+        }
+        let action = if ids.iter().all(|id| self.is_hooked(*id)) {
+            HookAction::Unhook
+        } else {
+            HookAction::Hook
+        };
+        for id in ids {
+            let (name, module) = self
+                .functions
+                .iter()
+                .find(|f| f.function_id == id)
+                .map(|f| (f.name.clone(), f.module.clone()))
+                .unwrap_or_default();
+            self.apply_hook_action(action, id, &name, &module);
+        }
+    }
+
+    /// The batch-hook controls a report shows once a drag has selected rows.
+    fn selection_hook_controls(&mut self, ui: &mut Ui) {
+        let n = self.report_selection.len();
+        if n == 0 {
+            return;
+        }
+        let label = if self.selection_all_hooked() { format!("Unhook {n}") } else { format!("Hook {n}") };
+        if pill(ui, &label, false)
+            .on_hover_text("Hook or unhook the selected functions (left-drag rows to select)")
+            .clicked()
+        {
+            self.toggle_hooks_for_selection();
+        }
+        if pill(ui, "Clear", false).on_hover_text("Clear the selection").clicked() {
+            self.report_selection.clear();
+        }
     }
 
     /// The line above a report that says what is hooked and what to do
