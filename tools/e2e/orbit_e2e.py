@@ -1148,8 +1148,16 @@ def python_reader(run):
     check(has_capture, "the whole-capture self-profile scope is missing from the events")
     check(has_symbolizer, "the 'build symbolizer' setup scope is missing from the events")
     check(has_loadsym, "no 'load symbols: <file>' scopes in the events")
+    # The service's own threads read by name (Builder::name / tokio thread_name,
+    # and the comm refresh now includes the service's own pid).
+    manifest, _ = _bundle_manifest(path)
+    bundle = manifest.get("bundle", manifest)
+    svc_pids = {p["pid"] for p in bundle.get("processes", []) if "orbit-service" in p.get("name", "")}
+    svc_names = {t.get("name", "") for t in bundle.get("threads", []) if t.get("pid") in svc_pids}
+    check("orbit-capture" in svc_names, f"the capture thread is not named orbit-capture: {sorted(svc_names)}")
+    check("orbit-http" in svc_names, f"no orbit-http worker thread: {sorted(svc_names)}")
     return (f"{n} events; {agent_rows} agent rows, {value_rows} value rows; "
-            f"startup scopes present (capture/build symbolizer/load symbols)")
+            f"startup scopes present; service threads named {sorted(svc_names)}")
 
 
 @scenario("agent-scopes", "orbit-scope puts an agent's tool calls on their own track")

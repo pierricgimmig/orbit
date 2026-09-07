@@ -325,15 +325,19 @@ fn main() {
     let stop_workers = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut workers = Vec::new();
     if sampling_self {
-        for _ in 0..(num_cpus_hint() + 2) {
+        for i in 0..(num_cpus_hint() + 2) {
             let stop = stop_workers.clone();
-            workers.push(std::thread::spawn(move || {
-                let mut acc = 0u64;
-                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                    acc = burn_cpu(acc);
-                }
-                std::hint::black_box(acc);
-            }));
+            let worker = std::thread::Builder::new()
+                .name(format!("orbit-burn-{i}"))
+                .spawn(move || {
+                    let mut acc = 0u64;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        acc = burn_cpu(acc);
+                    }
+                    std::hint::black_box(acc);
+                })
+                .expect("spawn self-sampling worker");
+            workers.push(worker);
         }
     }
 

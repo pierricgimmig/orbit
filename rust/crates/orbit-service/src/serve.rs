@@ -903,8 +903,15 @@ fn capture_loop(
         if last_name_refresh.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
             last_name_refresh = Some(std::time::Instant::now());
             let svc = &service;
+            // Include the service's own pid so its threads read by name
+            // (orbit-capture, orbit-symbols, orbit-http, ...) rather than as
+            // raw tids; visible.pids() is only the target and what it spawned.
+            let mut name_pids = visible.pids();
+            if !name_pids.contains(&self_pid) {
+                name_pids.push(self_pid);
+            }
             comm_names.refresh(
-                &visible.pids(),
+                &name_pids,
                 |pid, name| svc.set_process_name(pid, name),
                 |pid, tid, name| svc.set_thread_name(pid, tid, name),
             );
@@ -1691,6 +1698,9 @@ pub fn run_on(
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        // Name the HTTP worker threads so they read as "orbit-http" on the
+        // service's own track rather than the default "tokio-runtime-worker".
+        .thread_name("orbit-http")
         .build()
         .map_err(|error| error.to_string())?;
     runtime.block_on(http::serve(service))
