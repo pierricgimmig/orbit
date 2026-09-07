@@ -83,7 +83,7 @@ rpc.exports = {
                     if (symbol.type !== 'function' && !machCode) continue;
                     const seg = segs.find(s => s.executable && symbol.address.compare(s.address) >= 0 &&
                         symbol.address.compare(s.address.add(s.size.toString())) < 0);
-                    if (seg) result.push({name: symbol.name, module: module.name, module_path: module.path,
+                    if (seg) result.push({name: symbol.name, is_global: symbol.isGlobal, module: module.name, module_path: module.path,
                         file_offset: seg.offset.add(uint64(symbol.address.sub(seg.address).toString())).toNumber(), size: symbol.size || 0});
                 }
             } catch (_) { /* Some shared-cache images do not expose symbols. */ }

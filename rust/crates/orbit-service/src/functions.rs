@@ -127,15 +127,26 @@ impl FunctionIndex {
     #[cfg(target_os = "macos")]
     pub fn for_pid(pid: i32) -> FunctionIndex {
         let rows = crate::frida::symbols(pid).unwrap_or_else(|e| { eprintln!("orbit-service: {e}"); Vec::new() });
-        let mut functions: Vec<_> = rows.into_iter().filter_map(|row| {
+        Self::from_frida_rows(rows)
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    fn from_frida_rows(rows: Vec<serde_json::Value>) -> FunctionIndex {
+        let mut candidates: Vec<_> = rows.into_iter().filter_map(|row| {
             let path = row["module_path"].as_str()?.to_string();
             let offset = row["file_offset"].as_u64()?;
-            Some(InstrumentableFunction { id: function_id(&path, offset),
+            Some((InstrumentableFunction { id: function_id(&path, offset),
                 name: pretty_name(row["name"].as_str()?), module: row["module"].as_str()?.to_string(),
-                module_path: path, file_offset: offset, size: row["size"].as_u64().unwrap_or(0) })
+                module_path: path, file_offset: offset, size: row["size"].as_u64().unwrap_or(0) },
+                row["is_global"].as_bool().unwrap_or(false)))
         }).collect();
-        functions.sort_by_key(|f| f.id);
-        functions.dedup_by_key(|f| f.id);
+        // Mach-O includes local assembler labels (e.g. ltmp0) at the same
+        // address as a global function. Prefer its public name, otherwise
+        // deduplication hides perfectly instrumentable functions from search.
+        candidates.sort_by(|(a, ga), (b, gb)| a.id.cmp(&b.id)
+            .then_with(|| gb.cmp(ga)).then_with(|| a.name.cmp(&b.name)));
+        candidates.dedup_by_key(|(f, _)| f.id);
+        let functions: Vec<_> = candidates.into_iter().map(|(f, _)| f).collect();
         let module_count = functions.iter().map(|f| &f.module_path).collect::<std::collections::HashSet<_>>().len();
         FunctionIndex { functions, module_count }
     }
@@ -271,6 +282,21 @@ pub(crate) fn function_id(module_path: &str, file_offset: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mach_o_aliases_keep_the_public_function_name() {
+        let row = |name, global, offset| serde_json::json!({"name":name,
+            "is_global":global, "module":"target", "module_path":"/tmp/target",
+            "file_offset":offset, "size":0});
+        let index = FunctionIndex::from_frida_rows(vec![
+            row("ltmp0", false, 2048), row("orbit_frida_test_inner", true, 2048),
+            row("local_helper", false, 4096),
+        ]);
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.search("orbit_frida_test", 20)[0].file_offset, 2048);
+        assert_eq!(index.search("local_helper", 20).len(), 1);
+        assert!(index.search("ltmp", 20).is_empty());
+    }
 
     fn segments() -> Vec<ObjectSegment> {
         vec![

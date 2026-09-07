@@ -68,7 +68,8 @@ for shared API discovery; attachment fails instead of replacing their segment.
 
 Both sources write ordinary start/stop records to the same scope ring. The
 service computes one nesting hierarchy per thread; async scopes remain outside
-that hierarchy. Dynamic starts set `ScopeEvent::flags::DYNAMIC` (bit 3) in the
+that hierarchy. Retained uprobes carry the same live provenance flag, but keep
+their existing independent nesting implementation. Dynamic starts set `ScopeEvent::flags::DYNAMIC` (bit 3) in the
 existing flags byte. Completed live events carry provenance in bit 7 of the
 metadata byte (`LiveEvent::_pad`), leaving low bits for color mode. Capture
 exports preserve that byte in an optional `flags` column; older files default

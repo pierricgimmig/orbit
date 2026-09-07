@@ -1217,7 +1217,7 @@ fn capture_loop(
                     kind: kind::API_SCOPE,
                     depth: call.depth,
                     extra: 0,
-                    _pad: 0,
+                    _pad: orbit_live_event::event_flags::DYNAMIC,
                     name_id: hook_names.get(&call.function_id).copied().unwrap_or(0),
                 });
             }
@@ -1321,7 +1321,7 @@ fn capture_loop(
                 kind: kind::API_SCOPE,
                 depth: call.depth,
                 extra: 0,
-                _pad: 0,
+                _pad: orbit_live_event::event_flags::DYNAMIC,
                 name_id: hook_names.get(&call.function_id).copied().unwrap_or(0),
             })
             .collect();
