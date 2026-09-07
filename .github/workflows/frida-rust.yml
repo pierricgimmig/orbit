@@ -43,7 +43,10 @@ jobs:
       - name: Verify live attachment, exact spans and restart
         run: |
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; else ext=so; fi
-          /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+          # Hosted Macs have no interactive authorization dialog. Run both
+          # our own target and collector as root for this attachment test.
+          if [ "$(uname -s)" = Darwin ]; then prefix=(sudo); else prefix=(); fi
+          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
       - name: Verify startup failure does not block manual capture
         if: runner.os == 'Linux'
         run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent
