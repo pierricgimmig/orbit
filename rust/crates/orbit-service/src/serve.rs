@@ -662,15 +662,24 @@ fn capture_loop(
     // closes it at the stop timestamp, so it spans Record -> Stop and every
     // per-pass scope nests under it.
     let _capture = orbit_api::start("capture");
-    // Symbolizer::for_pid emits its own total "load symbols (N modules)" scope
-    // around the parallel per-file loads; empty() when there is no target.
-    let symbolizer = if has_target { Symbolizer::for_pid(target_pid) } else { Symbolizer::empty() };
-    if symbolizer.module_count() > 0 {
-        eprintln!(
-            "orbit-service: symbolizing {} modules, {} symbols",
-            symbolizer.module_count(),
-            symbolizer.symbol_count()
-        );
+    // Do not block the capture on symbol loading: start with an empty
+    // symbolizer (every address resolves to its hex form) and build the real
+    // one on a background thread. Scheduling, sampling and thread states stream
+    // from the first pass; sample frames read as addresses until the symbols
+    // arrive, then the pc cache is cleared so later frames re-resolve to names.
+    // This is what keeps a big split debug file from delaying the whole
+    // capture. Symbolizer::for_pid emits its own "load symbols (N modules)"
+    // scope around the parallel per-file loads.
+    let mut symbolizer = Symbolizer::empty();
+    let (symbolizer_tx, symbolizer_rx) = std::sync::mpsc::channel::<Symbolizer>();
+    if has_target {
+        let tx = symbolizer_tx;
+        std::thread::Builder::new()
+            .name("orbit-symbolize".to_string())
+            .spawn(move || {
+                let _ = tx.send(Symbolizer::for_pid(target_pid));
+            })
+            .expect("spawn symbolizer thread");
     }
     // One sampled thread = two per-task rings: the sampling ring, and a
     // task-event ring (`mmap_task`: PERF_RECORD_FORK / EXIT / MMAP for that
@@ -923,6 +932,20 @@ fn capture_loop(
 
     while running.load(Ordering::Relaxed) {
         let _pass = orbit_api::scope("capture pass");
+        // The background symbol load finished: swap it in and drop the pc cache
+        // (its entries are the interim hex addresses) so later frames resolve
+        // to names. Events already emitted keep their addresses.
+        if let Ok(built) = symbolizer_rx.try_recv() {
+            if built.module_count() > 0 {
+                eprintln!(
+                    "orbit-service: symbolizing {} modules, {} symbols",
+                    built.module_count(),
+                    built.symbol_count()
+                );
+            }
+            symbolizer = built;
+            pc_ids.clear();
+        }
         batch.clear();
         // Children appear mid-capture; the refresh is rate-limited internally.
         visible.maybe_refresh();
