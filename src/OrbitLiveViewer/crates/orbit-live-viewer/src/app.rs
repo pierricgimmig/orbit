@@ -9232,21 +9232,27 @@ fn paint_core_util(painter: &egui::Painter, r: Rect, util: f32) {
     }
 }
 
-/// Green → amber → red by utilization, htop-style.
+/// Green → yellow → orange → red by utilization. The stops are Orbit's own
+/// scope-palette colours (`orbit_live_event::color`), so the core meters read
+/// in the same green/yellow/orange/red the timeline paints scopes with.
 fn util_color(util: f32) -> Color32 {
-    let lerp = |a: Color32, b: Color32, t: f32| {
-        let t = t.clamp(0.0, 1.0);
-        let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
-        Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
-    };
-    let green = Color32::from_rgb(0x3F, 0xB9, 0x50);
-    let amber = Color32::from_rgb(0xE0, 0xB0, 0x2E);
-    let red = Color32::from_rgb(0xE0, 0x52, 0x4B);
-    if util < 0.5 {
-        lerp(green, amber, util * 2.0)
-    } else {
-        lerp(amber, red, (util - 0.5) * 2.0)
+    // (position, rgb) -- green, tan/yellow, orange, red from the scope palette.
+    const STOPS: [(f32, (u8, u8, u8)); 4] = [
+        (0.0, (0x57, 0xA6, 0x4A)),
+        (0.5, (0xD7, 0xAB, 0x69)),
+        (0.8, (0xF8, 0x65, 0x16)),
+        (1.0, (0xE7, 0x44, 0x35)),
+    ];
+    let u = util.clamp(0.0, 1.0);
+    let mut i = 0;
+    while i + 1 < STOPS.len() && u > STOPS[i + 1].0 {
+        i += 1;
     }
+    let (a_pos, a) = STOPS[i];
+    let (b_pos, b) = STOPS[(i + 1).min(STOPS.len() - 1)];
+    let t = if b_pos > a_pos { (u - a_pos) / (b_pos - a_pos) } else { 0.0 };
+    let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+    Color32::from_rgb(mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
 }
 
 /// ellipsis; a rough per-character width is enough for a bar label.

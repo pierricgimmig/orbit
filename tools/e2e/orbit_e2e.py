@@ -1139,15 +1139,16 @@ def python_reader(run):
         [PYARROW_PYTHON, "-c",
          "import pyarrow.parquet as pq,sys;"
          "n=set(pq.read_table(sys.argv[1]+'/events.parquet').column('name').to_pylist());"
-         "print('capture' in n, 'build symbolizer' in n, any(str(x).startswith('load symbols:') for x in n))",
+         "print('capture' in n, any(str(x).startswith('load symbols (') for x in n), "
+         "any(str(x).startswith('load symbols:') for x in n))",
          folder],
         capture_output=True, text=True, timeout=120,
     )
     check(names_q.returncode == 0, f"pyarrow name query failed: {names_q.stderr[-300:]}")
-    has_capture, has_symbolizer, has_loadsym = (v == "True" for v in names_q.stdout.split())
+    has_capture, has_total, has_loadsym = (v == "True" for v in names_q.stdout.split())
     check(has_capture, "the whole-capture self-profile scope is missing from the events")
-    check(has_symbolizer, "the 'build symbolizer' setup scope is missing from the events")
-    check(has_loadsym, "no 'load symbols: <file>' scopes in the events")
+    check(has_total, "the total 'load symbols (N modules)' scope is missing from the events")
+    check(has_loadsym, "no per-file 'load symbols: <file>' scopes in the events")
     # The service's own threads read by name (Builder::name / tokio thread_name,
     # and the comm refresh now includes the service's own pid).
     manifest, _ = _bundle_manifest(path)
