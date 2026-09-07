@@ -44,6 +44,17 @@ struct Module {
     symbols: Vec<(u64, u64, String)>,
 }
 
+/// One executable mapping's coordinates, before its symbols are loaded: the
+/// unit of work parallelised across [`crate::par_map`]. Plain data, so `Sync`.
+struct ModuleSpec {
+    start: u64,
+    end: u64,
+    bias: u64,
+    name: String,
+    path: String,
+    vdso: bool,
+}
+
 pub struct Symbolizer {
     modules: Vec<Module>,
 }
@@ -88,53 +99,78 @@ impl Symbolizer {
     /// Builds a symbolizer for a process by reading its maps and loading the
     /// symbol table of every executable file mapped into it.
     pub fn for_pid(pid: i32) -> Symbolizer {
-        let mut modules = Vec::new();
         let Ok(content) = std::fs::read(format!("/proc/{pid}/maps")) else {
-            return Symbolizer { modules };
+            return Symbolizer { modules: Vec::new() };
         };
+        // One spec per executable mapping (the resolver keeps a module per
+        // mapping, each with its own bias), then load the symbols in parallel:
+        // a big split debug file dominates and the modules are independent.
+        let mut specs: Vec<ModuleSpec> = Vec::new();
         for mapping in parse_maps(&content) {
             if mapping.perms & PROT_EXEC == 0 {
                 continue;
             }
             let Ok(path) = std::str::from_utf8(&mapping.pathname) else { continue };
             if path == "[vdso]" {
-                let _load = orbit_api::scope("load symbols: [vdso]");
-                if let Some(image) = vdso_image() {
-                    modules.push(Module {
-                        start: mapping.start_address,
-                        end: mapping.end_address,
-                        bias: mapping.start_address,
-                        name: "[vdso]".to_string(),
-                        path: String::new(),
-                        segments: Vec::new(),
-                        symbols: sorted_symbols(&image, None),
-                    });
-                }
+                specs.push(ModuleSpec {
+                    start: mapping.start_address,
+                    end: mapping.end_address,
+                    bias: mapping.start_address,
+                    name: "[vdso]".to_string(),
+                    path: String::new(),
+                    vdso: true,
+                });
                 continue;
             }
             if path.is_empty() || !path.starts_with('/') {
                 continue;
             }
-            let name = path.rsplit('/').next().unwrap_or(path).to_string();
-            // A self-profile scope per file, named for the symbols file loaded.
-            let _load = orbit_api::scope(format!("load symbols: {name}"));
-            let bias = mapping.start_address.wrapping_sub(mapping.offset);
-            let bytes = std::fs::read(path).unwrap_or_default();
-            let symbols = sorted_symbols(&bytes, Some(path));
-            let segments = parse_elf_metadata(&bytes, path)
-                .map(|m| m.loadable_segments)
-                .unwrap_or_default();
-            modules.push(Module {
+            specs.push(ModuleSpec {
                 start: mapping.start_address,
                 end: mapping.end_address,
-                bias,
-                name,
+                bias: mapping.start_address.wrapping_sub(mapping.offset),
+                name: path.rsplit('/').next().unwrap_or(path).to_string(),
                 path: path.to_string(),
-                segments,
-                symbols,
+                vdso: false,
             });
         }
+        let modules: Vec<Module> = crate::par_map(&specs, Self::module_of_spec)
+            .into_iter()
+            .flatten()
+            .collect();
         Symbolizer { modules }
+    }
+
+    /// Loads one module's symbols, on a worker thread. A self-profile scope
+    /// names the file so the cost of each load shows on the service's track.
+    fn module_of_spec(spec: &ModuleSpec) -> Option<Module> {
+        let _load = orbit_api::scope(format!("load symbols: {}", spec.name));
+        if spec.vdso {
+            let image = vdso_image()?;
+            return Some(Module {
+                start: spec.start,
+                end: spec.end,
+                bias: spec.bias,
+                name: spec.name.clone(),
+                path: String::new(),
+                segments: Vec::new(),
+                symbols: sorted_symbols(&image, None),
+            });
+        }
+        let bytes = std::fs::read(&spec.path).unwrap_or_default();
+        let symbols = sorted_symbols(&bytes, Some(&spec.path));
+        let segments = parse_elf_metadata(&bytes, &spec.path)
+            .map(|m| m.loadable_segments)
+            .unwrap_or_default();
+        Some(Module {
+            start: spec.start,
+            end: spec.end,
+            bias: spec.bias,
+            name: spec.name.clone(),
+            path: spec.path.clone(),
+            segments,
+            symbols,
+        })
     }
 
     pub fn module_count(&self) -> usize {

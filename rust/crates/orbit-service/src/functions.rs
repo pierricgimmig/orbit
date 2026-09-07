@@ -47,60 +47,72 @@ impl FunctionIndex {
     /// Reads every executable mapping of a process and indexes the functions
     /// of the files behind them.
     pub fn for_pid(pid: i32) -> FunctionIndex {
-        let mut functions = Vec::new();
-        let mut seen_modules: Vec<String> = Vec::new();
         let Ok(content) = std::fs::read(format!("/proc/{pid}/maps")) else {
-            return FunctionIndex { functions, module_count: 0 };
+            return FunctionIndex { functions: Vec::new(), module_count: 0 };
         };
+        // The unique executable module paths, in first-seen order. One mapping
+        // per file is enough: the offsets are the file's, not the mapping's, so
+        // a second executable segment of the same file adds nothing.
+        let mut paths: Vec<String> = Vec::new();
         for mapping in parse_maps(&content) {
             if mapping.perms & PROT_EXEC == 0 || mapping.inode == 0 {
                 continue;
             }
             let Ok(path) = std::str::from_utf8(&mapping.pathname) else { continue };
-            if !path.starts_with('/') {
+            if !path.starts_with('/') || paths.iter().any(|seen| seen == path) {
                 continue;
             }
-            // One mapping per file is enough: the offsets are the file's, not
-            // the mapping's, so a second executable segment adds nothing.
-            if seen_modules.iter().any(|seen| seen == path) {
-                continue;
-            }
-            seen_modules.push(path.to_string());
-            let module = path.rsplit('/').next().unwrap_or(path).to_string();
-            // A self-profile scope per file, named for the symbols file being
-            // loaded, so the cost of indexing each module is visible on the
-            // service's own track.
-            let _load = orbit_api::scope(format!("load symbols: {module}"));
-            let Ok(bytes) = std::fs::read(path) else { continue };
-            let segments = parse_elf_metadata(&bytes, path)
-                .map(|metadata| metadata.loadable_segments)
-                .unwrap_or_default();
-            // The detached debug file first, so a distribution's stripped
-            // library offers its internal functions too; see symbolize.rs.
-            let Ok(symbols) = crate::symbolize::symbol_source(&bytes, Some(path)) else { continue };
-            for symbol in symbols {
-                if symbol.address == 0 || symbol.mangled_name.is_empty() {
-                    continue;
-                }
-                let Some(file_offset) = file_offset_of(&segments, symbol.address) else {
-                    continue;
-                };
-                functions.push(InstrumentableFunction {
-                    id: function_id(path, file_offset),
-                    name: pretty_name(&symbol.mangled_name),
-                    module: module.clone(),
-                    module_path: path.to_string(),
-                    file_offset,
-                    size: symbol.size,
-                });
-            }
+            paths.push(path.to_string());
         }
+        let module_count = paths.len();
+        // Index each module in parallel: a big split debug file dominates and
+        // the modules are independent -- read, parse and symbolize each on its
+        // own worker (each also emits its own "load symbols: <file>" scope).
+        let mut functions: Vec<InstrumentableFunction> =
+            crate::par_map(&paths, |path| Self::functions_of_module(path))
+                .into_iter()
+                .flatten()
+                .collect();
         // Two symbols can share an address (aliases); the id is the address,
         // so keep one of each to stop a hook being armed twice.
         functions.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.name.cmp(&b.name)));
         functions.dedup_by_key(|function| function.id);
-        let module_count = seen_modules.len();
         FunctionIndex { functions, module_count }
+    }
+
+    /// Every instrumentable function of one module file. Pure per-module work,
+    /// so it runs on a worker thread; the self-profile scope is named for the
+    /// file so the cost of each shows on the service's track.
+    fn functions_of_module(path: &str) -> Vec<InstrumentableFunction> {
+        let module = path.rsplit('/').next().unwrap_or(path).to_string();
+        let _load = orbit_api::scope(format!("load symbols: {module}"));
+        let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+        let segments = parse_elf_metadata(&bytes, path)
+            .map(|metadata| metadata.loadable_segments)
+            .unwrap_or_default();
+        // The detached debug file first, so a distribution's stripped library
+        // offers its internal functions too; see symbolize.rs.
+        let Ok(symbols) = crate::symbolize::symbol_source(&bytes, Some(path)) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for symbol in symbols {
+            if symbol.address == 0 || symbol.mangled_name.is_empty() {
+                continue;
+            }
+            let Some(file_offset) = file_offset_of(&segments, symbol.address) else {
+                continue;
+            };
+            out.push(InstrumentableFunction {
+                id: function_id(path, file_offset),
+                name: pretty_name(&symbol.mangled_name),
+                module: module.clone(),
+                module_path: path.to_string(),
+                file_offset,
+                size: symbol.size,
+            });
+        }
+        out
     }
 
     pub fn len(&self) -> usize {
