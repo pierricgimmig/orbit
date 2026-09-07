@@ -659,6 +659,50 @@ pub(crate) fn num_cpus_hint() -> usize {
     if n > 0 { n as usize } else { 4 }
 }
 
+/// Applies `f` to every item across a small pool of scoped worker threads,
+/// pulling from a shared cursor so one heavyweight item (a module with a huge
+/// debug file) does not stall a whole static chunk. Order is not preserved --
+/// callers here sort or search afterwards. No thread pool crate: symbol
+/// loading is the only hot fan-out and `std::thread::scope` is enough.
+pub(crate) fn par_map<T, R, F>(items: &[T], f: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> R + Sync,
+{
+    let workers = num_cpus_hint().min(items.len()).min(32);
+    if workers <= 1 {
+        return items.iter().map(&f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let f = &f;
+    let parts: Vec<Vec<R>> = std::thread::scope(|scope| {
+        (0..workers)
+            .map(|i| {
+                let next = &next;
+                std::thread::Builder::new()
+                    .name(format!("orbit-sym-{i}"))
+                    .spawn_scoped(scope, move || {
+                        let mut out = Vec::new();
+                        loop {
+                            let idx = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if idx >= items.len() {
+                                break;
+                            }
+                            out.push(f(&items[idx]));
+                        }
+                        out
+                    })
+                    .expect("spawn symbol worker")
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().expect("symbol worker panicked"))
+            .collect()
+    });
+    parts.into_iter().flatten().collect()
+}
+
 /// A non-inlinable CPU burn so a self-capture has real stacks to unwind.
 #[inline(never)]
 fn burn_cpu(seed: u64) -> u64 {
