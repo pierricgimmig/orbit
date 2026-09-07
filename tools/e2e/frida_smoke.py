@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--target', required=True)
     parser.add_argument('--engine', default='frida', choices=['frida', 'kernel_uprobes'])
     parser.add_argument('--missing-agent', action='store_true')
+    parser.add_argument('--no-manual', action='store_true')
     args = parser.parse_args()
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -103,6 +104,8 @@ def main():
                 request('/api/capture/stop', {})
                 print('PASS: missing Frida runtime fails Start; manual capture still starts afterward')
                 return
+            mixed = args.engine == 'frida' and not args.no_manual
+            if mixed: wanted = {name: (count, depth * 2 + 1) for name, (count, depth) in wanted.items()}
             for iteration in range(2):
                 # Omit the method on the first run to exercise the actual default.
                 body = {'pid':pid, 'instrumented_functions':[{'function_id': f['function_id']} for f in hooks]}
@@ -121,15 +124,33 @@ def main():
                     manifest = json.loads(capture.read('manifest.json'))
                     rows = parquet.read_table(io.BytesIO(capture.read(manifest['files']['events']))).to_pylist()
                 for name, (count, depth) in wanted.items():
-                    events = [r for r in rows if r['pid'] == pid and r['name'].lstrip('_') == name]
+                    events = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') == name]
                     assert len(events) == count, (iteration, name, len(events), status['instrumentation'])
                     assert all(e['depth'] == depth and e['duration_ns'] > 0 for e in events), (name, events[:3])
                     tids = {e['tid'] for e in events}
                     assert len(tids) == 3
-                    assert tids == {r['tid'] for r in rows if r['pid'] == pid and r['name'] == 'manual worker'}, 'manual and dynamic thread identities differ'
-                assert any(r['pid'] == pid and r['name'] == 'manual alongside Frida' for r in rows), 'manual segment was replaced'
+                    if not args.no_manual: assert tids == {r['tid'] for r in rows if r['pid'] == pid and r['name'] == 'manual worker'}, 'manual and dynamic thread identities differ'
+                if not args.no_manual: assert any(r['pid'] == pid and r['name'] == 'manual alongside Frida' for r in rows), 'manual segment was replaced'
+                if args.engine == 'frida':
+                    dynamic = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') in wanted]
+                    assert all(r['flags'] & 128 for r in dynamic), 'dynamic provenance lost in export'
+                if mixed:
+                    expected = {'manual worker': (3, 0), 'manual outer': (30, 2),
+                                'manual middle': (60, 4), 'manual inner': (180, 6), 'async worker': (3, 0)}
+                    for name, (count, depth) in expected.items():
+                        scopes = [r for r in rows if r['pid'] == pid and r['name'] == name]
+                        assert len(scopes) == count, (name, len(scopes))
+                        assert all(r['depth'] == depth and not (r['flags'] & 128) for r in scopes), (name, scopes[:3])
+                    # Every synchronous child sits inside a parent on the same thread.
+                    sync = [r for r in rows if r['pid'] == pid and r['name'] in expected and r['name'] != 'async worker'] + dynamic
+                    for child in sync:
+                        if child['depth'] == 0: continue
+                        assert any(parent['tid'] == child['tid'] and parent['depth'] + 1 == child['depth']
+                                   and parent['start_ns'] <= child['start_ns']
+                                   and parent['start_ns'] + parent['duration_ns'] >= child['start_ns'] + child['duration_ns']
+                                   for parent in sync), ('missing enclosing parent', child)
                 assert target.poll() is None, 'detach killed target'
-            print(f'PASS {args.engine}: 270 exact spans per capture, three threads, correct depths, manual coexistence, restart')
+            print(f'PASS {args.engine}: 270 exact spans per capture, three threads, correct depths, manual/dynamic nesting and provenance, restart')
         except BaseException:
             log.seek(0); print(log.read()); raise
         finally:

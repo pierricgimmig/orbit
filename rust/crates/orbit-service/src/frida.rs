@@ -6,8 +6,6 @@
 //! call. This keeps the service's static-musl build independent of libfrida.
 use crate::hooks::HookSpec;
 use orbit_frida_transport::Transport;
-use orbit_live_event::{kind, LiveEvent};
-use orbit_scope_ring::merge::{drain_from, Cursors, Producer};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -133,9 +131,6 @@ pub struct FridaSession {
     helper: Helper,
     mapping: Transport,
     _file: tempfile::NamedTempFile,
-    cursors: Cursors,
-    pid: u32,
-    pub lost: u64,
     pub calls: u64,
     pub error: Option<String>,
     stopped: bool,
@@ -195,20 +190,16 @@ impl FridaSession {
         if ready["armed"].as_u64() != Some(hooks.len() as u64) {
             return Err(format!("Frida did not arm every hook: {ready}"));
         }
-        let cursors = Cursors::for_rings(mapping.rings().ring_count());
         Ok(Self {
             helper,
             mapping,
             _file: file,
-            cursors,
-            pid: pid as u32,
-            lost: 0,
             calls: 0,
             error: None,
             stopped: false,
         })
     }
-    pub fn poll(&mut self, name_id: impl Fn(u64) -> u32, batch: &mut Vec<LiveEvent>) {
+    pub fn poll(&mut self) {
         if !self.stopped {
             if let Ok(Some(status)) = self.helper.child.try_wait() {
                 self.error = Some(format!("Frida helper exited during capture: {status}"));
@@ -220,39 +211,7 @@ impl FridaSession {
                 self.error = Some(reply.to_string());
             }
         }
-        let producer = if orbit_scope_ring::platform::process_alive(self.pid) {
-            Producer::Alive
-        } else {
-            Producer::Gone
-        };
-        let pass = drain_from(
-            self.mapping.rings(),
-            &mut self.cursors,
-            crate::now_monotonic_ns(),
-            producer,
-        );
-        self.lost += pass.dropped;
-        for slice in pass.slices {
-            for event in slice.events {
-                if event.kind != 0 {
-                    self.lost += 1;
-                    continue;
-                }
-                let id = u64::from_le_bytes(event.text[..8].try_into().unwrap());
-                batch.push(LiveEvent {
-                    start_ns: event.timestamp_ns,
-                    duration_ns: event.scope_id,
-                    tid: event.tid,
-                    pid: self.pid,
-                    kind: kind::API_SCOPE,
-                    depth: event.depth,
-                    extra: 0,
-                    _pad: 0,
-                    name_id: name_id(id),
-                });
-                self.calls += 1;
-            }
-        }
+        self.calls = self.mapping.calls();
     }
     pub fn stop(&mut self) {
         self.stopped = true;
@@ -261,11 +220,11 @@ impl FridaSession {
         }
         self.mapping.disable();
     }
-    pub fn status(&self) -> String {
+    pub fn status(&self, shared_records_lost: u64) -> String {
         format!(
-            "Frida: {} calls, {} lost/invalid records{}",
+            "Frida: {} completed API scopes, {} shared scope records lost{}",
             self.calls,
-            self.lost,
+            shared_records_lost,
             self.error
                 .as_ref()
                 .map(|e| format!("; {e}"))

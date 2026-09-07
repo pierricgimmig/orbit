@@ -261,6 +261,7 @@ name = "orbit-frida-agent"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "orbit-api",
  "orbit-frida-transport",
  "orbit-scope-ring",
  "tempfile",

@@ -2,71 +2,60 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! A capture-private transport for native Frida callbacks. Uses the tested
-//! scope ring mechanics, but a separate file and record semantics so an agent
-//! never replaces a target's manual instrumentation segment.
-use orbit_scope_ring::{
-    ring::{self, Header, Rings},
-    ScopeEvent,
-};
-use std::fs::File;
-use std::io;
-use std::os::fd::AsRawFd;
-use std::sync::atomic::Ordering;
+//! Capture lease and counters only. Scope events use the ordinary Orbit API.
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::{fs::File, io, os::fd::AsRawFd};
 
-const RINGS: usize = 16;
-const SLOTS: usize = 8192;
-// Separate magic: these records are completed spans, not scope starts/stops.
-const MAGIC: u64 = 0x46524944;
-
-pub struct Transport {
-    base: *mut u8,
-    len: usize,
-    rings: Rings,
+const MAGIC: u64 = 0x46524944414c5332;
+#[repr(C)]
+struct Control {
+    magic: AtomicU64,
+    pid: u32,
+    controller: u32,
+    active: AtomicU32,
+    reserved: u32,
+    calls: AtomicU64,
 }
-// SAFETY: the ring implementation synchronizes all cross-thread slot access.
+pub struct Transport {
+    base: *mut Control,
+}
+// SAFETY: immutable identity and atomic control fields in a shared mapping.
 unsafe impl Send for Transport {}
 unsafe impl Sync for Transport {}
-
 impl Transport {
     pub fn create(file: &File, pid: u32) -> io::Result<Self> {
-        let len = ring::layout_size(RINGS, SLOTS);
-        file.set_len(len as u64)?;
+        file.set_len(std::mem::size_of::<Control>() as u64)?;
         let mapping = Self::map(file)?;
         unsafe {
-            ring::init_region(mapping.base, RINGS, SLOTS, pid);
-            let header = &mut *mapping.base.cast::<Header>();
-            header._pad[0] = std::process::id();
-            header.capturing.store(1, Ordering::Release);
-            header.magic.store(MAGIC, Ordering::Release);
+            mapping.base.write(Control {
+                magic: AtomicU64::new(0),
+                pid,
+                controller: std::process::id(),
+                active: AtomicU32::new(1),
+                reserved: 0,
+                calls: AtomicU64::new(0),
+            });
         }
+        mapping.control().magic.store(MAGIC, Ordering::Release);
         Ok(mapping)
     }
-
     pub fn open(file: &File, pid: u32) -> io::Result<Self> {
         let mapping = Self::map(file)?;
-        let h = unsafe { &*mapping.base.cast::<Header>() };
-        if h.magic.load(Ordering::Acquire) != MAGIC
-            || h.version != ring::VERSION
-            || h.pid != pid
-            || h.ring_count as usize != RINGS
-            || h.slots_per_ring as usize != SLOTS
-            || h.event_size as usize != std::mem::size_of::<ScopeEvent>()
+        if mapping.control().magic.load(Ordering::Acquire) != MAGIC || mapping.control().pid != pid
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "incompatible Frida transport",
+                "incompatible Frida capture lease",
             ));
         }
         Ok(mapping)
     }
-
     fn map(file: &File) -> io::Result<Self> {
-        let len = ring::layout_size(RINGS, SLOTS);
+        let len = std::mem::size_of::<Control>();
         if file.metadata()?.len() != len as u64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "invalid Frida transport size",
+                "invalid Frida capture lease size",
             ));
         }
         let base = unsafe {
@@ -82,111 +71,56 @@ impl Transport {
         if base == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self {
-            base: base.cast(),
-            len,
-            rings: unsafe { Rings::from_raw(base.cast(), RINGS, SLOTS) },
-        })
+        Ok(Self { base: base.cast() })
     }
-
+    fn control(&self) -> &Control {
+        unsafe { &*self.base }
+    }
     pub fn active(&self) -> bool {
-        unsafe { &*self.base.cast::<Header>() }
-            .capturing
-            .load(Ordering::Acquire)
-            != 0
+        self.control().active.load(Ordering::Acquire) != 0
     }
     pub fn controller_alive(&self) -> bool {
-        orbit_scope_ring::platform::process_alive(unsafe { &*self.base.cast::<Header>() }._pad[0])
+        orbit_scope_ring::platform::process_alive(self.control().controller)
     }
     pub fn disable(&self) {
-        unsafe { &*self.base.cast::<Header>() }
-            .capturing
-            .store(0, Ordering::Release);
+        self.control().active.store(0, Ordering::Release);
     }
-
-    pub fn rings(&self) -> &Rings {
-        &self.rings
+    pub fn record_call(&self) {
+        self.control().calls.fetch_add(1, Ordering::Relaxed);
     }
-
-    pub fn record(&self, id: u64, start: u64, end: u64, tid: u32, depth: u32) {
-        // The viewer stores depth in a byte. Drop unrepresentable invocations
-        // instead of wrapping deep recursion onto an unrelated lane.
-        if !self.active() {
-            return;
-        }
-        let invalid = end < start || depth > u8::MAX as u32;
-        let mut event = ScopeEvent {
-            timestamp_ns: start,
-            scope_id: end.saturating_sub(start),
-            kind: u8::from(invalid),
-            tid,
-            depth: depth as u8,
-            ..Default::default()
-        };
-        event.text[..8].copy_from_slice(&id.to_le_bytes());
-        self.rings
-            .push(ring::ring_for_thread(tid as u64, RINGS), event);
+    pub fn calls(&self) -> u64 {
+        self.control().calls.load(Ordering::Relaxed)
     }
 }
-
 impl Drop for Transport {
     fn drop(&mut self) {
         unsafe {
-            libc::munmap(self.base.cast(), self.len);
+            libc::munmap(self.base.cast(), std::mem::size_of::<Control>());
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orbit_scope_ring::merge::{drain_from, Cursors, Producer};
     #[test]
-    fn mappings_exchange_completed_spans_and_reject_wrong_target() {
+    fn shared_lease_validates_identity_and_counts_calls() {
         let file = tempfile::tempfile().unwrap();
         let reader = Transport::create(&file, 123).unwrap();
         assert!(Transport::open(&file, 124).is_err());
         let writer = Transport::open(&file, 123).unwrap();
-        std::thread::scope(|scope| {
-            for tid in 1..=4 {
-                let writer = &writer;
-                scope.spawn(move || {
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                let w = &writer;
+                s.spawn(move || {
                     for _ in 0..500 {
-                        writer.record(42, 100, 200, tid, 2);
+                        w.record_call();
                     }
                 });
             }
         });
-        let mut cursors = Cursors::for_rings(RINGS);
-        let pass = drain_from(reader.rings(), &mut cursors, 1000, Producer::Alive);
-        assert_eq!(pass.dropped, 0);
-        let events: Vec<_> = pass.slices.into_iter().flat_map(|s| s.events).collect();
-        assert_eq!(events.len(), 2000);
-        assert!(events
-            .iter()
-            .all(|e| e.timestamp_ns == 100 && e.scope_id == 100 && e.depth == 2));
+        assert_eq!(reader.calls(), 2000);
         reader.disable();
-        writer.record(42, 100, 200, 1, 0);
-        assert!(
-            drain_from(reader.rings(), &mut cursors, 1000, Producer::Alive)
-                .slices
-                .iter()
-                .all(|s| s.events.is_empty())
-        );
-    }
-    #[test]
-    fn malformed_file_and_unrepresentable_depth_are_detected() {
-        let file = tempfile::tempfile().unwrap();
-        assert!(Transport::open(&file, 1).is_err());
-        let writer = Transport::create(&file, 1).unwrap();
-        writer.record(42, 100, 200, 1, 256);
-        let mut cursors = Cursors::for_rings(RINGS);
-        let pass = drain_from(writer.rings(), &mut cursors, 1000, Producer::Alive);
-        let events: Vec<_> = pass.slices.into_iter().flat_map(|s| s.events).collect();
-        assert_eq!(events.len(), 1);
-        assert_eq!(
-            events[0].kind, 1,
-            "overflow is counted, not drawn at a wrapped depth"
-        );
+        assert!(!writer.active());
+        assert!(Transport::open(&tempfile::tempfile().unwrap(), 123).is_err());
     }
 }

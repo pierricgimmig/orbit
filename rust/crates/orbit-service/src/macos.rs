@@ -178,7 +178,7 @@ pub fn capture_loop(
     target_pid: i32,
     _store: Arc<SampleStore>,
     gpu_helper: Option<String>,
-    hooks: Vec<HookSpec>,
+    _hooks: Vec<HookSpec>,
     show_all_processes: bool,
     _duplicate_filter: bool,
     mut frida: Option<crate::frida::FridaSession>,
@@ -187,12 +187,6 @@ pub fn capture_loop(
         eprintln!("orbit-service: GPU helper capture is not supported on macOS");
     }
     service.set_instrumentation_status(if frida.is_some() { "Frida: functions armed" } else { "macOS: manual instrumentation; CPU sampling and scheduling are not yet available" });
-    let mut hook_names = std::collections::HashMap::new();
-    for (i, hook) in hooks.iter().enumerate() {
-        let id = (1 << 20) + i as u32;
-        service.intern.lock().insert_id(id, &hook.name);
-        hook_names.insert(hook.function_id, id);
-    }
     service.mark_capture_started(target_pid.max(0) as u32, crate::now_monotonic_ns());
     let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
     visible.add_instrumented(std::process::id());
@@ -216,8 +210,8 @@ pub fn capture_loop(
             visible.maybe_refresh();
             scopes.poll(&mut visible, now, &mut batch);
             if let Some(session) = frida.as_mut() {
-                session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut batch);
-                service.set_instrumentation_status(session.status());
+                session.poll();
+                service.set_instrumentation_status(session.status(scopes.events_lost));
             }
             if last_names.elapsed() >= Duration::from_secs(1) {
                 names.refresh(
@@ -243,8 +237,8 @@ pub fn capture_loop(
     batch.clear();
     if let Some(session) = frida.as_mut() {
         session.stop();
-        session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut batch);
-        service.set_instrumentation_status(session.status());
+        session.poll();
+        service.set_instrumentation_status(session.status(scopes.events_lost));
     }
     scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut batch);
     scopes.finish(crate::now_monotonic_ns(), &mut batch);

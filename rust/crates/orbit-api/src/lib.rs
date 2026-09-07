@@ -23,7 +23,27 @@ use orbit_scope_ring::shm::now_monotonic_ns;
 use orbit_scope_ring::text::split_name;
 use orbit_scope_ring::{ring_for_thread, ScopeEvent, ScopeRingWriter};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+
+static FORK_CHILD: AtomicBool = AtomicBool::new(false);
+unsafe extern "C" fn after_fork() {
+    FORK_CHILD.store(true, Ordering::Relaxed);
+    if let Some(writer) = SEGMENT.load(Ordering::Acquire).as_ref() {
+        writer.abandon_in_fork_child();
+    }
+}
+
+/// Process-local ABI for an injected caller. Published by init, so even
+/// statically linked, stripped applications reuse their exact API instance.
+#[repr(C)]
+pub struct DynamicApiV1 {
+    pub version: u64,
+    pub start: unsafe extern "C" fn(*const libc::c_char, usize) -> u64,
+    pub stop: extern "C" fn(u64),
+}
+static DYNAMIC_API: DynamicApiV1 = DynamicApiV1 {
+    version: 1, start: orbit_start_dynamic, stop: orbit_stop,
+};
 
 /// A handle to an event this process recorded. See `orbit.h`.
 pub type Handle = u64;
@@ -50,6 +70,7 @@ fn segment() -> Option<&'static ScopeRingWriter> {
 /// until the moment someone captures it.
 #[inline]
 fn active_segment() -> Option<&'static ScopeRingWriter> {
+    if FORK_CHILD.load(Ordering::Relaxed) { return None; }
     let writer = segment()?;
     writer.is_capturing().then_some(writer)
 }
@@ -64,6 +85,7 @@ static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Creates this process's segment. Idempotent; returns `Err(errno)` if the
 /// segment could not be made. Safe to call from several threads at once.
 pub fn init() -> Result<(), i32> {
+    if FORK_CHILD.load(Ordering::Relaxed) { return Err(libc::ENOTSUP); }
     if !SEGMENT.load(Ordering::Acquire).is_null() {
         return Ok(());
     }
@@ -71,14 +93,24 @@ pub fn init() -> Result<(), i32> {
     if !SEGMENT.load(Ordering::Acquire).is_null() {
         return Ok(());
     }
+    static ATFORK: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    let error = *ATFORK.get_or_init(|| unsafe { libc::pthread_atfork(None, None, Some(after_fork)) });
+    if error != 0 { return Err(error); }
+    // A second SDK initialized after injection must not unlink the active
+    // instance. Initialize the application's SDK before attaching Frida.
+    if orbit_scope_ring::ScopeRingReader::open(std::process::id())
+        .is_ok_and(|r| r.api_descriptor() != 0) { return Err(libc::EALREADY); }
     let writer = ScopeRingWriter::create_default().map_err(|e| e.raw_os_error().unwrap_or(-1))?;
-    SEGMENT.store(Box::into_raw(Box::new(writer)), Ordering::Release);
+    let writer = Box::leak(Box::new(writer));
+    SEGMENT.store(writer, Ordering::Release);
+    writer.publish_api_descriptor(&DYNAMIC_API as *const DynamicApiV1 as u64);
     Ok(())
 }
 
 /// Removes the segment's name. The mapping stays until the process exits, so
 /// a thread mid-call never dereferences a freed writer.
 pub fn shutdown() {
+    if FORK_CHILD.load(Ordering::Relaxed) { return; }
     if let Some(writer) = segment() {
         writer.unlink();
     }
@@ -169,6 +201,12 @@ fn stop_at(handle: Handle, timestamp_ns: u64) {
 /// Begins a scope on the calling thread. Takes `&str` or `&[u8]`.
 pub fn start(name: impl AsRef<[u8]>) -> Handle {
     start_at(0, name.as_ref(), now_monotonic_ns())
+}
+
+/// Begins a scope attributed to dynamic instrumentation, using the same
+/// handles, segment and nesting stream as manual scopes.
+pub fn start_dynamic(name: impl AsRef<[u8]>) -> Handle {
+    start_at(flags::DYNAMIC, name.as_ref(), now_monotonic_ns())
 }
 
 /// Begins a scope that may be stopped from any thread.
@@ -318,6 +356,13 @@ pub extern "C" fn orbit_shutdown() {
 #[no_mangle]
 pub unsafe extern "C" fn orbit_start(name: *const libc::c_char, name_len: usize) -> u64 {
     start(bytes(name, name_len))
+}
+
+/// # Safety
+/// See [`bytes`]. Kept as an explicit entry point for injected instrumentation.
+#[no_mangle]
+pub unsafe extern "C" fn orbit_start_dynamic(name: *const libc::c_char, name_len: usize) -> u64 {
+    start_dynamic(bytes(name, name_len))
 }
 
 /// # Safety
