@@ -127,10 +127,16 @@ impl FunctionIndex {
     /// almost always the plainest name that matches.
     pub fn search(&self, query: &str, limit: usize) -> Vec<&InstrumentableFunction> {
         let needle = query.to_ascii_lowercase();
+        // Case-insensitive and multi-token: every whitespace-separated token
+        // must appear in the name. So "step world" matches "b3Step_World".
+        let tokens: Vec<&str> = needle.split_whitespace().collect();
         let mut hits: Vec<&InstrumentableFunction> = self
             .functions
             .iter()
-            .filter(|function| function.name.to_ascii_lowercase().contains(&needle))
+            .filter(|function| {
+                let name = function.name.to_ascii_lowercase();
+                tokens.iter().all(|token| name.contains(token))
+            })
             .collect();
         if needle.is_empty() {
             // A listing, not a search: alphabetical, the way a Functions
@@ -336,6 +342,36 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    #[test]
+    fn search_is_multi_token_and_order_free() {
+        let index = FunctionIndex {
+            module_count: 1,
+            functions: vec![
+                InstrumentableFunction {
+                    id: 1,
+                    name: "b3Step_World".into(),
+                    module: "a".into(),
+                    module_path: "/a".into(),
+                    file_offset: 1,
+                    size: 1,
+                },
+                InstrumentableFunction {
+                    id: 2,
+                    name: "b3Step_Broadphase".into(),
+                    module: "a".into(),
+                    module_path: "/a".into(),
+                    file_offset: 2,
+                    size: 1,
+                },
+            ],
+        };
+        // Both tokens present, across the underscore, in any order.
+        let hits = index.search("step world", 8);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "b3Step_World");
+        assert_eq!(index.search("world step", 8).len(), 1);
+    }
+
     #[test]
     fn modules_are_listed_with_their_symbol_counts() {
         let index = FunctionIndex::for_pid(std::process::id() as i32);

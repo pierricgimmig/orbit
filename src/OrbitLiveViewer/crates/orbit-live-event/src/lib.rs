@@ -359,8 +359,12 @@ impl InternTable {
         if let Ok(id) = numeric.parse::<u32>() {
             out.insert(id);
         }
+        // Case-insensitive and multi-token: every whitespace-separated token
+        // must appear in the name. So "step world" matches "b3Step_World".
+        let tokens: Vec<&str> = lower.split_whitespace().collect();
         for (id, text) in self.iter() {
-            if text.to_ascii_lowercase().contains(&lower) {
+            let text = text.to_ascii_lowercase();
+            if tokens.iter().all(|token| text.contains(token)) {
                 out.insert(id);
             }
         }
@@ -854,5 +858,19 @@ mod tests {
         assert!(hash.contains(&30_000));
         let num = intern.ids_matching("100");
         assert!(num.contains(&100));
+    }
+
+    #[test]
+    fn intern_ids_matching_is_multi_token_and_order_free() {
+        let mut intern = InternTable::default();
+        intern.insert_id(1, "b3Step_World");
+        intern.insert_id(2, "b3Step_Broadphase");
+        // Two lower-case tokens, both present, in any order and across the
+        // underscore -- the C++-name case the owner called out.
+        assert_eq!(intern.ids_matching("step world"), [1].into_iter().collect());
+        assert_eq!(intern.ids_matching("world step"), [1].into_iter().collect());
+        // A token that is absent excludes the name.
+        assert!(intern.ids_matching("step broadphase").contains(&2));
+        assert!(!intern.ids_matching("step broadphase").contains(&1));
     }
 }

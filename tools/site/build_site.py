@@ -197,6 +197,8 @@ def build(out, stream_path, bundle, name, port, service=False):
         shutil.copytree(VIEWER_DIST, os.path.join(out, "viewer"), dirs_exist_ok=True)
     for asset in ("site.css", "logo.png", "favicon.png"):
         shutil.copy(os.path.join(HERE, asset), os.path.join(out, asset))
+    # The curl installer, served at the site root: `curl .../install.sh | sh`.
+    shutil.copy(os.path.join(REPO, "tools/install/install.sh"), os.path.join(out, "install.sh"))
     # The front-page capture.
     captures = os.path.join(out, "captures")
     os.makedirs(captures, exist_ok=True)

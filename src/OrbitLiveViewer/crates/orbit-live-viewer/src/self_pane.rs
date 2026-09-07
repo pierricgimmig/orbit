@@ -7,7 +7,7 @@
 //! as a sparkline plus the last frame's scopes as a compact per-lane
 //! flamegraph, available whether or not a capture is loaded.
 
-use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
+use eframe::egui::{self};
 use orbit_live_event::dev::{RelScope, NAME_FRAME, TID_UI};
 use orbit_live_event::InternTable;
 
@@ -287,43 +287,13 @@ impl SelfProfile {
                 *follow = !*follow;
             }
         });
-        let (resp, painter) =
-            ui.allocate_painter(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
-        self.draw_sparkline(&painter, resp.rect);
         ui.add_space(4.0);
+        // The frame-time history used to be a custom sparkline drawn here, a
+        // graph that read like an unnamed, un-hoverable first "track". It is
+        // redundant now: the timeline below carries `frame_period_us`,
+        // `outside_frame_us` and `fps` as proper value lanes, named and
+        // hoverable through the ordinary graph-track mechanism.
     }
-
-    fn draw_sparkline(&self, painter: &egui::Painter, r: Rect) {
-        painter.rect_filled(r, 2.0, theme::RAIL);
-        if self.frame_ms.is_empty() {
-            return;
-        }
-        // A 60fps and a 30fps reference line, so a hitch reads against a budget.
-        let top = self.max_ms().max(16.7 * 1.2);
-        let y_for = |ms: f32| r.bottom() - (ms / top).clamp(0.0, 1.0) * r.height();
-        for (budget, col) in [
-            (16.7_f32, Color32::from_rgb(0x2E, 0x40, 0x30)),
-            (33.3_f32, Color32::from_rgb(0x40, 0x38, 0x2E)),
-        ] {
-            let y = y_for(budget);
-            painter.line_segment(
-                [Pos2::new(r.left(), y), Pos2::new(r.right(), y)],
-                Stroke::new(1.0, col),
-            );
-        }
-        let n = self.frame_ms.len();
-        let dx = r.width() / HISTORY as f32;
-        let mut prev: Option<Pos2> = None;
-        for (i, ms) in self.frame_ms.iter().enumerate() {
-            let x = r.left() + (HISTORY - n + i) as f32 * dx;
-            let p = Pos2::new(x, y_for(*ms));
-            if let Some(pp) = prev {
-                painter.line_segment([pp, p], Stroke::new(1.0, theme::ACCENT));
-            }
-            prev = Some(p);
-        }
-    }
-
 }
 
 #[cfg(test)]
