@@ -609,6 +609,13 @@ pub struct OrbitLiveApp {
     /// A left-drag selecting rows in progress: the anchor's y relative to the
     /// rows' top, and the selection to union with (the prior one under shift).
     report_drag: Option<(f32, std::collections::HashSet<u64>)>,
+    /// Per-core busy fraction (0..1) over the visible window, for the htop-like
+    /// utilization readout on each scheduler "Core N" header. Keyed by core id
+    /// (`LaneKey::extra`), cached by window + throttled so it costs one pass
+    /// over the scheduler lanes when the view settles, not once per frame.
+    core_util: std::collections::HashMap<u8, f32>,
+    core_util_key: Option<(u64, u64)>,
+    core_util_at: f64,
     /// Frames still to repaint after a layout-changing event with no input
     /// behind it -- a stream file's end, which opens the report panel. The
     /// frame that uploads the instances in the new geometry must also be
@@ -1517,6 +1524,9 @@ impl OrbitLiveApp {
             report_filter: String::new(),
             report_selection: std::collections::HashSet::new(),
             report_drag: None,
+            core_util: std::collections::HashMap::new(),
+            core_util_key: None,
+            core_util_at: -10.0,
             flame_zoom: Vec::new(),
             listing_cache: orbit_live_render::ListingCache::default(),
             ui_readout: String::new(),
@@ -4005,6 +4015,42 @@ impl OrbitLiveApp {
         }
     }
 
+    /// Per-core busy fraction over `[t0, t1]`, keyed by core id, cached by
+    /// window and throttled to ~10 Hz so a pan does not re-sum the scheduler
+    /// slices every frame. Empty in the Self pane (it has no scheduler).
+    fn core_utilization(&mut self, t0: u64, t1: u64) -> std::collections::HashMap<u8, f32> {
+        if self.in_self_pane {
+            return std::collections::HashMap::new();
+        }
+        let stale = self.core_util_key != Some((t0, t1));
+        if stale && self.now_s - self.core_util_at >= 0.1 {
+            self.core_util_at = self.now_s;
+            self.core_util_key = Some((t0, t1));
+            let span = t1.saturating_sub(t0).max(1) as f64;
+            let mut map = std::collections::HashMap::new();
+            for (key, lane) in self.index.lanes() {
+                if !key.is_scheduler() {
+                    continue;
+                }
+                // Slices on a core do not overlap and are sorted by start, so
+                // their ends are monotonic: skip past the window, then sum the
+                // clamped overlap until the first slice that starts after it.
+                let ev = lane.events();
+                let start = ev.partition_point(|e| e.end_ns() <= t0);
+                let mut busy = 0u64;
+                for e in &ev[start..] {
+                    if e.start_ns >= t1 {
+                        break;
+                    }
+                    busy += e.end_ns().min(t1).saturating_sub(e.start_ns.max(t0));
+                }
+                map.insert(key.extra, (busy as f64 / span).clamp(0.0, 1.0) as f32);
+            }
+            self.core_util = map;
+        }
+        self.core_util.clone()
+    }
+
     fn paint_headers(
         &mut self,
         ui: &mut Ui,
@@ -4016,6 +4062,7 @@ impl OrbitLiveApp {
     ) {
         let dragged = self.tracks.dragging_thread();
         let rows: Vec<TrackRow> = self.tracks.rows().to_vec();
+        let core_util = self.core_utilization(self.t0.max(0.0) as u64, self.t1.max(0.0) as u64);
         let clip = ui.clip_rect();
         for row in &rows {
             let on_drag = dragged
@@ -4137,7 +4184,7 @@ impl OrbitLiveApp {
                     );
                 }
             }
-            self.paint_tree_row(ui, head, *row, r, interactive);
+            self.paint_tree_row(ui, head, *row, r, interactive, &core_util);
         }
     }
 
@@ -4148,6 +4195,7 @@ impl OrbitLiveApp {
         row: TrackRow,
         r: Rect,
         interactive: bool,
+        core_util: &std::collections::HashMap<u8, f32>,
     ) {
         let tight = self.header_w < 140.0;
         match row.id {
@@ -4432,6 +4480,11 @@ impl OrbitLiveApp {
                         FontId::new(10.5, FontFamily::Proportional),
                         theme::MUTED,
                     );
+                    // htop-like per-core utilization over the visible window,
+                    // right-aligned so the cores line up; a bar when there is
+                    // room, always the percentage.
+                    let util = core_util.get(&key.extra).copied().unwrap_or(0.0);
+                    paint_core_util(ui.painter(), r, util);
                     return;
                 }
                 if !interactive {
@@ -9151,6 +9204,51 @@ fn flame_layout(roots: &[crate::net::TreeNodeJson], width: f32) -> Vec<FlameBar>
 }
 
 /// `name` cut to what fits in `width` pixels at `font` size, with an
+/// The htop-like per-core utilization on a scheduler header: a colour-coded
+/// bar (when the header column is wide enough) and the percentage, both
+/// right-aligned so the cores line up.
+fn paint_core_util(painter: &egui::Painter, r: Rect, util: f32) {
+    let util = util.clamp(0.0, 1.0);
+    let color = util_color(util);
+    let pct = (util * 100.0).round() as i32;
+    painter.text(
+        Pos2::new(r.right() - 6.0, r.center().y),
+        Align2::RIGHT_CENTER,
+        format!("{pct}%"),
+        FontId::new(9.5, fonts::medium()),
+        color,
+    );
+    // A bar left of the percentage, only when the header is wide enough to
+    // keep clear of the "Core N" label.
+    let (bar_left, bar_right) = (r.right() - 86.0, r.right() - 34.0);
+    if bar_left > r.left() + 66.0 {
+        let track = Rect::from_min_max(
+            Pos2::new(bar_left, r.center().y - 4.0),
+            Pos2::new(bar_right, r.center().y + 4.0),
+        );
+        painter.rect_filled(track, 2.0, theme::INPUT);
+        let fill = Rect::from_min_size(track.min, Vec2::new(track.width() * util, track.height()));
+        painter.rect_filled(fill, 2.0, color);
+    }
+}
+
+/// Green → amber → red by utilization, htop-style.
+fn util_color(util: f32) -> Color32 {
+    let lerp = |a: Color32, b: Color32, t: f32| {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+        Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
+    };
+    let green = Color32::from_rgb(0x3F, 0xB9, 0x50);
+    let amber = Color32::from_rgb(0xE0, 0xB0, 0x2E);
+    let red = Color32::from_rgb(0xE0, 0x52, 0x4B);
+    if util < 0.5 {
+        lerp(green, amber, util * 2.0)
+    } else {
+        lerp(amber, red, (util - 0.5) * 2.0)
+    }
+}
+
 /// ellipsis; a rough per-character width is enough for a bar label.
 fn truncate_to_width(name: &str, width: f32, font: f32) -> String {
     let per_char = font * 0.58;
