@@ -687,8 +687,8 @@ pub(crate) fn now_monotonic_ns() -> u64 {
     timespec.tv_sec as u64 * 1_000_000_000 + timespec.tv_nsec as u64
 }
 
-/// Online CPU count, for sizing the self-mode worker pool. Falls back to 4.
-#[cfg(target_os = "linux")]
+/// Online CPU count, for sizing worker pools. Falls back to 4.
+#[cfg(unix)]
 pub(crate) fn num_cpus_hint() -> usize {
     // SAFETY: sysconf is always safe to call.
     let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };

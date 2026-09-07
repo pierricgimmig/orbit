@@ -69,7 +69,7 @@ for shared API discovery; attachment fails instead of replacing their segment.
 Both sources write ordinary start/stop records to the same scope ring. The
 service computes one nesting hierarchy per thread; async scopes remain outside
 that hierarchy. Retained uprobes carry the same live provenance flag, but keep
-their existing independent nesting implementation. Dynamic starts set `ScopeEvent::flags::DYNAMIC` (bit 3) in the
+their existing independent nesting implementation. Dynamic starts set `event::flags::DYNAMIC` (bit 3) in the
 existing flags byte. Completed live events carry provenance in bit 7 of the
 metadata byte (`LiveEvent::_pad`), leaving low bits for color mode. Capture
 exports preserve that byte in an optional `flags` column; older files default
@@ -107,11 +107,10 @@ This integration does not bypass SIP or promise attachment to protected system
 processes. Development targets are the initial supported use case. Build the
 agent for the target architecture, including Rosetta when applicable.
 
-Initial end-to-end validation is on Linux x86-64. The hosted Mac attachment
-tests run both collector and development target as root to avoid interactive
-task-port authorization prompts; this does not validate unprivileged attachment. Native CI covers Linux,
-Apple Silicon and Intel Macs; ARM Linux and Rosetta runtime validation remain
-pending. Neither exception handling nor sampled callstack fidelity through Gum
+Native end-to-end tests pass on Linux x86-64, Apple Silicon and Intel Macs.
+The hosted Mac tests run both collector and development target as root to avoid
+interactive task-port authorization prompts; this does not validate unprivileged
+attachment. ARM Linux and Rosetta runtime validation remain pending. Neither exception handling nor sampled callstack fidelity through Gum
 trampolines is certified by these tests. Existing Linux sampling continues, but
 Gum's return interception can affect unwinding; no trampoline-aware callstack
 repair is implemented here. CPU sampling on macOS remains future work.
