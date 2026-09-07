@@ -92,6 +92,26 @@ def main():
             found = request(f'/api/functions/search?pid={pid}&q=orbit_frida_test_&limit=20')['functions']
             wanted = {'orbit_frida_test_outer': (30, 0), 'orbit_frida_test_middle': (60, 1), 'orbit_frida_test_inner': (180, 2)}
             hooks = [f for f in found if f['name'].lstrip('_') in wanted]
+            if len(hooks) != 3 and os.sys.platform == 'darwin':
+                # Preserve native symbol metadata when discovery fails in CI.
+                import frida
+                probe = frida.attach(pid)
+                source = (Path(__file__).resolve().parents[1] / 'frida/agent.js').read_text()
+                debug = probe.create_script(source + """
+                rpc.exports.diagnostics = function () {
+                    const m = Process.mainModule;
+                    const symbols = m.enumerateSymbols();
+                    return {name:m.name, base:m.base, segments:segments(m),
+                        raw:symbols.filter(s => s.name.includes('orbit_frida_test')),
+                        indexed:rpc.exports.symbols().filter(s => s.name.includes('orbit_frida_test')),
+                        sections:m.enumerateSections(), count:symbols.length};
+                };
+                """)
+                try:
+                    debug.load()
+                    print('Symbol diagnostics:', json.dumps(debug.exports_sync.diagnostics()))
+                finally:
+                    probe.detach()
             assert len(hooks) == 3, found
             if args.missing_agent:
                 try:
