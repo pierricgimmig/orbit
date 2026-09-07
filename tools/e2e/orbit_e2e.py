@@ -983,6 +983,50 @@ def live_tab(run):
     return f"{len(rows)} rows, histogram for {first[5:]!r}"
 
 
+@scenario("batch-hook", "Drag-select rows in the Functions pane and batch-toggle hooking")
+def batch_hook(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.service.post("/api/symbols/load", {"pid": WeekCapture.pid})
+    run.wait_for(
+        lambda: run.service.get(f"/api/symbols/status?pid={WeekCapture.pid}").get("status") == "ready",
+        "symbols ready", timeout=40,
+    )
+    run.open_viewer("?collapse=scheduler&report=functions")
+    run.wait_for(lambda: run.sel().get("tab") == "Functions", "the Functions tab")
+    rows = run.wait_for(lambda: run.rects_matching("hook:") or None, "function rows", timeout=20)
+    check_at_least(len(rows), 6, "function rows in the pane")
+    # Drag over a range of rows, in the name area (not the checkbox column), to
+    # select them; the drag is captured by the row-select layer beneath.
+    ordered = sorted(rows.values(), key=lambda r: r[1])
+    x = ordered[0][0] + 90
+    y0 = ordered[1][1] + 3
+    y1 = ordered[6][1] + 3
+
+    def mouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+    mouse("mousePressed", x, y0)
+    for i in range(1, 9):
+        mouse("mouseMoved", x, y0 + (y1 - y0) * i / 8)
+        time.sleep(0.02)
+    mouse("mouseReleased", x, y1)
+    time.sleep(0.3)
+    before = len(run.sel().get("hooks") or [])
+    # The batch pill's label carries the count ("Hook 5"); find it by prefix.
+    ui = run.ui()
+    label = next((k for k in ui if k.startswith("Hook ")), None)
+    check(label, f"no 'Hook N' pill after a drag-select: {[k for k in ui if 'ook' in k.lower()][:8]}")
+    px, py, pw, ph = ui[label]
+    run.chrome.click(px + pw / 2, py + ph / 2)
+    time.sleep(0.4)
+    after = len(run.sel().get("hooks") or [])
+    check_at_least(after - before, 2, f"batch hook should add several hooks (before {before}, after {after})")
+    run.shot("36-batch-hook", settle=0.5)
+    return f"{label!r}: hooked {after - before} functions in one drag"
+
+
 @scenario("flame-tab", "The Flame tab draws the sampling report as a flame graph")
 def flame_tab(run):
     if run.chrome is None:

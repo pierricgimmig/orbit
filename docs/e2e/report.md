@@ -1,10 +1,10 @@
 # Orbit e2e report
 
-Run 2026-09-07 15:09 at commit `78f780860` on `rixbox`.
+Run 2026-09-07 15:21 at commit `b32ca392f` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
-| python-reader | pass | 6.4s | 252903 events; 3 agent rows, 1016 value rows; startup scopes present (capture/build symbolizer/load symbols) |
+| report-tabs | pass | 65.3s |  |
 
 ## Numbers
 
@@ -45,3 +45,4 @@ Run 2026-09-07 15:09 at commit `78f780860` on `rixbox`.
 - `33-self-pane.png` -- ![](../screenshots/33-self-pane.png)
 - `34-measure-scrolled.png` -- ![](../screenshots/34-measure-scrolled.png)
 - `35-rect-panned.png` -- ![](../screenshots/35-rect-panned.png)
+- `36-batch-hook.png` -- ![](../screenshots/36-batch-hook.png)
