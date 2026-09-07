@@ -120,6 +120,36 @@ impl ScopeSource {
         worst
     }
 
+    /// Opens the service's own scope segment and turns its capturing flag on
+    /// up front, before the capture loop's setup runs. The manual API is inert
+    /// until a reader sets that flag, and the ordinary discovery below only
+    /// does so on the first drain -- which is after the symbolizer is built,
+    /// the rings opened and the uprobes armed. Without this those setup phases,
+    /// and the whole-capture scope, are emitted while the segment is still
+    /// inert and lost. Opened here at cursor 0, the first drain reads them.
+    pub fn begin_self_capture(&mut self) {
+        // Touch the manual API so the producer segment exists. The call writes
+        // nothing (capturing is not set yet) but materialises the segment.
+        let _ = orbit_api::start("");
+        let self_pid = std::process::id();
+        if self.segments.iter().any(|s| s.pid == self_pid) {
+            return;
+        }
+        if let Ok(reader) = ScopeRingReader::open(self_pid) {
+            reader.set_capturing(true);
+            let ring_count = reader.rings().ring_count();
+            self.segments.push(Segment {
+                pid: self_pid,
+                reader,
+                cursors: Cursors::for_rings(ring_count),
+                text: TextAssembler::new(),
+                awaiting_name: HashMap::new(),
+                open: HashMap::new(),
+                sync_depth: HashMap::new(),
+            });
+        }
+    }
+
     /// Opens segments for any visible pid that has one and is not open yet --
     /// and always for the service itself.
     ///

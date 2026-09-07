@@ -1,11 +1,10 @@
 # Orbit e2e report
 
-Run 2026-09-07 14:20 at commit `74ffb6a0d` on `rixbox`.
+Run 2026-09-07 15:09 at commit `78f780860` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
-| rect-select | pass | 26.1s | 2496 scopes, 43 functions, 4 threads; locked under pan |
-| time-measure | pass | 16.5s | measured 1 span(s), sticks and stays visible after a scroll |
+| python-reader | pass | 6.4s | 252903 events; 3 agent rows, 1016 value rows; startup scopes present (capture/build symbolizer/load symbols) |
 
 ## Numbers
 

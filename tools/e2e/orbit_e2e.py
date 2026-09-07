@@ -1087,7 +1087,25 @@ def python_reader(run):
     agent_rows, value_rows = (int(v) for v in agent.stdout.split())
     check_at_least(agent_rows, 2, "agent-track rows (orbit-scope run/value/instant)")
     check_at_least(value_rows, 2, "value rows (service cpu %, rss MiB, agent value)")
-    return f"{n} events; {agent_rows} agent rows, {value_rows} value rows"
+    # The service now self-profiles the capture's startup: a whole-capture
+    # scope and the setup phases (build symbolizer -> load symbols: <file>).
+    # The epoch is taken before that setup, so these fall inside the window
+    # and read back by name (they were dropped before the fix).
+    names_q = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import pyarrow.parquet as pq,sys;"
+         "n=set(pq.read_table(sys.argv[1]+'/events.parquet').column('name').to_pylist());"
+         "print('capture' in n, 'build symbolizer' in n, any(str(x).startswith('load symbols:') for x in n))",
+         folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(names_q.returncode == 0, f"pyarrow name query failed: {names_q.stderr[-300:]}")
+    has_capture, has_symbolizer, has_loadsym = (v == "True" for v in names_q.stdout.split())
+    check(has_capture, "the whole-capture self-profile scope is missing from the events")
+    check(has_symbolizer, "the 'build symbolizer' setup scope is missing from the events")
+    check(has_loadsym, "no 'load symbols: <file>' scopes in the events")
+    return (f"{n} events; {agent_rows} agent rows, {value_rows} value rows; "
+            f"startup scopes present (capture/build symbolizer/load symbols)")
 
 
 @scenario("agent-scopes", "orbit-scope puts an agent's tool calls on their own track")
