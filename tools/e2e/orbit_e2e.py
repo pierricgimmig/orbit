@@ -895,10 +895,25 @@ def rect_select(run):
     rect = run.wait_for(lambda: run.sel().get("rect"), "the committed rectangle selection", timeout=10)
     check_at_least(rect.get("count", 0), 1, f"scopes inside the marquee: {rect}")
     check_at_least(rect.get("functions", 0), 1, f"distinct functions in the marquee: {rect}")
+    # Pan the view (a plain left-drag): the marquee is locked to its time span,
+    # so it moves with the world rather than staying fixed on screen.
+    midx, midy = (x0 + x1) / 2, (top + bot) / 2
+
+    def pan(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+    pan("mousePressed", midx, midy)
+    for i in range(1, 9):
+        pan("mouseMoved", midx - i * 22, midy)
+        time.sleep(0.02)
+    pan("mouseReleased", midx - 176, midy)
+    time.sleep(0.3)
+    check(run.sel().get("rect"), "the marquee should persist (locked to its time) after a pan")
+    run.shot("35-rect-panned", settle=0.5)
     # Escape clears the marquee.
     run.chrome.key("Escape")
     run.wait_for(lambda: run.sel().get("rect") is None, "Escape to clear the marquee")
-    return f"{rect['count']} scopes, {rect['functions']} functions, {rect['threads']} threads"
+    return f"{rect['count']} scopes, {rect['functions']} functions, {rect['threads']} threads; locked under pan"
 
 
 @scenario("time-measure", "A right-drag measures a time span and leaves a dimension arrow")
@@ -929,7 +944,15 @@ def time_measure(run):
     wide = [r for r in ranges if len(r) >= 3 and r[2] is None]
     check(wide, f"a right-drag should leave a process-wide range: {ranges}")
     run.shot("32-time-measure", settle=1.0)
-    return f"measured {len(wide)} span(s), sticks after release"
+    # Scroll the lanes down: the dimension arrow is pinned under the ruler, so
+    # it stays visible and the measure survives.
+    run.chrome.call("Input.dispatchMouseEvent", type="mouseWheel",
+                    x=(x0 + x1) / 2, y=cy + 160, deltaX=0, deltaY=600)
+    time.sleep(0.4)
+    still = run.wait_for(lambda: (run.sel().get("ranges") or None), "the measure after a scroll")
+    check([r for r in still if len(r) >= 3 and r[2] is None], "the measure should survive a scroll")
+    run.shot("34-measure-scrolled", settle=0.5)
+    return f"measured {len(wide)} span(s), sticks and stays visible after a scroll"
 
 
 @scenario("self-pane", "The viewer's Self pane shows frame phases as proper tracks, no mystery graph")

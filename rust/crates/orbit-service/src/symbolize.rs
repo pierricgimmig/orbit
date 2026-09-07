@@ -98,6 +98,7 @@ impl Symbolizer {
             }
             let Ok(path) = std::str::from_utf8(&mapping.pathname) else { continue };
             if path == "[vdso]" {
+                let _load = orbit_api::scope("load symbols: [vdso]");
                 if let Some(image) = vdso_image() {
                     modules.push(Module {
                         start: mapping.start_address,
@@ -115,6 +116,8 @@ impl Symbolizer {
                 continue;
             }
             let name = path.rsplit('/').next().unwrap_or(path).to_string();
+            // A self-profile scope per file, named for the symbols file loaded.
+            let _load = orbit_api::scope(format!("load symbols: {name}"));
             let bias = mapping.start_address.wrapping_sub(mapping.offset);
             let bytes = std::fs::read(path).unwrap_or_default();
             let symbols = sorted_symbols(&bytes, Some(path));

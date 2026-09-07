@@ -1,11 +1,11 @@
 # Orbit e2e report
 
-Run 2026-09-07 08:41 at commit `3f3a1b7ce` on `rixbox`.
+Run 2026-09-07 14:20 at commit `74ffb6a0d` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
-| time-measure | pass | 19.2s | measured 1 span(s), sticks after release |
-| self-pane | pass | 11.6s | 22 phases, 36 fps |
+| rect-select | pass | 26.1s | 2496 scopes, 43 functions, 4 threads; locked under pan |
+| time-measure | pass | 16.5s | measured 1 span(s), sticks and stays visible after a scroll |
 
 ## Numbers
 
@@ -44,3 +44,5 @@ Run 2026-09-07 08:41 at commit `3f3a1b7ce` on `rixbox`.
 - `31-rect-select.png` -- ![](../screenshots/31-rect-select.png)
 - `32-time-measure.png` -- ![](../screenshots/32-time-measure.png)
 - `33-self-pane.png` -- ![](../screenshots/33-self-pane.png)
+- `34-measure-scrolled.png` -- ![](../screenshots/34-measure-scrolled.png)
+- `35-rect-panned.png` -- ![](../screenshots/35-rect-panned.png)
