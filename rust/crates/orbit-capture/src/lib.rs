@@ -165,6 +165,7 @@ pub fn events_schema() -> Schema {
         Field::new("extra", DataType::UInt8, false),
         Field::new("name_id", DataType::UInt32, false),
         Field::new("name", DataType::Utf8, false),
+        Field::new("flags", DataType::UInt8, false),
     ])
 }
 
@@ -198,6 +199,7 @@ fn events_batch(
             Arc::new(extra),
             Arc::new(name_id),
             Arc::new(name),
+            Arc::new(events.iter().map(|e| e._pad).collect::<UInt8Array>()),
         ],
     )
 }
@@ -316,6 +318,8 @@ pub(crate) fn event_rows_from_batch(batch: &RecordBatch, out: &mut Vec<EventRow>
     let extra: &UInt8Array = column(batch, 6, "u8")?;
     let name_id: &UInt32Array = column(batch, 7, "u32")?;
     let name: &StringArray = column(batch, 8, "utf8")?;
+    let flags = batch.schema().index_of("flags").ok()
+        .map(|i| column::<UInt8Array>(batch, i, "u8")).transpose()?;
     for r in 0..batch.num_rows() {
         out.push(EventRow {
             event: LiveEvent {
@@ -326,7 +330,7 @@ pub(crate) fn event_rows_from_batch(batch: &RecordBatch, out: &mut Vec<EventRow>
                 kind: kind.value(r),
                 depth: depth.value(r),
                 extra: extra.value(r),
-                _pad: 0,
+                _pad: flags.map_or(0, |f| f.value(r)),
                 name_id: name_id.value(r),
             },
             name: name.value(r).to_string(),
@@ -735,6 +739,24 @@ mod tests {
     }
 
     #[test]
+    fn source_metadata_round_trips_and_old_files_default_to_manual() {
+        let mut events = many(2);
+        events[1]._pad = orbit_live_event::event_flags::DYNAMIC;
+        let bytes = write_events_ipc_to_vec(&events, names).unwrap();
+        let rows = read_events_ipc(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(rows[1].event, events[1]);
+        let bytes = write_events_parquet_to_vec(&events, names).unwrap();
+        let rows = read_events_parquet(bytes::Bytes::from(bytes)).unwrap();
+        assert_eq!(rows[1].event, events[1]);
+        let schema = Arc::new(events_schema());
+        let batch = events_batch(&schema, &events, &names).unwrap();
+        let old = batch.project(&(0..9).collect::<Vec<_>>()).unwrap();
+        let mut rows = Vec::new();
+        event_rows_from_batch(&old, &mut rows).unwrap();
+        assert!(rows.iter().all(|r| r.event._pad == 0));
+    }
+
+    #[test]
     fn round_trips_events_with_resolved_names() {
         let events = vec![
             ev(100, 50, 7, 8, 1, 0, 1),
@@ -777,6 +799,7 @@ mod tests {
                 "extra",
                 "name_id",
                 "name",
+                "flags",
             ]
         );
     }

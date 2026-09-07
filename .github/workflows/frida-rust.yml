@@ -47,6 +47,16 @@ jobs:
           # our own target and collector as root for this attachment test.
           if [ "$(uname -s)" = Darwin ]; then prefix=(sudo); else prefix=(); fi
           "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+      - name: Verify injected API in a target without manual instrumentation
+        run: |
+          cc -O1 -g -DORBIT_NO_API tools/e2e/frida_target.c -lpthread -o /tmp/orbit-frida-plain-target
+          if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
+          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-plain-target --no-manual
+      - name: Verify shared API discovery without API symbols
+        if: runner.os == 'Linux'
+        run: |
+          objcopy --strip-symbol=orbit_init --strip-symbol=orbit_start_dynamic --strip-symbol=orbit_stop --strip-symbol=orbit_start /tmp/orbit-frida-target /tmp/orbit-frida-hidden-api-target
+          /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-hidden-api-target
       - name: Verify startup failure does not block manual capture
         if: runner.os == 'Linux'
         run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent

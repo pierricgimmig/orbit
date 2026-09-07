@@ -50,6 +50,7 @@ struct Open {
     name_id: u32,
     depth: u8,
     is_async: bool,
+    dynamic: bool,
 }
 
 /// One instrumented process's segment and the reader state over it.
@@ -316,7 +317,7 @@ impl ScopeSource {
                 };
                 segment.open.insert(
                     event.scope_id,
-                    Open { start_ns: event.timestamp_ns, pid, tid: event.tid, name_id, depth, is_async },
+                    Open { start_ns: event.timestamp_ns, pid, tid: event.tid, name_id, depth, is_async, dynamic: event.flags & flags::DYNAMIC != 0 },
                 );
             }
             rk::INSTANT => {
@@ -380,7 +381,7 @@ fn span(open: Open, end_ns: u64) -> LiveEvent {
         kind: if open.is_async { kind::API_TRACK } else { kind::API_SCOPE },
         depth: open.depth,
         extra: 0,
-        _pad: 0,
+        _pad: if open.dynamic { orbit_live_event::event_flags::DYNAMIC } else { 0 },
         name_id: open.name_id,
     }
 }

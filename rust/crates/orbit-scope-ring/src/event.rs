@@ -40,6 +40,8 @@ pub mod flags {
     /// rather than nested in the starting thread's, and not counted towards
     /// that thread's depth.
     pub const ASYNC: u8 = 1 << 2;
+    /// Scope originated in a dynamic instrumentation callback.
+    pub const DYNAMIC: u8 = 1 << 3;
 }
 
 /// One event, exactly 32 bytes and `repr(C)`.

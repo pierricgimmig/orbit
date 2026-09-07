@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 'use strict';
-let listeners = [], nativeAgent, callbacks, closeAgent, generationStorage, generation = 0;
+let listeners = [], nativeAgent, callbacks, closeAgent, generationStorage, hookStorage = [], generation = 0;
 
 // Mach-O offsets are relative to the selected architecture slice. Parse loaded
 // segment commands, which also works for universal files without guessing which
@@ -44,6 +44,32 @@ function addressOf(hook) {
     throw new Error('function offset is outside executable mappings: ' + hook.name);
 }
 
+// Resolve one API instance before loading our fallback agent. Static SDKs may
+// expose symbols without exporting them. Initialized SDKs also publish an API
+// descriptor, which the native guard prefers and which needs no symbol lookup.
+function targetApi(agentName) {
+    for (const m of Process.enumerateModules()) {
+        if (m.name === agentName) continue;
+        const found = {};
+        for (const name of ['orbit_init', 'orbit_start_dynamic', 'orbit_stop', 'orbit_start']) {
+            const address = m.findExportByName(name);
+            if (address) found[name] = address;
+        }
+        if (!found.orbit_start_dynamic || !found.orbit_init || !found.orbit_stop) {
+            try {
+                for (const symbol of m.enumerateSymbols()) {
+                    const name = symbol.name.replace(/^_/, '');
+                    if (['orbit_init', 'orbit_start_dynamic', 'orbit_stop', 'orbit_start'].includes(name))
+                        found[name] = symbol.address;
+                }
+            } catch (_) {}
+        }
+        if (found.orbit_init && found.orbit_start_dynamic && found.orbit_stop)
+            return [found.orbit_init, found.orbit_start_dynamic, found.orbit_stop];
+    }
+    return [ptr(0), ptr(0), ptr(0)];
+}
+
 rpc.exports = {
     symbols() {
         const result = [];
@@ -51,7 +77,10 @@ rpc.exports = {
             try {
                 const segs = segments(module);
                 for (const symbol of module.enumerateSymbols()) {
-                    if (symbol.type !== 'function') continue;
+                    // Mach-O code symbols are 'section', not ELF's 'function'.
+                    const machCode = symbol.type === 'section' && symbol.section &&
+                        symbol.section.id.endsWith('.__text');
+                    if (symbol.type !== 'function' && !machCode) continue;
                     const seg = segs.find(s => s.executable && symbol.address.compare(s.address) >= 0 &&
                         symbol.address.compare(s.address.add(s.size.toString())) < 0);
                     if (seg) result.push({name: symbol.name, module: module.name, module_path: module.path,
@@ -63,40 +92,47 @@ rpc.exports = {
     },
     start(config) {
         if (generation !== 0) throw new Error('already recording');
-        nativeAgent = Process.findModuleByName(config.agent.split('/').pop()) || Module.load(config.agent);
-        const openAgent = new NativeFunction(nativeAgent.getExportByName('orbit_frida_open'), 'uint', ['pointer']);
+        const agentName = config.agent.split('/').pop();
+        const api = targetApi(agentName);
+        nativeAgent = Process.findModuleByName(agentName) || Module.load(config.agent);
+        const openAgent = new NativeFunction(nativeAgent.getExportByName('orbit_frida_open'), 'uint', ['pointer', 'pointer', 'pointer', 'pointer']);
         closeAgent = new NativeFunction(nativeAgent.getExportByName('orbit_frida_close'), 'void', ['uint']);
-        generation = openAgent(Memory.allocUtf8String(config.transport));
-        if (generation === 0) throw new Error('agent rejected transport (permissions, version, or another active collector)');
+        generation = openAgent(Memory.allocUtf8String(config.transport), ...api);
+        if (generation === 0) throw new Error('agent rejected transport (permissions, hidden/incompatible Orbit API, or another active collector)');
         generationStorage = Memory.alloc(4); generationStorage.writeU32(generation);
         try {
             callbacks = new CModule(`
 #include <gum/guminterceptor.h>
 extern const guint32 capture_generation;
-extern guint64 orbit_now(void);
-extern guint32 orbit_tid(void);
+extern guint64 orbit_start(guint32, const char *, gsize);
+extern void orbit_stop(guint32, guint64);
 extern void orbit_close(guint32);
 void finalize(void) { orbit_close(capture_generation); }
-extern void orbit_record(guint32, guint64, guint64, guint64, guint32, guint32);
-typedef struct { guint64 start, id; guint32 tid, depth; } Invocation;
+typedef struct { const char * name; gsize len; } Hook;
 void on_enter(GumInvocationContext * ctx) {
-    Invocation * i = gum_invocation_context_get_listener_invocation_data(ctx, sizeof(Invocation));
-    i->start = orbit_now();
-    i->id = (guintptr) gum_invocation_context_get_listener_function_data(ctx);
-    i->tid = orbit_tid();
-    i->depth = gum_invocation_context_get_depth(ctx);
+    guint64 * handle = gum_invocation_context_get_listener_invocation_data(ctx, sizeof(guint64));
+    const Hook * hook = gum_invocation_context_get_listener_function_data(ctx);
+    *handle = orbit_start(capture_generation, hook->name, hook->len);
 }
 void on_leave(GumInvocationContext * ctx) {
-    Invocation * i = gum_invocation_context_get_listener_invocation_data(ctx, sizeof(Invocation));
-    orbit_record(capture_generation, i->id, i->start, orbit_now(), i->tid, i->depth);
+    guint64 * handle = gum_invocation_context_get_listener_invocation_data(ctx, sizeof(guint64));
+    orbit_stop(capture_generation, *handle);
 }
-`, { capture_generation: generationStorage, orbit_now: nativeAgent.getExportByName('orbit_frida_now'),
-     orbit_record: nativeAgent.getExportByName('orbit_frida_record'),
-     orbit_close: nativeAgent.getExportByName('orbit_frida_close'),
-     orbit_tid: nativeAgent.getExportByName('orbit_frida_tid') });
-            for (const hook of config.hooks)
+`, { capture_generation: generationStorage,
+     orbit_start: nativeAgent.getExportByName('orbit_frida_start'),
+     orbit_stop: nativeAgent.getExportByName('orbit_frida_stop'),
+     orbit_close: nativeAgent.getExportByName('orbit_frida_close') });
+            for (const hook of config.hooks) {
+                const name = Memory.allocUtf8String(hook.name);
+                const data = Memory.alloc(Process.pointerSize * 2);
+                data.writePointer(name);
+                // strlen is evaluated once at setup, never on the callback path.
+                let length = 0; while (name.add(length).readU8() !== 0) length++;
+                data.add(Process.pointerSize).writeU64(length);
+                hookStorage.push({name, data});
                 listeners.push(Interceptor.attach(addressOf(hook),
-                    {onEnter: callbacks.on_enter, onLeave: callbacks.on_leave}, ptr(hook.function_id)));
+                    {onEnter: callbacks.on_enter, onLeave: callbacks.on_leave}, data));
+            }
             Interceptor.flush();
             return {armed: listeners.length, arch: Process.arch, platform: Process.platform};
         } catch (error) { this.stop(); throw error; }

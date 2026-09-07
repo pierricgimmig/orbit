@@ -51,29 +51,45 @@ still separate future work.
 
 The service launches a Python helper using Frida Core 17.17.0 to attach to the
 process. A small Gum CModule supplies native Interceptor entry/exit callbacks;
-these call the injected Rust agent directly. JavaScript and Python only handle
-configuration, attachment and detach. There is no per-event script callback,
-JSON serialization or pipe write.
+these call a small Rust lifecycle guard, which invokes `orbit_start_dynamic`
+and `orbit_stop` on the **same Orbit API instance** used by the application's
+manual scopes. JavaScript and Python only handle configuration, attachment and
+detach. There is no per-event script callback, JSON serialization or pipe write.
 
-The agent writes completed spans to a capture-private shared mapping using the
-existing scope-ring concurrency machinery. Function names are interned once in
-the service. This transport is separate from `orbit-api`, so an application
-already emitting manual scopes keeps its own mapping and globals. Callback
-publication takes an agent read lock so closing a capture can safely release the
-mapping. A capture generation prevents a late return from writing into the next
-capture. The ring is bounded; overwrites and unrepresentable depth are counted
-in instrumentation status.
+`orbit_init` publishes a versioned, process-local API descriptor in reserved
+scope-header bytes. The injected agent uses that descriptor even when the SDK
+is statically linked and its symbols are stripped. A producer-held file lease
+prevents reuse of descriptor addresses after exit or exec. It does not replace the
+application's segment, TLS state or handle allocator. If the application has no
+Orbit API, the agent initializes its bundled API. Initialize an application's
+own SDK before attachment; loading/initializing another SDK instance afterward
+is not supported. Older manually instrumented binaries need the updated SDK
+for shared API discovery; attachment fails instead of replacing their segment.
 
-Stop detaches listeners, disables the mapping and drains completed spans. The
-agent dylib stays loaded in the process for reuse. Functions still running when
-capture stops, exceptions, longjmp, and other paths that bypass normal return
-are not represented as completed spans. There is no claim that every function
-entry produces an exit. Frida controls callback/trampoline lifetime during
-script teardown; the helper has a bounded shutdown wait and reports failures.
-Concurrent Orbit collectors for one target are refused. Self-hooking the service
-is refused. Fork-child callbacks are disabled before touching inherited locks
-or the parent’s transport; attaching to such a child requires it to exec first.
-The existing 16-function limit and 32-bit wire thread IDs remain.
+Both sources write ordinary start/stop records to the same scope ring. The
+service computes one nesting hierarchy per thread; async scopes remain outside
+that hierarchy. Dynamic starts set `ScopeEvent::flags::DYNAMIC` (bit 3) in the
+existing flags byte. Completed live events carry provenance in bit 7 of the
+metadata byte (`LiveEvent::_pad`), leaving low bits for color mode. Capture
+exports preserve that byte in an optional `flags` column; older files default
+to zero. Batches carrying metadata use the existing raw live format because the
+original packed format omits that byte. Event sizes and existing frame formats
+are unchanged.
+
+The capture-private file now holds only an attachment lease and a completed-call
+counter, not a second stream of events. A read lock keeps callbacks from racing
+capture teardown; a generation prevents late returns from entering a subsequent
+capture. Ring overflow is reported through the ordinary scope-source loss
+counter. Stop detaches Frida before the shared source's final drain. Scopes still
+open at Stop are clipped to capture end, like manual scopes. Exceptions/longjmp
+that bypass return can leave scopes open; the API does not infer unwinding.
+
+The agent dylib stays loaded for reuse. Concurrent Orbit collectors for one
+target and self-hooking the service are refused. Fork-child callbacks and manual
+API calls are disabled before touching inherited state; the child must exec
+before instrumentation can resume. The existing 16-function selection limit and
+32-bit wire thread IDs remain. Shared nesting still has the manual reader's
+8-bit depth limit; very deep recursion is not represented faithfully.
 
 ## Platform requirements and current limits
 
@@ -107,12 +123,14 @@ license.
 ## Validation
 
 `tools/e2e/frida_smoke.py` checks attachment to an already-running C target,
-exact function counts (270 per capture), three worker threads, nesting depths,
-manual instrumentation coexistence, target survival and repeated capture. It can
+exact function counts (270 per capture), three worker threads, seven alternating
+manual/dynamic nesting levels, async isolation, source flags, parent containment,
+fork isolation, target survival and repeated capture. Separate runs cover targets
+without a linked SDK and API discovery with its symbols stripped. It can
 also exercise the retained backend with `--engine kernel_uprobes`.
 
-Unit tests check transport validation/concurrency and rejection of stale capture
-generations. `.github/workflows/frida-rust.yml` runs the native matrix.
+Unit tests check lease validation/concurrency, rejection of stale capture
+generations, and metadata round trips through live transport and capture files. `.github/workflows/frida-rust.yml` runs the native matrix.
 
 Upstream references: [Frida modes](https://frida.re/docs/modes/),
 [Gum](https://github.com/frida/frida-gum),

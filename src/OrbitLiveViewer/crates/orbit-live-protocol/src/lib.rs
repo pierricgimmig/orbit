@@ -385,6 +385,11 @@ pub fn unpack_events(payload: &[u8]) -> Result<Vec<LiveEvent>, ProtocolError> {
 
 /// Frames a batch in the given format. `Raw` is [`encode_event_batch`].
 pub fn encode_event_batch_with(events: &[LiveEvent], wire: WireFormat) -> Vec<u8> {
+    // The original packed format has no flags/color byte. Raw frames are
+    // understood by all clients and preserve metadata without a wire break.
+    if events.iter().any(|e| e._pad != 0) {
+        return encode_event_batch(events);
+    }
     match wire {
         WireFormat::Raw => encode_event_batch(events),
         WireFormat::Packed => {
@@ -670,6 +675,17 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn source_flags_survive_every_negotiated_wire_format() {
+        let mut events = capture_like_batch(3);
+        events[1]._pad = orbit_live_event::event_flags::DYNAMIC;
+        for wire in [WireFormat::Raw, WireFormat::Packed, WireFormat::Deflate] {
+            let bytes = encode_event_batch_with(&events, wire);
+            let (frame, _) = decode_frame(&bytes).unwrap();
+            assert_eq!(frame, LiveFrame::EventBatch { events: events.clone() });
+        }
     }
 
     #[test]

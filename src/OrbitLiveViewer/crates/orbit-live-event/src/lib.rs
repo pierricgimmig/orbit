@@ -71,6 +71,12 @@ pub mod thread_state {
     pub const IDLE: u8 = 9;
 }
 
+/// Source flags in the high bits of `LiveEvent::_pad`; low bits retain color mode.
+pub mod event_flags {
+    pub const DYNAMIC: u8 = 1 << 7;
+    pub const COLOR_MASK: u8 = 0x7f;
+}
+
 /// Packed 32-byte event. Layout is little-endian on the wire.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,7 +142,7 @@ impl LiveEvent {
             self.tid,
             self.depth,
             self.extra,
-            self._pad,
+            self._pad & event_flags::COLOR_MASK,
             self.name_id,
             hash,
         )

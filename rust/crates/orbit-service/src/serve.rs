@@ -1202,10 +1202,8 @@ fn capture_loop(
         // exact spans the target actually executed, and they belong above the
         // sampled flame graph rather than mixed into it.
         if let Some(session) = frida.as_mut() {
-            let mut events = Vec::new();
-            session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut events);
-            service.push_events(&events);
-            service.set_instrumentation_status(session.status());
+            session.poll();
+            service.set_instrumentation_status(session.status(scopes.events_lost));
         }
         if let Some(session) = uprobes.as_mut() {
             let _probes = orbit_api::scope("read uprobes");
@@ -1281,6 +1279,12 @@ fn capture_loop(
         }
     }
 
+    if let Some(session) = frida.as_mut() {
+        session.stop();
+        session.poll();
+        service.set_instrumentation_status(session.status(scopes.events_lost));
+    }
+
     // Manual scopes still open when the capture stops are closed at its end
     // timestamp, so the last frame is drawn rather than lost.
     {
@@ -1301,14 +1305,6 @@ fn capture_loop(
         if refused > 0 {
             eprintln!("orbit-service: {refused} event(s) started before the capture and were dropped");
         }
-    }
-
-    if let Some(session) = frida.as_mut() {
-        session.stop();
-        let mut tail = Vec::new();
-        session.poll(|id| hook_names.get(&id).copied().unwrap_or(0), &mut tail);
-        service.push_events(&tail);
-        service.set_instrumentation_status(session.status());
     }
 
     // Calls held back for reordering would otherwise be lost with the

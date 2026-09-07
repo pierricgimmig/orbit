@@ -17,7 +17,7 @@
 use crate::event::EVENT_SIZE;
 use crate::ring::{self, Header, Rings, MAGIC, MAX_RINGS, VERSION};
 use std::io;
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::atomic::Ordering;
 
 /// What the whole segment costs the profiled process by default.
@@ -180,6 +180,7 @@ impl Drop for Mapping {
 
 /// The producer side: creates the segment and writes into it.
 pub struct ScopeRingWriter {
+    _owner_fd: OwnedFd,
     mapping: Mapping,
     rings: Rings,
     pid: u32,
@@ -235,11 +236,18 @@ impl ScopeRingWriter {
                 0,
             )
         };
-        // SAFETY: the mapping holds its own reference to the file.
-        unsafe { libc::close(fd) };
+        // Keep an exclusive lease until exit (CLOEXEC closes it at exec).
+        // A descriptor in a stale segment must never be called after PID reuse
+        // or exec. Readers check this lease before exposing its address.
+        let owner_fd = unsafe { OwnedFd::from_raw_fd(fd) };
         if base == libc::MAP_FAILED {
             let error = io::Error::last_os_error();
             unsafe { segment_unlink(&name); }
+            return Err(error);
+        }
+        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = io::Error::last_os_error();
+            unsafe { libc::munmap(base, len); segment_unlink(&name); }
             return Err(error);
         }
         let base = base.cast::<u8>();
@@ -247,7 +255,20 @@ impl ScopeRingWriter {
         unsafe { ring::init_region(base, ring_count, slots_per_ring, pid) };
         // SAFETY: the region was just initialised at these dimensions.
         let rings = unsafe { Rings::from_raw(base, ring_count, slots_per_ring) };
-        Ok(ScopeRingWriter { mapping: Mapping { base, len }, rings, pid })
+        Ok(ScopeRingWriter { _owner_fd: owner_fd, mapping: Mapping { base, len }, rings, pid })
+    }
+
+    /// Release an inherited API lease in an atfork child callback.
+    /// # Safety
+    /// Only call once in the child, for a permanently leaked writer that will
+    /// never be used or dropped there. The parent's descriptor is unaffected.
+    pub unsafe fn abandon_in_fork_child(&self) {
+        libc::close(self._owner_fd.as_raw_fd());
+    }
+
+    /// Publish a process-local descriptor for injected instrumentation.
+    pub fn publish_api_descriptor(&self, address: u64) {
+        unsafe { &*self.mapping.base.cast::<Header>() }.api_descriptor.store(address, Ordering::Release);
     }
 
     pub fn rings(&self) -> &Rings {
@@ -293,6 +314,7 @@ impl Drop for ScopeRingWriter {
 /// being observed. The control page alone is mapped read-write, so the
 /// service can set `capturing`, and that page holds nothing but the header.
 pub struct ScopeRingReader {
+    owner_fd: OwnedFd,
     mapping: Mapping,
     control: Mapping,
     rings: Rings,
@@ -318,7 +340,7 @@ impl ScopeRingReader {
         }
         // Keep one descriptor for both views: reopening by name can race a
         // producer restart and map the control page of a different segment.
-        let _fd_owner = unsafe { OwnedFd::from_raw_fd(fd) };
+        let fd_owner = unsafe { OwnedFd::from_raw_fd(fd) };
         let mut stat: libc::stat = unsafe { std::mem::zeroed() };
         // SAFETY: fd is open, stat is a live local.
         if unsafe { libc::fstat(fd, &mut stat) } != 0 {
@@ -397,7 +419,21 @@ impl ScopeRingReader {
 
         // SAFETY: dimensions validated against the mapped length above.
         let rings = unsafe { Rings::from_raw(base, ring_count, slots_per_ring) };
-        Ok(ScopeRingReader { mapping, control, rings, pid })
+        Ok(ScopeRingReader { owner_fd: fd_owner, mapping, control, rings, pid })
+    }
+
+    /// Address in the producer's address space, not the reader's. Consumers
+    /// outside the producer must never dereference this value.
+    pub fn api_descriptor(&self) -> u64 {
+        let fd = self.owner_fd.as_raw_fd();
+        if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            unsafe { libc::flock(fd, libc::LOCK_UN) };
+            return 0;
+        }
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return 0;
+        }
+        unsafe { &*self.mapping.base.cast::<Header>() }.api_descriptor.load(Ordering::Acquire)
     }
 
     /// Tells the producer whether it should be writing. Set true when a
@@ -466,6 +502,17 @@ mod tests {
 
     fn exclusive() -> std::sync::MutexGuard<'static, ()> {
         SEGMENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn api_descriptor_requires_a_live_writer_lease() {
+        let _serial = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let reader = ScopeRingReader::open(std::process::id()).unwrap();
+        writer.publish_api_descriptor(1234);
+        assert_eq!(reader.api_descriptor(), 1234);
+        drop(writer);
+        assert_eq!(reader.api_descriptor(), 0, "never call a stale process-local address");
     }
 
     #[test]

@@ -51,6 +51,10 @@ typedef uint64_t orbit_scope;
  * anything after it. */
 orbit_scope orbit_start(const char* name, size_t name_len);
 
+/* Same stream and handles as orbit_start, tagged as dynamic instrumentation.
+ * orbit_init publishes the API instance for Frida, including in static SDKs. */
+orbit_scope orbit_start_dynamic(const char* name, size_t name_len);
+
 /* Begins a scope that may be stopped from any thread, drawn on its own
  * track rather than nested in the starting thread's. This is the "File IO
  * request site / result site" case. */

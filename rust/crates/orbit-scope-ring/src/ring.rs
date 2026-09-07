@@ -91,7 +91,12 @@ pub struct Header {
     pub capturing: AtomicU32,
     /// Semantic version of the instrumentation calls.
     pub api_version: u32,
-    pub _pad: [u32; 6],
+    pub _reserved: u32,
+    /// In-process API descriptor address, published by orbit-api. Never
+    /// dereferenced by the service. Zero in older producers; offsets and size
+    /// are unchanged because this occupies previously reserved header bytes.
+    pub api_descriptor: AtomicU64,
+    pub _pad: [u32; 4],
 }
 
 /// Semantic version of the API. Bumped when the meaning of a call changes.

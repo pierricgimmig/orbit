@@ -10,21 +10,40 @@
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
+#ifdef ORBIT_NO_API
+#include <stdint.h>
+#define orbit_init() 0
+#define orbit_shutdown() ((void)0)
+#define orbit_start(...) 0
+#define orbit_start_async(...) 0
+#define orbit_stop(...) ((void)0)
+#define orbit_instant(...) ((void)0)
+#else
 #include "orbit.h"
+#endif
 
 __attribute__((noinline)) void orbit_frida_test_inner(void) {
+  uint64_t manual = orbit_start("manual inner", 12);
   struct timespec t = {0, 100000}; nanosleep(&t, NULL);
+  orbit_stop(manual);
 }
 __attribute__((noinline)) void orbit_frida_test_middle(void) {
+  uint64_t manual = orbit_start("manual middle", 13);
   for (int i = 0; i < 3; ++i) orbit_frida_test_inner();
+  orbit_stop(manual);
 }
 __attribute__((noinline)) void orbit_frida_test_outer(void) {
+  uint64_t manual = orbit_start("manual outer", 12);
   for (int i = 0; i < 2; ++i) orbit_frida_test_middle();
+  orbit_stop(manual);
 }
 static void *worker(void *unused) {
   (void)unused;
-  orbit_instant("manual worker", 13);
+  uint64_t manual = orbit_start("manual worker", 13);
+  uint64_t async = orbit_start_async("async worker", 12);
   for (int i = 0; i < 10; ++i) orbit_frida_test_outer();
+  orbit_stop(async);
+  orbit_stop(manual);
   return NULL;
 }
 int main(void) {

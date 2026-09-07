@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 libc = "0.2"
+orbit-api = { path = "../orbit-api" }
 orbit-frida-transport = { path = "../orbit-frida-transport" }
 orbit-scope-ring = { path = "../orbit-scope-ring" }
 
