@@ -615,7 +615,30 @@ fn capture_loop(
     // service's own scopes, and every process instrumenting itself. Sampling,
     // unwinding, symbols and hooks all follow a process, so they are skipped.
     let has_target = target_pid > 0;
-    let symbolizer = if has_target { Symbolizer::for_pid(target_pid) } else { Symbolizer::empty() };
+    // Anchor the capture's epoch here, before the synchronous setup below
+    // (building the symbolizer, opening the sampling and scheduler rings,
+    // arming uprobes). That setup is why scheduling can take a moment to
+    // appear after Record; marking the start up front makes each phase show as
+    // a scope on the service's own track, inside the capture, instead of being
+    // dropped for starting "before" it. `now_monotonic_ns` (CLOCK_MONOTONIC)
+    // matches the perf and scope-ring clocks.
+    let capture_start_ns = crate::now_monotonic_ns();
+    service.mark_capture_started(target_pid.max(0) as u32, capture_start_ns);
+    // Manual instrumentation, incl. the service's own: open the service's
+    // segment and set its capturing flag now, before the setup below, so the
+    // setup phases and the whole-capture scope are recorded rather than being
+    // emitted while the segment is still inert. Drained every pass alongside
+    // the perf rings (and other processes' segments, opened lazily).
+    let mut scopes = ScopeSource::new(service.clone());
+    scopes.begin_self_capture();
+    // One scope around the whole capture, left open on purpose: `scopes.finish`
+    // closes it at the stop timestamp, so it spans Record -> Stop and every
+    // per-pass scope nests under it.
+    let _capture = orbit_api::start("capture");
+    let symbolizer = {
+        let _phase = orbit_api::scope("build symbolizer");
+        if has_target { Symbolizer::for_pid(target_pid) } else { Symbolizer::empty() }
+    };
     if symbolizer.module_count() > 0 {
         eprintln!(
             "orbit-service: symbolizing {} modules, {} symbols",
@@ -665,6 +688,7 @@ fn capture_loop(
         opened
     };
     if has_target {
+        let _phase = orbit_api::scope("open sampling rings");
         scan_threads(&mut threads);
     }
     const THREAD_SCAN_EVERY_NS: u64 = 2_000_000_000;
@@ -673,15 +697,18 @@ fn capture_loop(
     if has_target && threads.is_empty() {
         eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
     }
-    let mut unwinder = match (has_target, ProcessUnwinder::for_pid(target_pid)) {
-        (false, _) => None,
-        (true, Ok(unwinder)) => Some(unwinder),
-        (true, Err(error)) => {
-            // Not fatal, and worth saying out loud: without an unwinder there
-            // are no callstacks, but the sample bar below still works.
-            eprintln!("orbit-service: no unwinder for pid {target_pid} ({error}); \
-                       sample ticks only, no callstacks");
-            None
+    let mut unwinder = {
+        let _phase = orbit_api::scope("open unwinder");
+        match (has_target, ProcessUnwinder::for_pid(target_pid)) {
+            (false, _) => None,
+            (true, Ok(unwinder)) => Some(unwinder),
+            (true, Err(error)) => {
+                // Not fatal, and worth saying out loud: without an unwinder
+                // there are no callstacks, but the sample bar below still works.
+                eprintln!("orbit-service: no unwinder for pid {target_pid} ({error}); \
+                           sample ticks only, no callstacks");
+                None
+            }
         }
     };
     eprintln!(
@@ -691,10 +718,13 @@ fn capture_loop(
     );
     let sample_flags = SampleFlags::stack_sample();
     let mut switch_rings = Vec::new();
-    for cpu in 0..crate::num_cpus_hint() as i32 {
-        if let Ok(ring) = orbit_perf_ring::ring::open_context_switch(-1, cpu, 8192) {
-            if ring.enable().is_ok() {
-                switch_rings.push(ring);
+    {
+        let _phase = orbit_api::scope("open scheduler rings");
+        for cpu in 0..crate::num_cpus_hint() as i32 {
+            if let Ok(ring) = orbit_perf_ring::ring::open_context_switch(-1, cpu, 8192) {
+                if ring.enable().is_ok() {
+                    switch_rings.push(ring);
+                }
             }
         }
     }
@@ -708,10 +738,9 @@ fn capture_loop(
     // Which processes get rows. Scheduling is traced machine-wide either way;
     // this decides whose slices are also projected onto a thread bar.
     let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
-    // Manual instrumentation: the target's own scope segment, if it has one.
-    // Opened lazily -- a process may call orbit_init after the capture
-    // starts -- and drained every pass alongside the perf rings.
-    let mut scopes = ScopeSource::new(service.clone());
+    // `scopes` (the manual-instrumentation drain) was created up front so the
+    // service's own setup scopes are recorded; a target's or descendant's
+    // segment is discovered and opened lazily during the loop.
     if show_all_processes {
         eprintln!(
             "orbit-service: every process was requested; rows stay with the target, \
@@ -737,7 +766,9 @@ fn capture_loop(
     for hook in &hooks {
         hook_names.insert(hook.function_id, names.id_for(&hook.name));
     }
-    let mut uprobes = if hooks.is_empty() || !has_target {
+    let mut uprobes = {
+      let _phase = orbit_api::scope("arm uprobes");
+      if hooks.is_empty() || !has_target {
         service.set_instrumentation_status("");
         None
     } else {
@@ -783,21 +814,19 @@ fn capture_loop(
             service.set_instrumentation_status(message);
             Some(session)
         }
+      }
     };
 
     // Real thread states, from the scheduler's tracepoints. When they cannot
     // be opened the projection below still gives every thread a RUNNING bar,
-    // so the timeline degrades rather than emptying.
-    // CLOCK_MONOTONIC, not orbit_live_event::dev::now_ns: that one counts from
-    // its own first call, while perf timestamps are absolute. Seeding initial
-    // states on the wrong epoch would make every one of them look older than
-    // every transition by several decades.
-    let capture_start_ns = crate::now_monotonic_ns();
-    // The real clock, for the viewers' axis and for the server's guard: from
-    // here on nothing that starts before this instant enters the ring.
-    service.mark_capture_started(target_pid as u32, capture_start_ns);
-    let (mut thread_states, tracepoint_report) =
-        ThreadStateTracer::open(crate::num_cpus_hint());
+    // so the timeline degrades rather than emptying. The capture's epoch was
+    // taken and broadcast up front (before the setup above); the initial
+    // states are seeded on that same CLOCK_MONOTONIC instant so they line up
+    // with the perf transitions rather than looking decades older.
+    let (mut thread_states, tracepoint_report) = {
+        let _phase = orbit_api::scope("open thread states");
+        ThreadStateTracer::open(crate::num_cpus_hint())
+    };
     // The service's own pid, so its threads get state bars like anything else.
     let self_pid = std::process::id();
     let mut focus_pids: Vec<u32> = visible.pids();
