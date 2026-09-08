@@ -422,6 +422,11 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
 
 <div class="wrap">
 
+<div class="note warn">
+<p class="tag">Update &middot; 2026-09</p>
+<p>The analytic drop shadow read line by line in sections 6, 8 and 9 was later removed: the padded quad now carries only a 2&nbsp;px anti-aliasing edge, so <code>instance.wgsl</code> no longer holds the <code>rounded_box_shadow_x</code> / <code>erf_approx</code> machinery. The quad-inflation trick and the signed-distance fill are unchanged. Two draw flags have been added since, too &mdash; <code>FLAG_INACTIVE</code> and <code>FLAG_SAME_PID</code>, the thread-focus greys.</p>
+</div>
+
 <section class="part">
 <div class="col">
 <span class="part-num">01 &mdash; THE PROBLEM</span>

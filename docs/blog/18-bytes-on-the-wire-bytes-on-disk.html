@@ -687,7 +687,7 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
 
 <article class="doc">
 
-  <p class="lede">Post 7 chose a fixed 32-byte record for every event and said, honestly, that it was 1.69&times; larger than protobuf. That was the right trade on the capture hot path, where decode CPU is the bottleneck and a local socket is not. It stopped being the whole story the day the viewer moved onto the network and a 100-second capture of a 32-core machine saved as a 127&nbsp;MB file. This post is the measured answer to both, and the reasoning is short enough to write down in full.</p>
+  <p class="lede">Post 11 chose a fixed 32-byte record for every event and said, honestly, that it was 1.69&times; larger than protobuf. That was the right trade on the capture hot path, where decode CPU is the bottleneck and a local socket is not. It stopped being the whole story the day the viewer moved onto the network and a 100-second capture of a 32-core machine saved as a 127&nbsp;MB file. This post is the measured answer to both, and the reasoning is short enough to write down in full.</p>
 
   <h2 id="record">What is in a 32-byte record</h2>
 
@@ -759,7 +759,7 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
 
   <h2 id="one-idea">One idea, three places</h2>
 
-  <p>Every number in this post comes from the same observation about the data: a capture is a long run of nearly-identical records whose only fast-changing field is a timestamp that moves by a few thousand at a time. The wire sends the delta and a table index. The file stores the delta and a dictionary. A generic compressor, ssh or deflate, gets most of the way by pattern-matching but pays an order of magnitude in CPU for not knowing what it is looking at, and on a local link the right amount of compression is none. The fixed record from post 7 is still what the ring holds and what the capture path writes, because there the cost that matters is the decode, and a memcpy is still the fastest decoder there is.</p>
+  <p>Every number in this post comes from the same observation about the data: a capture is a long run of nearly-identical records whose only fast-changing field is a timestamp that moves by a few thousand at a time. The wire sends the delta and a table index. The file stores the delta and a dictionary. A generic compressor, ssh or deflate, gets most of the way by pattern-matching but pays an order of magnitude in CPU for not knowing what it is looking at, and on a local link the right amount of compression is none. The fixed record from post 11 is still what the ring holds and what the capture path writes, because there the cost that matters is the decode, and a memcpy is still the fastest decoder there is.</p>
 
   <h2 id="left">What is left</h2>
 
