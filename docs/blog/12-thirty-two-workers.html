@@ -673,6 +673,10 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
     <h1>Thirty-Two Workers</h1>
     <p class="dek">The WASM viewer spawns one web worker per hardware thread — thirty-two on the development machine. That number was never chosen; it was inherited from <code>navigator.hardwareConcurrency</code>. Here is the case for turning it down, and the case against.</p>
     <p class="byline">A default, examined</p>
+    <div class="note warn">
+      <p class="note-label">Update &middot; 2026-09</p>
+      <p>Since this was written the cap is <strong>16</strong>, not 8: <code>Math.min(hardwareConcurrency, 16)</code> in the viewer's <code>index.html</code> and <code>app.js</code>, so a big box gets real parallelism &mdash; a 72-core machine has 72 scheduler lanes to walk &mdash; while <code>?threads=N</code> still overrides. The reasoning below argues for 8; the code chose headroom.</p>
+    </div>
 
     <div class="stats">
       <div class="stat"><b>32</b><span>Workers spawned</span></div>

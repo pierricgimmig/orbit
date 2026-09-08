@@ -673,6 +673,10 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
     <h1>A Ring Per Core</h1>
     <p class="dek">Manual instrumentation has to cost almost nothing or people turn it off. Here is the write path, measured honestly at sixteen nanoseconds a scope, the two places the obvious design is unsound, what rseq is and what it would actually be worth, and the bug that only appeared when someone asked the right question.</p>
     <p class="byline">Design notes, with the corrections left in</p>
+    <div class="note warn">
+      <p class="note-label">Update &middot; 2026-09</p>
+      <p>This per-core design was later replaced. Rings now follow the <em>thread</em>, not the core &mdash; chosen by a hash of the thread id (<code>ring_for_thread</code>), which is what makes the producer portable off Linux &mdash; and there is no k-way merge: the drain reads each ring in claim order (<code>merge.rs</code>: &ldquo;There is no merge, and that is the point.&rdquo;). A record is 56 bytes with the name written inline and interned on the consumer, not 32 with a producer-side id, and the default is 16 rings (128 is the cap). The reasoning here still holds; the mechanism moved on.</p>
+    </div>
 
     <div class="stats">
       <div class="stat"><b>15.9 ns</b><span>Per scope</span></div>

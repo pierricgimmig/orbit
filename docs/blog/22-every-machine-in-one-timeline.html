@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>Every Machine in One Timeline — Orbit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+<style>
+.diagram { overflow-x:auto; padding:16px 8px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+.diagram svg { display:block; width:100%; min-width:700px; height:auto; }
+.diagram rect { fill:var(--ground); stroke:var(--line); stroke-width:1.5; }
+.diagram rect.accent { fill:var(--accent-wash); stroke:var(--accent); }
+.diagram rect.soft { fill:var(--surface-2); stroke:var(--line-strong); }
+.diagram rect.warn { fill:var(--warn-wash); stroke:var(--warn); }
+.diagram rect.bar { fill:var(--accent); stroke:none; }
+.diagram rect.bar.dim { fill:var(--line-strong); }
+.diagram circle.ok { fill:var(--good); stroke:none; }
+.diagram circle.wait { fill:var(--warn); stroke:none; }
+.diagram text { fill:var(--ink); font:16px Roboto,sans-serif; text-anchor:middle; }
+.diagram text.small { font-size:13px; fill:var(--ink-soft); }
+.diagram text.label { font-size:12px; letter-spacing:1px; fill:var(--muted); }
+.diagram text.mono { font-family:'Roboto Mono',monospace; font-size:14px; }
+.diagram text.left { text-anchor:start; }
+.diagram text.right { text-anchor:end; }
+.diagram path.arrow { fill:none; stroke:var(--accent); stroke-width:2; marker-end:url(#arrowhead); }
+.diagram path.arrow.both { marker-start:url(#arrowhead); }
+.diagram path.line { fill:none; stroke:var(--line-strong); stroke-width:2; }
+.diagram path.dash { fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:5 5; }
+.toc p { margin-bottom:0; } .doc table { font-size:15px; }
+.plan-phase { border-left:3px solid var(--accent); padding-left:1rem; margin:1.6rem 0; }
+.plan-phase h3 { margin-top:0; }
+.plan-phase p.accept { font-size:.95rem; color:var(--ink-soft); }
+.plan-phase p.accept b { color:var(--ink); }
+.callout { background:var(--accent-wash); border:1px solid var(--accent); border-radius:10px; padding:1rem 1.25rem; font-size:.98rem; }
+.callout.hold { background:var(--hold-wash); border-color:var(--hold); }
+.decisions li { margin-bottom:.75rem; }
+kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); border:1px solid var(--line-strong); border-radius:5px; padding:.05em .4em; }
+@media(max-width:900px) {
+  .doc { grid-template-columns:[full-start] 1.25rem [wide-start text-start] minmax(0,1fr) [text-end wide-end] 1.25rem [full-end]; }
+  .wide { max-width:100%; margin-left:0; margin-right:0; }
+}
+@media(max-width:760px) {
+  .diagram::after { content:"Scroll horizontally to see the full diagram →"; display:block; padding-top:12px; color:var(--muted); font-size:12px; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs><marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs></svg>
+<header class="masthead"><div class="masthead-inner">
+<p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 22 &middot; A plan, not a result</p>
+<h1>Every Machine in One Timeline</h1>
+<p class="dek">Orbit already lets any number of browsers watch one service. This is the plan for the other direction: one viewer watching any number of machines, reached over the network, over SSH with nothing pre-installed, or by the remote dialing in. Most of the design is plumbing. One part of it, putting two hosts' clocks on the same axis, is a real problem, and the plan says what precision it will and will not promise.</p>
+<p class="byline">Status: proposal for review. Nothing here is implemented. The numbers in the clock section are expectations to be replaced by measurements in phase 0; every other figure is read from the tree at <a href="https://github.com/pierricgimmig/orbit/tree/54816e58b">54816e58b</a>. Owner's request: <code>docs/TODO.md</code>, the aggregation item.</p>
+</div></header>
+
+<article class="doc">
+<p class="lede">The request in the TODO reads: <em>aggregate many machines' services to a single viewer, with precise clock synchronization, and an easy way to launch a service against the main viewer or connect to a remote one from the viewer itself.</em> Before designing anything I went looking for what the Rust port already has, because the rail draws machine trees today and it would be easy to assume the model underneath is real. It is not. This post is what exists, what the design should be, what each phase delivers and how each is tested, and the five decisions I need from you before I start.</p>
+
+<nav class="toc" aria-label="In this post"><b>The plan</b><p><a href="#today">What exists</a> &middot; <a href="#hub">The hub</a> &middot; <a href="#reach">Reaching a machine</a> &middot; <a href="#identity">Identity</a> &middot; <a href="#clocks">Clocks</a> &middot; <a href="#ux">The UX</a> &middot; <a href="#security">Security</a> &middot; <a href="#unchanged">What does not change</a> &middot; <a href="#phases">Phases</a> &middot; <a href="#decisions">Decisions</a></p></nav>
+
+<h2 id="today">What exists, and what only looks like it exists</h2>
+
+<p>Three facts set the shape of the design.</p>
+
+<p><strong>One service, many viewers, already.</strong> <code>orbit-service</code> serves the wasm viewer and a <code>/ws</code> stream from the same port (44766 by default, bound to every interface). The stream is a <code>tokio::sync::broadcast</code> channel; each browser that connects gets <code>hello_and_snapshot_frames()</code>, a catch-up of names and interned strings, then the live batches. The viewer is same-origin: it talks to whatever <code>window.location.host</code> served it. So "connect a viewer to machine X" is already a solved problem, spelled <em>open X's URL</em>. What is missing is the converse.</p>
+
+<p><strong>Every timestamp is one host's <code>CLOCK_MONOTONIC</code>.</strong> Perf events (the perf attr sets <code>clockid</code>), manual scopes, the GPU helper, the collector, the API: all the same clock, deliberately, so a scope written by the target lines up with a kernel record without conversion. That is the right choice for one host and it is exactly why two hosts cannot be overlaid: monotonic is nanoseconds since <em>that</em> boot. The only bridge in the data is the <code>SystemInfo</code> record at the head of every capture, which samples <code>CLOCK_REALTIME</code> and <code>CLOCK_MONOTONIC</code> at the same instant. One pair, once, at capture start; nothing reads it for alignment. It says where the capture began on the wall clock to NTP precision. It says nothing about rate.</p>
+
+<p><strong>The machine tree is a demo fiction.</strong> <code>MachineId</code> lives in <code>orbit-live-event/src/dev.rs</code>, the viewer's self-profile and demo module. It is a two-valued enum, <code>Local</code> and <code>Remote</code>, and <code>from_pid()</code> assigns it by matching two constants, pids 20 and 21, that only the demo generator emits. The comment above them: <em>"Spoofed remote-demo pids. LiveEvent has no machine field, the rail maps pid ranges."</em> The reordering, collapsing and per-machine Scheduler nesting in <code>tracks.rs</code> are real and will carry over. The identity under them will not.</p>
+
+<h2 id="hub">A service that is also a client</h2>
+
+<p>There are two places aggregation could happen. The browser could open one WebSocket per machine and merge in wasm. Or one <code>orbit-service</code>, the one whose URL you opened, could connect to the others as if it were a browser, stamp what arrives with a machine id, and push it into its own ring. I am proposing the second, and calling that service the <strong>hub</strong>. Any service can be a hub; nothing is configured in advance. The hub is whichever one you asked to add a machine.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 340" role="img" aria-labelledby="hub-title"><title id="hub-title">Browsers talk only to the hub; the hub reaches remotes three ways and re-broadcasts one merged stream</title>
+<text x="110" y="28" class="label">BROWSERS</text><text x="450" y="28" class="label">HUB · orbit-service</text><text x="790" y="28" class="label">REMOTE SERVICES</text>
+<rect x="20" y="60" width="180" height="50" rx="8"/><text x="110" y="90">your laptop's tab</text>
+<rect x="20" y="130" width="180" height="50" rx="8"/><text x="110" y="160">a colleague's tab</text>
+<path d="M200 85 H290" class="arrow both"/><path d="M200 155 H290" class="arrow both"/>
+<rect x="295" y="50" width="310" height="240" rx="10" class="accent"/>
+<text x="450" y="80">the service you opened</text>
+<rect x="315" y="98" width="270" height="34" rx="6"/><text x="450" y="120" class="small">machine table · 0 = itself</text>
+<rect x="315" y="140" width="270" height="34" rx="6"/><text x="450" y="162" class="small">one ring, one time axis, one viewer</text>
+<rect x="315" y="182" width="270" height="34" rx="6"/><text x="450" y="204" class="small">a clock fit per remote, applied at ingest</text>
+<rect x="315" y="224" width="270" height="34" rx="6"/><text x="450" y="246" class="small">reports proxied to the owning machine</text>
+<path d="M605 110 H690" class="arrow both"/><rect x="695" y="85" width="190" height="50" rx="8"/><text x="790" y="106">render-01</text><text x="790" y="126" class="small">direct · orbit://host:44766</text>
+<path d="M605 180 H690" class="arrow both"/><rect x="695" y="155" width="190" height="50" rx="8"/><text x="790" y="176">build-mac</text><text x="790" y="196" class="small">ssh user@host · stdio</text>
+<path d="M690 250 H610" class="arrow"/><rect x="695" y="225" width="190" height="50" rx="8"/><text x="790" y="246">ci-runner</text><text x="790" y="266" class="small">--join hub:44766 · dials in</text>
+<text x="450" y="322" class="small">Every link speaks the frames /ws already speaks. The hub is one more subscriber, whichever side opened the socket.</text>
+</svg></div><figcaption>The hub is an ordinary service that happens to also be a client of other ordinary services. Remotes need no new mode to be aggregated: they serve the hub exactly what they serve a browser.</figcaption></figure>
+
+<p>Why not the browser? Four reasons, one of which is decisive on its own.</p>
+
+<ul>
+<li><strong>Reports.</strong> <code>/api/sampling/report</code>, the trees, function search, disassembly and source all run on the service that owns the process. A browser merging N machines would reimplement the report aggregator client-side or call N services and merge JSON. The hub just forwards the call to the machine the pid belongs to.</li>
+<li><strong>Connections.</strong> With N machines and M open tabs the browser design makes N&times;M links, each re-doing the catch-up snapshot. The hub makes N, once.</li>
+<li><strong>Reach.</strong> A browser cannot run <code>ssh</code>, cannot accept an inbound connection from a remote behind NAT, and cannot install anything. A service can do all three.</li>
+<li><strong>Clocks.</strong> The decisive one. Aligning two hosts needs round-trip timing at microsecond resolution. Browsers deliberately coarsen <code>performance.now()</code> to 100&nbsp;&micro;s (5&nbsp;&micro;s when cross-origin isolated) as a Spectre mitigation. A probe from wasm would be an order of magnitude worse than the offset it is trying to measure. Server-to-server, with <code>clock_gettime</code> on both ends and <code>TCP_NODELAY</code>, there is no such floor.</li>
+</ul>
+
+<p>The cost is that a remote's events cross one more hop before a browser sees them. The hub does no decoding on the hot path: it takes a remote's event batch, rewrites the pid word (next section) and the timestamps (the section after), and re-broadcasts. That is an in-place pass over 32-byte records.</p>
+
+<h2 id="reach">Three ways to reach a machine</h2>
+
+<p>You asked whether users would have to SSH-tunnel. They can, and that works with no code at all today (<code>ssh -L 44766:localhost:44766 host</code>, open <code>localhost:44766</code>). But the tunnel is the wrong unit. It gives you the remote's viewer, not the remote <em>in</em> your viewer, and it leaves the user managing a port per machine. The link kinds below all produce the same thing on the hub, a <code>PeerLink</code> carrying the existing frames, and differ only in who opens the socket and what carries it.</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>Link</th><th>How you say it</th><th>Who dials</th><th>Needs on the remote</th><th>When it is the right one</th></tr></thead><tbody>
+<tr><td><strong>Direct</strong></td><td><code>render-01</code> or <code>render-01:44766</code></td><td>hub &rarr; remote, WebSocket to <code>/ws</code> + the HTTP API</td><td>a running <code>orbit-service</code>, port reachable, the hub holds its token</td><td>LAN, dev boxes, anything already serving its own viewer</td></tr>
+<tr><td><strong>SSH</strong></td><td><code>user@render-01</code></td><td>hub spawns <code>ssh user@render-01 orbit-service --stdio</code></td><td>sshd. If <code>orbit-service</code> is missing, the hub offers to install it over the same connection</td><td>anything you can ssh to; the default for a machine you have never profiled before</td></tr>
+<tr><td><strong>Reverse join</strong></td><td>on the remote: <code>orbit-service --join hub:44766 --code 7Q4K</code></td><td>remote &rarr; hub, then the hub speaks the client protocol back over that socket</td><td>outbound TCP to the hub and the join code from the hub's banner</td><td>containers, CI runners, cloud instances, anything behind NAT or a firewall that allows nothing inbound</td></tr>
+</tbody></table></div>
+
+<h3>SSH as a transport, the way git and rsync use it</h3>
+
+<p>The cleaner solution than a tunnel is to not have a port at all. <code>ssh host command</code> gives you an authenticated, encrypted byte pipe to a process on the remote. git, rsync, borg and VS Code Remote all work this way: the client runs the server as a subprocess over ssh and speaks its protocol on stdin/stdout. <code>orbit-service --stdio</code> is that mode: the same length-prefixed frames the WebSocket carries, on file descriptors 0 and 1, with the HTTP API multiplexed as request frames on the same pipe. Auth is ssh's. Nothing listens. The user types the same thing they would type to log in.</p>
+
+<p>It also answers the deployment question almost for free. If <code>ssh host orbit-service --stdio</code> fails with "command not found", the hub knows the remote's OS and architecture from <code>ssh host uname -sm</code>, and it knows its own. When they match, the hub streams <em>its own executable</em>, <code>std::env::current_exe()</code>, the 12&nbsp;MB static musl binary that has no runtime dependencies by construction, to <code>~/.orbit/bin/orbit-service</code> on the remote, verifies the SHA-256 over the same connection, and retries. When they do not match (a Linux hub adding a Mac), it fetches the right artifact from the install base <code>site/install.sh</code> already defines, or, until that site exists, prints the one-line install and stops. Version skew is handled the same way: a remote whose <code>Hello</code> reports a different protocol version is offered the hub's binary. No package manager, no infra the project does not already have, and the install is exactly as trustworthy as the ssh session it rode in on.</p>
+
+<div class="callout hold"><p style="margin:0"><strong>This installs software on another machine, so it asks first,</strong> every time, per host, with the exact path and size, and it never elevates. Uprobes need <code>CAP_SYS_ADMIN</code> on the remote just as they do locally; the dialog says so when the hook engine is uprobes, and <code>--sudo</code> is passed through to the remote's <code>tools/sudo</code> only if that wrapper exists there and the user ticked the box. Frida-engine hooks and sampling of the user's own processes need nothing.</p></div>
+
+<h3>Reverse join</h3>
+
+<p>Some machines cannot be dialed. For those, the remote dials the hub: <code>orbit-service --join hub:44766 --code 7Q4K</code> opens a WebSocket to the hub's <code>/api/peer/join</code>, and once the code checks out the roles flip, the hub becomes the client over that socket, and from there on the link is indistinguishable from a direct one. The hub's startup banner, the one <code>lan.rs</code> already prints with the LAN URLs, gains one line: <em>"Other machines can join with: orbit-service --join 192.168.1.10:44766 --code 7Q4K"</em>. Copy, paste, done. A remote that joins without a code shows up in the hub's Machines panel as <em>waiting</em> with an Accept button, so a colleague can join your session by asking.</p>
+
+<h2 id="identity">Identity: a machine is a byte, a process is a word</h2>
+
+<p>The hub keeps a machine table: index 0 is itself, each link gets the next free index, and an entry records the hostname from <code>SystemInfo</code>, a <code>service_id</code> (a random 128-bit id the service generates once and persists in <code>~/.orbit/service-id</code>, so two boxes both called <code>build-01</code> stay distinct and a reconnect after a dropped link lands in the same row), the OS and architecture, and the remote's <code>boot_id</code>, which is what says whether a reconnected machine's monotonic clock is still the same clock.</p>
+
+<p>The invasive question is pids. The viewer keys everything on a <code>u32</code> pid: <code>RowId::Process(u32)</code>, <code>ThreadId { pid, tid }</code>, <code>machine_sort</code>, the report queries, the settings window's process picker. Two machines will have a pid 1234 each. There are two ways to fix that and I want to recommend one.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 200" role="img" aria-labelledby="pid-title"><title id="pid-title">A 32-bit pid word split into an 8-bit machine index and a 24-bit host pid</title>
+<text x="450" y="28" class="label">LiveEvent.pid · 32 BITS · UNCHANGED SIZE</text>
+<rect x="60" y="55" width="200" height="60" rx="8" class="accent"/><text x="160" y="82">machine</text><text x="160" y="104" class="small">8 bits · 0 = the hub itself</text>
+<rect x="260" y="55" width="580" height="60" rx="8"/><text x="550" y="82">pid on that machine</text><text x="550" y="104" class="small">24 bits · Linux pid_max ceiling is 4,194,304 = 2²² · macOS 99,998 · Windows fits</text>
+<text x="160" y="140" class="mono">31 … 24</text><text x="550" y="140" class="mono">23 … 0</text>
+<text x="450" y="178" class="small">The demo's "spoofed remote pids" convention, made real: MachineId::from_pid(pid) becomes pid &gt;&gt; 24.</text>
+</svg></div><figcaption>Recommended: pack the machine into the top byte of the pid at hub ingest. The 32-byte <code>LiveEvent</code> keeps its layout and its spare <code>_pad</code> byte; single-machine captures are machine 0 and read exactly as before.</figcaption></figure>
+
+<p><strong>Pack (recommended).</strong> At ingest the hub rewrites <code>pid</code> to <code>machine &lt;&lt; 24 | pid</code>. Every place the viewer already asks <code>MachineId::from_pid</code> keeps working with a one-line body. Reports and code endpoints decode the machine from the pid the viewer sends, forward the low 24 bits to the owning remote, and stream the answer back. Display strips the top byte. Threads need nothing: a tid is only ever looked up with its pid. Saved bundles need nothing in the tables, only a <code>machines</code> entry in the manifest. The whole viewer change is the enum and the formatter.</p>
+
+<p><strong>Widen (alternative).</strong> Put the machine in <code>_pad</code> and make <code>RowId::Process</code>, <code>ThreadId</code>, the sort maps, the report query strings and the bundle schema carry it. Cleaner in principle, and it caps nothing at 255. But it touches every pid-keyed structure in the viewer and the Parquet schema, for a limit (255 machines in one live session) that is above anything the ring could ingest anyway. If a fleet mode ever wants thousands of hosts, it will want aggregate lanes rather than a tree per host, and that is a different viewer.</p>
+
+<p>The Scheduler track is per machine: it is already emitted inside the machine loop in <code>tracks.rs</code>, and a remote's core ids stay its own. Interned string ids collide too, and are remapped at ingest through a per-link table, the same way names are already re-announced to late subscribers.</p>
+
+<h2 id="clocks">Clocks: what can be promised</h2>
+
+<p>This is the section to read critically. Everything above is plumbing; this is the part that decides whether a cross-machine timeline means anything.</p>
+
+<h3>Why the existing anchor is not enough</h3>
+
+<p>The <code>SystemInfo</code> pair says how the remote's monotonic clock related to its wall clock at one instant. With a second host's pair you can subtract and get an offset, to the precision of each host's NTP, typically a millisecond or more on a LAN, worse on a laptop. Orbit resolves scopes in microseconds; a millisecond of alignment error is three orders of magnitude too coarse to say which of two events across machines came first. And it is one point. Two crystals disagree by parts per million; even after NTP slews them, tens of ppm between a pair is ordinary. Ten ppm is 10&nbsp;&micro;s of drift per second, 600&nbsp;&micro;s per minute. Any capture longer than a few seconds needs a rate, not just an offset.</p>
+
+<h3>The exchange</h3>
+
+<p>The hub sends a small <code>ClockPing</code> frame on each link at intervals (fast at first, then every few hundred milliseconds), and the remote answers with a <code>ClockPong</code>. Four timestamps, two per side, all <code>clock_gettime(CLOCK_MONOTONIC)</code> taken as close to the socket as the code can get.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 300" role="img" aria-labelledby="ntp-title"><title id="ntp-title">Four timestamps: t1 sent by the hub, t2 received and t3 sent by the remote, t4 received by the hub</title>
+<text x="130" y="70" class="right">hub clock</text><path d="M145 65 H860" class="line"/>
+<text x="130" y="220" class="right">remote clock</text><path d="M145 215 H860" class="line"/>
+<path d="M260 65 L440 215" class="arrow"/><path d="M520 215 L700 65" class="arrow"/>
+<circle cx="260" cy="65" r="5" class="ok"/><text x="260" y="48" class="mono">t1</text>
+<circle cx="440" cy="215" r="5" class="ok"/><text x="440" y="248" class="mono">t2</text>
+<circle cx="520" cy="215" r="5" class="ok"/><text x="520" y="248" class="mono">t3</text>
+<circle cx="700" cy="65" r="5" class="ok"/><text x="700" y="48" class="mono">t4</text>
+<text x="330" y="150" class="small">ping</text><text x="712" y="150" class="small left">pong (carries t2, t3)</text>
+<text x="450" y="285" class="mono">offset θ = ((t2 − t1) + (t3 − t4)) / 2      round trip δ = (t4 − t1) − (t3 − t2)      |error| ≤ δ / 2</text>
+</svg></div><figcaption>The NTP exchange. The bound is exact under one assumption, that the two legs took equal time. The whole method is about making that assumption as true as possible.</figcaption></figure>
+
+<p>One sample's error is bounded by half its round trip and is dominated by whichever leg was queued behind something. So the hub keeps a window of samples and does what NTP, PTP and Perfetto's clock snapshots all do: <strong>trust the fast ones</strong>. Samples within a small margin of the window's minimum round trip are the ones that met no queue on either leg; those are fed to a least-squares line, <code>θ(t) = a + b·t</code>, offset and rate against the hub's clock. Each remote event is then shifted at ingest, <code>start_ns += θ(start_ns)</code>, and the ring holds one time axis. The renderer, the reports and the bundle writer never learn that anything happened. Because the fit can move slightly as samples arrive, events already broadcast are not retroactively moved during a live session; the fit at the time of ingest is what a live viewer sees, and the raw timestamps plus every sample are kept so a saved bundle can be re-fitted from the complete record.</p>
+
+<p>Two details matter more than they look. Pings go on the link as their own tiny frames, never appended to an event batch, because a ping queued behind a 64&nbsp;KB batch measures the batch. And the fit must survive a dropped link: on reconnect the hub compares <code>boot_id</code>; same boot, same clock, the window continues; new boot, new clock, the fit restarts and the machine's earlier events keep the old fit.</p>
+
+<h3>The precision I expect, to be measured</h3>
+
+<div class="table-wrap wide"><table><thead><tr><th>Path</th><th>Expected round trip</th><th>Expected alignment after the minimum filter</th><th>Good enough for</th></tr></thead><tbody>
+<tr><td>Two services on one box (the e2e case)</td><td>20–60&nbsp;&micro;s</td><td>a few &micro;s; the true offset is exactly 0, so this is the calibration</td><td>proving the estimator</td></tr>
+<tr><td>Direct TCP on a wired LAN</td><td>100–300&nbsp;&micro;s</td><td>&plusmn;20–50&nbsp;&micro;s</td><td>ordering RPCs between services, matching a frame's send to its receive</td></tr>
+<tr><td>Over ssh on the same LAN</td><td>+50–150&nbsp;&micro;s of channel latency</td><td>&plusmn;50–100&nbsp;&micro;s</td><td>the same, with a wider band drawn</td></tr>
+<tr><td>Across a WAN or VPN</td><td>milliseconds, asymmetric</td><td>&plusmn;0.5–2&nbsp;ms and honest about it</td><td>seeing two machines' load side by side; not causality</td></tr>
+<tr><td>Both hosts with a PTP-disciplined NIC (later)</td><td>—</td><td>sub-&micro;s, from <code>CLOCK_TAI</code>/<code>/dev/ptp0</code> pairs sampled locally</td><td>a shared clock in the true sense</td></tr>
+</tbody></table></div>
+
+<p>These are expectations from how the mechanism behaves elsewhere, not Orbit measurements. Phase 0 exists to replace them, and the blog rule applies: no number in the follow-up post without a committed script. What I will not promise is the thing the phrase "precise clock synchronization" might be read to mean: that two hosts' scopes can be overlaid as if a single clock had stamped them. Over an ordinary network the floor is tens of microseconds, and the viewer should say so rather than hide it.</p>
+
+<h3>Uncertainty is part of the data</h3>
+
+<p>Each remote's machine header shows its current alignment band, <em>&plusmn;37&nbsp;&micro;s</em>, in the same place the thread rail shows a hooked count, amber if the last minute's fit is worse than a millisecond or the link has gone quiet. When a selection spans two machines, the readout states the band next to the delta. And the saved bundle gets a <code>clocks</code> table, one row per accepted sample (machine, t1, t2, t3, t4), plus the fit the hub used, in the manifest's new <code>machines</code> entry. A capture can be re-fitted offline with a better estimator than the one that recorded it, which is the same principle as keeping raw samples rather than a report.</p>
+
+<h2 id="ux">The UX</h2>
+
+<p>The design goal is that the first machine costs one text field and the fifth costs the same. No configuration files, no mode switch, no separate "distributed" build.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 420" role="img" aria-labelledby="ux-title"><title id="ux-title">The Machines panel: this machine, two connected remotes with sync bands, one waiting to join, and the add field</title>
+<rect x="30" y="20" width="840" height="46" rx="8" class="soft"/>
+<rect x="44" y="30" width="26" height="26" rx="13" class="bar" style="fill:var(--hold)"/><text x="57" y="49" class="small" style="fill:#fff">●</text>
+<text x="100" y="49" class="left">Record</text><text x="190" y="49" class="left small">workstation · 3 machines ▾</text>
+<text x="820" y="49" class="right small">⚙ orbit-test-rust · Self</text>
+<rect x="150" y="80" width="560" height="322" rx="10"/>
+<text x="175" y="110" class="left label">MACHINES</text>
+<circle cx="180" cy="142" r="5" class="ok"/><text x="198" y="147" class="left">workstation</text><text x="360" y="147" class="left small">this service · linux/x86_64</text><text x="685" y="147" class="right mono">0 µs</text>
+<circle cx="180" cy="180" r="5" class="ok"/><text x="198" y="185" class="left">render-01</text><text x="360" y="185" class="left small">direct · 41 k ev/s</text><text x="685" y="185" class="right mono">±37 µs</text>
+<circle cx="180" cy="218" r="5" class="ok"/><text x="198" y="223" class="left">build-mac</text><text x="360" y="223" class="left small">ssh pierric@build-mac · macos/aarch64</text><text x="685" y="223" class="right mono">±88 µs</text>
+<circle cx="180" cy="256" r="5" class="wait"/><text x="198" y="261" class="left">ci-runner-7</text><text x="360" y="261" class="left small">wants to join</text>
+<rect x="590" y="242" width="95" height="28" rx="6" class="accent"/><text x="637" y="261" class="small">Accept</text>
+<path d="M175 288 H685" class="dash"/>
+<rect x="175" y="304" width="410" height="36" rx="6" class="soft"/><text x="190" y="327" class="left small" style="fill:var(--muted)">host, host:port, or user@host</text>
+<rect x="595" y="304" width="90" height="36" rx="6" class="accent"/><text x="640" y="327" class="small">Add</text>
+<text x="175" y="372" class="left small">Others can join this session:  orbit-service --join 192.168.1.10:44766 --code 7Q4K</text>
+<text x="175" y="392" class="left small" style="fill:var(--muted)">Record starts a capture on every armed machine at once. Right-click a row to arm, disarm, open its own viewer, or forget it.</text>
+</svg></div><figcaption>The Machines control replaces the fixed hostname readout in the top strip. One field accepts anything you would type into <code>ssh</code> or a browser, and the panel decides which transport it means.</figcaption></figure>
+
+<p><strong>Adding a machine.</strong> The field takes <code>render-01</code>, <code>render-01:44766</code>, <code>pierric@render-01</code> or a pasted <code>http://…</code>. A bare host is probed directly first (200&nbsp;ms budget), then over ssh; <code>user@</code> goes straight to ssh. Progress reads in the row as it happens: <em>connecting · found orbit-service 0.9.2 · syncing clocks · 41 k ev/s</em>. If the remote has no service, the row turns into the install offer with the path, the size and one button. Nothing else in the UI is blocked while it happens.</p>
+
+<p><strong>The rail.</strong> Machines are what they already are on screen, a header row per host with its processes and threads under it and its own Scheduler track, draggable as a block. The hub is always first. The header carries the hostname, the alignment band, and a small link glyph that turns amber when the remote falls more than a second behind the hub's live edge, which is the honest way to show that a remote's most recent events are still in flight rather than draw a gap.</p>
+
+<p><strong>Recording.</strong> One Record button, one capture, N machines. Pressing it starts a capture on every armed machine; Stop stops them all; Save writes one bundle. The settings window behind the gear gains a machine strip across the top, so each machine has its own target process, hook list and sampling knobs, with the hub's settings as the defaults for a newly added machine. A machine can be disarmed to stay visible but not captured, which is how you keep a build box in view without profiling it.</p>
+
+<p><strong>Reports.</strong> Nothing changes on the surface. Select samples on a remote's thread and the flat, top-down and bottom-up reports come back; the hub forwarded the query to the machine that owns those samples and is streaming the answer. A selection that spans machines produces one report per machine, tabbed, because a merged callstack tree across two different binaries on two different hosts would be a lie in a table.</p>
+
+<p><strong>From the command line.</strong> Everything the panel does has a flag, so a saved shell line reproduces a setup: <code>orbit-service --connect render-01,pierric@build-mac</code> brings the hub up already linked; <code>orbit-service --join hub:44766 --code 7Q4K</code> on a remote; <code>orbit-service --stdio</code> is what ssh runs and is not meant to be typed. A URL with <code>?connect=pierric@build-mac</code> lets a link in a chat message add the machine when opened, after the same confirmation.</p>
+
+<p><strong>Any viewer, any machine.</strong> Because a remote is an ordinary service, it still serves its own viewer, and its row's menu has <em>open its own viewer</em> for when you want the single-machine view. And because a hub is an ordinary service, a second person's hub can add the same remote; the remote streams to both, and if the first hub is mid-capture the second sees the machine as <em>capturing for workstation</em>, can watch, and cannot press Record on it until that capture stops. One capture owner per machine, many watchers.</p>
+
+<h2 id="security">Security, in one paragraph</h2>
+
+<p>Today the service binds <code>0.0.0.0</code> with no authentication; the comment in <code>main.rs</code> says so plainly. It has been acceptable because the exposure was one dev box on a trusted LAN. Peering makes the control plane worth thinking about, because a hub that can start captures and read disassembly on N machines is N times the target. The plan: every service generates a token beside its <code>service-id</code>, prints it in the banner, and requires it on <code>/api/*</code> and <code>/ws</code> from anything that is not loopback. The viewer it served gets the token in the page; a hub adding a direct link asks for it once and stores it; ssh links need none because ssh already authenticated; reverse join uses the hub's code. It is not a substitute for a network you trust, and the docs will say that, but it turns "anyone on the LAN can start a capture" into "anyone with the token can", which is the least a profiler that reaches across machines should do. This lands in phase 1, before any hub connects to anything.</p>
+
+<h2 id="unchanged">What does not change</h2>
+
+<ul>
+<li>The ring, the renderer, the track index, the 32-byte <code>LiveEvent</code> and its spare byte, the WebSocket frame format and its version.</li>
+<li>The single-machine path. A service with no links is machine 0 and behaves byte for byte as it does today; the e2e suite's 36 scenarios are the regression test for that.</li>
+<li>The bundle's three Parquet tables. The manifest gains <code>machines</code>; a <code>clocks</code> table is added only when there is more than one machine. Old bundles load as machine 0.</li>
+<li>Any remote's code path. A remote is a stock <code>orbit-service</code>; aggregation is something done <em>to</em> it by a client, and it cannot tell a hub from a browser except by the token it presented.</li>
+</ul>
+
+<h2 id="phases">Phases, each with its test</h2>
+
+<div class="plan-phase"><h3>Phase 0 · Measure before designing the estimator</h3>
+<p>A throwaway <code>ClockPing</code>/<code>ClockPong</code> on the existing WebSocket and a script that logs ten thousand round trips between the workstation and the Mac, direct and over ssh, and between two services on one box. Histograms of round trip, and the offset recovered on the one-box case where the truth is zero.</p>
+<p class="accept"><b>Done when:</b> <code>docs/blog/metrics/phase-17-clock-rtt.txt</code> exists and the precision table above has real numbers in it, whatever they turn out to be.</p></div>
+
+<div class="plan-phase"><h3>Phase 1 · Token, peer link, identity</h3>
+<p>The token on the API. <code>PeerLink</code> in <code>orbit-service</code>: a WebSocket client to a remote's <code>/ws</code> (axum's WebSocket support already brings <code>tokio-tungstenite</code> into the tree; the client side is the same crate) plus HTTP forwarding for the API. The machine table, pid packing at ingest, string-id remapping, the <code>MachineId</code> rewrite, the Machines panel with the direct transport, <code>--connect</code>, capture fan-out, per-machine report forwarding, bundle manifest.</p>
+<p class="accept"><b>Done when:</b> a new e2e scenario starts two services on one box, links the second from the first, captures <code>orbit-test-rust</code> on both from one Record, and checks by label through <code>window.__orbit_ui</code> that both machine trees are present, that a report on the remote's thread returns the remote's functions, and that Save then Open round-trips both machines. No timestamps are adjusted yet; on one box they do not need to be.</p></div>
+
+<div class="plan-phase"><h3>Phase 2 · Clock alignment</h3>
+<p>The ping frames, the minimum-filtered window, the offset-and-rate fit, application at ingest, the band in the header and the selection readout, the <code>clocks</code> table, <code>boot_id</code> handling on reconnect. Two debug knobs on the service, <code>--debug-clock-offset-ns</code> and <code>--debug-clock-rate-ppm</code>, that shift its reported timestamps <em>and</em> its pong stamps consistently, so a test can inject a known lie.</p>
+<p class="accept"><b>Done when:</b> on one box with an injected offset of 12.345&nbsp;ms and 30&nbsp;ppm, under <code>tc netem</code> jitter of 200&nbsp;&micro;s, the hub's fit recovers both within the band it displays, and the band is under 50&nbsp;&micro;s. Second check, the causality invariant: <code>orbit-test-rust</code> gains a mode where one instance sends messages to another over TCP with a manual scope around each send and each receive; after alignment no receive scope starts before its send scope, across ten thousand messages, in both directions.</p></div>
+
+<div class="plan-phase"><h3>Phase 3 · SSH transport and install-on-demand</h3>
+<p><code>--stdio</code> mode, the hub spawning <code>ssh</code>, the API multiplexed over the pipe, the install offer with the consent dialog, same-arch self-copy, cross-arch fetch from the install base, <code>--sudo</code> passthrough, the Mac as the first real remote.</p>
+<p class="accept"><b>Done when:</b> from the workstation, with no Orbit on the Mac, typing <code>pierric@build-mac</code> ends with the Mac's processes in the rail after exactly one confirmation, and a capture of a Mac process shows manual scopes aligned to within the displayed band. An e2e version runs against a local sshd on the same box.</p></div>
+
+<div class="plan-phase"><h3>Phase 4 · Reverse join, settings strip, polish</h3>
+<p><code>--join</code> and the code in the banner, the Accept tray, the per-machine settings strip, the disarm state, the amber lag glyph, the <em>capturing for</em> lock, <code>?connect=</code>, the manual pages.</p>
+<p class="accept"><b>Done when:</b> a container on the box with no inbound ports joins the hub, appears, is captured, and its process is profiled with its own hook list while the hub's own target keeps a different one.</p></div>
+
+<p><strong>Deliberately not in this plan:</strong> hardware PTP (worth doing when a user has the NICs; the <code>clocks</code> table is designed so it slots in as a better sample source), cross-machine flow arrows (needs an API for pairing a send with a receive by id, a feature in its own right), and a fleet view for dozens of hosts (a different rendering, not a bigger tree).</p>
+
+<h2 id="decisions">Five decisions I need from you</h2>
+
+<ol class="decisions">
+<li><strong>Pack or widen?</strong> I recommend packing the machine into the pid's top byte, capping a live session at 255 machines. If you can see a use for more than that in one rail, widening is the time to do it, and it is cheaper now than after phase 1.</li>
+<li><strong>Is a token acceptable on the LAN path?</strong> It is one paste per direct link, and it closes a hole that peering would otherwise widen. The alternative is to keep the API open and document the exposure. I would rather not build the hub on an unauthenticated control plane.</li>
+<li><strong>Record fans out to every armed machine by default.</strong> The alternative is a Record per machine. One button matches how the timeline reads, one capture across hosts, but it means a stray click starts N captures.</li>
+<li><strong>Install-on-demand ships the hub's own binary when the architecture matches.</strong> That needs no infrastructure, but it means a dev build on your workstation becomes what runs on the remote. Restrict it to release builds, or accept it for now and tighten when the site exists?</li>
+<li><strong>The precision statement.</strong> The viewer will show a band and refuse to imply better. If the requirement behind "precise clock synchronization" is tighter than tens of microseconds on a LAN, the plan needs PTP in scope from the start and I should know that before phase 2.</li>
+</ol>
+
+<p>Answer those and phase 0 starts the same day; it is a script and a frame, and its output decides how much of the clock section survives contact with the network.</p>
+</article>
+<footer><div class="footer-inner">Post 22 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="21-the-first-few-bytes.html">&larr; Post 21</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/54816e58b">54816e58b</a> &middot; Status: proposal, nothing implemented</div></footer>
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>
+(function(){
+  var b=document.getElementById("orbit-theme-toggle");
+  function cur(){return document.documentElement.getAttribute("data-theme")||"light";}
+  function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}
+  lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});
+})();
+</script>
+</body></html>

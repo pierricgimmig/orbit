@@ -672,7 +672,7 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
     <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 03</p>
     <h1>The Stage That Didn't Ship</h1>
     <p class="dek">Unwind ranges landed. Line info passed every existing test, then failed against 4,719 real binaries four separate times — and the fourth one is why it is still delegating to C++.</p>
-    <p class="byline">Stages 2c and 2d &middot; <a href="metrics/phase-2d-differential-corpus.txt">corpus run</a> &middot; <a href="metrics/phase-2d-lineinfo.json">phase-2d-lineinfo.json</a></p>
+    <p class="byline">Stages 2c and 2d &middot; <a href="metrics/phase-2c-differential-corpus.txt">corpus run</a> &middot; <a href="metrics/phase-2d-lineinfo.json">phase-2d-lineinfo.json</a></p>
 
     <div class="stats">
       <div class="stat"><b>16.3M</b><span>Symbols compared</span></div>
@@ -811,7 +811,7 @@ symbols compared      16293491
         <tr><td><code>ElfFile</code> methods on Rust</td><td class="v">0</td><td class="v down">14 of 17</td><td>Three delegate, all line info</td></tr>
         <tr><td>Files including an <code>llvm/</code> header</td><td class="v">11</td><td class="v down">9</td><td>Unchanged this post</td></tr>
         <tr><td>External Rust crates</td><td class="v">0</td><td class="v up">11</td><td><code>object</code>, <code>gimli</code>, <code>addr2line</code> and their trees, including <code>flate2</code> for decompression</td></tr>
-        <tr><td><code>deps(//src/ObjectUtils)</code></td><td class="v">5,843</td><td class="v up">8,362</td><td>Still worse, still waiting on stage 2h</td></tr>
+        <tr><td><code>deps(//src/ObjectUtils)</code></td><td class="v">5,843</td><td class="v up">8,418</td><td>Still worse, still waiting on stage 2h</td></tr>
         <tr><td>C++ tests edited</td><td class="v">0</td><td class="v down">0</td><td>The rule that makes any of the above mean something</td></tr>
       </tbody>
     </table>
