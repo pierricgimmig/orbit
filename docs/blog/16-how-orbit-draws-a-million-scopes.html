@@ -422,11 +422,6 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
 
 <div class="wrap">
 
-<div class="note warn">
-<p class="tag">Update &middot; 2026-09</p>
-<p>The analytic drop shadow read line by line in sections 6, 8 and 9 was later removed: the padded quad now carries only a 2&nbsp;px anti-aliasing edge, so <code>instance.wgsl</code> no longer holds the <code>rounded_box_shadow_x</code> / <code>erf_approx</code> machinery. The quad-inflation trick and the signed-distance fill are unchanged. Two draw flags have been added since, too &mdash; <code>FLAG_INACTIVE</code> and <code>FLAG_SAME_PID</code>, the thread-focus greys.</p>
-</div>
-
 <section class="part">
 <div class="col">
 <span class="part-num">01 &mdash; THE PROBLEM</span>
@@ -762,12 +757,16 @@ fn fs_main(v: VsOut) -&gt; @location(0) vec4&lt;f32&gt; {
 <tr><td class="num">2.0</td><td><code>FLAG_SELECTED</code></td><td>Clicked &mdash; recoloured blue, lifted, pulsing</td></tr>
 <tr><td class="num">3.0</td><td><code>FLAG_SIBLING</code></td><td>Same function elsewhere &mdash; recoloured light blue</td></tr>
 <tr><td class="num">4.0</td><td><code>FLAG_DIMMED</code></td><td>Filtered out by search &mdash; desaturated and darkened</td></tr>
+<tr><td class="num">5.0</td><td><code>FLAG_INACTIVE</code></td><td>Outside the thread focus &mdash; recoloured flat grey</td></tr>
+<tr><td class="num">6.0</td><td><code>FLAG_SAME_PID</code></td><td>Another thread of the focused process &mdash; a lighter grey</td></tr>
 </tbody>
 </table>
 </div>
 </div>
 
 <div class="col">
+<p>The last two are the thread-focus greys, and they mirror how C++ Orbit paints its scheduler track: select a thread and every scheduler slice outside that selection drops to a flat grey, with a lighter grey kept for the selected thread's own process so its other threads still read on the cores. The CPU applies them in <code>apply_highlight_flags</code>, and only to scheduler slices &mdash; thread tracks keep their colours whatever is selected, because greying a thread's scopes would hide the very comparison a selection is for.</p>
+
 <p>Hence the odd-looking comparisons in the shader: <code>mark &gt; 1.5 &amp;&amp; mark &lt; 2.5</code> rather than <code>mark == 2.0</code>. Floats that have been through interpolation are not reliably exact, so the shader tests a window around each integer instead of equality.</p>
 </div>
 </section>
@@ -783,7 +782,7 @@ fn fs_main(v: VsOut) -&gt; @location(0) vec4&lt;f32&gt; {
 </div>
 
 <div class="wrap">
-<p class="filelabel"><span><b>shaders/instance.wgsl</b> &middot; lines 11&ndash;18</span><span>WGSL</span></p>
+<p class="filelabel"><span><b>shaders/instance.wgsl</b> &middot; lines 7&ndash;14</span><span>WGSL</span></p>
 <pre><code class="lang-wgsl">struct Uniforms {
   viewport: vec2&lt;f32&gt;,   // framebuffer size in physical pixels
   origin: vec2&lt;f32&gt;,     // where the timeline body starts on screen
@@ -864,41 +863,43 @@ fn fs_main(v: VsOut) -&gt; @location(0) vec4&lt;f32&gt; {
 <div class="col">
 <span class="part-num">06 &mdash; THE VERTEX STAGE</span>
 <h2>Inventing a quad that's bigger than the rectangle</h2>
-<p class="deck">instance.wgsl lines 50&ndash;80.</p>
+<p class="deck">instance.wgsl lines 37&ndash;78.</p>
 
-<p>The vertex shader builds the same unit-square quad as the blit, but with two twists. First, it must offset the quad by the instance's own position. Second &mdash; and this is the non-obvious part &mdash; it deliberately makes the quad <em>larger</em> than the rectangle being drawn, because the drop shadow needs somewhere to live.</p>
+<p>The vertex shader builds the same unit-square quad as the blit, but with two twists. First, it must offset the quad by the instance's own position. Second &mdash; and this is the non-obvious part &mdash; it deliberately makes the quad slightly <em>larger</em> than the rectangle being drawn, because the antialiased edge needs somewhere to live.</p>
 
-<p>A fragment shader can only colour pixels inside its triangles. A shadow that extends 6 pixels beyond the rectangle therefore needs 6 pixels of extra triangle to be painted on.</p>
+<p>A fragment shader can only colour pixels inside its triangles, but the soft edge of a rounded rectangle falls a pixel or so <em>outside</em> the geometry. So the quad is inflated by a couple of pixels on every side to leave room for that edge, and a selected scope &mdash; which lifts and grows as it pulses &mdash; is given a touch more.</p>
+
+<p>An earlier version of this shader inflated the quad by six pixels a side to make room for an analytic drop shadow: a blurred, offset copy of the rectangle evaluated per pixel with no second pass. That shadow was cut. The padding it forced was pure overdraw on a dense track, and the faint offset copy read as a rendering artifact more than a shadow. What survives is the inflation trick itself, shrunk to its honest size &mdash; a roughly two-pixel margin for the edge.</p>
 </div>
 
 <div class="wrap">
 <figure>
 <div class="figbox">
-<svg viewBox="0 0 820 250" role="img" aria-label="The drawn quad is inflated by six pixels of shadow padding on every side, so the fragment shader has coverage available for the drop shadow that falls outside the rectangle itself.">
-  <rect x="120" y="46" width="290" height="150" fill="none" stroke="#2B91AF" stroke-width="1.6" stroke-dasharray="6 4"></rect>
+<svg viewBox="0 0 820 250" role="img" aria-label="The drawn quad is inflated by a thin antialiasing margin on every side, so the fragment shader has coverage available for the soft edge that falls just outside the rectangle itself.">
+  <rect x="150" y="58" width="230" height="126" fill="none" stroke="#2B91AF" stroke-width="1.6" stroke-dasharray="6 4"></rect>
   <rect x="162" y="70" width="206" height="102" rx="8" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
 
   <text x="265" y="126" text-anchor="middle" font-size="12.5" fill="currentColor" font-weight="600">the scope rect</text>
   <text x="265" y="145" text-anchor="middle" font-size="11" fill="currentColor" opacity=".7" class="mono">rect.zw</text>
 
-  <text x="265" y="38" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">quad actually drawn</text>
+  <text x="265" y="44" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">quad actually drawn</text>
 
-  <line x1="120" y1="215" x2="162" y2="215" stroke="#2B91AF" stroke-width="1.4"></line>
-  <line x1="120" y1="211" x2="120" y2="219" stroke="#2B91AF" stroke-width="1.4"></line>
-  <line x1="162" y1="211" x2="162" y2="219" stroke="#2B91AF" stroke-width="1.4"></line>
-  <text x="141" y="234" text-anchor="middle" font-size="10.5" fill="#2B91AF" class="mono">pad</text>
+  <line x1="150" y1="200" x2="162" y2="200" stroke="#2B91AF" stroke-width="1.4"></line>
+  <line x1="150" y1="196" x2="150" y2="204" stroke="#2B91AF" stroke-width="1.4"></line>
+  <line x1="162" y1="196" x2="162" y2="204" stroke="#2B91AF" stroke-width="1.4"></line>
+  <text x="156" y="220" text-anchor="middle" font-size="10.5" fill="#2B91AF" class="mono">pad</text>
 
   <text x="450" y="66" font-size="12" fill="currentColor" font-weight="600">pad =</text>
-  <text x="450" y="90" font-size="11.5" fill="currentColor" opacity=".85" class="mono">SHADOW_PAD (6.0)</text>
+  <text x="450" y="90" font-size="11.5" fill="currentColor" opacity=".85" class="mono">AA_PAD (2.0)</text>
   <text x="450" y="112" font-size="11.5" fill="currentColor" opacity=".85" class="mono">+ 1.0 if selected</text>
   <text x="450" y="134" font-size="11.5" fill="currentColor" opacity=".85" class="mono">+ pulse * PULSE_RADIUS</text>
 
   <text x="450" y="170" font-size="11.5" fill="currentColor" opacity=".65">Grows with the pulse so the</text>
-  <text x="450" y="188" font-size="11.5" fill="currentColor" opacity=".65">breathing shadow never gets</text>
+  <text x="450" y="188" font-size="11.5" fill="currentColor" opacity=".65">breathing highlight never gets</text>
   <text x="450" y="206" font-size="11.5" fill="currentColor" opacity=".65">clipped by its own quad.</text>
 </svg>
 </div>
-<figcaption><b>Padding the geometry.</b> Every instance draws a quad inflated on all four sides. Inside that margin the fill is zero and only the shadow contributes &mdash; which is why the alpha at the end of the fragment shader takes a <code>max</code> of fill and shadow rather than just returning the fill.</figcaption>
+<figcaption><b>Padding the geometry.</b> Every instance draws a quad inflated by a couple of pixels on all four sides &mdash; just enough for the antialiased edge, with a little extra for a selected scope's lift and pulse. Inside the rectangle the fill is opaque; out in the thin margin the coverage falls smoothly to zero and the pixel ends up transparent.</figcaption>
 </figure>
 </div>
 
@@ -906,15 +907,13 @@ fn fs_main(v: VsOut) -&gt; @location(0) vec4&lt;f32&gt; {
 <div class="walk">
 
   <div class="wl">
-    <div class="wc">const SHADOW_PAD: f32 = 6.0;
-const SHADOW_SIGMA: f32 = 1.35;
-const SIBLING_RGB = vec3(0.392, 0.710, 0.965);
-const SELECTED_RGB = vec3(0.0, 0.502, 1.0);
+    <div class="wc">const AA_PAD: f32 = 2.0;
+const SIBLING_RGB: vec3&lt;f32&gt; = vec3(0.392, 0.710, 0.965);
+const SELECTED_RGB: vec3&lt;f32&gt; = vec3(0.0, 0.502, 1.0);
 const PULSE_PERIOD: f32 = 1.2;
 const PULSE_RADIUS: f32 = 0.45;
-const PULSE_SIGMA: f32 = 0.18;
 const PULSE_BRIGHT: f32 = 0.05;</div>
-    <div class="wd"><p>Compile-time constants. <code>SIGMA</code> is the shadow's blur radius in pixels &mdash; the standard deviation of the Gaussian.</p><p>The four <code>PULSE_</code> values tune the selected-scope animation: a 1.2-second cycle that grows the quad by 0.45px, widens the blur by 0.18px, and brightens the fill by 5% at its peak. Small numbers on purpose &mdash; a breathing highlight, not a flashing one.</p></div>
+    <div class="wd"><p>Compile-time constants. <code>AA_PAD</code> is the margin, in pixels, added around every rectangle so the antialiased edge is not clipped by the quad.</p><p>The three <code>PULSE_</code> values tune the selected-scope animation: a 1.2-second cycle that grows the quad by up to 0.45px and brightens the fill by 5% at its peak. Small numbers on purpose &mdash; a breathing highlight, not a flashing one.</p></div>
   </div>
 
   <div class="wl">
@@ -946,9 +945,9 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
   </div>
 
   <div class="wl">
-    <div class="wc">  let pad = SHADOW_PAD + select(0.0, 1.0, selected)
-            + pulse * PULSE_RADIUS;</div>
-    <div class="wd"><p>The inflation from the diagram. Base 6px, one extra pixel when selected, plus up to 0.45px more at the peak of the pulse &mdash; so the quad breathes in step with the shadow it has to contain.</p></div>
+    <div class="wc">  let pad = AA_PAD + select(0.0, 1.0, selected)
+          + pulse * PULSE_RADIUS;</div>
+    <div class="wd"><p>The inflation from the diagram. Base 2px for the edge, one extra pixel when selected, plus up to 0.45px more at the peak of the pulse &mdash; so the quad breathes in step with the highlight it has to contain.</p></div>
   </div>
 
   <div class="wl">
@@ -1082,127 +1081,14 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
 
 <hr class="sep">
 
-<section class="part">
-<div class="col">
-<span class="part-num">08 &mdash; THE SHADOW</span>
-<h2>Blurring without blurring</h2>
-<p class="deck">The most mathematically dense part of the file, and the only borrowed code.</p>
-
-<p>The usual way to soften a shape is to render it, then blur the result &mdash; a second pass, an offscreen texture, and dozens of texture reads per pixel. For a timeline drawing hundreds of thousands of rectangles, that is not affordable.</p>
-
-<p>Instead Orbit uses Evan Wallace's <a href="https://madebyevan.com/shaders/fast-rounded-rectangle-shadows/">fast rounded rectangle shadows</a>: rather than blurring pixels, it <em>evaluates the analytic result</em> of blurring a rounded rectangle at this point. No neighbours are sampled at all.</p>
-
-<p>The reasoning runs like this. Blurring is convolution with a Gaussian. For a plain box, that convolution has a closed form &mdash; it's the error function, <code>erf</code>. A rounded box isn't quite a box, but slice it into horizontal strips and each strip <em>is</em> a box, just with a width that varies as you move up and down through the corners. So: solve each strip exactly, then sum the strips.</p>
-</div>
-
-<div class="wrap">
-<figure>
-<div class="figbox">
-<svg viewBox="0 0 860 260" role="img" aria-label="The rounded rectangle is sliced into four horizontal strips within three sigma of the sample point; each strip's blurred width is solved exactly with the error function and weighted by a Gaussian.">
-  <rect x="90" y="60" width="215" height="130" rx="26" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="1.5"></rect>
-
-  <line x1="70" y1="88" x2="325" y2="88" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
-  <line x1="70" y1="112" x2="325" y2="112" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
-  <line x1="70" y1="136" x2="325" y2="136" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
-  <line x1="70" y1="160" x2="325" y2="160" stroke="#2B91AF" stroke-width="1.4" stroke-dasharray="5 3"></line>
-
-  <circle cx="340" cy="124" r="4" fill="#E74435"></circle>
-  <text x="350" y="128" font-size="11" fill="#E74435" font-weight="700">sample point</text>
-
-  <text x="197" y="46" text-anchor="middle" font-size="11.5" fill="#2B91AF" font-weight="700">4 strips, spanning &plusmn;3&sigma;</text>
-  <text x="197" y="216" text-anchor="middle" font-size="11" fill="currentColor" opacity=".62">each strip is a plain box &#8594; erf solves it exactly</text>
-
-  <line x1="420" y1="40" x2="420" y2="230" stroke="currentColor" stroke-width="1" opacity=".3"></line>
-
-  <text x="455" y="62" font-size="12.5" fill="currentColor" font-weight="600">Per strip:</text>
-  <text x="455" y="88" font-size="11.5" fill="currentColor" class="mono">width  &#8592; corner geometry</text>
-  <text x="455" y="110" font-size="11.5" fill="currentColor" class="mono">blur   &#8592; erf_approx(...)</text>
-  <text x="455" y="132" font-size="11.5" fill="currentColor" class="mono">weight &#8592; gaussian(y, sigma)</text>
-  <text x="455" y="160" font-size="12.5" fill="#2B91AF" font-weight="600">Sum the four &#8594; shadow alpha</text>
-  <text x="455" y="192" font-size="11.5" fill="currentColor" opacity=".62">Zero texture reads. Constant cost</text>
-  <text x="455" y="210" font-size="11.5" fill="currentColor" opacity=".62">per pixel, whatever the blur radius.</text>
-</svg>
-</div>
-<figcaption><b>Four samples, not a blur kernel.</b> A conventional Gaussian blur at this radius would need dozens of texture reads per pixel and a second render pass. This integrates the analytic solution over four strips and reads nothing.</figcaption>
-</figure>
-</div>
-
-<div class="wrap">
-<div class="walk">
-
-  <div class="wl">
-    <div class="wc">fn gaussian(x: f32, sigma: f32) -&gt; f32 {
-  let pi = 3.141592653589793;
-  return exp(-(x * x) / (2.0 * sigma * sigma))
-       / (sqrt(2.0 * pi) * sigma);
-}</div>
-    <div class="wd"><p>The textbook normal distribution, unmodified. Used as a weight: strips near the sample point count for more than strips far from it.</p></div>
-  </div>
-
-  <div class="wl">
-    <div class="wc">fn erf_approx(x: f32) -&gt; f32 {
-  let s = sign(x);
-  let a = abs(x);
-  var t = 1.0 + (0.278393 + (0.230389
-        + 0.078108 * (a * a)) * a) * a;
-  t = t * t;
-  return s - s / (t * t);
-}</div>
-    <div class="wd"><p>The error function has no elementary closed form, so this is a rational approximation &mdash; the Abramowitz &amp; Stegun 7.1.27 form, in Wallace's variant that drops the tiny cubic coefficient.</p>
-    <p><code>t = t*t</code> then <code>t*t</code> in the denominator gives the fourth power the formula calls for, using two multiplications instead of a <code>pow</code> call.</p>
-    <p>Odd symmetry is handled by pulling out <code>sign(x)</code> up front and working with <code>abs(x)</code>, since the approximation is only valid for positive inputs.</p></div>
-  </div>
-
-  <div class="wl">
-    <div class="wc">fn rounded_box_shadow_x(x: f32, y: f32, sigma: f32,
-                        corner: f32, half: vec2&lt;f32&gt;) -&gt; f32 {
-  let delta = min(half.y - corner - abs(y), 0.0);
-  let curved = half.x - corner
-             + sqrt(max(0.0, corner*corner - delta*delta));
-  return 0.5 + 0.5 * erf_approx((x + curved) * (sqrt(0.5) / sigma));
-}</div>
-    <div class="wd"><p>One strip. <code>delta</code> measures how far into the corner region this height sits &mdash; it stays 0 through the straight middle of the rectangle and goes negative once you're level with a corner arc.</p>
-    <p><code>curved</code> is then the strip's half-width: the flat part <code>half.x - corner</code>, plus a circular term that shortens the strip as it rides up the curve. The <code>max(0.0, &hellip;)</code> guards the square root against a negative argument from floating-point drift.</p>
-    <p>The final line is the blurred edge: <code>erf</code> rescaled from &minus;1&hellip;1 into 0&hellip;1 coverage.</p></div>
-  </div>
-
-  <div class="wl">
-    <div class="wc">  let low = point.y - half.y;
-  let high = point.y + half.y;
-  let start = clamp(-3.0 * sigma, low, high);
-  let end = clamp(3.0 * sigma, low, high);</div>
-    <div class="wd"><p>Choose the integration range. A Gaussian is negligible past three standard deviations, so there's no point integrating further &mdash; but the range is also clamped to the rectangle's actual vertical extent, so a short rectangle doesn't waste samples on empty space.</p></div>
-  </div>
-
-  <div class="wl">
-    <div class="wc">  let step = (end - start) / 4.0;
-  var y = start + step * 0.5;
-  var value = 0.0;
-  for (var i = 0; i &lt; 4; i++) {
-    value += rounded_box_shadow_x(point.x, point.y - y,
-                                  sigma, corner, half)
-           * gaussian(y, sigma) * step;
-    y += step;
-  }
-  return value;</div>
-    <div class="wd"><p>Midpoint-rule numerical integration with four samples. <code>start + step * 0.5</code> begins at the centre of the first strip rather than its edge, which is what makes it the midpoint rule and roughly doubles the accuracy for free.</p>
-    <p>Each term is <em>strip coverage &times; Gaussian weight &times; strip height</em> &mdash; a weighted sum approximating the true integral.</p>
-    <p>Four is a deliberate choice: enough for a shadow at this scale, small enough that the loop unrolls and stays cheap when it runs for every pixel of every rectangle on screen.</p></div>
-  </div>
-
-</div>
-</div>
-</section>
-
-<hr class="sep">
 
 <section class="part">
 <div class="col">
-<span class="part-num">09 &mdash; THE FRAGMENT STAGE</span>
+<span class="part-num">08 &mdash; THE FRAGMENT STAGE</span>
 <h2>Assembling one pixel</h2>
-<p class="deck">instance.wgsl lines 123&ndash;160. Everything above, combined.</p>
+<p class="deck">instance.wgsl lines 89&ndash;131. Everything above, combined.</p>
 
-<p>This runs for every pixel of every rectangle &mdash; the hottest code in the viewer by a wide margin. It reads the interpolated values, computes coverage and shadow, applies whatever state the mark encodes, and returns a single colour.</p>
+<p>This runs for every pixel of every rectangle &mdash; the hottest code in the viewer by a wide margin. It reads the interpolated values, computes coverage from the distance function, applies whatever state the mark encodes, and returns a single colour.</p>
 </div>
 
 <div class="wrap">
@@ -1212,17 +1098,10 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
     <div class="wc">  let hover    = v.mark &gt; 0.5 &amp;&amp; v.mark &lt; 1.5;
   let selected = v.mark &gt; 1.5 &amp;&amp; v.mark &lt; 2.5;
   let sibling  = v.mark &gt; 2.5 &amp;&amp; v.mark &lt; 3.5;
-  let dimmed   = v.mark &gt; 3.5 &amp;&amp; v.mark &lt; 4.5;</div>
-    <div class="wd"><p>Decode the state, one window per value. Only one can be true at a time.</p></div>
-  </div>
-
-  <div class="wl">
-    <div class="wc">  let sigma = SHADOW_SIGMA + select(0.0, 0.35, selected)
-            + pulse * PULSE_SIGMA;
-  let shadow = rounded_box_shadow(v.local + vec2(0.4, 0.7),
-                                  v.half_size, v.radius, sigma);</div>
-    <div class="wd"><p>The shadow, offset by <code>(0.4, 0.7)</code> &mdash; slightly right and slightly down, implying a light source above and to the left. Sub-pixel offsets, so the effect reads as depth rather than as a visible duplicate.</p>
-    <p>Selected rectangles get a wider blur, and the pulse widens it further still, so the highlight appears to breathe.</p></div>
+  let dimmed   = v.mark &gt; 3.5 &amp;&amp; v.mark &lt; 4.5;
+  let inactive = v.mark &gt; 4.5 &amp;&amp; v.mark &lt; 5.5;
+  let same_pid = v.mark &gt; 5.5 &amp;&amp; v.mark &lt; 6.5;</div>
+    <div class="wd"><p>Decode the state, one window per value. Every instance carries exactly one mark, so at most one of these is true. The last two are the thread-focus greys from section 4.</p></div>
   </div>
 
   <div class="wl">
@@ -1233,6 +1112,16 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
   }</div>
     <div class="wd"><p>Search filtering. Those three coefficients are the Rec. 709 luminance weights &mdash; green dominates because human vision is most sensitive to it, so this preserves perceived brightness where a naive average wouldn't.</p>
     <p><code>mix</code> pulls 84% of the way toward grey, then <code>* 0.36</code> darkens the result. Non-matching scopes recede without disappearing.</p></div>
+  </div>
+
+  <div class="wl">
+    <div class="wc">  if inactive {
+    rgb = vec3(0.392, 0.392, 0.392);
+  } else if same_pid {
+    rgb = vec3(0.549, 0.549, 0.549);
+  }</div>
+    <div class="wd"><p>The thread-focus greys, straight replacements of the palette colour. <code>0.392</code> and <code>0.549</code> are 100 and 140 on the 0&ndash;255 scale &mdash; the exact flat greys C++ Orbit paints scheduler slices with: the darker one for everything outside the selection, the lighter one for the focused process's other threads, so they still read on the cores.</p>
+    <p>These run before selection so a selected or sibling slice, decided next, still wins its colour back.</p></div>
   </div>
 
   <div class="wl">
@@ -1264,12 +1153,9 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
   </div>
 
   <div class="wl">
-    <div class="wc">  let shadow_a = select(0.10, 0.20, selected);
-  let alpha = max(fill * v.color.a,
-                  shadow * shadow_a * (1.0 - fill));
-  return vec4(rgb, alpha);</div>
-    <div class="wd"><p><strong>The line that makes the padded quad work.</strong> Inside the shape, <code>fill</code> is 1 and <code>(1.0 - fill)</code> kills the shadow term. Out in the padding, <code>fill</code> is 0 and only the shadow survives. <code>max</code> picks whichever applies, with a smooth handover across the antialiased edge.</p>
-    <p>Shadows are subtle by design &mdash; 10% opacity normally, 20% when selected. With the pipeline's alpha blending, hundreds of overlapping rectangles would otherwise accumulate into mud.</p></div>
+    <div class="wc">  return vec4(rgb, fill * v.color.a);</div>
+    <div class="wd"><p><strong>The line that makes the padded quad work.</strong> The alpha is coverage times the instance's own opacity, and nothing else. Inside the shape <code>fill</code> is 1, so the pixel takes the colour at full strength; out in the two-pixel margin <code>fill</code> is 0, so the pixel is transparent and the padding costs nothing on screen. Across the edge <code>fill</code> is fractional, which is the antialiasing.</p>
+    <p>This is where the old drop shadow used to add a second, softer term under a <code>max</code>. With it gone the margin exists only to keep that fractional edge from being clipped &mdash; the whole point of section 6's inflation.</p></div>
   </div>
 
 </div>
@@ -1287,7 +1173,7 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
 
 <section class="part">
 <div class="col">
-<span class="part-num">10 &mdash; ORIENTATION</span>
+<span class="part-num">09 &mdash; ORIENTATION</span>
 <h2>Where to look</h2>
 
 <p>All paths below are relative to <code>src/OrbitLiveViewer/</code>.</p>
@@ -1298,7 +1184,7 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
 <table>
 <thead><tr><th>File</th><th>What lives there</th></tr></thead>
 <tbody>
-<tr><td><code>crates/orbit-live-render/src/shaders/instance.wgsl</code></td><td>The SDF path &mdash; everything in sections 6 through 9</td></tr>
+<tr><td><code>crates/orbit-live-render/src/shaders/instance.wgsl</code></td><td>The SDF path &mdash; everything in sections 6 through 8</td></tr>
 <tr><td><code>crates/orbit-live-render/src/shaders/blit_rect.wgsl</code></td><td>The pixel-column path &mdash; section 3</td></tr>
 <tr><td><code>crates/orbit-live-render/src/shaders/blit.wgsl</code></td><td>Compiled into the binary; never made into a pipeline</td></tr>
 <tr><td><code>crates/orbit-live-render/src/shaders.rs</code></td><td>Three <code>include_str!</code> lines and nothing else</td></tr>
@@ -1326,7 +1212,7 @@ fn vs_main(inst: VsIn, @builtin(vertex_index) vid: u32) -&gt; VsOut {</div>
 </div>
 
 <footer class="end">
-<p>Source: <code>orbit-live-render</code> and <code>orbit-live-viewer</code>, branch <code>cursor/wasm-live-viewer-217f</code>. The shadow integral is Evan Wallace's, used under the terms described in the file header; everything else is Orbit's own.</p>
+<p>Source: <code>orbit-live-render</code> and <code>orbit-live-viewer</code>. Every shader read here is Orbit's own &mdash; the one borrowed piece, an analytic drop-shadow integral, was removed once it proved to cost more in overdraw than it bought in depth.</p>
 </footer>
 
 </section>
