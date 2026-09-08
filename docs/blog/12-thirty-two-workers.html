@@ -671,18 +671,14 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   <div class="masthead-inner">
     <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 12</p>
     <h1>Thirty-Two Workers</h1>
-    <p class="dek">The WASM viewer spawns one web worker per hardware thread — thirty-two on the development machine. That number was never chosen; it was inherited from <code>navigator.hardwareConcurrency</code>. Here is the case for turning it down, and the case against.</p>
+    <p class="dek">The WASM viewer once spawned one web worker per hardware thread — thirty-two on the development machine. That number was never chosen; it was inherited from <code>navigator.hardwareConcurrency</code>. Here is the case for turning it down, the case against, and where it landed.</p>
     <p class="byline">A default, examined</p>
-    <div class="note warn">
-      <p class="note-label">Update &middot; 2026-09</p>
-      <p>Since this was written the cap is <strong>16</strong>, not 8: <code>Math.min(hardwareConcurrency, 16)</code> in the viewer's <code>index.html</code> and <code>app.js</code>, so a big box gets real parallelism &mdash; a 72-core machine has 72 scheduler lanes to walk &mdash; while <code>?threads=N</code> still overrides. The reasoning below argues for 8; the code chose headroom.</p>
-    </div>
 
     <div class="stats">
-      <div class="stat"><b>32</b><span>Workers spawned</span></div>
-      <div class="stat"><b>1</b><span>Line that decides it</span></div>
+      <div class="stat"><b>16</b><span>Default cap</span></div>
+      <div class="stat"><b>32</b><span>Hard ceiling</span></div>
       <div class="stat"><b>~16 ms</b><span>The whole frame budget</span></div>
-      <div class="stat"><b>8</b><span>New default cap</span></div>
+      <div class="stat"><b>1</b><span>Line that decides it</span></div>
       <div class="stat"><b>?threads=N</b><span>Now overridable</span></div>
       <div class="stat"><b>0</b><span>Measurements behind the old number</span></div>
     </div>
@@ -691,7 +687,7 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
 
 <article class="doc">
 
-  <p class="lede">The viewer's thread pool is sized by one expression: <code>Math.min(navigator.hardwareConcurrency, 32)</code>. On a 24-core, 32-thread desktop that spawns thirty-two web workers before the first frame is drawn. Nobody decided thirty-two was right — it is what the machine reported. That is worth examining, because a default nobody chose is a default nobody has justified.</p>
+  <p class="lede">The viewer's thread pool was sized by one expression: <code>Math.min(navigator.hardwareConcurrency, 32)</code>. On a 24-core, 32-thread desktop that spawned thirty-two web workers before the first frame was drawn. Nobody decided thirty-two was right — it is what the machine reported. That is worth examining, because a default nobody chose is a default nobody has justified. This post walks the trade-offs and ends where the code now stands: a cap of sixteen, a hard ceiling of thirty-two, and a <code>?threads=N</code> override.</p>
 
   <h2 id="what">What the workers actually do</h2>
 
@@ -718,19 +714,19 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
 
   <h2 id="verdict">The verdict, and the honest caveat</h2>
 
-  <p>Turn it down — with the caveat stated plainly: <strong>this is reasoned, not measured.</strong> The default is now <code>min(hardwareConcurrency, 8)</code> rather than <code>min(hardwareConcurrency, 32)</code>.</p>
+  <p>Turn it down — but not to the performance-core count, and with the caveat stated plainly: <strong>this is reasoned, not measured.</strong> The shipped default is <code>min(hardwareConcurrency, 16)</code> rather than <code>min(hardwareConcurrency, 32)</code>, clamped to a hard ceiling of <code>32</code>, with <code>?threads=N</code> overriding either way.</p>
 
-  <p>Eight is defensible without being magic: it covers the performance cores of a typical desktop, keeps the pool wide enough for the large-capture case, and cuts idle memory and startup cost by three quarters on a 32-thread machine. It is a better guess than "whatever the CPU reports", which was the previous policy.</p>
+  <p>The tempting answer was eight — the performance cores of a typical desktop, and the choice that cuts idle memory and startup cost hardest. It is not the one that shipped. The collect/raster job scales with the lane count, and on a many-core box the lane count tracks the core count: a 72-thread machine has 72 scheduler lanes to walk. Capping at eight would hand that machine a pool narrower than its work, penalising exactly the large captures where a profiler earns its keep. Sixteen keeps the pool wide enough for a big box to get real parallelism while still bounding worker spin-up — a 72-thread box gets sixteen workers, not seventy-two. The ceiling of thirty-two backstops the override: even <code>?threads=64</code> is clamped, so no load spins up an unbounded pool. Either way it is a better guess than "whatever the CPU reports", which was the previous policy.</p>
 
   <p>More useful than the new number is that the number is now <em>reachable</em>. The pool width can be overridden per load:</p>
 
   <pre><code>http://127.0.0.1:44766/?threads=1     # sequential baseline
-http://127.0.0.1:44766/?threads=8     # the new default
-http://127.0.0.1:44766/?threads=32    # the old behaviour</code></pre>
+http://127.0.0.1:44766/?threads=16    # the default
+http://127.0.0.1:44766/?threads=32    # the ceiling, and the old behaviour</code></pre>
 
-  <p>That turns an argument into an experiment. The measurement worth running: load a large capture, hold the view still, and compare frame time across <code>?threads=1,2,4,8,16,32</code>. If the curve flattens by four, the cap should be four. If it keeps improving to thirty-two on big captures, the right answer is not a constant at all but a width chosen from the lane count — small captures sequential, large ones wide.</p>
+  <p>That turns an argument into an experiment. The measurement worth running: load a large capture, hold the view still, and compare frame time across <code>?threads=1,2,4,8,16,32</code>. If the curve flattens by four, the default is too wide. If it keeps improving to thirty-two on big captures, the right answer is not a constant at all but a width chosen from the lane count — small captures sequential, large ones wide.</p>
 
-  <p>The general lesson is the one this log keeps relearning: <code>hardwareConcurrency</code> answers "how many threads does this machine have", which is never the question. The question is "how much parallel work is there, and how wide before the overhead wins", and only measurement answers that. Until someone runs it, eight is an honest guess replacing an unexamined one.</p>
+  <p>The general lesson is the one this log keeps relearning: <code>hardwareConcurrency</code> answers "how many threads does this machine have", which is never the question. The question is "how much parallel work is there, and how wide before the overhead wins", and only measurement answers that. Until someone runs it, sixteen is an honest guess replacing an unexamined one — headroom chosen over the safer eight, on the bet that big captures are where the pool has to earn its keep.</p>
 
 </article>
 

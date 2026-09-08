@@ -671,35 +671,33 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   <div class="masthead-inner">
     <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 15</p>
     <h1>A Ring Per Core</h1>
-    <p class="dek">Manual instrumentation has to cost almost nothing or people turn it off. Here is the write path, measured honestly at sixteen nanoseconds a scope, the two places the obvious design is unsound, what rseq is and what it would actually be worth, and the bug that only appeared when someone asked the right question.</p>
+    <p class="dek">Manual instrumentation has to cost almost nothing or people turn it off. Here is the write path, measured honestly at sixteen nanoseconds a scope &mdash; why a ring per core became a ring per thread, what rseq is and why it stopped being the answer, and why the drain no longer merges anything at all.</p>
     <p class="byline">Design notes, with the corrections left in</p>
-    <div class="note warn">
-      <p class="note-label">Update &middot; 2026-09</p>
-      <p>This per-core design was later replaced. Rings now follow the <em>thread</em>, not the core &mdash; chosen by a hash of the thread id (<code>ring_for_thread</code>), which is what makes the producer portable off Linux &mdash; and there is no k-way merge: the drain reads each ring in claim order (<code>merge.rs</code>: &ldquo;There is no merge, and that is the point.&rdquo;). A record is 56 bytes with the name written inline and interned on the consumer, not 32 with a producer-side id, and the default is 16 rings (128 is the cap). The reasoning here still holds; the mechanism moved on.</p>
-    </div>
 
     <div class="stats">
-      <div class="stat"><b>15.9 ns</b><span>Per scope</span></div>
-      <div class="stat"><b>7.0 ns</b><span>Ring alone</span></div>
+      <div class="stat"><b>16.2 ns</b><span>Per scope</span></div>
+      <div class="stat"><b>9.8 ns</b><span>Ring alone</span></div>
       <div class="stat"><b>0</b><span>Locks</span></div>
-      <div class="stat"><b>32 B</b><span>Per record</span></div>
-      <div class="stat"><b>128</b><span>Rings, capped</span></div>
-      <div class="stat"><b>25</b><span>Tests</span></div>
+      <div class="stat"><b>56 B</b><span>Per record</span></div>
+      <div class="stat"><b>16</b><span>Rings, 128 cap</span></div>
+      <div class="stat"><b>49</b><span>Tests</span></div>
     </div>
   </div>
 </header>
 
 <article class="doc">
 
-  <p class="lede">A profiler's manual instrumentation is the feature people use most and trust least. Every <code>ORBIT_SCOPE</code> in a hot loop is a bet that the measurement costs less than the thing being measured, and the moment that bet stops paying, the macros get commented out and the profiler stops being used. So the write path is the whole design. Everything else &mdash; ordering, merging, nesting &mdash; is the consumer's problem, and the consumer is allowed to be slow.</p>
+  <p class="lede">A profiler's manual instrumentation is the feature people use most and trust least. Every <code>ORBIT_SCOPE</code> in a hot loop is a bet that the measurement costs less than the thing being measured, and the moment that bet stops paying, the macros get commented out and the profiler stops being used. So the write path is the whole design. Everything else &mdash; interning, nesting, and any ordering beyond a single thread's &mdash; is the consumer's problem, and the consumer is allowed to be slow.</p>
+
+  <p class="lede">The title is where this started, and it is left standing because the reasoning that led there is worth keeping. A ring per core was the natural first answer. It turned out to be the wrong one, for a reason that only shows up in userspace, and the design that replaced it &mdash; a ring per <em>thread</em> &mdash; is both simpler to defend and portable off Linux, which the producer has to be.</p>
 
   <h2 id="shape">The shape of it</h2>
 
-  <p>An instrumented process writes events into its own shared-memory segment. The service maps that segment, drains it, merges it into one globally ordered stream, and hands it to the timeline. The two sides never talk, never synchronise, and never block each other.</p>
+  <p>An instrumented process writes events into its own shared-memory segment. The service maps that segment, drains it, interns the names, and hands the events to the timeline. The two sides never talk, never synchronise, and never block each other.</p>
 
   <figure class="wide">
     <div class="fig-scroll">
-    <svg viewBox="0 0 760 300" role="img" aria-label="Architecture: a process writes to per-core rings in shared memory; the service drains and merges them into one ordered stream.">
+    <svg viewBox="0 0 760 300" role="img" aria-label="Architecture: a process writes to per-thread rings in shared memory; the service drains each ring in claim order, with no merge.">
       <defs>
         <marker id="a15" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
           <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
@@ -713,28 +711,28 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
         <rect x="26" y="126" width="76" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="64" y="143" text-anchor="middle">thread C</text>
         <rect x="26" y="160" width="76" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="64" y="177" text-anchor="middle">thread D</text>
       </g>
-      <text x="113" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">ring = cpu_id % ring_count</text>
-      <text x="113" y="232" text-anchor="middle" font-size="10.5" fill="var(--muted)">depth from thread-local storage</text>
+      <text x="113" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">ring = mix(thread_id) % ring_count</text>
+      <text x="113" y="232" text-anchor="middle" font-size="10.5" fill="var(--muted)">a thread always writes one ring</text>
 
       <rect x="248" y="20" width="200" height="260" fill="var(--accent-wash)" stroke="var(--accent)"/>
       <text x="348" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">/dev/shm/orbit-scopes-&lt;pid&gt;</text>
       <g font-size="11" fill="var(--ink-soft)">
-        <rect x="266" y="58" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="74" text-anchor="middle">ring 0 &nbsp;(core 0)</text>
-        <rect x="266" y="88" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="104" text-anchor="middle">ring 1 &nbsp;(core 1)</text>
-        <rect x="266" y="118" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="134" text-anchor="middle">ring 2 &nbsp;(core 2)</text>
+        <rect x="266" y="58" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="74" text-anchor="middle">ring 0</text>
+        <rect x="266" y="88" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="104" text-anchor="middle">ring 1</text>
+        <rect x="266" y="118" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="134" text-anchor="middle">ring 2</text>
         <text x="348" y="158" text-anchor="middle" fill="var(--muted)">&#8942;</text>
         <rect x="266" y="166" width="164" height="24" fill="var(--surface)" stroke="var(--line-strong)"/><text x="348" y="182" text-anchor="middle">ring K-1</text>
       </g>
-      <text x="348" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">one per core, capped at 128</text>
+      <text x="348" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">sixteen by default, capped at 128</text>
       <text x="348" y="232" text-anchor="middle" font-size="10.5" fill="var(--muted)">writer read-write, reader read-only</text>
 
       <rect x="478" y="20" width="274" height="260" fill="var(--surface-2)" stroke="var(--line)"/>
       <text x="615" y="42" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">orbit-service</text>
       <g font-size="11" fill="var(--ink-soft)">
         <rect x="496" y="58" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="75" text-anchor="middle">drain: copy each committed prefix</text>
-        <rect x="496" y="94" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="111" text-anchor="middle">merge: min-heap over K cursors</text>
-        <rect x="496" y="130" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="147" text-anchor="middle">hold back past the horizon</text>
-        <rect x="496" y="166" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="183" text-anchor="middle">one dense, ordered buffer</text>
+        <rect x="496" y="94" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="111" text-anchor="middle">no merge: read in claim order</text>
+        <rect x="496" y="130" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="147" text-anchor="middle">intern the names</text>
+        <rect x="496" y="166" width="238" height="26" fill="var(--surface)" stroke="var(--line-strong)"/><text x="615" y="183" text-anchor="middle">events onto the timeline</text>
       </g>
       <text x="615" y="215" text-anchor="middle" font-size="10.5" fill="var(--muted)">allowed to be slow: producers never wait</text>
 
@@ -742,104 +740,14 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
       <line x1="450" y1="122" x2="474" y2="122" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#a15)"/>
     </svg>
     </div>
-    <figcaption>Threads write to whichever ring their current core owns. The service maps the same pages read-only and never writes into the process it is observing.</figcaption>
+    <figcaption>Each thread hashes to one ring and only ever writes there. The service maps the same pages read-only, never writes into the process it is observing, and reads each ring in claim order &mdash; there is nothing to merge, because a ring already holds each thread's events in the order that thread wrote them.</figcaption>
   </figure>
 
-  <p>One ring per <em>core</em>, not per thread. A thread-per-ring design is simpler and genuinely single-producer, but it scales with something you do not control: a process with four thousand threads gets four thousand rings, and the merge becomes a four-thousand-way heap. Cores are a number you know at startup and can cap.</p>
+  <p>The first instinct was one ring per <em>core</em>. A ring per thread is genuinely single-producer and needs no atomic at all, but it scales with something you do not control: a process with four thousand threads gets four thousand rings. Cores are a number you know at startup and can cap. That instinct was half right &mdash; capping is exactly what you want &mdash; and half wrong, because a per-core ring is not safe to write with a plain store, for a reason that only appears in userspace. The next section is the whole of that reason. It is why the rings ended up following threads after all, just not one apiece.</p>
 
-  <h2 id="record">Thirty-two bytes</h2>
+  <h2 id="preemption">Why per-core does not hold</h2>
 
-  <p>The record is fixed width, which is what makes a claim a single index bump rather than a variable-length reservation. Names are interned ids, not strings, for the same reason: a scope must cost a handful of stores, never a copy.</p>
-
-  <figure class="wide">
-    <div class="fig-scroll">
-    <svg viewBox="0 0 720 150" role="img" aria-label="A 64-byte slot: 8-byte sequence stamp, 8-byte pending timestamp, and a 32-byte event.">
-      <g font-size="10.5" font-family="var(--mono)">
-        <rect x="10" y="30" width="110" height="42" fill="var(--accent-wash)" stroke="var(--accent)"/>
-        <text x="65" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">seq</text>
-        <text x="65" y="64" text-anchor="middle" fill="var(--muted)">8 B atomic</text>
-
-        <rect x="120" y="30" width="120" height="42" fill="var(--warn-wash)" stroke="var(--warn)"/>
-        <text x="180" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">pending_ns</text>
-        <text x="180" y="64" text-anchor="middle" fill="var(--muted)">8 B atomic</text>
-
-        <rect x="240" y="30" width="90" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
-        <text x="285" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">timestamp</text>
-        <text x="285" y="64" text-anchor="middle" fill="var(--muted)">8 B</text>
-
-        <rect x="330" y="30" width="90" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
-        <text x="375" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">scope_id</text>
-        <text x="375" y="64" text-anchor="middle" fill="var(--muted)">8 B</text>
-
-        <rect x="420" y="30" width="60" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
-        <text x="450" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">tid</text>
-        <text x="450" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
-
-        <rect x="480" y="30" width="60" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
-        <text x="510" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">name_id</text>
-        <text x="510" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
-
-        <rect x="540" y="30" width="90" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
-        <text x="585" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">kind, depth</text>
-        <text x="585" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
-
-        <rect x="630" y="30" width="80" height="42" fill="var(--surface)" stroke="var(--line)" stroke-dasharray="3 3"/>
-        <text x="670" y="55" text-anchor="middle" fill="var(--muted)">reserved</text>
-      </g>
-      <line x1="10" y1="88" x2="240" y2="88" stroke="var(--accent)" stroke-width="1.5"/>
-      <text x="125" y="104" text-anchor="middle" font-size="11" fill="var(--accent-deep)">the handshake</text>
-      <line x1="240" y1="88" x2="710" y2="88" stroke="var(--line-strong)" stroke-width="1.5"/>
-      <text x="475" y="104" text-anchor="middle" font-size="11" fill="var(--muted)">32-byte event, plain stores</text>
-      <text x="360" y="128" text-anchor="middle" font-size="11" fill="var(--muted)">one slot = one 64-byte cache line, so a claim never straddles two</text>
-    </svg>
-    </div>
-    <figcaption>The slot is exactly a cache line. Two atomics carry the handshake; the rest is the payload and is written with ordinary stores.</figcaption>
-  </figure>
-
-  <h2 id="write">The write path</h2>
-
-  <p>Six stores and one atomic add. No lock, no compare-and-swap loop, no allocation, no syscall, no branch on a queue being full.</p>
-
-  <figure class="wide">
-    <pre><code>pub fn push(&amp;self, ring: usize, event: ScopeEvent) {
-    let claim = self.ring_header(ring).write_cursor.fetch_add(1, Relaxed);
-    let slot = self.slot(ring, claim);
-    slot.pending_ns.store(event.timestamp_ns, Release);   // announce
-    unsafe { std::ptr::write_volatile(slot.event.get(), event) };
-    slot.seq.store(claim + 1, Release);                   // publish
-}</code></pre>
-    <figcaption>The entire producer. <code>fetch_add</code> hands out a slot index that belongs to exactly one caller, so the payload needs no further synchronisation.</figcaption>
-  </figure>
-
-  <p>The cursor only ever increases; it never wraps back. A slot index is <code>claim % slots_per_ring</code>, and the claim number doubles as the sequence stamp, so a consumer can always tell a slot's current occupant from the one that occupied it a lap ago.</p>
-
-  <h3>Where the time actually goes</h3>
-
-  <p>An earlier version of this post said the ring cost about ten nanoseconds an event and that "a good half of that is the clock read". The second half of that sentence was wrong, and wrong in the way benchmarks usually are: the benchmark pushed a pre-built event with a constant timestamp, so it never read the clock at all. Here is the same write path taken apart properly.</p>
-
-  <div class="table-wrap wide evidence">
-    <table>
-      <thead><tr><th>Cost</th><th>ns</th><th></th></tr></thead>
-      <tbody>
-        <tr><td>push, ring only</td><td class="v">6.98</td><td>claim, announce, payload, publish</td></tr>
-        <tr><td><strong>push + clock read</strong></td><td class="v bump">15.93</td><td><strong>what a scope actually costs</strong></td></tr>
-        <tr><td>clock read alone</td><td class="v">9.37</td><td>59% of a real scope</td></tr>
-        <tr><td>atomic <code>fetch_add</code></td><td class="v">4.33</td><td></td></tr>
-        <tr><td>plain increment</td><td class="v">0.18</td><td>what rseq would buy</td></tr>
-        <tr><td>atomic premium</td><td class="v hold-t">4.14</td><td>26% of a real scope</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <p>Two things fall out of that table, and both are more interesting than the number I first reported.</p>
-
-  <p>The atomic claim is <strong>4.14 ns, a quarter of a real scope</strong>. That is a much better case for <code>rseq</code> than the dismissal a few paragraphs down originally implied &mdash; it is not "one instruction", it is a lock-prefixed read-modify-write against a plain increment, and the ratio is twenty-four to one.</p>
-
-  <p>But the clock read is <strong>9.37 ns, more than half</strong>. Optimising the atomic while leaving that untouched is the wrong order of work. <code>clock_gettime</code> through the vDSO already reads the timestamp counter internally; what costs the nine nanoseconds is the vDSO's own generality. Reading <code>rdtscp</code> directly and converting with the same calibration the kernel publishes is the larger prize, and it is the one I would take first.</p>
-
-  <h2 id="preemption">Where the obvious design is unsound</h2>
-
-  <p>The natural way to write this is a per-core <em>single</em>-producer ring: a thread reads its core id, and since only one thread runs on a core at a time, only one thread is ever writing to that core's ring. No atomic needed at all &mdash; a plain store into the next slot.</p>
+  <p>The appeal of a per-core ring is that it looks single-producer for free: a thread reads its core id, and since only one thread runs on a core at a time, only one thread is ever writing to that core's ring. No atomic needed &mdash; a plain store into the next slot.</p>
 
   <p>That reasoning is exactly right in the kernel and exactly wrong in userspace, and the difference is preemption.</p>
 
@@ -871,155 +779,175 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
     <figcaption>The window is between reading the core id and storing into the ring. Nothing in userspace closes it.</figcaption>
   </figure>
 
-  <h3>What rseq is, since it is the real answer</h3>
+  <h3>What rseq is, and why it stopped being the answer</h3>
 
   <p><strong>Restartable sequences</strong> are a Linux mechanism, merged in 4.18, for exactly this problem: letting userspace run a short critical section that is guaranteed to have executed entirely on one CPU, without a lock and without a syscall.</p>
 
   <p>You register a small structure with the kernel through the <code>rseq</code> syscall &mdash; glibc 2.35 and later does this for every thread automatically and exposes it as <code>__rseq_abi</code>. Inside it, the kernel keeps a field that always holds the id of the CPU the thread is currently on, updated on every migration. That alone is useful: reading your CPU id becomes a thread-local load instead of a <code>sched_getcpu()</code> call.</p>
 
-  <p>The clever part is the second half. You also register a <em>critical section descriptor</em>: a start address, an end address, and an <em>abort</em> address. While the thread's instruction pointer is inside that range, the kernel promises that if the thread is preempted or migrated, it will not simply resume where it left off &mdash; it will jump to the abort handler instead. So you write the sequence as "read the CPU id, compute the slot, store", and if anything interrupts you anywhere in the middle, you land in the abort path and start over. What you get is an atomic-free, lock-free critical section with true per-CPU exclusivity, which is precisely the guarantee the naive design assumed it already had.</p>
+  <p>The clever part is the second half. You also register a <em>critical section descriptor</em>: a start address, an end address, and an <em>abort</em> address. While the thread's instruction pointer is inside that range, the kernel promises that if the thread is preempted or migrated, it will not simply resume where it left off &mdash; it will jump to the abort handler instead. So you write the sequence as "read the CPU id, compute the slot, store", and if anything interrupts you anywhere in the middle, you land in the abort path and start over. What you get is an atomic-free, lock-free critical section with true per-CPU exclusivity, which is precisely the guarantee the per-core design assumed it already had.</p>
 
   <p>It is what makes genuinely per-CPU userspace data structures possible, and it is why allocators like tcmalloc use it for their per-CPU caches. It needs the critical section written so it can be restarted from the top with no side effects, and on most architectures wants a hand-written assembly sequence with the abort handler placed by the linker behind a specific signature.</p>
 
-  <p>I first wrote that this was "a lot of machinery, and a hard dependency on one operating system, to save one instruction". The measurement above says the saving is 4.14 ns, a quarter of a scope, so "one instruction" was a bad way to put it. And the operating-system objection is weaker than it sounds for most of this port &mdash; the service is Linux-only throughout, tracepoints and uprobes and <code>/proc</code> and all.</p>
+  <p>So rseq would make a per-core ring sound. Two things keep it from being the answer here. The first is that it is Linux-only and wants hand-written assembly, and this is the one part of Orbit that does not run in Orbit: the producer is compiled into the profiled application, which may well be a game shipping on Windows, so a portable path has to exist regardless. The second is the one I missed at first. rseq buys per-CPU exclusivity &mdash; and the design does not want per-CPU anything. The whole hazard was born the instant a ring was chosen by the core a thread happened to be on. Choose it by the thread instead, and migration is a non-event: there is no window to close, and nothing to close it with.</p>
 
-  <p>It is not weak <em>here</em>, though, and the reason is worth stating because it is easy to miss: this is the one part of Orbit that does not run in Orbit. The producer is compiled into the profiled application, which may well be a game shipping on Windows. So a portable path has to exist regardless, and the question is not "rseq or the atomic" but "rseq <em>and</em> the atomic, chosen at compile time". That is a perfectly reasonable thing to build &mdash; it is just two write paths to keep correct instead of one, and the second one has to be there either way.</p>
+  <h2 id="perthread">So: a ring per thread</h2>
 
-  <p>So the rings are multi-producer instead, and the slot is claimed with a relaxed <code>fetch_add</code>. Uncontended that is about twenty cycles; contended it is the one thing on a cache line that two cores are fighting over, which is why the per-core sharding still matters even though it is no longer a correctness argument. It stopped being a correctness argument and became a contention argument, and it is still worth having.</p>
+  <p>Drop the core id entirely. Each thread hashes its own id to a ring and writes only there, for its whole life. However often the scheduler bounces it between cores, it never changes rings, so the preemption window simply does not exist &mdash; and the producer reads no CPU id, registers no <code>rseq</code>, and depends on nothing Linux-specific. That portability is the point, not a bonus: this code compiles into somebody else's application, wherever it ships.</p>
 
-  <p>There is a test for this, and it is the kind worth writing: eight threads pushing to <em>one</em> ring, then a check that every producer's events all survived with a slot of their own. Replace the <code>fetch_add</code> with a plain increment and it fails immediately.</p>
+  <p>The map from thread to ring is one rule for every thread, with no fast path and no fallback. It is a hash rather than <code>tid % ring_count</code> because thread ids are not arbitrary numbers: they are handed out in runs, and Windows hands them out in multiples of four, which a plain modulo over sixteen rings would fold onto four of them and leave twelve idle. Multiplying by the 64-bit golden-ratio constant and taking the <em>high</em> bits pushes that low-bit structure up and out. And the hash is <em>stateless</em>, which matters more than the arithmetic: a claimed ring would have to be released when a thread exits, and a thread-local destructor in someone else's application may run late or never. An earlier version handed out exclusive rings from a pool and sent the overflow to a shared one &mdash; two policies wearing one name, since with bounded rings and unbounded threads the sharing is guaranteed by pigeonhole anyway. Exclusivity was never a policy, only a lucky case, and it leaked rings the moment it lost.</p>
+
+  <p>Which is the catch, and the reason the atomic never went away. Because the rings are capped and the threads are not, several threads share a ring, so every ring is multi-producer whether you like it or not. The slot is claimed with a relaxed <code>fetch_add</code> &mdash; still lock-free, still no CAS loop, about twenty cycles uncontended. rseq would not have removed it: rseq gives per-CPU exclusivity, and the contention here is two <em>threads</em> on one ring, which it does not touch. The plain-increment path the per-core design wanted is simply unreachable once rings are shared. The sharding still earns its keep &mdash; as a contention argument now rather than a correctness one &mdash; because sixteen rings keep collisions rare.</p>
+
+  <p>How many rings is a knee, not a preference. More of them means less contention when several threads claim at once; fewer means each gets a larger share of the memory budget, which decides how long one busy thread runs before it laps its ring. At thirty-two threads claiming flat out, a whole scope costs 22.9&nbsp;ns on one ring, 14.0 on eight, 12.9 on sixteen and 12.5 on 128 &mdash; most of the benefit gone by eight, all of it by sixteen. Against that, at an 8&nbsp;MiB budget 128 rings leave each with 1024 slots, so a single hot thread laps after a thousand events, versus 8192 slots at sixteen. Sixteen buys ninety-five per cent of the contention win and eight times the headroom against the likelier failure, which is one thread doing most of the work while the rest sit idle. A hundred and twenty-eight is the cap the format allows a reader to trust, not the number a process opens.</p>
+
+  <p>There is a test for the sharing, and it is the kind worth writing: eight threads pushing to <em>one</em> ring, then a check that every producer's events survived with a slot of their own. Replace the <code>fetch_add</code> with a plain increment and it fails immediately.</p>
+
+  <h2 id="record">Fifty-six bytes</h2>
+
+  <p>The record is fixed width, which is what makes a claim a single index bump rather than a variable-length reservation. It is fifty-six bytes: twenty-four of fixed fields and thirty-two of name, and the name is written in full, <em>inline</em> &mdash; no interned id, no hash, no registration protocol on the write path.</p>
+
+  <figure class="wide">
+    <div class="fig-scroll">
+    <svg viewBox="0 0 720 150" role="img" aria-label="A 64-byte slot: an 8-byte sequence stamp and a 56-byte event carrying the name inline.">
+      <g font-size="10.5" font-family="var(--mono)">
+        <rect x="10" y="30" width="86" height="42" fill="var(--accent-wash)" stroke="var(--accent)"/>
+        <text x="53" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">seq</text>
+        <text x="53" y="64" text-anchor="middle" fill="var(--muted)">8 B atomic</text>
+
+        <rect x="96" y="30" width="96" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="144" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">timestamp</text>
+        <text x="144" y="64" text-anchor="middle" fill="var(--muted)">8 B</text>
+
+        <rect x="192" y="30" width="96" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="240" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">scope_id</text>
+        <text x="240" y="64" text-anchor="middle" fill="var(--muted)">8 B</text>
+
+        <rect x="288" y="30" width="54" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="315" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">tid</text>
+        <text x="315" y="64" text-anchor="middle" fill="var(--muted)">4 B</text>
+
+        <rect x="342" y="30" width="118" height="42" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+        <text x="401" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">kind depth flags len</text>
+        <text x="401" y="64" text-anchor="middle" fill="var(--muted)">4 &times; 1 B</text>
+
+        <rect x="460" y="30" width="250" height="42" fill="var(--accent-wash)" stroke="var(--accent)"/>
+        <text x="585" y="49" text-anchor="middle" font-size="11" fill="var(--ink)">text &mdash; the name, inline</text>
+        <text x="585" y="64" text-anchor="middle" fill="var(--muted)">32 B</text>
+      </g>
+      <line x1="10" y1="88" x2="96" y2="88" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="53" y="104" text-anchor="middle" font-size="11" fill="var(--accent-deep)">the handshake</text>
+      <line x1="96" y1="88" x2="710" y2="88" stroke="var(--line-strong)" stroke-width="1.5"/>
+      <text x="403" y="104" text-anchor="middle" font-size="11" fill="var(--muted)">56-byte event, plain stores</text>
+      <text x="360" y="128" text-anchor="middle" font-size="11" fill="var(--muted)">one slot = one 64-byte cache line, so a claim never straddles two</text>
+    </svg>
+    </div>
+    <figcaption>The slot is exactly a cache line. One atomic carries the handshake; the rest is the payload and is written with ordinary stores, the name among them.</figcaption>
+  </figure>
+
+  <p>The record is a fixed-width write either way, so those bytes are stored whether they carry a name or not; what a name adds on the write path is a length and a copy into the local record, which measures within the noise of doing nothing. What it buys is a segment that describes itself: no protocol for registering a name before an event can use it, no race between the two across threads, no table to ship to the service, and nothing left dangling when a process dies mid-run. Static and dynamic names take one path. Interning happens on the consumer, which is allowed to be slow. A name too long for one record spills into continuation records keyed by the same <code>(tid, scope_id)</code>, and the reader rebuilds it.</p>
+
+  <p>The thirty-two inline bytes are simply what is left of a cache line after the fixed fields, and they got there in two steps. When the merge went (below), the slot's second atomic went with it and its eight bytes became text; when the producer-side name id went, its four bytes followed. The record carries more of the name now precisely because it carries less machinery.</p>
+
+  <h2 id="write">The write path</h2>
+
+  <p>One atomic add, the payload in plain stores, one release store to publish. No lock, no compare-and-swap loop, no allocation, no syscall, no branch on a queue being full.</p>
+
+  <figure class="wide">
+    <pre><code>pub fn push(&amp;self, ring: usize, event: ScopeEvent) {
+    let claim = self.ring_header(ring).write_cursor.fetch_add(1, Relaxed);
+    let slot = self.slot(ring, claim);                            <span class="c">// claim % slots_per_ring</span>
+    unsafe { std::ptr::write_volatile(slot.event.get(), event) }; <span class="c">// payload</span>
+    slot.seq.store(claim + 1, Release);                           <span class="c">// publish</span>
+}</code></pre>
+    <figcaption>The producer, bar a one-line clamp on <code>ring</code>. <code>fetch_add</code> hands out a slot index that belongs to exactly one caller, so the payload needs no further synchronisation; the release store is what makes it visible.</figcaption>
+  </figure>
+
+  <p>The cursor only ever increases; it never wraps back. A slot index is <code>claim % slots_per_ring</code>, and the claim number doubles as the sequence stamp, so a consumer can always tell a slot's current occupant from the one that occupied it a lap ago.</p>
+
+  <h3>Where the time actually goes</h3>
+
+  <p>An earlier version of this post said the ring cost about ten nanoseconds an event and that "a good half of that is the clock read". The second half of that sentence was wrong, and wrong in the way benchmarks usually are: the benchmark pushed a pre-built event with a constant timestamp, so it never read the clock at all. Here is the same write path taken apart properly, on the shared path that every scope actually takes.</p>
+
+  <div class="table-wrap wide evidence">
+    <table>
+      <thead><tr><th>Cost</th><th>ns</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>push, ring only</td><td class="v">9.8</td><td>claim, payload, publish</td></tr>
+        <tr><td><strong>push + clock read</strong></td><td class="v bump">16.2</td><td><strong>what a scope actually costs</strong></td></tr>
+        <tr><td>clock read alone</td><td class="v">9.3</td><td>57% of a real scope</td></tr>
+        <tr><td>atomic <code>fetch_add</code></td><td class="v">4.4</td><td></td></tr>
+        <tr><td>plain increment</td><td class="v">0.2</td><td>unreachable: rings are shared</td></tr>
+        <tr><td>atomic premium</td><td class="v hold-t">4.3</td><td>27% of a real scope</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two things fall out of that table, and both matter more than the single number I first reported.</p>
+
+  <p>The clock read is <strong>9.3 ns, more than half</strong>. Optimising anything else while leaving that alone is the wrong order of work. <code>clock_gettime</code> through the vDSO already reads the timestamp counter internally; what costs the nine nanoseconds is the vDSO's own generality. Reading <code>rdtscp</code> directly and converting with the same calibration the kernel already publishes is the larger prize &mdash; with the caveat, below, that it has to keep producing <code>CLOCK_MONOTONIC</code> values or the timeline comes apart.</p>
+
+  <p>The atomic claim is <strong>4.3 ns, a quarter of a scope</strong>, against a plain increment of 0.2. That gap is exactly what <code>rseq</code>'s per-CPU exclusivity would have bought a per-core ring &mdash; and it is unreachable here, because the rings are shared and the claim has to be atomic whatever CPU the thread is on. The number is a good reason to respect the atomic. It is not a reason to reach for rseq.</p>
 
   <h2 id="release">The one fence</h2>
 
-  <p>The design brief said "no atomics, no CAS, no fences on the write path". Two of those survive. The third needs a qualification that costs nothing on the machine most people are reading this on, and one instruction elsewhere.</p>
+  <p>Past the one atomic claim, the write path has exactly one fence, the commit &mdash; no CAS loop, nothing else. And the fence needs a qualification that costs nothing on the machine most people are reading this on, and one instruction elsewhere.</p>
 
   <p>The payload stores can be plain. The store that <em>publishes</em> the slot cannot: without release ordering, the compiler or the processor may make the sequence stamp visible before the bytes it vouches for, and a consumer reads a slot the producer has not finished writing. On x86-64 the hardware does not reorder stores with other stores, so a release store compiles to an ordinary <code>mov</code> and the claim is literally true. On aarch64 it is one <code>stlr</code>. This codebase targets both, so the honest version of the claim is: <em>no fences where the hardware gives them to you for free, and one instruction where it does not</em>.</p>
 
-  <h2 id="merge">Drain, then merge</h2>
+  <h2 id="merge">Drain, no merge</h2>
 
-  <p>The consumer copies each ring's committed prefix out in one pass, then merges the snapshots. That split is the reason a slow consumer never stalls a producer: producers keep writing into the rings while the merge chews on a copy.</p>
+  <p>The consumer copies each ring's committed prefix out in one pass, and that is the end of it. There is no merge. The split between copying and consuming is still the reason a slow consumer never stalls a producer &mdash; producers keep writing while the consumer works on a snapshot &mdash; but the second half of the old pipeline, a k-way merge into one globally timestamp-ordered stream, is gone.</p>
 
-  <p>The merge itself is the textbook k-way merge &mdash; a min-heap over K cursors keyed by timestamp, pop the earliest, advance that cursor, push the new head, O(log K) per event. Nothing here is a linked list. It is a <code>BinaryHeap</code> over a flat <code>Vec</code>, a <code>VecDeque</code> per ring, and slices that are plain arrays; the "Rust hates linked lists" complaint is about pointer-chasing node allocation, and this design does none.</p>
+  <p>It is gone because nothing wanted what it produced, and it cost a great deal. Because a thread always writes the same ring, its events sit at increasing claim numbers in that ring, so reading a ring in claim order yields every thread's events in the order that thread wrote them. That is the only order anything downstream needs: a scope's start precedes its stop, a name's head precedes its continuations, and the viewer's lanes are keyed by <code>(pid, tid, kind, depth)</code>, so a lane holds one thread's events and they arrive already sorted. What the merge added on top was ordering <em>between</em> threads, which no consumer ever asked for.</p>
 
-  <h3>The horizon, and why an idle core nearly broke it</h3>
+  <p>What it cost was a horizon: a single global gate, held at the minimum frontier across every ring, so that nothing could be emitted until every ring had proven it could produce nothing older. That gate turned one stuck producer into everyone's problem. A thread stopped at a breakpoint, or starved of its CPU quota, held down not just its own events but every other thread's, because the horizon is a minimum and any one ring can pin it. Deleting the merge turns that global stall into a local one: a claim nobody has published blocks its own ring and nothing else.</p>
 
-  <p>You cannot emit an event as soon as you see it. A ring you have not looked at yet might hold something older, and once you have emitted a later event you can never insert an earlier one in front of it. The rule is: hold every event until <em>every</em> ring has proven it cannot still produce something older. Call each ring's proof its <strong>frontier</strong>, and the horizon is the minimum across all of them.</p>
+  <h2 id="stall">A stalled ring waits on liveness, not the clock</h2>
 
-  <p>Stated as "wait until every ring has produced something past it", that rule never terminates. Most cores are idle most of the time, and an idle core produces nothing, ever. The first version of this deadlocked on a machine with thirty-two cores and three busy threads.</p>
+  <p>A local stall is still a stall, and it has to end. When the drain reaches a claim that has been handed out but not yet committed, it cannot read past it &mdash; claims are read in order &mdash; so it stops on that ring and waits. The question is how long, and the wrong answer is a timeout.</p>
 
-  <p>The fix keeps the property without inventing an arbitrary window. A ring with nothing in flight <em>cannot</em> produce anything older than the moment you looked at it, because timestamps are read at write time. So its frontier is the drain timestamp, and the window for an idle ring is zero.</p>
+  <p>The first version used one: 250 ms, on the theory that no live producer could take longer to finish a write. That was simply untrue, and every counter-example is more likely while profiling, not less &mdash; a thread stopped at a debugger breakpoint, a cgroup that has spent its CPU quota, a major page fault under memory pressure, a guest descheduled by its hypervisor. Any of them outlasts 250 ms easily, and throwing away the events of a process that is alive and about to publish them is the profiler corrupting its own measurement.</p>
 
-  <figure class="wide">
-    <div class="fig-scroll">
-    <svg viewBox="0 0 720 250" role="img" aria-label="Three rings with events at various timestamps, a horizon line at the slowest frontier, and events beyond it held back.">
-      <g font-size="11" fill="var(--ink-soft)">
-        <text x="8" y="46" font-weight="600" fill="var(--ink)">ring 0</text>
-        <text x="8" y="96" font-weight="600" fill="var(--ink)">ring 1</text>
-        <text x="8" y="146" font-weight="600" fill="var(--ink)">ring 2</text>
-      </g>
-      <line x1="70" y1="40" x2="700" y2="40" stroke="var(--line)"/>
-      <line x1="70" y1="90" x2="700" y2="90" stroke="var(--line)"/>
-      <line x1="70" y1="140" x2="700" y2="140" stroke="var(--line)"/>
+  <p>So the consumer decides by <strong>liveness</strong>, not by the clock. If the producing process is still there, the claim may yet be published however long it has waited, and waiting is the correct thing to do. If the process is gone, nothing it claimed can ever be published, so the claim is written off at once, counted as dropped, and stepped over. That is a question orbit-service can answer &mdash; it already reads <code>/proc</code> for everything else &mdash; and it is why only the producer has to run everywhere, not the consumer.</p>
 
-      <g font-size="10" font-family="var(--mono)">
-        <circle cx="120" cy="40" r="7" fill="var(--accent)"/><text x="120" y="26" text-anchor="middle" fill="var(--muted)">10</text>
-        <circle cx="250" cy="40" r="7" fill="var(--accent)"/><text x="250" y="26" text-anchor="middle" fill="var(--muted)">40</text>
-        <circle cx="470" cy="40" r="7" fill="var(--line-strong)"/><text x="470" y="26" text-anchor="middle" fill="var(--muted)">70</text>
-        <circle cx="600" cy="40" r="7" fill="var(--line-strong)"/><text x="600" y="26" text-anchor="middle" fill="var(--muted)">95</text>
+  <p>A thirty-second backstop remains, but not as a timeout. It exists only to bound the case this design has not thought of &mdash; a recycled pid answering the liveness question wrongly, say. Half a minute is far too long to be a timeout and exactly right for a last resort: it will never fire in normal operation, and it keeps the worst case finite. When it does fire it drops one event and says so, which is a far better failure than a timeline that silently stops.</p>
 
-        <circle cx="175" cy="90" r="7" fill="var(--accent)"/><text x="175" y="76" text-anchor="middle" fill="var(--muted)">20</text>
+  <h2 id="migration">Migration is a non-question</h2>
 
-        <circle cx="215" cy="140" r="7" fill="var(--accent)"/><text x="215" y="126" text-anchor="middle" fill="var(--muted)">30</text>
-        <circle cx="240" cy="140" r="7" fill="var(--accent)"/><text x="240" y="126" text-anchor="middle" fill="var(--muted)">35</text>
-        <rect x="256" y="132" width="18" height="16" fill="var(--hold-wash)" stroke="var(--hold)"/>
-        <text x="300" y="145" font-size="10.5" fill="var(--hold)">producer mid-write</text>
-      </g>
+  <p>Everything above invites the question that broke the earlier design, so it is worth answering plainly: if a thread migrates between entering a scope and leaving it, is the record still valid? Yes, and for the least clever reason available. Starts and stops are matched by <code>(tid, scope_id)</code> &mdash; never by ring, never by adjacency, never by cross-core timestamp order &mdash; and a name reassembles by the same key. Nesting depth is worked out by the reader from the order of a thread's own starts and stops, so a scope that is never stopped costs nothing but itself instead of skewing everything after it. None of it depends on which core anything ran on.</p>
 
-      <line x1="278" y1="12" x2="278" y2="196" stroke="var(--hold)" stroke-width="2" stroke-dasharray="5 4"/>
-      <text x="278" y="212" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--hold)">horizon</text>
-      <text x="278" y="228" text-anchor="middle" font-size="10.5" fill="var(--muted)">= min frontier, set by ring 2</text>
+  <p>Under a per-core ring this took real care, because a start and its stop could land in different rings and the consumer had to knit them back together across the merge. Under a per-thread ring the question barely arises: a start and its stop go to the same ring however many times the scheduler moved the thread, because the ring is chosen by the thread. Migration was a hazard the per-core design had to survive. The per-thread design does not have it.</p>
 
-      <text x="120" y="176" font-size="10.5" fill="var(--accent-deep)">emitted: 10, 20, 30, 35</text>
-      <text x="470" y="176" font-size="10.5" fill="var(--muted)">held: 40, 70, 95 &mdash; ring 2 could still publish something older</text>
-      <text x="640" y="96" font-size="10.5" fill="var(--muted)">idle: frontier = now</text>
-      <text x="640" y="46" font-size="10.5" fill="var(--muted)">idle: frontier = now</text>
-    </svg>
-    </div>
-    <figcaption>Rings 0 and 1 have nothing in flight, so their frontier is the moment of the drain and they hold nobody up. Ring 2 has a producer mid-write, and everything at or after its pending timestamp waits.</figcaption>
-  </figure>
-
-  <h2 id="bug">The bug that a question found</h2>
-
-  <p>Everything above was written, tested and committed. Then came the question: <em>if a thread migrates between entering a scope and leaving it, so the start lands in one ring and the stop in another, is the merge still valid?</em></p>
-
-  <p>The answer is yes, and it is worth saying why, because it is the part of the design that does the most work for the least cleverness. Starts and stops are matched by <code>(tid, scope_id)</code> &mdash; never by ring, never by adjacency, never by cross-core timestamp order. Depth comes from thread-local storage, which follows the thread across cores. The merge keys on timestamp alone and does not know or care which ring an event came from. Migration makes the sharding imperfect, which is a contention problem, not a correctness one.</p>
-
-  <p>But going to check that took me to the frontier calculation, which was wrong.</p>
-
-  <p>Multi-producer rings have a consequence I had written down and not followed through: <strong>claim order is not timestamp order</strong>. Two producers can read the clock in one order and claim slots in the other. Which means a ring can hold a <em>committed</em> event that is newer than a <em>pending</em> one sitting behind it:</p>
-
-  <figure class="wide">
-    <div class="fig-scroll">
-    <svg viewBox="0 0 720 230" role="img" aria-label="Producer A reads the clock at 100 and stalls; producer B reads at 105 and commits into an earlier slot; the consumer wrongly emits 105.">
-      <text x="8" y="26" font-size="11.5" font-weight="600" fill="var(--ink)">producer A</text>
-      <line x1="100" y1="38" x2="700" y2="38" stroke="var(--line-strong)"/>
-      <circle cx="150" cy="38" r="5" fill="var(--accent)"/>
-      <text x="150" y="26" text-anchor="middle" font-size="10.5" fill="var(--accent-deep)">clock &rarr; 100</text>
-      <rect x="165" y="30" width="215" height="16" fill="var(--hold-wash)" stroke="var(--hold)"/>
-      <text x="272" y="42" text-anchor="middle" font-size="10" fill="var(--hold)">descheduled</text>
-      <circle cx="400" cy="38" r="5" fill="var(--warn)"/>
-      <text x="452" y="30" font-size="10.5" fill="var(--warn)">claims slot 1,</text>
-      <text x="452" y="44" font-size="10.5" fill="var(--warn)">stalls again</text>
-
-      <text x="8" y="86" font-size="11.5" font-weight="600" fill="var(--ink)">producer B</text>
-      <line x1="100" y1="98" x2="700" y2="98" stroke="var(--line-strong)"/>
-      <circle cx="230" cy="98" r="5" fill="var(--accent)"/>
-      <text x="230" y="86" text-anchor="middle" font-size="10.5" fill="var(--accent-deep)">clock &rarr; 105</text>
-      <circle cx="300" cy="98" r="5" fill="var(--accent)"/>
-      <text x="330" y="116" font-size="10.5" fill="var(--ink-soft)">claims slot 0, commits</text>
-
-      <rect x="100" y="140" width="270" height="34" fill="var(--surface-2)" stroke="var(--line-strong)"/>
-      <text x="235" y="161" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--ink)">slot 0: committed, ts = 105</text>
-      <rect x="370" y="140" width="270" height="34" fill="var(--hold-wash)" stroke="var(--hold)"/>
-      <text x="505" y="161" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--hold)">slot 1: pending, ts = 100</text>
-
-      <text x="360" y="200" text-anchor="middle" font-size="11" fill="var(--warn)">"last committed timestamp" says the frontier is 105 &mdash; so 105 is emitted,</text>
-      <text x="360" y="216" text-anchor="middle" font-size="11" fill="var(--warn)">and 100 arrives afterwards. Out of order, which is the one forbidden outcome.</text>
-    </svg>
-    </div>
-    <figcaption>Physically realisable, and not rare in principle: it needs only a producer descheduled between reading the clock and claiming a slot.</figcaption>
-  </figure>
-
-  <p>The fix is the second atomic in the slot. A producer announces its timestamp immediately after claiming and before writing the payload, so a consumer that finds a slot in flight has an <em>exact</em> lower bound on what is still coming, and holds the stream just short of it instead of guessing from whatever happens to be committed behind it. That is the <code>pending_ns</code> field in the layout above, and the reason there are two atomics per slot rather than one.</p>
-
-  <p>The cost was one release store: 9.7 ns an event became 10.2. The test builds that interleaving deterministically, and I checked it in both directions &mdash; with the old rule it fails and prints the event it wrongly emitted; with the new one it passes. A test that has only ever been seen to pass is not evidence.</p>
-
-  <p>One residual case is not fixed, and I would rather say so than round it off. If a producer is descheduled inside the two instructions <em>between</em> the claim and the announcement, there is no sound lower bound available, so the stream holds where it is rather than guessing. That is a stall, not a reordering, and it clears on the next pass &mdash; but it is a stall, and pretending the window is zero would be a lie.</p>
+  <p>One thing does follow from sharing, and it is worth stating rather than rounding off. Within a single ring, claims from different threads are <em>not</em> in timestamp order: two producers can read the clock in one order and claim slots in the other. That would matter if anything needed a ring's events sorted by time, but nothing does &mdash; each thread's events are read in its own write order and handed to its own lane, and the interleaving of different threads inside one ring is invisible once they are split apart by <code>tid</code>. The old merge, and the second slot atomic that fed it a lower bound, existed to paper over exactly this seam. Nobody was looking at the seam.</p>
 
   <h2 id="clock">Why not the TSC</h2>
 
-  <p>A timestamp counter read is faster than <code>clock_gettime</code>, and at ten nanoseconds an event the clock is a meaningful share of the cost. It is still the wrong choice here, and not for the usual reasons about invariant TSC or cross-socket skew.</p>
+  <p>A timestamp counter read is faster than <code>clock_gettime</code>, and at more than nine nanoseconds an event the clock is over half the cost. Treating it as a clock of its own is still the wrong choice, and not for the usual reasons about invariant TSC or cross-socket skew.</p>
 
-  <p>Manual scopes have to appear on the same timeline as scheduling slices, thread states and sampled callstacks, all of which arrive from <code>perf</code> stamped with <code>CLOCK_MONOTONIC</code>. Two clocks means two timelines that cannot be interleaved, and a scope that cannot be lined up against the context switch that interrupted it has lost most of its value. The vDSO makes <code>clock_gettime</code> a function call rather than a syscall, which is what makes this affordable at all.</p>
+  <p>Manual scopes have to appear on the same timeline as scheduling slices, thread states and sampled callstacks, all of which arrive from <code>perf</code> stamped with <code>CLOCK_MONOTONIC</code>. Two clocks means two timelines that cannot be interleaved, and a scope that cannot be lined up against the context switch that interrupted it has lost most of its value. The vDSO makes <code>clock_gettime</code> a function call rather than a syscall, which is what makes it affordable at all. This is why the <code>rdtscp</code> idea above is a conversion, not a substitution: read the counter directly, but turn it into <code>CLOCK_MONOTONIC</code> with the calibration the kernel already publishes, so the timeline stays one timeline and only the vDSO's generality is shed.</p>
 
   <p>This is also the shape of a bug found earlier in this port, in a different module: a timestamp taken from a clock that counted from its own first call rather than absolute <code>CLOCK_MONOTONIC</code>. Everything downstream looked several decades out. Clocks are worth being pedantic about.</p>
 
   <h2 id="untrusted">The reader assumes the writer is hostile</h2>
 
-  <p>The segment is written by another process that may be buggy, mid-crash, or simply a different build. So the reader maps it <strong>read-only</strong> &mdash; a consumer must not be able to corrupt the process it is observing &mdash; and validates every field of the header against the mapped length before reading a single event: magic, version, record size, ring count in range, slot count a power of two, and the described layout actually fitting in the file.</p>
+  <p>The segment is written by another process that may be buggy, mid-crash, or simply a different build. So the reader maps its rings <strong>read-only</strong> &mdash; a consumer must not be able to corrupt the process it is observing, and only the one control page that carries the capture flag is mapped writable &mdash; and validates every field of the header against the mapped length before reading a single event: magic, version, record size, ring count in range, slot count a power of two, and the described layout actually fitting in the file.</p>
 
   <p>The magic is stored <em>last</em>, with release ordering, so a reader that opens the segment while the writer is still initialising it sees "not initialised" and retries rather than mapping garbage at plausible-looking dimensions. Overflow is handled the same way: if a producer laps the consumer, the drain detects it from the sequence stamps, skips to the oldest slot still resident, and reports how many events were lost. Losing events under sustained overload is correct behaviour for a design whose first rule is that producers never wait. Lying about it would not be.</p>
 
-  <h2 id="left">What is not built yet</h2>
+  <h2 id="left">What this feeds</h2>
+
+  <p>When the earlier version of this post was written none of this was reachable from an instrumented program. Most of the list it ended on is now built, and built on top of the write path rather than tangled into it.</p>
 
   <ul>
-    <li><strong>The C API.</strong> None of this is reachable from an instrumented program yet. That is the <code>ORBIT_SCOPE</code> macro, the interned name table, and the thread-local depth counter and scope-id counter.</li>
-    <li><strong>A second process.</strong> The shared-memory path is exercised by a writer and a reader in one process. Two processes is the next test, and the one that would catch a layout that only agrees with itself.</li>
-    <li><strong>Service integration.</strong> Merged events need to become <code>API_SCOPE</code> events on the timeline, which is a small piece of work once the stream exists.</li>
-    <li><strong>Nesting reconstruction.</strong> The design is settled &mdash; a map from <code>(tid, scope_id)</code> to the open start &mdash; but it is not written.</li>
+    <li><strong>The instrumentation API.</strong> <code>ORBIT_SCOPE</code> and its siblings are real, in <code>orbit-api</code> behind <code>include/orbit.h</code>: a handful of functions exported with a C ABI for C, C++ and Python, and offered natively for Rust. Each caches the thread id once &mdash; <code>gettid</code> is a 60 ns syscall that would otherwise dwarf the scope it stamps &mdash; and does nothing else the ring does not.</li>
+    <li><strong>Interning.</strong> Names arrive inline and are interned on the consumer, exactly where the write path pushed the work. Nothing on the hot path registers anything.</li>
+    <li><strong>Nesting.</strong> Depth is not stamped at all; the reader reconstructs it from the order of a thread's starts and stops, so an unmatched start skews nothing after it.</li>
+    <li><strong>Service integration.</strong> The events reach <code>orbit-service</code>, which interns the names and turns them into scopes on the timeline.</li>
+    <li><strong>Still open: cross-process throughput.</strong> The crate's own tests exercise the shared-memory path with a writer and a reader in one process. A second process mapping the same segment under sustained load is the measurement not yet taken.</li>
   </ul>
 
-  <p>The numbers in this post are in <code>docs/blog/metrics/scope-rings.txt</code>, and the twenty-five tests are in <code>rust/crates/orbit-scope-ring</code>.</p>
+  <p>The numbers in this post are in <code>docs/blog/metrics/scope-rings.txt</code>; the forty-nine tests are in <code>rust/crates/orbit-scope-ring</code>, and the cost figures come from the two benchmarks in its <code>tests/cost.rs</code>.</p>
 
 </article>
 

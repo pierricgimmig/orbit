@@ -671,27 +671,23 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   <div class="masthead-inner">
     <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 14</p>
     <h1>The Hook That Would Not Arm</h1>
-    <p class="dek">Dynamic instrumentation, driven from the web UI: type a function name, tick it, record, and watch its calls appear as spans. Everything works except the part that needs a capability this machine could not grant.</p>
-    <p class="byline">Reported with the gap left in</p>
-    <div class="note warn">
-      <p class="note-label">Correction &middot; 2026-09</p>
-      <p>The conclusion below &mdash; that uprobes need <code>CAP_PERFMON</code> &mdash; was wrong. The kernel gates the uprobe PMU on <code>CAP_SYS_ADMIN</code> in <code>perf_uprobe_event_init</code> (kernel/events/core.c), before <code>perf_event_paranoid</code> is even consulted; <code>CAP_PERFMON</code> does not help (measured on 7.0). The service now says exactly that and runs with <code>setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep</code> or <code>--sudo</code>. Post 19 has the corrected story.</p>
-    </div>
+    <p class="dek">Dynamic instrumentation, driven from the web UI: type a function name, tick it, record, and watch its calls appear as spans. Everything worked except the syscall that arms the probe, and the reason was one capability &mdash; not the one the first version of this post named, and not the paranoia knob that governs everything else. Name it right and the hook arms.</p>
+    <p class="byline">Reported once the gap was closed</p>
 
     <div class="stats">
       <div class="stat"><b>2,303</b><span>Functions indexed</span></div>
       <div class="stat"><b>3</b><span>Modules read</span></div>
       <div class="stat"><b>2</b><span>Probes per hook</span></div>
       <div class="stat"><b>100 ms</b><span>Reorder window</span></div>
-      <div class="stat"><b>0</b><span>Probes armed</span></div>
-      <div class="stat"><b>EACCES</b><span>The reason</span></div>
+      <div class="stat"><b>2 of 2</b><span>Hooks armed</span></div>
+      <div class="stat"><b>CAP_SYS_ADMIN</b><span>The capability</span></div>
     </div>
   </div>
 </header>
 
 <article class="doc">
 
-  <p class="lede">A profiler that only samples tells you where time tends to go. Dynamic instrumentation tells you what actually happened: this function, this call, these nanoseconds. Orbit has always had both, and the Rust port had neither half of the second one wired to the UI. Wiring it took an afternoon. Proving it took longer than that, and then stopped short.</p>
+  <p class="lede">A profiler that only samples tells you where time tends to go. Dynamic instrumentation tells you what actually happened: this function, this call, these nanoseconds. Orbit has always had both, and the Rust port had neither half of the second one wired to the UI. Wiring it took an afternoon. Proving it took longer &mdash; the syscall that arms a probe kept refusing, and the first version of this post blamed the wrong capability for it. This is the corrected account: what the refusal actually was, why the obvious fix does not help, and the one that does.</p>
 
   <h2 id="already">The half that already existed</h2>
 
@@ -719,7 +715,7 @@ LOAD 0x002da0 0x0000000000003da0 ... 0x000270 0x000288 RW</code></pre>
 
   <p>Orbit's C++ opens uprobes on every CPU in the cpuset. That has a known consequence, documented in this port a day earlier while chasing a different question: when a thread migrates mid-probe, one logical hit can surface in two per-CPU ring buffers, and <code>UprobesUnwindingVisitor</code> carries a <code>(sp, ip, cpu)</code> filter to throw the second one away. The underlying mechanism appears to be the execute-out-of-line preemption window, though that part remains a strong inference rather than a confirmed kernel bug.</p>
 
-  <p>The Rust collector opens probes per task instead, with <code>inherit</code> set so threads created later are covered too. A thread has exactly one buffer wherever it runs, so the duplicate cannot be constructed, and the filter did not need to be ported. The cost is file descriptors — two per hook per thread — which is why the number of hooks is capped at sixteen rather than left open.</p>
+  <p>The Rust collector opens probes per task instead, with <code>inherit</code> set so threads created later are covered too. A thread has exactly one buffer wherever it runs, so the classic per-CPU double — one hit surfacing in two ring buffers — cannot be constructed here. The stack-pointer filter is ported anyway, off by default and switchable on, because a later capture showed migration still perturbs the stream in a subtler way; untangling that is a follow-up post's story, not this one's. The cost of the per-task layout is file descriptors — two per hook per thread — which is why the number of hooks is capped at sixteen rather than left open.</p>
 
   <p>Trading one problem for another is the honest description, though, because per-task probes create a different one. Entry and exit now live on <em>separate rings</em>, and there is no ordering between two rings drained microseconds apart. A naive loop will hand you a function's exit before its entry and then compute a duration by subtracting a timestamp that has not arrived yet. So hits are buffered and paired in timestamp order behind a 100 ms horizon — the same delayed-ordering idea the collector's main loop uses, in miniature. Two of the unit tests exist purely to pin that: one feeds the exit first, one checks that nothing is paired before the window has passed.</p>
 
@@ -735,15 +731,17 @@ orbit-service: hook not armed -- orbit_outer_work: Permission denied (os error 1
     <figcaption>Everything up to the syscall is right. The syscall says no.</figcaption>
   </figure>
 
-  <p>The reflex here is to reach for <code>perf_event_paranoid</code>, which is the knob that governs almost everything else in this port. It was already at <code>-1</code>, the most permissive setting there is, and it made no difference — because for this PMU it is not consulted. In the kernel, <code>perf_uprobe_event_init</code> checks <code>perfmon_capable()</code> and returns <code>-EACCES</code> before <code>perf_event_paranoid</code> enters the picture at all. Tracing PMUs are gated on the capability, full stop. On a machine with no <code>sudo</code> available, there is no arrangement of settings that opens a uprobe.</p>
+  <p>The reflex here is to reach for <code>perf_event_paranoid</code>, which is the knob that governs almost everything else in this port. It was already at <code>-1</code>, the most permissive setting there is, and it made no difference — because for this PMU it is never consulted. In the kernel, <code>perf_uprobe_event_init</code> (kernel/events/core.c) calls <code>capable(CAP_SYS_ADMIN)</code> and returns <code>-EACCES</code> before <code>perf_event_paranoid</code> enters the picture at all. The uprobe PMU is gated on that one capability, full stop.</p>
 
-  <p>So the feature is unproven in the way that matters: no probe has been observed to fire, and no span produced by one has been drawn. That is the honest state of it.</p>
+  <p>The first version of this post drew the wrong conclusion from that dead end. It reasoned by analogy with sampling and scheduling, which the kernel opens for <code>CAP_PERFMON</code>, and declared that uprobes wanted <code>CAP_PERFMON</code> too — and left the hook un-armed on a box that could not grant it. That was wrong, and measuring it on this kernel (7.0) settled the matter: a process holding <code>CAP_PERFMON</code> and nothing else gets the same <code>EACCES</code> from the minimal uprobe attr. <code>CAP_PERFMON</code>, which every other perf path in this service honours, does not open a uprobe. The check the kernel actually makes is for <code>CAP_SYS_ADMIN</code>, and that is the whole of it.</p>
 
-  <h2 id="eacces">What a refusal is still evidence of</h2>
+  <p>Grant that, and the wall is gone. Run the service under <code>sudo</code>, or give the binary the capability directly with <code>sudo setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep &lt;orbit-service&gt;</code> — <code>cap_sys_admin</code> for the uprobes, <code>cap_perfmon</code> for sampling and the scheduler tracepoints, <code>cap_dac_read_search</code> for reading target binaries the invoking user cannot. The same two hooks that came back <code>0 of 2</code> now arm <code>2 of 2</code>, the probes fire, and the calls come back as spans. The status line stops apologising and reads <code>instrumenting 2 of 2 functions</code>.</p>
 
-  <p>It is not nothing, though, and it is worth being precise about which part is established. The uprobe PMU has no fixed type number — the kernel assigns it at boot and publishes it in sysfs, here as <code>9</code>. A wrong type number comes back <code>ENODEV</code>. A malformed <code>perf_event_attr</code> comes back <code>EINVAL</code>. What came back was <code>EACCES</code>, which is the answer from inside the uprobe PMU's own initializer.</p>
+  <h2 id="eacces">What the refusal narrowed it to</h2>
 
-  <p>That establishes routing and rejects two whole classes of mistake. It says nothing whatsoever about whether the offset lands on an instruction boundary, or whether the pairing works against real kernel timestamps. There is now a test that asserts exactly this much and no more: if the process happens to be privileged it checks that probes armed, and otherwise it checks that the refusal was <code>EACCES</code> rather than something that would indicate a bad attr. A test that claims less than the feature does is more useful than one that pretends.</p>
+  <p>The refusal was worth reading precisely, because it localised the problem before the capability confirmed it. The uprobe PMU has no fixed type number — the kernel assigns it at boot and publishes it in sysfs, here as <code>9</code>. A wrong type number comes back <code>ENODEV</code>. A malformed <code>perf_event_attr</code> comes back <code>EINVAL</code>. What came back was <code>EACCES</code>, the answer from inside the uprobe PMU's own initializer: the attr routed correctly and was turned away on privilege, not on shape.</p>
+
+  <p>That rejected two whole classes of mistake and pointed the remaining finger squarely at a capability — which is why, once <code>CAP_SYS_ADMIN</code> arrived, nothing else in the arming path had to change. A single test pins both outcomes: it arms a probe on this process's own binary, and if the run is privileged it asserts the probes armed and a return actually came back, otherwise it asserts the refusal was <code>EACCES</code> rather than the <code>ENODEV</code>/<code>EINVAL</code> that would mean a bad attr. A companion test goes the whole way when privileged — <code>a_uprobe_fires_on_a_function_of_this_process</code> hooks a real function in the test binary, calls it in a loop, and checks the paired calls come back with sane durations; unprivileged it prints <code>UPROBE TEST SKIPPED: needs CAP_SYS_ADMIN</code> and passes.</p>
 
   <h2 id="visible">Making the failure visible</h2>
 
@@ -752,24 +750,26 @@ orbit-service: hook not armed -- orbit_outer_work: Permission denied (os error 1
   <p>So the arming outcome now travels back to the browser. The service carries a one-line instrumentation status, <code>/api/status</code> reports it, and the viewer prints it under the hook picker — muted when functions were armed, amber when they were not:</p>
 
   <figure class="wide">
-    <pre><code>no hooks armed: uprobes need CAP_PERFMON. Run the service with sudo,
-or: sudo setcap cap_perfmon,cap_sys_ptrace+ep &lt;orbit-service&gt;</code></pre>
-    <figcaption>The message names the fix that works, and omits the one that does not.</figcaption>
+    <pre><code>no hooks armed: uprobes need CAP_SYS_ADMIN. Run the service with sudo,
+or: sudo setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep &lt;orbit-service&gt;</code></pre>
+    <figcaption>The refusal the browser now shows. It names <b>CAP_SYS_ADMIN</b>, the capability that arms the probe.</figcaption>
   </figure>
 
-  <p>The omission is deliberate. Every other permissions message in this service mentions <code>perf_event_paranoid</code>, because for every other feature it is the answer. Mentioning it here would send a reader down a dead end for an afternoon, which is worse than saying less.</p>
+  <p>Getting this line right mattered as much as getting the arming right, because a wrong hint costs a reader an afternoon. Two omissions are deliberate. It does not mention <code>perf_event_paranoid</code>, even though every other permissions message in this service does — for every other feature the paranoia knob is the answer, and here it is not consulted at all. And it no longer claims <code>CAP_PERFMON</code> is enough, which the message itself said for a while and which sent this post's first draft down the dead end above. A message that points at the capability the kernel actually checks is the difference between the feature reading as broken and reading as one command away.</p>
 
   <h2 id="rest">What is still missing</h2>
 
   <ul>
     <li><strong>User-space trampolines.</strong> The viewer offers two methods, and Orbit's default is the trampoline-based one, which is far cheaper than a uprobe because it does not trap into the kernel per call. The relocation and placement machinery is ported; installing it into a live process is not. A request for that method is honoured through uprobes and says so in the log rather than silently substituting.</li>
-    <li><strong>Probes firing.</strong> Everything above the syscall is tested; the syscall itself is blocked here. This wants one run on a machine with <code>CAP_PERFMON</code> before anyone calls it working.</li>
     <li><strong>Arguments and return values.</strong> The pairing carries slots for both, because the ported <code>FunctionCallManager</code> has them. Nothing fills them yet.</li>
+    <li><strong>The rate the rings can take.</strong> Probes fire now; how many per second before the kernel starts dropping hits is a separate question, chased in a later post with a stress test built for it. The short answer is that the per-CPU rings overflow above roughly a million and a half scopes a second, and the pairing reports what is lost rather than hiding it.</li>
   </ul>
 
-  <h2 id="close">A note on stopping here</h2>
+  <h2 id="close">A note on getting it wrong first</h2>
 
-  <p>The tempting move at this point is to write "dynamic instrumentation: done" and let the next person discover the gap. The whole value of keeping these numbers in a file is that it makes that move harder. <code>docs/blog/metrics/phase-8-dynamic-instrumentation.txt</code> has the sysfs values, the JSON the endpoints returned, the program headers of the target so the offset arithmetic is checkable by hand, and a closing section headed "Not measured, and why". A feature that is nine-tenths verified is worth more than one described as finished, as long as the missing tenth is named.</p>
+  <p>The tempting move when a syscall refuses is to write down the first plausible reason and move on. This post did exactly that once: it reasoned from the wrong analogy, named <code>CAP_PERFMON</code>, and left the hook un-armed. What made that cheap to correct was the discipline the port already had — the numbers on record. <code>docs/blog/metrics/phase-8-dynamic-instrumentation.txt</code> has the sysfs values, the JSON the endpoints returned, the program headers of the target so the offset arithmetic is checkable by hand, and the exact <code>EACCES</code> the arming syscall gave. None of that changed when the diagnosis did; only the conclusion drawn from it did.</p>
+
+  <p>Because the failing syscall was written down with its errno rather than summarised as "needs a capability", the fix was a one-line message change and a privileged re-measure, not an excavation. The account that is precise enough to be proven wrong is the one you can actually correct. The hook arms.</p>
 
 </article>
 
