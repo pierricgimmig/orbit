@@ -281,6 +281,10 @@ pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
     });
     let store = Arc::new(SampleStore::new());
     let pid = args.pid.unwrap_or(0);
+    let capture_start_ns = crate::now_monotonic_ns();
+    let mut scopes = ScopeSource::new(service.clone());
+    scopes.begin_self_capture();
+    let _capture = orbit_api::start("capture");
     capture_loop(
         service.clone(),
         running,
@@ -291,6 +295,8 @@ pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
         true,
         true,
         None,
+        scopes,
+        capture_start_ns,
     );
     let _ = timer.join();
     let (_, events) = service.ring().snapshot();

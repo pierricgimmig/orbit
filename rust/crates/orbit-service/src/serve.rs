@@ -17,7 +17,6 @@
 
 use crate::functions::FunctionIndex;
 use crate::report::{FrameInfo, SampleRange, SampleStore, StoredSample, TreeMode};
-#[cfg(target_os = "linux")]
 use crate::scopes::ScopeSource;
 #[cfg(target_os = "linux")]
 use crate::telemetry::TelemetryHelper;
