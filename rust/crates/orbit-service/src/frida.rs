@@ -33,13 +33,31 @@ impl Engine {
     }
 }
 
+// Remote setup phases are complete async spans on the service's relay thread.
+// Their timestamps use the host-wide scope clock; receipt time is irrelevant.
+// They must not participate in the synchronous capture-loop nesting stack.
+fn record_profile(value: &serde_json::Value) -> bool {
+    let Some(p) = value.get("profile") else { return false };
+    if let (Some(name), Some(start), Some(end)) =
+        (p["name"].as_str(), p["start_ns"].as_u64(), p["end_ns"].as_u64())
+    {
+        if name.starts_with("Frida: ") && name.len() <= 4096 && end >= start {
+            orbit_api::span_async(name, start, end);
+        }
+    }
+    true
+}
+
 struct Helper {
     child: Child,
     input: Option<ChildStdin>,
     replies: Receiver<serde_json::Value>,
+    reader: Option<std::thread::JoinHandle<()>>,
 }
 impl Helper {
     fn launch(mut config: serde_json::Value) -> Result<Self, String> {
+        let _phase = orbit_api::scope("Frida: launch helper");
+        config["self_profile"] = true.into();
         config["agent"] = agent_path()?.into_os_string().to_string_lossy().into_owned().into();
         let helper_path = std::env::var_os("ORBIT_FRIDA_HELPER").map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name("orbit-frida-helper"));
@@ -56,7 +74,7 @@ impl Helper {
         let input = child.stdin.take();
         let stdout = child.stdout.take().unwrap();
         let (send, replies) = mpsc::channel();
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else {
                     break;
@@ -64,6 +82,7 @@ impl Helper {
                 let result = serde_json::from_str(&line).unwrap_or_else(
                     |_| serde_json::json!({"error": "invalid Frida helper response"}),
                 );
+                if record_profile(&result) { continue; }
                 if send.send(result).is_err() {
                     break;
                 }
@@ -73,11 +92,13 @@ impl Helper {
             child,
             input,
             replies,
+            reader: Some(reader),
         };
         writeln!(helper.input.as_mut().unwrap(), "{config}").map_err(|e| e.to_string())?;
         Ok(helper)
     }
     fn response(&self) -> Result<serde_json::Value, String> {
+        let _phase = orbit_api::scope("Frida: wait for agent");
         let value = self
             .replies
             .recv_timeout(Duration::from_secs(30))
@@ -96,6 +117,7 @@ impl Helper {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = self.child.try_wait().map_err(|e| e.to_string())? {
+                if let Some(reader) = self.reader.take() { let _ = reader.join(); }
                 return if status.success() {
                     Ok(())
                 } else {
@@ -131,6 +153,7 @@ pub struct FridaSession {
 }
 impl FridaSession {
     pub fn arm(pid: i32, hooks: &[HookSpec]) -> Result<Self, String> {
+        let _phase = orbit_api::scope("Frida: arm hooks");
         if pid <= 0 || pid as u32 == std::process::id() {
             return Err("Frida requires a target process other than orbit-service".into());
         }
@@ -191,6 +214,7 @@ impl FridaSession {
         self.calls = self.mapping.calls();
     }
     pub fn stop(&mut self) {
+        let _phase = orbit_api::scope("Frida: stop instrumentation");
         self.stopped = true;
         if let Err(e) = self.helper.stop() {
             self.error = Some(e);

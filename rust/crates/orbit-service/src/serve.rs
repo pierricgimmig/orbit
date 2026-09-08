@@ -620,6 +620,8 @@ fn capture_loop(
     show_all_processes: bool,
     uprobe_duplicate_filter: bool,
     mut frida: Option<crate::frida::FridaSession>,
+    mut scopes: ScopeSource,
+    capture_start_ns: u64,
 ) {
     // GPU telemetry rides the same helper-process path the file mode uses:
     // the static service cannot dlopen NVML, so a helper streams pod events
@@ -647,26 +649,8 @@ fn capture_loop(
     // service's own scopes, and every process instrumenting itself. Sampling,
     // unwinding, symbols and hooks all follow a process, so they are skipped.
     let has_target = target_pid > 0;
-    // Anchor the capture's epoch here, before the synchronous setup below
-    // (building the symbolizer, opening the sampling and scheduler rings,
-    // arming uprobes). That setup is why scheduling can take a moment to
-    // appear after Record; marking the start up front makes each phase show as
-    // a scope on the service's own track, inside the capture, instead of being
-    // dropped for starting "before" it. `now_monotonic_ns` (CLOCK_MONOTONIC)
-    // matches the perf and scope-ring clocks.
-    let capture_start_ns = crate::now_monotonic_ns();
+    // The scope reader and epoch were established before Frida attachment.
     service.mark_capture_started(target_pid.max(0) as u32, capture_start_ns);
-    // Manual instrumentation, incl. the service's own: open the service's
-    // segment and set its capturing flag now, before the setup below, so the
-    // setup phases and the whole-capture scope are recorded rather than being
-    // emitted while the segment is still inert. Drained every pass alongside
-    // the perf rings (and other processes' segments, opened lazily).
-    let mut scopes = ScopeSource::new(service.clone());
-    scopes.begin_self_capture();
-    // One scope around the whole capture, left open on purpose: `scopes.finish`
-    // closes it at the stop timestamp, so it spans Record -> Stop and every
-    // per-pass scope nests under it.
-    let _capture = orbit_api::start("capture");
     // Do not block the capture on symbol loading: start with an empty
     // symbolizer (every address resolves to its hex form) and build the real
     // one on a background thread. Scheduling, sampling and thread states stream
@@ -1704,6 +1688,13 @@ pub fn run_on(
                 return Err("No selected functions could be resolved".into());
             }
             hooks.truncate(MAX_HOOKS);
+            // Include synchronous injection and trampoline installation in
+            // self-profiling. Transfer this reader into the worker so its
+            // cursors and capture flag have one owner, including error paths.
+            let capture_start_ns = crate::now_monotonic_ns();
+            let mut scopes = ScopeSource::new(start_service.clone());
+            scopes.begin_self_capture();
+            let _capture = orbit_api::start("capture");
             let frida = if !hooks.is_empty() && engine == crate::frida::Engine::Frida {
                 Some(crate::frida::FridaSession::arm(pid, &hooks).map_err(|error| {
                     start_running.store(false, Ordering::SeqCst);
@@ -1739,6 +1730,8 @@ pub fn run_on(
                         show_all_processes,
                         uprobe_duplicate_filter,
                         frida,
+                        scopes,
+                        capture_start_ns,
                     )
                 })
                 .map_err(|error| {
