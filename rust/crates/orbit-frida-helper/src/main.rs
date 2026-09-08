@@ -128,14 +128,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Only accept is polled. The connected control stream is blocking on both.
     stream.set_nonblocking(false)?;
     stream.write_all(config.as_bytes())?;
-    let mut stop = stream.try_clone()?;
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        let _ = std::io::stdin().lock().read_line(&mut line);
-        // Both an explicit stop and service EOF close the agent's control path.
-        let _ = stop.write_all(b"stop\n");
-        let _ = stop.shutdown(std::net::Shutdown::Write);
-    });
+    // A symbols request is one-shot. Sending an EOF-triggered Stop would
+    // leave unread bytes when the agent closes, resetting a valid reply.
+    if value["command"] != "symbols" {
+        let mut stop = stream.try_clone()?;
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            let _ = std::io::stdin().lock().read_line(&mut line);
+            // Both an explicit stop and service EOF close the agent's control path.
+            let _ = stop.write_all(b"stop\n");
+            let _ = stop.shutdown(std::net::Shutdown::Write);
+        });
+    }
     let mut output = std::io::stdout().lock();
     for line in BufReader::new(stream).lines() {
         writeln!(output, "{}", line?)?;

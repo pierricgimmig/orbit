@@ -110,6 +110,16 @@ def main():
                 body = {'pid':pid, 'instrumented_functions':[{'function_id': f['function_id']} for f in hooks]}
                 if iteration or args.engine != 'frida': body['dynamic_instrumentation_method'] = args.engine
                 request('/api/capture/start', body)
+                if args.engine == 'frida' and iteration == 0:
+                    # Read-only discovery must not steal or reject the active
+                    # capture's controller lease.
+                    probe = subprocess.run([args.helper], input=json.dumps({
+                        'pid':pid, 'agent':str(Path(args.agent).resolve()), 'command':'symbols'
+                    }) + '\n', text=True, capture_output=True, timeout=30)
+                    assert probe.returncode == 0, (probe.stdout[:2048], probe.stderr[:2048])
+                    reply = json.loads(probe.stdout.splitlines()[0])
+                    discovered = {s['name'].lstrip('_') for s in reply.get('symbols', [])}
+                    assert set(wanted) <= discovered, (set(wanted) - discovered, len(discovered))
                 if pending_return:
                     # The old leave listener must survive detach and reject its
                     # old generation after a new capture has opened.

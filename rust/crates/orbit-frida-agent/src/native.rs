@@ -107,9 +107,6 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let config: Value = serde_json::from_str(&line)?;
-    let _control = CONTROL
-        .try_lock()
-        .map_err(|_| "another native controller is active")?;
     unsafe {
         orbit_gum_init();
         orbit_gum_ignore(1);
@@ -123,6 +120,11 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
         writeln!(stream, "{}", json!({"symbols":symbols}))?;
         return Ok(());
     }
+    // Read-only symbol discovery may run during capture; only another writer
+    // competes for the capture controller lease.
+    let _control = CONTROL
+        .try_lock()
+        .map_err(|_| "another native controller is active")?;
     let path = CString::new(config["transport"].as_str().ok_or("missing transport")?)?;
     let generation = unsafe { super::orbit_frida_open(path.as_ptr(), None, None, None) };
     if generation == 0 {
@@ -182,7 +184,10 @@ pub unsafe extern "C" fn orbit_frida_main(
     _: *mut c_void,
 ) {
     *unload_policy = 1;
-    if super::FORK_CHILD.load(std::sync::atomic::Ordering::Relaxed) {
+    if super::FORK_CHILD.load(std::sync::atomic::Ordering::Relaxed)
+        || *super::ATFORK.get_or_init(|| libc::pthread_atfork(None, None, Some(super::after_fork)))
+            != 0
+    {
         return;
     }
     let Ok(path) = CStr::from_ptr(data).to_str() else {
