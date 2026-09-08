@@ -12,6 +12,7 @@ license = "BSD-2-Clause"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+serde_json = { version = "1", optional = true }
 libc = "0.2"
 orbit-api = { path = "../orbit-api" }
 orbit-frida-transport = { path = "../orbit-frida-transport" }
@@ -19,3 +20,9 @@ orbit-scope-ring = { path = "../orbit-scope-ring" }
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+native = ["dep:serde_json"]
+
+[build-dependencies]
+cc = "1"

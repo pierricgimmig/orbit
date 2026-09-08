@@ -25,6 +25,6 @@ file "$BIN"
 echo -n "ldd:  "; ldd "$BIN" 2>&1 || true
 echo "size: $(du -h "$BIN" | cut -f1)"
 
-# The Frida engine needs a native glibc agent and a Python/Frida control helper.
+# The Frida engine needs a native glibc agent and a native Frida Core control helper.
 # The service executable itself remains fully static.
 ../tools/frida/build.sh "$PWD/$(dirname "$BIN")" --agent-only

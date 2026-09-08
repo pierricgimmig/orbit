@@ -1,51 +1,17 @@
 {
-  "frida": "17.17.0",
-  "system": "Linux",
-  "machine": "x86_64",
-  "kernel": "7.0.0-30-generic",
-  "compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
-  "note": "One isolated invocation per case; not a benchmark or an Orbit E2E test.",
+  "frida": "17.17.0", "system": "Linux", "machine": "x86_64",
+  "note": "Native Gum C listeners; one post-attach invocation per disposable child. Not an Orbit E2E test or benchmark.",
   "cases": [
-    {
-      "case": "rip_load",
-      "baseline": 42,
-      "patch": {
-        "before": "8b 05 3a 2d 00 00 c3 66 0f 1f 84 00 00 00 00 00",
-        "after": "e9 33 3d 00 00 90 c3 66 0f 1f 84 00 00 00 00 00"
-      },
-      "attach": "accepted",
-      "instrumented": 42,
-      "callbacks": {
-        "enter": 1,
-        "leave": 1
-      },
-      "exit_code": 0
-    },
-    {
-      "case": "interior_backedge",
-      "baseline": 3,
-      "patch": {
-        "before": "31 c0 ff c0 39 f8 7c fa c3 0f 1f 80 00 00 00 00",
-        "after": "e9 23 3d 00 00 90 7c fa c3 0f 1f 80 00 00 00 00"
-      },
-      "attach": "accepted",
-      "exit_code": -11,
-      "signal": "SIGSEGV"
-    },
-    {
-      "case": "entry_backedge",
-      "baseline": 0,
-      "patch": {
-        "before": "90 90 90 90 90 83 ef 01 7f f6 89 f8 c3 00 00 00",
-        "after": "e9 13 3d 00 00 83 ef 01 7f f6 89 f8 c3 00 00 00"
-      },
-      "attach": "accepted",
-      "instrumented": 0,
-      "callbacks": {
-        "enter": 3,
-        "leave": 3
-      },
-      "exit_code": 0
-    }
+    {"case":"rip_load", "baseline":42, "attach_status":0,
+     "before":"8b 05 ea 98 7a 00 c3 66 0f 1f 84 00 00 00 00 00", "after":"e9 e3 d8 7a 00 90 c3 66 0f 1f 84 00 00 00 00 00",
+     "instrumented":42, "callbacks":{"enter":1,"leave":1},
+     "exit_code":0},
+    {"case":"interior_backedge", "baseline":3, "attach_status":0,
+     "before":"31 c0 ff c0 39 f8 7c fa c3 0f 1f 80 00 00 00 00", "after":"e9 d3 d8 7a 00 90 7c fa c3 0f 1f 80 00 00 00 00",
+     "signal":11},
+    {"case":"entry_backedge", "baseline":0, "attach_status":0,
+     "before":"90 90 90 90 90 83 ef 01 7f f6 89 f8 c3 83 c8 ff", "after":"e9 c3 d8 7a 00 83 ef 01 7f f6 89 f8 c3 83 c8 ff",
+     "instrumented":0, "callbacks":{"enter":3,"leave":3},
+     "exit_code":0}
   ]
 }

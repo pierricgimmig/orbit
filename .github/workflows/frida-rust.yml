@@ -25,16 +25,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Fetch pinned native devkits
+        run: ./tools/frida/devkits.sh
       - name: Test native transport and agent lifecycle
-        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-frida-transport
+        run: cargo +1.88.0 test --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-frida-transport --features orbit-frida-agent/native
+      - name: Test native controller
+        run: cargo +1.88.0 test --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
       - name: Build service and native libraries
         run: |
           cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-service/Cargo.toml
-          cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-api
+          cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent -p orbit-api --features orbit-frida-agent/native
+          cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
       - name: Build target and install test runtime
         run: |
           python3 -m venv /tmp/orbit-frida-test
-          /tmp/orbit-frida-test/bin/pip install --only-binary=:all: frida==17.17.0 pyarrow
+          /tmp/orbit-frida-test/bin/pip install --only-binary=:all: pyarrow
           if [ "$(uname -s)" = Darwin ]; then
             cc -O1 -g -fno-omit-frame-pointer -I rust/crates/orbit-api/include tools/e2e/frida_target.c rust/target/debug/liborbit_api.a -lSystem -liconv -o /tmp/orbit-frida-target
           else
@@ -46,20 +51,29 @@ jobs:
           # Hosted Macs have no interactive authorization dialog. Run both
           # our own target and collector as root for this attachment test.
           if [ "$(uname -s)" = Darwin ]; then prefix=(sudo); else prefix=(); fi
-          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+      - name: Verify detach and controller death with a call in flight
+        run: |
+          if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
+          for mode in --inflight --controller-death; do
+            "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target "$mode"
+          done
       - name: Verify injected API in a target without manual instrumentation
         run: |
           cc -O1 -g -DORBIT_NO_API tools/e2e/frida_target.c -lpthread -o /tmp/orbit-frida-plain-target
           if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
-          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-plain-target --no-manual
+          "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-plain-target --no-manual
       - name: Verify shared API discovery without API symbols
         if: runner.os == 'Linux'
         run: |
           objcopy --strip-symbol=orbit_init --strip-symbol=orbit_start_dynamic --strip-symbol=orbit_stop --strip-symbol=orbit_start /tmp/orbit-frida-target /tmp/orbit-frida-hidden-api-target
-          /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-hidden-api-target
+          /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-hidden-api-target
       - name: Verify startup failure does not block manual capture
         if: runner.os == 'Linux'
-        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent
+        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent
+      - name: Verify missing native helper does not block manual capture
+        if: runner.os == 'Linux'
+        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-helper
       - name: Verify retained Linux uprobe backend
         if: runner.os == 'Linux'
-        run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes
+        run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes

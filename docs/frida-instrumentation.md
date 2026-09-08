@@ -8,37 +8,42 @@ reported at Start, without silently switching engines.
 
 ## Build and run
 
-On Linux, install Rust 1.88.0 and Python 3 with venv support, then:
+On Linux, install Rust 1.88.0, a C compiler, curl and tar/xz, then:
 
 ```sh
 ./tools/frida/build.sh
 ./dist/frida/orbit-service --host 127.0.0.1 --serve 3000
 ```
 
-On macOS, `./build-service-macos.sh` packages the Frida agent and Python runtime
-alongside the service and manual API. `--universal` builds both native agent
-architectures, as well as the service and manual API. The Python environment is
-for the machine where the build runs; recreate it on a different machine with
-`./tools/frida/build.sh <package-directory> --runtime-only`.
+The package contains a native `orbit-frida-helper` linked to Frida Core and
+`liborbit_frida_agent.so` linked to Gum. No Python environment or JavaScript
+agent is needed. `tools/frida/devkits.sh` downloads Frida 17.17.0 native devkits,
+verifies their pinned SHA-256 checksums, and caches them under
+`rust/target/frida-devkits`. Set `ORBIT_FRIDA_DEVKIT_ROOT` to use another cache.
+Builds thereafter can use the cached devkits without downloading them again.
+
+On macOS, `./build-service-macos.sh` packages the helper and agent alongside the
+service and manual SDK. `--universal` builds both architectures for all native
+components. The agent must contain the target process's architecture.
 
 For a development build:
 
 ```sh
-cargo +1.88.0 build --manifest-path rust/Cargo.toml -p orbit-frida-agent
-cargo +1.88.0 build --manifest-path rust/crates/orbit-service/Cargo.toml
-python3 -m venv /tmp/orbit-frida
-/tmp/orbit-frida/bin/pip install frida==17.17.0
-ORBIT_FRIDA_PYTHON=/tmp/orbit-frida/bin/python \
+./tools/frida/devkits.sh
+cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-frida-helper/Cargo.toml
+cargo +1.88.0 build --locked --manifest-path rust/Cargo.toml -p orbit-frida-agent --features native
+cargo +1.88.0 build --locked --manifest-path rust/crates/orbit-service/Cargo.toml
+ORBIT_FRIDA_HELPER="$PWD/rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper" \
 ORBIT_FRIDA_AGENT="$PWD/rust/target/debug/liborbit_frida_agent.so" \
   rust/crates/orbit-service/target/debug/orbit-service
 ```
 
-Use `.dylib` on macOS. The service otherwise finds the agent and
-`frida-python/bin/python` beside its executable; it falls back to `python3` for
-the helper. Ordinary manual captures need neither Frida nor Python. Building the
-service with Cargo alone does not install the Frida runtime. The musl build
-script adds a native glibc agent and Python runtime; the service executable
-remains static, but Frida capture has these additional runtime dependencies.
+Use `.dylib` on macOS. The service otherwise finds both components beside its
+executable. A Cargo-only service build does not build the optional injector.
+The agent's default Cargo feature set keeps lifecycle unit tests independent
+of the devkits; a deployable agent requires `--features native`. Ordinary manual
+captures need neither native Frida component. The musl service remains static;
+its Frida helper and agent use the host's native libc.
 
 Select a running process, load its functions, select functions, and record.
 Linux uses the existing ELF/detached-debug-file index. macOS uses Frida to
@@ -49,12 +54,23 @@ still separate future work.
 
 ## Recording and lifecycle
 
-The service launches a Python helper using Frida Core 17.17.0 to attach to the
-process. A small Gum CModule supplies native Interceptor entry/exit callbacks;
-these call a small Rust lifecycle guard, which invokes `orbit_start_dynamic`
-and `orbit_stop` on the **same Orbit API instance** used by the application's
-manual scopes. JavaScript and Python only handle configuration, attachment and
-detach. There is no per-event script callback, JSON serialization or pipe write.
+The Rust helper calls Frida Core's native injector to load the agent library
+and invoke `orbit_frida_main`. On Darwin, Core first injects a tiny C bootstrap
+embedded in the helper; it calls `dlopen` on the real agent so dyld owns its
+dependencies and native thread-local storage on every target thread. The
+bootstrap can unload after control ends, while the agent stays loaded.
+The helper does not create a Frida script/session or load
+a GumJS agent. Small C ABI adapters call Core and Gum directly; control and
+capture state remain in Rust. Gum listeners call `orbit_start_dynamic` and
+`orbit_stop` through the **same Orbit API instance** used by manual scopes.
+Per-invocation Gum storage holds the scope handle and capture generation.
+
+The helper and agent exchange startup/stop messages over an AF_UNIX socket;
+the helper authenticates the target's kernel-reported peer PID. Scope events
+never use this socket. EOF on helper death detaches the listeners. Agent writes
+suppress SIGPIPE locally, preserving the target's process-wide signal policy.
+Gum keeps outstanding invocation data alive after detach, and the agent remains
+resident so late returns cannot jump into unloaded code.
 
 `orbit_init` publishes a versioned, process-local API descriptor in reserved
 scope-header bytes. The injected agent uses that descriptor even when the SDK
@@ -81,7 +97,7 @@ The capture-private file now holds only an attachment lease and a completed-call
 counter, not a second stream of events. A read lock keeps callbacks from racing
 capture teardown; a generation prevents late returns from entering a subsequent
 capture. Ring overflow is reported through the ordinary scope-source loss
-counter. Stop detaches Frida before the shared source's final drain. Scopes still
+counter. Stop closes the capture generation and detaches Gum before the shared source's final drain. Scopes still
 open at Stop are clipped to capture end, like manual scopes. Exceptions/longjmp
 that bypass return can leave scopes open; the API does not infer unwinding.
 
@@ -115,17 +131,18 @@ trampolines is certified by these tests. Existing Linux sampling continues, but
 Gum's return interception can affect unwinding; no trampoline-aware callstack
 repair is implemented here. CPU sampling on macOS remains future work.
 
-Frida Core is supplied by its upstream wheel, with its upstream license files.
-Core and Gum have different licenses; preserve those notices when distributing
-the Python runtime. Orbit's new agent/transport code uses the repository's BSD
-license.
+The pinned upstream Core and Gum license texts are shipped under `licenses/`
+with the native package. Orbit's adapter, helper and transport use this
+repository's BSD license. Devkit archives remain build inputs, not runtime files.
 
 ## Validation
 
 `tools/e2e/frida_smoke.py` checks attachment to an already-running C target,
 exact function counts (270 per capture), three worker threads, seven alternating
 manual/dynamic nesting levels, async isolation, source flags, parent containment,
-fork isolation, target survival and repeated capture. Separate runs cover targets
+fork isolation, target survival and repeated capture. `--inflight` stops with a blocked call
+and releases its old return in a new capture; `--controller-death` additionally
+kills the helper to exercise EOF cleanup and SIGPIPE handling. Separate runs cover targets
 without a linked SDK and API discovery with its symbols stripped. It can
 also exercise the retained backend with `--engine kernel_uprobes`.
 
@@ -134,5 +151,5 @@ generations, and metadata round trips through live transport and capture files. 
 
 Upstream references: [Frida modes](https://frida.re/docs/modes/),
 [Gum](https://github.com/frida/frida-gum),
-[JavaScript/CModule API](https://frida.re/docs/javascript-api/),
+[Native C API](https://frida.re/docs/c-api/),
 [Apple hardened runtime](https://developer.apple.com/documentation/xcode/configuring-the-hardened-runtime/).
