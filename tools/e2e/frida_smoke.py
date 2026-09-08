@@ -144,7 +144,9 @@ def main():
                     for name in ('Frida: inject native agent', 'Frida: initialize Gum',
                                  'Frida: connect scope API', 'Frida: resolve executable address',
                                  'Frida: detach trampolines'):
-                        assert any(r['name'] == name and r['duration_ns'] > 0 for r in phases), ('missing self-profile phase', name)
+                        # Cached initialization can finish within a host clock tick
+                        # (notably CLOCK_MONOTONIC on Darwin). Zero is valid.
+                        assert any(r['name'] == name and r['duration_ns'] >= 0 for r in phases), ('missing self-profile phase', name)
                     installs = [r for r in phases if r['name'].startswith('Frida: install trampoline: ')]
                     assert len(installs) == len(wanted), ('missing hook installation timings', installs)
                     assert all(r['duration_ns'] > 0 and not (r['flags'] & 128) for r in installs)
