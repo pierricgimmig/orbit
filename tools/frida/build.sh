@@ -18,6 +18,7 @@ cargo +1.88.0 build --locked --release --manifest-path rust/Cargo.toml -p orbit-
 if [[ $(uname -s) == Darwin ]]; then library=liborbit_frida_agent.dylib; else library=liborbit_frida_agent.so; fi
 cp "rust/target/release/$library" "$output/"
 cp rust/crates/orbit-frida-helper/target/release/orbit-frida-helper "$output/"
+rm -rf "$output/frida-python" # obsolete generated runtime from the scripted integration
 mkdir -p "$output/licenses"
 cp tools/frida/licenses/* "$output/licenses/"
 echo "Native Frida helper and agent ready in $output."

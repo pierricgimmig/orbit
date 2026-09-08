@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--helper', required=True)
     parser.add_argument('--engine', default='frida', choices=['frida', 'kernel_uprobes'])
     parser.add_argument('--missing-agent', action='store_true')
+    parser.add_argument('--missing-helper', action='store_true')
     parser.add_argument('--no-manual', action='store_true')
     parser.add_argument('--inflight', action='store_true')
     parser.add_argument('--controller-death', action='store_true')
@@ -44,7 +45,7 @@ def main():
             data = response.read()
             return json.loads(data) if data.startswith((b'{', b'[')) else data
     with tempfile.TemporaryFile(mode='w+') as log:
-        env = dict(os.environ, ORBIT_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), ORBIT_FRIDA_HELPER=str(Path(args.helper).resolve()))
+        env = dict(os.environ, ORBIT_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), ORBIT_FRIDA_HELPER=str(Path(args.helper).resolve()) + ('.missing' if args.missing_helper else ''))
         service = subprocess.Popen([args.service, '--host', '127.0.0.1', '--serve', str(port)], env=env, stdout=log, stderr=log)
         target = subprocess.Popen([args.target], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         try:
@@ -69,7 +70,7 @@ def main():
             wanted = {'orbit_frida_test_outer': (30, 0), 'orbit_frida_test_middle': (60, 1), 'orbit_frida_test_inner': (180, 2)}
             hooks = [f for f in found if f['name'].lstrip('_') in wanted]
             assert len(hooks) == 3, found
-            if args.missing_agent:
+            if args.missing_agent or args.missing_helper:
                 try:
                     request('/api/capture/start', {'pid':pid, 'instrumented_functions':[{'function_id': hooks[0]['function_id']}]})
                 except urllib.error.HTTPError as error:

@@ -20,6 +20,10 @@ static void report(const char *path, const char *error) {
   if (strlen(path) >= sizeof(addr.sun_path)) { close(fd); return; }
   strcpy(addr.sun_path, path);
   if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+    // Complete the controller's request before replying, as the real agent
+    // would; otherwise an early close can mask dlerror with a broken pipe.
+    char byte;
+    while (read(fd, &byte, 1) == 1 && byte != '\n') {}
     char message[2048]; size_t n = 0;
     const char *prefix = "{\"error\":\"native agent loader: ";
     memcpy(message, prefix, strlen(prefix)); n = strlen(prefix);

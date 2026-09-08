@@ -53,6 +53,7 @@ codesign --force --sign - "$output/orbit-service"
 codesign --force --sign - "$output/liborbit_api.dylib"
 codesign --force --sign - "$output/liborbit_frida_agent.dylib"
 codesign --force --sign - "$output/orbit-frida-helper"
+rm -rf "$output/frida-python" # obsolete generated runtime
 mkdir -p "$output/licenses"
 cp tools/frida/licenses/* "$output/licenses/"
 cp rust/crates/orbit-api/include/orbit.h "$output/include/"

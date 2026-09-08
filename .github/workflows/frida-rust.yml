@@ -71,6 +71,9 @@ jobs:
       - name: Verify startup failure does not block manual capture
         if: runner.os == 'Linux'
         run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-agent
+      - name: Verify missing native helper does not block manual capture
+        if: runner.os == 'Linux'
+        run: /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --missing-helper
       - name: Verify retained Linux uprobe backend
         if: runner.os == 'Linux'
         run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes

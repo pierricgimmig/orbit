@@ -15,7 +15,7 @@
 #   ./rust.sh --sudo                     # root, for system-wide scheduling
 #   ./rust.sh -- --pid 1234 --duration-ms 5000 --out /tmp/c.pod   # file mode
 #
-# This builds the service, not the viewer pack. Run
+# This builds the service and native Frida components, not the viewer pack. Run
 # src/OrbitLiveViewer/build_wasm.sh if you changed the front end; the script
 # warns when it looks stale.
 
@@ -103,6 +103,12 @@ else
   BIN="$ROOT/rust/crates/orbit-service/target/release/orbit-service"
 fi
 [[ -x "$BIN" ]] || die "built, but $BIN is missing"
+
+# Dynamic instrumentation defaults to Frida. Keep its native components beside
+# the development service; the musl builder already packages them there.
+if [[ "$SERVE" -eq 1 && "$STATIC" -eq 0 ]]; then
+  ./tools/frida/build.sh "$(dirname "$BIN")" --agent-only
+fi
 
 if [[ "$WITH_GPU" -eq 1 ]]; then
   echo "rust.sh: building orbit-gpu-helper"
