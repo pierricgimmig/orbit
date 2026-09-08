@@ -117,7 +117,7 @@ def main():
                 time.sleep(.3)  # Allow late manual segment discovery.
                 target.stdin.write('go\n'); target.stdin.flush()
                 ready, _, _ = select.select([target.stdout], [], [], 20)
-                assert ready and target.stdout.readline().strip() == 'done', 'target stalled/crashed'
+                assert ready and target.stdout.readline().strip() == 'done', f'target stalled/crashed (exit={target.poll()})'
                 # Uprobes retain records briefly to reorder cross-CPU events.
                 time.sleep(.15)
                 request('/api/capture/stop', {})

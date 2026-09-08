@@ -19,6 +19,8 @@ extern "C" {
         data: *const c_char,
         error: *mut c_char,
         capacity: usize,
+        loader: *const c_void,
+        loader_size: usize,
     ) -> *mut c_void;
     fn orbit_core_close(injector: *mut c_void);
 }
@@ -87,6 +89,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     listener.set_nonblocking(true)?;
     let data = CString::new(path.to_str().ok_or("invalid socket path")?)?;
     let mut error = [0 as c_char; 1024];
+    #[cfg(target_os = "macos")]
+    let loader: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/loader.dylib"));
+    #[cfg(not(target_os = "macos"))]
+    let loader: &[u8] = &[];
     let raw = unsafe {
         orbit_core_inject(
             pid,
@@ -94,6 +100,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             data.as_ptr(),
             error.as_mut_ptr(),
             error.len(),
+            loader.as_ptr().cast(),
+            loader.len(),
         )
     };
     if raw.is_null() {
