@@ -216,6 +216,33 @@ pub fn query_report_tab_from_location() -> Option<String> {
     }
 }
 
+/// `?webgpu` (or `?webgpu=1`) -- opt back into the WebGPU backend. The viewer
+/// defaults to WebGL2, because WebGPU (Dawn) init fails on some Linux/NVIDIA
+/// drivers ("vkGetSemaphoreFdKHR ... VK_ERROR_INITIALIZATION_FAILED"), and
+/// WebGL2 renders the instanced timeline fine. This is the escape hatch for a
+/// machine where WebGPU works and its extra headroom is wanted.
+pub fn query_prefers_webgpu_from_location() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .map(|s| query_prefers_webgpu(&s))
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn query_prefers_webgpu(search: &str) -> bool {
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .any(|kv| kv == "webgpu" || kv == "webgpu=1" || kv == "webgpu=true")
+}
+
 /// `?capture=<url>` -- open a capture stream file (the `stream` export)
 /// instead of connecting to a service: the static web page's mode. The
 /// URL is relative to the page.

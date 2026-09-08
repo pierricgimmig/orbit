@@ -237,10 +237,22 @@ pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsVa
     // Warnings and errors only: eframe's own info lines ("event handlers
     // installed.") are noise in a user's console.
     eframe::WebLogger::init(log::LevelFilter::Warn).ok();
+    // Default to the WebGL2 backend. WebGPU (Dawn) init fails on some
+    // Linux/NVIDIA drivers -- "vkGetSemaphoreFdKHR ... VK_ERROR_INITIALIZATION
+    // _FAILED" -- and once picked, wgpu cannot fall back mid-run; WebGL2 draws
+    // the instanced timeline fine. `?webgpu` opts back in where it works.
+    let mut web_options = eframe::WebOptions::default();
+    if !crate::dev::query_prefers_webgpu_from_location() {
+        if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) =
+            &mut web_options.wgpu_options.wgpu_setup
+        {
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::GL;
+        }
+    }
     eframe::WebRunner::new()
         .start(
             canvas,
-            eframe::WebOptions::default(),
+            web_options,
             Box::new(|cc| Ok(Box::new(OrbitLiveApp::new(cc)))),
         )
         .await
