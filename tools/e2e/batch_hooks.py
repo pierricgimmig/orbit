@@ -4,7 +4,8 @@
 # found in the LICENSE file.
 
 """Browser regression: batch hook actions on selected Functions rows.
-Run against a service embedding the current viewer; API fixtures avoid ptrace.
+Run against a dedicated test service embedding the current viewer.
+API fixtures avoid ptrace; the Live check starts and stops demo events.
 Requires playwright and Chromium.
 """
 import argparse
@@ -18,8 +19,12 @@ with sync_playwright() as p:
  b=p.chromium.launch(executable_path=args.chromium,headless=True,args=['--no-sandbox','--enable-unsafe-swiftshader'])
  page=b.new_page(viewport={'width':1440,'height':950})
  page.route('**/api/processes',lambda r:r.fulfill(json=[{'pid':42,'name':'fixture'}]))
- page.route('**/api/functions/search?*',lambda r:r.fulfill(json={'pid':42,'status':'ready','functions':[{'function_id':i,'name':f'function_{i}','module':'fixture','size':16} for i in range(1,9)]}))
+ page.route('**/api/functions/search?*',lambda r:r.fulfill(json={'pid':42,'status':'ready','functions':[{'function_id':i,'name':f'function_{i}','module':f'module_{9-i}','size':i*16} for i in range(1,9)]}))
  page.route('**/api/symbols/**',lambda r:r.fulfill(json={'pid':42,'status':'ready','function_count':8,'module_count':1}))
+ page.route('**/api/sampling/tree?*',lambda r:r.fulfill(json={'samples':100,'roots':[
+  {'kind':'function','function_id':100+i,'name':f'tree_{i}','module':f'module_{4-i}',
+   'inclusive_percent':100-i*10,'exclusive':i,'of_parent_percent':100-i*10} for i in range(1,4)]}))
+ page.route('**/api/symbols/modules?*',lambda r:r.fulfill(json={'pid':42,'modules':[{'name':'beta','path':'/a','function_count':2},{'name':'alpha','path':'/z','function_count':9}]}))
  page.goto(args.url)
  page.wait_for_function('window.__orbit_ui')
  page.wait_for_timeout(1000)
@@ -44,5 +49,46 @@ with sync_playwright() as p:
  click('hook:function_2');assert hooks()==[],hooks()
  click('hook:function_2');assert hooks()==[1,2,3],hooks()
  click('fn:function_5',button='right');click('menu:hook');assert hooks()==[1,2,3,5],hooks()
- print('PASS batch context menu, checkbox hook/unhook, unselected row isolation')
+ # Every visible Functions column sorts in both directions, including module.
+ click('sort:module')
+ assert [r[0] for r in rows() if r[0].startswith('fn:')] == [f'fn:function_{i}' for i in range(8,0,-1)]
+ click('sort:module')
+ assert [r[0] for r in rows() if r[0].startswith('fn:')] == [f'fn:function_{i}' for i in range(1,9)]
+ for tab in ['Top-down','Bottom-up']:
+  click(tab);page.wait_for_timeout(700)
+  clear=next((r for r in rows() if r[0]=='Clear' and r[2]>100),None)
+  if clear: page.mouse.click(clear[1]+clear[3]/2,clear[2]+clear[4]/2);page.wait_for_timeout(300)
+  # Click a selected tree row's checkbox and context menu, not the toolbar.
+  click('hook:tree_1')
+  a=rect('tree:tree_1');z=rect('tree:tree_3')
+  page.mouse.move(a[1]+8,a[2]+a[4]/2);page.mouse.down()
+  page.mouse.move(z[1]+8,z[2]+z[4]/2,steps=15);page.mouse.up();page.wait_for_timeout(400)
+  click('tree:tree_2',button='right');click('menu:hook')
+  assert set([101,102,103]) <= set(hooks()), (tab,hooks())
+  click('hook:tree_2');assert not set([101,102,103]) & set(hooks()), (tab,hooks())
+  click('sort:module')
+  assert [r[0] for r in rows() if r[0].startswith('tree:')] == ['tree:tree_3','tree:tree_2','tree:tree_1']
+  click('sort:module')
+  assert [r[0] for r in rows() if r[0].startswith('tree:')] == ['tree:tree_1','tree:tree_2','tree:tree_3']
+  click('sort:inclusive') # Restore the tree's default order for the next tab.
+ click('Modules');page.wait_for_timeout(400)
+ click('sort:module');assert [r[0] for r in rows() if r[0].startswith('module:')]==['module:alpha','module:beta']
+ click('sort:module');assert [r[0] for r in rows() if r[0].startswith('module:')]==['module:beta','module:alpha']
+ click('sort:path');assert [r[0] for r in rows() if r[0].startswith('module:')]==['module:beta','module:alpha']
+ click('sort:symbols');assert [r[0] for r in rows() if r[0].startswith('module:')]==['module:alpha','module:beta']
+ # Exercise Live headers with real demo events, then freeze their statistics.
+ page.request.post(args.url.rstrip('/')+'/api/demo/start',data=json.dumps({'scopes_per_sec':1000}),headers={'Content-Type':'application/json'})
+ page.wait_for_timeout(1800)
+ page.request.post(args.url.rstrip('/')+'/api/demo/stop',data='{}',headers={'Content-Type':'application/json'})
+ page.route('**/api/processes',lambda r:r.fulfill(json=[]))
+ click('Refresh');page.wait_for_timeout(500)
+ click('Live');page.wait_for_timeout(500)
+ click('sort:function')
+ names=[r[0] for r in rows() if r[0].startswith('live:')]
+ assert len(names)>1 and names==sorted(names,key=str.lower),names
+ click('sort:function')
+ assert [r[0] for r in rows() if r[0].startswith('live:')]==list(reversed(names))
+ for column in ['type','count','total','avg','min','max','std dev','module']:
+  click('sort:'+column)
+ print('PASS Functions/tree batch hooks and Functions, tree, Modules, Live sorting')
  b.close()
