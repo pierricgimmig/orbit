@@ -328,6 +328,10 @@ def viewer_idle(run):
         "return c?c.width*c.height:0})()"
     )
     check_at_least(canvas, 100_000, "canvas is too small to be the viewer")
+    # The viewer defaults to the WebGL2 backend (WebGPU/Dawn fails on some
+    # Linux/NVIDIA drivers); the More menu and this readout report which is live.
+    renderer = run.wait_for(lambda: run.sel().get("renderer"), "the renderer readout")
+    check(renderer == "WebGL", f"expected the WebGL default backend, got {renderer!r}")
     run.shot("01-viewer-idle")
 
 

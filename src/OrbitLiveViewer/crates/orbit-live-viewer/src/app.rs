@@ -589,6 +589,9 @@ pub struct OrbitLiveApp {
     ws_queue: std::collections::VecDeque<Vec<u8>>,
     lod_label: &'static str,
     has_gpu: bool,
+    /// The graphics backend wgpu actually chose: "WebGPU", "WebGL", or "none".
+    /// Shown in the More menu so it is clear which path is live.
+    gpu_backend: &'static str,
     tracks: TrackStrip,
     selected: Option<ScopePick>,
     hover: Option<ScopePick>,
@@ -1152,7 +1155,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"renderer\":{:?}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1232,6 +1235,7 @@ impl OrbitLiveApp {
                 ),
                 None => "null".to_string(),
             },
+            self.gpu_backend,
         );
         if text == self.sel_readout {
             return;
@@ -1334,6 +1338,7 @@ impl OrbitLiveApp {
             None => Net::connect(),
         };
         let mut has_gpu = false;
+        let mut gpu_backend = "none";
         if let Some(rs) = &cc.wgpu_render_state {
             let mut renderer = rs.renderer.write();
             renderer.callback_resources.insert(TimelineGpuSlot::new(
@@ -1341,6 +1346,11 @@ impl OrbitLiveApp {
                 TimelineGpu::init(&rs.device, rs.target_format),
             ));
             has_gpu = true;
+            gpu_backend = match rs.adapter.get_info().backend {
+                eframe::wgpu::Backend::BrowserWebGpu => "WebGPU",
+                eframe::wgpu::Backend::Gl => "WebGL",
+                other => other.to_str(),
+            };
         }
         Self {
             index: TrackIndex::default(),
@@ -1375,6 +1385,7 @@ impl OrbitLiveApp {
             ws_queue: std::collections::VecDeque::new(),
             lod_label: "",
             has_gpu,
+            gpu_backend,
             tracks: TrackStrip::default(),
             selected: None,
             hover: None,
@@ -2606,6 +2617,15 @@ impl OrbitLiveApp {
             RichText::new(format!("viewer build {VIEWER_BUILD}"))
                 .font(FontId::monospace(10.5))
                 .color(theme::MUTED),
+        );
+        ui.label(
+            RichText::new(format!("renderer {}", self.gpu_backend))
+                .font(FontId::monospace(10.5))
+                .color(theme::MUTED),
+        )
+        .on_hover_text(
+            "The graphics backend in use. WebGL2 by default; add ?webgpu to the \
+             URL to try WebGPU where the driver supports it.",
         );
         if ui
             .selectable_label(self.light_canvas, "Paper")

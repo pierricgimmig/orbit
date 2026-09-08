@@ -1,10 +1,10 @@
 # Orbit e2e report
 
-Run 2026-09-07 22:52 at commit `7c9f9f012` on `rixbox`.
+Run 2026-09-07 22:57 at commit `0501bea52` on `rixbox`.
 
 | Scenario | Result | Time | Note |
 |---|---|---|---|
-| capture-scheduling | pass | 19.7s |  |
+| viewer-idle | pass | 9.6s |  |
 
 ## Numbers
 
