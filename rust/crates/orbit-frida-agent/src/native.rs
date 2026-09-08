@@ -7,6 +7,7 @@
 use serde_json::{json, Value};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::Mutex;
 
@@ -33,6 +34,33 @@ extern "C" {
         ),
         data: *mut c_void,
     );
+}
+// A C/C++ target need not ignore SIGPIPE (a Rust executable normally does).
+// Never change the application's process-wide signal disposition.
+struct ControlStream(UnixStream);
+impl Write for ControlStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        #[cfg(target_os = "linux")]
+        let flags = libc::MSG_NOSIGNAL;
+        #[cfg(target_os = "macos")]
+        let flags = 0; // SO_NOSIGPIPE was set on this socket.
+        let count = unsafe {
+            libc::send(
+                self.0.as_raw_fd(),
+                bytes.as_ptr().cast(),
+                bytes.len(),
+                flags,
+            )
+        };
+        if count < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(count as usize)
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 static CONTROL: Mutex<()> = Mutex::new(());
 struct Capture {
@@ -74,8 +102,8 @@ unsafe extern "C" fn emit(
         "module_path":CStr::from_ptr(path).to_string_lossy(),
         "file_offset":offset, "size":size, "is_global":global != 0}));
 }
-fn run(stream: &mut UnixStream) -> Result<(), Box<dyn std::error::Error>> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
+    let mut reader = BufReader::new(stream.0.try_clone()?);
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let config: Value = serde_json::from_str(&line)?;
@@ -160,7 +188,22 @@ pub unsafe extern "C" fn orbit_frida_main(
     let Ok(path) = CStr::from_ptr(data).to_str() else {
         return;
     };
-    if let Ok(mut stream) = UnixStream::connect(path) {
+    if let Ok(socket) = UnixStream::connect(path) {
+        #[cfg(target_os = "macos")]
+        {
+            let enabled: libc::c_int = 1;
+            if libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_NOSIGPIPE,
+                &enabled as *const _ as *const _,
+                std::mem::size_of_val(&enabled) as _,
+            ) != 0
+            {
+                return;
+            }
+        }
+        let mut stream = ControlStream(socket);
         if let Err(error) = run(&mut stream) {
             let _ = writeln!(stream, "{}", json!({"error":error.to_string()}));
         }

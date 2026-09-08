@@ -26,18 +26,19 @@ fn build_frida(component: &str, source: &str) {
     println!("cargo:rustc-link-search=native={}", kit.display());
     println!("cargo:rustc-link-lib=static=frida-{component}");
     if target.contains("apple") {
-        for lib in ["resolv", "pthread", "bsm", "dl", "m"] {
+        // Do not make the target agent depend on unused dylibs/frameworks:
+        // Darwin's injector resolves dependencies in the target process.
+        println!("cargo:rustc-link-arg=-Wl,-dead_strip_dylibs");
+        for lib in ["resolv", "m"] {
             println!("cargo:rustc-link-lib={lib}");
         }
-        for framework in [
-            "Foundation",
-            "Security",
-            "CoreFoundation",
-            "SystemConfiguration",
-            "AppKit",
-            "IOKit",
-        ] {
-            println!("cargo:rustc-link-lib=framework={framework}");
+        if component == "core" {
+            for lib in ["bsm", "dl"] {
+                println!("cargo:rustc-link-lib={lib}");
+            }
+            for framework in ["Foundation", "CoreFoundation", "AppKit"] {
+                println!("cargo:rustc-link-lib=framework={framework}");
+            }
         }
     } else {
         for lib in ["resolv", "dl", "m", "pthread", "rt"] {

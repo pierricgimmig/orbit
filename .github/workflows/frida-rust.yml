@@ -52,6 +52,12 @@ jobs:
           # our own target and collector as root for this attachment test.
           if [ "$(uname -s)" = Darwin ]; then prefix=(sudo); else prefix=(); fi
           "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target
+      - name: Verify detach and controller death with a call in flight
+        run: |
+          if [ "$(uname -s)" = Darwin ]; then ext=dylib; prefix=(sudo); else ext=so; prefix=(); fi
+          for mode in --inflight --controller-death; do
+            "${prefix[@]}" /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent "rust/target/debug/liborbit_frida_agent.$ext" --target /tmp/orbit-frida-target "$mode"
+          done
       - name: Verify injected API in a target without manual instrumentation
         run: |
           cc -O1 -g -DORBIT_NO_API tools/e2e/frida_target.c -lpthread -o /tmp/orbit-frida-plain-target

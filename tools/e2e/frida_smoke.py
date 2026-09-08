@@ -30,6 +30,8 @@ def main():
     parser.add_argument('--engine', default='frida', choices=['frida', 'kernel_uprobes'])
     parser.add_argument('--missing-agent', action='store_true')
     parser.add_argument('--no-manual', action='store_true')
+    parser.add_argument('--inflight', action='store_true')
+    parser.add_argument('--controller-death', action='store_true')
     args = parser.parse_args()
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -78,6 +80,26 @@ def main():
                 request('/api/capture/stop', {})
                 print('PASS: missing Frida runtime fails Start; manual capture still starts afterward')
                 return
+            pending_return = False
+            if args.inflight or args.controller_death:
+                blocked = next(f for f in found if f['name'].lstrip('_') == 'orbit_frida_test_blocked')
+                request('/api/capture/start', {'pid':pid, 'instrumented_functions':[{'function_id':blocked['function_id']}]})
+                target.stdin.write('hold\n'); target.stdin.flush()
+                ready, _, _ = select.select([target.stdout], [], [], 10)
+                assert ready and target.stdout.readline().strip() == 'entered', 'blocked hook did not enter'
+                if args.controller_death:
+                    import signal
+                    processes = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True)
+                    children = [int(fields[0]) for row in processes.splitlines()
+                                if len(fields := row.split(None, 2)) == 3
+                                and int(fields[1]) == service.pid and 'orbit-frida-helper' in fields[2]]
+                    assert len(children) == 1, children
+                    os.kill(children[0], signal.SIGKILL)
+                    time.sleep(.3)  # EOF cleanup in the target; no helper destructor.
+                started = time.monotonic()
+                request('/api/capture/stop', {})
+                assert time.monotonic() - started < 5, 'Stop waited for target return'
+                pending_return = True
             mixed = args.engine == 'frida' and not args.no_manual
             if mixed: wanted = {name: (count, depth * 2 + 1) for name, (count, depth) in wanted.items()}
             for iteration in range(2):
@@ -85,6 +107,13 @@ def main():
                 body = {'pid':pid, 'instrumented_functions':[{'function_id': f['function_id']} for f in hooks]}
                 if iteration or args.engine != 'frida': body['dynamic_instrumentation_method'] = args.engine
                 request('/api/capture/start', body)
+                if pending_return:
+                    # The old leave listener must survive detach and reject its
+                    # old generation after a new capture has opened.
+                    target.stdin.write('release\n'); target.stdin.flush()
+                    ready, _, _ = select.select([target.stdout], [], [], 10)
+                    assert ready and target.stdout.readline().strip() == 'released', 'late return crashed/stalled'
+                    pending_return = False
                 time.sleep(.3)  # Allow late manual segment discovery.
                 target.stdin.write('go\n'); target.stdin.flush()
                 ready, _, _ = select.select([target.stdout], [], [], 20)
@@ -97,6 +126,7 @@ def main():
                 with zipfile.ZipFile(io.BytesIO(request('/api/capture/export?format=bundle'))) as capture:
                     manifest = json.loads(capture.read('manifest.json'))
                     rows = parquet.read_table(io.BytesIO(capture.read(manifest['files']['events']))).to_pylist()
+                assert not any(r['pid'] == pid and r['name'].lstrip('_') == 'orbit_frida_test_blocked' for r in rows), 'late return leaked into next capture'
                 for name, (count, depth) in wanted.items():
                     events = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') == name]
                     assert len(events) == count, (iteration, name, len(events), status['instrumentation'])
@@ -125,7 +155,8 @@ def main():
                                    for parent in sync), ('missing enclosing parent', child)
                 assert target.poll() is None, 'detach killed target'
             print(f'PASS {args.engine}: 270 exact spans per capture, three threads, correct depths, manual/dynamic nesting and provenance, restart')
-        except BaseException:
+        except BaseException as error:
+            if isinstance(error, urllib.error.HTTPError): print(error.read().decode())
             log.seek(0); print(log.read()); raise
         finally:
             for process in [target, service]:
