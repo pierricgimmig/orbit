@@ -11,6 +11,9 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::Mutex;
 
+#[path = "../../../frida-profile.rs"]
+mod profile;
+
 extern "C" {
     fn orbit_gum_init();
     fn orbit_gum_ignore(ignore: i32);
@@ -107,16 +110,19 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let config: Value = serde_json::from_str(&line)?;
+    let profiling = config["self_profile"].as_bool().unwrap_or(false);
+    profile::measure(stream, profiling, "Frida: initialize Gum", || unsafe {
+        orbit_gum_init()
+    });
     unsafe {
-        orbit_gum_init();
         orbit_gum_ignore(1);
     }
     let _ignore = Ignore;
     if config["command"] == "symbols" {
         let mut symbols = Vec::<Value>::new();
-        unsafe {
+        profile::measure(stream, profiling, "Frida: enumerate symbols", || unsafe {
             orbit_gum_symbols(emit, &mut symbols as *mut _ as *mut _);
-        }
+        });
         writeln!(stream, "{}", json!({"symbols":symbols}))?;
         return Ok(());
     }
@@ -126,7 +132,9 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
         .try_lock()
         .map_err(|_| "another native controller is active")?;
     let path = CString::new(config["transport"].as_str().ok_or("missing transport")?)?;
-    let generation = unsafe { super::orbit_frida_open(path.as_ptr(), None, None, None) };
+    let generation = profile::measure(stream, profiling, "Frida: connect scope API", || unsafe {
+        super::orbit_frida_open(path.as_ptr(), None, None, None)
+    });
     if generation == 0 {
         return Err("agent rejected transport or incompatible Orbit API".into());
     }
@@ -144,7 +152,12 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
         let offset = hook["file_offset"]
             .as_u64()
             .ok_or("invalid function offset")?;
-        let address = unsafe { orbit_gum_resolve(path.as_ptr(), offset) };
+        let address = profile::measure(
+            stream,
+            profiling,
+            "Frida: resolve executable address",
+            || unsafe { orbit_gum_resolve(path.as_ptr(), offset) },
+        );
         if address == 0 {
             return Err(format!(
                 "function outside executable mappings: {}",
@@ -153,7 +166,12 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
         let mut status = 0;
-        let listener = unsafe { orbit_gum_attach(address, generation, name.as_ptr(), &mut status) };
+        let listener = profile::measure(
+            stream,
+            profiling,
+            &format!("Frida: install trampoline: {}", name.to_string_lossy()),
+            || unsafe { orbit_gum_attach(address, generation, name.as_ptr(), &mut status) },
+        );
         if listener.is_null() {
             return Err(format!(
                 "Gum rejected {}: attach status {status}",
@@ -170,7 +188,9 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     line.clear();
     reader.read_line(&mut line)?; // Explicit stop or EOF on controller death.
-    drop(capture);
+    profile::measure(stream, profiling, "Frida: detach trampolines", || {
+        drop(capture)
+    });
     writeln!(stream, "{}", json!({"stopped":true}))?;
     Ok(())
 }

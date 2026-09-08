@@ -135,6 +135,22 @@ The pinned upstream Core and Gum license texts are shipped under `licenses/`
 with the native package. Orbit's adapter, helper and transport use this
 repository's BSD license. Devkit archives remain build inputs, not runtime files.
 
+## Self-profiling
+
+The service records `Frida:` phases in its own timeline: arming hooks, launching
+and waiting for the helper, native-agent injection, Gum initialization, connecting
+the scope API, executable-address resolution, installing each named trampoline,
+and normal detach. Recording begins before attachment on both Linux and macOS.
+
+The installation span surrounds `gum_interceptor_attach`: it includes Gum's
+relocation, trampoline construction and entry-patch work, rather than separate
+measurements of those internal steps. Remote phases use host-wide
+`CLOCK_MONOTONIC` timestamps and arrive as complete async spans on the service's
+control-reader thread. They are attributed to the service, not application work;
+concurrent phases may overlap. No second SDK is initialized in the target, and
+per-invocation callbacks carry no additional self-profiling events. If the
+controller dies, its final detach timing cannot be delivered.
+
 ## Validation
 
 `tools/e2e/frida_smoke.py` checks attachment to an already-running C target,

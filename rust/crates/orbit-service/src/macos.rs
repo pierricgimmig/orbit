@@ -182,15 +182,16 @@ pub fn capture_loop(
     show_all_processes: bool,
     _duplicate_filter: bool,
     mut frida: Option<crate::frida::FridaSession>,
+    mut scopes: ScopeSource,
+    capture_start_ns: u64,
 ) {
     if gpu_helper.is_some() {
         eprintln!("orbit-service: GPU helper capture is not supported on macOS");
     }
     service.set_instrumentation_status(if frida.is_some() { "Frida: functions armed" } else { "macOS: manual instrumentation; CPU sampling and scheduling are not yet available" });
-    service.mark_capture_started(target_pid.max(0) as u32, crate::now_monotonic_ns());
+    service.mark_capture_started(target_pid.max(0) as u32, capture_start_ns);
     let mut visible = VisibleProcesses::new(target_pid, show_all_processes);
     visible.add_instrumented(std::process::id());
-    let mut scopes = ScopeSource::new(service.clone());
     let mut names = crate::names::NameSync::default();
     let mut stats = crate::selfstat::SelfStat::default();
     let mut last_names = Instant::now() - Duration::from_secs(1);

@@ -12,6 +12,9 @@ use std::os::unix::{
 };
 use std::time::{Duration, Instant};
 
+#[path = "../../../frida-profile.rs"]
+mod profile;
+
 extern "C" {
     fn orbit_core_inject(
         pid: u32,
@@ -93,17 +96,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let loader: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/loader.dylib"));
     #[cfg(not(target_os = "macos"))]
     let loader: &[u8] = &[];
-    let raw = unsafe {
-        orbit_core_inject(
-            pid,
-            agent.as_ptr(),
-            data.as_ptr(),
-            error.as_mut_ptr(),
-            error.len(),
-            loader.as_ptr().cast(),
-            loader.len(),
-        )
-    };
+    let raw = profile::measure(
+        &mut std::io::stdout().lock(),
+        value["self_profile"].as_bool().unwrap_or(false),
+        "Frida: inject native agent",
+        || unsafe {
+            orbit_core_inject(
+                pid,
+                agent.as_ptr(),
+                data.as_ptr(),
+                error.as_mut_ptr(),
+                error.len(),
+                loader.as_ptr().cast(),
+                loader.len(),
+            )
+        },
+    );
     if raw.is_null() {
         return Err(unsafe { CStr::from_ptr(error.as_ptr()) }
             .to_string_lossy()

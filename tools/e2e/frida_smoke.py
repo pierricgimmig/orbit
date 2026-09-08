@@ -139,6 +139,20 @@ def main():
                 with zipfile.ZipFile(io.BytesIO(request('/api/capture/export?format=bundle'))) as capture:
                     manifest = json.loads(capture.read('manifest.json'))
                     rows = parquet.read_table(io.BytesIO(capture.read(manifest['files']['events']))).to_pylist()
+                if args.engine == 'frida':
+                    phases = [r for r in rows if r['pid'] == service.pid and r['name'].startswith('Frida: ')]
+                    for name in ('Frida: inject native agent', 'Frida: initialize Gum',
+                                 'Frida: connect scope API', 'Frida: resolve executable address',
+                                 'Frida: detach trampolines'):
+                        assert any(r['name'] == name and r['duration_ns'] > 0 for r in phases), ('missing self-profile phase', name)
+                    installs = [r for r in phases if r['name'].startswith('Frida: install trampoline: ')]
+                    assert len(installs) == len(wanted), ('missing hook installation timings', installs)
+                    assert all(r['duration_ns'] > 0 and not (r['flags'] & 128) for r in installs)
+                    arm = next(r for r in phases if r['name'] == 'Frida: arm hooks')
+                    assert all(arm['start_ns'] <= r['start_ns'] and
+                               r['start_ns'] + r['duration_ns'] <= arm['start_ns'] + arm['duration_ns']
+                               for r in installs), 'remote timestamps do not align with service setup'
+
                 assert not any(r['pid'] == pid and r['name'].lstrip('_') == 'orbit_frida_test_blocked' for r in rows), 'late return leaked into next capture'
                 for name, (count, depth) in wanted.items():
                     events = [r for r in rows if r['pid'] == pid and r['kind'] == 1 and r['name'].lstrip('_') == name]
