@@ -3331,6 +3331,7 @@ impl OrbitLiveApp {
         if first > 0 {
             ui.allocate_exact_size(Vec2::new(avail_w, first as f32 * row_h), Sense::hover());
         }
+        let all_selected_hooked = self.selection_all_hooked();
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         for (n, &i) in shown[first..last].iter().enumerate() {
             let f = &self.functions[i];
@@ -3396,7 +3397,11 @@ impl OrbitLiveApp {
                 if hooked { theme::ACCENT } else { theme::TEXT },
             );
             note_ui_rect(&format!("fn:{}", f.name), name_rect);
-            if let Some(action) = hook_menu(&label, f.function_id, hooked) {
+            if let Some(action) = hook_menu(
+                &label, f.function_id,
+                if selected { all_selected_hooked } else { hooked },
+                if selected { self.report_selection.len() } else { 1 },
+            ) {
                 actions.push((action, f.function_id, f.name.clone(), f.module.clone()));
             }
             x += name_w + col_gap;
@@ -3424,7 +3429,7 @@ impl OrbitLiveApp {
             ui.allocate_exact_size(Vec2::new(avail_w, (shown.len() - last) as f32 * row_h), Sense::hover());
         }
         for (action, id, name, module) in actions {
-            self.apply_hook_action(action, id, &name, &module);
+            self.apply_row_hook_action(action, id, &name, &module);
         }
     }
 
@@ -6394,6 +6399,7 @@ impl OrbitLiveApp {
         let avail_w = ui.available_width().max(300.0);
         let widths = [22.0f32, bar_w, bar_w, 0.0, 150.0]; // hooked, self, incl, function (rest), module
         let name_w = (avail_w - widths[0] - widths[1] - widths[2] - widths[4] - 4.0 * col_gap).max(120.0);
+        let all_selected_hooked = self.selection_all_hooked();
         let mut actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         let mut sort_click: Option<u8> = None;
         let flat_sort = self.flat_sort;
@@ -6490,7 +6496,11 @@ impl OrbitLiveApp {
                 if hooked { theme::ACCENT } else { theme::TEXT },
             );
             note_ui_rect(&format!("report:{}", row.name), name_rect);
-            if let Some(action) = hook_menu(&label, row.function_id, hooked) {
+            if let Some(action) = hook_menu(
+                &label, row.function_id,
+                if selected { all_selected_hooked } else { hooked },
+                if selected { self.report_selection.len() } else { 1 },
+            ) {
                 actions.push((action, row.function_id, row.name.clone(), row.module.clone()));
             }
             x += name_w + col_gap;
@@ -6508,7 +6518,7 @@ impl OrbitLiveApp {
             ui.allocate_exact_size(Vec2::new(avail_w, (rows.len() - last) as f32 * row_h), Sense::hover());
         }
         for (action, id, name, module) in actions {
-            self.apply_hook_action(action, id, &name, &module);
+            self.apply_row_hook_action(action, id, &name, &module);
         }
         if let Some(col) = sort_click {
             // Numbers and the hooked tick read best largest first, names
@@ -6761,6 +6771,27 @@ impl OrbitLiveApp {
         self.needs_repaint = true;
     }
 
+    /// Row hook actions operate on the selection when the clicked row is
+    /// selected. Disassembly always belongs to the clicked function alone.
+    fn apply_row_hook_action(&mut self, action: HookAction, id: u64, name: &str, module: &str) {
+        for target in row_hook_targets(action, id, &self.report_selection) {
+            let (target_name, target_module) = if target == id {
+                (name.to_string(), module.to_string())
+            } else {
+                self.hook_metadata(target)
+            };
+            self.apply_hook_action(action, target, &target_name, &target_module);
+        }
+    }
+
+    fn hook_metadata(&self, id: u64) -> (String, String) {
+        self.functions.iter().find(|f| f.function_id == id)
+            .map(|f| (f.name.clone(), f.module.clone()))
+            .or_else(|| self.sampling.as_ref()?.rows.iter().find(|r| r.function_id == id)
+                .map(|r| (r.name.clone(), r.module.clone())))
+            .unwrap_or_default()
+    }
+
     /// Left-drag over a report's rows to select a contiguous range (shift adds
     /// to the prior selection). `ordered_ids[k]` is the function id of the
     /// k-th displayed row (0 for a row with none, e.g. a thread node, which is
@@ -6833,12 +6864,7 @@ impl OrbitLiveApp {
             HookAction::Hook
         };
         for id in ids {
-            let (name, module) = self
-                .functions
-                .iter()
-                .find(|f| f.function_id == id)
-                .map(|f| (f.name.clone(), f.module.clone()))
-                .unwrap_or_default();
+            let (name, module) = self.hook_metadata(id);
             self.apply_hook_action(action, id, &name, &module);
         }
     }
@@ -7012,7 +7038,7 @@ impl OrbitLiveApp {
                         }
                         if !is_thread {
                             note_ui_rect(&format!("tree:{}", node.name), label.rect);
-                            if let Some(action) = hook_menu(&label, node.function_id, hooked) {
+                            if let Some(action) = hook_menu(&label, node.function_id, hooked, 1) {
                                 tree_actions.push((action, node.function_id, node.name.clone(), node.module.clone()));
                             }
                         }
@@ -8057,17 +8083,30 @@ enum HookAction {
     Disassemble,
 }
 
+/// Resolve the action before mutation so mixed selections get one operation.
+fn row_hook_targets(action: HookAction, clicked: u64, selection: &std::collections::HashSet<u64>) -> Vec<u64> {
+    if clicked == 0 { return Vec::new(); }
+    if action == HookAction::Disassemble || !selection.contains(&clicked) {
+        return vec![clicked];
+    }
+    let mut ids: Vec<_> = selection.iter().copied().filter(|id| *id != 0).collect();
+    ids.sort_unstable();
+    ids
+}
+
 /// The right-click menu of a function in a report: hook it for dynamic
 /// instrumentation, or unhook it. A function the service could not place
 /// in a file (the vDSO, an imported capture) says so instead.
-fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool) -> Option<HookAction> {
+fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool, count: usize) -> Option<HookAction> {
     let mut action = None;
     label.context_menu(|ui| {
         if function_id == 0 {
             ui.label(RichText::new("Not hookable: no file offset for this function").color(theme::MUTED).size(11.0));
             return;
         }
-        let item = if hooked {
+        let item = if count > 1 {
+            ui.button(format!("{} {count} selected functions", if hooked { "Unhook" } else { "Hook" }))
+        } else if hooked {
             ui.button("Unhook function")
         } else {
             ui.button("Hook function for dynamic instrumentation")
@@ -10460,6 +10499,17 @@ mod tests {
             cpu: 0.0,
             path: path.into(),
         }
+    }
+
+    #[test]
+    fn row_hook_actions_respect_selection_and_disassembly_target() {
+        let selected = [0, 7, 9, 11].into_iter().collect();
+        for action in [HookAction::Hook, HookAction::Unhook] {
+            assert_eq!(row_hook_targets(action, 9, &selected), vec![7, 9, 11]);
+            assert_eq!(row_hook_targets(action, 13, &selected), vec![13]);
+            assert!(row_hook_targets(action, 0, &selected).is_empty());
+        }
+        assert_eq!(row_hook_targets(HookAction::Disassemble, 9, &selected), vec![9]);
     }
 
     #[test]
