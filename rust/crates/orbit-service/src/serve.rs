@@ -399,15 +399,22 @@ fn scheduling_events(slice: &orbit_tracing_state::context_switches::SchedulingSl
 ///
 /// Returns `None` for threads outside the visible set, which is the same rule
 /// the scheduling projection follows: the trace is machine-wide, the rows are
-/// not. The pid comes from `/proc` because a state slice carries only a tid --
-/// a thread that has already exited resolves to nothing and is dropped, which
-/// is correct: there is no row to draw it on.
+/// not. The service's own pid is always allowed, so its threads get state bars
+/// like any other process's -- introspection into the capture loop. The pid
+/// comes from `/proc` because a state slice carries only a tid -- a thread that
+/// has already exited resolves to nothing and is dropped, which is correct:
+/// there is no row to draw it on.
 #[cfg(target_os = "linux")]
-fn thread_state_event(slice: &Slice, focus: &Focus, visible: &VisibleProcesses) -> Option<LiveEvent> {
+fn thread_state_event(
+    slice: &Slice,
+    focus: &Focus,
+    visible: &VisibleProcesses,
+    self_pid: u32,
+) -> Option<LiveEvent> {
     // The focus knows every tracked thread's process; the `/proc` read is
     // only for a capture that tracks everything.
     let pid = focus.pid_of(slice.tid).or_else(|| pid_of_tid(slice.tid))?;
-    if !visible.contains(pid) {
+    if !visible.contains(pid) && pid != self_pid {
         return None;
     }
     Some(LiveEvent {
@@ -1179,7 +1186,7 @@ fn capture_loop(
         if let Some(tracer) = thread_states.as_mut() {
             let _states = orbit_api::scope("read thread states");
             for slice in tracer.poll() {
-                if let Some(event) = thread_state_event(&slice, tracer.focus(), &visible) {
+                if let Some(event) = thread_state_event(&slice, tracer.focus(), &visible, self_pid) {
                     batch.push(event);
                 }
             }
@@ -1272,7 +1279,7 @@ fn capture_loop(
         let tail: Vec<LiveEvent> = tracer
             .flush(end_ns)
             .iter()
-            .filter_map(|slice| thread_state_event(slice, tracer.focus(), &visible))
+            .filter_map(|slice| thread_state_event(slice, tracer.focus(), &visible, self_pid))
             .collect();
         if !tail.is_empty() {
             service.push_events(&tail);
