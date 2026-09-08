@@ -2423,15 +2423,21 @@ impl OrbitLiveApp {
                 }
             }
             LiveFrame::CaptureFinished => {
-                // A capture that just stopped fits the view to what it
-                // holds, as C++ Orbit does when recording ends -- unless
-                // the user had already taken the view somewhere. An opened
-                // bundle fits on its Status, and an empty ring has nothing
-                // to fit.
-                if !self.user_set_view && !self.import_pending && self.index.event_count() > 0 {
-                    self.follow = false;
+                // A live capture that just stopped stays where it was -- the
+                // last Follow window (~2s) -- instead of zooming out to the
+                // whole capture. Fitting there was a jarring jump and dropped
+                // straight into the pathological "every scope at once" view;
+                // keeping the window is continuous and stays zoomed in. Follow
+                // just stops, freezing the current window. A saved stream file
+                // arrives all at once with this frame and has no live window to
+                // keep, so it still fits to show the whole of it.
+                self.follow = false;
+                self.needs_repaint = true;
+                if self.static_capture.is_some()
+                    && !self.user_set_view
+                    && self.index.event_count() > 0
+                {
                     self.fit_to_content();
-                    self.needs_repaint = true;
                 }
                 // A stream file ends with this frame and no status ever
                 // comes: this is where its report is computed, and where a
