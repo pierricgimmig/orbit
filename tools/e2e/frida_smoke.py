@@ -3,7 +3,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Attach to a running target; verify counts, nesting, manual coexistence and restart.
-Requires frida==17.17.0 and pyarrow in the selected Python environment.
+Requires pyarrow for capture assertions. Frida injection uses the native helper.
 """
 import argparse
 import io
@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--service', required=True)
     parser.add_argument('--agent', required=True)
     parser.add_argument('--target', required=True)
+    parser.add_argument('--helper', required=True)
     parser.add_argument('--engine', default='frida', choices=['frida', 'kernel_uprobes'])
     parser.add_argument('--missing-agent', action='store_true')
     parser.add_argument('--no-manual', action='store_true')
@@ -41,7 +42,7 @@ def main():
             data = response.read()
             return json.loads(data) if data.startswith((b'{', b'[')) else data
     with tempfile.TemporaryFile(mode='w+') as log:
-        env = dict(os.environ, ORBIT_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), ORBIT_FRIDA_PYTHON=os.sys.executable)
+        env = dict(os.environ, ORBIT_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), ORBIT_FRIDA_HELPER=str(Path(args.helper).resolve()))
         service = subprocess.Popen([args.service, '--host', '127.0.0.1', '--serve', str(port)], env=env, stdout=log, stderr=log)
         target = subprocess.Popen([args.target], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         try:
@@ -55,33 +56,6 @@ def main():
                 except OSError:
                     assert service.poll() is None and time.monotonic() < deadline
                     time.sleep(.1)
-            if args.engine == 'frida' and not args.missing_agent:
-                import frida
-                # Exercise Mach-O address/offset arithmetic on every host using
-                # Frida's actual UInt64 and NativePointer types.
-                probe = frida.attach(pid)
-                source = (Path(__file__).resolve().parents[1] / 'frida/agent.js').read_text()
-                check = probe.create_script(source + """
-                rpc.exports.checkSegments = function () {
-                    const base = Memory.alloc(8192);
-                    base.writeU32(0xfeedfacf); base.add(16).writeU32(2);
-                    for (let i = 0; i < 2; i++) {
-                        const c = base.add(32 + i * 72);
-                        c.writeU32(0x19); c.add(4).writeU32(72);
-                        c.add(24).writeU64(uint64('0x100000000').add(i * 4096));
-                        c.add(40).writeU64(i * 4096); c.add(48).writeU64(4096);
-                        c.add(60).writeU32(i === 0 ? 5 : 3);
-                    }
-                    const s = segments({base:base});
-                    return s.length === 2 && s[0].address.equals(base) &&
-                        s[1].address.equals(base.add(4096)) && s[0].executable && !s[1].executable;
-                };
-                """)
-                try:
-                    check.load()
-                    assert check.exports_sync.check_segments(), 'Mach-O segment translation failed'
-                finally:
-                    probe.detach()
             request('/api/symbols/load', {'pid': pid})
             while True:
                 state = request(f'/api/symbols/status?pid={pid}')
@@ -92,26 +66,6 @@ def main():
             found = request(f'/api/functions/search?pid={pid}&q=orbit_frida_test_&limit=20')['functions']
             wanted = {'orbit_frida_test_outer': (30, 0), 'orbit_frida_test_middle': (60, 1), 'orbit_frida_test_inner': (180, 2)}
             hooks = [f for f in found if f['name'].lstrip('_') in wanted]
-            if len(hooks) != 3 and os.sys.platform == 'darwin':
-                # Preserve native symbol metadata when discovery fails in CI.
-                import frida
-                probe = frida.attach(pid)
-                source = (Path(__file__).resolve().parents[1] / 'frida/agent.js').read_text()
-                debug = probe.create_script(source + """
-                rpc.exports.diagnostics = function () {
-                    const m = Process.mainModule;
-                    const symbols = m.enumerateSymbols();
-                    return {name:m.name, base:m.base, segments:segments(m),
-                        raw:symbols.filter(s => s.name.includes('orbit_frida_test')),
-                        indexed:rpc.exports.symbols().filter(s => s.name.includes('orbit_frida_test')),
-                        sections:m.enumerateSections(), count:symbols.length};
-                };
-                """)
-                try:
-                    debug.load()
-                    print('Symbol diagnostics:', json.dumps(debug.exports_sync.diagnostics()))
-                finally:
-                    probe.detach()
             assert len(hooks) == 3, found
             if args.missing_agent:
                 try:

@@ -11,8 +11,12 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-const HELPER: &str = include_str!("../../../../tools/frida/helper.py");
-const SCRIPT: &str = include_str!("../../../../tools/frida/agent.js");
+fn agent_path() -> Result<std::path::PathBuf, String> {
+    let name = if cfg!(target_os = "macos") { "liborbit_frida_agent.dylib" } else { "liborbit_frida_agent.so" };
+    let path = std::env::var_os("ORBIT_FRIDA_AGENT").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name(name));
+    path.canonicalize().map_err(|e| format!("Frida agent {}: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_AGENT", path.display()))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
@@ -36,27 +40,17 @@ struct Helper {
 }
 impl Helper {
     fn launch(mut config: serde_json::Value) -> Result<Self, String> {
-        config["script"] = SCRIPT.into();
-        let python = std::env::var_os("ORBIT_FRIDA_PYTHON").unwrap_or_else(|| {
-            let beside = std::env::current_exe()
-                .unwrap_or_default()
-                .with_file_name("frida-python")
-                .join("bin/python");
-            if beside.is_file() {
-                beside.into_os_string()
-            } else {
-                "python3".into()
-            }
-        });
-        let mut child = Command::new(python)
-            .args(["-u", "-c", HELPER])
+        config["agent"] = agent_path()?.into_os_string().to_string_lossy().into_owned().into();
+        let helper_path = std::env::var_os("ORBIT_FRIDA_HELPER").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name("orbit-frida-helper"));
+        let mut child = Command::new(helper_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(|e| {
                 format!(
-                    "start Frida helper: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_PYTHON"
+                    "start Frida helper: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_HELPER"
                 )
             })?;
         let input = child.stdin.take();
@@ -140,24 +134,7 @@ impl FridaSession {
         if pid <= 0 || pid as u32 == std::process::id() {
             return Err("Frida requires a target process other than orbit-service".into());
         }
-        let name = if cfg!(target_os = "macos") {
-            "liborbit_frida_agent.dylib"
-        } else {
-            "liborbit_frida_agent.so"
-        };
-        let agent = std::env::var_os("ORBIT_FRIDA_AGENT")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .unwrap_or_default()
-                    .with_file_name(name)
-            });
-        let agent = agent.canonicalize().map_err(|e| {
-            format!(
-                "Frida agent {}: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_AGENT",
-                agent.display()
-            )
-        })?;
+        let agent = agent_path()?;
         let file = tempfile::Builder::new()
             .prefix("orbit-frida-")
             .tempfile_in("/tmp")

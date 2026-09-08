@@ -441,12 +441,21 @@ mod tests {
 
     #[test]
     fn modules_are_listed_with_their_symbol_counts() {
-        let index = FunctionIndex::for_pid(std::process::id() as i32);
+        // Test grouping/serialization independently of ptrace/task-port access
+        // and optional injection packaging. Live discovery belongs in native E2E.
+        let index = FunctionIndex {
+            module_count: 2,
+            functions: vec![
+                InstrumentableFunction { id: 1, name: "first".into(), module: "a".into(), module_path: "/a".into(), file_offset: 1, size: 4 },
+                InstrumentableFunction { id: 2, name: "second".into(), module: "b".into(), module_path: "/b".into(), file_offset: 2, size: 4 },
+                InstrumentableFunction { id: 3, name: "third".into(), module: "b".into(), module_path: "/b".into(), file_offset: 3, size: 4 },
+            ],
+        };
         let json: serde_json::Value =
             serde_json::from_str(&index.modules_json(42)).expect("valid json");
         assert_eq!(json["pid"], 42);
         let modules = json["modules"].as_array().unwrap();
-        assert!(!modules.is_empty(), "this process maps modules");
+        assert_eq!(modules.len(), 2);
         // Sorted by contribution, and every row carries a usable path.
         let counts: Vec<u64> =
             modules.iter().map(|m| m["function_count"].as_u64().unwrap()).collect();

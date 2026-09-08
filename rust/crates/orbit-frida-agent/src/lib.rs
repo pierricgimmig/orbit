@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 //! Native lifecycle guard around the target’s Orbit start/stop API.
+#[cfg(feature = "native")]
+mod native;
 use orbit_frida_transport::Transport;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
@@ -31,7 +33,7 @@ static SESSION: RwLock<Session> = RwLock::new(Session {
 });
 
 /// Returns zero on failure, otherwise a generation identifying this capture.
-/// The path is supplied by our controlling Frida script and must be C-terminated.
+/// The path is supplied by our native controller and must be C-terminated.
 #[no_mangle]
 pub unsafe extern "C" fn orbit_frida_open(
     path: *const libc::c_char,
