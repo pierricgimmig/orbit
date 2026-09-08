@@ -74,7 +74,9 @@ def main():
                 try:
                     request('/api/capture/start', {'pid':pid, 'instrumented_functions':[{'function_id': hooks[0]['function_id']}]})
                 except urllib.error.HTTPError as error:
-                    assert b'Frida agent' in error.read()
+                    message = error.read()
+                    expected = b'Frida helper' if args.missing_helper else b'Frida agent'
+                    assert expected in message, message
                 else:
                     raise AssertionError('missing Frida runtime silently accepted')
                 request('/api/capture/start', {'pid':pid})
