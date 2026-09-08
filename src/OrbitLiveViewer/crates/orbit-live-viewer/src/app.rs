@@ -691,6 +691,9 @@ pub struct OrbitLiveApp {
     light_canvas: bool,
     advanced: bool,
     recording: bool,
+    /// Whether a capture was active last frame, to catch the moment it ends
+    /// (falling edge of capturing/recording) and land on the top-down tree.
+    capture_was_active: bool,
     visible_count: u32,
     draw_label: String,
     visible_cache: Option<(u64, u64, u64, i32, u32)>,
@@ -1419,6 +1422,7 @@ impl OrbitLiveApp {
             light_canvas: false,
             advanced: false,
             recording: false,
+            capture_was_active: false,
             visible_count: 0,
             draw_label: String::new(),
             visible_cache: None,
@@ -2163,6 +2167,9 @@ impl OrbitLiveApp {
         // The moment recording stops, show the aggregate over everything just
         // recorded. Orbit does the same: a finished capture with no selection
         // should answer a question, not sit blank waiting to be dragged on.
+        // The default tab is set in the CaptureFinished handler, which is the
+        // reliable stop signal for a connected viewer (a capturing=false status
+        // may not arrive over the socket once the capture ends).
         if self.was_capturing && !capturing {
             self.show_whole_capture_report();
         }
@@ -2458,6 +2465,8 @@ impl OrbitLiveApp {
                     self.show_whole_capture_report();
                     self.settle_frames = 6;
                 }
+                // A live capture's default-to-top-down on stop is handled by the
+                // falling-edge check in update(), the reliable signal.
             }
             LiveFrame::Hello { .. } => {
                 self.hello_count += 1;
@@ -6759,7 +6768,18 @@ impl OrbitLiveApp {
             return;
         }
         let resp = ui.interact(rows_rect, ui.id().with("orbit_report_row_select"), Sense::click_and_drag());
-        let shift = ui.input(|i| i.modifiers.shift);
+        self.row_drag_from_response(&resp, top, row_h, ordered_ids);
+    }
+
+    /// The drag-select logic given an already-registered interaction. Split out
+    /// so a grid-laid report (the call trees) can register the interaction over
+    /// its area before drawing -- so per-row checkboxes still take clicks --
+    /// and feed it here with the row geometry recorded while drawing.
+    fn row_drag_from_response(&mut self, resp: &egui::Response, top: f32, row_h: f32, ordered_ids: &[u64]) {
+        if ordered_ids.is_empty() || row_h <= 0.0 {
+            return;
+        }
+        let shift = resp.ctx.input(|i| i.modifiers.shift);
         if resp.drag_started() {
             if let Some(p) = resp.interact_pointer_pos() {
                 let base = if shift { self.report_selection.clone() } else { std::collections::HashSet::new() };
@@ -6877,12 +6897,22 @@ impl OrbitLiveApp {
         }
         let mut tree_actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         self.hooked_hint(ui);
+        if !self.report_selection.is_empty() {
+            ui.horizontal(|ui| self.selection_hook_controls(ui));
+        }
+        // Drag-select over the tree: registered before the grid so the per-row
+        // hook checkboxes still take clicks; the row geometry recorded while
+        // drawing feeds the shared row-drag logic afterward.
+        let area = ui.available_rect_before_wrap();
+        let drag_resp = ui.interact(area, ui.id().with("orbit_tree_row_select"), Sense::click_and_drag());
+        let mut geom: Vec<(u64, Rect)> = Vec::new();
+        let mut ordered_ids: Vec<u64> = Vec::new();
         egui::Grid::new("orbit_call_tree_rows")
-            .num_columns(5)
+            .num_columns(6)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["inclusive", "self", "of parent", "function", "module"] {
+                for h in ["hook", "inclusive", "self", "of parent", "function", "module"] {
                     ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                 }
                 ui.end_row();
@@ -6909,6 +6939,27 @@ impl OrbitLiveApp {
                     drawn += 1;
                     let expandable = !node.children.is_empty();
                     let expanded = self.tree_expanded.contains(&path) || !filter.is_empty();
+                    let is_thread = node.kind == "thread";
+                    let hooked = self.is_hooked(node.function_id);
+                    // Hook checkbox (first column), like the flat report; a
+                    // click toggles this one, a drag selects a range to batch.
+                    let (crect, cresp) = ui.allocate_exact_size(
+                        Vec2::new(16.0, self.ui_tweaks.report_font + 4.0),
+                        egui::Sense::click(),
+                    );
+                    if !is_thread && node.function_id != 0 {
+                        paint_hook_box(ui, crect, hooked);
+                        if cresp.clicked() {
+                            tree_actions.push((
+                                if hooked { HookAction::Unhook } else { HookAction::Hook },
+                                node.function_id,
+                                node.name.clone(),
+                                node.module.clone(),
+                            ));
+                        }
+                    }
+                    geom.push((node.function_id, crect));
+                    ordered_ids.push(if is_thread { 0 } else { node.function_id });
                     // Inclusive as a bar, the way the native Inclusive column
                     // paints it: the shape of the hot path is visible down the
                     // column without reading a single number.
@@ -6930,8 +6981,6 @@ impl OrbitLiveApp {
                         // A painted triangle, not a glyph: the font atlas has
                         // no chevron and renders one as a replacement box.
                         toggle |= inline_chevron(ui, expandable.then_some(expanded));
-                        let is_thread = node.kind == "thread";
-                        let hooked = self.is_hooked(node.function_id);
                         // A hooked function reads in blue in every report, the
                         // way the flat report already marks it.
                         let name_color = if is_thread {
@@ -6981,6 +7030,26 @@ impl OrbitLiveApp {
                     }
                 }
             });
+        // Drag-select across the rows drawn this frame, reusing the shared
+        // logic with the recorded geometry, then highlight the selection.
+        if !ordered_ids.is_empty() {
+            let top = geom[0].1.top();
+            let row_h = if geom.len() >= 2 {
+                (geom[1].1.top() - geom[0].1.top()).max(1.0)
+            } else {
+                geom[0].1.height() + self.ui_tweaks.report_row_gap
+            };
+            self.row_drag_from_response(&drag_resp, top, row_h, &ordered_ids);
+            for (fid, crect) in &geom {
+                if *fid != 0 && self.report_selection.contains(fid) {
+                    let band = Rect::from_min_max(
+                        Pos2::new(crect.left() - 2.0, crect.center().y - row_h / 2.0),
+                        Pos2::new(area.right(), crect.center().y + row_h / 2.0),
+                    );
+                    ui.painter().rect_filled(band, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 40));
+                }
+            }
+        }
         for (action, id, name, module) in tree_actions {
             self.apply_hook_action(action, id, &name, &module);
         }
@@ -7155,7 +7224,8 @@ impl OrbitLiveApp {
                         {
                             let focused = self.live_focus == Some(r.name_id);
                             let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
-                            ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font));
+                            ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font))
+                                .on_hover_text(INSTRUMENTATION_TYPE_LEGEND);
                             let label = ui.add(
                                 egui::Label::new(
                                     RichText::new(&name)
@@ -7638,6 +7708,23 @@ impl eframe::App for OrbitLiveApp {
                     self.drain_net();
                     self.refresh_search();
                 }
+                // A live capture that just ended lands on the top-down call
+                // tree by default -- "where did the time go" -- with the report
+                // panel open. Detected on the falling edge of capturing here,
+                // the signal that arrives reliably (CaptureStarted/Finished set
+                // the flag outside apply_status's own transition tracking).
+                let capturing_now = self.status.capturing || self.recording;
+                if self.capture_was_active && !capturing_now && self.static_capture.is_none() {
+                    self.report_tab = ReportTab::TopDown;
+                    self.report_open = true;
+                    if self.report_collapsed || self.report_w_last < REPORT_COLLAPSE_W {
+                        self.report_collapsed = false;
+                        self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+                    }
+                    self.show_whole_capture_report();
+                    self.needs_repaint = true;
+                }
+                self.capture_was_active = capturing_now;
                 {
                     let _follow = devf.scope(TID_UI, NAME_TICK_FOLLOW);
                     let steal = ctx.wants_keyboard_input();
@@ -8225,6 +8312,31 @@ thread_local! {
 /// build_wasm.sh (ORBIT_VIEWER_BUILD). Shown in the More menu and on the
 /// wordmark, and published as `build` in window.__orbit_sel, so a stale
 /// page or a stale pack in a service binary is one look away.
+/// A thread-state code (`orbit_live_event::thread_state`) as a short name and
+/// a one-line description, for the hover tooltip over a thread-state bar.
+fn thread_state_label(code: u8) -> (&'static str, &'static str) {
+    use orbit_live_event::thread_state as ts;
+    match code {
+        ts::RUNNING => ("Running", "executing on a CPU"),
+        ts::RUNNABLE => ("Runnable", "ready to run, waiting for a CPU"),
+        ts::INTERRUPTIBLE_SLEEP => ("Sleeping", "interruptible sleep — waiting on I/O, a lock or an event"),
+        ts::UNINTERRUPTIBLE_SLEEP => ("Uninterruptible sleep", "in a syscall that cannot be interrupted, usually disk or DMA"),
+        ts::STOPPED => ("Stopped", "suspended by job control (SIGSTOP)"),
+        ts::TRACED => ("Traced", "stopped under a debugger"),
+        ts::DEAD => ("Dead", "exiting"),
+        ts::ZOMBIE => ("Zombie", "exited, waiting to be reaped"),
+        ts::PARKED => ("Parked", "a kernel thread, parked"),
+        ts::IDLE => ("Idle", "an idle kernel task"),
+        _ => ("Unknown", "unrecognised state code"),
+    }
+}
+
+/// The Live tab's "type" column legend, shown on hover.
+const INSTRUMENTATION_TYPE_LEGEND: &str = "Instrumentation type\n\
+    D — dynamic: a function hooked with a kernel uprobe, no recompile\n\
+    MS — manual scope: orbit_start / orbit_stop in the code\n\
+    MA — manual async: an async span drawn on its own track";
+
 const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
     Some(build) => build,
     None => "dev",
@@ -9767,6 +9879,32 @@ fn show_scope_tooltip(
                         .color(theme::MUTED),
                 );
             }
+            return;
+        }
+        if pick.kind == kind::THREAD_STATE {
+            let tname = intern
+                .get(pick.tid)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{}", pick.tid));
+            let (label, desc) = thread_state_label(pick.extra);
+            ui.label(
+                RichText::new("Thread state").family(fonts::medium()).size(12.0).color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(format!("{label} — {desc}"))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(format!("Thread: {tname} [{}]", pick.tid))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
+            ui.label(
+                RichText::new(format!("Duration: {}", format_ns(pick.duration_ns as f64)))
+                    .font(FontId::monospace(11.0))
+                    .color(theme::MUTED),
+            );
             return;
         }
         let name = intern

@@ -376,6 +376,13 @@ def capture_scheduling(run):
     run.open_viewer()
     run.shot("02-capture-live", settle=3.0)
     run.stop_capture()
+    # A finished capture lands on the top-down call tree by default.
+    if run.chrome is not None:
+        tab = run.wait_for(
+            lambda: run.sel().get("tab") if run.sel().get("tab") == "Top-down" else None,
+            "the report to default to Top-down after stop", timeout=10,
+        )
+        check(tab == "Top-down", f"a finished capture should default to Top-down, got {tab!r}")
 
 
 @scenario("sampling-report", "The whole-capture flat report names the workload's functions")
