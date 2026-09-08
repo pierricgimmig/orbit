@@ -116,6 +116,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
+    // Darwin inherits O_NONBLOCK from the listening socket; Linux does not.
+    // Only accept is polled. The connected control stream is blocking on both.
+    stream.set_nonblocking(false)?;
     stream.write_all(config.as_bytes())?;
     let mut stop = stream.try_clone()?;
     std::thread::spawn(move || {
