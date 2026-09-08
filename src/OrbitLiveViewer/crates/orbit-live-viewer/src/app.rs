@@ -3338,7 +3338,7 @@ impl OrbitLiveApp {
             let selected = self.report_selection.contains(&f.function_id);
             let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
             if (first + n) % 2 == 1 {
-                ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+                ui.painter().rect_filled(row_rect, 0.0, theme::REPORT_ROW_ALT);
             }
             if selected {
                 ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 48));
@@ -6026,6 +6026,8 @@ impl OrbitLiveApp {
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
+                // Grid stripes match the manually painted Flat, Functions and Code rows.
+                ui.visuals_mut().faint_bg_color = theme::REPORT_ROW_ALT;
                 let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
                 // Wrapped, not a single row: the panel is narrow and the tabs
                 // and the selection text must not run off its right edge.
@@ -6448,7 +6450,7 @@ impl OrbitLiveApp {
             let selected = self.report_selection.contains(&row.function_id) && row.function_id != 0;
             let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
             if (first + n) % 2 == 1 {
-                ui.painter().rect_filled(row_rect, 0.0, theme::TRACK_ALT);
+                ui.painter().rect_filled(row_rect, 0.0, theme::REPORT_ROW_ALT);
             }
             if selected {
                 ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 48));
@@ -6650,7 +6652,9 @@ impl OrbitLiveApp {
             if is_annotation {
                 painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2C, 0x2F, 0x33));
             } else if hovered {
-                painter.rect_filled(rect, 0.0, theme::TRACK_ALT);
+                painter.rect_filled(rect, 0.0, theme::REPORT_ROW_HOVER);
+            } else if i % 2 == 1 {
+                painter.rect_filled(rect, 0.0, theme::REPORT_ROW_ALT);
             }
             let text_x = rect.left() + gutter_w + 8.0;
             match row {

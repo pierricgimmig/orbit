@@ -8,6 +8,9 @@ pub const CANVAS: Color32 = Color32::from_rgb(0x0B, 0x0C, 0x0E);
 /// Opt-in timeline paper so Wallace drop shadows read against a light field.
 pub const PAPER: Color32 = Color32::from_rgb(0xE4, 0xE6, 0xEA);
 pub const PANEL: Color32 = Color32::from_rgb(0x12, 0x14, 0x1A);
+/// Cool graphite stripes shared by the report grids and virtualized rows.
+pub const REPORT_ROW_ALT: Color32 = Color32::from_rgb(0x1C, 0x20, 0x28);
+pub const REPORT_ROW_HOVER: Color32 = Color32::from_rgb(0x26, 0x2D, 0x37);
 pub const RAIL: Color32 = Color32::from_rgb(0x10, 0x12, 0x16);
 pub const TRACK: Color32 = Color32::from_rgb(0x16, 0x18, 0x1D);
 /// Neutral alt before per-process washes. Kept as the graphite baseline.
