@@ -676,6 +676,14 @@ fn capture_loop(
     // capture. Symbolizer::for_pid emits its own "load symbols (N modules)"
     // scope around the parallel per-file loads.
     let mut symbolizer = Symbolizer::empty();
+    // Samples are held until the symbolizer is ready rather than resolved with
+    // the empty one: the empty symbolizer names every address as bare hex, so
+    // a function sampled both before and after the load split into a hex ghost
+    // and its real name. The kernel sampling rings buffer meanwhile, so held
+    // samples keep their timestamps and appear, correctly named, once symbols
+    // land. Scheduling and thread states need no symbols and stream from the
+    // first pass.
+    let mut symbols_ready = false;
     let (symbolizer_tx, symbolizer_rx) = std::sync::mpsc::channel::<Symbolizer>();
     if has_target {
         let tx = symbolizer_tx;
@@ -941,9 +949,9 @@ fn capture_loop(
 
     while running.load(Ordering::Relaxed) {
         let _pass = orbit_api::scope("capture pass");
-        // The background symbol load finished: swap it in and drop the pc cache
-        // (its entries are the interim hex addresses) so later frames resolve
-        // to names. Events already emitted keep their addresses.
+        // The background symbol load finished: swap it in and start draining
+        // the sampling rings (which buffered while it built). Even a stripped
+        // binary resolves to module+offset here, not bare hex.
         if let Ok(built) = symbolizer_rx.try_recv() {
             if built.module_count() > 0 {
                 eprintln!(
@@ -953,7 +961,7 @@ fn capture_loop(
                 );
             }
             symbolizer = built;
-            pc_ids.clear();
+            symbols_ready = true;
         }
         batch.clear();
         // Children appear mid-capture; the refresh is rate-limited internally.
@@ -1096,8 +1104,10 @@ fn capture_loop(
                 }
             }
         }
+        // Hold samples until the symbols are ready; the kernel rings buffer
+        // them meanwhile, so they arrive named rather than as bare addresses.
         let _samples = orbit_api::scope("read samples");
-        if let Some(unwinder) = unwinder.as_mut() {
+        if let (true, Some(unwinder)) = (symbols_ready, unwinder.as_mut()) {
             for thread in threads.iter_mut() {
                 let ring = &mut thread.sample;
                 while let Ok(Some(record)) = ring.read_record() {

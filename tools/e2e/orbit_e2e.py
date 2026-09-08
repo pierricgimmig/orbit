@@ -1149,6 +1149,25 @@ def python_reader(run):
     check(has_capture, "the whole-capture self-profile scope is missing from the events")
     check(has_total, "the total 'load symbols (N modules)' scope is missing from the events")
     check(has_loadsym, "no per-file 'load symbols: <file>' scopes in the events")
+    # No bare-hex sample frames: samples are held until the symbolizer is ready,
+    # so a frame in a known module resolves to a name or module+offset, never a
+    # bare address (which would also split a function into a hex ghost and its
+    # real name). The test target is not stripped and has no JIT, so expect 0.
+    bare_q = subprocess.run(
+        [PYARROW_PYTHON, "-c",
+         "import re,pyarrow.parquet as pq,sys;"
+         "t=pq.read_table(sys.argv[1]+'/events.parquet');"
+         "name=t.column('name').to_pylist();kind=t.column('kind').to_pylist();"
+         "f=[n for n,k in zip(name,kind) if k in (2,7) and n];"
+         "b=[n for n in f if re.fullmatch(r'0x[0-9a-fA-F]+',str(n))];"
+         "print(len(f),len(b))",
+         folder],
+        capture_output=True, text=True, timeout=120,
+    )
+    check(bare_q.returncode == 0, f"pyarrow bare-hex query failed: {bare_q.stderr[-300:]}")
+    total_frames, bare_frames = (int(v) for v in bare_q.stdout.split())
+    check_at_least(total_frames, 100, "sample frames to symbolize")
+    check(bare_frames == 0, f"{bare_frames} of {total_frames} sample frames are bare hex (unsymbolized)")
     # The service's own threads read by name (Builder::name / tokio thread_name,
     # and the comm refresh now includes the service's own pid).
     manifest, _ = _bundle_manifest(path)
