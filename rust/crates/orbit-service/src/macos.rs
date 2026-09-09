@@ -70,17 +70,69 @@ fn process_path(pid: u32) -> String {
     }
 }
 
-pub fn list_processes_json() -> Result<String, String> {
-    let mut pids = pid_list().map_err(|e| e.to_string())?;
-    pids.sort_unstable();
-    let processes: Vec<_> = pids
+/// Nanoseconds per mach_absolute_time tick. 1:1 on Intel; on Apple silicon the
+/// timebase is 125/3, so a raw tick count read as nanoseconds would be
+/// forty-odd times too small. Bound here rather than through `libc`, whose
+/// binding is deprecated in favour of a crate this one has no other use for.
+fn timebase_ns_per_tick() -> f64 {
+    #[repr(C)]
+    struct MachTimebaseInfo {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut MachTimebaseInfo) -> libc::c_int;
+    }
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RATIO.get_or_init(|| {
+        let mut tb = MachTimebaseInfo { numer: 0, denom: 0 };
+        // SAFETY: the call only writes the struct it is handed.
+        if unsafe { mach_timebase_info(&mut tb) } == 0 && tb.denom != 0 {
+            f64::from(tb.numer) / f64::from(tb.denom)
+        } else {
+            1.0
+        }
+    })
+}
+
+/// Cumulative user + system CPU time of a process in seconds, from the task
+/// info libproc exposes. `pti_total_user`/`pti_total_system` are in
+/// mach_absolute_time units, so they go through the timebase.
+fn process_cpu_secs(pid: u32) -> Option<f64> {
+    let pid = i32::try_from(pid).ok()?;
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as i32;
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&mut info as *mut libc::proc_taskinfo).cast(),
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    let ticks = info.pti_total_user.saturating_add(info.pti_total_system);
+    Some(ticks as f64 * timebase_ns_per_tick() / 1e9)
+}
+
+/// Every visible process with its cumulative CPU time, for the shared
+/// sampler in `procs.rs` that turns successive snapshots into percentages.
+pub(crate) fn process_snapshot() -> Result<Vec<crate::procs::ProcSnap>, String> {
+    let pids = pid_list().map_err(|e| e.to_string())?;
+    Ok(pids
         .into_iter()
         .filter_map(|pid| {
-            Some(serde_json::json!({"pid": pid, "name": process_comm(pid)?,
-                               "path": process_path(pid), "cpu": 0.0}))
+            Some(crate::procs::ProcSnap {
+                pid,
+                name: process_comm(pid)?,
+                path: process_path(pid),
+                cpu_secs: process_cpu_secs(pid).unwrap_or(0.0),
+            })
         })
-        .collect();
-    Ok(serde_json::to_string(&processes).unwrap())
+        .collect())
 }
 
 pub fn read_parent_map() -> Vec<(u32, u32)> {
