@@ -443,111 +443,11 @@ fn pid_of_tid(tid: i32) -> Option<u32> {
 
 /// Enumerates processes for the viewer's Capture strip. The viewer expects
 /// `[{"pid":N,"name":"...","cpu":F,"path":"..."}]`.
-#[cfg(target_os = "linux")]
-/// The utime+stime of a process in clock ticks, from `/proc/<pid>/stat`. The
-/// comm field is `(name)` and may hold spaces or parentheses, so the numeric
-/// fields are read after the last `)`: state is field 3, so utime (14) and
-/// stime (15) are the 12th and 13th whitespace tokens after it.
-#[cfg(not(target_os = "macos"))]
-fn proc_cpu_jiffies(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let rest = &stat[stat.rfind(')')? + 1..];
-    let mut fields = rest.split_whitespace();
-    let utime: u64 = fields.nth(11)?.parse().ok()?;
-    let stime: u64 = fields.next()?.parse().ok()?;
-    Some(utime.saturating_add(stime))
-}
-
-/// Per-process CPU is a rate, so it needs two samples: this keeps the previous
-/// snapshot (when it was taken, and each pid's cumulative ticks) and turns the
-/// delta since then into a percentage. 100% is one core saturated; a
-/// multithreaded process can exceed it, the way `top` reports it.
-#[cfg(not(target_os = "macos"))]
-struct ProcCpuSampler {
-    prev: std::sync::Mutex<(std::time::Instant, HashMap<u32, u64>)>,
-    clk_tck: f64,
-}
-
-#[cfg(not(target_os = "macos"))]
-impl ProcCpuSampler {
-    fn new() -> Self {
-        let tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-        Self {
-            prev: std::sync::Mutex::new((std::time::Instant::now(), HashMap::new())),
-            clk_tck: if tck > 0 { tck as f64 } else { 100.0 },
-        }
-    }
-
-    fn list_json(&self) -> Result<String, String> {
-        let dir = std::fs::read_dir("/proc").map_err(|error| error.to_string())?;
-        // pid, comm, exe path, cumulative CPU ticks.
-        let mut cur: Vec<(u32, String, String, u64)> = Vec::new();
-        for entry in dir.flatten() {
-            let name = entry.file_name();
-            let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
-            // comm is the thread name; the exe link gives the full path when readable.
-            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-            if comm.is_empty() {
-                continue;
-            }
-            let path = std::fs::read_link(format!("/proc/{pid}/exe"))
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let jiffies = proc_cpu_jiffies(pid).unwrap_or(0);
-            cur.push((pid, comm, path, jiffies));
-        }
-
-        let now = std::time::Instant::now();
-        let mut guard = self.prev.lock().map_err(|_| "process sampler poisoned".to_string())?;
-        let (prev_t, prev_map) = &mut *guard;
-        let elapsed = now.duration_since(*prev_t).as_secs_f64();
-        // Ignore sub-threshold gaps (a manual refresh right after a poll): the
-        // rate would be noise. The old snapshot is kept so the next real poll
-        // still measures a full interval.
-        let fresh = elapsed >= 0.05;
-        // pid, cpu%, json.
-        let mut rows: Vec<(u32, f32, serde_json::Value)> = Vec::with_capacity(cur.len());
-        for (pid, comm, path, jiffies) in &cur {
-            let cpu = if fresh {
-                let prev = prev_map.get(pid).copied().unwrap_or(*jiffies);
-                let delta = jiffies.saturating_sub(prev) as f64;
-                ((delta / self.clk_tck) / elapsed * 100.0) as f32
-            } else {
-                0.0
-            };
-            rows.push((
-                *pid,
-                cpu,
-                serde_json::json!({ "pid": pid, "name": comm, "cpu": cpu, "path": path }),
-            ));
-        }
-        if fresh {
-            *prev_t = now;
-            prev_map.clear();
-            prev_map.extend(cur.iter().map(|(pid, _, _, j)| (*pid, *j)));
-        }
-        drop(guard);
-
-        // Busiest first; pid breaks ties so equal-CPU rows keep a stable order.
-        rows.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.0.cmp(&b.0))
-        });
-        let list: Vec<serde_json::Value> = rows.into_iter().map(|(_, _, v)| v).collect();
-        serde_json::to_string(&list).map_err(|error| error.to_string())
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
+///
+/// Every platform's list, with CPU, busiest first. The per-OS probes and the
+/// shared rate arithmetic live in `procs.rs`.
 fn list_processes_json() -> Result<String, String> {
-    use std::sync::OnceLock;
-    // One sampler for the life of the service, so successive polls have a
-    // previous snapshot to diff against.
-    static SAMPLER: OnceLock<ProcCpuSampler> = OnceLock::new();
-    SAMPLER.get_or_init(ProcCpuSampler::new).list_json()
+    crate::procs::list_processes_json()
 }
 
 /// A name id for an agent scope, in a range of its own. The server's
@@ -555,8 +455,6 @@ fn list_processes_json() -> Result<String, String> {
 /// start low, so an id handed out here would be overwritten by an
 /// instrumented process's next name; a hash of the text in the top half
 /// of the id space keeps clear of both, and of the frame ids at 2^21.
-#[cfg(target_os = "macos")]
-fn list_processes_json() -> Result<String, String> { crate::macos::list_processes_json() }
 
 fn agent_name_id(service: &LiveService, name: &str) -> u32 {
     let mut h: u32 = 0x811C_9DC5;

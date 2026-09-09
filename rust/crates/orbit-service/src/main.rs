@@ -27,6 +27,7 @@ mod lan;
 mod names;
 #[cfg(target_os = "linux")]
 mod privileges;
+mod procs;
 mod report;
 mod scope_index;
 mod selfstat;
