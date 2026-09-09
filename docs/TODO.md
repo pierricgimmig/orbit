@@ -703,7 +703,13 @@ instance-colour caches so it takes effect at once. Screenshots 38-44; e2e
 
 Light schemes added 2026-09-09: **Solarized Light** and **Gruvbox Light**.
 A `Theme::light` flag flips the grid, playhead, sample bar and egui widget
-base to their dark-on-light forms; the process washes use a near-white set;
-and scope-box labels now pick black or white per box by luminance
-(`label_ink`), so a pale accent no longer washes the text out. Seven
-schemes in all.
+base to their dark-on-light forms, and scope-box labels now pick black or
+white per box by luminance (`label_ink`) so a pale accent no longer washes
+the text out. Seven schemes in all.
+
+Wash harmony fix 2026-09-09: the non-default schemes kept Orbit's near-black
+process washes, which clashed with their own canvas (the capture view looked
+darker than the surrounding chrome). Now only Orbit ships an explicit wash
+table; every other scheme derives each process band as a faint tint of its
+own canvas toward one of its scope accents (`derive_wash`), so the timeline
+background is one family with the chrome in both dark and light schemes.
