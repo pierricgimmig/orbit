@@ -893,9 +893,10 @@ pub struct OrbitLiveApp {
     pending_file: chrome_load::PendingFile,
 }
 
-/// A committed rectangle ("marquee") selection: what to keep drawing, and the
-/// stats to show beside it. The scopes themselves went straight to the
-/// clipboard on release, so only the summary is kept. The horizontal extent is
+/// A committed rectangle ("marquee") selection: what to keep drawing, the stats
+/// to show beside it, and the full breakdown for the summary pane. The scopes
+/// themselves went to the clipboard on release; the same text is kept here so
+/// the right-side pane can show it and re-copy it. The horizontal extent is
 /// stored as a time span, so the rectangle stays locked to the capture under a
 /// pan or zoom; the vertical extent is body-local, so it tracks the lanes as
 /// they scroll.
@@ -906,6 +907,9 @@ struct RectResult {
     y0: f32,
     y1: f32,
     stats: crate::rect_select::RectStats,
+    /// The detailed plain-text report (per-function, per-thread, per-scope),
+    /// identical to what went to the clipboard, rendered in the summary pane.
+    report_text: String,
 }
 
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
@@ -5541,7 +5545,7 @@ impl OrbitLiveApp {
         let (stats, text) =
             crate::rect_select::report(&picked, &self.intern, |p, t| self.thread_display_name(p, t));
         if !text.is_empty() {
-            ctx.copy_text(text);
+            ctx.copy_text(text.clone());
             self.rect_copied_at = self.now_s;
         }
         // Body-local x -> absolute -> capture time, so the band re-projects.
@@ -5553,6 +5557,7 @@ impl OrbitLiveApp {
             y0: a.y.min(b.y),
             y1: a.y.max(b.y),
             stats,
+            report_text: text,
         });
     }
 
@@ -5987,6 +5992,86 @@ impl OrbitLiveApp {
                 self.in_self_pane = false;
                 self.self_tl = tl;
             });
+    }
+
+    /// A right-side pane with the full breakdown of the committed rectangle
+    /// selection: the same detailed report that went to the clipboard --
+    /// per-function, per-thread, and the individual scopes -- kept on screen so
+    /// it can be read and re-copied. Shown only while a marquee is committed and
+    /// covers at least one scope; the ✕ clears it and the drawn rectangle.
+    fn rect_summary_panel(&mut self, ctx: &Context) {
+        // Clone once per frame: the text is a few KB at most, and borrowing
+        // `rect_result` immutably across the panel closure would collide with
+        // the `&mut self` the closure needs for the copy flash.
+        let Some(res) = self.rect_result.clone() else {
+            return;
+        };
+        // A marquee dragged over blank space keeps its rectangle but has
+        // nothing to summarise -- no pane for it.
+        if res.stats.count == 0 || res.report_text.is_empty() {
+            return;
+        }
+        let screen_w = ctx.screen_rect().width();
+        let width = (screen_w * 0.26).clamp(300.0, 460.0).min(screen_w);
+        let mut clear = false;
+        egui::SidePanel::right("orbit_rect_summary")
+            .resizable(false)
+            .exact_width(width)
+            .frame(
+                Frame::new()
+                    .fill(theme::PANEL)
+                    .inner_margin(Margin::symmetric(12, 8))
+                    .stroke(Stroke::NONE),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Selection").color(theme::TEXT).size(12.0));
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .small_button("✕")
+                                .on_hover_text("Clear the selection")
+                                .clicked()
+                            {
+                                clear = true;
+                            }
+                            let flashing = self.now_s - self.rect_copied_at < 1.5;
+                            if ui
+                                .small_button(if flashing { "Copied ✓" } else { "Copy" })
+                                .on_hover_text("Copy this report to the clipboard")
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(res.report_text.clone());
+                                self.rect_copied_at = self.now_s;
+                            }
+                        },
+                    );
+                });
+                ui.label(
+                    RichText::new(res.stats.one_line())
+                        .color(theme::MUTED)
+                        .size(11.0),
+                );
+                ui.add_space(6.0);
+                // The report is column-aligned monospace; let it scroll both
+                // ways rather than wrap the columns.
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&res.report_text)
+                                    .font(FontId::monospace(11.0))
+                                    .color(theme::TEXT),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                    });
+            });
+        if clear {
+            self.rect_result = None;
+        }
     }
 
     /// The sampling report for the current selection: self and inclusive
@@ -7968,6 +8053,7 @@ impl eframe::App for OrbitLiveApp {
                 let _report = devf.scope(TID_UI, NAME_REPORT_PANEL);
                 self.sampling_panel(ctx);
             }
+            self.rect_summary_panel(ctx);
             self.tweaks_window(ctx);
             self.paint_scope_menu(ctx);
             {
