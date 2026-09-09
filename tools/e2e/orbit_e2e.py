@@ -1044,7 +1044,8 @@ def color_schemes(run):
         return "skipped: --no-shots"
     _week_capture(run)
     shot = 38
-    for key in ["orbit", "dracula", "nord", "gruvbox", "solarized"]:
+    for key in ["orbit", "dracula", "nord", "gruvbox", "solarized",
+                "solarized-light", "gruvbox-light"]:
         # ?theme= is applied at load, so a fresh open per scheme; the flame
         # graph and the timeline together show chrome, scopes and states.
         run.open_viewer(f"?collapse=scheduler&report=flame&theme={key}")

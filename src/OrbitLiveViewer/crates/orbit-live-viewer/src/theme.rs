@@ -88,16 +88,16 @@ pub fn timeline_canvas(light: bool) -> Color32 {
     }
 }
 
-pub fn quiet_grid_line(light: bool) -> Color32 {
-    if light {
+pub fn quiet_grid_line(paper: bool) -> Color32 {
+    if paper || active().light {
         Color32::from_rgba_unmultiplied(20, 22, 26, 28)
     } else {
         Color32::from_rgba_unmultiplied(255, 255, 255, 10)
     }
 }
 
-pub fn playhead_color(light: bool) -> Color32 {
-    if light {
+pub fn playhead_color(paper: bool) -> Color32 {
+    if paper || active().light {
         PAPER_PLAYHEAD()
     } else {
         PLAYHEAD()
@@ -150,7 +150,10 @@ pub fn process_track_wash_role(pid: u32, role: WashRole) -> Color32 {
 }
 
 fn chan(v: u8, lift: i16) -> u8 {
-    (i16::from(v) + lift).clamp(0x0B, 0x28) as u8
+    // Washes are near-black on a dark scheme and near-white on a light one;
+    // clamp into the matching end so a lift cannot push one into mid-grey.
+    let (lo, hi) = if active().light { (0xDC, 0xF6) } else { (0x0B, 0x28) };
+    (i16::from(v) + lift).clamp(lo, hi) as u8
 }
 
 /// Scope / event colours are drawn as-is. Only the timeline's `chrome::TRACK`

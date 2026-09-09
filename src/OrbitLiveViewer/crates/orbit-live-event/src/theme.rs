@@ -48,6 +48,9 @@ pub struct Theme {
     pub name: &'static str,
     /// Stable id for `?theme=` and `localStorage`.
     pub key: &'static str,
+    /// A light scheme: the canvas is bright, so the grid, playhead and egui
+    /// widgets flip to their dark-on-light forms.
+    pub light: bool,
 
     // --- Timeline / scope colours (read by color.rs) ---
     /// Scope-box palette, indexed by a hash of the name or the thread id.
@@ -111,6 +114,7 @@ const ORBIT_WASHES: [[u8; 3]; 8] = [
 pub static ORBIT: Theme = Theme {
     name: "Orbit",
     key: "orbit",
+    light: false,
     scope: &ORBIT_SCOPE,
     thread_states: ThreadStates {
         running: 0xFF4C_AF50,
@@ -159,6 +163,7 @@ const DRACULA_SCOPE: [Argb; 7] = [
 static DRACULA: Theme = Theme {
     name: "Dracula",
     key: "dracula",
+    light: false,
     scope: &DRACULA_SCOPE,
     thread_states: ThreadStates {
         running: 0xFF50_FA7B,
@@ -200,6 +205,7 @@ const NORD_SCOPE: [Argb; 8] = [
 static NORD: Theme = Theme {
     name: "Nord",
     key: "nord",
+    light: false,
     scope: &NORD_SCOPE,
     thread_states: ThreadStates {
         running: 0xFFA3_BE8C,
@@ -240,6 +246,7 @@ const GRUVBOX_SCOPE: [Argb; 7] = [
 static GRUVBOX: Theme = Theme {
     name: "Gruvbox",
     key: "gruvbox",
+    light: false,
     scope: &GRUVBOX_SCOPE,
     thread_states: ThreadStates {
         running: 0xFFB8_BB26,
@@ -281,6 +288,7 @@ const SOLARIZED_SCOPE: [Argb; 8] = [
 static SOLARIZED: Theme = Theme {
     name: "Solarized",
     key: "solarized",
+    light: false,
     scope: &SOLARIZED_SCOPE,
     thread_states: ThreadStates {
         running: 0xFF85_9900,
@@ -315,9 +323,109 @@ static SOLARIZED: Theme = Theme {
     process_washes: &ORBIT_WASHES,
 };
 
+// ---------------------------------------------------------------------------
+// Light schemes. The canvas is bright, so `light` is set (the viewer flips
+// the grid, playhead and egui widgets to dark-on-light) and the process
+// washes are near-white tints rather than the near-black originals.
+// ---------------------------------------------------------------------------
+
+/// Near-white per-process washes, the light counterpart of [`ORBIT_WASHES`].
+const LIGHT_WASHES: [[u8; 3]; 8] = [
+    [0xF0, 0xEA, 0xE2],
+    [0xE6, 0xEC, 0xF2],
+    [0xE6, 0xF0, 0xE8],
+    [0xF0, 0xE8, 0xF2],
+    [0xEC, 0xEF, 0xF2],
+    [0xF2, 0xEE, 0xE2],
+    [0xE8, 0xEC, 0xF2],
+    [0xF2, 0xEA, 0xEC],
+];
+
+/// Same accents as Solarized (dark), which are tuned to read on either
+/// ground; the chrome is the light base3/base2 with base00 text.
+static SOLARIZED_LIGHT: Theme = Theme {
+    name: "Solarized Light",
+    key: "solarized-light",
+    light: true,
+    scope: &SOLARIZED_SCOPE,
+    thread_states: ThreadStates {
+        running: 0xFF85_9900,
+        runnable: 0xFF26_8BD2,
+        interruptible: 0xFF93_A1A1,
+        uninterruptible: 0xFFCB_4B16,
+        stopped: 0xFFDC_322F,
+        traced: 0xFF6C_71C4,
+        dead: 0xFF07_3642,
+        parked: 0xFF58_6E75,
+    },
+    sample_tick: 0xFF58_6E75,
+    selection: 0xFF26_8BD2,
+    same_scope: 0xFF2A_A198,
+    inactive: 0xFF93_A1A1,
+    canvas: 0xFFFD_F6E3,
+    paper: 0xFFFD_F6E3,
+    panel: 0xFFEE_E8D5,
+    report_row_alt: 0xFFE9_E2CC,
+    report_row_hover: 0xFFDF_D8C0,
+    rail: 0xFFE9_E2CC,
+    track: 0xFFF5_EFDC,
+    track_alt: 0xFFEF_E8D0,
+    input: 0xFFFB_F3DE,
+    text: 0xFF65_7B83,
+    muted: 0xFF93_A1A1,
+    accent: 0xFF26_8BD2,
+    hair: 0x1407_0A0C,
+    insert: 0xFF65_7B83,
+    playhead: 0xFF58_6E75,
+    paper_playhead: 0xFF58_6E75,
+    process_washes: &LIGHT_WASHES,
+};
+
+const GRUVBOX_LIGHT_SCOPE: [Argb; 7] = [
+    0xFFCC_241D, 0xFFD6_5D0E, 0xFFD7_9921, 0xFF98_971A, 0xFF68_9D6A, 0xFF45_8588, 0xFFB1_6286,
+];
+static GRUVBOX_LIGHT: Theme = Theme {
+    name: "Gruvbox Light",
+    key: "gruvbox-light",
+    light: true,
+    scope: &GRUVBOX_LIGHT_SCOPE,
+    thread_states: ThreadStates {
+        running: 0xFF98_971A,
+        runnable: 0xFF45_8588,
+        interruptible: 0xFF7C_6F64,
+        uninterruptible: 0xFFD6_5D0E,
+        stopped: 0xFFCC_241D,
+        traced: 0xFFB1_6286,
+        dead: 0xFF3C_3836,
+        parked: 0xFF7C_6F64,
+    },
+    sample_tick: 0xFF3C_3836,
+    selection: 0xFF45_8588,
+    same_scope: 0xFF68_9D6A,
+    inactive: 0xFFA8_9984,
+    canvas: 0xFFFB_F1C7,
+    paper: 0xFFFB_F1C7,
+    panel: 0xFFEB_DBB2,
+    report_row_alt: 0xFFEB_DBB2,
+    report_row_hover: 0xFFD5_C4A1,
+    rail: 0xFFEB_DBB2,
+    track: 0xFFF2_E5BC,
+    track_alt: 0xFFEC_E3B0,
+    input: 0xFFFB_F1C7,
+    text: 0xFF3C_3836,
+    muted: 0xFF7C_6F64,
+    accent: 0xFF45_8588,
+    hair: 0x140A_0908,
+    insert: 0xFF3C_3836,
+    playhead: 0xFF3C_3836,
+    paper_playhead: 0xFF3C_3836,
+    process_washes: &LIGHT_WASHES,
+};
+
 /// Every scheme, in the order the picker lists them. Orbit leads so the
-/// default is the first thing offered.
-pub static THEMES: &[&Theme] = &[&ORBIT, &DRACULA, &NORD, &GRUVBOX, &SOLARIZED];
+/// default is the first thing offered; the light schemes come last.
+pub static THEMES: &[&Theme] =
+    &[&ORBIT, &DRACULA, &NORD, &GRUVBOX, &SOLARIZED, &SOLARIZED_LIGHT, &GRUVBOX_LIGHT];
 
 thread_local! {
     static ACTIVE: Cell<&'static Theme> = const { Cell::new(&ORBIT) };
@@ -378,13 +486,28 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), n, "theme keys must be unique");
-        assert_eq!(THEMES.len(), 5, "Orbit plus four terminal schemes");
+        assert_eq!(THEMES.len(), 7, "Orbit, four dark terminal schemes, two light");
         for t in THEMES {
             assert!(by_key(t.key).is_some());
             assert!(!t.scope.is_empty(), "every scheme needs a scope palette");
             assert_eq!(t.scope[0] >> 24, 0xFF, "scope colours are opaque ARGB");
         }
         assert!(by_key("nope").is_none());
+    }
+
+    #[test]
+    fn light_schemes_are_flagged_and_bright() {
+        // The default and the terminal-dark schemes are dark; the two light
+        // ones carry the flag and a bright canvas the viewer keys its
+        // grid/playhead/widget inversion off.
+        assert!(!ORBIT.light);
+        let light: Vec<&str> = THEMES.iter().filter(|t| t.light).map(|t| t.key).collect();
+        assert_eq!(light, ["solarized-light", "gruvbox-light"]);
+        for t in THEMES.iter().filter(|t| t.light) {
+            let bright = |c: Argb| ((c >> 16) & 0xFF).min((c >> 8) & 0xFF).min(c & 0xFF);
+            assert!(bright(t.canvas) > 0xC0, "{} canvas should be bright", t.key);
+            assert!(bright(t.text) < 0x80, "{} text should be dark", t.key);
+        }
     }
 
     #[test]

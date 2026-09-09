@@ -458,7 +458,14 @@ fn slider_jump_to_norm(t0: f64, t1: f64, cap0: f64, cap1: f64, click_norm: f64) 
 }
 
 pub fn apply_orbit_visuals(ctx: &Context) {
-    let mut v = egui::Visuals::dark();
+    // A light scheme starts from egui's light base so the bits we do not
+    // override (scrollbars, shadows) are light too; then every colour below
+    // is set from the active theme regardless.
+    let mut v = if orbit_live_event::theme::active().light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
     let r = egui::CornerRadius::same(RADIUS as u8);
     v.override_text_color = Some(theme::TEXT());
     v.panel_fill = theme::PANEL();
@@ -5804,8 +5811,9 @@ impl OrbitLiveApp {
     /// one, so it works in both themes.
     fn sample_bar_color(&self) -> Color32 {
         let c = self.canvas_color();
+        let light = self.light_canvas || orbit_live_event::theme::active().light;
         let mix = |v: u8| -> u8 {
-            let target = if self.light_canvas { 0u8 } else { 255u8 };
+            let target = if light { 0u8 } else { 255u8 };
             ((v as f32) * 0.88 + (target as f32) * 0.12) as u8
         };
         Color32::from_rgb(mix(c.r()), mix(c.g()), mix(c.b()))
@@ -10810,7 +10818,22 @@ fn paint_clip_labels(
             continue;
         };
         let pos = clip_label_origin(box_rect, pos_x, galley.mesh_bounds, galley.size());
-        ui.painter_at(clip).galley(pos, galley, Color32::WHITE);
+        ui.painter_at(clip).galley(pos, galley, label_ink(inst.color));
+    }
+}
+
+/// Readable text over a scope box: near-black on a light fill, near-white on
+/// a dark one. Rec. 601 luma. The old code always used white, which a light
+/// scheme's paler accent boxes (Solarized yellow, say) washed out.
+fn label_ink(fill_argb: u32) -> Color32 {
+    let r = ((fill_argb >> 16) & 0xFF) as u32;
+    let g = ((fill_argb >> 8) & 0xFF) as u32;
+    let b = (fill_argb & 0xFF) as u32;
+    let luma = (r * 54 + g * 183 + b * 19) / 256;
+    if luma > 150 {
+        Color32::from_rgb(0x14, 0x16, 0x1A)
+    } else {
+        Color32::WHITE
     }
 }
 
