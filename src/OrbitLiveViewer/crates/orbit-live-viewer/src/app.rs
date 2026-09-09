@@ -127,8 +127,12 @@ fn selection_after_process_refresh(selected: Option<u32>, incoming: &[ProcessJso
     selected.filter(|pid| incoming.iter().any(|p| p.pid == *pid))
 }
 
-fn should_poll_processes(list_empty: bool, capture_open: bool, now: f64, last: f64) -> bool {
-    (list_empty || capture_open) && now - last >= PROCESS_POLL_S
+/// The process list auto-refreshes every [`PROCESS_POLL_S`] so its CPU-ordered
+/// rows stay live -- not only while the list is empty or a capture is open, the
+/// way it once did. The caller still holds the refresh while a picker popup is
+/// open, so the rows do not reshuffle by CPU under the cursor.
+fn should_poll_processes(now: f64, last: f64) -> bool {
+    now - last >= PROCESS_POLL_S
 }
 
 pub(crate) fn c32(argb: u32) -> Color32 {
@@ -2979,6 +2983,15 @@ impl OrbitLiveApp {
         } else {
             format!("symbols {st}")
         }
+    }
+
+    /// True while either process-picker popup is open. The 1 Hz refresh holds
+    /// while it is, so a CPU-ordered list does not reshuffle rows under the
+    /// cursor mid-pick; the numbers freeze for the few seconds it is open.
+    fn process_popup_open(&self, ctx: &Context) -> bool {
+        ["orbit_processes_strip", "orbit_processes_side"]
+            .iter()
+            .any(|id| egui::Popup::is_id_open(ctx, egui::Id::new(("orbit_process_popup", *id))))
     }
 
     fn paint_process_picker(&mut self, ui: &mut Ui, id: &str) {
@@ -8021,12 +8034,8 @@ impl eframe::App for OrbitLiveApp {
                     self.tick_capture_net(now);
                 }
                 if has_service
-                    && should_poll_processes(
-                        self.processes.is_empty(),
-                        self.capture_open,
-                        now,
-                        self.last_process_request,
-                    )
+                    && should_poll_processes(now, self.last_process_request)
+                    && !self.process_popup_open(ctx)
                 {
                     self.last_process_request = now;
                     self.net.get_processes();
@@ -10838,10 +10847,13 @@ mod tests {
 
     #[test]
     fn process_list_polls_once_per_second_not_every_frame() {
-        assert!(should_poll_processes(true, false, 0.0, -1.0));
-        assert!(should_poll_processes(false, true, 1.0, 0.0));
-        assert!(!should_poll_processes(false, true, 0.5, 0.0));
-        assert!(!should_poll_processes(false, false, 5.0, 0.0));
+        // Refreshes once the interval has elapsed, whatever the list/capture
+        // state -- the picker stays live so its CPU ordering keeps up.
+        assert!(should_poll_processes(1.0, 0.0));
+        assert!(should_poll_processes(5.0, 0.0));
+        assert!(should_poll_processes(0.0, -1.0));
+        assert!(!should_poll_processes(0.5, 0.0));
+        assert!(!should_poll_processes(0.999, 0.0));
         assert!((PROCESS_POLL_S - 1.0).abs() < f64::EPSILON);
     }
 
