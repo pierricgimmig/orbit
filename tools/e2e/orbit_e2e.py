@@ -1038,6 +1038,22 @@ def batch_hook(run):
     return f"{label!r}: hooked {after - before} functions in one drag"
 
 
+@scenario("color-schemes", "Each colour scheme reskins the whole viewer")
+def color_schemes(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    shot = 38
+    for key in ["orbit", "dracula", "nord", "gruvbox", "solarized"]:
+        # ?theme= is applied at load, so a fresh open per scheme; the flame
+        # graph and the timeline together show chrome, scopes and states.
+        run.open_viewer(f"?collapse=scheduler&report=flame&theme={key}")
+        run.wait_for(lambda k=key: run.sel().get("theme") == k, f"the {key} scheme active")
+        run.shot(f"{shot}-theme-{key}", settle=2.0)
+        shot += 1
+    return "ok"
+
+
 @scenario("flame-tab", "The Flame tab draws the sampling report as a flame graph")
 def flame_tab(run):
     if run.chrome is None:

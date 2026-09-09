@@ -1,35 +1,90 @@
-//! DAW chrome for the live viewer. Canonical Avery / Fusion hex values
-//! stay in `orbit_live_event`; this module only remaps for display.
+//! Viewer chrome, read from the active colour scheme.
+//!
+//! Every value here comes from [`orbit_live_event::theme::active`]. The names
+//! stay `UPPER_CASE` (they read like the constants they replaced) but are
+//! functions, so a scheme change is reflected the next frame. The scope and
+//! thread-state colours live in `orbit_live_event::color`, which reads the
+//! same active theme.
+#![allow(non_snake_case)]
 
 use eframe::egui::Color32;
 use orbit_live_event::chrome;
+use orbit_live_event::theme::active;
 
-pub const CANVAS: Color32 = Color32::from_rgb(0x0B, 0x0C, 0x0E);
+/// `0xAARRGGBB` -> `Color32` (unmultiplied; opaque when `a == 0xFF`).
+fn c(argb: u32) -> Color32 {
+    Color32::from_rgba_unmultiplied(
+        (argb >> 16) as u8,
+        (argb >> 8) as u8,
+        argb as u8,
+        (argb >> 24) as u8,
+    )
+}
+
+pub fn CANVAS() -> Color32 {
+    c(active().canvas)
+}
 /// Opt-in timeline paper so Wallace drop shadows read against a light field.
-pub const PAPER: Color32 = Color32::from_rgb(0xE4, 0xE6, 0xEA);
-pub const PANEL: Color32 = Color32::from_rgb(0x12, 0x14, 0x1A);
+pub fn PAPER() -> Color32 {
+    c(active().paper)
+}
+pub fn PANEL() -> Color32 {
+    c(active().panel)
+}
 /// Cool graphite stripes shared by the report grids and virtualized rows.
-pub const REPORT_ROW_ALT: Color32 = Color32::from_rgb(0x1C, 0x20, 0x28);
-pub const REPORT_ROW_HOVER: Color32 = Color32::from_rgb(0x26, 0x2D, 0x37);
-pub const RAIL: Color32 = Color32::from_rgb(0x10, 0x12, 0x16);
-pub const TRACK: Color32 = Color32::from_rgb(0x16, 0x18, 0x1D);
+pub fn REPORT_ROW_ALT() -> Color32 {
+    c(active().report_row_alt)
+}
+pub fn REPORT_ROW_HOVER() -> Color32 {
+    c(active().report_row_hover)
+}
+pub fn RAIL() -> Color32 {
+    c(active().rail)
+}
+pub fn TRACK() -> Color32 {
+    c(active().track)
+}
 /// Neutral alt before per-process washes. Kept as the graphite baseline.
 #[allow(dead_code)]
-pub const TRACK_ALT: Color32 = Color32::from_rgb(0x14, 0x16, 0x1B);
-pub const INPUT: Color32 = Color32::from_rgb(0x0E, 0x10, 0x14);
-pub const TEXT: Color32 = Color32::from_rgb(0xC4, 0xC7, 0xCC);
-pub const MUTED: Color32 = Color32::from_rgb(0x6A, 0x6E, 0x76);
-pub const ACCENT: Color32 = Color32::from_rgb(0x7A, 0xA4, 0xC2);
-pub const HAIR: Color32 = Color32::from_rgba_premultiplied(18, 18, 18, 18);
-pub const INSERT: Color32 = Color32::from_rgb(0xD0, 0xD8, 0xE0);
-pub const PLAYHEAD: Color32 = Color32::from_rgb(0xE8, 0xEA, 0xEE);
-pub const PAPER_PLAYHEAD: Color32 = Color32::from_rgb(0x3A, 0x3E, 0x46);
+pub fn TRACK_ALT() -> Color32 {
+    c(active().track_alt)
+}
+pub fn INPUT() -> Color32 {
+    c(active().input)
+}
+pub fn TEXT() -> Color32 {
+    c(active().text)
+}
+pub fn MUTED() -> Color32 {
+    c(active().muted)
+}
+pub fn ACCENT() -> Color32 {
+    c(active().accent)
+}
+pub fn HAIR() -> Color32 {
+    let h = active().hair;
+    Color32::from_rgba_premultiplied(
+        (h >> 16) as u8,
+        (h >> 8) as u8,
+        h as u8,
+        (h >> 24) as u8,
+    )
+}
+pub fn INSERT() -> Color32 {
+    c(active().insert)
+}
+pub fn PLAYHEAD() -> Color32 {
+    c(active().playhead)
+}
+pub fn PAPER_PLAYHEAD() -> Color32 {
+    c(active().paper_playhead)
+}
 
 pub fn timeline_canvas(light: bool) -> Color32 {
     if light {
-        PAPER
+        PAPER()
     } else {
-        CANVAS
+        CANVAS()
     }
 }
 
@@ -43,28 +98,19 @@ pub fn quiet_grid_line(light: bool) -> Color32 {
 
 pub fn playhead_color(light: bool) -> Color32 {
     if light {
-        PAPER_PLAYHEAD
+        PAPER_PLAYHEAD()
     } else {
-        PLAYHEAD
+        PLAYHEAD()
     }
 }
 pub const RADIUS: f32 = 4.0;
 pub const TRACK_RADIUS: f32 = 2.0;
 
-pub const DISPLAY_TRACK: u32 = 0xFF16_181D;
-
-/// Near-black process washes: graphite with a hint of cool/warm. Low chroma.
-/// Index is a stable hash of `pid` (reserved 1/2/3 are pinned so they differ).
-const PROCESS_WASHES: [[u8; 3]; 8] = [
-    [0x1C, 0x16, 0x13], // warm ember — demo pid 1
-    [0x13, 0x17, 0x1E], // cool steel — viewer pid 2
-    [0x13, 0x1A, 0x16], // pine — service pid 3
-    [0x1A, 0x15, 0x1C], // plum
-    [0x15, 0x18, 0x1B], // slate
-    [0x1B, 0x18, 0x13], // ochre
-    [0x14, 0x16, 0x1A], // ink
-    [0x18, 0x15, 0x16], // rose-ash
-];
+/// The scheme's track colour as `0xAARRGGBB`, what the timeline's
+/// `chrome::TRACK` sentinel pixels are remapped to on display.
+pub fn DISPLAY_TRACK() -> u32 {
+    active().track
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WashRole {
@@ -75,13 +121,14 @@ pub enum WashRole {
 }
 
 pub fn process_wash_index(pid: u32) -> usize {
+    let n = active().process_washes.len();
     match pid {
         1 => 0,
         2 => 1,
         3 => 2,
         _ => {
             let x = pid.wrapping_mul(0x9E37_79B9) ^ pid.rotate_right(16);
-            3 + (x as usize % (PROCESS_WASHES.len() - 3))
+            3 + (x as usize % (n - 3))
         }
     }
 }
@@ -92,7 +139,7 @@ pub fn process_track_wash(pid: u32) -> Color32 {
 }
 
 pub fn process_track_wash_role(pid: u32, role: WashRole) -> Color32 {
-    let [r, g, b] = PROCESS_WASHES[process_wash_index(pid)];
+    let [r, g, b] = active().process_washes[process_wash_index(pid)];
     let lift = match role {
         WashRole::Process => 10,
         WashRole::Thread => 0,
@@ -106,11 +153,11 @@ fn chan(v: u8, lift: i16) -> u8 {
     (i16::from(v) + lift).clamp(0x0B, 0x28) as u8
 }
 
-/// Scope / event colors stay the raw Avery / Fusion hex. Only the Orbit
-/// track-gray chrome value is remapped onto the DAW graphite lane.
+/// Scope / event colours are drawn as-is. Only the timeline's `chrome::TRACK`
+/// sentinel is remapped onto the active scheme's track colour.
 pub fn display_argb(argb: u32) -> u32 {
     if argb == chrome::TRACK {
-        return DISPLAY_TRACK;
+        return DISPLAY_TRACK();
     }
     argb
 }
@@ -158,12 +205,13 @@ pub fn dim_argb(argb: u32) -> u32 {
 }
 
 pub fn hairline() -> eframe::egui::Stroke {
-    eframe::egui::Stroke::new(1.0, HAIR)
+    eframe::egui::Stroke::new(1.0, HAIR())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbit_live_event::theme;
     use orbit_live_event::THREAD_PALETTE;
 
     #[test]
@@ -172,7 +220,7 @@ mod tests {
         assert_eq!(src, 0xFFE7_4435);
         assert_eq!(display_argb(src), src);
         assert_eq!(display_argb(THREAD_PALETTE[1]), THREAD_PALETTE[1]);
-        assert_eq!(display_argb(chrome::TRACK), DISPLAY_TRACK);
+        assert_eq!(display_argb(chrome::TRACK), DISPLAY_TRACK());
     }
 
     #[test]
@@ -192,17 +240,25 @@ mod tests {
         assert_eq!(process_track_wash(99), process_track_wash(99));
         assert_ne!(process_track_wash_role(1, WashRole::Process), a);
         assert_ne!(process_track_wash_role(1, WashRole::Leaf), a);
-        assert_ne!(a, TRACK_ALT);
     }
 
     #[test]
     fn paper_canvas_is_light_and_opt_in() {
-        assert_eq!(timeline_canvas(false), CANVAS);
-        assert_eq!(timeline_canvas(true), PAPER);
-        assert!(PAPER.r() > 0xC0 && PAPER.g() > 0xC0 && PAPER.b() > 0xC0);
-        assert_ne!(PAPER, CANVAS);
+        assert_eq!(timeline_canvas(false), CANVAS());
+        assert_eq!(timeline_canvas(true), PAPER());
+        assert!(PAPER().r() > 0xC0 && PAPER().g() > 0xC0 && PAPER().b() > 0xC0);
+        assert_ne!(PAPER(), CANVAS());
         assert_ne!(playhead_color(true), playhead_color(false));
         assert!(quiet_grid_line(true).a() > quiet_grid_line(false).a());
+    }
+
+    #[test]
+    fn a_scheme_switch_changes_the_chrome_then_restores() {
+        let orbit_panel = PANEL();
+        assert!(theme::set_active_by_key("dracula"));
+        assert_ne!(PANEL(), orbit_panel, "the panel colour follows the scheme");
+        theme::set_active(&theme::ORBIT);
+        assert_eq!(PANEL(), orbit_panel);
     }
 
     #[test]

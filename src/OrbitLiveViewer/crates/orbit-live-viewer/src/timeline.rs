@@ -1262,7 +1262,7 @@ mod tests {
         assert!(width >= 8);
         assert!(height >= 16);
         let expect = crate::theme::display_argb(named_scope_color(&1u32.to_le_bytes(), 1));
-        assert_ne!(expect, crate::theme::DISPLAY_TRACK);
+        assert_ne!(expect, crate::theme::DISPLAY_TRACK());
         assert_eq!(rgba[0], ((expect >> 16) & 0xFF) as u8);
         assert_eq!(rgba[1], ((expect >> 8) & 0xFF) as u8);
         assert_eq!(rgba[2], (expect & 0xFF) as u8);
