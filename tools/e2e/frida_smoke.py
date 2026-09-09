@@ -116,7 +116,7 @@ def main():
                     probe = subprocess.run([args.helper], input=json.dumps({
                         'pid':pid, 'agent':str(Path(args.agent).resolve()), 'command':'symbols'
                     }) + '\n', text=True, capture_output=True, timeout=30)
-                    assert probe.returncode == 0, (probe.stdout[:2048], probe.stderr[:2048])
+                    assert probe.returncode == 0, (probe.returncode, probe.stdout[-2048:], probe.stderr[-4096:])
                     reply = json.loads(probe.stdout.splitlines()[0])
                     discovered = {s['name'].lstrip('_') for s in reply.get('symbols', [])}
                     assert set(wanted) <= discovered, (set(wanted) - discovered, len(discovered))
