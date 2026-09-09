@@ -698,5 +698,12 @@ default) plus **Dracula**, **Nord**, **Gruvbox** and **Solarized**, whose
 scope palettes are each scheme's own harmonious accent set. Pick it in the
 More menu; `?theme=<key>` pins it for a link or screenshot; the choice is
 saved to `localStorage`. Switching rebuilds egui's visuals and drops the
-instance-colour caches so it takes effect at once. Screenshots 38-42; e2e
+instance-colour caches so it takes effect at once. Screenshots 38-44; e2e
 `color-schemes` asserts each is active (`window.__orbit_sel.theme`).
+
+Light schemes added 2026-09-09: **Solarized Light** and **Gruvbox Light**.
+A `Theme::light` flag flips the grid, playhead, sample bar and egui widget
+base to their dark-on-light forms; the process washes use a near-white set;
+and scope-box labels now pick black or white per box by luminance
+(`label_ink`), so a pale accent no longer washes the text out. Seven
+schemes in all.
