@@ -815,7 +815,7 @@ pub struct OrbitLiveApp {
     live_sel_events_seen: u64,
     live_sel_computed_s: f64,
     /// The Live row whose histogram is shown.
-    live_focus: Option<u32>,
+    live_focus: Option<crate::live::LiveKey>,
     /// A right-click on a scope: the pick and where the menu goes.
     scope_menu: Option<(ScopePick, Pos2)>,
     /// The menu was opened this frame: the click that opened it must not
@@ -3444,6 +3444,11 @@ impl OrbitLiveApp {
     fn tick_capture_net(&mut self, now: f64) {
         if let Some(pid) = self.selected_pid {
             if self.status.hooks && self.loaded_symbol_pid != Some(pid) {
+                if self.loaded_symbol_pid.is_some() {
+                    self.selected_hooks.clear();
+                    self.report_selection.clear();
+                    self.report_drag = None;
+                }
                 self.loaded_symbol_pid = Some(pid);
                 self.symbols = SymbolsStatusJson {
                     pid,
@@ -3461,10 +3466,9 @@ impl OrbitLiveApp {
                 self.last_symbol_poll = now;
                 self.net.get_symbols_status(pid);
             }
-            // The Functions view's list, once symbols are ready and the tab
-            // wants it.
+            // Live rows and scope menus also need symbols to resolve hook targets.
             if self.symbols.status == "ready"
-                && self.report_tab == ReportTab::Functions
+                && (self.report_open || self.scope_menu.is_some())
                 && self.functions_pid != Some(pid)
                 && !self.functions_requested
             {
@@ -3995,7 +3999,7 @@ impl OrbitLiveApp {
                 }
                 // A graph lane already writes its value at the cursor line;
                 // the tooltip on top of that said the same thing twice.
-                if let Some(h) = self.hover.filter(|h| h.kind != kind::VALUE) {
+                if let Some(h) = self.hover.filter(|h| h.kind != kind::VALUE && self.scope_menu.is_none()) {
                     let stack = if h.kind == kind::SAMPLE {
                         sample_callstack(&self.index, &self.intern, h)
                     } else {
@@ -6781,6 +6785,12 @@ impl OrbitLiveApp {
         self.needs_repaint = true;
     }
 
+    fn scope_function(&self, pid: u32, name: &str) -> Option<FunctionHit> {
+        if self.selected_pid != Some(pid) { return None; }
+        let loaded = if self.functions_pid == Some(pid) { self.functions.as_slice() } else { &[] };
+        unique_named_function(name, loaded.iter().chain(self.selected_hooks.iter()))
+    }
+
     /// Row hook actions operate on the selection when the clicked row is
     /// selected. Disassembly always belongs to the clicked function alone.
     fn apply_row_hook_action(&mut self, action: HookAction, id: u64, name: &str, module: &str) {
@@ -6960,7 +6970,6 @@ impl OrbitLiveApp {
         // with the grid's checkboxes and context menus.
         let area = ui.available_rect_before_wrap();
         let mut geom: Vec<(u64, Rect)> = Vec::new();
-        let mut ordered_ids: Vec<u64> = Vec::new();
         egui::Grid::new("orbit_call_tree_rows")
             .num_columns(6)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
@@ -7011,7 +7020,6 @@ impl OrbitLiveApp {
                         }
                     }
                     geom.push((if is_thread { 0 } else { node.function_id }, crect));
-                    ordered_ids.push(if is_thread { 0 } else { node.function_id });
                     // Inclusive as a bar, the way the native Inclusive column
                     // paints it: the shape of the hot path is visible down the
                     // column without reading a single number.
@@ -7082,9 +7090,14 @@ impl OrbitLiveApp {
                     }
                 }
             });
-        // Drag-select across the rows drawn this frame, reusing the shared
-        // logic with the recorded geometry, then highlight the selection.
-        if !ordered_ids.is_empty() {
+        self.select_grid_rows(ui, area, &geom);
+        for (action, id, name, module) in tree_actions {
+            self.apply_row_hook_action(action, id, &name, &module);
+        }
+    }
+
+    fn select_grid_rows(&mut self, ui: &Ui, area: Rect, geom: &[(u64, Rect)]) {
+        if !geom.is_empty() {
             let top = geom[0].1.top();
             let row_h = if geom.len() >= 2 {
                 (geom[1].1.top() - geom[0].1.top()).max(1.0)
@@ -7108,7 +7121,7 @@ impl OrbitLiveApp {
                         let mut selected = base.clone();
                         let a = (top + anchor).min(pointer.y);
                         let b = (top + anchor).max(pointer.y);
-                        for (id, rect) in &geom {
+                        for (id, rect) in geom {
                             if *id != 0 && rect.bottom() >= a && rect.top() <= b { selected.insert(*id); }
                         }
                         self.report_selection = selected;
@@ -7117,7 +7130,7 @@ impl OrbitLiveApp {
             } else {
                 self.report_drag = None;
             }
-            for (fid, crect) in &geom {
+            for (fid, crect) in geom {
                 if *fid != 0 && self.report_selection.contains(fid) {
                     let band = Rect::from_min_max(
                         Pos2::new(crect.left() - 2.0, crect.center().y - row_h / 2.0),
@@ -7126,9 +7139,6 @@ impl OrbitLiveApp {
                     ui.painter().rect_filled(band, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 40));
                 }
             }
-        }
-        for (action, id, name, module) in tree_actions {
-            self.apply_row_hook_action(action, id, &name, &module);
         }
     }
 
@@ -7249,8 +7259,8 @@ impl OrbitLiveApp {
         format!("Live — {scopes} scopes, {samples} samples{rate}")
     }
 
-    /// The Live tab: C++ Orbit's live functions table, one row per scope
-    /// name with running statistics, and the histogram of the selected row.
+    /// Live statistics by process, scope name and instrumentation source,
+    /// with hook selection and a histogram for the focused row.
     fn live_rows(&mut self, ui: &mut Ui) {
         let font = self.ui_tweaks.report_font;
         let (mut rows, sample_threads): (Vec<crate::live::LiveRow>, Vec<(u32, u64)>) = {
@@ -7274,6 +7284,27 @@ impl OrbitLiveApp {
         if self.recording {
             self.needs_repaint = true;
         }
+        ui.horizontal(|ui| {
+            ui.set_min_height(22.0);
+            self.selection_hook_controls(ui);
+        });
+        let all_selected_hooked = self.selection_all_hooked();
+        // Resolve names in one pass over symbols, not one scan per row or
+        // sort comparison. Ambiguous labels deliberately have no hook target.
+        let names: std::collections::HashSet<_> = rows.iter()
+            .filter_map(|r| self.intern.get(r.name_id)).collect();
+        let loaded = if self.functions_pid == self.selected_pid { self.functions.as_slice() } else { &[] };
+        let mut functions: std::collections::HashMap<&str, Option<FunctionHit>> = std::collections::HashMap::new();
+        for f in loaded.iter().chain(self.selected_hooks.iter()).filter(|f| f.function_id != 0 && names.contains(f.name.as_str())) {
+            functions.entry(&f.name).and_modify(|old| {
+                if old.as_ref().is_some_and(|old| old.function_id != f.function_id) { *old = None; }
+            }).or_insert_with(|| Some(f.clone()));
+        }
+        let resolved: std::collections::HashMap<_, _> = rows.iter().map(|r| {
+            let f = (self.selected_pid == Some(r.pid)).then(|| self.intern.get(r.name_id)
+                .and_then(|name| functions.get(name)).and_then(|f| f.clone())).flatten();
+            (r.key(), f)
+        }).collect();
         // The histogram is pinned to the bottom of the Live view, as in C++
         // Orbit: its height is fixed, so selecting a function fills this panel
         // rather than pushing the table around.
@@ -7285,25 +7316,28 @@ impl OrbitLiveApp {
                 self.draw_live_histogram(ui, font);
             });
         // The table fills the space above the histogram and scrolls on its own.
-        let mut clicked: Option<u32> = None;
+        let mut clicked: Option<crate::live::LiveKey> = None;
+        let mut actions = Vec::new();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
             .show(ui, |ui| {
+                let area = ui.available_rect_before_wrap();
+                let mut selection_rows = Vec::new();
                 egui::Grid::new("orbit_live_rows")
-                    .num_columns(9)
+                    .num_columns(10)
                     .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
                     .striped(true)
                     .show(ui, |ui| {
+                        sort_header(ui, "hook", 9, &mut self.live_sort, true, font);
                         for (col, h) in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"].iter().enumerate() {
                             sort_header(ui, h, col as u8, &mut self.live_sort, (2..=7).contains(&col), font);
                         }
                         let (col, desc) = self.live_sort;
-                        // Resolve modules once, not by scanning the sampling
-                        // report and allocating strings on every comparison.
-                        let modules: std::collections::HashMap<_, _> = self.sampling.iter()
-                            .flat_map(|report| report.rows.iter())
-                            .map(|r| (r.name.as_str(), r.module.as_str())).collect();
+                        let module = |r: &crate::live::LiveRow| resolved.get(&r.key())
+                            .and_then(|f| f.as_ref()).map_or("", |f| f.module.as_str());
+                        let hooked = |r: &crate::live::LiveRow| resolved.get(&r.key())
+                            .and_then(|f| f.as_ref()).is_some_and(|f| self.is_hooked(f.function_id));
                         rows.sort_by(|a, b| {
                             let an = self.intern.get(a.name_id).unwrap_or("");
                             let bn = self.intern.get(b.name_id).unwrap_or("");
@@ -7313,7 +7347,8 @@ impl OrbitLiveApp {
                                 3 => a.total_ns.cmp(&b.total_ns), 4 => a.avg_ns().cmp(&b.avg_ns()),
                                 5 => a.min_ns.cmp(&b.min_ns), 6 => a.max_ns.cmp(&b.max_ns),
                                 7 => a.std_dev_ns().cmp(&b.std_dev_ns()),
-                                _ => cmp_ci(modules.get(an).copied().unwrap_or(""), modules.get(bn).copied().unwrap_or("")),
+                                9 => hooked(a).cmp(&hooked(b)),
+                                _ => cmp_ci(module(a), module(b)),
                             };
                             (if desc { ord.reverse() } else { ord }).then(a.name_id.cmp(&b.name_id))
                         });
@@ -7324,21 +7359,44 @@ impl OrbitLiveApp {
                             .filter(|r| filter.is_empty() || self.intern.get(r.name_id).is_some_and(|n| contains_ci(n, &filter)))
                             .take(300)
                         {
-                            let focused = self.live_focus == Some(r.name_id);
+                            let focused = self.live_focus == Some(r.key());
                             let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
+                            let function = resolved.get(&r.key()).and_then(|f| f.as_ref());
+                            let fid = function.as_ref().map_or(0, |f| f.function_id);
+                            let hooked = self.is_hooked(fid);
+                            let selected = fid != 0 && self.report_selection.contains(&fid);
+                            let (rect, response) = ui.allocate_exact_size(Vec2::new(16.0, font + 4.0), Sense::click());
+                            selection_rows.push((fid, rect));
+                            if let Some(f) = function {
+                                paint_hook_box(ui, rect, hooked);
+                                note_ui_rect(&format!("hook:{name}"), rect);
+                                if response.clicked() {
+                                    actions.push((if hooked { HookAction::Unhook } else { HookAction::Hook }, f.clone()));
+                                }
+                            }
+
                             ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font))
                                 .on_hover_text(INSTRUMENTATION_TYPE_LEGEND);
                             let label = ui.add(
                                 egui::Label::new(
                                     RichText::new(&name)
-                                        .color(if focused { theme::ACCENT } else { theme::TEXT })
+                                        .color(if focused || hooked { theme::ACCENT } else { theme::TEXT })
                                         .size(font),
                                 )
                                 .sense(Sense::click()),
                             );
                             note_ui_rect(&format!("live:{name}"), label.rect);
-                            if label.on_hover_text("Click for the duration histogram; the timeline highlights this scope").clicked() {
-                                clicked = Some(r.name_id);
+                            note_ui_rect(&format!("live-type:{}:{name}", r.type_label()), label.rect);
+                            if let Some(f) = function {
+                                if let Some(action) = hook_menu(&label, fid,
+                                    if selected { all_selected_hooked } else { hooked },
+                                    if selected { self.report_selection.len() } else { 1 }) {
+                                    actions.push((action, f.clone()));
+                                }
+                            }
+
+                            if label.on_hover_text(format!("Process {}. Click for the duration histogram; drag rows to select functions", r.pid)).clicked() {
+                                clicked = Some(r.key());
                             }
                             for v in [
                                 r.count.to_string(),
@@ -7350,11 +7408,15 @@ impl OrbitLiveApp {
                             ] {
                                 ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
                             }
-                            ui.label(RichText::new(self.module_of_name(&name)).color(theme::MUTED).size(font - 0.5));
+                            ui.label(RichText::new(function.map_or("", |f| f.module.as_str())).color(theme::MUTED).size(font - 0.5));
                             ui.end_row();
                         }
                     });
+                self.select_grid_rows(ui, area, &selection_rows);
             });
+        for (action, f) in actions {
+            self.apply_row_hook_action(action, f.function_id, &f.name, &f.module);
+        }
         if let Some(id) = clicked {
             if self.live_focus == Some(id) {
                 self.live_focus = None;
@@ -7363,7 +7425,7 @@ impl OrbitLiveApp {
                 self.live_focus = Some(id);
                 // Linked to the timeline the way the search box is: every
                 // instance of this scope lights up, the rest dims.
-                self.search = self.intern.get(id).unwrap_or("").to_string();
+                self.search = self.intern.get(id.name_id).unwrap_or("").to_string();
             }
         }
     }
@@ -7377,7 +7439,7 @@ impl OrbitLiveApp {
         });
         match focused {
             Some((id, row)) => {
-                let name = self.intern.get(id).unwrap_or("?").to_string();
+                let name = self.intern.get(id.name_id).unwrap_or("?").to_string();
                 ui.label(
                     RichText::new(format!("{name} — {} calls, duration histogram (log scale)", row.count))
                         .color(theme::TEXT)
@@ -7560,17 +7622,7 @@ impl OrbitLiveApp {
             .unwrap_or_else(|| tid.to_string())
     }
 
-    /// The module a function name belongs to, when a symbol search or a
-    /// report has said; empty for manual scopes.
-    fn module_of_name(&self, name: &str) -> String {
-        self.sampling
-            .as_ref()
-            .and_then(|r| r.rows.iter().find(|row| row.name == name).map(|row| row.module.clone()))
-            .unwrap_or_default()
-    }
-
-    /// The right-click menu on a scope: a sampling report over every
-    /// instance of that scope (TODO item 9).
+    /// Scope-local hook actions and a sampling report over its instances.
     fn paint_scope_menu(&mut self, ctx: &Context) {
         let Some((pick, pos)) = self.scope_menu else { return };
         let name = self.intern.get(pick.name_id).unwrap_or("scope").to_string();
@@ -7588,6 +7640,19 @@ impl OrbitLiveApp {
                             .size(10.5),
                     );
                     ui.add_space(4.0);
+                    if let Some(function) = self.scope_function(pick.pid, &name) {
+                        let hooked = self.is_hooked(function.function_id);
+                        let item = ui.button(if hooked { "Unhook function" } else { "Hook function" });
+                        note_ui_rect("menu:hook", item.rect);
+                        if item.clicked() {
+                            self.apply_hook_action(if hooked { HookAction::Unhook } else { HookAction::Hook },
+                                function.function_id, &function.name, &function.module);
+                            close = true;
+                        }
+                    } else {
+                        ui.label(RichText::new("Select this process and load an unambiguous function symbol to hook it")
+                            .color(theme::MUTED).size(10.5));
+                    }
                     let report_item = ui.button("Sampling report for this scope");
                     note_ui_rect("menu:report", report_item.rect);
                     if report_item.clicked() {
@@ -8155,6 +8220,17 @@ enum HookAction {
     Disassemble,
 }
 
+/// Names in manual scopes are arbitrary labels. Never pick an arbitrary
+/// overload/module when more than one function matches a captured name.
+fn unique_named_function<'a>(name: &str, functions: impl Iterator<Item = &'a FunctionHit>) -> Option<FunctionHit> {
+    let mut result: Option<FunctionHit> = None;
+    for f in functions.filter(|f| f.function_id != 0 && f.name == name) {
+        if result.as_ref().is_some_and(|old| old.function_id != f.function_id) { return None; }
+        result = Some(f.clone());
+    }
+    result
+}
+
 /// Resolve the action before mutation so mixed selections get one operation.
 fn row_hook_targets(action: HookAction, clicked: u64, selection: &std::collections::HashSet<u64>) -> Vec<u64> {
     if clicked == 0 { return Vec::new(); }
@@ -8477,7 +8553,7 @@ fn thread_state_label(code: u8) -> (&'static str, &'static str) {
 
 /// The Live tab's "type" column legend, shown on hover.
 const INSTRUMENTATION_TYPE_LEGEND: &str = "Instrumentation type\n\
-    D — dynamic: a function hooked with a kernel uprobe, no recompile\n\
+    D — dynamic: a function hooked with Frida or a kernel uprobe, no recompile\n\
     MS — manual scope: orbit_start / orbit_stop in the code\n\
     MA — manual async: an async span drawn on its own track";
 
@@ -10055,6 +10131,14 @@ fn show_scope_tooltip(
             .get(pick.name_id)
             .map(str::to_string)
             .unwrap_or_else(|| format!("#{}", pick.name_id));
+        let source = if pick.event_flags & orbit_live_event::event_flags::DYNAMIC != 0
+            || pick.kind == kind::FUNCTION_CALL { Some("Dynamic instrumentation") }
+            else if pick.kind == kind::API_SCOPE { Some("Manual instrumentation") }
+            else if pick.kind == kind::API_TRACK { Some("Manual async instrumentation") }
+            else { None };
+        if let Some(source) = source {
+            ui.label(RichText::new(source).size(11.0).color(theme::MUTED));
+        }
         let dur =
             format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
         ui.label(
@@ -10603,6 +10687,17 @@ mod tests {
     }
 
     #[test]
+    fn captured_names_resolve_only_to_unique_functions() {
+        let first = FunctionHit { function_id: 1, name: "work".into(), module: "one".into(), size: 16 };
+        let other = FunctionHit { function_id: 2, module: "two".into(), ..first.clone() };
+        assert_eq!(unique_named_function("work", [&first, &first].into_iter()).unwrap().function_id, 1);
+        assert!(unique_named_function("work", [&first, &other].into_iter()).is_none());
+        assert!(unique_named_function("custom manual label", [&first].into_iter()).is_none());
+        let unresolved = FunctionHit { function_id: 0, ..first.clone() };
+        assert!(unique_named_function("work", [&unresolved].into_iter()).is_none());
+    }
+
+    #[test]
     fn tree_sort_preserves_original_paths_and_sibling_boundaries() {
         use crate::net::TreeNodeJson;
         let nodes = vec![
@@ -11107,6 +11202,7 @@ mod tests {
             kind,
             depth: 0,
             extra: 0,
+            event_flags: 0,
         }
     }
 

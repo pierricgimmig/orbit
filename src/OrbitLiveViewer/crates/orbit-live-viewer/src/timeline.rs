@@ -1131,7 +1131,7 @@ mod tests {
     fn the_flags_word_sits_at_the_documented_offset() {
         let mut inst = ScopeInstance {
             x: 1.0, y: 2.0, w: 10.0, h: 16.0, color: 0xFFE7_4435, radius: 3.0, name_id: 1,
-            start_ns: 0, duration_ns: 1, pid: 1, tid: 1, kind: 1, depth: 0, extra: 0, flags: 0.0,
+            start_ns: 0, duration_ns: 1, pid: 1, tid: 1, kind: 1, depth: 0, extra: 0, event_flags: 0, flags: 0.0,
         };
         inst.flags = 3.0;
         let bytes = pack_instances(&[inst]);
@@ -1156,6 +1156,7 @@ mod tests {
             kind: 1,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: 2.0,
         };
         let bytes = pack_instances(&[inst]);
@@ -1180,6 +1181,7 @@ mod tests {
             kind: 0,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: 3.0,
         };
         let bytes = pack_instances(&[inst]);
@@ -1323,6 +1325,7 @@ mod tests {
             kind: 1,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: 0.0,
         };
         let (bg, fg) = split_drag_instances(vec![mk(1), mk(2), mk(3)], Some((1, 2)));
@@ -1357,6 +1360,7 @@ mod tests {
             kind: 1,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: 0.0,
         };
         let old = [(lane(1, 0), 20.0), (lane(2, 0), 80.0), (lane(3, 0), 140.0)];
@@ -1396,6 +1400,7 @@ mod tests {
             kind: 1,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: 0.0,
         };
         let origin = 80.0;

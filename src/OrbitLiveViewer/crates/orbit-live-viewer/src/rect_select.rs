@@ -258,6 +258,7 @@ mod tests {
             kind,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: 0.0,
         }
     }

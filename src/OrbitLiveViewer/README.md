@@ -36,6 +36,28 @@ Open `http://<host>:44766/`.
 
 `--http_port 0` disables the viewer.
 
+## Function hooks in the Rust service viewer
+
+Live, Functions, Flat, Top-down and Bottom-up share the hook selection.
+Drag across rows to select functions (Shift-drag adds to the selection), then
+use a selected row's checkbox or right-click menu to hook/unhook the whole
+selection. Right-clicking a row outside the selection acts on that row alone.
+Hook changes configure the next recording. Changing target process clears the
+previous process's hook choices.
+
+Right-click a scope in the capture timeline to hook or unhook its function.
+This action affects that function alone, regardless of report selection.
+Live rows and timeline scopes resolve their captured names against the selected
+process's symbols; arbitrary manual labels and ambiguous names cannot be hooked.
+
+Live's type column distinguishes **D** (Frida or uprobes), **MS** (manual scopes)
+and **MA** (manual async tracks). Frida already enters through the SDK's internal
+`DynamicApiV1` bridge, whose `orbit_start_dynamic` uses the same nesting state as
+manual instrumentation and marks the scope as dynamic. The service forwards that
+mark in the event's flags byte. The viewer preserves it through timeline picking
+and keeps statistics and histograms separate by process, name and source, so a
+manual scope and a dynamic scope with the same name remain distinct.
+
 ## Open a Chrome trace
 
 Drag a Chrome Trace Event Format file onto the canvas, or click **Open**

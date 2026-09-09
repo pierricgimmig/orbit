@@ -30,7 +30,9 @@ with sync_playwright() as p:
  page.wait_for_timeout(1000)
  def rows():
   v=page.evaluate('window.__orbit_ui');return json.loads(v) if isinstance(v,str) else v
- def rect(label):return next(r for r in rows() if r[0]==label)
+ def rect(label):
+  page.wait_for_function("label => { let v=window.__orbit_ui; v=typeof v==='string'?JSON.parse(v):v; return v?.some(r=>r[0]===label); }",arg=label)
+  return next(r for r in rows() if r[0]==label)
  def click(label,button='left'):
   r=rect(label);page.mouse.click(r[1]+r[3]/2,r[2]+r[4]/2,button=button);page.wait_for_timeout(300)
  page.mouse.click(280,50);page.wait_for_timeout(300)
@@ -90,5 +92,48 @@ with sync_playwright() as p:
  assert [r[0] for r in rows() if r[0].startswith('live:')]==list(reversed(names))
  for column in ['type','count','total','avg','min','max','std dev','module']:
   click('sort:'+column)
- print('PASS Functions/tree batch hooks and Functions, tree, Modules, Live sorting')
+ # Give the demo scopes real symbol identities, as a captured target would.
+ # Selecting another process must also discard the old process's hook IDs.
+ live_names=sorted(set(label[5:] for label in names))
+ fixture=[{'function_id':200+i,'name':name,'module':'demo','size':16} for i,name in enumerate(live_names)]
+ page.route('**/api/processes',lambda r:r.fulfill(json=[{'pid':1,'name':'demo'}]))
+ page.route('**/api/functions/search?*',lambda r:r.fulfill(json={'pid':1,'status':'ready','functions':fixture}))
+ page.route('**/api/symbols/**',lambda r:r.fulfill(json={'pid':1,'status':'ready','function_count':len(fixture),'module_count':1}))
+ click('Refresh');page.wait_for_timeout(300)
+ page.mouse.click(280,50);page.wait_for_timeout(300)
+ page.mouse.click(110,100);page.wait_for_timeout(800)
+ assert hooks()==[], hooks()
+ click('sort:function');page.wait_for_timeout(300)
+ hook_rows=[r for r in rows() if r[0].startswith('hook:')]
+ assert len(hook_rows)>=3, rows()
+ targets=hook_rows[:3]
+ expected=sorted(next(f['function_id'] for f in fixture if f['name']==r[0][5:]) for r in targets)
+ click(targets[0][0])
+ a=rect('live:'+targets[0][0][5:]);z=rect('live:'+targets[2][0][5:])
+ page.mouse.move(a[1]+8,a[2]+a[4]/2);page.mouse.down()
+ page.mouse.move(z[1]+8,z[2]+z[4]/2,steps=15);page.mouse.up();page.wait_for_timeout(400)
+ click('live:'+targets[1][0][5:],button='right');click('menu:hook')
+ assert hooks()==expected, hooks()
+ click(targets[1][0]);assert hooks()==[],hooks()
+ click(targets[1][0]);assert hooks()==expected,hooks()
+ click('sort:hook')
+ # Scope actions always act on that scope, even with a report selection.
+ # Sweep the first demo thread's timeline until a scope is hit.
+ timeline_right=rect('sort:hook')[1]-12
+ lane=next(r for r in rows() if r[0]=='row:thread:1:100')
+ x0=lane[1]+lane[3]
+ found=False
+ for frac in [0.5,0.3,0.7,0.1,0.9]:
+  for dy in [0.3,0.4,0.5,0.6,0.2,0.7]:
+   page.mouse.click(x0+(timeline_right-x0)*frac,lane[2]+lane[4]*dy,button='right');page.wait_for_timeout(500)
+   if any(r[0]=='menu:hook' for r in rows()):
+    before=set(hooks());click('menu:hook');after=set(hooks())
+    assert len(before.symmetric_difference(after))==1,(before,after)
+    page.mouse.click(x0+(timeline_right-x0)*frac,lane[2]+lane[4]*dy,button='right');page.wait_for_timeout(150)
+    click('menu:hook');assert set(hooks())==before,hooks()
+    found=True;break
+   page.keyboard.press('Escape')
+  if found:break
+ assert found,'No scope hook menu found on the demo thread'
+ print('PASS batch hooks in Functions/trees/Live, sorting, process isolation, and timeline hook/unhook')
  b.close()
