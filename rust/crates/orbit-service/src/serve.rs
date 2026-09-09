@@ -931,6 +931,23 @@ fn capture_loop(
     let mut last_fill_push_ns: u64 = 0;
     const FILL_EVERY_NS: u64 = 50_000_000;
 
+    // Overflow fallback. While the scope (or perf) rings fill toward a lap,
+    // draining sooner -- down to `min_drain` -- laps less and loses nothing; it
+    // costs only more frequent viewer batches, and only under load. If loss
+    // still climbs past `OVERFLOW_LOSS_BUDGET`, the producer is outrunning the
+    // buffers for good, and the honest response is to stop the capture rather
+    // than draw a timeline full of half-open scopes. A few dropped records at a
+    // capture's edges are normal; a hundred thousand are not.
+    let min_drain = std::time::Duration::from_millis(1);
+    const OVERFLOW_LOSS_BUDGET: u64 = 100_000;
+    let mut overflow_stopped = false;
+    // When adaptive draining is boosting (rings past half-full, so we come back
+    // sooner), mark it on the service's own track: one async span per boost
+    // stretch, opened when boosting begins and closed when it ends, so its
+    // width on the timeline is exactly the time spent draining faster.
+    const DRAIN_BOOST_AT: f32 = 0.5;
+    let mut boost_start_ns: Option<u64> = None;
+
     while running.load(Ordering::Relaxed) {
         let _pass = orbit_api::scope("capture pass");
         // The background symbol load finished: swap it in and start draining
@@ -1246,6 +1263,11 @@ fn capture_loop(
                 f64::from(threads.iter().map(|t| t.sample.fill_fraction()).fold(0.0f32, f32::max)) * 100.0,
             );
             orbit_api::value("scope rings fill %", f64::from(scopes.fill_fraction()) * 100.0);
+            // Troubleshooting the shared scope path: how many records the rings
+            // lost to a lap, and how many scopes are open (started, not yet
+            // stopped). Either climbing steadily means STOPs are going missing.
+            orbit_api::value("scope records lost", scopes.events_lost as f64);
+            orbit_api::value("scope open scopes", scopes.open_scopes() as f64);
             let stats = service.stats();
             let viewer_fill = if stats.events_capacity > 0 {
                 stats.events_live as f64 / stats.events_capacity as f64 * 100.0
@@ -1254,6 +1276,28 @@ fn capture_loop(
             };
             orbit_api::value("viewer ring fill %", viewer_fill);
             orbit_api::value("events per pass", batch.len() as f64);
+        }
+
+        // Overflow fallback: adaptive draining could not keep the scope rings
+        // ahead of the producer, and loss has passed the budget. Stop, and say
+        // why on the status line the viewer shows.
+        if !overflow_stopped && scopes.events_lost >= OVERFLOW_LOSS_BUDGET {
+            overflow_stopped = true;
+            let msg = format!(
+                "capture stopped: scope rings overflowed and {} records were lost -- \
+                 the instrumented process is producing scopes faster than the buffers \
+                 drain. Hook fewer functions, or lower the call rate.",
+                scopes.events_lost
+            );
+            eprintln!("orbit-service: {msg}");
+            // The frida status is re-set after the loop, so park the reason on
+            // the session's error where status() keeps surfacing it; set the
+            // status directly too for the no-frida (manual API) case.
+            if let Some(session) = frida.as_mut() {
+                session.error = Some(msg.clone());
+            }
+            service.set_instrumentation_status(msg);
+            running.store(false, Ordering::Relaxed);
         }
 
         if !batch.is_empty() {
@@ -1265,7 +1309,41 @@ fn capture_loop(
             let _push = orbit_api::scope("push to viewer");
             service.push_events(&batch);
         }
-        std::thread::sleep(drain_interval);
+
+        // Adaptive drain: the fuller the rings, the sooner we come back, from
+        // the base interval at half-full down to `min_drain` at a lap. Below
+        // half-full nothing is at risk, so pay the full interval and keep the
+        // viewer batches large.
+        let fill = scopes.fill_fraction().max(
+            threads.iter().map(|t| t.sample.fill_fraction()).fold(0.0f32, f32::max),
+        );
+        let boosting = fill >= DRAIN_BOOST_AT;
+        // Open the boost marker on the rising edge, close it on the falling
+        // edge; one async span covers the whole stretch.
+        let mark_ns = crate::now_monotonic_ns();
+        match (boosting, boost_start_ns) {
+            (true, None) => boost_start_ns = Some(mark_ns),
+            (false, Some(start)) => {
+                orbit_api::span_async("drain boost", start, mark_ns);
+                boost_start_ns = None;
+            }
+            _ => {}
+        }
+        let sleep = if boosting {
+            let t = ((fill - DRAIN_BOOST_AT) / (1.0 - DRAIN_BOOST_AT)).clamp(0.0, 1.0);
+            let base = drain_interval.as_secs_f32();
+            let lo = min_drain.as_secs_f32();
+            std::time::Duration::from_secs_f32(base + (lo - base) * t)
+        } else {
+            drain_interval
+        };
+        std::thread::sleep(sleep);
+    }
+
+    // A boost still open when the capture ends: close it at the end so its bar
+    // is drawn, while the segment is still capturing (before `finish`).
+    if let Some(start) = boost_start_ns.take() {
+        orbit_api::span_async("drain boost", start, crate::now_monotonic_ns());
     }
 
     if let Some(tracer) = thread_states.as_mut() {

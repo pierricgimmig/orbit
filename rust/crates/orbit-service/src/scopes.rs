@@ -41,6 +41,20 @@ const SCOPE_NAME_ID_BASE: u32 = 2 << 20;
 /// How often to look for a segment that has not appeared yet.
 const REOPEN_EVERY_NS: u64 = 250_000_000;
 
+/// The deepest nesting the timeline will draw for one thread. Real call
+/// stacks are far shallower; a depth climbing past this means STOPs are being
+/// lost -- a Frida `onLeave` that never fired, or a ring overflow -- and
+/// drawing hundreds of nested lanes only turns that into a slowdown. Both the
+/// per-thread counter and the depth stamped on each scope are clamped here, so
+/// the counter also recovers once matching STOPs resume.
+const MAX_TIMELINE_DEPTH: u8 = 64;
+
+/// The most open (started, not yet stopped) sync scopes one segment may hold.
+/// A steady leak of unmatched STARTs -- again, lost STOPs -- is bounded here
+/// rather than left to grow the `open` map without limit; normal captures
+/// never approach it.
+const MAX_OPEN_SCOPES: usize = 1 << 16;
+
 /// A scope started and not yet stopped.
 #[derive(Clone, Copy)]
 struct Open {
@@ -104,6 +118,12 @@ impl ScopeSource {
 
     pub fn segment_count(&self) -> usize {
         self.segments.len()
+    }
+
+    /// Scopes started but not yet stopped, across every segment. A count that
+    /// only grows is STOPs being lost, the same signal behind [`Self::events_lost`].
+    pub fn open_scopes(&self) -> usize {
+        self.segments.iter().map(|s| s.open.len()).sum()
     }
 
     /// The fullest ring across every open segment, 0.0 to 1.0: unread claims
@@ -302,6 +322,16 @@ impl ScopeSource {
 
     fn named(&mut self, index: usize, event: ScopeEvent, name: &[u8], batch: &mut Vec<LiveEvent>) {
         let name_id = self.names.id_for(name);
+        // Bound the open set before borrowing the segment: a START whose STOP
+        // never arrives stays open forever, so an unbounded run of them would
+        // leak. Refuse new starts (sync or async) past the cap, counting them
+        // as lost.
+        if event.kind == rk::SCOPE_START
+            && self.segments[index].open.len() >= MAX_OPEN_SCOPES
+        {
+            self.events_lost = self.events_lost.saturating_add(1);
+            return;
+        }
         let segment = &mut self.segments[index];
         let pid = segment.pid;
         match event.kind {
@@ -311,8 +341,8 @@ impl ScopeSource {
                     0
                 } else {
                     let d = segment.sync_depth.entry(event.tid).or_insert(0);
-                    let here = *d;
-                    *d = d.saturating_add(1);
+                    let here = (*d).min(MAX_TIMELINE_DEPTH - 1);
+                    *d = d.saturating_add(1).min(MAX_TIMELINE_DEPTH);
                     here
                 };
                 segment.open.insert(

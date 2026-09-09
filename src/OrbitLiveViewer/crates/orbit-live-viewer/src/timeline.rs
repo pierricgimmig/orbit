@@ -195,6 +195,7 @@ impl TimelinePayload {
                         y_cull,
                         early_out: true,
                         inline: false,
+                        per_lane_spans: dev.is_active(),
                     },
                 );
                 for inst in &mut frame.instances {
@@ -226,6 +227,7 @@ impl TimelinePayload {
                         Some(layout),
                         y_cull,
                         intern,
+                        dev.is_active(),
                     )
                 };
                 if let Some((pid, tid)) = punch {
@@ -1682,7 +1684,7 @@ mod blit_align_tests {
             "dest rows {rows} must equal emitted rows {height}"
         );
         let (origin, _) = idx
-            .rasterize_pixel_layout(0, 50, 64, &keys, Some(&layout), None, None)
+            .rasterize_pixel_layout(0, 50, 64, &keys, Some(&layout), None, None, false)
             .placed_extent(&layout, scale);
         assert!(
             (top - origin).abs() < 1e-4,
