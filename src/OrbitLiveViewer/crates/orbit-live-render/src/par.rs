@@ -99,24 +99,87 @@ fn use_rayon_pool(n_items: usize) -> bool {
     }
 }
 
+/// One worker's contribution: what it produced, and the self-profile spans it
+/// timed. Chunk mode returns 0..1 span for the whole chunk; per-lane mode
+/// returns one span per item, each named by `label`. Both keep every span on
+/// the worker's own tid, so a lane holds non-overlapping intervals.
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
+fn map_chunk<T, R, F, L>(
+    slot: usize,
+    part: &[T],
+    f: &F,
+    span_name: Option<u32>,
+    label: Option<&L>,
+) -> (Vec<R>, Vec<WorkerSpan>)
+where
+    F: Fn(&T) -> R,
+    L: Fn(&T) -> u32,
+{
+    let tid = render_worker_tid(slot as u32);
+    if let Some(label) = label {
+        let mut out = Vec::with_capacity(part.len());
+        let mut spans = Vec::with_capacity(part.len());
+        for item in part {
+            let t0 = now_ns();
+            let r = f(item);
+            let t1 = now_ns();
+            spans.push(WorkerSpan { tid, name_id: label(item), t0_ns: t0, t1_ns: t1 });
+            out.push(r);
+        }
+        (out, spans)
+    } else {
+        let t0 = now_ns();
+        let out: Vec<R> = part.iter().map(f).collect();
+        let t1 = now_ns();
+        let spans = span_name
+            .map(|name_id| WorkerSpan { tid, name_id, t0_ns: t0, t1_ns: t1 })
+            .into_iter()
+            .collect();
+        (out, spans)
+    }
+}
+
 pub fn map_collect_lanes<T, R, F>(items: &[T], f: F) -> (Vec<R>, Vec<WorkerSpan>)
 where
     T: Sync,
     R: Send,
     F: Fn(&T) -> R + Sync + Send,
 {
-    map_collect_profiled(items, Some(NAME_COLLECT_LANE), f)
+    map_collect_profiled(items, Some(NAME_COLLECT_LANE), None::<fn(&T) -> u32>, f)
 }
 
-fn map_collect_profiled<T, R, F>(
+/// Like [`map_collect_lanes`], but times each lane on its own and names its
+/// span with `label(item)` -- so the Self pane shows which lane was slow, not
+/// just which worker. Costs two clock reads per lane, paid only when the
+/// caller asks (the Self pane is open).
+pub fn map_collect_lanes_labeled<T, R, F, L>(
     items: &[T],
-    span_name: Option<u32>,
+    label: L,
     f: F,
 ) -> (Vec<R>, Vec<WorkerSpan>)
 where
     T: Sync,
     R: Send,
     F: Fn(&T) -> R + Sync + Send,
+    L: Fn(&T) -> u32 + Sync + Send,
+{
+    map_collect_profiled(items, None, Some(label), f)
+}
+
+fn map_collect_profiled<T, R, F, L>(
+    items: &[T],
+    span_name: Option<u32>,
+    label: Option<L>,
+    f: F,
+) -> (Vec<R>, Vec<WorkerSpan>)
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> R + Sync + Send,
+    L: Fn(&T) -> u32 + Sync + Send,
 {
     if items.is_empty() {
         return (Vec::new(), Vec::new());
@@ -127,31 +190,22 @@ where
             let threads = parallelism();
             if threads > 1 && items.len() >= PARALLEL_MIN {
                 let chunk = chunk_size(items.len(), threads);
-                return thread_scope_map(items, chunk, span_name, f);
+                return thread_scope_map(items, chunk, span_name, label, f);
             }
         }
         let _ = span_name;
+        let _ = &label;
         return (items.iter().map(f).collect(), Vec::new());
     }
     let chunk = chunk_size(items.len(), parallelism());
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        let pieces: Vec<(Vec<R>, Option<WorkerSpan>)> = items
+        let label = label.as_ref();
+        let pieces: Vec<(Vec<R>, Vec<WorkerSpan>)> = items
             .par_chunks(chunk)
             .enumerate()
-            .map(|(slot, part)| {
-                let t0 = now_ns();
-                let out: Vec<R> = part.iter().map(&f).collect();
-                let t1 = now_ns();
-                let span = span_name.map(|name_id| WorkerSpan {
-                    tid: render_worker_tid(slot as u32),
-                    name_id,
-                    t0_ns: t0,
-                    t1_ns: t1,
-                });
-                (out, span)
-            })
+            .map(|(slot, part)| map_chunk(slot, part, &f, span_name, label))
             .collect();
         return flatten_pieces(pieces);
     }
@@ -163,35 +217,27 @@ where
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "parallel")))]
-fn thread_scope_map<T, R, F>(
+fn thread_scope_map<T, R, F, L>(
     items: &[T],
     chunk: usize,
     span_name: Option<u32>,
+    label: Option<L>,
     f: F,
 ) -> (Vec<R>, Vec<WorkerSpan>)
 where
     T: Sync,
     R: Send,
     F: Fn(&T) -> R + Sync + Send,
+    L: Fn(&T) -> u32 + Sync + Send,
 {
     std::thread::scope(|s| {
+        let lab = label.as_ref();
         let mut joins = Vec::new();
         for (slot, part) in items.chunks(chunk).enumerate() {
             let fr = &f;
-            joins.push(s.spawn(move || {
-                let t0 = now_ns();
-                let out: Vec<R> = part.iter().map(fr).collect();
-                let t1 = now_ns();
-                let span = span_name.map(|name_id| WorkerSpan {
-                    tid: render_worker_tid(slot as u32),
-                    name_id,
-                    t0_ns: t0,
-                    t1_ns: t1,
-                });
-                (out, span)
-            }));
+            joins.push(s.spawn(move || map_chunk(slot, part, fr, span_name, lab)));
         }
-        let pieces: Vec<(Vec<R>, Option<WorkerSpan>)> = joins
+        let pieces: Vec<(Vec<R>, Vec<WorkerSpan>)> = joins
             .into_iter()
             .map(|j| j.join().expect("lane worker"))
             .collect();
@@ -203,16 +249,58 @@ where
     all(target_arch = "wasm32", not(feature = "parallel")),
     allow(dead_code)
 )]
-fn flatten_pieces<R>(pieces: Vec<(Vec<R>, Option<WorkerSpan>)>) -> (Vec<R>, Vec<WorkerSpan>) {
+fn flatten_pieces<R>(pieces: Vec<(Vec<R>, Vec<WorkerSpan>)>) -> (Vec<R>, Vec<WorkerSpan>) {
     let mut out = Vec::new();
     let mut spans = Vec::new();
-    for (part, span) in pieces {
+    for (part, part_spans) in pieces {
         out.extend(part);
-        if let Some(s) = span {
-            spans.push(s);
-        }
+        spans.extend(part_spans);
     }
     (out, spans)
+}
+
+/// One raster worker's spans over its slice of `rows`. Chunk mode times the
+/// whole slice (0..1 span); per-lane mode times each row and names it by
+/// `label`. Every span stays on the worker's tid, non-overlapping by
+/// construction.
+#[cfg_attr(
+    all(target_arch = "wasm32", not(feature = "parallel")),
+    allow(dead_code)
+)]
+fn rows_chunk<T, F, L>(
+    slot: usize,
+    part: &[T],
+    rows: &mut [u32],
+    width: usize,
+    f: &F,
+    span_name: Option<u32>,
+    label: Option<&L>,
+) -> Vec<WorkerSpan>
+where
+    F: Fn(&T, &mut [u32]),
+    L: Fn(&T) -> u32,
+{
+    let tid = render_worker_tid(slot as u32);
+    if let Some(label) = label {
+        let mut spans = Vec::with_capacity(part.len());
+        for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
+            let t0 = now_ns();
+            f(item, row);
+            let t1 = now_ns();
+            spans.push(WorkerSpan { tid, name_id: label(item), t0_ns: t0, t1_ns: t1 });
+        }
+        spans
+    } else {
+        let t0 = now_ns();
+        for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
+            f(item, row);
+        }
+        let t1 = now_ns();
+        span_name
+            .map(|name_id| WorkerSpan { tid, name_id, t0_ns: t0, t1_ns: t1 })
+            .into_iter()
+            .collect()
+    }
 }
 
 pub fn for_each_row_lanes<T, F>(
@@ -225,19 +313,38 @@ where
     T: Sync,
     F: Fn(&T, &mut [u32]) + Sync + Send,
 {
-    for_each_row_profiled(items, dest, width, Some(NAME_RASTER_LANE), f)
+    for_each_row_profiled(items, dest, width, Some(NAME_RASTER_LANE), None::<fn(&T) -> u32>, f)
 }
 
-fn for_each_row_profiled<T, F>(
+/// Like [`for_each_row_lanes`], but times each lane and names its span with
+/// `label(item)`, so a slow lane is identifiable on the Self pane.
+pub fn for_each_row_lanes_labeled<T, F, L>(
     items: &[T],
     dest: &mut [u32],
     width: usize,
-    span_name: Option<u32>,
+    label: L,
     f: F,
 ) -> Vec<WorkerSpan>
 where
     T: Sync,
     F: Fn(&T, &mut [u32]) + Sync + Send,
+    L: Fn(&T) -> u32 + Sync + Send,
+{
+    for_each_row_profiled(items, dest, width, None, Some(label), f)
+}
+
+fn for_each_row_profiled<T, F, L>(
+    items: &[T],
+    dest: &mut [u32],
+    width: usize,
+    span_name: Option<u32>,
+    label: Option<L>,
+    f: F,
+) -> Vec<WorkerSpan>
+where
+    T: Sync,
+    F: Fn(&T, &mut [u32]) + Sync + Send,
+    L: Fn(&T) -> u32 + Sync + Send,
 {
     assert_eq!(dest.len(), items.len() * width);
     if items.is_empty() || width == 0 {
@@ -249,10 +356,11 @@ where
             let threads = parallelism();
             if threads > 1 && items.len() >= PARALLEL_MIN {
                 let chunk = chunk_size(items.len(), threads);
-                return thread_scope_rows(items, dest, width, chunk, span_name, f);
+                return thread_scope_rows(items, dest, width, chunk, span_name, label, f);
             }
         }
         let _ = span_name;
+        let _ = &label;
         for (item, row) in items.iter().zip(dest.chunks_mut(width)) {
             f(item, row);
         }
@@ -262,24 +370,14 @@ where
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
+        let label = label.as_ref();
         return dest
             .par_chunks_mut(chunk * width)
             .zip(items.par_chunks(chunk))
             .enumerate()
-            .map(|(slot, (rows, part))| {
-                let t0 = now_ns();
-                for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
-                    f(item, row);
-                }
-                let t1 = now_ns();
-                span_name.map(|name_id| WorkerSpan {
-                    tid: render_worker_tid(slot as u32),
-                    name_id,
-                    t0_ns: t0,
-                    t1_ns: t1,
-                })
+            .flat_map(|(slot, (rows, part))| {
+                rows_chunk(slot, part, rows, width, &f, span_name, label)
             })
-            .flatten()
             .collect();
     }
     #[cfg(not(feature = "parallel"))]
@@ -293,19 +391,22 @@ where
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "parallel")))]
-fn thread_scope_rows<T, F>(
+fn thread_scope_rows<T, F, L>(
     items: &[T],
     dest: &mut [u32],
     width: usize,
     chunk: usize,
     span_name: Option<u32>,
+    label: Option<L>,
     f: F,
 ) -> Vec<WorkerSpan>
 where
     T: Sync,
     F: Fn(&T, &mut [u32]) + Sync + Send,
+    L: Fn(&T) -> u32 + Sync + Send,
 {
     std::thread::scope(|s| {
+        let lab = label.as_ref();
         let mut joins = Vec::new();
         for (slot, (part, rows)) in items
             .chunks(chunk)
@@ -313,23 +414,11 @@ where
             .enumerate()
         {
             let fr = &f;
-            joins.push(s.spawn(move || {
-                let t0 = now_ns();
-                for (item, row) in part.iter().zip(rows.chunks_mut(width)) {
-                    fr(item, row);
-                }
-                let t1 = now_ns();
-                span_name.map(|name_id| WorkerSpan {
-                    tid: render_worker_tid(slot as u32),
-                    name_id,
-                    t0_ns: t0,
-                    t1_ns: t1,
-                })
-            }));
+            joins.push(s.spawn(move || rows_chunk(slot, part, rows, width, fr, span_name, lab)));
         }
         joins
             .into_iter()
-            .filter_map(|j| j.join().expect("raster worker"))
+            .flat_map(|j| j.join().expect("raster worker"))
             .collect()
     })
 }
@@ -378,6 +467,38 @@ mod worker_lane_tests {
     /// intervals -- `Lane::first_ending_after` binary-searches on that. The
     /// thread calling `par_chunks` runs chunks too, so if it is handed the same
     /// tid as a pool worker the two overlap and the lane is corrupt.
+    /// Labeled mode names each lane's span after that lane (here, the item
+    /// itself) and still keeps a worker's spans non-overlapping on its tid.
+    #[test]
+    fn labeled_walk_names_each_lane_and_stays_non_overlapping() {
+        let items: Vec<u32> = (0..4096).collect();
+        let (_out, spans) = map_collect_lanes_labeled(
+            &items,
+            |v| *v,
+            |v| (0..2_000u64).fold(*v as u64, |a, b| a.wrapping_add(b)),
+        );
+        // Sequential fallback (no pool) emits no spans; only assert when the
+        // pool actually produced them.
+        if !spans.is_empty() {
+            // One span per lane, each carrying that lane's own name.
+            assert_eq!(spans.len(), items.len());
+            let names: std::collections::HashSet<u32> = spans.iter().map(|s| s.name_id).collect();
+            assert_eq!(names.len(), items.len(), "each lane names its own span");
+            for (i, a) in spans.iter().enumerate() {
+                for b in spans.iter().skip(i + 1) {
+                    if a.tid != b.tid {
+                        continue;
+                    }
+                    assert!(
+                        a.t1_ns <= b.t0_ns || b.t1_ns <= a.t0_ns,
+                        "tid {} has overlapping spans",
+                        a.tid
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn one_walk_never_puts_overlapping_spans_in_a_lane() {
         let items: Vec<u32> = (0..4096).collect();

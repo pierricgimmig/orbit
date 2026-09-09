@@ -449,12 +449,13 @@ impl TrackIndex {
         order: &[LaneKey],
         intern: Option<&InternTable>,
     ) -> RasterizedFrame {
-        self.rasterize_pixel_layout(t0, t1, width, order, None, None, intern)
+        self.rasterize_pixel_layout(t0, t1, width, order, None, None, intern, false)
     }
 
     /// Pixel-column raster with optional stack-Y cull. `ys` is `(lane, y)` in
     /// the same space as [`lod::stacked_layout`]; when `y_cull` is set, off-
     /// screen lanes are skipped before the column walk.
+    #[allow(clippy::too_many_arguments)]
     pub fn rasterize_pixel_layout(
         &self,
         t0: u64,
@@ -464,6 +465,10 @@ impl TrackIndex {
         ys: Option<&[(LaneKey, f32)]>,
         y_cull: Option<YCull>,
         intern: Option<&InternTable>,
+        // Time each lane's raster separately and name its span after the lane
+        // (its tid), instead of one span per worker chunk. Only when the Self
+        // pane is open -- it costs two clock reads per lane.
+        per_lane_spans: bool,
     ) -> RasterizedFrame {
         let ymap: Option<std::collections::BTreeMap<LaneKey, f32>> =
             ys.map(|l| l.iter().copied().collect());
@@ -497,9 +502,23 @@ impl TrackIndex {
             keys
         };
         let mut pixels = vec![0u32; keys.len() * width];
-        let worker_spans = par::for_each_row_lanes(&keys, &mut pixels, width, |key, dest| {
-            self.lanes[key].rasterize(t0, t1, width, dest, intern);
-        });
+        let worker_spans = if per_lane_spans {
+            // Name each lane's span after its thread (tid), resolvable on the
+            // Self pane through the shared intern table.
+            par::for_each_row_lanes_labeled(
+                &keys,
+                &mut pixels,
+                width,
+                |k: &LaneKey| k.tid,
+                |key, dest| {
+                    self.lanes[key].rasterize(t0, t1, width, dest, intern);
+                },
+            )
+        } else {
+            par::for_each_row_lanes(&keys, &mut pixels, width, |key, dest| {
+                self.lanes[key].rasterize(t0, t1, width, dest, intern);
+            })
+        };
         RasterizedFrame {
             width,
             lanes: keys,
@@ -1143,10 +1162,11 @@ mod tests {
             Some(&layout),
             Some(YCull::new(y0, y0 + h0 * 0.5)),
             None,
+            false,
         );
         assert_eq!(culled.lanes.len(), 1);
         assert_eq!(culled.lanes[0], layout[0].0);
-        let none = idx.rasterize_pixel_layout(0, 50, 8, &[], Some(&[]), None, None);
+        let none = idx.rasterize_pixel_layout(0, 50, 8, &[], Some(&[]), None, None, false);
         assert!(
             none.lanes.is_empty(),
             "explicit empty layout must not fall back to every index lane"

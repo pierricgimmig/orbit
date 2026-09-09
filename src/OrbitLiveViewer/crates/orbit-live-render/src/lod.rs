@@ -52,6 +52,11 @@ pub struct CollectOpts {
     /// decides from its own measurements: on a small window the hand-off to
     /// the workers and the join cost far more than the walk they parallelise.
     pub inline: bool,
+    /// Time each lane's walk separately and name its self-profile span after
+    /// the lane, instead of one span for the whole worker chunk. Costs two
+    /// clock reads per lane, so it is only set when the Self pane is open to
+    /// show which lane was slow.
+    pub per_lane_spans: bool,
 }
 
 impl Default for CollectOpts {
@@ -60,6 +65,7 @@ impl Default for CollectOpts {
             y_cull: None,
             early_out: true,
             inline: false,
+            per_lane_spans: false,
         }
     }
 }
@@ -70,6 +76,7 @@ impl CollectOpts {
             y_cull: None,
             early_out: false,
             inline: false,
+            per_lane_spans: false,
         }
     }
 }
@@ -653,6 +660,7 @@ mod value_lod_tests {
                 y_cull: Some(YCull::new(y0, y0 + h0)),
                 early_out: true,
                 inline: false,
+                per_lane_spans: false,
             },
         );
         assert_eq!(culled.instances.len(), 1);
@@ -677,6 +685,7 @@ mod value_lod_tests {
                 y_cull: None,
                 early_out: true,
                 inline: false,
+                per_lane_spans: false,
             },
         );
         assert_eq!(wide.instances.len(), 1);
@@ -734,6 +743,7 @@ mod value_lod_tests {
                 y_cull: Some(YCull::new(80.0, 200.0)),
                 early_out: true,
                 inline: false,
+                per_lane_spans: false,
             },
         );
         assert!(inst.instances.iter().all(|i| i.kind != kind::VALUE));
@@ -911,6 +921,10 @@ pub fn collect_instances_cached(
     };
     let (parts, worker_spans): (Vec<Row>, Vec<par::WorkerSpan>) = if opts.inline {
         (layout.iter().map(walk).collect(), Vec::new())
+    } else if opts.per_lane_spans {
+        // Name each lane's span after its thread (tid), resolvable on the Self
+        // pane through the shared intern table.
+        par::map_collect_lanes_labeled(layout, |(k, _): &(LaneKey, f32)| k.tid, walk)
     } else {
         par::map_collect_lanes(layout, walk)
     };

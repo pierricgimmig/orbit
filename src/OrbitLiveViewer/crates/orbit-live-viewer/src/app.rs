@@ -4764,6 +4764,7 @@ impl OrbitLiveApp {
                             y_cull,
                             early_out: true,
                             inline: self.listing_inline,
+                            per_lane_spans: dev.is_active(),
                         },
                         Some(&mut self.listing_cache),
                     );
@@ -4822,6 +4823,7 @@ impl OrbitLiveApp {
                             y_cull,
                             early_out: true,
                             inline: false,
+                            per_lane_spans: false,
                         },
                     );
                     for inst in &mut frame.instances {
@@ -4916,6 +4918,7 @@ impl OrbitLiveApp {
                         y_cull,
                         early_out: true,
                         inline: false,
+                        per_lane_spans: false,
                     },
                 );
                 let d = self.tracks.scale;

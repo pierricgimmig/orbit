@@ -82,6 +82,14 @@ impl DevFrame {
         self.inner.as_ref().map(|i| i.origin_ns)
     }
 
+    /// Whether this frame is recording. Used to decide whether the collect and
+    /// raster walks should time each lane separately (naming its span after the
+    /// lane) or take the cheaper per-worker span -- the per-lane timing is only
+    /// worth its clock reads when the Self pane is open to show them.
+    pub fn is_active(&self) -> bool {
+        self.inner.is_some()
+    }
+
     /// Records a main-thread span from clock readings taken elsewhere, at the
     /// depth currently open on `tid` -- so a phase measured inside a library
     /// call lands as a child of the scope wrapping that call. Ignored when the
