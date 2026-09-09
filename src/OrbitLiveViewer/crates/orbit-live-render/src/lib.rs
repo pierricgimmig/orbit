@@ -1281,6 +1281,7 @@ mod tests {
             kind: kind::API_SCOPE,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: FLAG_NONE,
         };
         let b = ScopeInstance {
@@ -1298,6 +1299,7 @@ mod tests {
             kind: kind::API_SCOPE,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: FLAG_NONE,
         };
         assert_eq!(pick_instance_at(&[a, b], 8.0, 4.0), Some(1));
@@ -1313,6 +1315,7 @@ mod tests {
                 kind: kind::API_SCOPE,
                 depth: 0,
                 extra: 0,
+                event_flags: 0,
             }),
             None,
             None, ThreadFocus::default());
@@ -1337,6 +1340,7 @@ mod tests {
             kind: kind::API_SCOPE,
             depth: 0,
             extra: 0,
+            event_flags: 0,
             flags: FLAG_NONE,
         };
         let mut b = a;
@@ -1358,6 +1362,7 @@ mod tests {
                 kind: kind::API_SCOPE,
                 depth: 0,
                 extra: 0,
+                event_flags: 0,
             }),
             None,
             Some(&ids), ThreadFocus::default());
@@ -1376,6 +1381,7 @@ mod tests {
                 kind: kind::API_SCOPE,
                 depth: 0,
                 extra: 0,
+                event_flags: 0,
             }),
             None,
             Some(&ids), ThreadFocus::default());
@@ -1433,6 +1439,7 @@ mod tests {
         let mk = |pid: u32, tid: u32, kind: u8| ScopeInstance {
             x: 0.0, y: 0.0, w: 10.0, h: 4.0, color: 0xFF80_8080, radius: 1.0,
             name_id: 1, start_ns: 0, duration_ns: 10, pid, tid, kind, depth: 0, extra: 0,
+            event_flags: 0,
             flags: FLAG_NONE,
         };
         let mut insts = vec![

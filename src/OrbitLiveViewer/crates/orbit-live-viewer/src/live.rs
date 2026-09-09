@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! The Live Functions table: one row per scope name, with count, total,
+//! The Live Functions table: one row per process, name and source, with count, total,
 //! average, min, max and standard deviation, kept up to date as events
 //! arrive (TODO item 11, C++ Orbit's `LiveFunctionsDataView`).
 //!
@@ -27,11 +27,20 @@ use orbit_live_event::{kind, LiveEvent};
 /// 40 buckets reach 2^40 ns, about 18 minutes.
 pub const HIST_BUCKETS: usize = 40;
 
+/// Scope statistics must not mix processes or instrumentation origins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LiveKey {
+    pub pid: u32,
+    pub name_id: u32,
+    pub kind: u8,
+}
+
 /// One scope name's running statistics.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiveRow {
     pub name_id: u32,
-    /// The event kind the name was first seen with; the type column.
+    pub pid: u32,
+    /// Instrumentation source kind; dynamic API scopes normalize to FUNCTION_CALL.
     pub kind: u8,
     pub count: u64,
     pub total_ns: u64,
@@ -44,9 +53,12 @@ pub struct LiveRow {
 }
 
 impl LiveRow {
-    fn new(name_id: u32, kind: u8) -> LiveRow {
+    pub fn key(&self) -> LiveKey { LiveKey { pid: self.pid, name_id: self.name_id, kind: self.kind } }
+
+    fn new(name_id: u32, pid: u32, kind: u8) -> LiveRow {
         LiveRow {
             name_id,
+            pid,
             kind,
             count: 0,
             total_ns: 0,
@@ -116,7 +128,7 @@ pub fn hist_bucket_floor_ns(bucket: usize) -> u64 {
 /// The table: scope rows plus what the samples are doing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LiveTable {
-    rows: HashMap<u32, LiveRow>,
+    rows: HashMap<LiveKey, LiveRow>,
     pub samples: u64,
     sample_threads: HashMap<u32, u64>,
     first_ns: u64,
@@ -137,9 +149,13 @@ impl LiveTable {
         }
         match e.kind {
             kind::API_SCOPE | kind::FUNCTION_CALL | kind::API_TRACK => {
+                let source_kind = if e._pad & orbit_live_event::event_flags::DYNAMIC != 0 {
+                    kind::FUNCTION_CALL
+                } else { e.kind };
+                let key = LiveKey { pid: e.pid, name_id: e.name_id, kind: source_kind };
                 self.rows
-                    .entry(e.name_id)
-                    .or_insert_with(|| LiveRow::new(e.name_id, e.kind))
+                    .entry(key)
+                    .or_insert_with(|| LiveRow::new(e.name_id, e.pid, source_kind))
                     .push(e.duration_ns);
                 self.note_span(e.start_ns, e.end_ns());
             }
@@ -171,15 +187,15 @@ impl LiveTable {
         self.rows.is_empty() && self.samples == 0
     }
 
-    pub fn row(&self, name_id: u32) -> Option<&LiveRow> {
-        self.rows.get(&name_id)
+    pub fn row(&self, key: LiveKey) -> Option<&LiveRow> {
+        self.rows.get(&key)
     }
 
     /// Rows by total time, hottest first; ties by name id so the order is
     /// stable across frames.
     pub fn sorted_rows(&self) -> Vec<&LiveRow> {
         let mut rows: Vec<&LiveRow> = self.rows.values().collect();
-        rows.sort_by(|a, b| b.total_ns.cmp(&a.total_ns).then(a.name_id.cmp(&b.name_id)));
+        rows.sort_by(|a, b| b.total_ns.cmp(&a.total_ns).then(a.key().cmp(&b.key())));
         rows
     }
 
@@ -228,13 +244,35 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_origin_and_process_keep_same_named_scopes_separate() {
+        let manual = ev(100, 10, 1, kind::API_SCOPE, 1);
+        let mut dynamic = ev(110, 20, 1, kind::API_SCOPE, 1);
+        dynamic._pad = orbit_live_event::event_flags::DYNAMIC;
+        let mut other_process = manual;
+        other_process.pid = 8;
+        let events = [manual, dynamic, other_process];
+        // Both the running and selection tables go through this path.
+        let table = LiveTable::from_events(events.iter(), &[]);
+        assert_eq!(table.sorted_rows().len(), 3);
+        let manual_key = LiveKey { pid: 7, name_id: 1, kind: kind::API_SCOPE };
+        let dynamic_key = LiveKey { kind: kind::FUNCTION_CALL, ..manual_key };
+        assert_eq!(table.row(manual_key).unwrap().type_label(), "MS");
+        assert_eq!(table.row(manual_key).unwrap().total_ns, 10);
+        assert_eq!(table.row(dynamic_key).unwrap().type_label(), "D");
+        assert_eq!(table.row(dynamic_key).unwrap().total_ns, 20);
+        let selection = LiveTable::from_events(events.iter(), &[(110, 130, Some(1))]);
+        assert_eq!(selection.sorted_rows().len(), 1);
+        assert_eq!(selection.row(dynamic_key).unwrap().count, 1);
+    }
+
+    #[test]
     fn welford_matches_the_two_pass_answer() {
         let durations = [10u64, 30, 20, 40, 100, 5];
         let mut t = LiveTable::default();
         for (i, d) in durations.iter().enumerate() {
             t.push(&ev(100 * i as u64, *d, 1, kind::API_SCOPE, 1));
         }
-        let row = t.row(1).unwrap();
+        let row = t.sorted_rows().into_iter().find(|r| r.name_id == 1).unwrap();
         let n = durations.len() as f64;
         let mean = durations.iter().sum::<u64>() as f64 / n;
         let var = durations.iter().map(|d| (*d as f64 - mean).powi(2)).sum::<f64>() / n;
@@ -293,7 +331,7 @@ mod tests {
         for d in [1u64, 2, 3, 1000, 1500] {
             t.push(&ev(0, d, 1, kind::API_SCOPE, 1));
         }
-        let h = t.row(1).unwrap().hist;
+        let h = t.sorted_rows().into_iter().find(|r| r.name_id == 1).unwrap().hist;
         assert_eq!(h[1], 1); // 1
         assert_eq!(h[2], 2); // 2, 3
         assert_eq!(h[10], 1); // 1000

@@ -178,6 +178,7 @@ pub struct ScopeInstance {
     pub kind: u8,
     pub depth: u8,
     pub extra: u8,
+    pub event_flags: u8,
     pub flags: f32,
 }
 
@@ -192,6 +193,7 @@ pub struct ScopePick {
     pub kind: u8,
     pub depth: u8,
     pub extra: u8,
+    pub event_flags: u8,
 }
 
 impl ScopePick {
@@ -205,6 +207,7 @@ impl ScopePick {
             kind: e.kind,
             depth: e.depth,
             extra: e.extra,
+            event_flags: e._pad,
         }
     }
 
@@ -233,6 +236,7 @@ impl ScopePick {
             kind: i.kind,
             depth: i.depth,
             extra: i.extra,
+            event_flags: i.event_flags,
         }
     }
 
@@ -1193,6 +1197,7 @@ pub fn instance_for_event(
         kind: e.kind,
         depth: e.depth,
         extra: e.extra,
+        event_flags: e._pad,
         flags: FLAG_NONE,
     }
 }
@@ -1550,5 +1555,22 @@ mod listing_cache_tests {
                 reused / rounds
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_origin_survives_both_scope_picking_paths() {
+        let event = LiveEvent { start_ns: 10, duration_ns: 20, pid: 1, tid: 2,
+            kind: kind::API_SCOPE, depth: 3, extra: 0,
+            _pad: orbit_live_event::event_flags::DYNAMIC, name_id: 7 };
+        let pick = ScopePick::from_event(event);
+        let instance = instance_for_event(&event, 0, 100, 100.0, 100.0, 0.0, 16.0, 2.0, None);
+        assert_eq!(ScopePick::from_instance(&instance), pick);
+        assert_eq!(pick.event_flags, orbit_live_event::event_flags::DYNAMIC);
+        assert_eq!(pick.lane_key(), event.lane_key());
     }
 }
