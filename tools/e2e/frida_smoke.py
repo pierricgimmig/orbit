@@ -113,13 +113,16 @@ def main():
                 if args.engine == 'frida' and iteration == 0:
                     # Read-only discovery must not steal or reject the active
                     # capture's controller lease.
-                    probe = subprocess.run([args.helper], input=json.dumps({
-                        'pid':pid, 'agent':str(Path(args.agent).resolve()), 'command':'symbols'
-                    }) + '\n', text=True, capture_output=True, timeout=30)
-                    assert probe.returncode == 0, (probe.returncode, probe.stdout[-2048:], probe.stderr[-4096:])
-                    reply = json.loads(probe.stdout.splitlines()[0])
-                    discovered = {s['name'].lstrip('_') for s in reply.get('symbols', [])}
-                    assert set(wanted) <= discovered, (set(wanted) - discovered, len(discovered))
+                    # Exercise short-lived Core injectors repeatedly: teardown
+                    # failures may only appear after an otherwise valid reply.
+                    for _ in range(20 if args.no_manual else 1):
+                        probe = subprocess.run([args.helper], input=json.dumps({
+                            'pid':pid, 'agent':str(Path(args.agent).resolve()), 'command':'symbols'
+                        }) + '\n', text=True, capture_output=True, timeout=30)
+                        assert probe.returncode == 0, (probe.returncode, probe.stdout[-2048:], probe.stderr[-4096:])
+                        reply = json.loads(probe.stdout.splitlines()[0])
+                        discovered = {s['name'].lstrip('_') for s in reply.get('symbols', [])}
+                        assert set(wanted) <= discovered, (set(wanted) - discovered, len(discovered))
                 if pending_return:
                     # The old leave listener must survive detach and reject its
                     # old generation after a new capture has opened.
