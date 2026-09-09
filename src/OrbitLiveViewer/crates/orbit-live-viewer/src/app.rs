@@ -856,6 +856,9 @@ pub struct OrbitLiveApp {
     functions_show_all: bool,
     /// Flat report sort: column index (hooked, self, incl, function, module) and descending.
     flat_sort: (u8, bool),
+    tree_sort: (u8, bool),
+    module_sort: (u8, bool),
+    live_sort: (u8, bool),
     /// The code views' state: the source document, the disassembly, how
     /// they read, the rows built from them, and what went wrong.
     code_doc: Option<crate::code::CodeDoc>,
@@ -1512,6 +1515,9 @@ impl OrbitLiveApp {
             functions_requested: false,
             functions_show_all: false,
             flat_sort: (1, true),
+            tree_sort: (1, true),
+            module_sort: (0, true),
+            live_sort: (3, true),
             code_doc: None,
             code_disasm: None,
             code_mode: crate::code::CodeMode::Both,
@@ -3277,6 +3283,8 @@ impl OrbitLiveApp {
         let functions_sort = self.functions_sort;
         let mut sort_click: Option<u8> = None;
         ui.horizontal(|ui| {
+            // Match the manually positioned row columns: add_space supplies the gap.
+            ui.spacing_mut().item_spacing.x = 0.0;
             let (r, _) = ui.allocate_exact_size(Vec2::new(INDEX_W, row_h), Sense::hover());
             ui.painter().text(
                 Pos2::new(r.right() - 4.0, r.center().y),
@@ -6404,6 +6412,8 @@ impl OrbitLiveApp {
         let mut sort_click: Option<u8> = None;
         let flat_sort = self.flat_sort;
         ui.horizontal(|ui| {
+            // Match the manually positioned row columns: add_space supplies the gap.
+            ui.spacing_mut().item_spacing.x = 0.0;
             for (i, (h, w)) in [
                 ("hooked", widths[0]),
                 ("self", widths[1]),
@@ -6789,6 +6799,14 @@ impl OrbitLiveApp {
             .map(|f| (f.name.clone(), f.module.clone()))
             .or_else(|| self.sampling.as_ref()?.rows.iter().find(|r| r.function_id == id)
                 .map(|r| (r.name.clone(), r.module.clone())))
+            .or_else(|| {
+                let mut stack: Vec<_> = self.tree.as_ref()?.roots.iter().collect();
+                while let Some(node) = stack.pop() {
+                    if node.function_id == id { return Some((node.name.clone(), node.module.clone())); }
+                    stack.extend(&node.children);
+                }
+                None
+            })
             .unwrap_or_default()
     }
 
@@ -6816,7 +6834,7 @@ impl OrbitLiveApp {
         }
         let shift = resp.ctx.input(|i| i.modifiers.shift);
         if resp.drag_started() {
-            if let Some(p) = resp.interact_pointer_pos() {
+            if let Some(p) = resp.ctx.input(|i| i.pointer.press_origin()) {
                 let base = if shift { self.report_selection.clone() } else { std::collections::HashSet::new() };
                 self.report_drag = Some((p.y - top, base));
             }
@@ -6925,16 +6943,22 @@ impl OrbitLiveApp {
             ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
             return;
         }
+        let all_selected_hooked = self.selection_all_hooked();
+        let hooked_ids: std::collections::HashSet<_> = self.selected_hooks.iter().map(|f| f.function_id).collect();
         let mut tree_actions: Vec<(HookAction, u64, String, String)> = Vec::new();
         self.hooked_hint(ui);
-        if !self.report_selection.is_empty() {
-            ui.horizontal(|ui| self.selection_hook_controls(ui));
-        }
-        // Drag-select over the tree: registered before the grid so the per-row
-        // hook checkboxes still take clicks; the row geometry recorded while
-        // drawing feeds the shared row-drag logic afterward.
+        // Keep the rows stationary when a drag creates the first selection.
+        ui.horizontal(|ui| {
+            ui.set_min_height(22.0);
+            if self.report_selection.is_empty() {
+                ui.label(RichText::new("Drag rows to select functions").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            } else {
+                self.selection_hook_controls(ui);
+            }
+        });
+        // Record actual tree row geometry for selection without interfering
+        // with the grid's checkboxes and context menus.
         let area = ui.available_rect_before_wrap();
-        let drag_resp = ui.interact(area, ui.id().with("orbit_tree_row_select"), Sense::click_and_drag());
         let mut geom: Vec<(u64, Rect)> = Vec::new();
         let mut ordered_ids: Vec<u64> = Vec::new();
         egui::Grid::new("orbit_call_tree_rows")
@@ -6942,19 +6966,15 @@ impl OrbitLiveApp {
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["hook", "inclusive", "self", "of parent", "function", "module"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                for (col, h) in ["hook", "inclusive", "self", "of parent", "function", "module"].iter().enumerate() {
+                    sort_header(ui, h, col as u8, &mut self.tree_sort, col < 4, self.ui_tweaks.report_font);
                 }
                 ui.end_row();
                 // Explicit stack rather than recursion: the borrow of the
                 // expansion set has to end before the next row is drawn.
-                let mut stack: Vec<(crate::net::TreeNodeJson, usize, String)> = tree
-                    .roots
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .map(|(i, n)| (n.clone(), 0usize, i.to_string()))
-                    .collect();
+                let mut stack: Vec<(crate::net::TreeNodeJson, usize, String)> =
+                    sorted_tree_indices(&tree.roots, self.tree_sort, &hooked_ids).into_iter().rev()
+                        .map(|i| (tree.roots[i].clone(), 0usize, i.to_string())).collect();
                 let mut drawn = 0usize;
                 let filter = self.report_filter.trim().to_lowercase();
                 while let Some((node, depth, path)) = stack.pop() {
@@ -6971,6 +6991,7 @@ impl OrbitLiveApp {
                     let expanded = self.tree_expanded.contains(&path) || !filter.is_empty();
                     let is_thread = node.kind == "thread";
                     let hooked = self.is_hooked(node.function_id);
+                    let selected = self.report_selection.contains(&node.function_id);
                     // Hook checkbox (first column), like the flat report; a
                     // click toggles this one, a drag selects a range to batch.
                     let (crect, cresp) = ui.allocate_exact_size(
@@ -6978,6 +6999,7 @@ impl OrbitLiveApp {
                         egui::Sense::click(),
                     );
                     if !is_thread && node.function_id != 0 {
+                        note_ui_rect(&format!("hook:{}", node.name), crect);
                         paint_hook_box(ui, crect, hooked);
                         if cresp.clicked() {
                             tree_actions.push((
@@ -6988,7 +7010,7 @@ impl OrbitLiveApp {
                             ));
                         }
                     }
-                    geom.push((node.function_id, crect));
+                    geom.push((if is_thread { 0 } else { node.function_id }, crect));
                     ordered_ids.push(if is_thread { 0 } else { node.function_id });
                     // Inclusive as a bar, the way the native Inclusive column
                     // paints it: the shape of the hot path is visible down the
@@ -7038,7 +7060,7 @@ impl OrbitLiveApp {
                         }
                         if !is_thread {
                             note_ui_rect(&format!("tree:{}", node.name), label.rect);
-                            if let Some(action) = hook_menu(&label, node.function_id, hooked, 1) {
+                            if let Some(action) = hook_menu(&label, node.function_id, if selected { all_selected_hooked } else { hooked }, if selected { self.report_selection.len() } else { 1 }) {
                                 tree_actions.push((action, node.function_id, node.name.clone(), node.module.clone()));
                             }
                         }
@@ -7054,8 +7076,8 @@ impl OrbitLiveApp {
                     ui.end_row();
 
                     if expanded {
-                        for (i, child) in node.children.iter().enumerate().rev() {
-                            stack.push((child.clone(), depth + 1, format!("{path}/{i}")));
+                        for i in sorted_tree_indices(&node.children, self.tree_sort, &hooked_ids).into_iter().rev() {
+                            stack.push((node.children[i].clone(), depth + 1, format!("{path}/{i}")));
                         }
                     }
                 }
@@ -7069,7 +7091,32 @@ impl OrbitLiveApp {
             } else {
                 geom[0].1.height() + self.ui_tweaks.report_row_gap
             };
-            self.row_drag_from_response(&drag_resp, top, row_h, &ordered_ids);
+            // Grid child UIs consume egui's background drag response. Observe
+            // primary drags without installing an overlay that steals checkbox
+            // clicks or right-click menus from those children.
+            let body = Rect::from_min_max(Pos2::new(area.left(), top),
+                Pos2::new(area.right(), geom.last().unwrap().1.bottom())).intersect(ui.clip_rect());
+            let (down, origin, pointer, shift) = ui.input(|i| (
+                i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos(), i.modifiers.shift));
+            if down {
+                if let (Some(origin), Some(pointer)) = (origin, pointer) {
+                    if self.report_drag.is_none() && body.contains(origin) && origin.distance(pointer) >= 6.0 {
+                        self.report_drag = Some((origin.y - top,
+                            if shift { self.report_selection.clone() } else { Default::default() }));
+                    }
+                    if let Some((anchor, base)) = &self.report_drag {
+                        let mut selected = base.clone();
+                        let a = (top + anchor).min(pointer.y);
+                        let b = (top + anchor).max(pointer.y);
+                        for (id, rect) in &geom {
+                            if *id != 0 && rect.bottom() >= a && rect.top() <= b { selected.insert(*id); }
+                        }
+                        self.report_selection = selected;
+                    }
+                }
+            } else {
+                self.report_drag = None;
+            }
             for (fid, crect) in &geom {
                 if *fid != 0 && self.report_selection.contains(fid) {
                     let band = Rect::from_min_max(
@@ -7081,12 +7128,12 @@ impl OrbitLiveApp {
             }
         }
         for (action, id, name, module) in tree_actions {
-            self.apply_hook_action(action, id, &name, &module);
+            self.apply_row_hook_action(action, id, &name, &module);
         }
     }
 
     fn module_rows(&mut self, ui: &mut Ui) {
-        let Some(modules) = self.modules.clone() else {
+        let Some(mut modules) = self.modules.clone() else {
             ui.label(
                 RichText::new("No modules loaded — pick a process and load symbols.")
                     .color(theme::MUTED)
@@ -7099,9 +7146,14 @@ impl OrbitLiveApp {
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
             .striped(true)
             .show(ui, |ui| {
-                for h in ["symbols", "module", "path"] {
-                    ui.label(RichText::new(h).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                for (col, h) in ["symbols", "module", "path"].iter().enumerate() {
+                    sort_header(ui, h, col as u8, &mut self.module_sort, col == 0, self.ui_tweaks.report_font);
                 }
+                let (col, desc) = self.module_sort;
+                modules.modules.sort_by(|a, b| {
+                    let ord = match col { 0 => a.function_count.cmp(&b.function_count), 1 => cmp_ci(&a.name, &b.name), _ => cmp_ci(&a.path, &b.path) };
+                    (if desc { ord.reverse() } else { ord }).then_with(|| a.path.cmp(&b.path))
+                });
                 ui.end_row();
                 let filter = self.report_filter.trim().to_lowercase();
                 for row in modules
@@ -7115,7 +7167,8 @@ impl OrbitLiveApp {
                             .monospace()
                             .size(self.ui_tweaks.report_font),
                     );
-                    ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    let label = ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    note_ui_rect(&format!("module:{}", row.name), label.rect);
                     ui.label(RichText::new(&row.path).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
                 }
@@ -7200,7 +7253,7 @@ impl OrbitLiveApp {
     /// name with running statistics, and the histogram of the selected row.
     fn live_rows(&mut self, ui: &mut Ui) {
         let font = self.ui_tweaks.report_font;
-        let (rows, sample_threads): (Vec<crate::live::LiveRow>, Vec<(u32, u64)>) = {
+        let (mut rows, sample_threads): (Vec<crate::live::LiveRow>, Vec<(u32, u64)>) = {
             let t = self.live_table();
             (t.sorted_rows().into_iter().cloned().collect(), t.sample_threads())
         };
@@ -7242,9 +7295,28 @@ impl OrbitLiveApp {
                     .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
                     .striped(true)
                     .show(ui, |ui| {
-                        for h in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"] {
-                            ui.label(RichText::new(h).color(theme::MUTED).size(font - 0.5));
+                        for (col, h) in ["type", "function", "count", "total", "avg", "min", "max", "std dev", "module"].iter().enumerate() {
+                            sort_header(ui, h, col as u8, &mut self.live_sort, (2..=7).contains(&col), font);
                         }
+                        let (col, desc) = self.live_sort;
+                        // Resolve modules once, not by scanning the sampling
+                        // report and allocating strings on every comparison.
+                        let modules: std::collections::HashMap<_, _> = self.sampling.iter()
+                            .flat_map(|report| report.rows.iter())
+                            .map(|r| (r.name.as_str(), r.module.as_str())).collect();
+                        rows.sort_by(|a, b| {
+                            let an = self.intern.get(a.name_id).unwrap_or("");
+                            let bn = self.intern.get(b.name_id).unwrap_or("");
+                            let ord = match col {
+                                0 => a.type_label().cmp(b.type_label()),
+                                1 => cmp_ci(an, bn), 2 => a.count.cmp(&b.count),
+                                3 => a.total_ns.cmp(&b.total_ns), 4 => a.avg_ns().cmp(&b.avg_ns()),
+                                5 => a.min_ns.cmp(&b.min_ns), 6 => a.max_ns.cmp(&b.max_ns),
+                                7 => a.std_dev_ns().cmp(&b.std_dev_ns()),
+                                _ => cmp_ci(modules.get(an).copied().unwrap_or(""), modules.get(bn).copied().unwrap_or("")),
+                            };
+                            (if desc { ord.reverse() } else { ord }).then(a.name_id.cmp(&b.name_id))
+                        });
                         ui.end_row();
                         let filter = self.report_filter.trim().to_lowercase();
                         for r in rows
@@ -8092,6 +8164,35 @@ fn row_hook_targets(action: HookAction, clicked: u64, selection: &std::collectio
     let mut ids: Vec<_> = selection.iter().copied().filter(|id| *id != 0).collect();
     ids.sort_unstable();
     ids
+}
+
+/// Sort siblings, retaining original indices for expansion IDs and ancestry.
+fn sorted_tree_indices(nodes: &[crate::net::TreeNodeJson], sort: (u8, bool), hooked: &std::collections::HashSet<u64>) -> Vec<usize> {
+    let mut indices: Vec<_> = (0..nodes.len()).collect();
+    indices.sort_by(|&a, &b| {
+        let (a_node, b_node) = (&nodes[a], &nodes[b]);
+        let ord = match sort.0 {
+            0 => hooked.contains(&a_node.function_id).cmp(&hooked.contains(&b_node.function_id)),
+            1 => a_node.inclusive_percent.total_cmp(&b_node.inclusive_percent),
+            2 => a_node.exclusive.cmp(&b_node.exclusive),
+            3 => a_node.of_parent_percent.total_cmp(&b_node.of_parent_percent),
+            4 => cmp_ci(&a_node.name, &b_node.name),
+            _ => cmp_ci(&a_node.module, &b_node.module),
+        };
+        (if sort.1 { ord.reverse() } else { ord }).then(a.cmp(&b))
+    });
+    indices
+}
+
+fn sort_header(ui: &mut Ui, name: &str, col: u8, sort: &mut (u8, bool), descending: bool, font: f32) {
+    let active = sort.0 == col;
+    let response = ui.add(egui::Label::new(RichText::new(format!("{name}   "))
+        .color(if active { theme::TEXT } else { theme::MUTED }).size(font - 0.5)).sense(Sense::click()));
+    if active { paint_sort_arrow(ui, Pos2::new(response.rect.right() - 5.0, response.rect.center().y), sort.1); }
+    note_ui_rect(&format!("sort:{name}"), response.rect);
+    if response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Click to sort; click again to reverse").clicked() {
+        toggle_sort(sort, col, descending);
+    }
 }
 
 /// The right-click menu of a function in a report: hook it for dynamic
@@ -10499,6 +10600,22 @@ mod tests {
             cpu: 0.0,
             path: path.into(),
         }
+    }
+
+    #[test]
+    fn tree_sort_preserves_original_paths_and_sibling_boundaries() {
+        use crate::net::TreeNodeJson;
+        let nodes = vec![
+            TreeNodeJson { name: "Zulu".into(), module: "beta".into(), function_id: 1, inclusive_percent: 20.0,
+                children: vec![TreeNodeJson { name: "child".into(), ..Default::default() }], ..Default::default() },
+            TreeNodeJson { name: "Alpha".into(), module: "alpha".into(), function_id: 2, inclusive_percent: 80.0, ..Default::default() },
+        ];
+        let hooked = [1].into_iter().collect();
+        assert_eq!(sorted_tree_indices(&nodes, (4, false), &hooked), vec![1, 0]);
+        assert_eq!(sorted_tree_indices(&nodes, (5, true), &hooked), vec![0, 1]);
+        assert_eq!(sorted_tree_indices(&nodes, (1, true), &hooked), vec![1, 0]);
+        assert_eq!(sorted_tree_indices(&nodes, (0, true), &hooked), vec![0, 1]);
+        assert_eq!(nodes[0].children[0].name, "child");
     }
 
     #[test]

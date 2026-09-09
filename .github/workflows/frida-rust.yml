@@ -77,3 +77,20 @@ jobs:
       - name: Verify retained Linux uprobe backend
         if: runner.os == 'Linux'
         run: sudo /tmp/orbit-frida-test/bin/python tools/e2e/frida_smoke.py --helper rust/crates/orbit-frida-helper/target/debug/orbit-frida-helper --service rust/crates/orbit-service/target/debug/orbit-service --agent rust/target/debug/liborbit_frida_agent.so --target /tmp/orbit-frida-target --engine kernel_uprobes
+      - name: Collect macOS crash reports
+        if: failure() && runner.os == 'macOS'
+        run: |
+          # CrashReporter writes asynchronously, including crashes of sudo targets.
+          sleep 5
+          mkdir -p /tmp/orbit-crashes
+          sudo find /Library/Logs/DiagnosticReports /var/root/Library/Logs/DiagnosticReports "$HOME/Library/Logs/DiagnosticReports" -type f \( -name '*orbit*.ips' -o -name '*orbit*.crash' \) -exec cp {} /tmp/orbit-crashes/ \; 2>/dev/null || true
+          sudo chmod -R a+rX /tmp/orbit-crashes
+          for report in /tmp/orbit-crashes/*; do
+            if [ -f "$report" ]; then cat "$report"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: failure() && runner.os == 'macOS'
+        with:
+          name: frida-crashes-${{ matrix.runner }}
+          path: /tmp/orbit-crashes/
+          if-no-files-found: ignore
