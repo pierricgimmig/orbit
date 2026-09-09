@@ -120,15 +120,18 @@ pub enum WashRole {
     Leaf,
 }
 
+/// A stable per-process slot in `0..8`. Reserved pids 1/2/3 (demo, viewer,
+/// service) are pinned so they always differ; the rest hash. The virtual
+/// count is fixed, so it is independent of how long a scheme's wash table or
+/// scope palette is -- the caller takes it modulo the array it indexes.
 pub fn process_wash_index(pid: u32) -> usize {
-    let n = active().process_washes.len();
     match pid {
         1 => 0,
         2 => 1,
         3 => 2,
         _ => {
             let x = pid.wrapping_mul(0x9E37_79B9) ^ pid.rotate_right(16);
-            3 + (x as usize % (n - 3))
+            3 + (x as usize % 5)
         }
     }
 }
@@ -139,21 +142,44 @@ pub fn process_track_wash(pid: u32) -> Color32 {
 }
 
 pub fn process_track_wash_role(pid: u32, role: WashRole) -> Color32 {
-    let [r, g, b] = active().process_washes[process_wash_index(pid)];
     let lift = match role {
         WashRole::Process => 10,
         WashRole::Thread => 0,
         WashRole::ThreadAlt => -3,
         WashRole::Leaf => -5,
     };
-    Color32::from_rgb(chan(r, lift), chan(g, lift), chan(b, lift))
+    let t = active();
+    let idx = process_wash_index(pid);
+    // Orbit ships an explicit near-black table; other schemes derive the wash
+    // from their own canvas so a process band stays in the scheme's family.
+    if !t.process_washes.is_empty() {
+        let [r, g, b] = t.process_washes[idx % t.process_washes.len()];
+        return Color32::from_rgb(chan(r, lift), chan(g, lift), chan(b, lift));
+    }
+    derive_wash(t, idx, lift)
+}
+
+/// A process band as a faint tint of the scheme's canvas toward one of its
+/// scope accents -- distinct per process, but clearly the timeline
+/// background rather than a foreign colour. The row lift is a small lightness
+/// step (lighter than the canvas on a dark scheme, darker on a light one) so
+/// the alternating thread rows still read.
+fn derive_wash(t: &orbit_live_event::theme::Theme, idx: usize, lift: i16) -> Color32 {
+    let accent = t.scope[idx % t.scope.len()];
+    let mix = |base: u32, acc: u32| ((base * 92 + acc * 8) / 100) as i16;
+    let chan_at = |shift: u32| {
+        let base = (t.canvas >> shift) & 0xFF;
+        let acc = (accent >> shift) & 0xFF;
+        let dir = if t.light { -1 } else { 1 };
+        (mix(base, acc) + lift * dir).clamp(0, 255) as u8
+    };
+    Color32::from_rgb(chan_at(16), chan_at(8), chan_at(0))
 }
 
 fn chan(v: u8, lift: i16) -> u8 {
-    // Washes are near-black on a dark scheme and near-white on a light one;
-    // clamp into the matching end so a lift cannot push one into mid-grey.
-    let (lo, hi) = if active().light { (0xDC, 0xF6) } else { (0x0B, 0x28) };
-    (i16::from(v) + lift).clamp(lo, hi) as u8
+    // The explicit-table (Orbit) path: near-black washes, clamped to the dark
+    // end so a lift cannot push one into mid-grey.
+    (i16::from(v) + lift).clamp(0x0B, 0x28) as u8
 }
 
 /// Scope / event colours are drawn as-is. Only the timeline's `chrome::TRACK`
@@ -253,6 +279,24 @@ mod tests {
         assert_ne!(PAPER(), CANVAS());
         assert_ne!(playhead_color(true), playhead_color(false));
         assert!(quiet_grid_line(true).a() > quiet_grid_line(false).a());
+    }
+
+    #[test]
+    fn derived_washes_stay_in_the_scheme_family() {
+        // A non-default scheme's process band is a tint of its own canvas, not
+        // the old near-black table -- that was the "clashes with the chrome"
+        // report. Each channel should sit close to the canvas.
+        theme::set_active_by_key("dracula");
+        let canvas = theme::active().canvas;
+        let (cr, cg, cb) = ((canvas >> 16) & 0xFF, (canvas >> 8) & 0xFF, canvas & 0xFF);
+        let w = process_track_wash(1234);
+        assert!((w.r() as i32 - cr as i32).abs() <= 40, "wash r near canvas");
+        assert!((w.g() as i32 - cg as i32).abs() <= 40, "wash g near canvas");
+        assert!((w.b() as i32 - cb as i32).abs() <= 40, "wash b near canvas");
+        assert!(w.r() > 0x20 || w.g() > 0x20 || w.b() > 0x20, "not near-black");
+        // Distinct processes get distinct bands.
+        assert_ne!(process_track_wash(1234), process_track_wash(1237));
+        theme::set_active(&theme::ORBIT);
     }
 
     #[test]

@@ -146,6 +146,10 @@ pub static ORBIT: Theme = Theme {
     insert: 0xFFD0_D8E0,
     playhead: 0xFFE8_EAEE,
     paper_playhead: 0xFF3A_3E46,
+    // Orbit keeps its exact near-black wash table; every other scheme leaves
+    // this empty and the wash is derived from that scheme's own canvas, so a
+    // process band is a tint of the timeline background rather than a foreign
+    // near-black one that clashes with the chrome.
     process_washes: &ORBIT_WASHES,
 };
 
@@ -153,8 +157,9 @@ pub static ORBIT: Theme = Theme {
 // Terminal-derived dark schemes. Chrome maps the scheme's backgrounds to
 // canvas/panel/rail/track and its foreground/comment to text/muted; the
 // scope palette is the scheme's accent set, which is built to be harmonious.
-// The washes stay the neutral originals -- they are a near-black tint under a
-// process, not a scheme colour.
+// The per-process washes are left empty and derived from each scheme's own
+// canvas (see the viewer's theme.rs), so a process band is a faint tint of
+// the timeline background rather than a foreign colour.
 // ---------------------------------------------------------------------------
 
 const DRACULA_SCOPE: [Argb; 7] = [
@@ -195,7 +200,7 @@ static DRACULA: Theme = Theme {
     insert: 0xFFF8_F8F2,
     playhead: 0xFFF8_F8F2,
     paper_playhead: 0xFF3A_3E46,
-    process_washes: &ORBIT_WASHES,
+    process_washes: &[],
 };
 
 const NORD_SCOPE: [Argb; 8] = [
@@ -237,7 +242,7 @@ static NORD: Theme = Theme {
     insert: 0xFFE5_E9F0,
     playhead: 0xFFEC_EFF4,
     paper_playhead: 0xFF3A_3E46,
-    process_washes: &ORBIT_WASHES,
+    process_washes: &[],
 };
 
 const GRUVBOX_SCOPE: [Argb; 7] = [
@@ -278,7 +283,7 @@ static GRUVBOX: Theme = Theme {
     insert: 0xFFFB_F1C7,
     playhead: 0xFFEB_DBB2,
     paper_playhead: 0xFF3A_3E46,
-    process_washes: &ORBIT_WASHES,
+    process_washes: &[],
 };
 
 const SOLARIZED_SCOPE: [Argb; 8] = [
@@ -320,26 +325,14 @@ static SOLARIZED: Theme = Theme {
     insert: 0xFFEE_E8D5,
     playhead: 0xFFEE_E8D5,
     paper_playhead: 0xFF3A_3E46,
-    process_washes: &ORBIT_WASHES,
+    process_washes: &[],
 };
 
 // ---------------------------------------------------------------------------
 // Light schemes. The canvas is bright, so `light` is set (the viewer flips
-// the grid, playhead and egui widgets to dark-on-light) and the process
-// washes are near-white tints rather than the near-black originals.
+// the grid, playhead and egui widgets to dark-on-light); the process washes
+// are derived from the light canvas, like the other non-default schemes.
 // ---------------------------------------------------------------------------
-
-/// Near-white per-process washes, the light counterpart of [`ORBIT_WASHES`].
-const LIGHT_WASHES: [[u8; 3]; 8] = [
-    [0xF0, 0xEA, 0xE2],
-    [0xE6, 0xEC, 0xF2],
-    [0xE6, 0xF0, 0xE8],
-    [0xF0, 0xE8, 0xF2],
-    [0xEC, 0xEF, 0xF2],
-    [0xF2, 0xEE, 0xE2],
-    [0xE8, 0xEC, 0xF2],
-    [0xF2, 0xEA, 0xEC],
-];
 
 /// Same accents as Solarized (dark), which are tuned to read on either
 /// ground; the chrome is the light base3/base2 with base00 text.
@@ -378,7 +371,7 @@ static SOLARIZED_LIGHT: Theme = Theme {
     insert: 0xFF65_7B83,
     playhead: 0xFF58_6E75,
     paper_playhead: 0xFF58_6E75,
-    process_washes: &LIGHT_WASHES,
+    process_washes: &[],
 };
 
 const GRUVBOX_LIGHT_SCOPE: [Argb; 7] = [
@@ -419,7 +412,7 @@ static GRUVBOX_LIGHT: Theme = Theme {
     insert: 0xFF3C_3836,
     playhead: 0xFF3C_3836,
     paper_playhead: 0xFF3C_3836,
-    process_washes: &LIGHT_WASHES,
+    process_washes: &[],
 };
 
 /// Every scheme, in the order the picker lists them. Orbit leads so the
