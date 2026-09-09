@@ -423,8 +423,13 @@ symbol of the process with a hooked column (2026-09-04), replacing the
 pills in the capture row; uprobes are the default method. A unit test
 (`a_uprobe_fires_on_a_function_of_this_process`) arms a probe on the test
 binary's own function and checks the paired calls; unprivileged it prints
-UPROBE TEST SKIPPED, with CAP_SYS_ADMIN it asserts (the uprobe PMU checks that capability, not CAP_PERFMON: measured 2026-09-05). Not done: hooking from
-the Flame tab and from the timeline's sampled frames.
+UPROBE TEST SKIPPED, with CAP_SYS_ADMIN it asserts (the uprobe PMU checks that capability, not CAP_PERFMON: measured 2026-09-05). Hooking from the
+Flame tab is done (2026-09-08): a right-click on a bar opens the same
+Hook / Unhook / "Show disassembly and source" menu as a report row -- the
+bars now carry the function index's id and module, and read hooked by id
+-- and the `hook-from-flame` e2e scenario hooks a Box3D bar, checks the
+id against the search and unhooks it (screenshot 37). Not done: hooking
+from the timeline's sampled frames.
 
 
 

@@ -818,6 +818,10 @@ pub struct OrbitLiveApp {
     live_focus: Option<crate::live::LiveKey>,
     /// A right-click on a scope: the pick and where the menu goes.
     scope_menu: Option<(ScopePick, Pos2)>,
+    /// The flame bar under the pointer when it was right-clicked: function
+    /// id, name, module. Latched because the pointer leaves the bar for the
+    /// menu, and the menu stays up across frames.
+    flame_menu: Option<(u64, String, String)>,
     /// The menu was opened this frame: the click that opened it must not
     /// count as a click outside it.
     scope_menu_fresh: bool,
@@ -1497,6 +1501,7 @@ impl OrbitLiveApp {
             live_sel_computed_s: 0.0,
             live_focus: None,
             scope_menu: None,
+            flame_menu: None,
             scope_menu_fresh: false,
             scope_report: None,
             self_tl: TimelineState::fresh(),
@@ -7594,20 +7599,28 @@ impl OrbitLiveApp {
         let bars = flame_layout(roots, width);
         let depth = bars.iter().map(|b| b.depth).max().unwrap_or(0) + 1;
         let row_h = (font + 7.0).max(16.0);
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, depth as f32 * row_h), Sense::hover());
+        // Click-sensing so a right-click can open the hook menu on the bar
+        // under the pointer; the left click and double-click below still
+        // read the raw pointer, as before.
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, depth as f32 * row_h), Sense::click());
         let painter = ui.painter_at(rect);
         let pointer = ui.ctx().pointer_hover_pos();
         let selected_name = self.selected.and_then(|p| self.intern.get(p.name_id)).map(str::to_string);
-        // Hooked functions read in blue everywhere; the flame bar is coloured
-        // by function, so mark a hooked one with a blue outline instead.
-        let hooked_names: HashSet<&str> =
-            self.selected_hooks.iter().map(|h| h.name.as_str()).collect();
         let mut hovered: Option<&FlameBar> = None;
         let mut clicked: Option<String> = None;
-        let (click, double) = ui.input(|i| {
-            (i.pointer.primary_clicked(), i.pointer.button_double_clicked(egui::PointerButton::Primary))
+        let (click, double, secondary) = ui.input(|i| {
+            (
+                i.pointer.primary_clicked(),
+                i.pointer.button_double_clicked(egui::PointerButton::Primary),
+                i.pointer.secondary_clicked(),
+            )
         });
         let mut zoom_change: Option<Vec<usize>> = None;
+        // egui's hover, not raw containment: it is false while another layer
+        // -- the hook menu just opened over these bars -- is under the
+        // pointer, so the menu neither gets a tooltip drawn across it nor
+        // passes its click through to the bar beneath.
+        let flame_hovered = resp.hovered();
         for bar in &bars {
             let r = Rect::from_min_size(
                 Pos2::new(rect.left() + bar.x, rect.top() + bar.depth as f32 * row_h),
@@ -7619,7 +7632,7 @@ impl OrbitLiveApp {
                 let c = theme::display_argb(orbit_live_event::named_scope_color(bar.name.as_bytes(), bar.depth as u8));
                 Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
             };
-            let is_hover = pointer.is_some_and(|p| r.contains(p));
+            let is_hover = flame_hovered && pointer.is_some_and(|p| r.contains(p));
             let dim = self.search_active() && !bar.name.contains(self.search.as_str());
             let fill = if is_hover {
                 theme::ACCENT
@@ -7632,9 +7645,12 @@ impl OrbitLiveApp {
             if !bar.is_thread {
                 note_ui_rect(&format!("flame:{}", bar.name), r);
             }
+            // Hooked functions read in blue everywhere; the flame bar is
+            // coloured by function, so mark a hooked one with a blue outline
+            // instead -- by id, the key every hook carries.
             if selected_name.as_deref() == Some(bar.name.as_str()) {
                 painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT), StrokeKind::Inside);
-            } else if !bar.is_thread && hooked_names.contains(bar.name.as_str()) {
+            } else if !bar.is_thread && self.is_hooked(bar.function_id) {
                 painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
             }
             if bar.w > 24.0 {
@@ -7681,6 +7697,22 @@ impl OrbitLiveApp {
                 if self.search == bar.name {
                     self.search.clear();
                 }
+            }
+        }
+        // A right-click latches the bar under the pointer (a thread root or
+        // empty space clears it), and the same hook menu as a report row
+        // opens on it: Hook / Unhook, or its disassembly. The latch outlives
+        // the click because the pointer leaves the bar for the menu.
+        if secondary && pointer.is_some_and(|p| rect.contains(p)) {
+            self.flame_menu = hovered
+                .filter(|b| !b.is_thread)
+                .map(|b| (b.function_id, b.name.clone(), b.module.clone()));
+        }
+        if let Some((function_id, name, module)) = self.flame_menu.clone() {
+            let hooked = self.is_hooked(function_id);
+            if let Some(action) = hook_menu(&resp, function_id, hooked, 1) {
+                self.apply_hook_action(action, function_id, &name, &module);
+                self.flame_menu = None;
             }
         }
         if let Some(bar) = hovered {
@@ -9586,6 +9618,11 @@ struct FlameBar {
     /// zooms to.
     path: Vec<usize>,
     name: String,
+    /// The function index's id and module, from the tree node: what a hook
+    /// is keyed by, so a bar can be hooked and reads hooked by id rather
+    /// than by name. 0 when the service could not place the function.
+    function_id: u64,
+    module: String,
     samples: u64,
     percent: f64,
     /// A thread root: drawn plain and labelled, never coloured by name.
@@ -9633,6 +9670,8 @@ fn flame_layout(roots: &[crate::net::TreeNodeJson], width: f32) -> Vec<FlameBar>
             depth,
             path: path.clone(),
             name: node.name.clone(),
+            function_id: node.function_id,
+            module: node.module.clone(),
             samples: node.inclusive,
             percent: 100.0 * node.inclusive as f64 / total as f64,
             is_thread: node.kind == "thread",
@@ -11317,7 +11356,14 @@ mod tests {
                 name: "main".into(),
                 inclusive: 75,
                 children: vec![
-                    TreeNodeJson { name: "a".into(), inclusive: 50, children: vec![leaf("b", 25)], ..Default::default() },
+                    TreeNodeJson {
+                        name: "a".into(),
+                        function_id: 0xA11,
+                        module: "libbox3d.so".into(),
+                        inclusive: 50,
+                        children: vec![leaf("b", 25)],
+                        ..Default::default()
+                    },
                     leaf("c", 20),
                 ],
                 ..Default::default()
@@ -11328,6 +11374,10 @@ mod tests {
         let find = |n: &str| bars.iter().find(|b| b.name == n).unwrap();
         assert_eq!((find("main").x, find("main").w, find("main").depth), (0.0, 750.0, 0));
         assert!(find("main").is_thread);
+        // A bar carries its node's function id and module -- what a hook is
+        // keyed by -- and a thread root has neither.
+        assert_eq!((find("a").function_id, find("a").module.as_str()), (0xA11, "libbox3d.so"));
+        assert_eq!((find("main").function_id, find("main").module.as_str()), (0, ""));
         assert_eq!((find("worker").x, find("worker").w), (750.0, 250.0));
         assert_eq!((find("a").x, find("a").w, find("a").depth), (0.0, 500.0, 1));
         assert_eq!((find("c").x, find("c").w, find("c").depth), (500.0, 200.0, 1));
