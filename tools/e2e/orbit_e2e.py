@@ -1049,6 +1049,41 @@ def flame_tab(run):
     return "ok"
 
 
+@scenario("hook-from-flame", "A function is hooked from the Flame tab's right-click menu, and the hook list follows")
+def hook_from_flame(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    # Box3D, with symbols, so the tree's bars carry function ids.
+    run.load_symbols()
+    run.capture(seconds=4.0)
+    run.stop_capture()
+    run.open_viewer("?collapse=scheduler&report=flame")
+    run.wait_for(lambda: run.sel().get("tab") == "Flame", "the Flame tab")
+    bars = run.wait_for(lambda: run.rects_matching("flame:") or None, "flame bars", timeout=20)
+    # A bar of the workload's own code, in view and wide enough to hit.
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    targets = [(v[1], k) for k, v in bars.items()
+               if (k.startswith("flame:b3") or "orbit_e2e" in k) and 0 <= v[1] < canvas_h - 20 and v[2] >= 12]
+    check(targets, f"no Box3D bar in view in the flame graph: {sorted(bars)[:8]}")
+    bar = sorted(targets)[0][1]
+    run.click(bar, button="right")
+    run.rect("menu:hook", timeout=5)
+    run.shot("37-hook-from-flame", settle=0.5)
+    run.click("menu:hook")
+    sel = run.wait_for(lambda: run.sel() if run.sel().get("hooks") else None, "the hook in the readout")
+    ids = sel["hooks"]
+    check(len(ids) == 1, f"one hook expected, got {ids}")
+    # The id is one the service's function index knows, under the same name.
+    name = bar[len("flame:"):]
+    hits = run.service.get(f"/api/functions/search?pid={run.target.pid}&q={name}&limit=8")["functions"]
+    check(any(h["function_id"] == ids[0] for h in hits), f"the bar's id {ids[0]} is not a search hit for {name!r}: {hits[:3]}")
+    # Unhook through the same menu: the list follows.
+    run.click(bar, button="right")
+    run.click("menu:hook")
+    run.wait_for(lambda: run.sel().get("hooks") == [], "the hook removed")
+    return "ok"
+
+
 def _export_bundle(run, name, query=""):
     body = run.service.get(f"/api/capture/export?format=bundle{query}")
     check(isinstance(body, bytes) and body[:2] == b"PK", "the export is not a zip")
