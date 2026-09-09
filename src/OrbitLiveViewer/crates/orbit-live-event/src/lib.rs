@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 
 mod color;
 pub mod dev;
+pub mod theme;
 pub use color::{
-    argb_to_css, async_scope_color, encode_manual_color, event_color, material_index_to_argb,
-    name_hash, named_scope_color, palette_index, rgba_word_to_argb, scale_rgb, thread_scope_color,
-    thread_state_color,
-    BOX_BORDER, ORBIT_API_COLORS_RGBA, ORBIT_COLOR_RED, SAME_SCOPE_HIGHLIGHT, SELECTION,
-    SHADE_LEFT, THREAD_PALETTE,
+    argb_to_css, async_scope_color, encode_manual_color, event_color, inactive,
+    material_index_to_argb, name_hash, named_scope_color, palette_index, rgba_word_to_argb,
+    same_scope_highlight, sample_tick, scale_rgb, selection, thread_scope_color, thread_state_color,
+    BOX_BORDER, ORBIT_API_COLORS_RGBA, ORBIT_COLOR_RED, SHADE_LEFT, THREAD_PALETTE,
 };
 pub use color::{chrome, mode as color_mode};
 
@@ -249,7 +249,7 @@ impl LaneKey {
 /// Thread/CPU scopes need tid+depth — prefer [`LiveEvent::color_rgba`].
 pub fn palette_color(kind: u8, extra: u8, name_id: u32) -> u32 {
     match kind {
-        kind::SAMPLE => crate::color::SAMPLE_TICK,
+        kind::SAMPLE => crate::color::sample_tick(),
         kind::THREAD_STATE => thread_state_color(extra),
         kind::API_SCOPE | kind::API_TRACK => named_scope_color(&name_id.to_le_bytes(), extra),
         _ => thread_scope_color(name_id, extra),

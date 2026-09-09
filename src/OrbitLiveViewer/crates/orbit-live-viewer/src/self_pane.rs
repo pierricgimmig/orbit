@@ -246,13 +246,13 @@ impl SelfProfile {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("VIEWER SELF-PROFILE")
-                    .color(theme::ACCENT)
+                    .color(theme::ACCENT())
                     .size(9.5),
             );
             ui.add_space(10.0);
             let stat = |ui: &mut egui::Ui, k: &str, v: String| {
-                ui.label(egui::RichText::new(k).color(theme::MUTED).size(10.0));
-                ui.label(egui::RichText::new(v).color(theme::TEXT).size(10.0));
+                ui.label(egui::RichText::new(k).color(theme::MUTED()).size(10.0));
+                ui.label(egui::RichText::new(v).color(theme::TEXT()).size(10.0));
                 ui.add_space(8.0);
             };
             stat(ui, "fps", format!("{:.0}", self.fps));

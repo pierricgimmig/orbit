@@ -17,26 +17,33 @@ pub mod mode {
     pub const MANUAL_API: u8 = 2;
 }
 
-/// `#E74435 #2B91AF #B975B5 #57A64A #D7AB69 #F86516` as `0xAARRGGBB`.
-pub const THREAD_PALETTE: [u32; 6] = [
-    0xFFE7_4435,
-    0xFF2B_91AF,
-    0xFFB9_75B5,
-    0xFF57_A64A,
-    0xFFD7_AB69,
-    0xFFF8_6516,
-];
+/// Orbit's original six-colour scope palette, the default scheme's `scope`.
+/// The live palette is [`crate::theme::active`]`().scope`; this stays as the
+/// canonical default value and what the tests pin.
+pub const THREAD_PALETTE: [u32; 6] = crate::theme::ORBIT_SCOPE;
 
-pub const SELECTION: u32 = 0xFF00_80FF;
-pub const SAME_SCOPE_HIGHLIGHT: u32 = 0xFF64_B5F6;
-pub const INACTIVE: u32 = 0xFF64_6464;
+/// Marquee / range selection, from the active scheme.
+pub fn selection() -> u32 {
+    crate::theme::active().selection
+}
+/// "Highlight every instance of this scope", from the active scheme.
+pub fn same_scope_highlight() -> u32 {
+    crate::theme::active().same_scope
+}
+/// Greyed inactive / non-matching scope, from the active scheme.
+pub fn inactive() -> u32 {
+    crate::theme::active().inactive
+}
 pub const BOX_BORDER: u32 = 0xFFFF_FFFF;
 
-/// One tick per sampled callstack, matching Orbit's own sample bar: a near-white
-/// vertical line, deliberately the same for every sample. The bar answers "when
-/// was this thread sampled", so colouring ticks by what was running would turn a
-/// density readout into a second, noisier flame graph.
-pub const SAMPLE_TICK: u32 = 0xFFEC_EFF1;
+/// One tick per sampled callstack, matching Orbit's own sample bar: a
+/// vertical line, deliberately the same for every sample. The bar answers
+/// "when was this thread sampled", so colouring ticks by what was running
+/// would turn a density readout into a second, noisier flame graph. The
+/// colour follows the active scheme.
+pub fn sample_tick() -> u32 {
+    crate::theme::active().sample_tick
+}
 pub const SHADE_LEFT: f32 = 0.94;
 
 pub const ORBIT_API_COLORS_RGBA: [u32; 19] = [
@@ -72,7 +79,8 @@ pub fn scale_rgb(color: u32, num: u32, den: u32) -> u32 {
 }
 
 pub fn thread_scope_color(tid: u32, depth: u8) -> u32 {
-    apply_even_depth(THREAD_PALETTE[(tid as usize) % THREAD_PALETTE.len()], depth)
+    let p = crate::theme::active().scope;
+    apply_even_depth(p[(tid as usize) % p.len()], depth)
 }
 
 /// Same 6-color palette as [`thread_scope_color`], keyed by FNV-1a of the
@@ -89,7 +97,8 @@ fn apply_even_depth(mut c: u32, depth: u8) -> u32 {
 }
 
 pub fn palette_index(id: u32) -> u32 {
-    THREAD_PALETTE[(id as usize) % THREAD_PALETTE.len()]
+    let p = crate::theme::active().scope;
+    p[(id as usize) % p.len()]
 }
 
 pub fn name_hash(bytes: &[u8]) -> u32 {
@@ -149,16 +158,17 @@ pub fn encode_manual_color(orbit_api_color: u32) -> (u8, u8) {
 }
 
 pub fn thread_state_color(state: u8) -> u32 {
+    let ts = crate::theme::active().thread_states;
     match state {
-        thread_state::RUNNING => 0xFF4C_AF50,
-        thread_state::RUNNABLE => 0xFF21_96F3,
-        thread_state::INTERRUPTIBLE_SLEEP => 0xFF75_7575,
-        thread_state::UNINTERRUPTIBLE_SLEEP => 0xFFFF_9800,
-        thread_state::STOPPED => 0xFFF4_4336,
-        thread_state::TRACED => 0xFF9C_27B0,
-        thread_state::DEAD | thread_state::ZOMBIE => 0xFF00_0000,
-        thread_state::PARKED | thread_state::IDLE => 0xFF79_5548,
-        _ => INACTIVE,
+        thread_state::RUNNING => ts.running,
+        thread_state::RUNNABLE => ts.runnable,
+        thread_state::INTERRUPTIBLE_SLEEP => ts.interruptible,
+        thread_state::UNINTERRUPTIBLE_SLEEP => ts.uninterruptible,
+        thread_state::STOPPED => ts.stopped,
+        thread_state::TRACED => ts.traced,
+        thread_state::DEAD | thread_state::ZOMBIE => ts.dead,
+        thread_state::PARKED | thread_state::IDLE => ts.parked,
+        _ => inactive(),
     }
 }
 
@@ -195,7 +205,7 @@ pub fn event_color_hashed(
         // Before the name-based arms: a sample tick carries the leaf frame's
         // name_id so hovering it says what was running, and colouring by that
         // name is exactly what must not happen here.
-        kind::SAMPLE => SAMPLE_TICK,
+        kind::SAMPLE => sample_tick(),
         kind::API_SCOPE | kind::API_TRACK | kind::VALUE => {
             let hash = name_hash.unwrap_or_else(|| self::name_hash(&name_id.to_le_bytes()));
             apply_even_depth(palette_index(hash), depth)

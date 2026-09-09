@@ -681,3 +681,22 @@ select feature should not be a ui button, let's map it to
 ctrl-left-click-and-drag
 
 **Status: done (2026-09-07).** The Select pill is gone; Ctrl+left-drag draws the marquee (wheel still zooms, plain drag still pans). Esc clears it. app.rs; e2e `rect-select` drives it with the Ctrl modifier.
+
+### 43. Colour schemes
+
+Let users switch Orbit's colour scheme. Extract all colours to a common
+place, offer 4-5 harmonious schemes based on terminal palettes (Dracula
+etc.), keep the current one exactly as is, and find scope colours that
+look good with each.
+
+**Status: done (2026-09-09).** Every colour -- chrome, timeline canvas and
+track washes, the scope-box palette, the thread-state bar, the selection
+highlights -- lives in one `Theme` table in `orbit_live_event::theme`, read
+through a thread-local active theme (the service never switches, so it draws
+exactly as before). Five schemes: **Orbit** (the original, byte-for-byte the
+default) plus **Dracula**, **Nord**, **Gruvbox** and **Solarized**, whose
+scope palettes are each scheme's own harmonious accent set. Pick it in the
+More menu; `?theme=<key>` pins it for a link or screenshot; the choice is
+saved to `localStorage`. Switching rebuilds egui's visuals and drops the
+instance-colour caches so it takes effect at once. Screenshots 38-42; e2e
+`color-schemes` asserts each is active (`window.__orbit_sel.theme`).

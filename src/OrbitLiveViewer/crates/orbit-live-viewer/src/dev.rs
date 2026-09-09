@@ -340,6 +340,33 @@ pub fn query_report_tab(search: &str) -> Option<String> {
     None
 }
 
+/// `?theme=<key>` -- pick a colour scheme at load (orbit, dracula, nord,
+/// gruvbox, solarized). Lets a screenshot or a shared link pin the look.
+pub fn query_theme_from_location() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|s| query_theme(&s))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn query_theme(search: &str) -> Option<String> {
+    for pair in search.trim_start_matches('?').split('&') {
+        if let Some(value) = pair.strip_prefix("theme=") {
+            if !value.is_empty() {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
+}
+
 fn now_ns() -> u64 {
     // Same clock as lane-worker spans (`orbit_live_event::dev::now_ns`).
     // WASM: installed hook (`globalThis.performance.now`) so DedicatedWorkers
@@ -365,6 +392,17 @@ fn now_ns() -> u64 {
 mod tests {
     use super::*;
     use orbit_live_event::dev::{NAME_FRAME, NAME_NET, TID_NET, TID_UI};
+
+    #[test]
+    fn theme_query_reads_the_key() {
+        assert_eq!(query_theme("?theme=dracula").as_deref(), Some("dracula"));
+        assert_eq!(query_theme("foo=1&theme=Nord").as_deref(), Some("nord"));
+        assert_eq!(query_theme("?theme="), None);
+        assert_eq!(query_theme("?report=flat"), None);
+        // A key the registry does not know is simply ignored downstream.
+        assert!(orbit_live_event::theme::by_key("dracula").is_some());
+        assert!(orbit_live_event::theme::by_key("nope").is_none());
+    }
 
     #[test]
     fn disabled_frame_is_empty() {

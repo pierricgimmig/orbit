@@ -21,7 +21,7 @@ use orbit_live_event::dev::{
     NAME_WORKER_SPANS, NAME_LISTING_DISPATCH, NAME_LISTING_FLATTEN, NAME_LISTING_SORT, NAME_POOL_WAKE_US,
     NAME_POOL_TAIL_US, NAME_LISTING_INLINE, TID_NET, TID_RENDER, TID_STATS, TID_UI, VIEWER_PID,
 };
-use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent, THREAD_PALETTE};
+use orbit_live_event::{kind, InternTable, LaneKey, LiveEvent};
 use orbit_live_protocol::{decode_frame, LiveFrame};
 use orbit_live_render::{ThreadFocus, 
     apply_highlight_flags, choose_lod_hint, collect_instances_cached, collect_instances_layout_opts,
@@ -145,7 +145,7 @@ fn hairline() -> Stroke {
 }
 
 fn muted() -> Color32 {
-    theme::MUTED
+    theme::MUTED()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -460,36 +460,37 @@ fn slider_jump_to_norm(t0: f64, t1: f64, cap0: f64, cap1: f64, click_norm: f64) 
 pub fn apply_orbit_visuals(ctx: &Context) {
     let mut v = egui::Visuals::dark();
     let r = egui::CornerRadius::same(RADIUS as u8);
-    v.override_text_color = Some(theme::TEXT);
-    v.panel_fill = theme::PANEL;
-    v.window_fill = theme::PANEL;
+    v.override_text_color = Some(theme::TEXT());
+    v.panel_fill = theme::PANEL();
+    v.window_fill = theme::PANEL();
     v.window_corner_radius = r;
     v.menu_corner_radius = r;
-    v.extreme_bg_color = theme::INPUT;
-    v.faint_bg_color = theme::PANEL;
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, theme::TEXT);
-    v.widgets.noninteractive.bg_fill = theme::PANEL;
-    v.widgets.noninteractive.weak_bg_fill = theme::PANEL;
+    v.extreme_bg_color = theme::INPUT();
+    v.faint_bg_color = theme::PANEL();
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, theme::TEXT());
+    v.widgets.noninteractive.bg_fill = theme::PANEL();
+    v.widgets.noninteractive.weak_bg_fill = theme::PANEL();
     v.widgets.noninteractive.corner_radius = r;
     v.widgets.noninteractive.bg_stroke = Stroke::NONE;
-    v.widgets.inactive.bg_fill = theme::INPUT;
-    v.widgets.inactive.weak_bg_fill = theme::INPUT;
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0, theme::TEXT);
+    v.widgets.inactive.bg_fill = theme::INPUT();
+    v.widgets.inactive.weak_bg_fill = theme::INPUT();
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, theme::TEXT());
     v.widgets.inactive.bg_stroke = Stroke::NONE;
     v.widgets.inactive.corner_radius = r;
     v.widgets.inactive.expansion = 0.0;
-    v.widgets.hovered.bg_fill = Color32::from_rgb(0x1A, 0x1C, 0x22);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x1A, 0x1C, 0x22);
-    v.widgets.hovered.bg_stroke =
-        Stroke::new(1.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 50));
+    let accent = theme::ACCENT();
+    let accent_a = |a: u8| Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), a);
+    v.widgets.hovered.bg_fill = theme::REPORT_ROW_HOVER();
+    v.widgets.hovered.weak_bg_fill = theme::REPORT_ROW_HOVER();
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, accent_a(50));
     v.widgets.hovered.corner_radius = r;
     v.widgets.hovered.expansion = 0.0;
-    v.widgets.active.bg_fill = theme::INPUT;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, theme::ACCENT);
+    v.widgets.active.bg_fill = theme::INPUT();
+    v.widgets.active.bg_stroke = Stroke::new(1.0, accent);
     v.widgets.active.corner_radius = r;
     v.widgets.open.corner_radius = r;
-    v.selection.bg_fill = Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 60);
-    v.selection.stroke = Stroke::new(1.0, theme::ACCENT);
+    v.selection.bg_fill = accent_a(60);
+    v.selection.stroke = Stroke::new(1.0, accent);
     ctx.set_visuals(v);
 }
 
@@ -1165,7 +1166,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"renderer\":{:?}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1245,6 +1246,7 @@ impl OrbitLiveApp {
                 ),
                 None => "null".to_string(),
             },
+            orbit_live_event::theme::active().key,
             self.gpu_backend,
         );
         if text == self.sel_readout {
@@ -1293,7 +1295,7 @@ impl OrbitLiveApp {
     }
 
     fn rail_color(&self) -> Color32 {
-        self.canvas_override.map(|(_, r)| r).unwrap_or(theme::RAIL)
+        self.canvas_override.map(|(_, r)| r).unwrap_or(theme::RAIL())
     }
 
     /// Picks inline vs. pool for the next primitive listing from what each
@@ -1337,6 +1339,12 @@ impl OrbitLiveApp {
 impl OrbitLiveApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         fonts::install(&cc.egui_ctx);
+        // Pick the colour scheme before building visuals from it: `?theme=`
+        // wins (a shared link or screenshot pins the look), else the reader's
+        // saved choice, else Orbit's default.
+        if let Some(key) = crate::dev::query_theme_from_location().or_else(read_saved_theme) {
+            orbit_live_event::theme::set_active_by_key(&key);
+        }
         apply_orbit_visuals(&cc.egui_ctx);
         // Half a second between the clicks of a double-click (the desktop
         // default on Windows and GNOME; egui's 0.3 s is tight over a slow frame).
@@ -2505,14 +2513,14 @@ impl OrbitLiveApp {
                 .desired_width(132.0)
                 .hint_text("scope")
                 .font(FontId::monospace(11.5))
-                .background_color(theme::INPUT),
+                .background_color(theme::INPUT()),
         );
         resp.clone().on_hover_text("Grey scopes that do not match");
         if self.search_active() {
             ui.label(
                 RichText::new(format!("{}", self.search_ids.len()))
                     .font(FontId::monospace(10.5))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             if icon_pill(ui, "×", "Clear search").clicked() {
                 self.search.clear();
@@ -2635,12 +2643,12 @@ impl OrbitLiveApp {
         ui.label(
             RichText::new(format!("viewer build {VIEWER_BUILD}"))
                 .font(FontId::monospace(10.5))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         );
         ui.label(
             RichText::new(format!("renderer {}", self.gpu_backend))
                 .font(FontId::monospace(10.5))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         )
         .on_hover_text(
             "The graphics backend in use. WebGL2 by default; add ?webgpu to the \
@@ -2653,6 +2661,17 @@ impl OrbitLiveApp {
         {
             self.light_canvas = !self.light_canvas;
         }
+        ui.menu_button("Color scheme", |ui| {
+            let current = orbit_live_event::theme::active().key;
+            for theme in orbit_live_event::theme::THEMES {
+                if ui.selectable_label(current == theme.key, theme.name).clicked() {
+                    self.set_color_scheme(theme.key, ui.ctx());
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Recolour the whole viewer — chrome, scopes and thread states");
         if ui.selectable_label(self.advanced, "Inspector").clicked() {
             self.advanced = !self.advanced;
             ui.close();
@@ -2669,12 +2688,30 @@ impl OrbitLiveApp {
         self.paint_verbose_stats(ui);
     }
 
+    /// Switch the colour scheme: set it active, rebuild egui's visuals from
+    /// it, drop the caches that hold baked-in colours, remember the choice,
+    /// and repaint.
+    fn set_color_scheme(&mut self, key: &str, ctx: &Context) {
+        if !orbit_live_event::theme::set_active_by_key(key) {
+            return;
+        }
+        apply_orbit_visuals(ctx);
+        // Collected instances carry their colour, and lanes are cached across
+        // frames; without this the old palette lingers until each lane next
+        // changes. The pixel-raster path recolours every frame, so it needs no
+        // help.
+        self.listing_cache.clear();
+        self.self_tl.listing_cache.clear();
+        save_theme(key);
+        self.needs_repaint = true;
+    }
+
     fn paint_verbose_stats(&self, ui: &mut Ui) {
         if let Some(load) = &self.trace_load {
             ui.label(
                 RichText::new(load.progress_line())
                     .font(FontId::monospace(11.0))
-                    .color(theme::ACCENT),
+                    .color(theme::ACCENT()),
             );
         } else if let Some(name) = &self.trace_name {
             ui.label(
@@ -2683,13 +2720,13 @@ impl OrbitLiveApp {
                     fmt_int(self.index.event_count() as u64)
                 ))
                 .font(FontId::monospace(11.0))
-                .color(theme::TEXT),
+                .color(theme::TEXT()),
             );
         }
         ui.label(
             RichText::new(format!("{} live", fmt_int(self.status.events_live)))
                 .font(FontId::monospace(11.0))
-                .color(theme::TEXT),
+                .color(theme::TEXT()),
         );
         if self.visible_count > 0 || !self.draw_label.is_empty() {
             ui.label(
@@ -2699,14 +2736,14 @@ impl OrbitLiveApp {
                     self.draw_label
                 ))
                 .font(FontId::monospace(11.0))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
             );
         }
         if !self.lod_label.is_empty() {
             ui.label(
                 RichText::new(self.lod_label)
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
         }
         let link = format!(
@@ -2718,7 +2755,7 @@ impl OrbitLiveApp {
         ui.label(
             RichText::new(link)
                 .font(FontId::monospace(11.0))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         );
     }
 
@@ -2737,7 +2774,7 @@ impl OrbitLiveApp {
                 ui.label(
                     RichText::new(load.progress_line())
                         .font(FontId::monospace(10.5))
-                        .color(theme::ACCENT),
+                        .color(theme::ACCENT()),
                 );
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2812,7 +2849,7 @@ impl OrbitLiveApp {
                     .family(fonts::medium())
                     .size(11.0)
                     .extra_letter_spacing(1.6)
-                    .color(theme::TEXT),
+                    .color(theme::TEXT()),
             );
             ui.add_space(2.0);
             self.paint_link_dot(ui);
@@ -2851,7 +2888,7 @@ impl OrbitLiveApp {
                 }
             } else if let Some(url) = &self.static_capture {
                 let name = url.rsplit('/').next().unwrap_or(url);
-                ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED))
+                ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED()))
                     .on_hover_text("This page shows a saved capture; there is no service behind it");
             }
             vsep(ui);
@@ -3006,8 +3043,8 @@ impl OrbitLiveApp {
         let width = ui.available_width().min(360.0);
         let button = ui.add_sized(
             Vec2::new(width, 22.0),
-            egui::Button::new(RichText::new(selected_text).size(12.0).color(theme::TEXT))
-                .fill(theme::INPUT),
+            egui::Button::new(RichText::new(selected_text).size(12.0).color(theme::TEXT()))
+                .fill(theme::INPUT()),
         );
         let opening = button.clicked() && !egui::Popup::is_id_open(ui.ctx(), popup_id);
         let popup = egui::Popup::from_response(&button)
@@ -3022,7 +3059,7 @@ impl OrbitLiveApp {
                     .desired_width(ui.available_width())
                     .hint_text("Filter")
                     .font(FontId::monospace(11.0))
-                    .background_color(theme::INPUT),
+                    .background_color(theme::INPUT()),
             );
             if opening {
                 filter.request_focus();
@@ -3116,12 +3153,12 @@ impl OrbitLiveApp {
                     .desired_width(40.0)
                     .hint_text("ms")
                     .font(FontId::monospace(11.0))
-                    .background_color(theme::INPUT),
+                    .background_color(theme::INPUT()),
             );
             ui.label(
                 RichText::new("ms")
                     .font(FontId::monospace(10.5))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             vsep(ui);
             section_label(ui, "UNWIND");
@@ -3150,7 +3187,7 @@ impl OrbitLiveApp {
                     "requires Linux uprobe permissions"
                 })
                 .font(FontId::monospace(10.0))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
             );
         });
         ui.add_space(4.0);
@@ -3166,7 +3203,7 @@ impl OrbitLiveApp {
                 1 => "1 function hooked".to_string(),
                 n => format!("{n} functions hooked"),
             };
-            ui.label(RichText::new(text).font(FontId::monospace(10.5)).color(theme::MUTED));
+            ui.label(RichText::new(text).font(FontId::monospace(10.5)).color(theme::MUTED()));
             if pill(ui, "Functions", self.report_open && self.report_tab == ReportTab::Functions)
                 .on_hover_text("Every function of the selected process, with a hooked column")
                 .clicked()
@@ -3189,7 +3226,7 @@ impl OrbitLiveApp {
                 let lossy = self.status.instrumentation.contains("records lost");
                 ui.label(
                     RichText::new(&self.status.instrumentation).size(11.0).color(if armed && !lossy {
-                        theme::MUTED
+                        theme::MUTED()
                     } else {
                         Color32::from_rgb(0xFF, 0xB3, 0x00)
                     }),
@@ -3205,19 +3242,19 @@ impl OrbitLiveApp {
     fn function_rows(&mut self, ui: &mut Ui) {
         let font = self.ui_tweaks.report_font;
         let Some(pid) = self.selected_pid else {
-            ui.label(RichText::new("Select a process to list its functions.").color(theme::MUTED).size(font));
+            ui.label(RichText::new("Select a process to list its functions.").color(theme::MUTED()).size(font));
             return;
         };
         if self.symbols.status != "ready" {
             ui.label(
                 RichText::new(format!("Symbols for pid {pid}: {}", self.symbol_status_line()))
-                    .color(theme::MUTED)
+                    .color(theme::MUTED())
                     .size(font),
             );
             return;
         }
         if self.functions_pid != Some(pid) {
-            ui.label(RichText::new("Listing functions…").color(theme::MUTED).size(font));
+            ui.label(RichText::new("Listing functions…").color(theme::MUTED()).size(font));
             return;
         }
         self.hooked_hint(ui);
@@ -3259,7 +3296,7 @@ impl OrbitLiveApp {
                 } else {
                     format!("{} of {} functions", rows.len(), self.functions.len())
                 })
-                .color(theme::MUTED)
+                .color(theme::MUTED())
                 .size(font - 0.5),
             );
             if rows.len() > MAX_ROWS
@@ -3295,7 +3332,7 @@ impl OrbitLiveApp {
                 Align2::RIGHT_CENTER,
                 "#",
                 FontId::new(font - 0.5, FontFamily::Proportional),
-                theme::MUTED,
+                theme::MUTED(),
             );
             ui.add_space(col_gap);
             for (i, (h, w)) in [("hooked", widths[0]), ("function", name_w), ("size", widths[2]), ("module", widths[3])]
@@ -3310,7 +3347,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         *h,
                         FontId::new(font - 0.5, FontFamily::Proportional),
-                        if active { theme::TEXT } else { theme::MUTED },
+                        if active { theme::TEXT() } else { theme::MUTED() },
                     )
                     .width();
                 if active {
@@ -3351,7 +3388,7 @@ impl OrbitLiveApp {
             let selected = self.report_selection.contains(&f.function_id);
             let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
             if (first + n) % 2 == 1 {
-                ui.painter().rect_filled(row_rect, 0.0, theme::REPORT_ROW_ALT);
+                ui.painter().rect_filled(row_rect, 0.0, theme::REPORT_ROW_ALT());
             }
             if selected {
                 ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 48));
@@ -3364,7 +3401,7 @@ impl OrbitLiveApp {
                 Align2::RIGHT_CENTER,
                 format!("{}", first + n + 1),
                 FontId::new(font - 0.5, FontFamily::Proportional),
-                theme::MUTED,
+                theme::MUTED(),
             );
             x += INDEX_W + col_gap;
             // hooked
@@ -3374,18 +3411,18 @@ impl OrbitLiveApp {
             ui.painter().rect(
                 box_r,
                 2.0,
-                if hooked { theme::ACCENT } else { theme::INPUT },
-                Stroke::new(1.0, if hooked { theme::ACCENT } else { theme::MUTED }),
+                if hooked { theme::ACCENT() } else { theme::INPUT() },
+                Stroke::new(1.0, if hooked { theme::ACCENT() } else { theme::MUTED() }),
                 StrokeKind::Inside,
             );
             if hooked {
                 ui.painter().line_segment(
                     [Pos2::new(box_r.left() + 3.0, box_r.center().y), Pos2::new(box_r.center().x, box_r.bottom() - 3.0)],
-                    Stroke::new(1.5, theme::CANVAS),
+                    Stroke::new(1.5, theme::CANVAS()),
                 );
                 ui.painter().line_segment(
                     [Pos2::new(box_r.center().x, box_r.bottom() - 3.0), Pos2::new(box_r.right() - 2.0, box_r.top() + 3.0)],
-                    Stroke::new(1.5, theme::CANVAS),
+                    Stroke::new(1.5, theme::CANVAS()),
                 );
             }
             note_ui_rect(&format!("hook:{}", f.name), check_rect);
@@ -3406,7 +3443,7 @@ impl OrbitLiveApp {
                 Align2::LEFT_CENTER,
                 truncate_to_width(&f.name, name_w - 4.0, font),
                 FontId::new(font, FontFamily::Proportional),
-                if hooked { theme::ACCENT } else { theme::TEXT },
+                if hooked { theme::ACCENT() } else { theme::TEXT() },
             );
             note_ui_rect(&format!("fn:{}", f.name), name_rect);
             if let Some(action) = hook_menu(
@@ -3424,7 +3461,7 @@ impl OrbitLiveApp {
                 Align2::LEFT_CENTER,
                 f.size.to_string(),
                 FontId::monospace(font),
-                theme::MUTED,
+                theme::MUTED(),
             );
             x += widths[2] + col_gap;
             // module
@@ -3434,7 +3471,7 @@ impl OrbitLiveApp {
                 Align2::LEFT_CENTER,
                 truncate_to_width(&f.module, widths[3] - 4.0, font - 0.5),
                 FontId::new(font - 0.5, FontFamily::Proportional),
-                theme::MUTED,
+                theme::MUTED(),
             );
         }
         if last < shown.len() {
@@ -3489,7 +3526,7 @@ impl OrbitLiveApp {
                 .family(fonts::medium())
                 .size(10.0)
                 .extra_letter_spacing(1.4)
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         );
 
         section(ui, "PROCESS");
@@ -3498,7 +3535,7 @@ impl OrbitLiveApp {
         ui.label(
             RichText::new(self.symbol_status_line())
                 .font(FontId::monospace(11.0))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         );
         if icon_pill(ui, "↻", "Refresh process list").clicked() {
             self.last_process_request = ui.input(|i| i.time);
@@ -3511,7 +3548,7 @@ impl OrbitLiveApp {
             egui::TextEdit::singleline(&mut self.ring_bytes)
                 .desired_width(ui.available_width())
                 .font(FontId::monospace(12.0))
-                .background_color(theme::INPUT),
+                .background_color(theme::INPUT()),
         );
         ui.add_space(4.0);
         ui.label(RichText::new("Spill path").size(11.0).color(muted()));
@@ -3520,7 +3557,7 @@ impl OrbitLiveApp {
                 .desired_width(ui.available_width())
                 .hint_text("/tmp/orbit-spill")
                 .font(FontId::proportional(12.5))
-                .background_color(theme::INPUT),
+                .background_color(theme::INPUT()),
         );
         ui.add_space(6.0);
         if pill(ui, "Apply", false).clicked() {
@@ -3558,7 +3595,7 @@ impl OrbitLiveApp {
                 .size(12.0)
                 .extra_letter_spacing(0.6)
                 .color(if self.status.demo || self.status.capturing {
-                    theme::ACCENT
+                    theme::ACCENT()
                 } else {
                     muted()
                 }),
@@ -3605,7 +3642,7 @@ impl OrbitLiveApp {
                 "Ruler wheel zoom · Ctrl+wheel zoom · WASD pan/zoom · Ctrl+drag: select scopes · Home / double-click ruler: fit · space follow",
             )
             .size(10.0)
-            .color(theme::MUTED),
+            .color(theme::MUTED()),
         );
     }
 
@@ -3653,7 +3690,7 @@ impl OrbitLiveApp {
             Align2::LEFT_CENTER,
             "TRACKS",
             FontId::new(9.5, fonts::medium()),
-            theme::MUTED,
+            theme::MUTED(),
         );
         if self.tracks.hidden_count() > 0 {
             let all = Rect::from_center_size(
@@ -3667,9 +3704,9 @@ impl OrbitLiveApp {
                 "all",
                 FontId::new(10.0, fonts::medium()),
                 if hit.hovered() {
-                    theme::TEXT
+                    theme::TEXT()
                 } else {
-                    theme::MUTED
+                    theme::MUTED()
                 },
             );
             if hit.clicked() {
@@ -3849,7 +3886,7 @@ impl OrbitLiveApp {
                     Align2::CENTER_CENTER,
                     "Drop Chrome trace (.json / .json.gz)",
                     FontId::new(15.0, fonts::medium()),
-                    theme::TEXT,
+                    theme::TEXT(),
                 );
             }
             let empty = self.index.event_count() == 0
@@ -4266,7 +4303,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         label,
                         FontId::new(11.0, fonts::medium()),
-                        theme::TEXT,
+                        theme::TEXT(),
                     );
                     return;
                 }
@@ -4280,7 +4317,7 @@ impl OrbitLiveApp {
                     Align2::LEFT_CENTER,
                     label,
                     FontId::new(11.0, fonts::medium()),
-                    theme::TEXT,
+                    theme::TEXT(),
                 );
                 let hit = ui.interact(r, ui.id().with(("sched", 0u32, 0u32)), Sense::hover());
                 hit.on_hover_text("Shows scheduling information for CPU cores");
@@ -4292,7 +4329,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         format!("MACHINE  {}", m.label().to_uppercase()),
                         FontId::new(9.5, fonts::medium()),
-                        theme::MUTED,
+                        theme::MUTED(),
                     );
                     return;
                 }
@@ -4325,7 +4362,7 @@ impl OrbitLiveApp {
                     Align2::LEFT_CENTER,
                     format!("MACHINE  {}", m.label().to_uppercase()),
                     FontId::new(9.5, fonts::medium()),
-                    theme::MUTED,
+                    theme::MUTED(),
                 );
             }
             RowId::Process(pid) => {
@@ -4335,7 +4372,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         format!("process  {pid}"),
                         FontId::new(11.0, fonts::medium()),
-                        theme::TEXT,
+                        theme::TEXT(),
                     );
                     return;
                 }
@@ -4375,7 +4412,7 @@ impl OrbitLiveApp {
                     Align2::LEFT_CENTER,
                     proc_label,
                     FontId::new(11.0, fonts::medium()),
-                    theme::TEXT,
+                    theme::TEXT(),
                 );
                 let hidden_n = self.tracks.hidden_in_process(pid);
                 if hidden_n > 0 && !tight {
@@ -4390,9 +4427,9 @@ impl OrbitLiveApp {
                         format!("{hidden_n} hidden"),
                         FontId::new(9.5, fonts::medium()),
                         if hit.hovered() {
-                            theme::TEXT
+                            theme::TEXT()
                         } else {
-                            theme::MUTED
+                            theme::MUTED()
                         },
                     );
                     if hit.clicked() {
@@ -4419,7 +4456,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         label,
                         FontId::new(11.0, FontFamily::Proportional),
-                        theme::TEXT,
+                        theme::TEXT(),
                     );
                     return;
                 }
@@ -4484,7 +4521,7 @@ impl OrbitLiveApp {
                     self.relayout_tracks();
                 }
                 let chip =
-                    theme::display_argb(THREAD_PALETTE[(th.tid as usize) % THREAD_PALETTE.len()]);
+                    theme::display_argb(orbit_live_event::thread_scope_color(th.tid, 1));
                 let chip_r = Rect::from_center_size(
                     Pos2::new(title.left() + chip_x, title.center().y),
                     Vec2::splat(6.0),
@@ -4506,7 +4543,7 @@ impl OrbitLiveApp {
                     Align2::LEFT_CENTER,
                     thread_label,
                     FontId::new(11.0, FontFamily::Proportional),
-                    theme::TEXT,
+                    theme::TEXT(),
                 );
                 let hide_r =
                     ui.interact(hide, ui.id().with(("hide", th.pid, th.tid)), Sense::click());
@@ -4516,9 +4553,9 @@ impl OrbitLiveApp {
                     "–",
                     FontId::new(12.0, fonts::medium()),
                     if hide_r.hovered() {
-                        theme::TEXT
+                        theme::TEXT()
                     } else {
-                        theme::MUTED
+                        theme::MUTED()
                     },
                 );
                 if hide_r.clicked() {
@@ -4534,7 +4571,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         leaf_label(key),
                         FontId::new(10.5, FontFamily::Proportional),
-                        theme::MUTED,
+                        theme::MUTED(),
                     );
                     // htop-like per-core utilization over the visible window,
                     // right-aligned so the cores line up; a bar when there is
@@ -4550,7 +4587,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         name,
                         FontId::new(10.5, FontFamily::Proportional),
-                        theme::MUTED,
+                        theme::MUTED(),
                     );
                     return;
                 }
@@ -4594,7 +4631,7 @@ impl OrbitLiveApp {
                         format!("{name}  {latest}")
                     },
                     FontId::new(10.5, FontFamily::Proportional),
-                    theme::MUTED,
+                    theme::MUTED(),
                 );
             }
         }
@@ -5128,13 +5165,13 @@ impl OrbitLiveApp {
             .input(|i| i.pointer.latest_pos())
             .is_some_and(|p| track.contains(p));
         let painter = ui.painter();
-        painter.rect_filled(track, 0.0, theme::RAIL);
+        painter.rect_filled(track, 0.0, theme::RAIL());
         let color = if resp.dragged() {
-            theme::ACCENT
+            theme::ACCENT()
         } else if over {
-            theme::TEXT
+            theme::TEXT()
         } else {
-            theme::MUTED
+            theme::MUTED()
         };
         painter.rect_filled(handle, 2.0, color);
     }
@@ -5242,7 +5279,7 @@ impl OrbitLiveApp {
                 }
             }
         }
-        ui.painter().rect_filled(track, 0.0, theme::INPUT);
+        ui.painter().rect_filled(track, 0.0, theme::INPUT());
         ui.painter().rect_filled(
             thumb,
             2.0,
@@ -5579,7 +5616,7 @@ impl OrbitLiveApp {
                 rect,
                 2.0,
                 Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, fill_a),
-                Stroke::new(1.0, theme::ACCENT),
+                Stroke::new(1.0, theme::ACCENT()),
                 StrokeKind::Inside,
             );
             rect
@@ -5607,7 +5644,7 @@ impl OrbitLiveApp {
             }
             // A small badge at the rectangle's top-left, kept inside the body.
             let font = FontId::new(11.0, fonts::medium());
-            let galley = ui.painter().layout_no_wrap(line, font, theme::TEXT);
+            let galley = ui.painter().layout_no_wrap(line, font, theme::TEXT());
             let pad = Vec2::new(6.0, 3.0);
             let size = galley.size() + pad * 2.0;
             let top_left = Pos2::new(
@@ -5618,11 +5655,11 @@ impl OrbitLiveApp {
             ui.painter().rect(
                 badge,
                 3.0,
-                theme::PANEL,
-                Stroke::new(1.0, theme::ACCENT),
+                theme::PANEL(),
+                Stroke::new(1.0, theme::ACCENT()),
                 StrokeKind::Inside,
             );
-            ui.painter().galley(top_left + pad, galley, theme::TEXT);
+            ui.painter().galley(top_left + pad, galley, theme::TEXT());
         }
     }
 
@@ -5970,7 +6007,7 @@ impl OrbitLiveApp {
                 if self.self_tl.index.event_count() == 0 {
                     ui.label(
                         RichText::new("waiting for the first instrumented frame…")
-                            .color(theme::MUTED)
+                            .color(theme::MUTED())
                             .size(11.0),
                     );
                     return;
@@ -6023,13 +6060,13 @@ impl OrbitLiveApp {
             .exact_width(width)
             .frame(
                 Frame::new()
-                    .fill(theme::PANEL)
+                    .fill(theme::PANEL())
                     .inner_margin(Margin::symmetric(12, 8))
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Selection").color(theme::TEXT).size(12.0));
+                    ui.label(RichText::new("Selection").color(theme::TEXT()).size(12.0));
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
@@ -6054,7 +6091,7 @@ impl OrbitLiveApp {
                 });
                 ui.label(
                     RichText::new(res.stats.one_line())
-                        .color(theme::MUTED)
+                        .color(theme::MUTED())
                         .size(11.0),
                 );
                 ui.add_space(6.0);
@@ -6067,7 +6104,7 @@ impl OrbitLiveApp {
                             egui::Label::new(
                                 RichText::new(&res.report_text)
                                     .font(FontId::monospace(11.0))
-                                    .color(theme::TEXT),
+                                    .color(theme::TEXT()),
                             )
                             .wrap_mode(egui::TextWrapMode::Extend),
                         );
@@ -6126,13 +6163,13 @@ impl OrbitLiveApp {
         let inner = panel
             .frame(
                 Frame::new()
-                    .fill(theme::PANEL)
+                    .fill(theme::PANEL())
                     .inner_margin(Margin::symmetric(12, 8))
                     .stroke(Stroke::NONE),
             )
             .show(ctx, |ui| {
                 // Grid stripes match the manually painted Flat, Functions and Code rows.
-                ui.visuals_mut().faint_bg_color = theme::REPORT_ROW_ALT;
+                ui.visuals_mut().faint_bg_color = theme::REPORT_ROW_ALT();
                 let samples = report.as_ref().map(|r| r.samples).unwrap_or(0);
                 // Wrapped, not a single row: the panel is narrow and the tabs
                 // and the selection text must not run off its right edge.
@@ -6154,13 +6191,13 @@ impl OrbitLiveApp {
                             self.local_sample_count
                         ),
                     };
-                    ui.label(RichText::new(title).color(theme::TEXT).size(12.0));
+                    ui.label(RichText::new(title).color(theme::TEXT()).size(12.0));
                     let desc = if self.report_tab == ReportTab::Live {
                         describe_selection(&self.sampling_ranges)
                     } else {
                         self.describe_selection_named()
                     };
-                    ui.label(RichText::new(desc).color(theme::MUTED).size(11.0));
+                    ui.label(RichText::new(desc).color(theme::MUTED()).size(11.0));
                 });
                 ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
@@ -6208,7 +6245,7 @@ impl OrbitLiveApp {
                             .desired_width(150.0)
                             .hint_text("filter functions")
                             .font(FontId::monospace(11.0))
-                            .background_color(theme::INPUT),
+                            .background_color(theme::INPUT()),
                     );
                     note_ui_rect("report_filter", filter.rect);
                     // Escape makes the box surrender focus in the same frame, so
@@ -6278,7 +6315,7 @@ impl OrbitLiveApp {
                                 } else {
                                     format!("open > {:.0}%", self.tree_expand_threshold)
                                 })
-                                .color(theme::MUTED)
+                                .color(theme::MUTED())
                                 .size(self.ui_tweaks.report_font - 0.5),
                             ),
                         );
@@ -6365,7 +6402,7 @@ impl OrbitLiveApp {
         let x = panel.left() + 1.0;
         painter.line_segment(
             [Pos2::new(x, handle.top()), Pos2::new(x, handle.bottom())],
-            Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT } else { theme::HAIR }),
+            Stroke::new(if active { 2.0 } else { 1.0 }, if active { theme::ACCENT() } else { theme::HAIR() }),
         );
         note_ui_rect("report_splitter", handle);
     }
@@ -6415,9 +6452,9 @@ impl OrbitLiveApp {
             .show(ctx, |ui| {
                 let (r, resp) = ui.allocate_exact_size(Vec2::new(EDGE_TAB_W, EDGE_TAB_H), Sense::click());
                 let painter = ui.painter();
-                let fill = if resp.hovered() { theme::ACCENT } else { theme::INPUT };
+                let fill = if resp.hovered() { theme::ACCENT() } else { theme::INPUT() };
                 painter.rect_filled(r, 4.0, fill);
-                painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::ACCENT), StrokeKind::Inside);
+                painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::ACCENT()), StrokeKind::Inside);
                 let c = Pos2::new(r.center().x, r.top() + 14.0);
                 let dir = if points_left { -1.0 } else { 1.0 };
                 painter.add(Shape::convex_polygon(
@@ -6426,19 +6463,19 @@ impl OrbitLiveApp {
                         Pos2::new(c.x + 3.0 * dir, c.y),
                         Pos2::new(c.x - 3.0 * dir, c.y + 5.0),
                     ],
-                    if resp.hovered() { theme::PANEL } else { theme::TEXT },
+                    if resp.hovered() { theme::PANEL() } else { theme::TEXT() },
                     Stroke::NONE,
                 ));
                 let label = if points_left { "report" } else { "timeline" };
                 let galley = painter.layout_no_wrap(
                     label.to_string(),
                     FontId::new(10.5, fonts::medium()),
-                    if resp.hovered() { theme::PANEL } else { theme::TEXT },
+                    if resp.hovered() { theme::PANEL() } else { theme::TEXT() },
                 );
                 // Rotated a quarter turn counter-clockwise: the text reads
                 // bottom to top along the tab.
                 let pos = Pos2::new(r.center().x - galley.size().y / 2.0, r.bottom() - 8.0);
-                painter.add(egui::epaint::TextShape::new(pos, galley, theme::TEXT).with_angle(-std::f32::consts::FRAC_PI_2));
+                painter.add(egui::epaint::TextShape::new(pos, galley, theme::TEXT()).with_angle(-std::f32::consts::FRAC_PI_2));
                 if resp.on_hover_text(hint).clicked() {
                     self.report_collapsed = false;
                     self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
@@ -6450,7 +6487,7 @@ impl OrbitLiveApp {
     fn flat_report_rows(&mut self, ui: &mut Ui, report: Option<&crate::net::SamplingReport>) {
         let Some(report) = report else { return };
         if report.samples == 0 {
-            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            ui.label(RichText::new("No samples here.").color(theme::MUTED()).size(self.ui_tweaks.report_font));
             return;
         }
         self.hooked_hint(ui);
@@ -6484,7 +6521,7 @@ impl OrbitLiveApp {
         if !filter.is_empty() {
             ui.label(
                 RichText::new(format!("{} of {} functions match", rows.len(), report.rows.len()))
-                    .color(theme::MUTED)
+                    .color(theme::MUTED())
                     .size(self.ui_tweaks.report_font - 0.5),
             );
         }
@@ -6525,7 +6562,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         *h,
                         FontId::new(font - 0.5, FontFamily::Proportional),
-                        if active { theme::TEXT } else { theme::MUTED },
+                        if active { theme::TEXT() } else { theme::MUTED() },
                     )
                     .width();
                 if active {
@@ -6558,7 +6595,7 @@ impl OrbitLiveApp {
             let selected = self.report_selection.contains(&row.function_id) && row.function_id != 0;
             let (row_rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
             if (first + n) % 2 == 1 {
-                ui.painter().rect_filled(row_rect, 0.0, theme::REPORT_ROW_ALT);
+                ui.painter().rect_filled(row_rect, 0.0, theme::REPORT_ROW_ALT());
             }
             if selected {
                 ui.painter().rect_filled(row_rect, 0.0, Color32::from_rgba_unmultiplied(0x7A, 0xA4, 0xC2, 48));
@@ -6595,7 +6632,7 @@ impl OrbitLiveApp {
                 Align2::LEFT_CENTER,
                 truncate_to_width(&row.name, name_w - 4.0, font),
                 FontId::new(font, FontFamily::Proportional),
-                if hooked { theme::ACCENT } else { theme::TEXT },
+                if hooked { theme::ACCENT() } else { theme::TEXT() },
             );
             note_ui_rect(&format!("report:{}", row.name), name_rect);
             if let Some(action) = hook_menu(
@@ -6613,7 +6650,7 @@ impl OrbitLiveApp {
                 Align2::LEFT_CENTER,
                 truncate_to_width(&row.module, widths[4] - 4.0, font - 0.5),
                 FontId::new(font - 0.5, FontFamily::Proportional),
-                theme::MUTED,
+                theme::MUTED(),
             );
         }
         if last < rows.len() {
@@ -6673,9 +6710,9 @@ impl OrbitLiveApp {
                 (None, Some(doc)) => format!("{}  {}  {} lines", doc.name(), doc.lang.label(), doc.lines.len()),
                 (None, None) => "Right-click a function in a report for its disassembly, or open an example.".to_string(),
             };
-            ui.label(RichText::new(what).font(FontId::monospace(font - 0.5)).color(theme::MUTED));
+            ui.label(RichText::new(what).font(FontId::monospace(font - 0.5)).color(theme::MUTED()));
             if self.code_loading {
-                ui.label(RichText::new("loading…").font(FontId::monospace(font - 0.5)).color(theme::ACCENT));
+                ui.label(RichText::new("loading…").font(FontId::monospace(font - 0.5)).color(theme::ACCENT()));
             }
         });
         match load_example {
@@ -6714,7 +6751,7 @@ impl OrbitLiveApp {
             ui.label(
                 RichText::new(format!("{}  {:#x}  {} bytes  {}{}", d.arch, d.function.address, d.function.size, src, if d.truncated { "  (cut)" } else { "" }))
                     .font(FontId::monospace(font - 1.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
         }
     }
@@ -6764,9 +6801,9 @@ impl OrbitLiveApp {
             if is_annotation {
                 painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2C, 0x2F, 0x33));
             } else if hovered {
-                painter.rect_filled(rect, 0.0, theme::REPORT_ROW_HOVER);
+                painter.rect_filled(rect, 0.0, theme::REPORT_ROW_HOVER());
             } else if i % 2 == 1 {
-                painter.rect_filled(rect, 0.0, theme::REPORT_ROW_ALT);
+                painter.rect_filled(rect, 0.0, theme::REPORT_ROW_ALT());
             }
             let text_x = rect.left() + gutter_w + 8.0;
             match row {
@@ -6777,7 +6814,7 @@ impl OrbitLiveApp {
                         Align2::RIGHT_CENTER,
                         (line + 1).to_string(),
                         FontId::monospace(font - 1.0),
-                        theme::MUTED,
+                        theme::MUTED(),
                     );
                     let text = &doc.lines[*line];
                     let spans = doc.spans(*line);
@@ -6787,7 +6824,7 @@ impl OrbitLiveApp {
                     }
                     let galley = ui.fonts(|f| f.layout_job(job));
                     widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
-                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT());
                 }
                 CodeRow::Asm { index } => {
                     let Some(d) = &self.code_disasm else { continue };
@@ -6818,7 +6855,7 @@ impl OrbitLiveApp {
                     }
                     let galley = ui.fonts(|f| f.layout_job(job));
                     widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
-                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT);
+                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT());
                 }
                 CodeRow::Note { text } => {
                     painter.text(
@@ -6826,7 +6863,7 @@ impl OrbitLiveApp {
                         Align2::LEFT_CENTER,
                         text,
                         FontId::monospace(font - 1.0),
-                        theme::MUTED,
+                        theme::MUTED(),
                     );
                 }
             }
@@ -7010,11 +7047,11 @@ impl OrbitLiveApp {
         // it: with nothing hooked the line says so, in the muted colour.
         let n = self.selected_hooks.len();
         let (text, color) = if n == 0 {
-            ("no functions hooked — tick a row to instrument it on the next Record".to_string(), theme::MUTED)
+            ("no functions hooked — tick a row to instrument it on the next Record".to_string(), theme::MUTED())
         } else if self.status.capturing {
-            (format!("{n} function(s) hooked — they arm on the next Record"), theme::ACCENT)
+            (format!("{n} function(s) hooked — they arm on the next Record"), theme::ACCENT())
         } else {
-            (format!("{n} function(s) hooked — press Record to instrument them"), theme::ACCENT)
+            (format!("{n} function(s) hooked — press Record to instrument them"), theme::ACCENT())
         };
         ui.label(RichText::new(text).color(color).size(self.ui_tweaks.report_font - 0.5));
     }
@@ -7034,11 +7071,11 @@ impl OrbitLiveApp {
     /// while the tree is read.
     fn call_tree_rows(&mut self, ui: &mut Ui) {
         let Some(tree) = self.tree.clone() else {
-            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED()).size(self.ui_tweaks.report_font));
             return;
         };
         if tree.samples == 0 {
-            ui.label(RichText::new("No samples here.").color(theme::MUTED).size(self.ui_tweaks.report_font));
+            ui.label(RichText::new("No samples here.").color(theme::MUTED()).size(self.ui_tweaks.report_font));
             return;
         }
         let all_selected_hooked = self.selection_all_hooked();
@@ -7049,7 +7086,7 @@ impl OrbitLiveApp {
         ui.horizontal(|ui| {
             ui.set_min_height(22.0);
             if self.report_selection.is_empty() {
-                ui.label(RichText::new("Drag rows to select functions").color(theme::MUTED).size(self.ui_tweaks.report_font));
+                ui.label(RichText::new("Drag rows to select functions").color(theme::MUTED()).size(self.ui_tweaks.report_font));
             } else {
                 self.selection_hook_controls(ui);
             }
@@ -7118,7 +7155,7 @@ impl OrbitLiveApp {
                         } else {
                             String::new()
                         })
-                        .color(theme::MUTED)
+                        .color(theme::MUTED())
                         .monospace()
                         .size(self.ui_tweaks.report_font),
                     );
@@ -7132,11 +7169,11 @@ impl OrbitLiveApp {
                         // A hooked function reads in blue in every report, the
                         // way the flat report already marks it.
                         let name_color = if is_thread {
-                            theme::MUTED
+                            theme::MUTED()
                         } else if hooked {
-                            theme::ACCENT
+                            theme::ACCENT()
                         } else {
-                            theme::TEXT
+                            theme::TEXT()
                         };
                         let label = ui.add(
                             egui::Label::new(
@@ -7168,7 +7205,7 @@ impl OrbitLiveApp {
                             self.tree_expanded.insert(path.clone());
                         }
                     }
-                    ui.label(RichText::new(&node.module).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                    ui.label(RichText::new(&node.module).color(theme::MUTED()).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
 
                     if expanded {
@@ -7234,7 +7271,7 @@ impl OrbitLiveApp {
         let Some(mut modules) = self.modules.clone() else {
             ui.label(
                 RichText::new("No modules loaded — pick a process and load symbols.")
-                    .color(theme::MUTED)
+                    .color(theme::MUTED())
                     .size(self.ui_tweaks.report_font),
             );
             return;
@@ -7261,13 +7298,13 @@ impl OrbitLiveApp {
                 {
                     ui.label(
                         RichText::new(row.function_count.to_string())
-                            .color(theme::TEXT)
+                            .color(theme::TEXT())
                             .monospace()
                             .size(self.ui_tweaks.report_font),
                     );
-                    let label = ui.label(RichText::new(&row.name).color(theme::TEXT).size(self.ui_tweaks.report_font));
+                    let label = ui.label(RichText::new(&row.name).color(theme::TEXT()).size(self.ui_tweaks.report_font));
                     note_ui_rect(&format!("module:{}", row.name), label.rect);
-                    ui.label(RichText::new(&row.path).color(theme::MUTED).size(self.ui_tweaks.report_font - 0.5));
+                    ui.label(RichText::new(&row.path).color(theme::MUTED()).size(self.ui_tweaks.report_font - 0.5));
                     ui.end_row();
                 }
             });
@@ -7357,16 +7394,16 @@ impl OrbitLiveApp {
         };
         if !sample_threads.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("samples by thread:").color(theme::MUTED).size(font - 0.5));
+                ui.label(RichText::new("samples by thread:").color(theme::MUTED()).size(font - 0.5));
                 for (tid, n) in sample_threads.iter().take(12) {
                     let name = self.thread_label_by_tid(*tid);
-                    ui.label(RichText::new(format!("{name} {n}")).color(theme::TEXT).size(font - 0.5));
+                    ui.label(RichText::new(format!("{name} {n}")).color(theme::TEXT()).size(font - 0.5));
                 }
             });
             ui.add_space(4.0);
         }
         if rows.is_empty() {
-            ui.label(RichText::new("No scopes yet.").color(theme::MUTED).size(font));
+            ui.label(RichText::new("No scopes yet.").color(theme::MUTED()).size(font));
             return;
         }
         if self.recording {
@@ -7463,12 +7500,12 @@ impl OrbitLiveApp {
                                 }
                             }
 
-                            ui.label(RichText::new(r.type_label()).color(theme::MUTED).monospace().size(font))
+                            ui.label(RichText::new(r.type_label()).color(theme::MUTED()).monospace().size(font))
                                 .on_hover_text(INSTRUMENTATION_TYPE_LEGEND);
                             let label = ui.add(
                                 egui::Label::new(
                                     RichText::new(&name)
-                                        .color(if focused || hooked { theme::ACCENT } else { theme::TEXT })
+                                        .color(if focused || hooked { theme::ACCENT() } else { theme::TEXT() })
                                         .size(font),
                                 )
                                 .sense(Sense::click()),
@@ -7494,9 +7531,9 @@ impl OrbitLiveApp {
                                 display_time_ns(r.max_ns),
                                 display_time_ns(r.std_dev_ns()),
                             ] {
-                                ui.label(RichText::new(v).color(theme::MUTED).monospace().size(font));
+                                ui.label(RichText::new(v).color(theme::MUTED()).monospace().size(font));
                             }
-                            ui.label(RichText::new(function.map_or("", |f| f.module.as_str())).color(theme::MUTED).size(font - 0.5));
+                            ui.label(RichText::new(function.map_or("", |f| f.module.as_str())).color(theme::MUTED()).size(font - 0.5));
                             ui.end_row();
                         }
                     });
@@ -7530,7 +7567,7 @@ impl OrbitLiveApp {
                 let name = self.intern.get(id.name_id).unwrap_or("?").to_string();
                 ui.label(
                     RichText::new(format!("{name} — {} calls, duration histogram (log scale)", row.count))
-                        .color(theme::TEXT)
+                        .color(theme::TEXT())
                         .size(font),
                 );
                 paint_histogram(ui, &row.hist, font);
@@ -7539,7 +7576,7 @@ impl OrbitLiveApp {
                 ui.centered_and_justified(|ui| {
                     ui.label(
                         RichText::new("Click a function above for its duration histogram")
-                            .color(theme::MUTED)
+                            .color(theme::MUTED())
                             .size(font - 0.5),
                     );
                 });
@@ -7556,14 +7593,14 @@ impl OrbitLiveApp {
     fn flame_rows(&mut self, ui: &mut Ui) {
         let font = self.ui_tweaks.report_font;
         let Some(tree) = self.tree.clone() else {
-            ui.label(RichText::new("No call tree yet.").color(theme::MUTED).size(font));
+            ui.label(RichText::new("No call tree yet.").color(theme::MUTED()).size(font));
             return;
         };
         if tree.mode != "top_down" || tree.samples == 0 {
             if tree.samples == 0 {
-                ui.label(RichText::new("No samples here.").color(theme::MUTED).size(font));
+                ui.label(RichText::new("No samples here.").color(theme::MUTED()).size(font));
             } else {
-                ui.label(RichText::new("Fetching the top-down tree…").color(theme::MUTED).size(font));
+                ui.label(RichText::new("Fetching the top-down tree…").color(theme::MUTED()).size(font));
             }
             return;
         }
@@ -7582,7 +7619,7 @@ impl OrbitLiveApp {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("zoomed to {}", roots[0].name))
-                        .color(theme::MUTED)
+                        .color(theme::MUTED())
                         .size(font - 0.5),
                 );
                 if pill(ui, "Zoom out", false).on_hover_text("Back to the whole tree (or double-click the root bar)").clicked() {
@@ -7614,7 +7651,7 @@ impl OrbitLiveApp {
                 Vec2::new(bar.w.max(1.0), row_h - 1.0),
             );
             let base = if bar.is_thread {
-                theme::INPUT
+                theme::INPUT()
             } else {
                 let c = theme::display_argb(orbit_live_event::named_scope_color(bar.name.as_bytes(), bar.depth as u8));
                 Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
@@ -7622,7 +7659,7 @@ impl OrbitLiveApp {
             let is_hover = pointer.is_some_and(|p| r.contains(p));
             let dim = self.search_active() && !bar.name.contains(self.search.as_str());
             let fill = if is_hover {
-                theme::ACCENT
+                theme::ACCENT()
             } else if dim {
                 Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 60)
             } else {
@@ -7633,9 +7670,9 @@ impl OrbitLiveApp {
                 note_ui_rect(&format!("flame:{}", bar.name), r);
             }
             if selected_name.as_deref() == Some(bar.name.as_str()) {
-                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT), StrokeKind::Inside);
+                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::TEXT()), StrokeKind::Inside);
             } else if !bar.is_thread && hooked_names.contains(bar.name.as_str()) {
-                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
+                painter.rect_stroke(r, 2.0, Stroke::new(1.5, theme::ACCENT()), StrokeKind::Inside);
             }
             if bar.w > 24.0 {
                 let text = truncate_to_width(&bar.name, bar.w - 6.0, font - 1.0);
@@ -7644,7 +7681,7 @@ impl OrbitLiveApp {
                     Align2::LEFT_CENTER,
                     text,
                     FontId::new(font - 1.0, fonts::medium()),
-                    if is_hover || bar.is_thread { theme::TEXT } else { theme::PANEL },
+                    if is_hover || bar.is_thread { theme::TEXT() } else { theme::PANEL() },
                 );
             }
             if is_hover {
@@ -7719,12 +7756,12 @@ impl OrbitLiveApp {
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .show(ctx, |ui| {
-                Frame::popup(ui.style()).fill(theme::PANEL).show(ui, |ui| {
+                Frame::popup(ui.style()).fill(theme::PANEL()).show(ui, |ui| {
                     ui.set_min_width(220.0);
-                    ui.label(RichText::new(&name).color(theme::TEXT).size(11.5));
+                    ui.label(RichText::new(&name).color(theme::TEXT()).size(11.5));
                     ui.label(
                         RichText::new(format!("{} on thread {}", display_time_ns(pick.duration_ns), pick.tid))
-                            .color(theme::MUTED)
+                            .color(theme::MUTED())
                             .size(10.5),
                     );
                     ui.add_space(4.0);
@@ -7739,7 +7776,7 @@ impl OrbitLiveApp {
                         }
                     } else {
                         ui.label(RichText::new("Select this process and load an unambiguous function symbol to hook it")
-                            .color(theme::MUTED).size(10.5));
+                            .color(theme::MUTED()).size(10.5));
                     }
                     let report_item = ui.button("Sampling report for this scope");
                     note_ui_rect("menu:report", report_item.rect);
@@ -7830,7 +7867,7 @@ impl OrbitLiveApp {
             .resizable(true)
             .default_width(760.0)
             .default_pos(Pos2::new(12.0, 48.0))
-            .frame(Frame::window(&ctx.style()).fill(theme::RAIL))
+            .frame(Frame::window(&ctx.style()).fill(theme::RAIL()))
             .show(ctx, |ui| {
                 self.capture_strip(ui);
                 ui.add_space(6.0);
@@ -7841,14 +7878,14 @@ impl OrbitLiveApp {
                     section_label(ui, "INTERFACE");
                 });
                 let t = &mut self.ui_tweaks;
-                ui.label(RichText::new("Sampling report").color(theme::MUTED).size(10.5));
+                ui.label(RichText::new("Sampling report").color(theme::MUTED()).size(10.5));
                 ui.add(egui::Slider::new(&mut t.report_row_gap, 0.0..=16.0).text("row gap"));
                 ui.add(egui::Slider::new(&mut t.report_col_gap, 4.0..=40.0).text("column gap"));
                 ui.add(egui::Slider::new(&mut t.report_font, 8.0..=18.0).text("font size"));
                 ui.add(egui::Slider::new(&mut t.report_bar_w, 20.0..=160.0).text("bar width"));
                 ui.add(egui::Slider::new(&mut t.report_indent, 0.0..=32.0).text("tree indent"));
                 ui.add_space(6.0);
-                ui.label(RichText::new("Tracks").color(theme::MUTED).size(10.5));
+                ui.label(RichText::new("Tracks").color(theme::MUTED()).size(10.5));
                 let mut scale = self.tracks.scale;
                 if ui.add(egui::Slider::new(&mut scale, 0.5..=2.0).text("track scale")).changed() {
                     self.tracks.scale = scale;
@@ -8056,7 +8093,7 @@ impl eframe::App for OrbitLiveApp {
                     .exact_height(bar_h + sat[0])
                     .frame(
                         Frame::new()
-                            .fill(theme::PANEL)
+                            .fill(theme::PANEL())
                             .inner_margin(Margin {
                                 left: 4 + sat_i8(sat[3]),
                                 right: 4 + sat_i8(sat[1]),
@@ -8079,7 +8116,7 @@ impl eframe::App for OrbitLiveApp {
                         .exact_height(30.0)
                         .frame(
                             Frame::new()
-                                .fill(theme::RAIL)
+                                .fill(theme::RAIL())
                                 .inner_margin(Margin::symmetric(4, 3))
                                 .stroke(Stroke::NONE),
                         )
@@ -8092,7 +8129,7 @@ impl eframe::App for OrbitLiveApp {
                         .resizable(false)
                         .frame(
                             Frame::new()
-                                .fill(theme::PANEL)
+                                .fill(theme::PANEL())
                                 .inner_margin(Margin::symmetric(16, 12))
                                 .stroke(Stroke::NONE),
                         )
@@ -8109,7 +8146,7 @@ impl eframe::App for OrbitLiveApp {
                 egui::TopBottomPanel::bottom("orbit_safe_bottom")
                     .exact_height(sat[2])
                     .show_separator_line(false)
-                    .frame(Frame::new().fill(theme::RAIL).inner_margin(0))
+                    .frame(Frame::new().fill(theme::RAIL()).inner_margin(0))
                     .show(ctx, |_| {});
             }
 
@@ -8128,7 +8165,7 @@ impl eframe::App for OrbitLiveApp {
             self.publish_selection();
 
             egui::CentralPanel::default()
-                .frame(Frame::new().fill(theme::CANVAS).inner_margin(0))
+                .frame(Frame::new().fill(theme::CANVAS()).inner_margin(0))
                 .show(ctx, |ui| self.timeline(ui, dt, &devf));
             self.publish_ui_rects();
 
@@ -8261,14 +8298,14 @@ fn section(ui: &mut Ui, label: &str) {
             .family(fonts::medium())
             .size(10.0)
             .extra_letter_spacing(1.6)
-            .color(theme::MUTED),
+            .color(theme::MUTED()),
     );
     ui.add_space(6.0);
 }
 
 fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
     match id {
-        RowId::Scheduler | RowId::Machine(_) => theme::RAIL,
+        RowId::Scheduler | RowId::Machine(_) => theme::RAIL(),
         RowId::Process(pid) => theme::process_track_wash_role(pid, theme::WashRole::Process),
         RowId::Thread(t) => {
             if dragging {
@@ -8279,7 +8316,7 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
                 theme::process_track_wash(t.pid)
             }
         }
-        RowId::Lane(key) if key.is_scheduler() => theme::TRACK,
+        RowId::Lane(key) if key.is_scheduler() => theme::TRACK(),
         RowId::Lane(key) => theme::process_track_wash_role(key.pid, theme::WashRole::Leaf),
     }
 }
@@ -8352,7 +8389,7 @@ fn sorted_tree_indices(nodes: &[crate::net::TreeNodeJson], sort: (u8, bool), hoo
 fn sort_header(ui: &mut Ui, name: &str, col: u8, sort: &mut (u8, bool), descending: bool, font: f32) {
     let active = sort.0 == col;
     let response = ui.add(egui::Label::new(RichText::new(format!("{name}   "))
-        .color(if active { theme::TEXT } else { theme::MUTED }).size(font - 0.5)).sense(Sense::click()));
+        .color(if active { theme::TEXT() } else { theme::MUTED() }).size(font - 0.5)).sense(Sense::click()));
     if active { paint_sort_arrow(ui, Pos2::new(response.rect.right() - 5.0, response.rect.center().y), sort.1); }
     note_ui_rect(&format!("sort:{name}"), response.rect);
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Click to sort; click again to reverse").clicked() {
@@ -8367,7 +8404,7 @@ fn hook_menu(label: &egui::Response, function_id: u64, hooked: bool, count: usiz
     let mut action = None;
     label.context_menu(|ui| {
         if function_id == 0 {
-            ui.label(RichText::new("Not hookable: no file offset for this function").color(theme::MUTED).size(11.0));
+            ui.label(RichText::new("Not hookable: no file offset for this function").color(theme::MUTED()).size(11.0));
             return;
         }
         let item = if count > 1 {
@@ -8410,7 +8447,7 @@ fn section_label(ui: &mut Ui, text: &str) {
             .family(fonts::medium())
             .size(9.5)
             .extra_letter_spacing(1.2)
-            .color(theme::MUTED),
+            .color(theme::MUTED()),
     );
 }
 
@@ -8423,13 +8460,13 @@ fn icon_button(ui: &mut Ui, label: &str, tip: &str, paint: fn(&egui::Painter, Re
     let resp = ui
         .add(
             egui::Button::new(RichText::new(" ").size(1.0))
-                .fill(theme::TRACK)
-                .stroke(Stroke::new(1.0, theme::HAIR))
+                .fill(theme::TRACK())
+                .stroke(Stroke::new(1.0, theme::HAIR()))
                 .min_size(Vec2::new(28.0, 22.0))
                 .corner_radius(4),
         )
         .on_hover_text(tip);
-    let color = if resp.hovered() { theme::TEXT } else { theme::MUTED };
+    let color = if resp.hovered() { theme::TEXT() } else { theme::MUTED() };
     paint(ui.painter(), resp.rect, color);
     note_ui_rect(label, resp.rect);
     resp
@@ -8441,8 +8478,8 @@ fn icon_button(ui: &mut Ui, label: &str, tip: &str, paint: fn(&egui::Painter, Re
 fn record_button(ui: &mut Ui, recording: bool) -> egui::Response {
     let resp = ui.add(
         egui::Button::new(RichText::new(" ").size(1.0))
-            .fill(if recording { RECORD_RED } else { theme::TRACK })
-            .stroke(if recording { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+            .fill(if recording { RECORD_RED } else { theme::TRACK() })
+            .stroke(if recording { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR()) })
             .min_size(Vec2::new(30.0, 22.0))
             .corner_radius(4),
     );
@@ -8459,7 +8496,7 @@ fn record_button(ui: &mut Ui, recording: bool) -> egui::Response {
     } else {
         ui.painter().circle_filled(c, 5.0, RECORD_RED);
         if resp.hovered() {
-            ui.painter().circle_stroke(c, 7.0, Stroke::new(1.0, theme::TEXT));
+            ui.painter().circle_stroke(c, 7.0, Stroke::new(1.0, theme::TEXT()));
         }
     }
     note_ui_rect(if recording { "Stop" } else { "Record" }, resp.rect);
@@ -8531,10 +8568,10 @@ fn segmented(ui: &mut Ui, id: &str, options: &[&str], selected: usize) -> Option
                     RichText::new(*label)
                         .family(fonts::medium())
                         .size(11.0)
-                        .color(if on { theme::CANVAS } else { theme::TEXT }),
+                        .color(if on { theme::CANVAS() } else { theme::TEXT() }),
                 )
-                .fill(if on { theme::ACCENT } else { theme::TRACK })
-                .stroke(if on { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR) })
+                .fill(if on { theme::ACCENT() } else { theme::TRACK() })
+                .stroke(if on { Stroke::NONE } else { Stroke::new(1.0, theme::HAIR()) })
                 .min_size(Vec2::new(0.0, 22.0))
                 .corner_radius(radius),
             );
@@ -8560,7 +8597,7 @@ fn tab_strip(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
                 RichText::new(*label)
                     .family(fonts::medium())
                     .size(11.0)
-                    .color(if on { theme::ACCENT } else { theme::MUTED }),
+                    .color(if on { theme::ACCENT() } else { theme::MUTED() }),
             )
             .fill(Color32::TRANSPARENT)
             .stroke(Stroke::NONE)
@@ -8571,7 +8608,7 @@ fn tab_strip(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
             let r = resp.rect;
             ui.painter().line_segment(
                 [Pos2::new(r.left() + 4.0, r.bottom() - 1.0), Pos2::new(r.right() - 4.0, r.bottom() - 1.0)],
-                Stroke::new(2.0, theme::ACCENT),
+                Stroke::new(2.0, theme::ACCENT()),
             );
         }
         note_ui_rect(label, resp.rect);
@@ -8584,11 +8621,11 @@ fn tab_strip(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
 
 fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     let fill = if selected {
-        theme::ACCENT
+        theme::ACCENT()
     } else {
-        theme::TRACK
+        theme::TRACK()
     };
-    let text = if selected { theme::CANVAS } else { theme::TEXT };
+    let text = if selected { theme::CANVAS() } else { theme::TEXT() };
     let resp = ui.add(
         egui::Button::new(
             RichText::new(label)
@@ -8600,7 +8637,7 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         .stroke(if selected {
             Stroke::NONE
         } else {
-            Stroke::new(1.0, theme::HAIR)
+            Stroke::new(1.0, theme::HAIR())
         })
         .min_size(Vec2::new(0.0, 22.0))
         .corner_radius(4),
@@ -8669,7 +8706,7 @@ fn paint_sort_arrow(ui: &Ui, at: Pos2, desc: bool) {
     } else {
         vec![Pos2::new(at.x - w, at.y + h * 0.5), Pos2::new(at.x + w, at.y + h * 0.5), Pos2::new(at.x, at.y - h * 0.5)]
     };
-    ui.painter().add(egui::Shape::convex_polygon(pts, theme::TEXT, Stroke::NONE));
+    ui.painter().add(egui::Shape::convex_polygon(pts, theme::TEXT(), Stroke::NONE));
 }
 
 /// Case-insensitive ordering without allocating a lowercase copy per
@@ -8688,18 +8725,18 @@ fn paint_hook_box(ui: &Ui, cell: Rect, hooked: bool) {
     ui.painter().rect(
         box_r,
         2.0,
-        if hooked { theme::ACCENT } else { theme::INPUT },
-        Stroke::new(1.0, if hooked { theme::ACCENT } else { theme::MUTED }),
+        if hooked { theme::ACCENT() } else { theme::INPUT() },
+        Stroke::new(1.0, if hooked { theme::ACCENT() } else { theme::MUTED() }),
         StrokeKind::Inside,
     );
     if hooked {
         ui.painter().line_segment(
             [Pos2::new(box_r.left() + 3.0, box_r.center().y), Pos2::new(box_r.center().x, box_r.bottom() - 3.0)],
-            Stroke::new(1.5, theme::CANVAS),
+            Stroke::new(1.5, theme::CANVAS()),
         );
         ui.painter().line_segment(
             [Pos2::new(box_r.center().x, box_r.bottom() - 3.0), Pos2::new(box_r.right() - 2.0, box_r.top() + 3.0)],
-            Stroke::new(1.5, theme::CANVAS),
+            Stroke::new(1.5, theme::CANVAS()),
         );
     }
 }
@@ -8707,7 +8744,7 @@ fn paint_hook_box(ui: &Ui, cell: Rect, hooked: bool) {
 /// `percent_bar` painted at a given rect, for rows laid out by hand.
 fn paint_percent_bar(ui: &Ui, rect: Rect, percent: f64, strong: bool) {
     let painter = ui.painter();
-    painter.rect_filled(rect, 2.0, theme::INPUT);
+    painter.rect_filled(rect, 2.0, theme::INPUT());
     let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
     if fraction > 0.0 {
         let mut filled = rect;
@@ -8723,7 +8760,7 @@ fn paint_percent_bar(ui: &Ui, rect: Rect, percent: f64, strong: bool) {
         egui::Align2::CENTER_CENTER,
         format!("{percent:.1}%"),
         FontId::monospace(10.5),
-        if strong { theme::TEXT } else { theme::MUTED },
+        if strong { theme::TEXT() } else { theme::MUTED() },
     );
 }
 
@@ -8946,7 +8983,7 @@ fn paint_focus_chip(ui: &Ui, area: Rect, right: f32, text: &str, id: &str) -> (f
         return (0.0, false);
     }
     let font = FontId::monospace(11.0);
-    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), font, theme::TEXT));
+    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_string(), font, theme::TEXT()));
     let pad = Vec2::new(6.0, 3.0);
     // Room for a painted cross after the text: the WASM font atlas has no
     // multiplication sign and renders one as a box.
@@ -8961,10 +8998,10 @@ fn paint_focus_chip(ui: &Ui, area: Rect, right: f32, text: &str, id: &str) -> (f
         egui::Order::Foreground,
         egui::Id::new(id).with("paint"),
     ));
-    let fill = if resp.hovered() { theme::ACCENT } else { Color32::from_black_alpha(160) };
+    let fill = if resp.hovered() { theme::ACCENT() } else { Color32::from_black_alpha(160) };
     painter.rect_filled(rect, 3.0, fill);
-    painter.rect_stroke(rect, 3.0, Stroke::new(1.0, theme::ACCENT), StrokeKind::Inside);
-    let ink = if resp.hovered() { theme::PANEL } else { theme::TEXT };
+    painter.rect_stroke(rect, 3.0, Stroke::new(1.0, theme::ACCENT()), StrokeKind::Inside);
+    let ink = if resp.hovered() { theme::PANEL() } else { theme::TEXT() };
     painter.galley(rect.min + pad, galley, ink);
     let c = Pos2::new(rect.right() - pad.x - 4.0, rect.center().y);
     painter.line_segment([Pos2::new(c.x - 3.0, c.y - 3.0), Pos2::new(c.x + 3.0, c.y + 3.0)], Stroke::new(1.3, ink));
@@ -8980,7 +9017,7 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) -> f32 {
     }
     let label = format!("{:.0} fps · {}", fps, format_rate(stream_bps));
     let font = FontId::monospace(11.0);
-    let galley = ui.fonts(|f| f.layout_no_wrap(label, font, theme::TEXT));
+    let galley = ui.fonts(|f| f.layout_no_wrap(label, font, theme::TEXT()));
     let pad = Vec2::new(6.0, 3.0);
     let size = galley.size() + pad * 2.0;
     let rect = Rect::from_min_size(
@@ -8995,7 +9032,7 @@ fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) -> f32 {
         egui::Id::new("orbit_fps_chip"),
     ));
     painter.rect_filled(rect, 3.0, Color32::from_black_alpha(140));
-    painter.galley(rect.min + pad, galley, theme::TEXT);
+    painter.galley(rect.min + pad, galley, theme::TEXT());
     size.x
 }
 
@@ -9012,7 +9049,7 @@ fn format_rate(bps: f32) -> String {
 }
 
 fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
-    let fill = if on { theme::ACCENT } else { theme::TRACK };
+    let fill = if on { theme::ACCENT() } else { theme::TRACK() };
     let resp = ui
         .add(
             egui::Button::new(RichText::new(" ").size(1.0))
@@ -9020,7 +9057,7 @@ fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
                 .stroke(if on {
                     Stroke::NONE
                 } else {
-                    Stroke::new(1.0, theme::HAIR)
+                    Stroke::new(1.0, theme::HAIR())
                 })
                 .min_size(Vec2::new(28.0, 22.0))
                 .corner_radius(4),
@@ -9031,11 +9068,11 @@ fn fullscreen_pill(ui: &mut Ui, on: bool) -> egui::Response {
             "Enter fullscreen"
         });
     let color = if on {
-        theme::CANVAS
+        theme::CANVAS()
     } else if resp.hovered() {
-        theme::TEXT
+        theme::TEXT()
     } else {
-        theme::MUTED
+        theme::MUTED()
     };
     paint_fullscreen_icon(ui.painter(), resp.rect, on, color);
     resp
@@ -9277,14 +9314,14 @@ fn paint_value_graphs(
             let name = intern.get(e.name_id).unwrap_or("value");
             let text = format!("{name} {}", format_value(intern, e.name_id, v));
             let font = FontId::monospace(10.5);
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), theme::TEXT));
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), theme::TEXT()));
             let w = galley.size().x + 8.0;
             // Right of the line unless that runs off the body.
             let left = if px + 8.0 + w > body.right() { px - 8.0 - w } else { px + 8.0 };
             let top = (py - galley.size().y - 4.0).max(body.top() + y);
             let bg = Rect::from_min_size(Pos2::new(left, top), Vec2::new(w, galley.size().y + 4.0));
             painter.rect_filled(bg, 3.0, Color32::from_rgba_unmultiplied(0x12, 0x14, 0x18, 220));
-            painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, theme::TEXT);
+            painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, theme::TEXT());
             painter.circle_filled(Pos2::new(px, py), 3.0, color);
         }
     }
@@ -9341,10 +9378,10 @@ fn icon_pill(ui: &mut Ui, label: &str, tip: &str) -> egui::Response {
             RichText::new(label)
                 .family(fonts::medium())
                 .size(12.0)
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         )
-        .fill(theme::TRACK)
-        .stroke(Stroke::new(1.0, theme::HAIR))
+        .fill(theme::TRACK())
+        .stroke(Stroke::new(1.0, theme::HAIR()))
         .min_size(Vec2::new(28.0, 22.0))
         .corner_radius(4),
     )
@@ -9358,7 +9395,7 @@ fn status_row(ui: &mut Ui, label: &str, value: &str) {
             ui.label(
                 RichText::new(value)
                     .font(FontId::new(12.0, FontFamily::Monospace))
-                    .color(theme::TEXT),
+                    .color(theme::TEXT()),
             );
         });
     });
@@ -9416,7 +9453,7 @@ fn inline_chevron(ui: &mut Ui, open: Option<bool>) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(12.0, 12.0), Sense::click());
     let Some(open) = open else { return false };
     let c = rect.center();
-    let color = if resp.hovered() { theme::TEXT } else { theme::MUTED };
+    let color = if resp.hovered() { theme::TEXT() } else { theme::MUTED() };
     let pts = if open {
         vec![
             Pos2::new(c.x - 3.5, c.y - 2.0),
@@ -9441,7 +9478,7 @@ fn inline_chevron(ui: &mut Ui, open: Option<bool>) -> bool {
 fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 14.0), Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 2.0, theme::INPUT);
+    painter.rect_filled(rect, 2.0, theme::INPUT());
     let fraction = (percent / 100.0).clamp(0.0, 1.0) as f32;
     if fraction > 0.0 {
         let mut filled = rect;
@@ -9464,7 +9501,7 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
         egui::Align2::CENTER_CENTER,
         format!("{percent:.1}%"),
         FontId::monospace(10.5),
-        if strong { theme::TEXT } else { theme::MUTED },
+        if strong { theme::TEXT() } else { theme::MUTED() },
     );
 }
 
@@ -9515,6 +9552,38 @@ impl Default for UiTweaks {
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 const UI_TWEAKS_KEY: &str = "orbit_ui_tweaks";
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const THEME_KEY: &str = "orbit_theme";
+
+/// The colour scheme the reader last chose, from `localStorage`. `None` on
+/// native or a fresh browser -- the caller falls back to Orbit's default.
+fn read_saved_theme() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .and_then(|s| s.get_item(THEME_KEY).ok().flatten())
+            .filter(|k| !k.is_empty())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+/// Remember the chosen scheme so it survives a reload. No-op on native.
+fn save_theme(key: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = s.set_item(THEME_KEY, key);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = key;
+    }
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 impl UiTweaks {
@@ -9673,7 +9742,7 @@ fn paint_core_util(painter: &egui::Painter, r: Rect, util: f32) {
             Pos2::new(bar_left, r.center().y - 4.0),
             Pos2::new(bar_right, r.center().y + 4.0),
         );
-        painter.rect_filled(track, 2.0, theme::INPUT);
+        painter.rect_filled(track, 2.0, theme::INPUT());
         let fill = Rect::from_min_size(track.min, Vec2::new(track.width() * util, track.height()));
         painter.rect_filled(fill, 2.0, color);
     }
@@ -9728,7 +9797,7 @@ fn paint_histogram(ui: &mut Ui, hist: &[u32; crate::live::HIST_BUCKETS], font: f
     let width = ui.available_width().max(120.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 96.0), Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 3.0, theme::INPUT);
+    painter.rect_filled(rect, 3.0, theme::INPUT());
     let plot = rect.shrink2(Vec2::new(6.0, 6.0)).with_max_y(rect.bottom() - 18.0);
     let bw = plot.width() / buckets.len() as f32;
     for (i, n) in buckets.iter().enumerate() {
@@ -9740,7 +9809,7 @@ fn paint_histogram(ui: &mut Ui, hist: &[u32; crate::live::HIST_BUCKETS], font: f
         painter.rect_filled(
             Rect::from_min_max(Pos2::new(x0 + 1.0, plot.bottom() - h), Pos2::new(x0 + bw - 1.0, plot.bottom())),
             1.0,
-            theme::ACCENT,
+            theme::ACCENT(),
         );
     }
     // Tick labels: every few buckets, the bucket's lower bound.
@@ -9752,7 +9821,7 @@ fn paint_histogram(ui: &mut Ui, hist: &[u32; crate::live::HIST_BUCKETS], font: f
             Align2::LEFT_BOTTOM,
             display_time_ns(crate::live::hist_bucket_floor_ns(first + i)),
             FontId::new(font - 2.0, fonts::medium()),
-            theme::MUTED,
+            theme::MUTED(),
         );
     }
 }
@@ -9845,9 +9914,9 @@ fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> 
     let resp = ui.interact(hit, ui.id().with(id), Sense::click());
     let c = hit.center();
     let color = if resp.hovered() {
-        theme::TEXT
+        theme::TEXT()
     } else {
-        theme::MUTED
+        theme::MUTED()
     };
     // WASM font atlas lacks ▾/▸; paint a 5–6px triangle instead.
     let pts = if open {
@@ -9870,7 +9939,7 @@ fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> 
 
 fn paint_handle_dots(painter: &egui::Painter, r: Rect, active: bool) {
     let color = if active {
-        theme::INSERT
+        theme::INSERT()
     } else {
         Color32::from_rgb(0x3E, 0x42, 0x4A)
     };
@@ -9899,7 +9968,7 @@ fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
             "Idle"
         },
         FontId::new(15.0, fonts::medium()),
-        theme::TEXT,
+        theme::TEXT(),
     );
     painter.text(
         rect.center() + Vec2::new(0.0, 12.0),
@@ -10124,22 +10193,22 @@ fn show_scope_tooltip(
                 RichText::new("CPU Core activity")
                     .family(fonts::medium())
                     .size(12.0)
-                    .color(theme::TEXT),
+                    .color(theme::TEXT()),
             );
             ui.label(
                 RichText::new(format!("Core: {}", pick.extra))
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             ui.label(
                 RichText::new(format!("Process: {pname} [{}]", pick.pid))
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             ui.label(
                 RichText::new(format!("Thread: {tname} [{}]", pick.tid))
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             return;
         }
@@ -10154,23 +10223,23 @@ fn show_scope_tooltip(
                 RichText::new("Callstack sample")
                     .family(fonts::medium())
                     .size(12.0)
-                    .color(theme::TEXT),
+                    .color(theme::TEXT()),
             );
             ui.label(
                 RichText::new(format!("Thread: {tname} [{}]", pick.tid))
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             ui.label(
                 RichText::new(if callstack_copied { "copied to the clipboard" } else { "click to copy" })
                     .font(FontId::monospace(10.5))
-                    .color(if callstack_copied { theme::ACCENT } else { theme::MUTED }),
+                    .color(if callstack_copied { theme::ACCENT() } else { theme::MUTED() }),
             );
             if callstack.is_empty() {
                 ui.label(
                     RichText::new("no frames for this sample")
                         .font(FontId::monospace(11.0))
-                        .color(theme::MUTED),
+                        .color(theme::MUTED()),
                 );
             }
             const MAX_FRAMES: usize = 40;
@@ -10178,14 +10247,14 @@ fn show_scope_tooltip(
                 ui.label(
                     RichText::new(frame)
                         .font(FontId::monospace(10.5))
-                        .color(if i == 0 { theme::TEXT } else { theme::MUTED }),
+                        .color(if i == 0 { theme::TEXT() } else { theme::MUTED() }),
                 );
             }
             if callstack.len() > MAX_FRAMES {
                 ui.label(
                     RichText::new(format!("… {} more", callstack.len() - MAX_FRAMES))
                         .font(FontId::monospace(10.5))
-                        .color(theme::MUTED),
+                        .color(theme::MUTED()),
                 );
             }
             return;
@@ -10197,22 +10266,22 @@ fn show_scope_tooltip(
                 .unwrap_or_else(|| format!("{}", pick.tid));
             let (label, desc) = thread_state_label(pick.extra);
             ui.label(
-                RichText::new("Thread state").family(fonts::medium()).size(12.0).color(theme::TEXT),
+                RichText::new("Thread state").family(fonts::medium()).size(12.0).color(theme::TEXT()),
             );
             ui.label(
                 RichText::new(format!("{label} — {desc}"))
                     .font(FontId::monospace(11.0))
-                    .color(theme::TEXT),
+                    .color(theme::TEXT()),
             );
             ui.label(
                 RichText::new(format!("Thread: {tname} [{}]", pick.tid))
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             ui.label(
                 RichText::new(format!("Duration: {}", format_ns(pick.duration_ns as f64)))
                     .font(FontId::monospace(11.0))
-                    .color(theme::MUTED),
+                    .color(theme::MUTED()),
             );
             return;
         }
@@ -10226,7 +10295,7 @@ fn show_scope_tooltip(
             else if pick.kind == kind::API_TRACK { Some("Manual async instrumentation") }
             else { None };
         if let Some(source) = source {
-            ui.label(RichText::new(source).size(11.0).color(theme::MUTED));
+            ui.label(RichText::new(source).size(11.0).color(theme::MUTED()));
         }
         let dur =
             format_value_pick(intern, pick).unwrap_or_else(|| format_ns(pick.duration_ns as f64));
@@ -10234,12 +10303,12 @@ fn show_scope_tooltip(
             RichText::new(name)
                 .family(fonts::medium())
                 .size(12.0)
-                .color(theme::TEXT),
+                .color(theme::TEXT()),
         );
         ui.label(
             RichText::new(dur)
                 .font(FontId::monospace(11.0))
-                .color(theme::MUTED),
+                .color(theme::MUTED()),
         );
         let key = ArgKey {
             start_ns: pick.start_ns,
@@ -10253,7 +10322,7 @@ fn show_scope_tooltip(
                 ui.label(
                     RichText::new(text)
                         .font(FontId::monospace(10.5))
-                        .color(theme::MUTED),
+                        .color(theme::MUTED()),
                 );
             }
         }
@@ -10326,7 +10395,7 @@ fn label_fits(x: f32, width: f32, last_right: f32, right_edge: f32) -> bool {
 /// which is both meaningless to read and wide enough to overlap its neighbour.
 fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64, origin_ns: f64) {
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, theme::CANVAS);
+    painter.rect_filled(rect, 0.0, theme::CANVAS());
     if t1 <= t0 {
         return;
     }
@@ -10363,13 +10432,13 @@ fn paint_timebar(ui: &Ui, rect: Rect, t0: f64, t1: f64, origin_ns: f64) {
                 // `origin_ns` into the same "0ns", which reads as a broken
                 // ruler rather than as "this is before the origin".
                 let text = format_ns(t - origin_ns);
-                let galley = painter.layout_no_wrap(text, font.clone(), theme::MUTED);
+                let galley = painter.layout_no_wrap(text, font.clone(), theme::MUTED());
                 let label_x = x + 4.0;
                 let width = galley.rect.width();
                 // Drop a label rather than let it overlap: a gap in the ruler
                 // is readable, two numbers on top of each other are not.
                 if label_fits(label_x, width, last_label_right, rect.right()) {
-                    painter.galley(Pos2::new(label_x, rect.top() + 4.0), galley, theme::MUTED);
+                    painter.galley(Pos2::new(label_x, rect.top() + 4.0), galley, theme::MUTED());
                     last_label_right = label_x + width;
                 }
             }
