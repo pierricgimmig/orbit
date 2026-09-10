@@ -27,7 +27,7 @@ Open `http://<host>:44766/`.
 
 | Control | What it does |
 |---|---|
-| **Refresh / Process** | Searchable `ProcessService` list (pid, name, cpu, path). Record stays disabled until a pid is picked. |
+| **Process** | Searchable process menu, refreshed and sorted by CPU usage every second, including while open. |
 | **Record** | Against OrbitService: real capture of the selected pid (CSW, thread state, API, optional sampling + hooks). Rust-only / missing hooks: Record starts the **Demo** producer and the strip says so. |
 | **Demo** | In-process dummy scopes (no attach). Separate from Record when hooks are present. |
 | **Capture strip** | Sampling (default 1 ms / 1000 Hz, DWARF unwind), user-space vs kernel uprobes, function search (service-side, paged). Symbols load on the machine running OrbitService — the browser never parses ELF/DWARF. |
@@ -35,6 +35,24 @@ Open `http://<host>:44766/`.
 | **Spill path** | Directory for serialize-on-overflow (`orbit-live-spill.bin`) |
 
 `--http_port 0` disables the viewer.
+
+## Toolbar and right pane
+
+The desktop toolbar keeps capture controls, process selection, scope search and
+symbol-loading status on one row. **More** contains **Report** (`R`), **Self**
+(`F2`) and **Inspector** (`I`). **Move** contains **Follow latest** (`Space`) and
+**Fit capture** (`Home`), with reminders for pan/zoom and scrolling shortcuts.
+Shortcuts are inactive while typing in a text field.
+
+Inspector shares the resizable right pane with function reports and holds viewer
+statistics, FPS, stream rate, ring settings and symbol-loading errors/retry.
+Ctrl-drag over scopes opens the rectangle report in the same pane's **Selection**
+tab. Copy and clear remain available there.
+
+Symbol status shows a live elapsed timer while loading, then the final count and
+service-measured duration. Linux reports counts as modules finish indexing; the
+macOS Frida catalogue arrives as one result, so its count becomes available at
+completion. The timer redraws each frame without sending a request per frame.
 
 ## Function hooks in the Rust service viewer
 

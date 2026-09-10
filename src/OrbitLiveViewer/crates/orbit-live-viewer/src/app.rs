@@ -49,7 +49,6 @@ use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
 use crate::vscroll::{clamp_offset, max_offset, VScrollInertia};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
-const SIDE: f32 = 228.0;
 const HEADER_W_WIDE: f32 = 196.0;
 /// iPhone (~390) and iPad portrait (~768–834). A laptop at 1280 stays wide.
 const NARROW_MAX_PX: f32 = 840.0;
@@ -127,10 +126,11 @@ fn selection_after_process_refresh(selected: Option<u32>, incoming: &[ProcessJso
     selected.filter(|pid| incoming.iter().any(|p| p.pid == *pid))
 }
 
-/// The process list auto-refreshes every [`PROCESS_POLL_S`] so its CPU-ordered
-/// rows stay live -- not only while the list is empty or a capture is open, the
-/// way it once did. The caller still holds the refresh while a picker popup is
-/// open, so the rows do not reshuffle by CPU under the cursor.
+fn sort_processes_by_cpu(processes: &mut [ProcessJson]) {
+    processes.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(a.pid.cmp(&b.pid)));
+}
+
+/// Refresh even while the picker is open, keeping busiest processes first.
 fn should_poll_processes(now: f64, last: f64) -> bool {
     now - last >= PROCESS_POLL_S
 }
@@ -694,14 +694,12 @@ pub struct OrbitLiveApp {
     immersive: bool,
     pending_fs: u8,
     header_w: f32,
-    side_w: f32,
     was_narrow: bool,
     compact_user: bool,
     capture_user: bool,
     needs_repaint: bool,
     compact: bool,
     light_canvas: bool,
-    advanced: bool,
     recording: bool,
     /// Whether a capture was active last frame, to catch the moment it ends
     /// (falling edge of capturing/recording) and land on the top-down tree.
@@ -859,6 +857,7 @@ pub struct OrbitLiveApp {
     /// Off by default: see StartBody::show_all_processes.
     show_all_processes: bool,
     symbols: SymbolsStatusJson,
+    symbols_started_s: f64,
     /// Every function the service indexed for `functions_pid`, for the
     /// Functions view.
     functions: Vec<FunctionHit>,
@@ -968,6 +967,8 @@ enum ReportTab {
     /// The code views: a source file, a function's disassembly, or the
     /// two interleaved (TODO item 30).
     Code,
+    Inspector,
+    Selection,
 }
 
 impl ReportTab {
@@ -983,6 +984,8 @@ impl ReportTab {
             "flame" => Some(ReportTab::Flame),
             "functions" => Some(ReportTab::Functions),
             "code" => Some(ReportTab::Code),
+            "inspector" => Some(ReportTab::Inspector),
+            "selection" => Some(ReportTab::Selection),
             _ => None,
         }
     }
@@ -997,6 +1000,8 @@ impl ReportTab {
             ReportTab::Flame => "Flame",
             ReportTab::Functions => "Functions",
             ReportTab::Code => "Code",
+            ReportTab::Inspector => "Inspector",
+            ReportTab::Selection => "Selection",
         }
     }
 
@@ -1439,14 +1444,12 @@ impl OrbitLiveApp {
             immersive: false,
             pending_fs: 0,
             header_w: HEADER_W_WIDE,
-            side_w: SIDE,
             was_narrow: false,
             compact_user: false,
             capture_user: false,
             needs_repaint: false,
             compact: false,
             light_canvas: false,
-            advanced: false,
             recording: false,
             capture_was_active: false,
             visible_count: 0,
@@ -1533,6 +1536,7 @@ impl OrbitLiveApp {
             uprobe_duplicate_filter: true,
             show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
+            symbols_started_s: 0.0,
             functions: Vec::new(),
             functions_pid: None,
             functions_requested: false,
@@ -2055,11 +2059,6 @@ impl OrbitLiveApp {
         let css_w = css_viewport_width(ctx).max(1.0);
         let scale = points_w / css_w;
         self.header_w = header_w_for(css_w) * scale;
-        self.side_w = if is_narrow_width(css_w) {
-            (css_w * 0.62).clamp(150.0, 220.0) * scale
-        } else {
-            SIDE
-        };
         let narrow = is_narrow_width(css_w);
         if narrow == self.was_narrow {
             return;
@@ -2210,6 +2209,7 @@ impl OrbitLiveApp {
         self.selected_pid = selection_after_process_refresh(self.selected_pid, &incoming);
         self.processes = incoming;
         self.merge_trace_processes();
+        sort_processes_by_cpu(&mut self.processes);
         // Demo convenience on the first list only. A pid that exited stays unset.
         if was_empty && self.selected_pid.is_none() && !self.status.hooks {
             if self.processes.iter().any(|p| p.pid == 1) {
@@ -2293,8 +2293,13 @@ impl OrbitLiveApp {
             }
             self.needs_repaint = true;
         }
-        if let Some(s) = inbox.symbols {
-            self.symbols = s;
+        if let Some(mut s) = inbox.symbols {
+            if s.pid == 0 || self.selected_pid == Some(s.pid) {
+                if s.status == "ready" && s.elapsed_ms.is_none() {
+                    s.elapsed_ms = Some(((self.now_s - self.symbols_started_s).max(0.0) * 1000.0) as u64);
+                }
+                self.symbols = s;
+            }
         }
         if let Some(list) = inbox.function_list {
             self.functions_pid = Some(list.pid);
@@ -2624,9 +2629,12 @@ impl OrbitLiveApp {
             self.capture_user = true;
             ui.close();
         }
-        if ui.selectable_label(self.follow, "Follow").clicked() {
-            self.follow = !self.follow;
-        }
+        let report = ui.selectable_label(self.report_open, "Report   R");
+        note_ui_rect("Report", report.rect);
+        if report.clicked() { self.toggle_report(); ui.close(); }
+        let own = ui.selectable_label(self.self_pane_open, "Self   F2");
+        note_ui_rect("Self", own.rect);
+        if own.clicked() { self.self_pane_open = !self.self_pane_open; ui.close(); }
         ui.separator();
         if ui
             .selectable_label(self.capture_open, "UI knobs")
@@ -2683,10 +2691,10 @@ impl OrbitLiveApp {
         })
         .response
         .on_hover_text("Recolour the whole viewer — chrome, scopes and thread states");
-        if ui.selectable_label(self.advanced, "Inspector").clicked() {
-            self.advanced = !self.advanced;
-            ui.close();
-        }
+        let inspector = ui.selectable_label(self.report_open && self.report_tab == ReportTab::Inspector, "Inspector   I");
+        note_ui_rect("Inspector", inspector.rect);
+        if inspector.clicked() { self.open_right_tab(ReportTab::Inspector); ui.close(); }
+        if ui.button("Rectangle selection report").clicked() { self.open_right_tab(ReportTab::Selection); ui.close(); }
         if ui
             .selectable_label(self.compact, "Compact tracks")
             .on_hover_text("Track density")
@@ -2696,7 +2704,6 @@ impl OrbitLiveApp {
             self.compact_user = true;
         }
         ui.separator();
-        self.paint_verbose_stats(ui);
     }
 
     /// Switch the colour scheme: set it active, rebuild egui's visuals from
@@ -2780,6 +2787,7 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_link_dot(ui);
             self.transport_record(ui);
+            self.transport_move(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
                 ui.label(
@@ -2845,101 +2853,69 @@ impl OrbitLiveApp {
         resp.on_hover_text(format!("{what} — {detail}"));
     }
 
+    fn open_right_tab(&mut self, tab: ReportTab) {
+        self.report_tab = tab;
+        self.report_open = true;
+        self.report_collapsed = false;
+        if self.report_w_last < REPORT_COLLAPSE_W {
+            self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
+        }
+    }
+
+    fn toggle_report(&mut self) {
+        if self.report_open && !self.report_collapsed { self.report_open = false; }
+        else {
+            let tab = if self.report_tab == ReportTab::Flat && self.sampling.is_none() && self.sampling_ranges.is_empty() {
+                ReportTab::Live
+            } else { self.report_tab };
+            self.open_right_tab(tab);
+        }
+    }
+
+    fn transport_move(&mut self, ui: &mut Ui) {
+        let menu = pill(ui, "Move", false);
+        egui::Popup::menu(&menu).show(|ui| {
+            let follow = ui.selectable_label(self.follow, "Follow latest   Space");
+            note_ui_rect(if self.follow { "Follow:on" } else { "Follow:off" }, follow.rect);
+            if follow.clicked() {
+                self.follow = !self.follow;
+                ui.close();
+            }
+            if ui.button("Fit capture   Home").clicked() { self.fit_to_content(); ui.close(); }
+            ui.separator();
+            ui.label("Pan time: A / D");
+            ui.label("Zoom: W / S");
+            ui.label("Scroll tracks: ↑ / ↓, Page Up / Down");
+        });
+    }
+
     fn transport(&mut self, ui: &mut Ui) {
         if self.chrome_collapsed() || self.was_narrow {
             self.transport_narrow_bar(ui);
             return;
         }
-        // Clusters, left to right: the mark and the link; the capture's
-        // verbs (Record, Open, Save, Clear); the panels (Capture, Report,
-        // Self); Follow; the search; the stats; the rest behind "…".
         ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new("ORBIT")
-                    .family(fonts::medium())
-                    .size(11.0)
-                    .extra_letter_spacing(1.6)
-                    .color(theme::TEXT()),
-            );
-            ui.add_space(2.0);
+            ui.spacing_mut().item_spacing.x = 5.0;
             self.paint_link_dot(ui);
-            vsep(ui);
-            let has_service = self.static_capture.is_none();
-            if has_service {
+            if self.static_capture.is_none() {
                 let recording = self.recording || self.status.demo || self.status.capturing;
-                let tip = if recording {
-                    if self.status.hooks && !self.status.demo { "Stop capture" } else { "Stop demo" }
-                } else if self.status.hooks {
-                    if self.selected_pid.is_some() {
-                        "Start a capture of the selected process"
-                    } else {
-                        "Capture with no target: the scheduler, orbit-service, and every instrumented process"
-                    }
-                } else {
-                    "No OrbitService hooks — Record starts the demo producer"
-                };
-                if record_button(ui, recording).on_hover_text(format!("{tip} (X)")).clicked() {
-                    if recording {
-                        self.stop_record();
-                    } else {
-                        self.start_record();
-                    }
+                if record_button(ui, recording).on_hover_text("Start/stop capture (X)").clicked() {
+                    if recording { self.stop_record(); } else { self.start_record(); }
                 }
                 self.transport_open(ui);
                 self.transport_save(ui);
-                if icon_button(ui, "Clear", "Empty the capture: every event, on the service and here", paint_clear_icon).clicked() {
-                    self.clear_everything();
-                }
-                if icon_button(ui, "Settings", "Settings: the process, what to collect, unwinding, hooks, the interface", paint_gear_icon)
-                    .clicked()
-                {
+                if icon_button(ui, "Clear", "Empty the capture", paint_clear_icon).clicked() { self.clear_everything(); }
+                if icon_button(ui, "Settings", "Capture settings", paint_gear_icon).clicked() {
                     self.capture_open = !self.capture_open;
                     self.capture_user = true;
                 }
-            } else if let Some(url) = &self.static_capture {
-                let name = url.rsplit('/').next().unwrap_or(url);
-                ui.label(RichText::new(name).font(FontId::monospace(10.5)).color(theme::MUTED()))
-                    .on_hover_text("This page shows a saved capture; there is no service behind it");
+                self.paint_process_picker(ui, "orbit_processes_strip");
             }
-            vsep(ui);
-            if pill(ui, "Report", self.report_open)
-                .on_hover_text("The report panel: Live scope statistics, the sampling report, the functions")
-                .clicked()
-            {
-                self.report_open = !self.report_open;
-                if self.report_open && (self.report_collapsed || self.report_w_last < REPORT_COLLAPSE_W) {
-                    self.report_collapsed = false;
-                    self.report_w_override = Some(SAMPLING_PANEL_DEFAULT_W);
-                }
-                if self.report_open && self.sampling_ranges.is_empty() && self.sampling.is_none() {
-                    self.report_tab = ReportTab::Live;
-                }
-            }
-            if pill(ui, "Self", self.self_pane_open)
-                .on_hover_text("Profile the viewer itself, in its own pane — independent of any capture")
-                .clicked()
-            {
-                self.self_pane_open = !self.self_pane_open;
-            }
-            vsep(ui);
-            if pill(ui, "Follow", self.follow)
-                .on_hover_text("Keep the newest events in view while capturing (space)")
-                .clicked()
-            {
-                self.follow = !self.follow;
-            }
-            ui.add_space(6.0);
             self.paint_search(ui);
-            ui.add_space(8.0);
-            self.paint_verbose_stats(ui);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(8.0);
-                if fullscreen_pill(ui, self.fullscreen).clicked() {
-                    self.set_fullscreen(ui.ctx(), !self.fullscreen);
-                }
-                self.transport_more(ui);
-            });
+            self.paint_symbols_status(ui);
+            self.transport_move(ui);
+            self.transport_more(ui);
+            if fullscreen_pill(ui, self.fullscreen).clicked() { self.set_fullscreen(ui.ctx(), !self.fullscreen); }
         });
     }
 
@@ -2978,64 +2954,30 @@ impl OrbitLiveApp {
         });
     }
 
-    /// The symbols pill: what the service has indexed for the selected
-    /// process, and a click to (re)load it. Loading also starts on its own
-    /// when a process is selected; this is for the eye and for a retry.
-    fn paint_symbols_pill(&mut self, ui: &mut Ui) {
-        let ready = self.symbols.status == "ready";
-        let label = if self.selected_pid.is_none() {
-            "Symbols".to_string()
-        } else {
-            self.symbol_status_line()
-        };
-        let resp = pill(ui, &label, ready).on_hover_text(match self.symbols.status.as_str() {
-            "ready" => "Symbols are loaded; click to reload them",
-            "loading" => "Loading the process's symbols",
-            "error" => "Symbol loading failed; click to retry",
-            _ => "Load the selected process's symbols (function names for hooks and reports)",
-        });
-        note_ui_rect("Symbols", resp.rect);
-        if resp.clicked() {
-            if let Some(pid) = self.selected_pid {
-                self.loaded_symbol_pid = Some(pid);
-                self.symbols = SymbolsStatusJson { pid, status: "loading".into(), ..Default::default() };
-                self.functions.clear();
-                self.functions_pid = None;
-                self.net.load_symbols(pid);
-            }
-        }
-        if !self.symbols.error.is_empty() && self.symbols.status == "error" {
-            ui.label(
-                RichText::new(&self.symbols.error)
-                    .font(FontId::monospace(10.5))
-                    .color(Color32::from_rgb(0xF4, 0x43, 0x36)),
-            );
-        }
+    fn paint_symbols_status(&mut self, ui: &mut Ui) {
+        let text = self.symbol_status_line();
+        let width = (ui.available_width() - 145.0).max(0.0);
+        let label = ui.add_sized(Vec2::new(width, 22.0),
+            egui::Label::new(RichText::new(&text).size(10.5).color(theme::MUTED())).truncate());
+        note_ui_rect("Symbols", label.rect);
+        note_ui_rect(&format!("symbols-status:{text}"), label.rect);
+        label.on_hover_text(if self.symbols.error.is_empty() { text } else { self.symbols.error.clone() });
+        if self.symbols.status == "loading" { ui.ctx().request_repaint(); }
     }
 
     fn symbol_status_line(&self) -> String {
-        let st = if self.symbols.status.is_empty() {
-            "idle"
-        } else {
-            self.symbols.status.as_str()
-        };
-        if self.symbols.function_count > 0 {
-            format!(
-                "symbols {st}  {} fn  {} mod",
-                self.symbols.function_count, self.symbols.module_count
-            )
-        } else {
-            format!("symbols {st}")
+        if let Some(load) = &self.trace_load { return load.progress_line(); }
+        if self.static_capture.is_some() { return "Saved capture".into(); }
+        if self.selected_pid.is_none() {
+            return self.trace_name.clone().unwrap_or_else(|| "Select a process to load symbols".into());
         }
-    }
-
-    /// True while either process-picker popup is open. The 1 Hz refresh holds
-    /// while it is, so a CPU-ordered list does not reshuffle rows under the
-    /// cursor mid-pick; the numbers freeze for the few seconds it is open.
-    fn process_popup_open(&self, ctx: &Context) -> bool {
-        ["orbit_processes_strip", "orbit_processes_side"]
-            .iter()
-            .any(|id| egui::Popup::is_id_open(ctx, egui::Id::new(("orbit_process_popup", *id))))
+        let n = self.symbols.function_count;
+        match self.symbols.status.as_str() {
+            "loading" => format!("Loading {n} symbols · {:.0} ms", (self.now_s - self.symbols_started_s).max(0.0) * 1000.0),
+            "ready" => format!("Loaded {n} symbols in {} ms", self.symbols.elapsed_ms.unwrap_or(0)),
+            "error" => "Symbol loading failed · see Inspector".into(),
+            _ => "Waiting for symbols…".into(),
+        }
     }
 
     fn paint_process_picker(&mut self, ui: &mut Ui, id: &str) {
@@ -3060,17 +3002,19 @@ impl OrbitLiveApp {
         let popup_id = egui::Id::new(("orbit_process_popup", id));
         let filter_id = egui::Id::new(("orbit_process_filter", id));
         let list_id = egui::Id::new(("orbit_process_scroll", id));
-        let width = ui.available_width().min(360.0);
+        let width = if id == "orbit_processes_strip" { 210.0 } else { ui.available_width().min(360.0) };
         let button = ui.add_sized(
             Vec2::new(width, 22.0),
             egui::Button::new(RichText::new(selected_text).size(12.0).color(theme::TEXT()))
+                .wrap_mode(egui::TextWrapMode::Truncate)
                 .fill(theme::INPUT()),
         );
+        note_ui_rect("Process", button.rect);
         let opening = button.clicked() && !egui::Popup::is_id_open(ui.ctx(), popup_id);
         let popup = egui::Popup::from_response(&button)
             .id(popup_id)
             .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-            .width(button.rect.width().max(width))
+            .width(500.0_f32.min(ui.ctx().screen_rect().width() - 24.0))
             .open_memory(button.clicked().then_some(SetOpenCommand::Toggle));
         popup.show(|ui| {
             let filter = ui.add(
@@ -3095,44 +3039,18 @@ impl OrbitLiveApp {
                         if !process_matches_filter(p.pid, &p.name, &p.path, &q) {
                             continue;
                         }
-                        let label = if p.path.is_empty() {
-                            format!("{}  {}", p.pid, p.name)
-                        } else {
-                            format!("{}  {}  {:.1}%  {}", p.pid, p.name, p.cpu, p.path)
-                        };
+                        let label = format!("{:.1}%  {}  {}", p.cpu, p.pid, p.name);
                         let selected = self.selected_pid == Some(p.pid);
-                        if ui.selectable_label(selected, label).clicked() {
-                            pick = Some(p.pid);
-                        }
+                        ui.push_id(p.pid, |ui| {
+                            let row = ui.selectable_label(selected, label).on_hover_text(&p.path);
+                            note_ui_rect(&format!("process:{}", p.pid), row.rect);
+                            if row.clicked() { pick = Some(p.pid); }
+                        });
                     }
                 });
             if let Some(pid) = pick {
                 self.selected_pid = Some(pid);
                 egui::Popup::close_id(ui.ctx(), popup_id);
-            }
-        });
-    }
-
-    /// The process row, always in the main UI under the transport: which
-    /// process the capture is about is not a setting to go looking for.
-    fn process_row(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            section_label(ui, "PROCESS");
-            self.paint_process_picker(ui, "orbit_processes_strip");
-            // Plain words: the font has no glyph for a refresh arrow and drew
-            // a question mark in its place.
-            if pill(ui, "Refresh", false).on_hover_text("Re-read the process list").clicked() {
-                self.last_process_request = ui.input(|i| i.time);
-                self.net.get_processes();
-            }
-            self.paint_symbols_pill(ui);
-            if !self.status.hooks {
-                ui.label(
-                    RichText::new("Record starts Demo — no OrbitService hooks")
-                        .font(FontId::monospace(10.5))
-                        .color(Color32::from_rgb(0xFF, 0xC1, 0x07)),
-                );
             }
         });
     }
@@ -3511,6 +3429,7 @@ impl OrbitLiveApp {
                     self.report_drag = None;
                 }
                 self.loaded_symbol_pid = Some(pid);
+                self.symbols_started_s = now;
                 self.symbols = SymbolsStatusJson {
                     pid,
                     status: "loading".into(),
@@ -3540,15 +3459,6 @@ impl OrbitLiveApp {
     }
 
     fn chrome(&mut self, ui: &mut Ui) {
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("INSPECTOR")
-                .family(fonts::medium())
-                .size(10.0)
-                .extra_letter_spacing(1.4)
-                .color(theme::MUTED()),
-        );
-
         section(ui, "PROCESS");
         self.paint_process_picker(ui, "orbit_processes_side");
         ui.add_space(4.0);
@@ -3557,9 +3467,13 @@ impl OrbitLiveApp {
                 .font(FontId::monospace(11.0))
                 .color(theme::MUTED()),
         );
-        if icon_pill(ui, "↻", "Refresh process list").clicked() {
-            self.last_process_request = ui.input(|i| i.time);
-            self.net.get_processes();
+        section(ui, "VIEWER");
+        self.paint_verbose_stats(ui);
+        status_row(ui, "Frame rate", &format!("{:.0} fps", self.fps_ema));
+        status_row(ui, "Stream", &format_rate(self.ws_rate_bps));
+        status_row(ui, "Renderer", &self.gpu_backend);
+        if ui.button("Retry symbol loading").clicked() {
+            self.loaded_symbol_pid = None;
         }
 
         section(ui, "RING / SPILL");
@@ -3705,13 +3619,6 @@ impl OrbitLiveApp {
         let header_cut = time_rect.with_max_x(time_rect.left() + header_w);
         let ruler = time_rect.with_min_x(time_rect.left() + header_w);
         ui.painter().rect_filled(header_cut, 0.0, self.rail_color());
-        ui.painter().text(
-            header_cut.left_center() + Vec2::new(12.0, 0.0),
-            Align2::LEFT_CENTER,
-            "TRACKS",
-            FontId::new(9.5, fonts::medium()),
-            theme::MUTED(),
-        );
         if self.tracks.hidden_count() > 0 {
             let all = Rect::from_center_size(
                 Pos2::new(header_cut.right() - 28.0, header_cut.center().y),
@@ -4104,11 +4011,10 @@ impl OrbitLiveApp {
             Pos2::new(ui.max_rect().left() + header_w, time_rect.bottom()),
             ui.max_rect().max,
         );
-        let fps_w = paint_fps_chip(ui, fps_area, self.fps_ema, self.ws_rate_bps);
-        // What is narrowing the view, and how to undo it, next to the fps:
+        // What is narrowing the view, and how to undo it:
         // the grey of a thread selection and the dim of a name filter look
         // alike, and neither shows anywhere else.
-        let mut right = fps_area.right() - fps_w - 12.0;
+        let mut right = fps_area.right() - 12.0;
         if self.search_active() || !self.search.is_empty() {
             let text = format!("filter \u{201c}{}\u{201d}", self.search);
             let (w, clicked) = paint_focus_chip(ui, fps_area, right, &text, "orbit_filter_chip");
@@ -4237,11 +4143,6 @@ impl OrbitLiveApp {
                         [band.left_top(), band.right_top()],
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
                     );
-                }
-                // Core lanes share a plain background. Decorative separators
-                // can form a repeating light/dark pattern at fractional scale.
-                if !matches!(row.id, RowId::Lane(k) if k.is_scheduler()) {
-                    painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
                 }
                 let hover_thread = match hover_row {
                     Some(RowId::Thread(t)) => Some(t),
@@ -5362,6 +5263,11 @@ impl OrbitLiveApp {
             }
             return;
         }
+        if !self.in_self_pane {
+            if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::R)) { self.toggle_report(); }
+            if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::I)) { self.open_right_tab(ReportTab::Inspector); }
+            if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::F2)) { self.self_pane_open = !self.self_pane_open; }
+        }
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
         }
@@ -5616,6 +5522,7 @@ impl OrbitLiveApp {
         // Body-local x -> absolute -> capture time, so the band re-projects.
         let t0_ns = time_at_x(body.left() + a.x.min(b.x), body, self.t0, self.t1);
         let t1_ns = time_at_x(body.left() + a.x.max(b.x), body, self.t0, self.t1);
+        if stats.count > 0 { self.open_right_tab(ReportTab::Selection); }
         self.rect_result = Some(RectResult {
             t0_ns,
             t1_ns,
@@ -5958,6 +5865,7 @@ impl OrbitLiveApp {
         self.last_report_request_s = now;
         if !ranges.is_empty() {
             self.scope_report = None;
+            if !self.report_open { self.open_right_tab(ReportTab::Flat); }
         }
         self.sampling_ranges = ranges;
         self.local_sample_count = count_samples_in(&self.index, &self.sampling_ranges);
@@ -6060,101 +5968,38 @@ impl OrbitLiveApp {
             });
     }
 
-    /// A right-side pane with the full breakdown of the committed rectangle
-    /// selection: the same detailed report that went to the clipboard --
-    /// per-function, per-thread, and the individual scopes -- kept on screen so
-    /// it can be read and re-copied. Shown only while a marquee is committed and
-    /// covers at least one scope; the ✕ clears it and the drawn rectangle.
-    fn rect_summary_panel(&mut self, ctx: &Context) {
-        // Clone once per frame: the text is a few KB at most, and borrowing
-        // `rect_result` immutably across the panel closure would collide with
-        // the `&mut self` the closure needs for the copy flash.
-        let Some(res) = self.rect_result.clone() else {
+    /// The committed marquee's report, in the shared right pane.
+    fn rect_summary_rows(&mut self, ui: &mut Ui) {
+        let Some(res) = self.rect_result.clone().filter(|r| r.stats.count > 0 && !r.report_text.is_empty()) else {
+            ui.label("Ctrl-drag over scopes to select a rectangle.");
             return;
         };
-        // A marquee dragged over blank space keeps its rectangle but has
-        // nothing to summarise -- no pane for it.
-        if res.stats.count == 0 || res.report_text.is_empty() {
-            return;
-        }
-        let screen_w = ctx.screen_rect().width();
-        let width = (screen_w * 0.26).clamp(300.0, 460.0).min(screen_w);
-        let mut clear = false;
-        egui::SidePanel::right("orbit_rect_summary")
-            .resizable(false)
-            .exact_width(width)
-            .frame(
-                Frame::new()
-                    .fill(theme::PANEL())
-                    .inner_margin(Margin::symmetric(12, 8))
-                    .stroke(Stroke::NONE),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Selection").color(theme::TEXT()).size(12.0));
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .small_button("✕")
-                                .on_hover_text("Clear the selection")
-                                .clicked()
-                            {
-                                clear = true;
-                            }
-                            let flashing = self.now_s - self.rect_copied_at < 1.5;
-                            if ui
-                                .small_button(if flashing { "Copied ✓" } else { "Copy" })
-                                .on_hover_text("Copy this report to the clipboard")
-                                .clicked()
-                            {
-                                ui.ctx().copy_text(res.report_text.clone());
-                                self.rect_copied_at = self.now_s;
-                            }
-                        },
-                    );
-                });
-                ui.label(
-                    RichText::new(res.stats.one_line())
-                        .color(theme::MUTED())
-                        .size(11.0),
-                );
-                ui.add_space(6.0);
-                // The report is column-aligned monospace; let it scroll both
-                // ways rather than wrap the columns.
-                egui::ScrollArea::both()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(&res.report_text)
-                                    .font(FontId::monospace(11.0))
-                                    .color(theme::TEXT()),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                    });
-            });
-        if clear {
-            self.rect_result = None;
-        }
+        ui.horizontal(|ui| {
+            let clear = ui.small_button("Clear").on_hover_text("Clear the selection");
+            note_ui_rect("selection:clear", clear.rect);
+            if clear.clicked() { self.rect_result = None; }
+            let flashing = self.now_s - self.rect_copied_at < 1.5;
+            let copy = ui.small_button(if flashing { "Copied" } else { "Copy" })
+                .on_hover_text("Copy this report to the clipboard");
+            note_ui_rect("selection:copy", copy.rect);
+            if copy.clicked() {
+                ui.ctx().copy_text(res.report_text.clone());
+                self.rect_copied_at = self.now_s;
+            }
+        });
+        ui.label(RichText::new(res.stats.one_line()).color(theme::MUTED()).size(11.0));
+        ui.add_space(6.0);
+        // The parent scrolls both ways to preserve the report's columns.
+        ui.add(egui::Label::new(RichText::new(&res.report_text)
+            .font(FontId::monospace(11.0)).color(theme::TEXT()))
+            .wrap_mode(egui::TextWrapMode::Extend));
     }
 
     /// The sampling report for the current selection: self and inclusive
     /// percentages per function, hottest first, the pair Orbit shows.
     fn sampling_panel(&mut self, ctx: &Context) {
+        if !self.report_open { return; }
         let report = self.sampling.clone();
-        // The panel shows for a selection, and also for a finished capture
-        // with nothing selected -- that is the aggregate view.
-        let has_selection = !self.sampling_ranges.is_empty();
-        if report.is_none()
-            && self.tree.is_none()
-            && self.modules.is_none()
-            && !has_selection
-            && !self.report_open
-        {
-            return;
-        }
         // A vertical panel to the right of the capture, where C++ Orbit docks
         // its sampling report: the timeline keeps its full height, and the
         // report reads top to bottom beside it instead of eating rows off
@@ -6200,6 +6045,8 @@ impl OrbitLiveApp {
                 // and the selection text must not run off its right edge.
                 ui.horizontal_wrapped(|ui| {
                     let title = match (&report, self.report_tab) {
+                        (_, ReportTab::Inspector) => "Inspector".into(),
+                        (_, ReportTab::Selection) => "Rectangle selection".into(),
                         (_, ReportTab::Live) => self.live_title(),
                         (Some(_), _) => format!("Sampling report — {samples} samples"),
                         // The tree tabs have their own sample count even
@@ -6217,7 +6064,8 @@ impl OrbitLiveApp {
                         ),
                     };
                     ui.label(RichText::new(title).color(theme::TEXT()).size(12.0));
-                    let desc = if self.report_tab == ReportTab::Live {
+                    let desc = if matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) { String::new() }
+                    else if self.report_tab == ReportTab::Live {
                         describe_selection(&self.sampling_ranges)
                     } else {
                         self.describe_selection_named()
@@ -6226,7 +6074,7 @@ impl OrbitLiveApp {
                 });
                 ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
-                    const TABS: [ReportTab; 8] = [
+                    const TABS: [ReportTab; 10] = [
                         ReportTab::Live,
                         ReportTab::Flat,
                         ReportTab::Flame,
@@ -6235,6 +6083,8 @@ impl OrbitLiveApp {
                         ReportTab::Modules,
                         ReportTab::Functions,
                         ReportTab::Code,
+                        ReportTab::Inspector,
+                        ReportTab::Selection,
                     ];
                     let labels: Vec<&str> = TABS.iter().map(|t| t.label()).collect();
                     let current = TABS.iter().position(|t| *t == self.report_tab).unwrap_or(0);
@@ -6245,7 +6095,8 @@ impl OrbitLiveApp {
                             self.report_tab = tab;
                             // Switching between top-down and bottom-up needs a
                             // different tree; switching to or from Flat does not.
-                            if tab.mode() != was_tree_mode || self.tree.is_none() {
+                            if !matches!(tab, ReportTab::Inspector | ReportTab::Selection)
+                                && (tab.mode() != was_tree_mode || self.tree.is_none()) {
                                 self.tree_expanded.clear();
                                 if self.static_capture.is_some() {
                                     self.compute_local_reports();
@@ -6263,6 +6114,7 @@ impl OrbitLiveApp {
                             }
                         }
                     }
+                    if matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) { return; }
                     ui.add_space(8.0);
                     let filter = ui.add(
                         egui::TextEdit::singleline(&mut self.report_filter)
@@ -6346,6 +6198,13 @@ impl OrbitLiveApp {
                         );
                     }
                 });
+                if matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) {
+                    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                        if self.report_tab == ReportTab::Inspector { self.chrome(ui); }
+                        else { self.rect_summary_rows(ui); }
+                    });
+                    return;
+                }
                 if self.report_tab == ReportTab::Code {
                     self.code_toolbar(ui);
                 }
@@ -6366,7 +6225,7 @@ impl OrbitLiveApp {
                                 ReportTab::Flat => self.flat_report_rows(ui, report.as_ref()),
                                 ReportTab::TopDown | ReportTab::BottomUp => self.call_tree_rows(ui),
                                 ReportTab::Modules => self.module_rows(ui),
-                                ReportTab::Live => {}
+                                ReportTab::Live | ReportTab::Inspector | ReportTab::Selection => {}
                                 ReportTab::Flame => self.flame_rows(ui),
                                 ReportTab::Functions => self.function_rows(ui),
                                 ReportTab::Code => self.code_rows(ui),
@@ -8084,7 +7943,6 @@ impl eframe::App for OrbitLiveApp {
                 }
                 if has_service
                     && should_poll_processes(now, self.last_process_request)
-                    && !self.process_popup_open(ctx)
                 {
                     self.last_process_request = now;
                     self.net.get_processes();
@@ -8130,37 +7988,6 @@ impl eframe::App for OrbitLiveApp {
                             }),
                     )
                     .show(ctx, |ui| self.transport(ui));
-
-
-                if self.static_capture.is_none() && !self.chrome_collapsed() {
-                    egui::TopBottomPanel::top("orbit_process_row")
-                        .exact_height(30.0)
-                        .frame(
-                            Frame::new()
-                                .fill(theme::RAIL())
-                                .inner_margin(Margin::symmetric(4, 3))
-                                .stroke(Stroke::NONE),
-                        )
-                        .show(ctx, |ui| self.process_row(ui));
-                }
-
-                if self.advanced {
-                    egui::SidePanel::left("orbit_chrome")
-                        .exact_width(self.side_w)
-                        .resizable(false)
-                        .frame(
-                            Frame::new()
-                                .fill(theme::PANEL())
-                                .inner_margin(Margin::symmetric(16, 12))
-                                .stroke(Stroke::NONE),
-                        )
-                        .show(ctx, |ui| {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| self.chrome(ui));
-                        });
-                    ui_hairline_sidebar(ctx, self.side_w);
-                }
             }
 
             if sat[2] > 0.5 {
@@ -8176,7 +8003,6 @@ impl eframe::App for OrbitLiveApp {
                 let _report = devf.scope(TID_UI, NAME_REPORT_PANEL);
                 self.sampling_panel(ctx);
             }
-            self.rect_summary_panel(ctx);
             self.tweaks_window(ctx);
             self.paint_scope_menu(ctx);
             {
@@ -8299,19 +8125,6 @@ impl eframe::App for OrbitLiveApp {
     }
 }
 
-fn ui_hairline_sidebar(ctx: &Context, side_w: f32) {
-    let screen = ctx.screen_rect();
-    let x = side_w;
-    ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new("orbit_side_rule"),
-    ))
-    .line_segment(
-        [Pos2::new(x, screen.top()), Pos2::new(x, screen.bottom())],
-        hairline(),
-    );
-}
-
 fn section(ui: &mut Ui, label: &str) {
     ui.add_space(16.0);
     ui.label(
@@ -8331,8 +8144,6 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
         RowId::Thread(t) => {
             if dragging {
                 theme::process_track_wash_role(t.pid, theme::WashRole::Process)
-            } else if t.tid % 2 == 1 {
-                theme::process_track_wash_role(t.pid, theme::WashRole::ThreadAlt)
             } else {
                 theme::process_track_wash(t.pid)
             }
@@ -9031,34 +8842,7 @@ fn paint_focus_chip(ui: &Ui, area: Rect, right: f32, text: &str, id: &str) -> (f
     (size.x, resp.clicked())
 }
 
-/// Paints the fps chip; returns its width so other chips can sit beside it.
-fn paint_fps_chip(ui: &Ui, area: Rect, fps: f32, stream_bps: f32) -> f32 {
-    if fps <= 0.0 || !area.is_finite() || area.width() < 24.0 {
-        return 0.0;
-    }
-    let label = format!("{:.0} fps · {}", fps, format_rate(stream_bps));
-    let font = FontId::monospace(11.0);
-    let galley = ui.fonts(|f| f.layout_no_wrap(label, font, theme::TEXT()));
-    let pad = Vec2::new(6.0, 3.0);
-    let size = galley.size() + pad * 2.0;
-    let rect = Rect::from_min_size(
-        Pos2::new(area.right() - size.x - 8.0, area.top() + 6.0),
-        size,
-    );
-    if !area.intersects(rect) {
-        return 0.0;
-    }
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new("orbit_fps_chip"),
-    ));
-    painter.rect_filled(rect, 3.0, Color32::from_black_alpha(140));
-    painter.galley(rect.min + pad, galley, theme::TEXT());
-    size.x
-}
 
-/// `1.24 MB/s`, `312 KB/s`, `0 B/s` -- the event stream's rate, MB when it
-/// is worth saying in MB.
 fn format_rate(bps: f32) -> String {
     if bps >= 1_000_000.0 {
         format!("{:.2} MB/s", bps / 1_000_000.0)
@@ -10882,6 +10666,24 @@ mod tests {
             cpu: 0.0,
             path: path.into(),
         }
+    }
+
+    #[test]
+    fn process_menu_orders_cpu_descending_with_stable_ties() {
+        let mut rows = vec![proc(3, "third", ""), proc(1, "first", ""), proc(2, "second", "")];
+        rows[2].cpu = 80.0;
+        sort_processes_by_cpu(&mut rows);
+        assert_eq!(rows.iter().map(|p| p.pid).collect::<Vec<_>>(), [2, 1, 3]);
+        rows[2].cpu = 90.0;
+        sort_processes_by_cpu(&mut rows);
+        assert_eq!(rows.iter().map(|p| p.pid).collect::<Vec<_>>(), [3, 2, 1]);
+        assert_eq!(selection_after_process_refresh(Some(2), &rows), Some(2));
+    }
+
+    #[test]
+    fn thread_background_does_not_depend_on_tid_parity() {
+        let row = |tid| RowId::Thread(ThreadId { pid: 42, tid });
+        assert_eq!(row_process_wash(row(10), false), row_process_wash(row(11), false));
     }
 
     #[test]

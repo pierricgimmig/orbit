@@ -116,3 +116,8 @@ armed. The kernel requires CAP_PERFMON in `perf_uprobe_event_init` before
 `perf_event_paranoid` is consulted, so an unprivileged run cannot arm a probe.
 The scenario still asserts that the refusal names the capability, because
 silence there is the actual failure mode.
+
+The focused `toolbar_layout.py` Playwright check covers the single-row toolbar,
+CPU reordering while the process menu is open, symbol progress, shortcuts, and
+Inspector/Selection sharing the right pane. Run it against a current service:
+`python3 tools/e2e/toolbar_layout.py --url http://127.0.0.1:44771/`.

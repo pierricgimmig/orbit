@@ -34,9 +34,9 @@ with sync_playwright() as p:
   page.wait_for_function("label => { let v=window.__orbit_ui; v=typeof v==='string'?JSON.parse(v):v; return v?.some(r=>r[0]===label); }",arg=label)
   return next(r for r in rows() if r[0]==label)
  def click(label,button='left'):
+  if label in ['Report', 'Self'] and not any(r[0]==label for r in rows()): click('More')
   r=rect(label);page.mouse.click(r[1]+r[3]/2,r[2]+r[4]/2,button=button);page.wait_for_timeout(300)
- page.mouse.click(280,50);page.wait_for_timeout(300)
- page.mouse.click(110,100);page.wait_for_timeout(500)
+ click('Process');click('process:42');page.wait_for_timeout(500)
  click('Report');click('Functions');page.wait_for_timeout(700)
  click('hook:function_1')  # A mixed selection must hook all, not toggle each.
  a=rect('fn:function_1'); z=rect('fn:function_3')
@@ -83,7 +83,7 @@ with sync_playwright() as p:
  page.wait_for_timeout(1800)
  page.request.post(args.url.rstrip('/')+'/api/demo/stop',data='{}',headers={'Content-Type':'application/json'})
  page.route('**/api/processes',lambda r:r.fulfill(json=[]))
- click('Refresh');page.wait_for_timeout(500)
+ page.wait_for_timeout(1400)
  click('Live');page.wait_for_timeout(500)
  click('sort:function')
  names=[r[0] for r in rows() if r[0].startswith('live:')]
@@ -99,9 +99,8 @@ with sync_playwright() as p:
  page.route('**/api/processes',lambda r:r.fulfill(json=[{'pid':1,'name':'demo'}]))
  page.route('**/api/functions/search?*',lambda r:r.fulfill(json={'pid':1,'status':'ready','functions':fixture}))
  page.route('**/api/symbols/**',lambda r:r.fulfill(json={'pid':1,'status':'ready','function_count':len(fixture),'module_count':1}))
- click('Refresh');page.wait_for_timeout(300)
- page.mouse.click(280,50);page.wait_for_timeout(300)
- page.mouse.click(110,100);page.wait_for_timeout(800)
+ page.wait_for_timeout(1400)
+ click('Process');click('process:1');page.wait_for_timeout(800)
  assert hooks()==[], hooks()
  click('sort:function');page.wait_for_timeout(300)
  hook_rows=[r for r in rows() if r[0].startswith('hook:')]

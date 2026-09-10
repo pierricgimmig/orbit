@@ -51,6 +51,11 @@ impl FunctionIndex {
     /// of the files behind them.
     #[cfg(target_os = "linux")]
     pub fn for_pid(pid: i32) -> FunctionIndex {
+        Self::for_pid_with_progress(pid, |_, _| {})
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn for_pid_with_progress(pid: i32, progress: impl Fn(usize, usize) + Sync) -> FunctionIndex {
         let Ok(content) = std::fs::read(format!("/proc/{pid}/maps")) else {
             return FunctionIndex { functions: Vec::new(), module_count: 0 };
         };
@@ -76,7 +81,11 @@ impl FunctionIndex {
         // here until they return, so its span is the total symbol-loading time.
         let mut functions: Vec<InstrumentableFunction> = {
             let _total = orbit_api::scope(format!("load symbols ({module_count} modules)"));
-            crate::par_map(&paths, |path| Self::functions_of_module(path))
+            crate::par_map(&paths, |path| {
+                let functions = Self::functions_of_module(path);
+                progress(functions.len(), 1);
+                functions
+            })
                 .into_iter()
                 .flatten()
                 .collect()
@@ -128,6 +137,14 @@ impl FunctionIndex {
     pub fn for_pid(pid: i32) -> FunctionIndex {
         let rows = crate::frida::symbols(pid).unwrap_or_else(|e| { eprintln!("orbit-service: {e}"); Vec::new() });
         Self::from_frida_rows(rows)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn for_pid_with_progress(pid: i32, progress: impl Fn(usize, usize) + Sync) -> FunctionIndex {
+        // Frida returns one completed catalogue on macOS.
+        let index = Self::for_pid(pid);
+        progress(index.len(), index.module_count());
+        index
     }
 
     #[cfg(any(target_os = "macos", test))]

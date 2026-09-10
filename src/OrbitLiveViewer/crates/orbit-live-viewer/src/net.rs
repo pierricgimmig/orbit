@@ -102,6 +102,8 @@ pub struct SamplingReport {
 #[allow(dead_code)]
 pub struct SymbolsStatusJson {
     #[serde(default)]
+    pub elapsed_ms: Option<u64>,
+    #[serde(default)]
     pub pid: u32,
     #[serde(default)]
     pub status: String,
