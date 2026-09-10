@@ -1923,7 +1923,7 @@ pub fn run_on(
             // A status for a process nobody has asked about is "idle", not
             // the previous process's answer.
             if state.pid != pid {
-                return Ok(SymbolState::default().status_json());
+                return Ok(SymbolState { pid, ..Default::default() }.status_json());
             }
             Ok(state.status_json())
         }),
