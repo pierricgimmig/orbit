@@ -57,6 +57,16 @@ with sync_playwright() as playwright:
         assert max(r[2] for r in controls) - min(r[2] for r in controls) < 10, controls
         assert not any(r[0] in ['Refresh', 'Report', 'Self'] for r in rows()), rows()
     page.set_viewport_size({'width': 1200, 'height': 800})
+    processes.extend({'pid': pid, 'name': f'worker-{pid}', 'cpu': 1} for pid in range(100, 125))
+    click('Process')
+    page.wait_for_timeout(1400)
+    visible = [r for r in rows() if r[0].startswith('visible-process:')]
+    assert 20 <= len(visible) <= 21, visible
+    assert all(r[2] >= 0 and r[2] + r[4] <= 800 for r in visible), visible
+    page.screenshot(path='/tmp/orbit-process-menu.png')
+    page.keyboard.press('Escape')
+    del processes[2:]
+    page.wait_for_timeout(1400)
     click('Process')
     assert [r[0] for r in rows() if r[0].startswith('process:')] == ['process:43', 'process:42']
     before = len(polls)
