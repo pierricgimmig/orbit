@@ -46,6 +46,70 @@
   <p class="facts">{{facts}}</p>
 
   <section class="section">
+    <h2>Python on one side, native + CUDA on the other &mdash; one timeline</h2>
+    <p class="sub">The one thing no other profiler does: dynamic instrumentation on <em>both</em> sides of the
+      Python boundary, in a single capture. Your Python functions, the C extension they call into, and the GPU
+      kernel it launches &mdash; aligned on one timeline.</p>
+
+    <div class="card" style="padding:1.25rem;">
+      <svg viewBox="0 0 900 250" role="img"
+           aria-label="One timeline with three aligned lanes: a Python function train_step, the C-extension matmul it calls, and the CUDA sgemm kernel that launches, each nested under the previous."
+           style="width:100%;height:auto;font-family:var(--mono);font-size:13px;">
+        <!-- time axis -->
+        <line x1="150" y1="28" x2="880" y2="28" stroke="var(--line)"/>
+        <text x="150" y="20" fill="var(--muted)">t</text>
+        <text x="864" y="20" fill="var(--muted)">&rarr;</text>
+
+        <!-- lane labels -->
+        <text x="16" y="66"  fill="var(--ink-soft)">Python</text>
+        <text x="16" y="122" fill="var(--ink-soft)">C&nbsp;extension</text>
+        <text x="16" y="178" fill="var(--ink-soft)">GPU&nbsp;(CUDA)</text>
+        <text x="16" y="230" fill="var(--muted)" font-size="11">source</text>
+
+        <!-- Python function scope (USDT / out-of-process) -->
+        <rect x="150" y="46" width="700" height="34" rx="4" fill="var(--accent-wash)" stroke="var(--accent)"/>
+        <text x="164" y="68" fill="var(--accent-deep)">train_step()  &mdash;  Python function (USDT probe)</text>
+
+        <!-- C extension scope (native dynamic instrumentation) -->
+        <rect x="250" y="102" width="520" height="34" rx="4" fill="#f6e6cf" stroke="#d98a2b"/>
+        <text x="264" y="124" fill="#8a5212">at::matmul  &mdash;  C extension (native hook)</text>
+
+        <!-- CUDA kernel (GPU) -->
+        <rect x="330" y="158" width="360" height="34" rx="4" fill="#dcf0dc" stroke="#3f9d3f"/>
+        <text x="344" y="180" fill="#256b25">sgemm&lt;&lt;&lt;&gt;&gt;&gt;  &mdash;  CUDA kernel</text>
+
+        <!-- alignment guides -->
+        <line x1="250" y1="80" x2="250" y2="102" stroke="var(--line)" stroke-dasharray="3 3"/>
+        <line x1="330" y1="136" x2="330" y2="158" stroke="var(--line)" stroke-dasharray="3 3"/>
+        <line x1="690" y1="192" x2="690" y2="136" stroke="var(--line)" stroke-dasharray="3 3"/>
+      </svg>
+    </div>
+
+    <div class="cards" style="margin-top:1.25rem;">
+      <div class="card primary">
+        <p class="kicker">Zero code</p>
+        <h3>Attach and see it</h3>
+        <p>CPython built <code>--with-dtrace</code> carries USDT probes Orbit reads from outside the process &mdash;
+          your Python functions become scopes with no imports, no decorators, no restart. Where a build omits the
+          per-function probes, Orbit says so and falls back to sampling.</p>
+      </div>
+      <div class="card">
+        <p class="kicker">The half everyone misses</p>
+        <h3>Into the C extension</h3>
+        <p>The Python probes stop at the C boundary &mdash; and in AI workloads that is where the time goes. Orbit's
+          native instrumentation catches NumPy, PyTorch and the CUDA kernels they launch, so one capture shows the
+          whole stack: Python wrapper &rarr; C extension &rarr; GPU.</p>
+      </div>
+      <div class="card">
+        <p class="kicker">For AI work</p>
+        <h3>One machine or a cluster</h3>
+        <p>Profile a training loop end to end &mdash; framework overhead, the native kernels, and the GPU &mdash;
+          on a single box or across a cluster on one timeline. The differentiator for ML performance work.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
     <h2>What it does</h2>
     <p class="sub">One timeline, three sources of truth about where the time goes.</p>
     <div class="cards">

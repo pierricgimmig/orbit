@@ -31,6 +31,7 @@ mod procs;
 mod report;
 mod scope_index;
 mod selfstat;
+mod python_usdt;
 mod scopes;
 mod serve;
 mod symbolize;
@@ -149,6 +150,16 @@ fn parse_args() -> Args {
                         std::process::exit(2);
                     }
                 }
+            }
+            "--python-probes" => {
+                // orbit-service --python-probes <pid | path-to-python>
+                // Enumerate a Python binary's USDT probes and report whether
+                // Orbit could instrument its functions out-of-process or would
+                // fall back to sampling. The discovery step of the Python /
+                // native one-timeline feature; see
+                // docs/python-ebpf-instrumentation.md.
+                let target = iter.next().unwrap_or_default();
+                std::process::exit(python_usdt::print_probes(&target));
             }
             "--uprobe-dump" => {
                 // Every raw probe hit to a file, for looking at what the

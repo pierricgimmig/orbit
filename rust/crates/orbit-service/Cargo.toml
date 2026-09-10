@@ -58,6 +58,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 orbit-maps = { path = "../orbit-maps" }
 orbit-object = { path = "../orbit-object" }
+object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }
 orbit-perf-records = { path = "../orbit-perf-records" }
 orbit-scope-ring = { path = "../orbit-scope-ring" }
 orbit-thread-states = { path = "../orbit-thread-states" }
