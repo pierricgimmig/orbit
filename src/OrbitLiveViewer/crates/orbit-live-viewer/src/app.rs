@@ -9341,8 +9341,10 @@ fn paint_value_graphs(
             let w = galley.size().x + 8.0;
             // Right of the line unless that runs off the body.
             let left = if px + 8.0 + w > body.right() { px - 8.0 - w } else { px + 8.0 };
-            let top = (py - galley.size().y - 4.0).max(body.top() + y);
-            let bg = Rect::from_min_size(Pos2::new(left, top), Vec2::new(w, galley.size().y + 4.0));
+            // Keep the readout stationary vertically; only the dot follows the value.
+            let label_h = galley.size().y + 4.0;
+            let top = body.top() + y + (h - label_h) * 0.5;
+            let bg = Rect::from_min_size(Pos2::new(left, top), Vec2::new(w, label_h));
             painter.rect_filled(bg, 3.0, color);
             painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, ink);
             painter.circle_filled(Pos2::new(px, py), 3.0, color);
