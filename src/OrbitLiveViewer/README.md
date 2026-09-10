@@ -42,7 +42,11 @@ The desktop toolbar keeps capture controls, process selection, scope search and
 symbol-loading status on one row. **More** contains **Report** (`R`), **Self**
 (`F2`) and **Inspector** (`I`). **Move** contains **Follow latest** (`Space`) and
 **Fit capture** (`Home`), with reminders for pan/zoom and scrolling shortcuts.
-Shortcuts are inactive while typing in a text field.
+Open the process picker with **Ctrl+Shift+P** (**⌘⇧P** on Mac). Type to filter,
+use **Up/Down** to move through results, and press **Enter** to select the highlighted
+process (the first result by default). **Escape** dismisses the picker. Navigation
+keeps the highlighted process visible and preserves it across CPU reordering.
+Other global shortcuts are inactive while typing in a text field.
 
 Inspector shares the resizable right pane with function reports and holds viewer
 statistics, FPS, stream rate, ring settings and symbol-loading errors/retry.
