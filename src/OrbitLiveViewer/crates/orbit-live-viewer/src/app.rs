@@ -4238,7 +4238,11 @@ impl OrbitLiveApp {
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
                     );
                 }
-                painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
+                // Core lanes share a plain background. Decorative separators
+                // can form a repeating light/dark pattern at fractional scale.
+                if !matches!(row.id, RowId::Lane(k) if k.is_scheduler()) {
+                    painter.line_segment([r.left_bottom(), r.right_bottom()], hairline());
+                }
                 let hover_thread = match hover_row {
                     Some(RowId::Thread(t)) => Some(t),
                     Some(RowId::Lane(k)) if !k.is_scheduler() => Some(ThreadId {
