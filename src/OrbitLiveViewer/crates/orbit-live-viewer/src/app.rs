@@ -845,6 +845,7 @@ pub struct OrbitLiveApp {
     canvas_override: Option<(Color32, Color32)>,
     capture_open: bool,
     process_filter: String,
+    process_keyboard_pid: Option<u32>,
     opt_api: bool,
     opt_csw: bool,
     opt_thread_states: bool,
@@ -1526,6 +1527,7 @@ impl OrbitLiveApp {
             canvas_override: None,
             capture_open: false,
             process_filter: String::new(),
+            process_keyboard_pid: None,
             opt_api: true,
             opt_csw: true,
             opt_thread_states: true,
@@ -3010,13 +3012,24 @@ impl OrbitLiveApp {
                 .fill(theme::INPUT()),
         );
         note_ui_rect("Process", button.rect);
-        let opening = button.clicked() && !egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let shortcut = ui.input_mut(|i| i.consume_key(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::P));
+        button.clone().on_hover_text("Select process (Ctrl+Shift+P / ⌘⇧P)");
+        let opening = shortcut || (button.clicked() && !egui::Popup::is_id_open(ui.ctx(), popup_id));
+        if opening { self.process_keyboard_pid = None; }
         let popup = egui::Popup::from_response(&button)
             .id(popup_id)
             .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
             .width(500.0_f32.min(ui.ctx().screen_rect().width() - 24.0))
-            .open_memory(button.clicked().then_some(SetOpenCommand::Toggle));
+            .open_memory(if shortcut { Some(SetOpenCommand::Bool(true)) } else { button.clicked().then_some(SetOpenCommand::Toggle) });
         popup.show(|ui| {
+            // Consume navigation before TextEdit sees it, so focus stays in
+            // the filter while the highlighted process moves.
+            let (up, down, enter) = ui.input_mut(|i| (
+                i.consume_key(egui::Modifiers::NONE, Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, Key::ArrowDown),
+                i.consume_key(egui::Modifiers::NONE, Key::Enter),
+            ));
             let filter = ui.add(
                 egui::TextEdit::singleline(&mut self.process_filter)
                     .id(filter_id)
@@ -3028,8 +3041,19 @@ impl OrbitLiveApp {
             if opening {
                 filter.request_focus();
             }
+            note_ui_rect("process-filter", filter.rect);
             let q = self.process_filter.clone();
-            let mut pick = None;
+            let matching: Vec<u32> = self.processes.iter()
+                .filter(|p| process_matches_filter(p.pid, &p.name, &p.path, &q))
+                .map(|p| p.pid).collect();
+            if filter.changed() { self.process_keyboard_pid = None; }
+            let index = self.process_keyboard_pid
+                .and_then(|pid| matching.iter().position(|&p| p == pid)).unwrap_or(0);
+            let index = if down { (index + 1).min(matching.len().saturating_sub(1)) }
+                else if up { index.saturating_sub(1) } else { index };
+            let active_pid = matching.get(index).copied();
+            if up || down { self.process_keyboard_pid = active_pid; }
+            let mut pick = if enter { active_pid } else { None };
             // Reserve room for twenty rows instead of inheriting a short
             // viewport from the popup's previous size or its toolbar anchor.
             let row_pitch = ui.spacing().interact_size.y + ui.spacing().item_spacing.y;
@@ -3049,10 +3073,16 @@ impl OrbitLiveApp {
                             continue;
                         }
                         let label = format!("{:.1}%  {}  {}", p.cpu, p.pid, p.name);
-                        let selected = self.selected_pid == Some(p.pid);
+                        let selected = active_pid == Some(p.pid);
                         ui.push_id(p.pid, |ui| {
                             let row = ui.selectable_label(selected, label).on_hover_text(&p.path);
                             note_ui_rect(&format!("process:{}", p.pid), row.rect);
+                            if selected {
+                                note_ui_rect(&format!("active-process:{}", p.pid), row.rect);
+                                if up || down || filter.changed() || opening {
+                                    row.scroll_to_me(Some(egui::Align::Center));
+                                }
+                            }
                             if ui.is_rect_visible(row.rect) {
                                 note_ui_rect(&format!("visible-process:{}", p.pid), row.rect);
                             }
