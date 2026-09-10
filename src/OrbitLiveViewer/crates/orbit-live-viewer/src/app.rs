@@ -9302,13 +9302,14 @@ fn paint_value_graphs(
         });
         let (min_v, max_v) = value_extent(&samples);
         let bucketed = bucket_last_per_device_px(&samples, ppp);
-        let color = c32(theme::display_argb(orbit_live_event::named_scope_color(
+        let graph_argb = theme::display_argb(orbit_live_event::named_scope_color(
             intern
                 .get(lane.events().last().map(|e| e.name_id).unwrap_or(key.tid))
                 .map(str::as_bytes)
                 .unwrap_or(&key.tid.to_le_bytes()),
             1,
-        )));
+        ));
+        let color = c32(graph_argb);
         let pad = 3.0;
         let inner_h = (h - pad * 2.0).max(1.0);
         let span_v = (max_v - min_v).max(1e-6);
@@ -9335,14 +9336,15 @@ fn paint_value_graphs(
             let name = intern.get(e.name_id).unwrap_or("value");
             let text = format!("{name} {}", format_value(intern, e.name_id, v));
             let font = FontId::monospace(10.5);
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), theme::TEXT()));
+            let ink = label_ink(graph_argb);
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), ink));
             let w = galley.size().x + 8.0;
             // Right of the line unless that runs off the body.
             let left = if px + 8.0 + w > body.right() { px - 8.0 - w } else { px + 8.0 };
             let top = (py - galley.size().y - 4.0).max(body.top() + y);
             let bg = Rect::from_min_size(Pos2::new(left, top), Vec2::new(w, galley.size().y + 4.0));
-            painter.rect_filled(bg, 3.0, Color32::from_rgba_unmultiplied(0x12, 0x14, 0x18, 220));
-            painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, theme::TEXT());
+            painter.rect_filled(bg, 3.0, color);
+            painter.galley(Pos2::new(left + 4.0, top + 2.0), galley, ink);
             painter.circle_filled(Pos2::new(px, py), 3.0, color);
         }
     }
