@@ -971,6 +971,7 @@ def self_pane(run):
     if run.chrome is None:
         return "skipped: --no-shots"
     run.open_viewer()
+    run.click("More")
     run.click("Self")
     phases = run.wait_for(lambda: (run.self_phases() or None), "the viewer's self-profile", timeout=15)
     check(phases.get("phases"), f"the Self pane shows no frame phases: {phases}")
@@ -1300,6 +1301,7 @@ def wire_and_perf(run):
     # can be lost, so the pane is asked for again if nothing shows.
     phases = None
     for _ in range(3):
+        run.click("More")
         run.click("Self")
         try:
             phases = run.wait_for(lambda: run.self_phases() or None, "the self-profile readout", timeout=7)

@@ -225,6 +225,10 @@ struct CaptureState {
 /// three-state shape is the viewer's, not ours: it already knows how to wait.
 #[derive(Default)]
 struct SymbolState {
+    started: Option<std::time::Instant>,
+    elapsed_ms: Option<u64>,
+    functions_loaded: usize,
+    modules_loaded: usize,
     pid: u32,
     status: String,
     error: String,
@@ -235,9 +239,11 @@ impl SymbolState {
     fn status_json(&self) -> String {
         let (functions, modules) = match &self.index {
             Some(index) => (index.len(), index.module_count()),
-            None => (0, 0),
+            None => (self.functions_loaded, self.modules_loaded),
         };
         serde_json::json!({
+            "pid": self.pid,
+            "elapsed_ms": self.elapsed_ms.or_else(|| self.started.map(|t| t.elapsed().as_millis() as u64)),
             "status": if self.status.is_empty() { "idle" } else { self.status.as_str() },
             "module_count": modules,
             "function_count": functions,
@@ -252,6 +258,7 @@ fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), Str
     if pid == 0 {
         return Err("a process must be selected before symbols can be loaded".to_string());
     }
+    let started = std::time::Instant::now();
     {
         let mut guard = state.lock().map_err(|_| "symbol state poisoned".to_string())?;
         if guard.pid == pid && (guard.status == "ready" || guard.status == "loading") {
@@ -262,20 +269,31 @@ fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), Str
             status: "loading".to_string(),
             error: String::new(),
             index: None,
+            started: Some(started),
+            ..Default::default()
         };
     }
     let state = state.clone();
+    let error_state = state.clone();
     std::thread::Builder::new()
         .name("orbit-symbols".to_string())
         .spawn(move || {
             // FunctionIndex::for_pid emits its own total "load symbols (N
             // modules)" scope around the parallel per-file loads.
-            let index = FunctionIndex::for_pid(pid as i32);
+            let index = FunctionIndex::for_pid_with_progress(pid as i32, |functions, modules| {
+                if let Ok(mut guard) = state.lock() {
+                    if guard.pid == pid && guard.started == Some(started) {
+                        guard.functions_loaded += functions;
+                        guard.modules_loaded += modules;
+                    }
+                }
+            });
             let Ok(mut guard) = state.lock() else { return };
             // A later selection may have superseded this one while it ran.
-            if guard.pid != pid {
+            if guard.pid != pid || guard.started != Some(started) {
                 return;
             }
+            guard.elapsed_ms = Some(started.elapsed().as_millis() as u64);
             if index.is_empty() {
                 guard.status = "error".to_string();
                 guard.error =
@@ -290,7 +308,16 @@ fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), Str
             guard.status = "ready".to_string();
             guard.index = Some(Arc::new(index));
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            if let Ok(mut guard) = error_state.lock() {
+                if guard.pid == pid && guard.started == Some(started) {
+                    guard.status = "error".into();
+                    guard.error = error.to_string();
+                    guard.elapsed_ms = Some(started.elapsed().as_millis() as u64);
+                }
+            }
+            error.to_string()
+        })?;
     Ok(())
 }
 
@@ -1784,6 +1811,7 @@ pub fn run_on(
                     .and_then(|state| (state.pid == pid as u32).then(|| state.index.clone()).flatten());
                 if index.is_none() && pid > 0 {
                     eprintln!("orbit-service: loading symbols for pid {pid} before arming {} hook(s)", ids.len());
+                    let symbol_started = std::time::Instant::now();
                     let fresh = FunctionIndex::for_pid(pid);
                     if !fresh.is_empty() {
                         let fresh = Arc::new(fresh);
@@ -1793,6 +1821,8 @@ pub fn run_on(
                                 status: "ready".to_string(),
                                 error: String::new(),
                                 index: Some(fresh.clone()),
+                                elapsed_ms: Some(symbol_started.elapsed().as_millis() as u64),
+                                ..Default::default()
                             };
                         }
                         index = Some(fresh);
@@ -1945,6 +1975,25 @@ mod tests {
     use orbit_tracing_state::context_switches::SchedulingSlice;
 
     const S: u64 = 1_000_000_000;
+
+    #[test]
+    fn symbol_status_reports_progress_and_freezes_completion_time() {
+        let mut state = SymbolState {
+            pid: 42, status: "loading".into(),
+            started: Some(std::time::Instant::now()),
+            functions_loaded: 123, modules_loaded: 2,
+            ..Default::default()
+        };
+        let json: serde_json::Value = serde_json::from_str(&state.status_json()).unwrap();
+        assert_eq!(json["pid"], 42);
+        assert_eq!(json["function_count"], 123);
+        assert_eq!(json["module_count"], 2);
+        assert!(json["elapsed_ms"].is_u64());
+        state.status = "ready".into();
+        state.elapsed_ms = Some(73);
+        let json: serde_json::Value = serde_json::from_str(&state.status_json()).unwrap();
+        assert_eq!(json["elapsed_ms"], 73);
+    }
 
     #[test]
     fn overflow_stop_needs_unbroken_loss_for_the_whole_window() {

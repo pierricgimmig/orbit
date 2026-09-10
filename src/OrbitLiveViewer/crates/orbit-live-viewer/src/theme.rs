@@ -116,7 +116,6 @@ pub fn DISPLAY_TRACK() -> u32 {
 pub enum WashRole {
     Process,
     Thread,
-    ThreadAlt,
     Leaf,
 }
 
@@ -145,7 +144,6 @@ pub fn process_track_wash_role(pid: u32, role: WashRole) -> Color32 {
     let lift = match role {
         WashRole::Process => 10,
         WashRole::Thread => 0,
-        WashRole::ThreadAlt => -3,
         WashRole::Leaf => -5,
     };
     let t = active();
@@ -163,7 +161,7 @@ pub fn process_track_wash_role(pid: u32, role: WashRole) -> Color32 {
 /// scope accents -- distinct per process, but clearly the timeline
 /// background rather than a foreign colour. The row lift is a small lightness
 /// step (lighter than the canvas on a dark scheme, darker on a light one) so
-/// the alternating thread rows still read.
+/// the process headers and child lanes still read.
 fn derive_wash(t: &orbit_live_event::theme::Theme, idx: usize, lift: i16) -> Color32 {
     let accent = t.scope[idx % t.scope.len()];
     let mix = |base: u32, acc: u32| ((base * 92 + acc * 8) / 100) as i16;
