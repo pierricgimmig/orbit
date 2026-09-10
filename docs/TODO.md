@@ -713,3 +713,22 @@ darker than the surrounding chrome). Now only Orbit ships an explicit wash
 table; every other scheme derives each process band as a faint tint of its
 own canvas toward one of its scope accents (`derive_wash`), so the timeline
 background is one family with the chrome in both dark and light schemes.
+
+## 45. Mojo: host and GPU in one timeline
+
+Same one-timeline-across-the-boundary angle as Python (44), but easier: Mojo
+compiles ahead of time to native code, so a Mojo function is a native symbol
+Orbit already hooks with kernel uprobes -- no interpreter, no probes, no eBPF.
+Its GPU kernels launch through the driver Orbit's GPU telemetry helper already
+watches, so host and device land on one timeline.
+
+**Status: landing page + design (2026-09-10); Mojo-specific work planned.**
+The homepage features the angle with a diagram (`tools/site/index.html`). The
+instrumentation itself is the native path Orbit ships; what is Mojo-specific --
+name demangling / source mapping, function discovery from the symbol table for
+"hook from the report", GPU kernel attribution and `language=mojo` tagging, and
+an e2e -- is in [mojo-instrumentation.md](mojo-instrumentation.md). Not
+verifiable on this box: no Mojo toolchain, no GPU, so the mangling scheme,
+whether `mojo build` emits DWARF, and CUPTI's Mojo kernel names are unconfirmed.
+First step: build a small Mojo program on a toolchain machine and pin the
+demangling from its symbols/DWARF.
