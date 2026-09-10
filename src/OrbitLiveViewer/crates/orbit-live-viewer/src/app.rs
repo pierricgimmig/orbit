@@ -3030,9 +3030,18 @@ impl OrbitLiveApp {
             }
             let q = self.process_filter.clone();
             let mut pick = None;
+            // Reserve room for twenty rows instead of inheriting a short
+            // viewport from the popup's previous size or its toolbar anchor.
+            let row_pitch = ui.spacing().interact_size.y + ui.spacing().item_spacing.y;
+            let screen = ui.ctx().screen_rect();
+            let room = (screen.bottom() - button.rect.bottom())
+                .max(button.rect.top() - screen.top());
+            let list_height = (20.0 * row_pitch - ui.spacing().item_spacing.y)
+                .min((room - filter.rect.height() - 24.0).max(0.0));
             egui::ScrollArea::vertical()
                 .id_salt(list_id)
-                .max_height(240.0)
+                .min_scrolled_height(list_height)
+                .max_height(list_height)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     for p in &self.processes {
@@ -3044,6 +3053,9 @@ impl OrbitLiveApp {
                         ui.push_id(p.pid, |ui| {
                             let row = ui.selectable_label(selected, label).on_hover_text(&p.path);
                             note_ui_rect(&format!("process:{}", p.pid), row.rect);
+                            if ui.is_rect_visible(row.rect) {
+                                note_ui_rect(&format!("visible-process:{}", p.pid), row.rect);
+                            }
                             if row.clicked() { pick = Some(p.pid); }
                         });
                     }
