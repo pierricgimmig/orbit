@@ -713,3 +713,25 @@ darker than the surrounding chrome). Now only Orbit ships an explicit wash
 table; every other scheme derives each process band as a faint tint of its
 own canvas toward one of its scope accents (`derive_wash`), so the timeline
 background is one family with the chrome in both dark and light schemes.
+
+## 44. Python + native in one timeline (eBPF / USDT)
+
+Lean into Orbit's unique angle: the only profiler that does dynamic
+instrumentation on both sides of the Python boundary in one view. CPython's
+built-in USDT probes (`function__entry`/`function__return`) catch pure-Python
+functions out-of-process; Orbit's native instrumentation catches the C
+extension and CUDA. One capture, full stack: Python wrapper -> C extension ->
+GPU kernel. Select functions from a sampling report or edit the list in Orbit.
+
+**Status: landing page + discovery built (2026-09-10); attach/capture planned.**
+The homepage features the angle with a diagram (`tools/site/index.html`), and
+`python_usdt.rs` discovers a Python image's USDT probes and decides
+USDT-vs-sampling (`orbit-service --python-probes <pid|path>`), unit-tested and
+run against the live `python3.14`. Design, the two attach paths (generated
+eBPF with in-kernel filtering, or the perf-uprobe bridge), tagging
+(`language=python`/`origin=python_function`), the CUDA merge, fallbacks, and
+the e2e are in [python-ebpf-instrumentation.md](python-ebpf-instrumentation.md).
+Reality check found on 2026-09-10: Ubuntu's `python3.14` ships `gc`/`import`/
+`audit` probes but **not** the per-function ones, so detect-and-degrade to
+sampling is the common path, not an edge case. Building the attach/capture
+needs a `--with-dtrace` Python with the function probes, privileges, and a GPU.

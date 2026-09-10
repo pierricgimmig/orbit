@@ -945,6 +945,7 @@ dependencies = [
  "iced-x86",
  "libc",
  "miniz_oxide 0.8.9",
+ "object",
  "orbit-api",
  "orbit-capture",
  "orbit-frida-transport",
