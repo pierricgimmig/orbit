@@ -52,10 +52,10 @@ with sync_playwright() as playwright:
     for width in [1200, 1024, 900]:
         page.set_viewport_size({'width': width, 'height': 800})
         page.wait_for_timeout(300)
-        controls = [rect(name) for name in ['Process', 'Symbols', 'Move', 'More', 'Open', 'Settings']]
+        controls = [rect(name) for name in ['Process', 'Symbols', 'More', 'Open', 'Settings']]
         assert all(r[1] >= 0 and r[1] + r[3] <= width for r in controls), controls
         assert max(r[2] for r in controls) - min(r[2] for r in controls) < 10, controls
-        assert not any(r[0] in ['Refresh', 'Report', 'Self'] for r in rows()), rows()
+        assert not any(r[0] in ['Refresh', 'Report', 'Self', 'Move', 'Paper'] for r in rows()), rows()
     page.set_viewport_size({'width': 1200, 'height': 800})
     processes.extend({'pid': pid, 'name': f'worker-{pid}', 'cpu': 1} for pid in range(100, 125))
     click('Process')
@@ -127,10 +127,10 @@ with sync_playwright() as playwright:
     assert state()['tab'] == 'Inspector' and state()['report_open'], state()
     click('Selection')
     assert state()['tab'] == 'Selection', state()
-    click('Move')
+    click('More')
     follow = next(r[0] for r in rows() if r[0].startswith('Follow:'))
     click(follow)
-    click('Move')
+    click('More')
     assert next(r[0] for r in rows() if r[0].startswith('Follow:')) != follow
     page.keyboard.press('Escape')
     # A real marquee opens the Selection tab in the same resizable right pane.
