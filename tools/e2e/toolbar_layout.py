@@ -28,7 +28,20 @@ with sync_playwright() as playwright:
     page.route('**/api/processes', process_list)
     page.route('**/api/status', lambda r: r.fulfill(json={'hooks': True, 'capturing': False, 'demo': False, 'wire': 'packed'}))
     symbols = {'pid': 42, 'status': 'loading', 'function_count': 120, 'module_count': 2, 'elapsed_ms': 20}
-    page.route('**/api/symbols/**', lambda r: r.fulfill(json=symbols))
+    symbol_polls = []
+    symbol_loads = []
+    delayed_symbol_status = []
+    def symbol_status(route):
+        symbol_polls.append(1)
+        if 'pid=43' in route.request.url and not delayed_symbol_status:
+            delayed_symbol_status.append(route)
+            return
+        route.fulfill(json=symbols)
+    def symbol_load(route):
+        symbol_loads.append(1)
+        route.fulfill(status=200, body='')
+    page.route('**/api/symbols/status?*', symbol_status)
+    page.route('**/api/symbols/load', symbol_load)
     page.route('**/api/functions/search?*', lambda r: r.fulfill(json={'pid': 42, 'status': 'ready', 'functions': []}))
     trace = {'traceEvents': [{'ph': 'X', 'name': f'work{i}', 'pid': 42, 'tid': tid,
         'ts': i * 1000, 'dur': 700} for tid in [10, 11] for i in range(10)]}
@@ -116,8 +129,20 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(700)
     assert state()['selected_pid'] == 42
     assert any(r[0].startswith('symbols-status:Loading 120 symbols') for r in rows()), rows()
-    symbols.update(status='ready', function_count=240, elapsed_ms=321)
+    # A status request can beat symbol loading and return a legacy pid-0
+    # idle reply. That must not permanently stop polling.
+    symbols.update(pid=0, status='idle', function_count=0)
+    before_polls, before_loads = len(symbol_polls), len(symbol_loads)
+    page.wait_for_timeout(1500)
+    assert len(symbol_polls) > before_polls + 1
+    assert len(symbol_loads) > before_loads
+    symbols.update(pid=42, status='ready', function_count=240, elapsed_ms=321)
     page.wait_for_timeout(700)
+    assert any(r[0] == 'symbols-status:Loaded 240 symbols in 321 ms' for r in rows()), rows()
+    # A late idle reply for the previous process must not replace readiness.
+    assert delayed_symbol_status
+    delayed_symbol_status[0].fulfill(json={'pid': 0, 'status': 'idle'})
+    page.wait_for_timeout(200)
     assert any(r[0] == 'symbols-status:Loaded 240 symbols in 321 ms' for r in rows()), rows()
     click('More'); click('Inspector')
     assert state()['tab'] == 'Inspector' and state()['report_open'], state()

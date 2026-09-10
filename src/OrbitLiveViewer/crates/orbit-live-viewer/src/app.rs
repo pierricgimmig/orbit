@@ -2296,7 +2296,7 @@ impl OrbitLiveApp {
             self.needs_repaint = true;
         }
         if let Some(mut s) = inbox.symbols {
-            if s.pid == 0 || self.selected_pid == Some(s.pid) {
+            if self.selected_pid == Some(s.pid) {
                 if s.status == "ready" && s.elapsed_ms.is_none() {
                     s.elapsed_ms = Some(((self.now_s - self.symbols_started_s).max(0.0) * 1000.0) as u64);
                 }
@@ -3475,9 +3475,15 @@ impl OrbitLiveApp {
             }
             if self.status.hooks
                 && now - self.last_symbol_poll > 0.4
-                && (self.symbols.status == "loading" || self.symbols.status.is_empty())
+                && matches!(self.symbols.status.as_str(), "loading" | "idle" | "")
             {
                 self.last_symbol_poll = now;
+                // A poll can beat the load request, or the service may have
+                // restarted / indexed another process. Idle is recoverable,
+                // not a terminal state. Loading is idempotent on the service.
+                if self.symbols.status == "idle" {
+                    self.net.load_symbols(pid);
+                }
                 self.net.get_symbols_status(pid);
             }
             // Live rows and scope menus also need symbols to resolve hook targets.

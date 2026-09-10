@@ -735,7 +735,12 @@ mod wasm_impl {
                     .and_then(|t| parse_symbols_status_json(&t));
                 let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
                 match result {
-                    Ok(s) => g.symbols = Some(s),
+                    // Older services return pid 0 for idle. Keep the request
+                    // identity so a late response cannot reset a new selection.
+                    Ok(mut s) => {
+                        if s.pid == 0 { s.pid = pid; }
+                        g.symbols = Some(s);
+                    }
                     Err(e) => g.error = Some(e),
                 }
             });
