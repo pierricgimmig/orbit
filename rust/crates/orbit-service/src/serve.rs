@@ -959,6 +959,14 @@ fn capture_loop(
     // width on the timeline is exactly the time spent draining faster.
     const DRAIN_BOOST_AT: f32 = 0.5;
     let mut boost_start_ns: Option<u64> = None;
+    // A loud async span on the service's own track for each unbroken stretch
+    // the scope rings are dropping records, so a capture that is losing events
+    // shows it plainly on the timeline -- not only on a value lane. Opened on
+    // the first lossy drain, closed and labelled with the count when a drain
+    // finally loses nothing. (Plain text, no glyph: the timeline font has no
+    // warning emoji and would draw tofu.)
+    let mut dropping_since_ns: Option<u64> = None;
+    let mut dropping_start_lost: u64 = 0;
 
     while running.load(Ordering::Relaxed) {
         let _pass = orbit_api::scope("capture pass");
@@ -1322,6 +1330,29 @@ fn capture_loop(
             running.store(false, Ordering::Relaxed);
         }
 
+        // Drop indicator. An async span on the service track for each unbroken
+        // losing stretch, plus a loud status line while it is happening, so it
+        // is unmistakable that Orbit is dropping events. A drain that loses
+        // nothing closes the span.
+        match (lost_delta > 0, dropping_since_ns) {
+            (true, None) => {
+                dropping_since_ns = Some(now_lost_ns);
+                dropping_start_lost = scopes.events_lost.saturating_sub(lost_delta);
+            }
+            (false, Some(start)) => {
+                let lost = scopes.events_lost.saturating_sub(dropping_start_lost);
+                orbit_api::span_async(format!("DROPPED {lost} events"), start, now_lost_ns);
+                dropping_since_ns = None;
+            }
+            _ => {}
+        }
+        if lost_delta > 0 && !overflow_stopped {
+            service.set_instrumentation_status(format!(
+                "DROPPING EVENTS: {} scope records lost -- hook fewer functions or lower the call rate",
+                scopes.events_lost
+            ));
+        }
+
         if !batch.is_empty() {
             // push_events, NOT ring().push_many(): the former also advances
             // the live-end marker the viewer positions its window by, bumps
@@ -1366,6 +1397,11 @@ fn capture_loop(
     // is drawn, while the segment is still capturing (before `finish`).
     if let Some(start) = boost_start_ns.take() {
         orbit_api::span_async("drain boost", start, crate::now_monotonic_ns());
+    }
+    // Likewise a drop stretch that ran to the end of the capture.
+    if let Some(start) = dropping_since_ns.take() {
+        let lost = scopes.events_lost.saturating_sub(dropping_start_lost);
+        orbit_api::span_async(format!("DROPPED {lost} events"), start, crate::now_monotonic_ns());
     }
 
     if let Some(tracer) = thread_states.as_mut() {
