@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbit-profiler"
+version = "0.1.0"
+description = "Orbit: a low-overhead profiler. The capture service and web viewer in one command, plus the C/C++ and Python instrumentation API."
+readme = "README.md"
+license = "BSD-2-Clause"
+requires-python = ">=3.8"
+authors = [{ name = "The Orbit Authors" }]
+keywords = ["profiling", "tracing", "instrumentation", "performance", "orbit"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: System :: Monitoring",
+]
+# Pinned to the same release: the service and the instrumentation library must
+# speak the same ring protocol, and both wheels are cut from one build.
+dependencies = ["orbit-api==0.1.0"]
+
+[project.scripts]
+orbit-service = "orbit_profiler:main"
+
+[project.urls]
+Homepage = "https://github.com/pierricgimmig/orbit"
+Source = "https://github.com/pierricgimmig/orbit/tree/main/rust/crates/orbit-service/python"
+
+[tool.setuptools]
+packages = ["orbit_profiler"]
+
+# The service binary, liborbit_api and orbit.h are dropped into the package by
+# tools/release/build_wheels.sh before the wheel is built.
+[tool.setuptools.package-data]
+orbit_profiler = ["orbit-service", "orbit-service.exe", "liborbit_api.so", "liborbit_api.dylib", "orbit_api.dll", "orbit.h"]

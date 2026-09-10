@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbit-api"
+version = "0.1.0"
+description = "Orbit manual instrumentation for Python: scopes, instants, links and values on a timeline a running orbit-service draws"
+readme = "README.md"
+license = "BSD-2-Clause"
+requires-python = ">=3.8"
+authors = [{ name = "The Orbit Authors" }]
+keywords = ["profiling", "tracing", "instrumentation", "orbit"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: System :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/pierricgimmig/orbit"
+Source = "https://github.com/pierricgimmig/orbit/tree/main/rust/crates/orbit-api/python"
+
+[tool.setuptools]
+packages = ["orbit_api"]
+
+# The prebuilt producer library ships inside the wheel. It is dropped into the
+# package by tools/release/build_wheels.sh before the wheel is built; a plain
+# `pip install .` from a checkout has no library and installs a pure no-op
+# package, which is the right behaviour for a source install.
+[tool.setuptools.package-data]
+orbit_api = ["liborbit_api.so", "liborbit_api.dylib", "orbit_api.dll"]
