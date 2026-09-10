@@ -2675,13 +2675,6 @@ impl OrbitLiveApp {
             "The graphics backend in use. WebGL2 by default; add ?webgpu to the \
              URL to try WebGPU where the driver supports it.",
         );
-        if ui
-            .selectable_label(self.light_canvas, "Paper")
-            .on_hover_text("Light canvas — judge selected/hover drop shadows on paper")
-            .clicked()
-        {
-            self.light_canvas = !self.light_canvas;
-        }
         ui.menu_button("Color scheme", |ui| {
             let current = orbit_live_event::theme::active().key;
             for theme in orbit_live_event::theme::THEMES {
@@ -2781,7 +2774,11 @@ impl OrbitLiveApp {
 
     fn transport_more(&mut self, ui: &mut Ui) {
         let more = pill(ui, "More", false).on_hover_text("More");
-        egui::Popup::menu(&more).show(|ui| self.transport_overflow_items(ui));
+        egui::Popup::menu(&more).show(|ui| {
+            self.transport_navigation_items(ui);
+            ui.separator();
+            self.transport_overflow_items(ui);
+        });
     }
 
     fn transport_narrow_bar(&mut self, ui: &mut Ui) {
@@ -2789,7 +2786,6 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_link_dot(ui);
             self.transport_record(ui);
-            self.transport_move(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
                 ui.label(
@@ -2874,21 +2870,18 @@ impl OrbitLiveApp {
         }
     }
 
-    fn transport_move(&mut self, ui: &mut Ui) {
-        let menu = pill(ui, "Move", false);
-        egui::Popup::menu(&menu).show(|ui| {
-            let follow = ui.selectable_label(self.follow, "Follow latest   Space");
-            note_ui_rect(if self.follow { "Follow:on" } else { "Follow:off" }, follow.rect);
-            if follow.clicked() {
-                self.follow = !self.follow;
-                ui.close();
-            }
-            if ui.button("Fit capture   Home").clicked() { self.fit_to_content(); ui.close(); }
-            ui.separator();
-            ui.label("Pan time: A / D");
-            ui.label("Zoom: W / S");
-            ui.label("Scroll tracks: ↑ / ↓, Page Up / Down");
-        });
+    fn transport_navigation_items(&mut self, ui: &mut Ui) {
+        let follow = ui.selectable_label(self.follow, "Follow latest   Space");
+        note_ui_rect(if self.follow { "Follow:on" } else { "Follow:off" }, follow.rect);
+        if follow.clicked() {
+            self.follow = !self.follow;
+            ui.close();
+        }
+        if ui.button("Fit capture   Home").clicked() { self.fit_to_content(); ui.close(); }
+        ui.separator();
+        ui.label("Pan time: A / D");
+        ui.label("Zoom: W / S");
+        ui.label("Scroll tracks: ↑ / ↓, Page Up / Down");
     }
 
     fn transport(&mut self, ui: &mut Ui) {
@@ -2915,7 +2908,6 @@ impl OrbitLiveApp {
             }
             self.paint_search(ui);
             self.paint_symbols_status(ui);
-            self.transport_move(ui);
             self.transport_more(ui);
             if fullscreen_pill(ui, self.fullscreen).clicked() { self.set_fullscreen(ui.ctx(), !self.fullscreen); }
         });
@@ -2958,7 +2950,7 @@ impl OrbitLiveApp {
 
     fn paint_symbols_status(&mut self, ui: &mut Ui) {
         let text = self.symbol_status_line();
-        let width = (ui.available_width() - 145.0).max(0.0);
+        let width = (ui.available_width() - 105.0).max(0.0);
         let label = ui.add_sized(Vec2::new(width, 22.0),
             egui::Label::new(RichText::new(&text).size(10.5).color(theme::MUTED())).truncate());
         note_ui_rect("Symbols", label.rect);

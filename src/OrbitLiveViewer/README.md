@@ -40,7 +40,7 @@ Open `http://<host>:44766/`.
 
 The desktop toolbar keeps capture controls, process selection, scope search and
 symbol-loading status on one row. **More** contains **Report** (`R`), **Self**
-(`F2`) and **Inspector** (`I`). **Move** contains **Follow latest** (`Space`) and
+(`F2`), **Inspector** (`I`), **Follow latest** (`Space`) and
 **Fit capture** (`Home`), with reminders for pan/zoom and scrolling shortcuts.
 Open the process picker with **Ctrl+Shift+P** (**⌘⇧P** on Mac). Type to filter,
 use **Up/Down** to move through results, and press **Enter** to select the highlighted
