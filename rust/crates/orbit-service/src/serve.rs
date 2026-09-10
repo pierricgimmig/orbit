@@ -509,6 +509,27 @@ fn started_in_capture(e: &LiveEvent, capture_start_ns: u64) -> bool {
     e.start_ns >= capture_start_ns
 }
 
+/// Whether a *sustained* scope-ring overflow should stop the capture, and the
+/// updated start-of-overload marker.
+///
+/// `losing` is whether this drain lost any records. Overflow must be
+/// unbroken: a drain that loses nothing resets the run (returns `None`), so a
+/// bursty or steady-but-recovering producer never trips it -- only one that
+/// loses on every drain for `window_ns` straight does. `window_ns == 0`
+/// disables the stop entirely (the default).
+fn overflow_should_stop(
+    overload_since_ns: Option<u64>,
+    losing: bool,
+    now_ns: u64,
+    window_ns: u64,
+) -> (Option<u64>, bool) {
+    if window_ns == 0 || !losing {
+        return (None, false);
+    }
+    let start = overload_since_ns.unwrap_or(now_ns);
+    (Some(start), now_ns.saturating_sub(start) >= window_ns)
+}
+
 /// Makes an opened bundle the current capture: the ring is emptied and
 /// refilled with its events, the names and the sample store replaced, and
 /// every viewer sees it as a capture that started and finished at once.
@@ -909,14 +930,29 @@ fn capture_loop(
 
     // Overflow fallback. While the scope (or perf) rings fill toward a lap,
     // draining sooner -- down to `min_drain` -- laps less and loses nothing; it
-    // costs only more frequent viewer batches, and only under load. If loss
-    // still climbs past `OVERFLOW_LOSS_BUDGET`, the producer is outrunning the
-    // buffers for good, and the honest response is to stop the capture rather
-    // than draw a timeline full of half-open scopes. A few dropped records at a
-    // capture's edges are normal; a hundred thousand are not.
+    // costs only more frequent viewer batches, and only under load.
+    //
+    // Dropping records under sustained overload is by design (the rings never
+    // block the producer), and the drain clamps depth and bounds open scopes,
+    // so an overflow does not corrupt the timeline. So the capture keeps
+    // running through bursts and steady high rates -- exactly what hooking a
+    // hot function is. Only a *continuously* overflowing capture, losing on
+    // every drain for a long unbroken stretch, is stopped, and only if
+    // `ORBIT_OVERFLOW_STOP_MS` sets a window (0, the default, never stops --
+    // an earlier build stopped once cumulative loss crossed a fixed budget,
+    // which killed legitimate hot-function captures after a few seconds).
     let min_drain = std::time::Duration::from_millis(1);
-    const OVERFLOW_LOSS_BUDGET: u64 = 100_000;
+    let overflow_stop_window_ns: u64 = std::env::var("ORBIT_OVERFLOW_STOP_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+        .saturating_mul(1_000_000);
     let mut overflow_stopped = false;
+    // Start of the current unbroken run of lossy drains; reset whenever a
+    // drain loses nothing. `last_events_lost` turns the cumulative counter
+    // into a per-pass delta.
+    let mut overload_since_ns: Option<u64> = None;
+    let mut last_events_lost: u64 = 0;
     // When adaptive draining is boosting (rings past half-full, so we come back
     // sooner), mark it on the service's own track: one async span per boost
     // stretch, opened when boosting begins and closed when it ends, so its
@@ -1254,15 +1290,25 @@ fn capture_loop(
             orbit_api::value("events per pass", batch.len() as f64);
         }
 
-        // Overflow fallback: adaptive draining could not keep the scope rings
-        // ahead of the producer, and loss has passed the budget. Stop, and say
-        // why on the status line the viewer shows.
-        if !overflow_stopped && scopes.events_lost >= OVERFLOW_LOSS_BUDGET {
+        // Overflow fallback: stop only if the scope rings have been losing on
+        // every drain, without a break, for the configured window -- a capture
+        // that is not just bursty but hopelessly behind. A drain that loses
+        // nothing resets the run, so steady hot-function hooking (which drops
+        // records but recovers between drains) keeps capturing.
+        let lost_delta = scopes.events_lost.saturating_sub(last_events_lost);
+        last_events_lost = scopes.events_lost;
+        let now_lost_ns = crate::now_monotonic_ns();
+        let (since, stop) =
+            overflow_should_stop(overload_since_ns, lost_delta > 0, now_lost_ns, overflow_stop_window_ns);
+        overload_since_ns = since;
+        if stop && !overflow_stopped {
             overflow_stopped = true;
             let msg = format!(
-                "capture stopped: scope rings overflowed and {} records were lost -- \
-                 the instrumented process is producing scopes faster than the buffers \
-                 drain. Hook fewer functions, or lower the call rate.",
+                "capture stopped: scope rings overflowed continuously for {} s ({} records \
+                 lost) -- the instrumented process is producing scopes faster than the \
+                 buffers drain. Hook fewer functions, lower the call rate, or set \
+                 ORBIT_OVERFLOW_STOP_MS=0 to keep capturing.",
+                overflow_stop_window_ns / 1_000_000_000,
                 scopes.events_lost
             );
             eprintln!("orbit-service: {msg}");
@@ -1861,6 +1907,47 @@ pub fn run_on(
 mod tests {
     use super::*;
     use orbit_tracing_state::context_switches::SchedulingSlice;
+
+    const S: u64 = 1_000_000_000;
+
+    #[test]
+    fn overflow_stop_needs_unbroken_loss_for_the_whole_window() {
+        let window = 10 * S;
+        // First lossy drain: mark the start, do not stop.
+        let (since, stop) = overflow_should_stop(None, true, 100 * S, window);
+        assert_eq!((since, stop), (Some(100 * S), false));
+        // Still losing, but only 5 s in: keep waiting.
+        let (since, stop) = overflow_should_stop(since, true, 105 * S, window);
+        assert_eq!((since, stop), (Some(100 * S), false));
+        // 10 s of unbroken loss: stop.
+        let (_since, stop) = overflow_should_stop(since, true, 110 * S, window);
+        assert!(stop);
+    }
+
+    #[test]
+    fn a_drain_that_loses_nothing_resets_the_run() {
+        let window = 10 * S;
+        let (since, _) = overflow_should_stop(None, true, 100 * S, window);
+        // A recovered drain (lost nothing) clears the run...
+        let (since, stop) = overflow_should_stop(since, false, 108 * S, window);
+        assert_eq!((since, stop), (None, false));
+        // ...so the clock restarts and 8 s of prior loss does not count.
+        let (_since, stop) = overflow_should_stop(since, true, 109 * S, window);
+        assert!(!stop, "a single lossy drain after a reset must not stop");
+    }
+
+    #[test]
+    fn a_zero_window_never_stops_however_long_it_overflows() {
+        // The default: hooking a hot function drops records forever and the
+        // capture keeps running.
+        let mut since = None;
+        for t in 0..1000u64 {
+            let (s, stop) = overflow_should_stop(since, true, t * S, 0);
+            since = s;
+            assert!(!stop);
+            assert_eq!(since, None);
+        }
+    }
 
     #[test]
     fn scopes_drained_from_before_the_capture_are_dropped() {
