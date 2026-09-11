@@ -1630,6 +1630,43 @@ def report_filter(run):
     return f"{len(after)} of {len(before)} rows match 'b3Mul'"
 
 
+@scenario("track-filter", "The tracks box hides every track whose name contains none of its words")
+def track_filter(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler")
+    before = run.wait_for(lambda: run.rects_matching("row:thread:") or None, "thread rows", timeout=20)
+    # One word: the physics workers and their process stay, the rest go.
+    run.click("filter:tracks")
+    run.chrome.call("Input.insertText", text="physics")
+    after = run.wait_for(
+        lambda: (lambda r: r if r and len(r) < len(before) else None)(run.rects_matching("row:thread:")),
+        "fewer thread rows once the word is in", timeout=10,
+    )
+    check(run.sel().get("track_filter") == "physics", "the readout shows the words")
+    # Any word matches, not every word: a second word nothing matches hides
+    # nothing more, as C++ Orbit's track filter behaved.
+    run.chrome.call("Input.insertText", text=" zzzz")
+    time.sleep(0.8)
+    check(set(run.rects_matching("row:thread:")) == set(after),
+          "an unmatched second word hides nothing more (any-word semantics)")
+    run.shot("45-track-filter", settle=0.5)
+    # Escape in the box clears it and every row is back.
+    run.chrome.key("Escape")
+    run.wait_for(lambda: len(run.rects_matching("row:thread:")) == len(before) or None,
+                 "every thread row back after Escape", timeout=10)
+    # A word nothing matches empties the rail: no thread, process or machine rows.
+    run.click("filter:tracks")
+    run.chrome.call("Input.insertText", text="zzzz")
+    run.wait_for(lambda: not run.rects_matching("row:") or None,
+                 "an empty rail for a word nothing matches", timeout=10)
+    run.chrome.key("Escape")
+    run.wait_for(lambda: len(run.rects_matching("row:thread:")) == len(before) or None,
+                 "every thread row back again", timeout=10)
+    return f"{len(before)} thread rows, {len(after)} with 'physics'"
+
+
 @scenario("sample-bar-select", "A left-drag on one thread's sample bar selects that thread's samples, drawn on the bar")
 def sample_bar_select(run):
     if run.chrome is None:

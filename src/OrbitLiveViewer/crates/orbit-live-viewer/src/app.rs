@@ -711,6 +711,12 @@ pub struct OrbitLiveApp {
     search_ids: HashSet<u32>,
     search_resolved: String,
     search_intern_len: usize,
+    /// The tracks box: words that a track's name must contain (any of them)
+    /// to stay on the rail. Distinct from `search`, which greys scopes.
+    track_filter: String,
+    /// What the last `refresh_track_filter` was computed from: the words,
+    /// the index's lane generation and the name tables' sizes.
+    track_filter_key: Option<(String, u64, usize, usize)>,
     lane_scroll: f32,
     pending_vscroll: Option<f32>,
     vscroll: VScrollInertia,
@@ -1183,7 +1189,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1235,6 +1241,7 @@ impl OrbitLiveApp {
                 .join(","),
             self.capture_start_ns,
             self.report_filter,
+            self.track_filter,
             self.last_n_prims,
             self.flame_zoom.len(),
             match self.selected_pid { Some(p) => p.to_string(), None => "null".to_string() },
@@ -1460,6 +1467,8 @@ impl OrbitLiveApp {
             search_ids: HashSet::new(),
             search_resolved: String::new(),
             search_intern_len: 0,
+            track_filter: crate::dev::query_track_filter_from_location().unwrap_or_default(),
+            track_filter_key: None,
             lane_scroll: 0.0,
             pending_vscroll: None,
             vscroll: VScrollInertia::default(),
@@ -1613,6 +1622,51 @@ impl OrbitLiveApp {
         !self.search_resolved.is_empty()
     }
 
+    fn track_filter_active(&self) -> bool {
+        !self.track_filter.trim().is_empty()
+    }
+
+    /// Applies the tracks box to the rail. A thread stays when its own label
+    /// or its process's -- tid, thread name, pid, process name -- contains
+    /// any of the words, and the scheduler track is judged against
+    /// "scheduler"; C++ Orbit's TrackManager filtered the same way. Recomputed
+    /// only when the words, the index's lanes or the name tables change, and
+    /// run before the strip lays out, so a thread that appears while a filter
+    /// is on never shows for a frame.
+    fn refresh_track_filter(&mut self) {
+        self.tracks.ensure_catalogue(&self.index);
+        let key = (
+            self.track_filter.trim().to_lowercase(),
+            self.index.lane_gen(),
+            self.thread_names.len(),
+            self.processes.len() + self.trace_processes.len(),
+        );
+        if self.track_filter_key.as_ref() == Some(&key) {
+            return;
+        }
+        let tokens = crate::tracks::filter_tokens(&key.0);
+        if tokens.is_empty() {
+            self.tracks.set_name_filter(None, false);
+        } else {
+            let threads = self.tracks.catalogue_threads().to_vec();
+            let mut process_labels: HashMap<u32, String> = HashMap::new();
+            let mut hidden = HashSet::new();
+            for th in threads {
+                let process = process_labels
+                    .entry(th.pid)
+                    .or_insert_with(|| format!("{} {}", th.pid, self.process_display_name(th.pid)).to_lowercase())
+                    .clone();
+                let label = format!("{} {} {process}", th.tid, self.thread_display_name(th.pid, th.tid)).to_lowercase();
+                if !crate::tracks::label_matches(&label, &tokens) {
+                    hidden.insert(th);
+                }
+            }
+            let scheduler_hidden = !crate::tracks::label_matches("scheduler", &tokens);
+            self.tracks.set_name_filter(Some(hidden), scheduler_hidden);
+        }
+        self.track_filter_key = Some(key);
+    }
+
     fn mark_layout_changed(&mut self) {
         self.skip_clip_labels = true;
         self.needs_repaint = true;
@@ -1628,6 +1682,7 @@ impl OrbitLiveApp {
         // instrumented processes and orbit-service's own track appeared only
         // when Stop lifted the filter.
         let filter: Option<u32> = None;
+        self.refresh_track_filter();
         self.tracks.tick(0.0, &self.index, filter);
         self.mark_layout_changed();
     }
@@ -2549,6 +2604,37 @@ impl OrbitLiveApp {
         }
     }
 
+    fn paint_track_filter(&mut self, ui: &mut Ui) {
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut self.track_filter)
+                .id_salt("orbit_track_filter")
+                .desired_width(110.0)
+                .hint_text("tracks")
+                .font(FontId::monospace(11.5))
+                .background_color(theme::INPUT()),
+        );
+        note_ui_rect("filter:tracks", resp.rect);
+        resp.clone().on_hover_text("Show only the tracks whose name contains any of these words");
+        if self.track_filter_active() {
+            let total = self.tracks.catalogue_threads().len();
+            let shown = total.saturating_sub(self.tracks.filtered_count());
+            ui.label(
+                RichText::new(format!("{shown}/{total}"))
+                    .font(FontId::monospace(10.5))
+                    .color(theme::MUTED()),
+            );
+            if icon_pill(ui, "×", "Clear the tracks filter").clicked() {
+                self.track_filter.clear();
+            }
+        }
+        // egui's TextEdit gives up focus on Escape before this runs, so the
+        // key shows up on a box that has just lost focus (as the report's
+        // filter box also handles it).
+        if (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape)) {
+            self.track_filter.clear();
+        }
+    }
+
     fn transport_record(&mut self, ui: &mut Ui) {
         let recording = self.recording || self.status.demo || self.status.capturing;
         if recording {
@@ -2907,6 +2993,7 @@ impl OrbitLiveApp {
                 self.paint_process_picker(ui, "orbit_processes_strip");
             }
             self.paint_search(ui);
+            self.paint_track_filter(ui);
             self.paint_symbols_status(ui);
             self.transport_more(ui);
             if fullscreen_pill(ui, self.fullscreen).clicked() { self.set_fullscreen(ui.ctx(), !self.fullscreen); }
@@ -3647,6 +3734,7 @@ impl OrbitLiveApp {
             };
             {
                 let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
+                self.refresh_track_filter();
                 self.tracks.sync(&self.index, filter);
             }
             self.tracks.tick(dt, &self.index, filter);
@@ -3754,7 +3842,8 @@ impl OrbitLiveApp {
                     let ry = p.y - head.top();
                     self.tracks.update_drag(ry);
                     self.tracks.update_header_drag(ry);
-                    self.tracks.tick(0.0, &self.index, filter);
+                    self.refresh_track_filter();
+        self.tracks.tick(0.0, &self.index, filter);
                 }
             }
 
@@ -4061,6 +4150,14 @@ impl OrbitLiveApp {
             if clicked {
                 self.search.clear();
                 self.live_focus = None;
+            }
+            right -= w + 6.0;
+        }
+        if self.track_filter_active() {
+            let text = format!("tracks \u{201c}{}\u{201d}", self.track_filter.trim());
+            let (w, clicked) = paint_focus_chip(ui, fps_area, right, &text, "orbit_tracks_chip");
+            if clicked {
+                self.track_filter.clear();
             }
             right -= w + 6.0;
         }

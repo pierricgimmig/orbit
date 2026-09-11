@@ -305,7 +305,7 @@ export function wbg_rayon_start_worker(receiver) {
 }
 
 function __wbg_adapter_38(arg0, arg1) {
-    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__ha04600efb620c53b(arg0, arg1);
+    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h05baf04095759cc6(arg0, arg1);
 }
 
 function __wbg_adapter_41(arg0, arg1, arg2) {
@@ -3298,8 +3298,12 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1370 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 136, __wbg_adapter_38);
+    imports.wbg.__wbindgen_closure_wrapper1385 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 105, __wbg_adapter_38);
+        return ret;
+    };
+    imports.wbg.__wbindgen_closure_wrapper2616 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 436, __wbg_adapter_41);
         return ret;
     };
     imports.wbg.__wbindgen_closure_wrapper2618 = function(arg0, arg1, arg2) {
@@ -3307,18 +3311,14 @@ function __wbg_get_imports() {
         return ret;
     };
     imports.wbg.__wbindgen_closure_wrapper2620 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 436, __wbg_adapter_41);
-        return ret;
-    };
-    imports.wbg.__wbindgen_closure_wrapper2622 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 436, __wbg_adapter_46);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper4147 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbindgen_closure_wrapper4145 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 1119, __wbg_adapter_49);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper4149 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbindgen_closure_wrapper4147 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 1119, __wbg_adapter_49);
         return ret;
     };

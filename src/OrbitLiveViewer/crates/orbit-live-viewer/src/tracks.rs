@@ -93,6 +93,16 @@ pub struct TrackStrip {
     pub scale: f32,
     collapsed: HashSet<RowId>,
     hidden: HashSet<ThreadId>,
+    /// Threads the tracks box hides (see `set_name_filter`), kept apart from
+    /// `hidden` -- the user's own list -- so "N hidden / all" keeps counting
+    /// only what the user hid, and clearing the box brings nothing back that
+    /// the user meant to keep away.
+    filtered: HashSet<ThreadId>,
+    /// Whether a name filter is on at all. When it is, a machine with nothing
+    /// left under it loses its header too, rather than standing empty.
+    name_filter: bool,
+    /// The scheduler track, judged by the same words against "scheduler".
+    scheduler_filtered: bool,
     y: FastMap<RowId, f32>,
     drag: Option<Drag>,
     header_drag: Option<HeaderDrag>,
@@ -227,6 +237,9 @@ impl Default for TrackStrip {
             scale: 1.0,
             collapsed: HashSet::new(),
             hidden: HashSet::new(),
+            filtered: HashSet::new(),
+            name_filter: false,
+            scheduler_filtered: false,
             y: FastMap::default(),
             drag: None,
             header_drag: None,
@@ -265,7 +278,7 @@ const TIER_AUTO: u8 = 2;
 
 impl TrackStrip {
     /// Rebuilds the lane catalogue if the index's lane set changed.
-    fn ensure_catalogue(&mut self, index: &TrackIndex) {
+    pub fn ensure_catalogue(&mut self, index: &TrackIndex) {
         if self.catalogue.gen != Some(index.lane_gen()) {
             self.catalogue = LaneCatalogue::build(index);
         }
@@ -406,7 +419,35 @@ impl TrackStrip {
     }
 
     fn is_shown(&self, t: ThreadId) -> bool {
-        !self.hidden.contains(&t)
+        !self.hidden.contains(&t) && !self.filtered.contains(&t)
+    }
+
+    /// Applies the tracks box. `filtered` is the set of threads the words do
+    /// not match, `None` when the box is empty; `scheduler_filtered` says the
+    /// words do not match the scheduler track either. The layout is only
+    /// invalidated when something actually changed, so calling this every
+    /// frame with the same answer costs a few comparisons.
+    pub fn set_name_filter(&mut self, filtered: Option<HashSet<ThreadId>>, scheduler_filtered: bool) {
+        let active = filtered.is_some();
+        let filtered = filtered.unwrap_or_default();
+        if active == self.name_filter && filtered == self.filtered && scheduler_filtered == self.scheduler_filtered {
+            return;
+        }
+        self.name_filter = active;
+        self.filtered = filtered;
+        self.scheduler_filtered = scheduler_filtered;
+        self.layout_gen = self.layout_gen.wrapping_add(1);
+    }
+
+    /// How many threads the tracks box is hiding right now.
+    pub fn filtered_count(&self) -> usize {
+        self.filtered.len()
+    }
+
+    /// Every thread the index knows, in first-seen order -- the population a
+    /// name filter is judged over. Call [`Self::ensure_catalogue`] first.
+    pub fn catalogue_threads(&self) -> &[ThreadId] {
+        &self.catalogue.threads
     }
 
     pub fn dragging(&self) -> bool {
@@ -1047,7 +1088,7 @@ impl TrackStrip {
             // Still show the scheduler when a capture has cores but no
             // process tracks yet -- otherwise a scheduling-only capture looks
             // empty.
-            if !cores.is_empty() {
+            if !cores.is_empty() && !self.scheduler_filtered {
                 let m = scheduler_machine();
                 out.push((RowId::Machine(m), MACHINE_H * s));
                 if !self.collapsed.contains(&RowId::Machine(m)) {
@@ -1067,12 +1108,15 @@ impl TrackStrip {
             machines.sort_by_key(|m| m.sort_key());
         }
         for m in machines {
-            out.push((RowId::Machine(m), MACHINE_H * s));
             if self.collapsed.contains(&RowId::Machine(m)) {
+                out.push((RowId::Machine(m), MACHINE_H * s));
                 continue;
             }
-            if m == scheduler_owner && !cores.is_empty() {
-                push_scheduler_rows(&mut out, cores, self, s);
+            // The machine's rows are gathered first: with a name filter on, a
+            // machine that has nothing left under it loses its header too.
+            let mut section: Vec<(RowId, f32)> = Vec::new();
+            if m == scheduler_owner && !cores.is_empty() && !self.scheduler_filtered {
+                push_scheduler_rows(&mut section, cores, self, s);
             }
             for &pid in &self.process_order {
                 if MachineId::from_pid(pid) != m {
@@ -1092,7 +1136,7 @@ impl TrackStrip {
                 if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) && !keep_drag_proc {
                     continue;
                 }
-                out.push((RowId::Process(pid), PROCESS_H * s));
+                section.push((RowId::Process(pid), PROCESS_H * s));
                 if self.collapsed.contains(&RowId::Process(pid)) {
                     continue;
                 }
@@ -1109,20 +1153,39 @@ impl TrackStrip {
                             }
                         }
                     }
-                    out.push((RowId::Thread(th), stack));
+                    section.push((RowId::Thread(th), stack));
                     if self.collapsed.contains(&RowId::Thread(th)) {
                         continue;
                     }
                     for &k in leaves {
                         if is_rail_lane(k) {
-                            out.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
+                            section.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
                         }
                     }
                 }
             }
+            if self.name_filter && section.is_empty() {
+                continue;
+            }
+            out.push((RowId::Machine(m), MACHINE_H * s));
+            out.extend(section);
         }
         out
     }
+}
+
+/// The words of a track filter: lower-cased, split on whitespace. Empty for a
+/// blank box, which means no filter.
+pub fn filter_tokens(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Whether a track's label matches the words: it contains at least one of
+/// them. Any word rather than every word, as C++ Orbit's TrackManager
+/// filtered, so "physics render" shows both families of threads. `label`
+/// must already be lower-case; no words matches everything.
+pub fn label_matches(label: &str, tokens: &[String]) -> bool {
+    tokens.is_empty() || tokens.iter().any(|t| label.contains(t.as_str()))
 }
 
 fn is_cpu_lane(k: LaneKey) -> bool {
@@ -1213,6 +1276,60 @@ mod tests {
             _pad: 0,
             name_id: name,
         }
+    }
+
+    #[test]
+    fn filter_words_are_lower_cased_and_any_one_matches() {
+        assert!(filter_tokens("  ").is_empty());
+        assert_eq!(filter_tokens("Physics  RENDER"), vec!["physics", "render"]);
+        let words = filter_tokens("physics zzzz");
+        assert!(label_matches("7 physics-2 1234 orbittestrust", &words));
+        assert!(!label_matches("8 render 1234 orbittestrust", &words));
+        assert!(label_matches("anything", &[]));
+    }
+
+    #[test]
+    fn name_filter_hides_threads_then_processes_then_the_machine() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 100, 1));
+        idx.insert(scope(1, 101, 1));
+        idx.insert(scope(4, 200, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let rows = |strip: &TrackStrip| strip.rows().iter().map(|r| r.id).collect::<Vec<_>>();
+        let all = rows(&strip);
+        assert!(all.contains(&RowId::Thread(ThreadId { pid: 1, tid: 101 })));
+        // One thread filtered: it goes, its process stays.
+        let one: HashSet<ThreadId> = [ThreadId { pid: 1, tid: 101 }].into_iter().collect();
+        strip.set_name_filter(Some(one), false);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let r = rows(&strip);
+        assert!(!r.contains(&RowId::Thread(ThreadId { pid: 1, tid: 101 })));
+        assert!(r.contains(&RowId::Thread(ThreadId { pid: 1, tid: 100 })));
+        assert!(r.contains(&RowId::Process(1)));
+        assert_eq!(strip.filtered_count(), 1);
+        assert_eq!(strip.hidden_count(), 0, "the user's own hidden list is untouched");
+        // Every thread of a process filtered: the process header goes too.
+        let proc1: HashSet<ThreadId> = [ThreadId { pid: 1, tid: 100 }, ThreadId { pid: 1, tid: 101 }].into_iter().collect();
+        strip.set_name_filter(Some(proc1), false);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let r = rows(&strip);
+        assert!(!r.contains(&RowId::Process(1)));
+        assert!(r.contains(&RowId::Process(4)));
+        // Everything filtered: the machine header goes as well.
+        let every: HashSet<ThreadId> = strip.catalogue_threads().iter().copied().collect();
+        strip.set_name_filter(Some(every), true);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert!(rows(&strip).is_empty(), "nothing matched, nothing drawn: {:?}", rows(&strip));
+        // Clearing the box restores every row.
+        strip.set_name_filter(None, false);
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        assert_eq!(rows(&strip), all);
     }
 
     #[test]

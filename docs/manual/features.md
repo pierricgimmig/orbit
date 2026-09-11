@@ -83,6 +83,18 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   capture (also the space bar).
 - **Search box.** Typing filters scopes by name; matching scopes stay lit and
   the rest grey out. Escape clears the search and every selection.
+- **Tracks box.** Next to the search: words separated by spaces, and only
+  the tracks whose name contains any of them stay on the rail. A thread
+  matches by its own name or tid, or by its process's name or pid, so a
+  process name shows all of its threads and a thread name shows just that
+  thread under its process; the scheduler track matches "scheduler"; a
+  process or machine with nothing left under it loses its header. Case-
+  insensitive, and *any* word rather than every word, as C++ Orbit's track
+  filter worked. A `shown/total` count and a × sit beside the box, Escape
+  clears it, and a `tracks “…”` chip over the timeline says it is on. It
+  is separate from the per-thread hide (right-click) and its "N hidden /
+  all" count. `?tracks=physics+render` opens the viewer with it filled.
+  Screenshot: `45-track-filter.png`.
 - **Viewer build.** The More menu ends with the viewer's build (UTC time
   and commit), also `build` in `window.__orbit_sel`. The service serves
   the viewer with `Cache-Control: no-cache` and an ETag, so a restarted
@@ -406,3 +418,4 @@ in the URL opens a tab on load.
 | `25-report-filter.png` | report-filter | The Flat report narrowed by the filter box |
 | `26-code-both.png` | code-views | The Code tab in Both mode: the service's own function, source lines above the instructions they produced |
 | `27-code-source.png` | code-views | The Code tab on an embedded Rust file, highlighted |
+| `45-track-filter.png` | track-filter | The tracks box narrowing the rail to the physics threads |

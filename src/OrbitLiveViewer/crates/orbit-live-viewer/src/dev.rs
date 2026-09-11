@@ -340,6 +340,35 @@ pub fn query_report_tab(search: &str) -> Option<String> {
     None
 }
 
+/// `?tracks=<words>` -- start with the tracks box filled, so a shared link or
+/// a screenshot opens on just the tracks that matter. `+` and `%20` are
+/// spaces, as a browser writes them.
+pub fn query_track_filter_from_location() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .and_then(|s| query_track_filter(&s))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn query_track_filter(search: &str) -> Option<String> {
+    for pair in search.trim_start_matches('?').split('&') {
+        if let Some(value) = pair.strip_prefix("tracks=") {
+            let value = value.replace('+', " ").replace("%20", " ");
+            if !value.trim().is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 /// `?theme=<key>` -- pick a colour scheme at load (orbit, dracula, nord,
 /// gruvbox, solarized). Lets a screenshot or a shared link pin the look.
 pub fn query_theme_from_location() -> Option<String> {
@@ -542,6 +571,15 @@ mod absorb_guard_tests {
         assert!(query_collapses_scheduler("?report=flat&collapse=scheduler"));
         assert!(!query_collapses_scheduler("?collapse=machine"));
         assert!(!query_collapses_scheduler("?xcollapse=scheduler"));
+    }
+
+    #[test]
+    fn tracks_query_is_words_with_plus_and_percent20_as_spaces() {
+        assert_eq!(query_track_filter("?tracks=physics"), Some("physics".to_string()));
+        assert_eq!(query_track_filter("?collapse=scheduler&tracks=physics+render"), Some("physics render".to_string()));
+        assert_eq!(query_track_filter("?tracks=a%20b"), Some("a b".to_string()));
+        assert_eq!(query_track_filter("?tracks="), None);
+        assert_eq!(query_track_filter("?xtracks=a"), None);
         assert!(!query_collapses_scheduler(""));
     }
 }
