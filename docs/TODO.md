@@ -724,12 +724,17 @@ people reach for to accelerate AI development, on a laptop or cluster-wide.
 reads a process's `/proc/<pid>/maps` and `/proc/<pid>/fd` -- no attach, no code
 change -- and reports the framework (PyTorch/TensorFlow/JAX/ONNX) and GPU stack
 (CUDA/ROCm), including GPU-in-use from open `/dev/nvidia*` / `/dev/kfd`. Surfaced
-at capture start in the log and via `orbit-service --detect-ai <pid>`, with a
-per-framework suggested-hook list to drive auto-hooking. Proven end to end on a
-real NVIDIA GPU (`detects_a_real_gpu_process_without_touching_it` spawns a
-libcuda/`cuInit` process and detects it from `/proc`; skips cleanly without a
-GPU), plus classifier unit tests and a no-false-positive test. Design, the
-CUDA/CUPTI kernel path (via the existing GPU telemetry helper), CPU
-data-loading, auto-hook wiring and cluster rollups are in
-[ai-profiling.md](ai-profiling.md). The homepage no-code angle is covered by
-items 44 (Python) and 45 (Mojo).
+as the viewer's green **AI:** badge (the `ai` field of `/api/status`), in the log
+at capture start, and via `orbit-service --detect-ai <pid> [--json]`. Opt-in
+**auto-hook** (`auto_hook_ai` on the capture request) resolves the detected
+framework's entry points through the symbol index and arms them next to the
+user's picks, capped at 16, picks first. Proven end to end on a real NVIDIA GPU
+(`detects_a_real_gpu_process_without_touching_it` spawns a libcuda/`cuInit`
+process and detects it from `/proc`; skips cleanly without a GPU); the auto-hook
+resolver is tested against a real symbol index
+(`resolves_patterns_against_a_real_index`); plus classifier unit tests and a
+no-false-positive test. Not yet confirmed: the per-framework symbol names, which
+need a real `libtorch`/`libtensorflow` on the box. Design, the CUDA/CUPTI kernel
+path (via the existing GPU telemetry helper), CPU data-loading and cluster
+rollups are in [ai-profiling.md](ai-profiling.md). The homepage no-code angle is
+covered by items 44 (Python) and 45 (Mojo).

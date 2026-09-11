@@ -2446,6 +2446,7 @@ impl OrbitLiveApp {
                     // This frame is the WebSocket's stats push, which carries
                     // no control state; keep what /api/status last said.
                     instrumentation: self.status.instrumentation.clone(),
+                    ai: self.status.ai.clone(),
                     wire: self.status.wire.clone(),
                 });
                 // An opened capture is all here once the service reports it
@@ -3190,6 +3191,20 @@ impl OrbitLiveApp {
             // What actually happened to the hooked functions. Uprobes need
             // CAP_PERFMON, so "nothing was armed" is a normal outcome that has
             // to read as a fixable permissions problem, not an empty track.
+            // What the target is, found without touching it: the AI badge.
+            // Its own line and colour so "PyTorch + NVIDIA GPU (CUDA)" reads
+            // at a glance, not buried in the instrumentation status.
+            if !self.status.ai.is_empty() {
+                ui.label(
+                    RichText::new(format!("AI: {}", self.status.ai))
+                        .size(11.0)
+                        .color(Color32::from_rgb(0x66, 0xBB, 0x6A)),
+                )
+                .on_hover_text(
+                    "Detected from the process's loaded libraries and open GPU devices -- \
+                     no attach, no code change. Tick auto-hook to instrument its hot paths.",
+                );
+            }
             if !self.status.instrumentation.is_empty() {
                 let armed = self.status.instrumentation.starts_with("instrumenting");
                 // Records the kernel dropped mean an incomplete capture -- the

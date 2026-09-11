@@ -363,6 +363,16 @@ fn wants_duplicate_filter(body: &str) -> bool {
         .unwrap_or(true)
 }
 
+/// Whether the capture asked Orbit to hook a detected AI framework's hot
+/// entry points automatically (`auto_hook_ai`). Absent means no: hooks are
+/// placed only when asked, so a capture never surprises the target.
+fn wants_auto_hook_ai(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("auto_hook_ai").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
 /// The function ids and method the viewer put in the capture request.
 fn hook_request(body: &str) -> (Vec<u64>, String) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -1800,8 +1810,14 @@ pub fn run_on(
             let (ids, _method) = hook_request(body);
             let show_all_processes = wants_all_processes(body);
             let uprobe_duplicate_filter = wants_duplicate_filter(body);
+            // Zero-code AI: detect the target's framework / GPU from its
+            // loaded modules and open devices, and -- only if the request
+            // opted in -- hook the framework's hot entry points automatically,
+            // so a training loop shows up as named scopes with nothing picked.
+            let auto_hook_ai = wants_auto_hook_ai(body);
+            let ai = if pid > 0 { crate::ai_detect::detect(pid as u32) } else { Default::default() };
             let mut hooks = Vec::new();
-            if !ids.is_empty() {
+            if !ids.is_empty() || (auto_hook_ai && !ai.frameworks.is_empty()) {
                 // The index for this process, loading it now if the viewer
                 // never asked (a hook picked from a report needs no search
                 // first). A few hundred milliseconds at most, once.
@@ -1810,7 +1826,7 @@ pub fn run_on(
                     .ok()
                     .and_then(|state| (state.pid == pid as u32).then(|| state.index.clone()).flatten());
                 if index.is_none() && pid > 0 {
-                    eprintln!("orbit-service: loading symbols for pid {pid} before arming {} hook(s)", ids.len());
+                    eprintln!("orbit-service: loading symbols for pid {pid} before arming hooks");
                     let symbol_started = std::time::Instant::now();
                     let fresh = FunctionIndex::for_pid(pid);
                     if !fresh.is_empty() {
@@ -1841,14 +1857,41 @@ pub fn run_on(
                             );
                         }
                         hooks = resolved;
+                        // The user's picks come first; auto-hooks fill what is
+                        // left of the cap, never displacing them.
+                        if auto_hook_ai && hooks.len() < MAX_HOOKS {
+                            let room = MAX_HOOKS - hooks.len();
+                            let extra: Vec<HookSpec> =
+                                crate::ai_detect::auto_hooks(&index, &ai.frameworks, room)
+                                    .into_iter()
+                                    .filter(|h| hooks.iter().all(|k| k.function_id != h.function_id))
+                                    .collect();
+                            if extra.is_empty() {
+                                eprintln!(
+                                    "orbit-service: auto-hook: {} detected but none of its entry points \
+                                     resolved in the symbol index",
+                                    ai.summary()
+                                );
+                            } else {
+                                let names: Vec<&str> = extra.iter().map(|h| h.name.as_str()).collect();
+                                eprintln!(
+                                    "orbit-service: auto-hook ({}): {} function(s): {}",
+                                    ai.summary(),
+                                    extra.len(),
+                                    names.join(", ")
+                                );
+                                hooks.extend(extra);
+                            }
+                        }
                     }
                     None => eprintln!(
-                        "orbit-service: {} functions selected but no symbols could be loaded for pid {pid}; \
-                         starting without instrumentation",
-                        ids.len()
+                        "orbit-service: hooks requested but no symbols could be loaded for pid {pid}; \
+                         starting without instrumentation"
                     ),
                 }
             }
+            // Explicit picks that resolved to nothing is an error the user
+            // must see; auto-hooks finding nothing is not.
             if !ids.is_empty() && hooks.is_empty() {
                 start_running.store(false, Ordering::SeqCst);
                 return Err("No selected functions could be resolved".into());
@@ -1906,15 +1949,12 @@ pub fn run_on(
                 })?;
             *worker = Some(handle);
             eprintln!("orbit-service: capture started (pid {pid})");
-            // Zero-code AI detection: say what framework / GPU the target is
-            // using, read from its loaded modules and open devices -- no
-            // attach, no code change. Makes the AI angle visible from the
-            // first line of the log.
-            if pid > 0 {
-                let ai = crate::ai_detect::detect(pid as u32);
-                if ai.is_ai() {
-                    eprintln!("orbit-service: pid {pid} looks like an AI workload: {}", ai.summary());
-                }
+            // Publish the zero-code AI detection (made above, before the
+            // hooks) so the viewer shows the badge; empty resets a stale one
+            // from an earlier capture of a different process.
+            start_service.set_ai_status(if ai.is_ai() { ai.summary() } else { String::new() });
+            if ai.is_ai() {
+                eprintln!("orbit-service: pid {pid} looks like an AI workload: {}", ai.summary());
             }
             Ok(())
         }),
