@@ -18,6 +18,7 @@
 
 #[cfg(target_os = "macos")]
 mod macos;
+mod ai_detect;
 mod hooks;
 mod frida;
 mod code;
@@ -149,6 +150,23 @@ fn parse_args() -> Args {
                         std::process::exit(2);
                     }
                 }
+            }
+            "--detect-ai" => {
+                // orbit-service --detect-ai <pid>
+                // Zero-code: read the process's loaded modules and open GPU
+                // devices and report the AI framework / GPU stack it is using,
+                // without attaching to or modifying it. See ai_detect.rs.
+                let pid: u32 = iter.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                if pid == 0 {
+                    eprintln!("usage: orbit-service --detect-ai <pid>");
+                    std::process::exit(2);
+                }
+                let w = ai_detect::detect(pid);
+                println!("pid {pid}: {}", w.summary());
+                for fw in &w.frameworks {
+                    println!("  {} -- suggested hooks: {}", fw.label(), ai_detect::suggested_hooks(*fw).join(", "));
+                }
+                std::process::exit(if w.is_ai() { 0 } else { 1 });
             }
             "--uprobe-dump" => {
                 // Every raw probe hit to a file, for looking at what the

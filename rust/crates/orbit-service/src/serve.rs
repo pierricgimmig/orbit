@@ -1906,6 +1906,16 @@ pub fn run_on(
                 })?;
             *worker = Some(handle);
             eprintln!("orbit-service: capture started (pid {pid})");
+            // Zero-code AI detection: say what framework / GPU the target is
+            // using, read from its loaded modules and open devices -- no
+            // attach, no code change. Makes the AI angle visible from the
+            // first line of the log.
+            if pid > 0 {
+                let ai = crate::ai_detect::detect(pid as u32);
+                if ai.is_ai() {
+                    eprintln!("orbit-service: pid {pid} looks like an AI workload: {}", ai.summary());
+                }
+            }
             Ok(())
         }),
         stop_capture: Arc::new(move || {
