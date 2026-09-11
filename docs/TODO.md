@@ -749,3 +749,23 @@ Reality check found on 2026-09-10: Ubuntu's `python3.14` ships `gc`/`import`/
 `audit` probes but **not** the per-function ones, so detect-and-degrade to
 sampling is the common path, not an edge case. Building the attach/capture
 needs a `--with-dtrace` Python with the function probes, privileges, and a GPU.
+
+## 45. AI profiling umbrella -- zero-code detection
+
+Core pillar: learn as much as possible about an AI workload without changing
+the user's code or attaching instrumentation. Orbit should be the profiler
+people reach for to accelerate AI development, on a laptop or cluster-wide.
+
+**Status: zero-code detection built and proven e2e (2026-09-10).** `ai_detect.rs`
+reads a process's `/proc/<pid>/maps` and `/proc/<pid>/fd` -- no attach, no code
+change -- and reports the framework (PyTorch/TensorFlow/JAX/ONNX) and GPU stack
+(CUDA/ROCm), including GPU-in-use from open `/dev/nvidia*` / `/dev/kfd`. Surfaced
+at capture start in the log and via `orbit-service --detect-ai <pid>`, with a
+per-framework suggested-hook list to drive auto-hooking. Proven end to end on a
+real NVIDIA GPU (`detects_a_real_gpu_process_without_touching_it` spawns a
+libcuda/`cuInit` process and detects it from `/proc`; skips cleanly without a
+GPU), plus classifier unit tests and a no-false-positive test. Design, the
+CUDA/CUPTI kernel path (via the existing GPU telemetry helper), CPU
+data-loading, auto-hook wiring and cluster rollups are in
+[ai-profiling.md](ai-profiling.md). The homepage no-code angle is covered by
+item 44 (Python).
