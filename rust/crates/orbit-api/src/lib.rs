@@ -425,12 +425,84 @@ pub extern "C" fn orbit_now_ns() -> u64 {
     now_ns()
 }
 
+// ------------------------------------------------------- loadable table --
+
+/// The ABI the single-header `orbit.h` speaks. Bumped only when a field is
+/// added, removed or changes meaning; a header built against another version
+/// gets a null table and stays no-op rather than calling through a wrong
+/// layout.
+pub const API_ABI_VERSION: u32 = 1;
+
+/// Every entry point, as a table a header-only caller fills once.
+///
+/// `orbit.h` in its default (dynamic) mode never links this library: it
+/// `dlopen`s it, asks [`orbit_api_table_v1`] for this struct, and dispatches
+/// through it. That keeps the ring protocol out of every compiled
+/// application -- the library that ships beside `orbit-service` is the one
+/// implementation, and it always matches the service it came with.
+#[repr(C)]
+pub struct ApiTableV1 {
+    /// `API_ABI_VERSION` of the library that built the table.
+    pub abi_version: u32,
+    /// `size_of::<ApiTableV1>()`, so a newer header can see an older table.
+    pub size: u32,
+    pub init: extern "C" fn() -> libc::c_int,
+    pub shutdown: extern "C" fn(),
+    pub start: unsafe extern "C" fn(*const libc::c_char, usize) -> u64,
+    pub start_dynamic: unsafe extern "C" fn(*const libc::c_char, usize) -> u64,
+    pub start_async: unsafe extern "C" fn(*const libc::c_char, usize) -> u64,
+    pub stop: extern "C" fn(u64),
+    pub instant: unsafe extern "C" fn(*const libc::c_char, usize) -> u64,
+    pub link: extern "C" fn(u64, u64),
+    pub value: unsafe extern "C" fn(*const libc::c_char, usize, f64),
+    pub now_ns: extern "C" fn() -> u64,
+    pub span: unsafe extern "C" fn(*const libc::c_char, usize, u64, u64),
+    pub span_async: unsafe extern "C" fn(*const libc::c_char, usize, u64, u64),
+}
+
+static API_TABLE: ApiTableV1 = ApiTableV1 {
+    abi_version: API_ABI_VERSION,
+    size: std::mem::size_of::<ApiTableV1>() as u32,
+    init: orbit_init,
+    shutdown: orbit_shutdown,
+    start: orbit_start,
+    start_dynamic: orbit_start_dynamic,
+    start_async: orbit_start_async,
+    stop: orbit_stop,
+    instant: orbit_instant,
+    link: orbit_link,
+    value: orbit_value,
+    now_ns: orbit_now_ns,
+    span: orbit_span,
+    span_async: orbit_span_async,
+};
+
+/// The table for `abi_version`, or null when this library does not speak
+/// it. The one symbol `orbit.h` looks up after loading the library; the
+/// table is static and lives as long as the mapping.
+#[no_mangle]
+pub extern "C" fn orbit_api_table_v1(abi_version: u32) -> *const ApiTableV1 {
+    if abi_version == API_ABI_VERSION { &API_TABLE } else { std::ptr::null() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use orbit_scope_ring::merge::{drain, Cursors};
     use orbit_scope_ring::text::{Completeness, TextAssembler};
     use orbit_scope_ring::ScopeRingReader;
+
+    #[test]
+    fn the_table_is_handed_out_only_for_its_own_abi() {
+        let table = orbit_api_table_v1(API_ABI_VERSION);
+        assert!(!table.is_null());
+        let table = unsafe { &*table };
+        assert_eq!(table.abi_version, API_ABI_VERSION);
+        assert_eq!(table.size as usize, std::mem::size_of::<ApiTableV1>());
+        assert_eq!((table.now_ns)() > 0, true);
+        assert!(orbit_api_table_v1(API_ABI_VERSION + 1).is_null());
+        assert!(orbit_api_table_v1(0).is_null());
+    }
 
     fn all_events() -> Vec<ScopeEvent> {
         let reader = ScopeRingReader::open(std::process::id()).expect("segment exists");

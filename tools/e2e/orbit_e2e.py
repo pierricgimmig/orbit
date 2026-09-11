@@ -484,6 +484,15 @@ def report_tabs(run):
 
 def _build_app(lang):
     """Returns the argv to launch the test app for `lang`, building it first."""
+    # OrbitTestC, OrbitTestCpp and the Python package do not link the API:
+    # orbit.h and orbit_api load liborbit_api at run time, by default from
+    # beside the orbit-service on PATH. The suite's service is not on PATH, so
+    # name the tree's library explicitly; Target inherits the environment.
+    lib = os.path.join(REPO, "rust/target/release/liborbit_api.so")
+    if not os.path.exists(lib):
+        subprocess.run(["cargo", "build", "--release", "-p", "orbit-api"],
+                       cwd=os.path.join(REPO, "rust"), check=True)
+    os.environ.setdefault("ORBIT_API_LIB", lib)
     if lang == "rust":
         binary = os.path.join(REPO, "rust/target/release/OrbitTestRust")
         if not os.path.exists(binary):
@@ -498,10 +507,6 @@ def _build_app(lang):
             subprocess.run([os.path.join(folder, "build.sh")], check=True)
         return [binary, "--seconds", "0"]
     if lang == "python":
-        lib = os.path.join(REPO, "rust/target/release/liborbit_api.so")
-        if not os.path.exists(lib):
-            subprocess.run(["cargo", "build", "--release", "-p", "orbit-api"],
-                           cwd=os.path.join(REPO, "rust"), check=True)
         return [sys.executable, os.path.join(REPO, "src/OrbitTestPython/OrbitTestPython.py"),
                 "--seconds", "0"]
     raise Failure(f"unknown app language {lang}")

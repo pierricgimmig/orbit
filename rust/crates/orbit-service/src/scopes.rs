@@ -32,7 +32,7 @@ use orbit_scope_ring::event::{flags, kind as rk};
 use orbit_scope_ring::merge::{drain_from, Cursors, Producer};
 use orbit_scope_ring::text::TextAssembler;
 use orbit_scope_ring::{NameInterner, ScopeEvent, ScopeRingReader};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Name ids for manual scopes start here, clear of the sampler's frame names.
@@ -89,6 +89,9 @@ pub struct ScopeSource {
     /// Pids tried and not found, with when, so a process that never
     /// instruments is not probed every five milliseconds forever.
     last_probe_ns: HashMap<u32, u64>,
+    /// Pids whose segment speaks another protocol version, warned about once
+    /// so an upgrade-skewed process does not log every reprobe.
+    warned_version_mismatch: HashSet<u32>,
     next_discovery_ns: u64,
     pub links_seen: u64,
     pub events_pushed: u64,
@@ -109,6 +112,7 @@ impl ScopeSource {
             names: NameInterner::starting_at(SCOPE_NAME_ID_BASE),
             segments: Vec::new(),
             last_probe_ns: HashMap::new(),
+            warned_version_mismatch: HashSet::new(),
             next_discovery_ns: 0,
             links_seen: 0,
             events_pushed: 0,
@@ -207,8 +211,29 @@ impl ScopeSource {
             self.last_probe_ns.insert(pid, now_ns);
             // "Not initialised yet" and "no such segment" both come back as
             // errors and both mean try again later.
-            if let Ok(reader) = ScopeRingReader::open(pid) {
+            let opened = ScopeRingReader::open(pid);
+            if opened.is_err() {
+                // Distinguish a real version mismatch -- a process built
+                // against another Orbit's liborbit_api -- from a segment that
+                // is simply absent or half-written, which open() reports the
+                // same way. Only the mismatch is worth telling the operator
+                // about, and only once: the fix is to match the library to
+                // this service (they ship together, so `pip install -U
+                // orbit-api` or reinstalling brings them level).
+                if let Some(found) = orbit_scope_ring::segment_version(pid) {
+                    if found != orbit_scope_ring::VERSION
+                        && self.warned_version_mismatch.insert(pid)
+                    {
+                        let ours = orbit_scope_ring::VERSION;
+                        eprintln!(
+                            "orbit-service: manual instrumentation: pid {pid} has an Orbit                              segment at protocol version {found}, but this service reads                              version {ours}. Its scopes are skipped -- update its liborbit_api                              (or the orbit-api package) to match this service."
+                        );
+                    }
+                }
+            }
+            if let Ok(reader) = opened {
                 let ring_count = reader.rings().ring_count();
+                self.warned_version_mismatch.remove(&pid);
                 eprintln!(
                     "orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)"
                 );

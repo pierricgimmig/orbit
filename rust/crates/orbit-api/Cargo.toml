@@ -9,6 +9,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Orbit manual instrumentation: scopes, instants, links and values on a shared-memory ring a running orbit-service drains"
+keywords = ["profiling", "tracing", "instrumentation", "orbit"]
+categories = ["development-tools::profiling"]
+include = ["src/**", "include/orbit.h", "README.md"]
 
 # Three shapes of the same library: rlib for Rust callers, staticlib for C and
 # C++ to link, cdylib for Python to load with ctypes.

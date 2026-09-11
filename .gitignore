@@ -36,3 +36,19 @@ third_party/py-spy/
 /dist/macos-universal/
 
 /dist/frida/
+
+# Prebuilt binaries staged into the pip packages by tools/release/build_wheels.sh
+/rust/crates/orbit-api/python/orbit_api/liborbit_api.*
+/rust/crates/orbit-api/python/orbit_api/orbit_api.dll
+/rust/crates/orbit-service/python/orbit_profiler/orbit-service
+/rust/crates/orbit-service/python/orbit_profiler/orbit-service.exe
+/rust/crates/orbit-service/python/orbit_profiler/liborbit_api.*
+/rust/crates/orbit-service/python/orbit_profiler/orbit_api.dll
+/rust/crates/orbit-service/python/orbit_profiler/orbit.h
+/dist/wheels/
+/rust/crates/orbit-api/python/build/
+/rust/crates/orbit-api/python/dist/
+/rust/crates/orbit-api/python/*.egg-info/
+/rust/crates/orbit-service/python/build/
+/rust/crates/orbit-service/python/dist/
+/rust/crates/orbit-service/python/*.egg-info/

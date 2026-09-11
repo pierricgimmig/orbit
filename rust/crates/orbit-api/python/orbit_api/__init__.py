@@ -25,10 +25,12 @@ Where the library is looked for, in order:
 
 1. ``$ORBIT_API_LIB``: the full path of the library file. When set it is the
    only place tried, so a wrong path fails visibly.
-2. beside this package: a copy dropped next to ``__init__.py``.
-3. beside ``orbit-service``: the directory of the ``orbit-service`` on
+2. beside ``orbit-service``: the directory of the ``orbit-service`` on
    ``PATH``, then ``~/.local/bin`` (the install script's default) and
-   ``~/.orbit/bin``.
+   ``~/.orbit/bin``. The service is the authority on the ring protocol
+   version, so its own library wins over any other copy.
+3. beside this package: the copy bundled in the wheel, always matched to
+   this package's version.
 4. the system loader.
 
 Every call is a no-op when the library is missing or ``init()`` was not

@@ -48,6 +48,8 @@ else
   lipo -create "${frida_helpers[@]}" -output "$output/orbit-frida-helper"
 fi
 # A relocatable SDK; consumers using the dylib provide their own rpath.
+# orbit.h loads liborbit_api.dylib from the directory that holds orbit-service.
+cp rust/crates/orbit-api/include/orbit.h "$output/orbit.h"
 install_name_tool -id @rpath/liborbit_api.dylib "$output/liborbit_api.dylib"
 codesign --force --sign - "$output/orbit-service"
 codesign --force --sign - "$output/liborbit_api.dylib"

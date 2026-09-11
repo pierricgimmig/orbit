@@ -37,4 +37,10 @@ packages = ["orbit_profiler"]
 # The service binary, liborbit_api and orbit.h are dropped into the package by
 # tools/release/build_wheels.sh before the wheel is built.
 [tool.setuptools.package-data]
-orbit_profiler = ["orbit-service", "orbit-service.exe", "liborbit_api.so", "liborbit_api.dylib", "orbit_api.dll", "orbit.h"]
+orbit_profiler = [
+  "orbit-service", "orbit-service.exe",
+  "liborbit_api.so", "liborbit_api.dylib", "orbit_api.dll", "orbit.h",
+  # The Frida engine's companions, present when the wheel was built with
+  # ORBIT_COMPANIONS_DIR (see tools/release/build_wheels.sh).
+  "liborbit_frida_agent.so", "liborbit_frida_agent.dylib", "orbit-frida-helper", "licenses/*",
+]

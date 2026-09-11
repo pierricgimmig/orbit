@@ -324,15 +324,47 @@ in the URL opens a tab on load.
 - **The API** is the `orbit-api` crate at `rust/crates/orbit-api`: Rust
   functions `init`, `shutdown`, `start`, `stop`, `start_async`, `instant`,
   `link`, `value`, `now_ns`, and the RAII helpers `span`, `span_async`,
-  `scope`, `scope_async`. The same crate builds a static and a shared
-  library with a C ABI (`orbit_init`, `orbit_start`, `orbit_stop`,
-  `orbit_instant`, `orbit_link`, `orbit_value`, `orbit_now_ns`, ...),
-  declared in `rust/crates/orbit-api/include/orbit.h`.
+  `scope`, `scope_async`. The same crate builds `liborbit_api` (static and
+  shared) with a C ABI (`orbit_init`, `orbit_start`, `orbit_stop`,
+  `orbit_instant`, `orbit_link`, `orbit_value`, `orbit_now_ns`, ...) and a
+  versioned function table (`orbit_api_table_v1`).
+- **Shipping shape: one header, one library, no linking.**
+  `rust/crates/orbit-api/include/orbit.h` is a single file a C or C++
+  project includes; it links nothing. `orbit_init()` loads `liborbit_api`
+  at run time -- from `$ORBIT_API_LIB`, beside the executable, beside the
+  `orbit-service` on `PATH` (then `~/.local/bin`, `~/.orbit/bin`), or the
+  system loader -- checks the ABI version, and fills a process-wide table;
+  without a library every call is one predictable branch and `orbit_init()`
+  returns `ORBIT_E_NOLIB`. The ring protocol therefore lives only in the
+  library that ships beside the service (`build-service-musl.sh`,
+  `build-service-macos.sh` and `install.sh` place it there), never in a
+  compiled application. `#define ORBIT_STATIC` keeps the link-time shape
+  for musl. `ORBIT_SCOPE("name")` is RAII in C++ and a cleanup attribute in
+  GNU C.
+- **Python** is the pure-Python package at `rust/crates/orbit-api/python`
+  (`pip install orbit-api`, module `orbit_api`): the same search order,
+  ctypes over the same library, `with orbit.scope(...)` and `@orbit.scope`.
+- **Distribution.** Prebuilt wheels, never source-to-compile, so no toolchain
+  is needed to install. `tools/release/build_wheels.sh <platform>` cuts two
+  platform wheels from one build (so their ring protocol matches): `orbit-api`
+  bundles a `liborbit_api` cross-built against glibc 2.17 (manylinux2014); and
+  `orbit-profiler` (`rust/crates/orbit-service/python`) carries the static
+  `orbit-service` binary, the library and `orbit.h`, installs an
+  `orbit-service` command, and depends on `orbit-api`. The
+  `.github/workflows/python-wheels.yml` matrix builds Linux and macOS wheels
+  and publishes to PyPI on a version tag. The `curl … | sh` installer and the
+  release archives stay for users who do not want Python in the loop. Because
+  the service is the authority on the ring version, the Python loader and
+  `orbit.h` prefer a library found beside `orbit-service` over any bundled
+  copy, and the service now logs a one-line warning naming the version when it
+  finds a segment written by a mismatched library.
 - **Examples** for each language: `rust/crates/orbit-test-rust`
-  (`OrbitTestRust`), `src/OrbitTestC`, `src/OrbitTestCpp` (RAII),
-  `src/OrbitTestPython` (ctypes over `liborbit_api.so`). Each runs every
-  call; the `api-*` scenarios capture them. Screenshots:
-  `07-api-rust.png`, `08-api-c.png`, `09-api-cpp.png`, `10-api-python.png`.
+  (`OrbitTestRust`), `src/OrbitTestC`, `src/OrbitTestCpp` (RAII, built
+  header-only by their `build.sh`; `ORBIT_STATIC=1` links), and
+  `src/OrbitTestPython` (the package). Each runs every call; the `api-*`
+  scenarios capture them with `ORBIT_API_LIB` naming the tree's library.
+  Screenshots: `07-api-rust.png`, `08-api-c.png`, `09-api-cpp.png`,
+  `10-api-python.png`.
 - **What reaches the timeline.** Scopes nest per thread, async spans get
   their own track, `instant` is a zero-length mark, `link` joins a start to
   a later thread, `value` draws a lane.
