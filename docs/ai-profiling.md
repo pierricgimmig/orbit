@@ -21,15 +21,39 @@ loaded and opened. `ai_detect.rs` reads `/proc/<pid>/maps` and
   compute signal.
 
 At capture start the service logs `pid N looks like an AI workload: PyTorch +
-NVIDIA GPU (CUDA)`; `orbit-service --detect-ai <pid>` reports it on demand and
-lists the framework's suggested hook points.
+NVIDIA GPU (CUDA)` and publishes it as the `ai` field of `/api/status`, which
+the viewer shows as a green **AI:** badge in the capture chrome — the angle is
+visible from the first second, with no attach. `orbit-service --detect-ai
+<pid> [--json]` reports it on demand (exit 0 when something AI was found, 1
+when not) and lists the framework's auto-hook candidates.
+
+**Auto-hook (opt-in).** A capture request carrying `"auto_hook_ai": true`
+makes the service, after detecting the framework, resolve
+[`suggested_hooks`](../rust/crates/orbit-service/src/ai_detect.rs) — specific
+entry points, never bare namespace prefixes, since `at::native::` alone would
+match thousands of kernels — through the process's symbol index into hook
+placements, and arm them alongside whatever the user picked. The user's picks
+come first; auto-hooks fill what is left of the 16-hook cap and never displace
+them. Absent or `false` places nothing: a capture never surprises the target.
+Resolution is by case-insensitive substring over demangled names, shortest
+first, so `cudaLaunchKernel` beats `cudaLaunchKernelExC`.
 
 **Proven end to end** on a real NVIDIA GPU: a test spawns a process that loads
 `libcuda` and calls `cuInit` (which opens `/dev/nvidia*`), then detects it
 purely from `/proc` — `detects_a_real_gpu_process_without_touching_it`. A
 plain process is not flagged (`a_plain_process_is_not_flagged`), and the
-classifier rules are unit-tested with fixtures. The GPU test skips cleanly
-where there is no NVIDIA device, so CI without a GPU stays green.
+classifier rules are unit-tested with fixtures (including a library path with
+spaces). The auto-hook resolver is tested against a **real symbol index** —
+the test binary's own — pattern → demangled-name search → function id →
+`HookSpec`, with dedup and the cap (`resolves_patterns_against_a_real_index`),
+so the mechanism the framework patterns ride on is proven without `libtorch`
+on the box. The GPU test skips cleanly where there is no NVIDIA device, so CI
+without a GPU stays green.
+
+**Not verified here, stated plainly:** the PyTorch/TensorFlow/JAX/ONNX
+*pattern lists* are best-effort symbol names; they need a real `libtorch` /
+`libtensorflow` symbol table to confirm which resolve. The plumbing is
+exercised; the specific names are the follow-up.
 
 ## Why this is the foundation
 
@@ -71,11 +95,15 @@ summaries) rather than new capture plumbing.
 ## Status / checklist
 
 - [x] **Zero-code detection of PyTorch/TensorFlow/JAX/ONNX and GPU use** —
-      built and tested end to end (`ai_detect.rs`, `--detect-ai`).
+      built and tested end to end (`ai_detect.rs`, `--detect-ai [--json]`),
+      shown as the viewer's **AI:** badge via `/api/status`.
 - [x] **GPU usage detection without instrumenting the target** — built and
       proven on a real GPU.
-- [~] **Auto-hook the training loop** — the suggested-hook lists exist; wiring
-      them into the hook path is next (reuses the native uprobe/Frida path).
+- [x] **Auto-hook the training loop** — opt-in `auto_hook_ai` on the capture
+      request resolves each detected framework's entry points through the
+      symbol index and arms them (native uprobe/Frida path), capped, user
+      picks first. Mechanism tested on a real index; the framework symbol
+      lists still need confirming against real `libtorch`/`libtensorflow`.
 - [ ] **CPU data-loading + GPU kernel profiling path** — designed; the GPU
       side is CUPTI records through the telemetry helper.
 - [ ] **CUDA profiling integration** — CUPTI activity via the helper; needs

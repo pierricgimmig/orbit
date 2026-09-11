@@ -152,11 +152,13 @@ fn mapped_modules(pid: u32) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     if let Ok(maps) = std::fs::read_to_string(format!("/proc/{pid}/maps")) {
         for line in maps.lines() {
-            // The path is the last field, present only for file-backed maps.
-            if let Some(path) = line.split_whitespace().nth(5) {
-                if path.starts_with('/') {
-                    out.insert(path.to_string());
-                }
+            // address perms offset dev inode [path]: the path is everything
+            // after the fifth field, taken whole so a path with spaces in it
+            // survives, and present only for file-backed maps.
+            let mut fields = line.splitn(6, char::is_whitespace);
+            let path = fields.nth(5).map(str::trim_start).unwrap_or("");
+            if path.starts_with('/') {
+                out.insert(path.to_string());
             }
         }
     }
@@ -182,26 +184,101 @@ fn gpu_device_open(pid: u32) -> bool {
     false
 }
 
-/// Hot entry points Orbit would offer to hook automatically for a framework
-/// -- native symbol-name substrings, matched against the symbol index. These
-/// are where a training loop spends its host time, so hooking them turns a
-/// zero-code capture into named scopes without the user picking anything.
+/// The AI workload as JSON, for tooling (`--detect-ai --json`) and the
+/// capture status.
+pub fn to_json(w: &AiWorkload) -> serde_json::Value {
+    serde_json::json!({
+        "frameworks": w.frameworks.iter().map(|f| f.label()).collect::<Vec<_>>(),
+        "gpu_stack": match w.gpu_stack {
+            Some(GpuStack::Cuda) => "cuda",
+            Some(GpuStack::Rocm) => "rocm",
+            None => "",
+        },
+        "gpu_device_open": w.gpu_device_open,
+        "uses_gpu": w.uses_gpu(),
+        "summary": w.summary(),
+    })
+}
+
+/// Hot entry points Orbit hooks automatically for a framework when a capture
+/// asks for it (`auto_hook_ai`). Specific symbols, not prefixes: a prefix like
+/// `at::native::` matches thousands of ATen kernels and would blow through
+/// [`MAX_HOOKS`](crate::hooks::MAX_HOOKS) with noise, so each entry names one
+/// place a training loop spends host time -- the kernel launch, the optimizer
+/// step, the backward engine, the big ops. Matched case-insensitively as
+/// substrings against the demangled symbol index, shortest name first, so
+/// the plain symbol wins over its templated wrappers.
+///
+/// These are best-effort until verified against real `libtorch` /
+/// `libtensorflow` symbol tables; the resolver is what is tested here.
 pub fn suggested_hooks(framework: Framework) -> &'static [&'static str] {
     match framework {
         Framework::PyTorch => &[
-            "at::native::",       // the ATen kernels
-            "torch::autograd::",  // backward pass
-            "c10::",              // dispatcher / tensor core
-            "cudaLaunchKernel",   // host-side kernel launches
+            "cudaLaunchKernel",                 // every host-side kernel launch
+            "torch::autograd::Engine::execute", // the backward pass
+            "torch::optim::Optimizer::step",    // the optimizer step
+            "at::native::conv2d",
+            "at::native::matmul",
+            "at::native::linear",
+            "at::native::cudnn_convolution",
         ],
         Framework::TensorFlow => &[
-            "tensorflow::OpKernel::Compute",
-            "tensorflow::",
             "cudaLaunchKernel",
+            "tensorflow::OpKernel::Compute",
+            "tensorflow::DirectSession::Run",
+            "tensorflow::EagerExecutor",
         ],
-        Framework::Jax => &["xla::", "jax::", "cudaLaunchKernel"],
-        Framework::OnnxRuntime => &["onnxruntime::", "Ort::"],
+        Framework::Jax => &[
+            "cudaLaunchKernel",
+            "xla::gpu::GpuExecutable::Execute",
+            "xla::PjRtStreamExecutorLoadedExecutable",
+        ],
+        Framework::OnnxRuntime => &["onnxruntime::InferenceSession::Run", "Ort::Session::Run"],
     }
+}
+
+/// Resolve name patterns against a process's function index into hook
+/// placements: each pattern contributes its best (shortest-named) matches,
+/// duplicates by function id are dropped, and the result is capped at `cap`
+/// so auto-hooks never crowd out what the user picked. Pure over the index,
+/// so it is testable against any real binary.
+pub fn resolve_patterns(
+    index: &crate::functions::FunctionIndex,
+    patterns: &[&str],
+    cap: usize,
+) -> Vec<crate::hooks::HookSpec> {
+    // A pattern may legitimately match a few variants (cudaLaunchKernel,
+    // cudaLaunchKernelExC); take the shortest couple, not the whole family.
+    const PER_PATTERN: usize = 2;
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
+    let mut out = Vec::new();
+    for pattern in patterns {
+        for f in index.search(pattern, PER_PATTERN) {
+            if out.len() >= cap {
+                return out;
+            }
+            if seen.insert(f.id) {
+                out.push(crate::hooks::HookSpec {
+                    function_id: f.id,
+                    module_path: f.module_path.clone(),
+                    file_offset: f.file_offset,
+                    name: f.name.clone(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The hooks to add automatically for the frameworks a process was detected
+/// to use: [`suggested_hooks`] for each, resolved through the index.
+pub fn auto_hooks(
+    index: &crate::functions::FunctionIndex,
+    frameworks: &[Framework],
+    cap: usize,
+) -> Vec<crate::hooks::HookSpec> {
+    let patterns: Vec<&str> = frameworks.iter().flat_map(|f| suggested_hooks(*f).iter().copied()).collect();
+    resolve_patterns(index, &patterns, cap)
 }
 
 #[cfg(test)]
@@ -250,7 +327,67 @@ mod tests {
     fn every_framework_suggests_at_least_one_hook() {
         for fw in [Framework::PyTorch, Framework::TensorFlow, Framework::Jax, Framework::OnnxRuntime] {
             assert!(!suggested_hooks(fw).is_empty(), "{} has no suggested hooks", fw.label());
+            // Specific symbols, never a bare namespace prefix that would match
+            // a whole library.
+            for p in suggested_hooks(fw) {
+                assert!(!p.ends_with("::"), "{p:?} is a prefix, not a symbol");
+            }
         }
+    }
+
+    #[test]
+    fn json_carries_the_summary_and_flags() {
+        let w = AiWorkload {
+            frameworks: vec![Framework::TensorFlow],
+            gpu_stack: Some(GpuStack::Rocm),
+            gpu_device_open: false,
+        };
+        let j = to_json(&w);
+        assert_eq!(j["frameworks"][0], "TensorFlow");
+        assert_eq!(j["gpu_stack"], "rocm");
+        assert_eq!(j["uses_gpu"], true);
+        assert_eq!(j["summary"], "TensorFlow + AMD GPU (ROCm)");
+    }
+
+    /// A maps line whose path contains spaces keeps the whole path.
+    #[test]
+    fn maps_paths_with_spaces_survive() {
+        let line = "7f00-7f01 r-xp 00000000 fd:00 1234                       /opt/my libs/libtorch cpu.so";
+        let mut fields = line.splitn(6, char::is_whitespace);
+        let path = fields.nth(5).map(str::trim_start).unwrap_or("");
+        assert_eq!(path, "/opt/my libs/libtorch cpu.so");
+        let (fw, _) = classify_modules(&[path]);
+        assert_eq!(fw, vec![Framework::PyTorch]);
+    }
+
+    /// The auto-hook resolver against a real symbol index: this test binary's
+    /// own. Pattern -> demangled name search -> function id -> HookSpec, with
+    /// dedup and a cap. Proves the mechanism the framework patterns ride on,
+    /// without needing libtorch on the box.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolves_patterns_against_a_real_index() {
+        let index = crate::functions::FunctionIndex::for_pid(std::process::id() as i32);
+        if index.is_empty() {
+            eprintln!("AUTO-HOOK TEST SKIPPED: could not index this test binary");
+            return;
+        }
+        // A function that certainly exists in this binary: this module's own.
+        let hooks = resolve_patterns(&index, &["ai_detect::resolve_patterns"], 8);
+        assert!(!hooks.is_empty(), "should resolve a symbol from the live index");
+        assert!(hooks.iter().all(|h| h.name.contains("resolve_patterns")), "{hooks:?}");
+        assert!(hooks.iter().all(|h| h.file_offset > 0 && !h.module_path.is_empty()));
+        // The cap holds, and a repeated pattern does not duplicate ids.
+        let capped = resolve_patterns(&index, &["ai_detect::", "ai_detect::"], 1);
+        assert_eq!(capped.len(), 1);
+        let ids: BTreeSet<u64> = resolve_patterns(&index, &["ai_detect::", "ai_detect::"], 8)
+            .iter()
+            .map(|h| h.function_id)
+            .collect();
+        let n = resolve_patterns(&index, &["ai_detect::", "ai_detect::"], 8).len();
+        assert_eq!(ids.len(), n, "no duplicate function ids");
+        // No framework detected -> nothing auto-hooked.
+        assert!(auto_hooks(&index, &[], 8).is_empty());
     }
 
     // --- End-to-end against real processes (Linux) ---------------------------
