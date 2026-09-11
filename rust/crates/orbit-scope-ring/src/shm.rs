@@ -157,6 +157,51 @@ pub fn pid_from_shm_file_name(name: &str) -> Option<u32> {
     name.strip_prefix("orbit-scopes-")?.parse().ok()
 }
 
+/// The protocol [`VERSION`] stamped in `pid`'s segment, or `None` when there
+/// is no initialised Orbit segment for that pid.
+///
+/// Returns `Some(v)` even when `v != VERSION`, so a caller can tell a real
+/// version mismatch -- a producer built against another Orbit -- from an
+/// absent or half-written segment, which [`ScopeRingReader::open`] reports the
+/// same way. Maps only the header, read-only, and unmaps it before returning.
+pub fn segment_version(pid: u32) -> Option<u32> {
+    prepare_directory().ok()?;
+    let name = shm_name(pid);
+    // SAFETY: plain syscall, result checked.
+    let fd = unsafe { segment_open(&name, libc::O_RDONLY, 0) };
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: fd is freshly opened; OwnedFd closes it when this returns.
+    let owner = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: fd is open, stat is a live local.
+    if unsafe { libc::fstat(owner.as_raw_fd(), &mut stat) } != 0 {
+        return None;
+    }
+    if (stat.st_size as u64) < std::mem::size_of::<Header>() as u64 {
+        // A segment mid-creation: ftruncate has not run yet. Absent, retry.
+        return None;
+    }
+    let len = std::mem::size_of::<Header>();
+    // SAFETY: mapping the header of an open fd whose file is at least that big.
+    let base = unsafe {
+        libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, owner.as_raw_fd(), 0)
+    };
+    if base == libc::MAP_FAILED {
+        return None;
+    }
+    let mapping = Mapping { base: base.cast::<u8>(), len };
+    // SAFETY: the mapping covers Header; the producer stores magic last, so a
+    // segment that reads MAGIC here has its version and pid already written.
+    let header = unsafe { &*mapping.base.cast::<Header>() };
+    if header.magic.load(Ordering::Acquire) == MAGIC && header.pid == pid {
+        Some(header.version)
+    } else {
+        None
+    }
+}
+
 fn shm_name(pid: u32) -> std::ffi::CString {
     #[cfg(target_os = "macos")]
     return std::ffi::CString::new(segment_directory().join(shm_file_name(pid)).to_string_lossy().as_bytes()).unwrap();
@@ -502,6 +547,17 @@ mod tests {
 
     fn exclusive() -> std::sync::MutexGuard<'static, ()> {
         SEGMENT.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn segment_version_reads_the_live_segment_and_is_none_when_absent() {
+        let _serial = exclusive();
+        let pid = std::process::id();
+        assert_eq!(segment_version(pid), None, "no segment before one is made");
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        assert_eq!(segment_version(pid), Some(VERSION), "the live segment's version");
+        assert_eq!(segment_version(pid + 1), None, "a pid with no segment");
+        drop(writer);
     }
 
     #[test]

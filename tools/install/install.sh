@@ -101,6 +101,21 @@ chmod +x "$bin"
 mv -f "$bin" "$dest" || die "cannot install to $dest"
 say "installed $dest"
 
+# --- manual instrumentation library (optional) --------------------------------
+# orbit.h and the orbit-api Python package load liborbit_api from the
+# directory that holds orbit-service, so it goes beside the binary when the
+# release publishes one. Missing is not an error: programs run uninstrumented.
+case "$os" in
+    linux) lib="liborbit_api.so" ;;
+    macos) lib="liborbit_api.dylib" ;;
+esac
+liburl="${BASE}/dist/${VERSION}/${lib%.*}-${os}-${arch}.${lib##*.}"
+if fetch_ok "$liburl" && fetch "$liburl" "$tmp/$lib"; then
+    mv -f "$tmp/$lib" "$INSTALL_DIR/$lib" && say "installed $INSTALL_DIR/$lib (manual instrumentation)"
+else
+    say "no instrumentation library published for this release; orbit.h and pip's orbit-api run as no-ops"
+fi
+
 # --- PATH hint ---------------------------------------------------------------
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
@@ -119,4 +134,7 @@ orbit-service is installed. Start it and open the viewer:
 
 Sampling needs perf_event_paranoid <= -1 or CAP_PERFMON; dynamic
 instrumentation needs CAP_SYS_ADMIN. See the manual for details.
+
+To instrument your own code: drop orbit.h into a C or C++ project (nothing
+to link; it finds liborbit_api beside orbit-service), or pip install orbit-api.
 EOF
