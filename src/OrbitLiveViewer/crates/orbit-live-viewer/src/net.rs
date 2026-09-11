@@ -50,6 +50,10 @@ pub struct StatusJson {
     /// functions were armed, or why none were. Empty when none were asked for.
     #[serde(default)]
     pub instrumentation: String,
+    /// Zero-code AI detection of the target, e.g. `PyTorch + NVIDIA GPU
+    /// (CUDA)`; empty when the service found nothing AI about it.
+    #[serde(default)]
+    pub ai: String,
 }
 
 fn default_machine() -> String {
@@ -1306,6 +1310,19 @@ pub use native_impl::Net;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_carries_the_ai_badge_and_tolerates_its_absence() {
+        // A service that detected the target zero-code sends `ai`; an older
+        // service sends nothing, and the badge simply stays empty.
+        let s = super::parse_status_json(
+            r#"{"capturing":true,"demo":false,"ai":"PyTorch + NVIDIA GPU (CUDA)"}"#,
+        )
+        .expect("status with ai");
+        assert_eq!(s.ai, "PyTorch + NVIDIA GPU (CUDA)");
+        let s = super::parse_status_json(r#"{"capturing":false,"demo":false}"#).expect("status without ai");
+        assert!(s.ai.is_empty());
+    }
+
     #[test]
     fn a_report_with_sorted_keys_parses_its_rows() {
         // Exactly what the service writes: serde_json's sorted keys, so a
