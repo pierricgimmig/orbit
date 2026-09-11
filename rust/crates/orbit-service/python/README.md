@@ -19,6 +19,18 @@ for instrumenting Python.
 - `orbit_profiler.binary_path()`, `.library_path()`, `.header_path()` locate
   the bundled files, e.g. to point a build system at `orbit.h`.
 
+## What is in the wheel, and what is not
+
+Sampling, scheduling, GPU telemetry, manual instrumentation through the API
+(C, C++, Rust, Python) and the uprobes dynamic-instrumentation engine are all
+in the binary. The Frida dynamic-instrumentation engine additionally needs
+two native companions, `liborbit_frida_agent` and `orbit-frida-helper`, which
+a wheel carries only when it was built with them
+(`ORBIT_COMPANIONS_DIR`, see `tools/release/build_wheels.sh`); a wheel built
+without them says so at build time, and the service's settings offer the
+uprobes engine instead. The project's release archives always include the
+Frida engine.
+
 Sampling needs `perf_event_paranoid <= -1` or `CAP_PERFMON`; dynamic
 instrumentation needs `CAP_SYS_ADMIN`. See the manual for details. The pure
 `curl … | sh` installer and prebuilt archives remain at the project's releases

@@ -23,11 +23,13 @@ Run `orbit-service`, open its viewer, pick the Python process, press Record.
 ## How it finds the library
 
 The producer is the same `liborbit_api` that C and C++ load through
-`orbit.h`, installed beside `orbit-service` by the install script. The
-package looks, in order, at `$ORBIT_API_LIB`, beside itself, beside the
-`orbit-service` on `PATH`, `~/.local/bin`, `~/.orbit/bin`, then the system
-loader. Without a library every call is a no-op and `init()` returns
-`orbit_api.E_NOLIB`.
+`orbit.h`. The package looks, in order, at `$ORBIT_API_LIB`, beside the
+`orbit-service` on `PATH` (then `~/.local/bin`, `~/.orbit/bin`), the copy
+bundled in this wheel, then the system loader. The service comes first
+because it is the authority on the ring protocol version: the library that
+writes must match the service that reads, and a running service's own
+library is the one guaranteed to. Without any library every call is a no-op
+and `init()` returns `orbit_api.E_NOLIB`.
 
 ## API
 
