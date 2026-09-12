@@ -722,13 +722,14 @@ Orbit already hooks with kernel uprobes -- no interpreter, no probes, no eBPF.
 Its GPU kernels launch through the driver Orbit's GPU telemetry helper already
 watches, so host and device land on one timeline.
 
-**Status: landing page + design (2026-09-10); Mojo-specific work planned.**
-The homepage features the angle with a diagram (`tools/site/index.html`). The
-instrumentation itself is the native path Orbit ships; what is Mojo-specific --
-name demangling / source mapping, function discovery from the symbol table for
-"hook from the report", GPU kernel attribution and `language=mojo` tagging, and
-an e2e -- is in [mojo-instrumentation.md](mojo-instrumentation.md). Not
-verifiable on this box: no Mojo toolchain, no GPU, so the mangling scheme,
-whether `mojo build` emits DWARF, and CUPTI's Mojo kernel names are unconfirmed.
-First step: build a small Mojo program on a toolchain machine and pin the
-demangling from its symbols/DWARF.
+**Status: built and proven on Mojo 1.0.0 + an RTX 4090 (2026-09-12).** Mojo
+does not mangle: `.symtab` holds `module::fn(::SIMD[::DType(int),
+::SIMDLength(1)])`-style names, which `mojo.rs` prettifies to
+`module::fn(Int)` for the function index and the symbolizer;
+`--mojo-functions <pid|path>` lists a binary's functions and the GPU kernels it
+carries (PTX, `sm_89`); search hits carry `language: mojo`. The `mojo` e2e
+hooks `simulate` and `step` of `src/OrbitTestMojo` with uprobes (1651 + 1652
+scopes in 6 s) with the GPU lanes alongside -- `45-mojo-host-gpu.png`.
+Details and what is still open (per-kernel spans need CUPTI records; the
+viewer does not draw the language chip yet) in
+[mojo-instrumentation.md](mojo-instrumentation.md).

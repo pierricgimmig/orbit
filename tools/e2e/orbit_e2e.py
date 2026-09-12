@@ -667,6 +667,129 @@ def instrumentation(run):
     return f"{message}; {spans} hooked spans, longest {longest/1e6:.2f} ms"
 
 
+MOJO_DIR = os.path.join(REPO, "src/OrbitTestMojo")
+
+
+def _build_mojo():
+    """The Mojo test program, built if a `mojo` compiler is on PATH (or in
+    $MOJO); None when there is no toolchain to build it with."""
+    binary = os.path.join(MOJO_DIR, "orbit_test_mojo")
+    if os.path.exists(binary):
+        return binary
+    mojo = os.environ.get("MOJO") or shutil.which("mojo")
+    if not mojo:
+        return None
+    subprocess.run([os.path.join(MOJO_DIR, "build.sh")], check=True, env={**os.environ, "MOJO": mojo})
+    return binary
+
+
+@scenario("mojo", "A Mojo program: its functions found by name, hooked with uprobes, GPU on the same timeline")
+def mojo(run):
+    """Mojo compiles to native code, so nothing new is needed to hook it --
+    only to read its names. This proves the chain: the binary is recognised
+    as Mojo and its functions and GPU kernel listed without touching the
+    process; the function index serves the same names prettified and tagged
+    `mojo`; uprobes on them land as scopes on the timeline, with the GPU
+    lanes alongside when the box has a GPU."""
+    binary = _build_mojo()
+    if binary is None:
+        return "skipped: no Mojo toolchain (see src/OrbitTestMojo/build.sh)"
+    # The GPU frame when there is a device; the same host loop without one.
+    gpu = os.path.exists("/dev/nvidiactl")
+    app = Target([binary] + ([] if gpu else ["--cpu"]))
+    try:
+        # 1. Discovery from the executable alone, by pid.
+        listing = subprocess.run(
+            [SERVICE, "--mojo-functions", str(app.pid)], capture_output=True, text=True, timeout=60,
+        )
+        check(listing.returncode == 0, f"--mojo-functions did not call it a Mojo binary: {listing.stderr[-300:]}")
+        check("orbit_test_mojo::simulate(Int)" in listing.stdout, f"simulate is not listed:\n{listing.stdout}")
+        check(
+            "orbit_test_mojo::saxpy_kernel(" in listing.stdout and "nvptx64-nvidia-cuda" in listing.stdout,
+            f"the GPU kernel is not listed:\n{listing.stdout}",
+        )
+        # 2. The function index reads the same names, tagged with the language.
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            status = run.service.get(f"/api/symbols/status?pid={app.pid}")
+            if status.get("status") == "ready":
+                break
+            check(status.get("status") != "error", f"symbols: {status.get('error')}")
+            time.sleep(0.3)
+        hits = run.service.get(f"/api/functions/search?pid={app.pid}&q=orbit_test_mojo::&limit=20")["functions"]
+        by_name = {h["name"]: h for h in hits}
+        frame = "orbit_test_mojo::step(DeviceContext, DeviceBuffer[DType.float32], DeviceBuffer[DType.float32], Int)" \
+            if gpu else "orbit_test_mojo::host_step(Int)"
+        wanted = ["orbit_test_mojo::simulate(Int)", frame]
+        for name in wanted:
+            check(name in by_name, f"{name} is not in the function index: {sorted(by_name)[:6]}")
+            check(by_name[name].get("language") == "mojo", f"{name} is not tagged mojo: {by_name[name]}")
+        # 3. Hooked with uprobes, like any native function.
+        run.service.post("/api/capture/start", {
+            "pid": app.pid,
+            "dynamic_instrumentation_method": "kernel_uprobes",
+            "instrumented_functions": [{"function_id": by_name[n]["function_id"]} for n in wanted],
+        })
+        message = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            message = run.service.get("/api/status").get("instrumentation", "")
+            if message:
+                break
+            time.sleep(0.2)
+        check(message, "the service said nothing about arming the hooks")
+        if "no hooks armed" in message:
+            run.service.post("/api/capture/stop")
+            check("CAP_SYS_ADMIN" in message, f"refusal does not name the capability: {message}")
+            return f"skipped: {message.split('.')[0]} (run with --sudo)"
+        check("instrumenting 2 of 2" in message, f"not every function armed: {message}")
+        time.sleep(6.0)
+        run.open_viewer("?collapse=scheduler")
+        if run.chrome is not None:
+            # Zoomed in (W held over the program's first thread) so the scopes
+            # draw wide enough to carry their Mojo names.
+            lanes = _thread_rows(run, app.pid)
+            x, y, w, h = run.rect("row:scheduler")
+            canvas_right = run.chrome.eval("document.querySelector('canvas').clientWidth")
+            first = sorted(lanes.items())[0][1]
+            run.chrome.move(x + w + (canvas_right - x - w) * 0.5, first[1] + first[3] * 0.5)
+            run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="w", code="KeyW", windowsVirtualKeyCode=87)
+            time.sleep(3.0)
+            run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="w", code="KeyW", windowsVirtualKeyCode=87)
+            run.chrome.move(x + w * 0.5, canvas_right)  # off the timeline, so no hover tooltip
+        run.shot("45-mojo-host-gpu", settle=2.0)
+        run.stop_capture()
+        # 4. The scopes carry the Mojo names. Through the bundle, via pyarrow.
+        probe = subprocess.run([PYARROW_PYTHON, "-c", "import pyarrow"], capture_output=True)
+        if probe.returncode != 0:
+            return f"{message}; spans not checked ({PYARROW_PYTHON} has no pyarrow)"
+        path = _export_bundle(run, "mojo.orbit.zip")
+        folder = os.path.join(SCRATCH, "mojo-unzipped")
+        shutil.rmtree(folder, ignore_errors=True)
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            z.extractall(folder)
+        count = subprocess.run(
+            [PYARROW_PYTHON, "-c",
+             "import pyarrow.parquet as pq,sys;t=pq.read_table(sys.argv[1]+'/events.parquet');"
+             "name=t.column('name').to_pylist();kind=t.column('kind').to_pylist();"
+             "sim=sum(1 for n,k in zip(name,kind) if k==1 and n=='orbit_test_mojo::simulate(Int)');"
+             "frame=sum(1 for n,k in zip(name,kind) if k==1 and n==sys.argv[2]);print(sim, frame)",
+             folder, frame],
+            capture_output=True, text=True, timeout=120,
+        )
+        check(count.returncode == 0, f"pyarrow query failed: {count.stderr[-300:]}")
+        simulate_spans, frame_spans = (int(v) for v in count.stdout.split())
+        # The program runs ~100 frames/s; a 6 s capture holds hundreds.
+        check_at_least(simulate_spans, 100, "orbit_test_mojo::simulate(Int) scopes")
+        check_at_least(frame_spans, 100, f"{frame} scopes")
+        return (f"{message}; {simulate_spans} simulate + {frame_spans} frame scopes"
+                f"{' with the GPU frame on the RTX' if gpu else ' (host only, no GPU)'}")
+    finally:
+        app.proc.kill()
+
+
 # ------------------------------------------------------------------------ run
 
 
