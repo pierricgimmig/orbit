@@ -18,7 +18,9 @@
 //! `name___<param types>` plus an ISA suffix such as `_avx2` -- which no C++
 //! demangler knows; `ispc` below reads it and labels the kernel
 //! `name [ispc avx2]`. Anything that fails to parse passes through as the
-//! linker wrote it.
+//! linker wrote it. Mojo does not mangle: its names are its source paths
+//! with every type spelled out, which `mojo.rs` recognises and shortens to
+//! how the source reads (`orbit_test_mojo::simulate(Int)`).
 //!
 //! Cost: about 2 µs a name (86k names of libLLVM + libclang-cpp in 160 ms,
 //! 99.7 % demangled; the `throughput` test below re-measures it). The
@@ -39,9 +41,13 @@ pub fn pretty(mangled: &str) -> String {
 }
 
 /// Itanium and Rust names start `_Z`/`_R`; an ISPC name is the plain
-/// function name followed by `___` and its parameter types.
+/// function name followed by `___` and its parameter types; a Mojo name is
+/// a source path with its argument types spelled out (`mojo.rs`).
 fn looks_mangled(name: &str) -> bool {
-    name.starts_with("_Z") || name.starts_with("_R") || name.contains("___")
+    name.starts_with("_Z")
+        || name.starts_with("_R")
+        || name.contains("___")
+        || crate::mojo::is_mojo_symbol(name)
 }
 
 /// As [`pretty`], memoized: for callers that ask the same few names many
@@ -65,6 +71,9 @@ pub fn pretty_cached(mangled: &str) -> String {
 }
 
 fn pretty_uncached(mangled: &str) -> String {
+    if crate::mojo::is_mojo_symbol(mangled) {
+        return crate::mojo::pretty(mangled);
+    }
     if is_rust(mangled) {
         let demangled = format!("{:#}", rustc_demangle::demangle(mangled));
         if demangled != mangled {

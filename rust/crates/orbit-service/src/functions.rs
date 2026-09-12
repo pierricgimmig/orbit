@@ -298,7 +298,7 @@ impl FunctionIndex {
         let hits: Vec<serde_json::Value> = functions.into_iter()
             .map(|function| {
                 let safety = self.safety_of(function.id);
-                serde_json::json!({
+                let mut hit = serde_json::json!({
                     "function_id": function.id,
                     "name": function.name,
                     "module": function.module,
@@ -307,7 +307,13 @@ impl FunctionIndex {
                     // "unknown", with a human reason for the tooltip.
                     "safety": safety.level.as_str(),
                     "safety_reason": safety.reason,
-                })
+                });
+                // The language, when the name alone says it: a Mojo function
+                // is hooked like any native one, but the picker can say so.
+                if crate::mojo::is_mojo_symbol(&function.name) {
+                    hit["language"] = serde_json::Value::from("mojo");
+                }
+                hit
             })
             .collect();
         // `total` is the whole index: a viewer that asked for the first N
@@ -561,7 +567,7 @@ mod tests {
     }
 }
 
-/// A Rust or C++ symbol made readable (`demangle.rs`): the Functions view,
+/// A Rust, C++ or Mojo symbol made readable (`demangle.rs`): the Functions view,
 /// the hook scope names and the disassembly read names, and neither
 /// `_ZN12orbit_service7uprobes..` nor `_ZN9Stockfish6Search6Worker..Ev` is
 /// one. The same rule the symbolizer applies to sampled frames.
