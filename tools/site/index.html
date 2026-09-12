@@ -46,6 +46,69 @@
   <p class="facts">{{facts}}</p>
 
   <section class="section">
+    <h2>Mojo, host and GPU &mdash; one timeline</h2>
+    <p class="sub">Mojo compiles straight to native code, so there is no interpreter to trap: Orbit hooks a Mojo
+      function like any other native symbol &mdash; no probes, no eBPF &mdash; and the GPU kernel it launches rides
+      Orbit's GPU telemetry. Host and device, aligned on one timeline.</p>
+
+    <div class="card" style="padding:1.25rem;">
+      <svg viewBox="0 0 900 200" role="img"
+           aria-label="Two aligned lanes: a Mojo host function step() and the GPU kernel saxpy it launches, on one timeline."
+           style="width:100%;height:auto;font-family:var(--mono);font-size:13px;">
+        <line x1="150" y1="28" x2="880" y2="28" stroke="var(--line)"/>
+        <text x="150" y="20" fill="var(--muted)">t</text>
+        <text x="864" y="20" fill="var(--muted)">&rarr;</text>
+
+        <text x="16" y="66"  fill="var(--ink-soft)">Mojo&nbsp;(host)</text>
+        <text x="16" y="122" fill="var(--ink-soft)">GPU&nbsp;kernel</text>
+        <text x="16" y="174" fill="var(--muted)" font-size="11">source</text>
+
+        <!-- Mojo host function: a native symbol, hooked like any other -->
+        <rect x="150" y="46" width="700" height="34" rx="4" fill="var(--accent-wash)" stroke="var(--accent)"/>
+        <text x="164" y="68" fill="var(--accent-deep)">def step()  &mdash;  Mojo function (native hook, no probe)</text>
+
+        <!-- GPU kernel via the telemetry helper -->
+        <rect x="330" y="102" width="380" height="34" rx="4" fill="#dcf0dc" stroke="#3f9d3f"/>
+        <text x="344" y="124" fill="#256b25">saxpy_kernel  &mdash;  GPU (telemetry lanes)</text>
+
+        <line x1="330" y1="80" x2="330" y2="102" stroke="var(--line)" stroke-dasharray="3 3"/>
+        <line x1="710" y1="136" x2="710" y2="80" stroke="var(--line)" stroke-dasharray="3 3"/>
+      </svg>
+    </div>
+
+    <div class="cards" style="margin-top:1.25rem;">
+      <div class="card primary">
+        <p class="kicker">No probes needed</p>
+        <h3>It's already native</h3>
+        <p>Where Python needs its interpreter's USDT probes, Mojo is compiled ahead of time. A Mojo function is a
+          native symbol, so Orbit hooks it with the same kernel uprobes it uses for C, C++ and Rust &mdash; entry
+          and exit become a scope, no rebuild of the target. Mojo doesn't even mangle: Orbit reads
+          <code>orbit_test_mojo::step(DeviceContext, &hellip;, Int)</code> straight off the symbol table.</p>
+      </div>
+      <div class="card">
+        <p class="kicker">The kernel it launches</p>
+        <h3>Onto the GPU</h3>
+        <p>A Mojo kernel is compiled to PTX and carried inside the binary; <code>orbit-service --mojo-functions</code>
+          lists it, with its target (<code>nvptx64-nvidia-cuda sm_89</code>). It launches through the driver Orbit's
+          GPU helper watches, so the GPU lanes &mdash; utilization, memory, power, clocks &mdash; run under the host
+          scopes in the same capture. Per-kernel spans are next.</p>
+      </div>
+      <div class="card">
+        <p class="kicker">For AI work</p>
+        <h3>The MAX stack</h3>
+        <p>Mojo is where a lot of AI kernels are being written now. Profiling the host and the device together, on
+          one machine or across a cluster, is the same story as Python &mdash; and simpler, because there is no
+          language boundary to cross.</p>
+      </div>
+    </div>
+
+    <figure class="card" style="margin-top:1.25rem;padding:0.75rem;">
+      <img src="screenshots/45-mojo-host-gpu.png" alt="Orbit capturing a Mojo program: hooked step and simulate scopes on the Mojo thread, the CUDA event thread, and the GPU lanes below" style="width:100%;height:auto;border-radius:6px;display:block;">
+      <figcaption class="sub" style="margin:0.6rem 0 0;font-size:0.9rem;">A real capture, Mojo 1.0 on an RTX 4090: <code>step</code> and <code>simulate</code> hooked by name with kernel uprobes, the runtime's CUDA event thread, and the GPU lanes from the telemetry helper &mdash; one timeline.</figcaption>
+    </figure>
+  </section
+
+  <section class="section">
     <h2>What it does</h2>
     <p class="sub">One timeline, three sources of truth about where the time goes.</p>
     <div class="cards">

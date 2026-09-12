@@ -261,11 +261,15 @@ fn find_symbol(symbols: &[(u64, u64, String)], address: u64) -> Option<&str> {
 }
 
 /// Rust names are demangled (legacy `_ZN..E` with its hash dropped, and v0
-/// `_R..`); anything else passes through as the linker wrote it. Itanium
-/// C++ demangling stays with `abi::__cxa_demangle` in the C++ shims: blog
-/// post 02 records why the Rust crate for it was not good enough, and a
-/// static musl service has no libstdc++ to call.
+/// `_R..`), Mojo names shortened to their source spelling (`mojo.rs`);
+/// anything else passes through as the linker wrote it. Itanium C++
+/// demangling stays with `abi::__cxa_demangle` in the C++ shims: blog post
+/// 02 records why the Rust crate for it was not good enough, and a static
+/// musl service has no libstdc++ to call.
 fn demangle(name: &str) -> String {
+    if crate::mojo::is_mojo_symbol(name) {
+        return crate::mojo::pretty(name);
+    }
     format!("{:#}", rustc_demangle::demangle(name))
 }
 

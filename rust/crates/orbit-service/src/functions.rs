@@ -249,12 +249,18 @@ impl FunctionIndex {
             .search(query, limit)
             .into_iter()
             .map(|function| {
-                serde_json::json!({
+                let mut hit = serde_json::json!({
                     "function_id": function.id,
                     "name": function.name,
                     "module": function.module,
                     "size": function.size,
-                })
+                });
+                // The language, when the name alone says it: a Mojo function
+                // is hooked like any native one, but the picker can say so.
+                if crate::mojo::is_mojo_symbol(&function.name) {
+                    hit["language"] = serde_json::Value::from("mojo");
+                }
+                hit
             })
             .collect();
         serde_json::json!({ "pid": pid, "status": "ready", "functions": hits }).to_string()
@@ -483,10 +489,11 @@ mod tests {
     }
 }
 
-/// A Rust symbol demangled (legacy `_ZN..E` without its hash, and v0), a C
-/// or C++ one as it is: the Functions view and the disassembly read names,
-/// and `_ZN12orbit_service7uprobes..` is not one. The same rule the
-/// symbolizer applies to sampled frames.
+/// A Rust symbol demangled (legacy `_ZN..E` without its hash, and v0), a
+/// Mojo one shortened to how its source spells it (`mojo.rs`), a C or C++
+/// one as it is: the Functions view and the disassembly read names, and
+/// `_ZN12orbit_service7uprobes..` is not one. The same rule the symbolizer
+/// applies to sampled frames.
 fn pretty_name(mangled: &str) -> String {
     if mangled.starts_with("_R") || (mangled.starts_with("_ZN") && mangled.ends_with('E')) {
         let demangled = format!("{:#}", rustc_demangle::demangle(mangled));
@@ -494,6 +501,6 @@ fn pretty_name(mangled: &str) -> String {
             return demangled;
         }
     }
-    mangled.to_string()
+    crate::mojo::pretty(mangled)
 }
 

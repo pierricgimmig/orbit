@@ -24,6 +24,7 @@ mod code;
 mod functions;
 mod interner;
 mod lan;
+mod mojo;
 mod names;
 #[cfg(target_os = "linux")]
 mod privileges;
@@ -150,6 +151,24 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--mojo-functions" => {
+                // orbit-service --mojo-functions <pid|path> [--json]: the
+                // Mojo functions of a binary and the GPU kernels it carries.
+                let target = iter.next().unwrap_or_default();
+                if target.is_empty() {
+                    eprintln!("orbit-service --mojo-functions <pid|path> [--json]");
+                    std::process::exit(2);
+                }
+                let as_json = iter.next().as_deref() == Some("--json");
+                #[cfg(target_os = "linux")]
+                std::process::exit(mojo::print_functions(&target, as_json));
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = as_json;
+                    eprintln!("orbit-service: --mojo-functions reads ELF files; Linux only");
+                    std::process::exit(2);
+                }
+            }
             "--uprobe-dump" => {
                 // Every raw probe hit to a file, for looking at what the
                 // kernel delivered around a lost one (uprobes.rs). A flag
@@ -194,6 +213,8 @@ fn parse_args() -> Args {
                      packed and deflated\n\
                      orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>  cut a \
                      saved capture to a window, reading only the row groups inside it\n\
+                     orbit-service --mojo-functions <pid|path> [--json]  the Mojo functions of a \
+                     binary (or a running process's executable) and the GPU kernels it carries\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]"
                 );
