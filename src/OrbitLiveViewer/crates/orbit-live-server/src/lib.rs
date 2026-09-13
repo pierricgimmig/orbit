@@ -133,6 +133,9 @@ pub struct LiveService {
     /// under the hook picker, because a hook that was ticked but never armed
     /// is otherwise indistinguishable from a function that simply never ran.
     pub instrumentation_status: Mutex<String>,
+    /// The zero-code AI detection for the capture's target (see
+    /// [`Self::set_ai_status`]); empty when there is none.
+    pub ai_status: Mutex<String>,
     /// Optional: aggregates sampled callstacks over a time range into a
     /// sampling report. Set separately from `ControlHooks` so a service that
     /// does not sample (or predates this) needs no change.
@@ -275,6 +278,7 @@ impl LiveService {
             demo: AtomicBool::new(false),
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
+            ai_status: Mutex::new(String::new()),
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
             sampling_report_scope: Mutex::new(None),
@@ -303,6 +307,17 @@ impl LiveService {
     #[allow(clippy::type_complexity)]
     pub fn set_instrumentation_status(&self, status: impl Into<String>) {
         *self.instrumentation_status.lock() = status.into();
+    }
+
+    /// What the capture's target looks like as an AI workload, found from
+    /// its loaded modules and open devices without touching it -- e.g.
+    /// `PyTorch + NVIDIA GPU (CUDA)`. Empty when nothing AI was detected.
+    pub fn set_ai_status(&self, status: impl Into<String>) {
+        *self.ai_status.lock() = status.into();
+    }
+
+    pub fn ai_status(&self) -> String {
+        self.ai_status.lock().clone()
     }
 
     pub fn instrumentation_status(&self) -> String {
