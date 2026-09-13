@@ -1,4 +1,12 @@
-//! Machine → process → thread session tree. Leaf lanes sit under a thread.
+//! Machine → process → track session tree.
+//!
+//! A *track* is the unit the user moves: a thread with the lanes packed under
+//! it (states, samples, scopes), a thread's async spans as a block of their
+//! own, or one value graph. Each is a `TrackKey`; the rail is one flat
+//! `track_order` of them, and a track's position among the others of its
+//! process section is its position in that list. A track always belongs to
+//! the thread in its key -- that never changes -- but it can be *placed* under
+//! another process (`host`), where it is drawn as a guest of that section.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
@@ -77,7 +85,83 @@ pub enum RowId {
     Machine(MachineId),
     Process(u32),
     Thread(ThreadId),
+    /// The head of a thread's async block: its API_TRACK lanes, every depth,
+    /// packed under this row the way scope lanes pack under the thread row.
+    Async(ThreadId),
     Lane(LaneKey),
+}
+
+/// A movable unit of the rail: what a drag lifts, what a hole is opened for,
+/// what can be placed under another process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TrackKey {
+    /// A thread row with the lanes packed under it.
+    Thread(ThreadId),
+    /// A thread's async spans: their own block, not part of the thread's.
+    Async(ThreadId),
+    /// One value graph (one name of one thread).
+    Value(LaneKey),
+}
+
+impl TrackKey {
+    /// The thread the track belongs to. Never changes: moving a track changes
+    /// where it is drawn, not whose it is.
+    pub fn owner(self) -> ThreadId {
+        match self {
+            TrackKey::Thread(t) | TrackKey::Async(t) => t,
+            TrackKey::Value(k) => ThreadId { pid: k.pid, tid: k.tid },
+        }
+    }
+
+    pub fn owner_pid(self) -> u32 {
+        self.owner().pid
+    }
+
+    /// The row that heads the track.
+    pub fn row(self) -> RowId {
+        match self {
+            TrackKey::Thread(t) => RowId::Thread(t),
+            TrackKey::Async(t) => RowId::Async(t),
+            TrackKey::Value(k) => RowId::Lane(k),
+        }
+    }
+
+    /// Whether lane `k` is drawn inside this track.
+    pub fn owns_lane(self, k: LaneKey) -> bool {
+        match self {
+            TrackKey::Thread(t) => k.pid == t.pid && k.tid == t.tid && !is_standalone_lane(k),
+            TrackKey::Async(t) => k.pid == t.pid && k.tid == t.tid && k.kind == kind::API_TRACK,
+            TrackKey::Value(v) => k == v,
+        }
+    }
+
+    /// Whether an event of `kind_id` on thread (`pid`, `tid`) is drawn inside
+    /// this track -- the instance-level twin of [`Self::owns_lane`].
+    pub fn owns(self, pid: u32, tid: u32, kind_id: u8) -> bool {
+        match self {
+            TrackKey::Thread(t) => {
+                t.pid == pid && t.tid == tid && kind_id != kind::API_TRACK && kind_id != kind::VALUE
+            }
+            TrackKey::Async(t) => t.pid == pid && t.tid == tid && kind_id == kind::API_TRACK,
+            TrackKey::Value(v) => v.pid == pid && v.tid == tid && kind_id == kind::VALUE,
+        }
+    }
+
+    /// Whether `row` is the track's head row or a lane row inside it.
+    pub fn covers_row(self, row: RowId) -> bool {
+        match row {
+            RowId::Thread(t) => self == TrackKey::Thread(t),
+            RowId::Async(t) => self == TrackKey::Async(t),
+            RowId::Lane(k) => !is_cpu_lane(k) && self.owns_lane(k),
+            _ => false,
+        }
+    }
+}
+
+impl From<ThreadId> for TrackKey {
+    fn from(t: ThreadId) -> Self {
+        TrackKey::Thread(t)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -88,9 +172,16 @@ pub struct TrackRow {
 }
 
 pub struct TrackStrip {
-    pub thread_order: Vec<ThreadId>,
+    /// Every track, in rail order across every process. A track's place
+    /// among the others shown in its section is its place here; the
+    /// sections themselves follow `process_order`.
+    pub track_order: Vec<TrackKey>,
     pub process_order: Vec<u32>,
     pub scale: f32,
+    /// Where a track is drawn when not under its own process: the pid of
+    /// the section it was dropped into. Absent means home. The key still
+    /// says whose the track is, so a guest reads as one.
+    host: FastMap<TrackKey, u32>,
     collapsed: HashSet<RowId>,
     hidden: HashSet<ThreadId>,
     /// Threads the tracks box hides (see `set_name_filter`), kept apart from
@@ -209,10 +300,14 @@ impl LaneCatalogue {
 }
 
 struct Drag {
-    thread: ThreadId,
+    key: TrackKey,
     grab_off: f32,
     pointer_y: f32,
-    dest: usize,
+    /// Where the track lands if released now: the section's pid and the
+    /// slot among that section's other shown tracks. Refreshed by every
+    /// layout while the drag is held; seeded with the track's own place so
+    /// a press that never moves drops it where it was.
+    dest: (u32, usize),
 }
 
 /// Header rows (processes, machines) reorder by live shuffle rather than the
@@ -232,9 +327,10 @@ struct HeaderDrag {
 impl Default for TrackStrip {
     fn default() -> Self {
         Self {
-            thread_order: Vec::new(),
+            track_order: Vec::new(),
             process_order: Vec::new(),
             scale: 1.0,
+            host: FastMap::default(),
             collapsed: HashSet::new(),
             hidden: HashSet::new(),
             filtered: HashSet::new(),
@@ -371,12 +467,46 @@ impl TrackStrip {
                 *p,
             )
         });
-        self.thread_order.retain(|t| threads.contains(t));
+        // Tracks: what is still there keeps its order and its host; a new
+        // thread joins at the end with its async block and its graphs behind
+        // it, and a new graph or async block of a known thread joins right
+        // after that thread's last track, so it starts out under it.
+        let present: FastSet<ThreadId> = threads.iter().copied().collect();
+        let catalogue = &self.catalogue;
+        self.track_order.retain(|key| {
+            let t = key.owner();
+            present.contains(&t)
+                && match *key {
+                    TrackKey::Thread(_) => true,
+                    TrackKey::Async(_) => catalogue.leaves_of(t).iter().any(|k| k.kind == kind::API_TRACK),
+                    TrackKey::Value(k) => catalogue.leaves_of(t).contains(&k),
+                }
+        });
         for t in threads {
-            if !self.thread_order.contains(&t) {
-                self.thread_order.push(t);
+            let mut want = vec![TrackKey::Thread(t)];
+            if self.catalogue.leaves_of(t).iter().any(|k| k.kind == kind::API_TRACK) {
+                want.push(TrackKey::Async(t));
+            }
+            want.extend(
+                self.catalogue.leaves_of(t).iter().filter(|k| k.kind == kind::VALUE).map(|k| TrackKey::Value(*k)),
+            );
+            for key in want {
+                if self.track_order.contains(&key) {
+                    continue;
+                }
+                let at = self
+                    .track_order
+                    .iter()
+                    .rposition(|k| k.owner() == t)
+                    .map(|i| i + 1)
+                    .unwrap_or(self.track_order.len());
+                self.track_order.insert(at, key);
             }
         }
+        // A host that left the rail sends its guests home.
+        let order = &self.track_order;
+        let listed = &self.process_order;
+        self.host.retain(|key, pid| order.contains(key) && listed.contains(pid) && *pid != key.owner_pid());
         // No seeding of `y` here. That used to retain the skeleton's rows and
         // insert the rest at 0 for the lerp animation rows no longer have --
         // and the skeleton lists only the rail lanes, so every frame it
@@ -455,11 +585,129 @@ impl TrackStrip {
     }
 
     pub fn is_dragging_thread(&self, t: ThreadId) -> bool {
-        self.drag.as_ref().map(|d| d.thread == t).unwrap_or(false)
+        self.dragging_track() == Some(TrackKey::Thread(t))
     }
 
+    pub fn is_dragging(&self, key: TrackKey) -> bool {
+        self.dragging_track() == Some(key)
+    }
+
+    /// The thread being dragged, when the lifted track is a thread.
     pub fn dragging_thread(&self) -> Option<ThreadId> {
-        self.drag.as_ref().map(|d| d.thread)
+        match self.dragging_track() {
+            Some(TrackKey::Thread(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    pub fn dragging_track(&self) -> Option<TrackKey> {
+        self.drag.as_ref().map(|d| d.key)
+    }
+
+    /// The threads in rail order, shown or not.
+    pub fn thread_order(&self) -> Vec<ThreadId> {
+        self.track_order
+            .iter()
+            .filter_map(|k| match k {
+                TrackKey::Thread(t) => Some(*t),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The section a track is drawn in: its host when it was moved, else
+    /// its own process. A host that is not on the rail counts as home.
+    pub fn host_pid(&self, key: TrackKey) -> u32 {
+        self.host
+            .get(&key)
+            .copied()
+            .filter(|p| self.process_order.contains(p))
+            .unwrap_or(key.owner_pid())
+    }
+
+    /// Whether the track is drawn under a process that is not its own.
+    pub fn is_guest(&self, key: TrackKey) -> bool {
+        self.host_pid(key) != key.owner_pid()
+    }
+
+    /// How many guests a section is showing.
+    pub fn guests_in_process(&self, pid: u32) -> usize {
+        self.track_order
+            .iter()
+            .filter(|k| k.owner_pid() != pid && self.host_pid(**k) == pid && self.shown(**k))
+            .count()
+    }
+
+    /// Puts a moved track back under its own process, after its thread's
+    /// other tracks so a graph lands under its thread again.
+    pub fn send_home(&mut self, key: TrackKey) {
+        self.host.remove(&key);
+        let Some(cur) = self.track_order.iter().position(|k| *k == key) else {
+            return;
+        };
+        self.track_order.remove(cur);
+        let owner = key.owner();
+        let home = owner.pid;
+        let at = self
+            .track_order
+            .iter()
+            .rposition(|k| k.owner() == owner && self.host_pid(*k) == home)
+            .or_else(|| self.track_order.iter().rposition(|k| self.host_pid(*k) == home))
+            .map(|i| i + 1)
+            .unwrap_or(self.track_order.len());
+        self.track_order.insert(at, key);
+        self.layout_gen = self.layout_gen.wrapping_add(1);
+    }
+
+    /// Places `key` at `slot` among the shown tracks of section `pid` --
+    /// its own process or another one. The shown tracks of the section are
+    /// permuted over the positions they already hold, so a hidden track
+    /// keeps its place in the list and comes back where it was; a track
+    /// arriving from another section takes a new position after them.
+    pub fn place(&mut self, key: TrackKey, pid: u32, slot: usize) {
+        let was_here = self.host_pid(key) == pid;
+        let mut slots: Vec<usize> = self
+            .track_order
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| self.host_pid(**k) == pid && self.shown(**k))
+            .map(|(i, _)| i)
+            .collect();
+        let mut shown: Vec<TrackKey> =
+            slots.iter().map(|i| self.track_order[*i]).filter(|k| *k != key).collect();
+        shown.insert(slot.min(shown.len()), key);
+        if !was_here {
+            if let Some(cur) = self.track_order.iter().position(|k| *k == key) {
+                self.track_order.remove(cur);
+                for i in slots.iter_mut() {
+                    if *i > cur {
+                        *i -= 1;
+                    }
+                }
+            }
+            let at = slots
+                .last()
+                .map(|l| l + 1)
+                .or_else(|| self.track_order.iter().rposition(|k| self.host_pid(*k) == pid).map(|i| i + 1))
+                .unwrap_or(self.track_order.len());
+            self.track_order.insert(at, key);
+            slots.push(at);
+        }
+        for (i, k) in slots.into_iter().zip(shown) {
+            self.track_order[i] = k;
+        }
+        if pid == key.owner_pid() {
+            self.host.remove(&key);
+        } else {
+            self.host.insert(key, pid);
+        }
+        // A track dropped into a folded section would vanish into it;
+        // unfold it, and count that as the user's doing so the auto-fold of
+        // the service's rows does not close it again.
+        if self.collapsed.remove(&RowId::Process(pid)) {
+            self.user_toggled.insert(RowId::Process(pid));
+        }
+        self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 
     /// True while any row -- thread or header -- is being dragged, so the app
@@ -549,97 +797,56 @@ impl TrackStrip {
         self.header_drag = None;
     }
 
+    /// Whether `row` is on thread `t`'s own track (its header or a lane
+    /// packed under it). Its graphs and async block are tracks of their own.
     pub fn row_on_thread(row: RowId, t: ThreadId) -> bool {
-        match row {
-            RowId::Thread(th) => th == t,
-            RowId::Lane(k) => !is_cpu_lane(k) && k.pid == t.pid && k.tid == t.tid,
-            _ => false,
-        }
+        TrackKey::Thread(t).covers_row(row)
     }
 
+    pub fn row_on_track(row: RowId, key: TrackKey) -> bool {
+        key.covers_row(row)
+    }
+
+    /// A track shows when its thread does: hiding or filtering a thread
+    /// takes its graphs and async block with it, wherever they were moved.
+    fn shown(&self, key: TrackKey) -> bool {
+        self.is_shown(key.owner())
+    }
+
+    /// Threads in rail order, the shown ones.
+    #[cfg(test)]
     fn shown_order(&self) -> Vec<ThreadId> {
-        self.thread_order
+        self.track_order
+            .iter()
+            .filter_map(|k| match k {
+                TrackKey::Thread(t) if self.is_shown(*t) => Some(*t),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The shown tracks drawn in section `pid`, in order, without `exclude`
+    /// (the one being dragged, which floats instead).
+    fn section_items(&self, pid: u32, exclude: Option<TrackKey>) -> Vec<TrackKey> {
+        self.track_order
             .iter()
             .copied()
-            .filter(|t| self.is_shown(*t))
+            .filter(|k| Some(*k) != exclude && self.shown(*k) && self.host_pid(*k) == pid)
             .collect()
     }
 
-    fn rest_threads(&self) -> Vec<ThreadId> {
-        self.shown_order()
-            .into_iter()
-            .filter(|t| self.drag.as_ref().map(|d| d.thread != *t).unwrap_or(true))
-            .collect()
-    }
-
-    fn process_rest(&self, pid: u32) -> Vec<ThreadId> {
-        self.rest_threads()
-            .into_iter()
-            .filter(|t| t.pid == pid)
-            .collect()
-    }
-
+    /// A process keeps its header while it shows any track or owns any
+    /// shown one, so a section emptied by moving its tracks away is still
+    /// there to drop them back into.
     fn process_is_listed(&self, pid: u32) -> bool {
         if let Some(fp) = self.filter_pid {
             if fp != pid && !is_self_pid(pid) {
                 return false;
             }
         }
-        self.thread_order
+        self.track_order
             .iter()
-            .any(|t| t.pid == pid && self.is_shown(*t))
-    }
-
-    /// Top of the thread list for `pid` in rail Y space (machine + process
-    /// headers + packed rest blocks, no hole).
-    fn process_thread_list_y(&self, pid: u32) -> f32 {
-        let s = self.scale.max(0.01);
-        let want = MachineId::from_pid(pid);
-        let mut y = self.scheduler_block_h();
-        for m in self.machines_present() {
-            y += MACHINE_H * s;
-            if self.collapsed.contains(&RowId::Machine(m)) {
-                continue;
-            }
-            for &p in &self.process_order {
-                if MachineId::from_pid(p) != m || !self.process_is_listed(p) {
-                    continue;
-                }
-                y += PROCESS_H * s;
-                if self.collapsed.contains(&RowId::Process(p)) {
-                    continue;
-                }
-                if p == pid {
-                    return y;
-                }
-                for t in self.process_rest(p) {
-                    y += self.thread_block_h(t);
-                }
-            }
-            if m == want {
-                return y;
-            }
-        }
-        y
-    }
-
-    fn scheduler_block_h(&self) -> f32 {
-        let s = self.scale.max(0.01);
-        if !self.y.contains_key(&RowId::Scheduler) {
-            return 0.0;
-        }
-        let mut h = SCHEDULER_H * s;
-        if self.collapsed.contains(&RowId::Scheduler) {
-            return h;
-        }
-        for (id, _) in self.y.iter() {
-            if let RowId::Lane(k) = *id {
-                if is_cpu_lane(k) {
-                    h += (lane_height(k) + lane_gap(k)) * s;
-                }
-            }
-        }
-        h
+            .any(|k| self.shown(*k) && (self.host_pid(*k) == pid || k.owner_pid() == pid))
     }
 
     fn machine_rank(&self, m: MachineId) -> i64 {
@@ -658,36 +865,77 @@ impl TrackStrip {
         out
     }
 
-    fn drop_index_in_process(&self) -> usize {
+    /// Where the dragged track lands if released now, read off the rows as
+    /// they were drawn last frame -- hole included, since that is what the
+    /// pointer is over: the section whose header is the last one above the
+    /// lifted track's top, and the slot among that section's tracks whose
+    /// midpoints are above it. Any section will do -- that is how a track
+    /// crosses into another process. Stable frame to frame: once the hole
+    /// passes a row that row shifts by the hole's height, away from the
+    /// pointer, so the comparison does not flip back.
+    fn drop_target(&self) -> (u32, usize) {
         let Some(d) = &self.drag else {
-            return 0;
+            return (0, 0);
         };
-        if !self.is_shown(d.thread) {
-            return 0;
+        let home = (d.key.owner_pid(), 0);
+        if !self.shown(d.key) {
+            return home;
         }
         let header_top = d.pointer_y - d.grab_off;
-        let rest = self.process_rest(d.thread.pid);
-        let mut y = self.process_thread_list_y(d.thread.pid);
-        for (i, t) in rest.iter().enumerate() {
-            let h = self.thread_block_h(*t);
-            if header_top < y + h * 0.5 {
-                return i;
+        let mut sections: Vec<(u32, f32, usize)> = Vec::new();
+        for row in &self.cached_rows {
+            match row.id {
+                RowId::Process(p) => sections.push((p, row.y, 0)),
+                RowId::Machine(_) | RowId::Scheduler => {}
+                RowId::Lane(k) if is_cpu_lane(k) => {}
+                RowId::Thread(_) | RowId::Async(_) | RowId::Lane(_) => {
+                    if d.key.covers_row(row.id) {
+                        continue;
+                    }
+                    if let Some(section) = sections.last_mut() {
+                        if row.y + row.height * 0.5 < header_top {
+                            section.2 += 1;
+                        }
+                    }
+                }
             }
-            y += h;
         }
-        rest.len()
+        let Some(first) = sections.first() else {
+            return home;
+        };
+        let mut target = *first;
+        for s in &sections {
+            if s.1 <= header_top {
+                target = *s;
+            }
+        }
+        (target.0, target.2)
     }
 
-    fn thread_block_h(&self, t: ThreadId) -> f32 {
-        let scale = self.scale.max(0.01);
-        let mut h = THREAD_H * scale;
-        if self.collapsed.contains(&RowId::Thread(t)) {
-            return h;
+    /// The height of a track's block as drawn at rest.
+    fn block_h(&self, key: TrackKey) -> f32 {
+        match key {
+            TrackKey::Thread(t) => self.thread_scope_stack_h(t),
+            TrackKey::Async(t) => self.async_block_h(t),
+            TrackKey::Value(k) => (lane_height(k) + lane_gap(k)) * self.scale.max(0.01),
         }
-        for &k in self.catalogue.leaves_of(t) {
-            h += (lane_height(k) + lane_gap(k)) * scale;
-        }
-        h
+    }
+
+    /// A thread's async lanes, every depth, stacked.
+    fn async_block_h(&self, t: ThreadId) -> f32 {
+        let s = self.scale.max(0.01);
+        self.catalogue
+            .leaves_of(t)
+            .iter()
+            .filter(|k| k.kind == kind::API_TRACK)
+            .map(|k| (lane_height(*k) + lane_gap(*k)) * s)
+            .sum()
+    }
+
+    /// The thread row with the lanes packed under it. Its graphs and async
+    /// block are separate tracks and do not count.
+    pub fn thread_block_h(&self, t: ThreadId) -> f32 {
+        self.thread_scope_stack_h(t)
     }
 
     pub fn hidden_in_process(&self, pid: u32) -> usize {
@@ -699,20 +947,11 @@ impl TrackStrip {
         self.layout_gen = self.layout_gen.wrapping_add(1);
     }
 
-    /// Hit test: machine/process/value rows, or the full thread block.
+    /// Hit test: the row at `y`. A thread's and an async block's rows span
+    /// the lanes packed under them, so a hit anywhere in the block is the
+    /// block's head.
     pub fn hit_at_y(&self, y: f32) -> Option<RowId> {
-        if let Some(id) = self.row_at_y(y) {
-            return Some(id);
-        }
-        for t in self.shown_order() {
-            if let Some(&ty) = self.y.get(&RowId::Thread(t)) {
-                let h = self.thread_block_h(t);
-                if y >= ty && y < ty + h {
-                    return Some(RowId::Thread(t));
-                }
-            }
-        }
-        None
+        self.row_at_y(y)
     }
 
     pub fn thread_band(&self, t: ThreadId) -> Option<(f32, f32)> {
@@ -729,12 +968,13 @@ impl TrackStrip {
     fn apply_layout(&mut self, index: &TrackIndex, filter_pid: Option<u32>) {
         self.filter_pid = filter_pid;
         self.ensure_catalogue(index);
-        let dest = self.drop_index_in_process();
+        debug_assert_eq!(self.catalogue.gen, Some(index.lane_gen()), "catalogue is stale");
+        let exclude = self.drag.as_ref().map(|d| d.key);
+        let dest = self.drop_target();
+        let skeleton = self.skeleton(exclude);
         if let Some(d) = &mut self.drag {
             d.dest = dest;
         }
-        let rest = self.rest_threads();
-        let skeleton = self.skeleton_with_threads(index, filter_pid, &rest);
         let items = self.skeleton_with_hole(&skeleton, dest);
         let mut y = 0.0;
         let mut next: FastMap<RowId, f32> = FastMap::with_capacity_and_hasher(skeleton.len() + 8, FastState::default());
@@ -752,57 +992,64 @@ impl TrackStrip {
             }
         }
         self.cached_insert_y = hole_y;
+        // The lifted track floats under the pointer: its head row at the
+        // grab point, its lanes packed under it from the same catalogue, in
+        // the same order, as every resting track's (reading `index.lanes()`
+        // here once drew sampled-frame lanes on the lifted thread that no
+        // resting thread shows).
         if let Some(d) = &self.drag {
-            if self.is_shown(d.thread) {
-                let base = d.pointer_y - d.grab_off;
-                next.insert(RowId::Thread(d.thread), base);
-                let s = self.scale.max(0.01);
-                let mut ly = base + THREAD_H * s;
-                if !self.collapsed.contains(&RowId::Thread(d.thread)) {
-                    // The dragged thread's leaves come from the same catalogue,
-                    // in the same order, as every other thread's. Reading
-                    // `index.lanes()` here was a second copy of that selection
-                    // that missed the catalogue's exclusions, so sampled-frame
-                    // flame lanes -- kept out of every resting track -- were
-                    // drawn on the one being dragged. The lifted thread stacks
-                    // all of them contiguously (rail lanes included: for a
-                    // resting thread the skeleton gives rail lanes their own
-                    // trailing rows, but the lifted thread has no skeleton row).
-                    for &k in self.catalogue.leaves_of(d.thread) {
-                        next.insert(RowId::Lane(k), ly);
-                        ly += (lane_height(k) + lane_gap(k)) * s;
-                    }
-                }
+            if self.shown(d.key) {
+                next.insert(d.key.row(), d.pointer_y - d.grab_off);
             }
         }
-        self.assign_packed_leaf_ys(index, &mut next);
+        self.assign_packed_leaf_ys(&mut next);
         if next != self.y {
             self.layout_gen = self.layout_gen.wrapping_add(1);
         }
         self.y = next;
         self.rebuild_rows();
         if let (Some(hy), Some(d)) = (hole_y, self.drag.as_ref()) {
-            let hole_h = self.thread_block_h(d.thread);
+            let hole_h = self.block_h(d.key);
             self.cached_total_h = self.cached_total_h.max(hy + hole_h);
         }
     }
 
-    fn assign_packed_leaf_ys(&self, _index: &TrackIndex, next: &mut FastMap<RowId, f32>) {
+    /// The lanes packed under each thread row and each async row, at rest
+    /// or lifted alike: they follow their head row's Y.
+    fn assign_packed_leaf_ys(&self, next: &mut FastMap<RowId, f32>) {
         let s = self.scale.max(0.01);
-        for t in self.shown_order() {
-            if self.collapsed.contains(&RowId::Thread(t)) {
-                continue;
-            }
-            let Some(&ty) = next.get(&RowId::Thread(t)) else {
-                continue;
-            };
-            let mut ly = ty + THREAD_H * s;
-            for &k in self.catalogue.leaves_of(t) {
-                if is_rail_lane(k) {
-                    continue;
+        for key in &self.track_order {
+            match *key {
+                TrackKey::Thread(t) => {
+                    if self.collapsed.contains(&RowId::Thread(t)) {
+                        continue;
+                    }
+                    let Some(&ty) = next.get(&RowId::Thread(t)) else {
+                        continue;
+                    };
+                    let mut ly = ty + THREAD_H * s;
+                    for &k in self.catalogue.leaves_of(t) {
+                        if is_standalone_lane(k) {
+                            continue;
+                        }
+                        next.insert(RowId::Lane(k), ly);
+                        ly += (lane_height(k) + lane_gap(k)) * s;
+                    }
                 }
-                next.insert(RowId::Lane(k), ly);
-                ly += (lane_height(k) + lane_gap(k)) * s;
+                TrackKey::Async(t) => {
+                    let Some(&ty) = next.get(&RowId::Async(t)) else {
+                        continue;
+                    };
+                    let mut ly = ty;
+                    for &k in self.catalogue.leaves_of(t) {
+                        if k.kind != kind::API_TRACK {
+                            continue;
+                        }
+                        next.insert(RowId::Lane(k), ly);
+                        ly += (lane_height(k) + lane_gap(k)) * s;
+                    }
+                }
+                TrackKey::Value(_) => {}
             }
         }
     }
@@ -821,7 +1068,9 @@ impl TrackStrip {
             bottom = bottom.max(y + height);
             if let RowId::Lane(k) = id {
                 self.cached_layout.push((k, y));
-                if !is_rail_lane(k) && !is_cpu_lane(k) {
+                // Lanes packed under a thread or async row have a Y but no
+                // row of their own; graphs and cores are rows.
+                if k.kind != kind::VALUE && !is_cpu_lane(k) {
                     continue;
                 }
             }
@@ -856,7 +1105,7 @@ impl TrackStrip {
         self.layout_gen
     }
 
-    /// Packed rest lanes (no dragged thread). Background raster / instance Ys.
+    /// Packed rest lanes (no dragged track). Background raster / instance Ys.
     pub fn rest_layout(&self) -> Vec<(LaneKey, f32)> {
         let Some(d) = &self.drag else {
             return self.cached_layout.clone();
@@ -864,11 +1113,11 @@ impl TrackStrip {
         self.cached_layout
             .iter()
             .copied()
-            .filter(|(k, _)| k.pid != d.thread.pid || k.tid != d.thread.tid)
+            .filter(|(k, _)| !d.key.owns_lane(*k))
             .collect()
     }
 
-    /// Dragged thread lanes at the floating pointer Y.
+    /// The dragged track's lanes at the floating pointer Y.
     pub fn drag_layout(&self) -> Vec<(LaneKey, f32)> {
         let Some(d) = &self.drag else {
             return Vec::new();
@@ -876,16 +1125,25 @@ impl TrackStrip {
         self.cached_layout
             .iter()
             .copied()
-            .filter(|(k, _)| k.pid == d.thread.pid && k.tid == d.thread.tid)
+            .filter(|(k, _)| d.key.owns_lane(*k))
             .collect()
     }
 
-    pub fn begin_drag(&mut self, thread: ThreadId, lane_y: f32, pointer_y: f32) {
+    /// Lifts a track. `lane_y` is its head row's rail Y, `pointer_y` the
+    /// pointer's, so the grab point stays under the pointer.
+    pub fn begin_drag(&mut self, key: impl Into<TrackKey>, lane_y: f32, pointer_y: f32) {
+        let key = key.into();
+        let pid = self.host_pid(key);
+        let slot = self
+            .section_items(pid, None)
+            .iter()
+            .position(|k| *k == key)
+            .unwrap_or(0);
         self.drag = Some(Drag {
-            thread,
+            key,
             grab_off: pointer_y - lane_y,
             pointer_y,
-            dest: 0,
+            dest: (pid, slot),
         });
     }
 
@@ -895,36 +1153,19 @@ impl TrackStrip {
         }
     }
 
+    /// Drops the track where the pointer is now, judged against the rows as
+    /// last drawn, so a release with no frame in between still lands where
+    /// it points.
     pub fn end_drag(&mut self) {
-        let Some(d) = self.drag.as_ref() else {
+        let Some(key) = self.drag.as_ref().map(|d| d.key) else {
             return;
         };
-        if self.is_shown(d.thread) {
-            let dest = self.drop_index_in_process();
-            let pid = d.thread.pid;
-            let thread = d.thread;
-            let mut same: Vec<ThreadId> = self
-                .thread_order
-                .iter()
-                .copied()
-                .filter(|t| t.pid == pid && self.is_shown(*t) && *t != thread)
-                .collect();
-            let dest = dest.min(same.len());
-            same.insert(dest, thread);
-            let mut it = same.iter();
-            self.thread_order = self
-                .thread_order
-                .iter()
-                .map(|t| {
-                    if t.pid == pid && self.is_shown(*t) {
-                        it.next().copied().unwrap_or(*t)
-                    } else {
-                        *t
-                    }
-                })
-                .collect();
-        }
+        let dest = self.drop_target();
         self.drag = None;
+        if self.shown(key) {
+            let (pid, slot) = dest;
+            self.place(key, pid, slot);
+        }
         self.cached_insert_y = None;
     }
 
@@ -997,7 +1238,7 @@ impl TrackStrip {
             return h;
         }
         for &k in self.catalogue.leaves_of(t) {
-            if !is_rail_lane(k) {
+            if !is_standalone_lane(k) {
                 h += (lane_height(k) + lane_gap(k)) * s;
             }
         }
@@ -1011,80 +1252,73 @@ impl TrackStrip {
             RowId::Machine(_) => MACHINE_H * s,
             RowId::Process(_) => PROCESS_H * s,
             RowId::Thread(t) => self.thread_scope_stack_h(t),
+            RowId::Async(t) => self.async_block_h(t),
             RowId::Lane(k) => (lane_height(k) + lane_gap(k)) * s,
         }
     }
 
-    fn skeleton_with_hole(&self, skeleton: &[(RowId, f32)], dest: usize) -> Vec<SkelItem> {
+    /// The resting skeleton with a hole the size of the dragged track opened
+    /// at `dest`: before the `slot`-th track of section `pid`, or at the end
+    /// of that section when it has fewer -- right under the header of a
+    /// collapsed or emptied one.
+    fn skeleton_with_hole(&self, skeleton: &[(RowId, f32)], dest: (u32, usize)) -> Vec<SkelItem> {
+        let plain = || skeleton.iter().map(|(id, h)| SkelItem::Row(*id, *h)).collect::<Vec<_>>();
         let Some(d) = &self.drag else {
-            return skeleton
-                .iter()
-                .map(|(id, h)| SkelItem::Row(*id, *h))
-                .collect();
+            return plain();
         };
-        if !self.is_shown(d.thread) {
-            return skeleton
-                .iter()
-                .map(|(id, h)| SkelItem::Row(*id, *h))
-                .collect();
+        if !self.shown(d.key) {
+            return plain();
         }
-        let hole_h = self.thread_block_h(d.thread);
-        let rest_ids = self.process_rest(d.thread.pid);
-        let dest = dest.min(rest_ids.len());
+        let hole = SkelItem::Hole(self.block_h(d.key));
+        let (pid, slot) = dest;
         let mut items: Vec<SkelItem> = Vec::with_capacity(skeleton.len() + 1);
-        let mut ri = 0usize;
+        let mut current: Option<u32> = None;
+        let mut seen = 0usize;
         let mut inserted = false;
         for &(id, h) in skeleton {
-            if let RowId::Thread(t) = id {
-                if t.pid == d.thread.pid {
-                    if ri == dest && !inserted {
-                        items.push(SkelItem::Hole(hole_h));
+            let leaving = match id {
+                RowId::Process(_) | RowId::Machine(_) | RowId::Scheduler => true,
+                _ => false,
+            };
+            if leaving && current == Some(pid) && !inserted {
+                items.push(SkelItem::Hole(self.block_h(d.key)));
+                inserted = true;
+            }
+            match id {
+                RowId::Process(p) => {
+                    current = Some(p);
+                    seen = 0;
+                }
+                RowId::Machine(_) | RowId::Scheduler => current = None,
+                RowId::Lane(k) if is_cpu_lane(k) => {}
+                _ if current == Some(pid) => {
+                    if seen == slot && !inserted {
+                        items.push(SkelItem::Hole(self.block_h(d.key)));
                         inserted = true;
                     }
-                    ri += 1;
+                    seen += 1;
                 }
+                _ => {}
             }
             items.push(SkelItem::Row(id, h));
         }
         if !inserted {
-            if rest_ids.is_empty() {
-                if let Some(pos) = items.iter().position(|it| {
-                    matches!(it, SkelItem::Row(RowId::Process(p), _) if *p == d.thread.pid)
-                }) {
-                    items.insert(pos + 1, SkelItem::Hole(hole_h));
-                    inserted = true;
-                }
-            } else if let Some(last) = rest_ids.last() {
-                if let Some(pos) = items.iter().rposition(|it| match it {
-                    SkelItem::Row(RowId::Thread(t), _) => *t == *last,
-                    SkelItem::Row(RowId::Lane(k), _) => k.pid == last.pid && k.tid == last.tid,
-                    _ => false,
-                }) {
-                    items.insert(pos + 1, SkelItem::Hole(hole_h));
-                    inserted = true;
-                }
-            }
-        }
-        if !inserted {
-            items.push(SkelItem::Hole(hole_h));
+            items.push(hole);
         }
         items
     }
 
-    fn skeleton_with_threads(
-        &self,
-        index: &TrackIndex,
-        filter_pid: Option<u32>,
-        threads: &[ThreadId],
-    ) -> Vec<(RowId, f32)> {
+    /// The rail at rest: every row and its height, top to bottom, without
+    /// `exclude` (the track being dragged, which floats instead).
+    fn skeleton(&self, exclude: Option<TrackKey>) -> Vec<(RowId, f32)> {
         let s = self.scale.max(0.01);
+        let filter_pid = self.filter_pid;
         let mut out = Vec::new();
-        debug_assert_eq!(self.catalogue.gen, Some(index.lane_gen()), "catalogue is stale");
         let cores = &self.catalogue.cores;
         // The scheduler describes a machine's cores, so it belongs under that
         // machine rather than beside it. It is emitted inside the machine loop
         // below; `scheduler_machine` says which machine owns it.
-        if threads.is_empty() && self.process_order.is_empty() {
+        if self.track_order.is_empty() && self.process_order.is_empty() {
             // Still show the scheduler when a capture has cores but no
             // process tracks yet -- otherwise a scheduling-only capture looks
             // empty.
@@ -1128,40 +1362,15 @@ impl TrackStrip {
                 if !self.catalogue.pids_with_lanes.contains(&pid) {
                     continue;
                 }
-                let keep_drag_proc = self
-                    .drag
-                    .as_ref()
-                    .map(|d| d.thread.pid == pid && self.is_shown(d.thread))
-                    .unwrap_or(false);
-                if !threads.iter().any(|th| th.pid == pid && self.is_shown(*th)) && !keep_drag_proc {
+                if !self.process_is_listed(pid) {
                     continue;
                 }
                 section.push((RowId::Process(pid), PROCESS_H * s));
                 if self.collapsed.contains(&RowId::Process(pid)) {
                     continue;
                 }
-                for &th in threads {
-                    if th.pid != pid || !self.is_shown(th) {
-                        continue;
-                    }
-                    let leaves = self.catalogue.leaves_of(th);
-                    let mut stack = THREAD_H * s;
-                    if !self.collapsed.contains(&RowId::Thread(th)) {
-                        for k in leaves {
-                            if !is_rail_lane(*k) {
-                                stack += (lane_height(*k) + lane_gap(*k)) * s;
-                            }
-                        }
-                    }
-                    section.push((RowId::Thread(th), stack));
-                    if self.collapsed.contains(&RowId::Thread(th)) {
-                        continue;
-                    }
-                    for &k in leaves {
-                        if is_rail_lane(k) {
-                            section.push((RowId::Lane(k), (lane_height(k) + lane_gap(k)) * s));
-                        }
-                    }
+                for key in self.section_items(pid, exclude) {
+                    section.push((key.row(), self.block_h(key)));
                 }
             }
             if self.name_filter && section.is_empty() {
@@ -1199,8 +1408,10 @@ fn is_sampled_frame_lane(k: LaneKey, lane: &orbit_live_render::Lane) -> bool {
         && lane.events().first().is_some_and(|e| e.extra == orbit_live_event::extra::SAMPLED_FRAME)
 }
 
-fn is_rail_lane(k: LaneKey) -> bool {
-    k.kind == kind::VALUE
+/// A lane that is a track of its own rather than packed under its thread:
+/// a value graph, or an async lane (part of the thread's async block).
+fn is_standalone_lane(k: LaneKey) -> bool {
+    k.kind == kind::VALUE || k.kind == kind::API_TRACK
 }
 
 /// One paint lane per core, 0..N-1, matching native `num_cores_ = max+1`.
@@ -1340,7 +1551,7 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         assert_eq!(strip.process_order, vec![1, 4]);
-        assert_eq!(strip.thread_order.len(), 2);
+        assert_eq!(strip.thread_order().len(), 2);
         strip.tick(1.0, &idx, None);
         let lanes = strip.layout();
         assert_eq!(lanes.len(), 2);
@@ -1355,7 +1566,7 @@ mod tests {
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
         assert_eq!(strip.layout().len(), 1);
-        let th = strip.thread_order[0];
+        let th = strip.thread_order()[0];
         strip.toggle(RowId::Thread(th));
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
@@ -1484,7 +1695,7 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let first = strip.thread_order[0];
+        let first = strip.thread_order()[0];
         assert!(strip.dragging_thread().is_none());
         let y0 = strip.y.get(&RowId::Thread(first)).copied().unwrap_or(0.0);
         strip.begin_drag(first, y0, y0);
@@ -1502,14 +1713,14 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let first = strip.thread_order[0];
-        let second = strip.thread_order[1];
+        let first = strip.thread_order()[0];
+        let second = strip.thread_order()[1];
         let y0 = strip.y.get(&RowId::Thread(first)).copied().unwrap_or(0.0);
         strip.begin_drag(first, y0, y0);
         strip.update_drag(y0 + 80.0);
         strip.end_drag();
-        assert_eq!(strip.thread_order[0], second);
-        assert_eq!(strip.thread_order[1], first);
+        assert_eq!(strip.thread_order()[0], second);
+        assert_eq!(strip.thread_order()[1], first);
     }
 
     #[test]
@@ -1610,7 +1821,7 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let first = strip.thread_order[0];
+        let first = strip.thread_order()[0];
         assert_eq!(strip.layout().len(), 2);
         strip.toggle_hidden(first);
         strip.sync(&idx, None);
@@ -1682,9 +1893,9 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let t0 = strip.thread_order[0];
-        let t1 = strip.thread_order[1];
-        let t2 = strip.thread_order[2];
+        let t0 = strip.thread_order()[0];
+        let t1 = strip.thread_order()[1];
+        let t2 = strip.thread_order()[2];
         let y0 = strip.y.get(&RowId::Thread(t0)).copied().unwrap();
         let y1 = strip.y.get(&RowId::Thread(t1)).copied().unwrap();
         let y2 = strip.y.get(&RowId::Thread(t2)).copied().unwrap();
@@ -1758,12 +1969,12 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let n = strip.thread_order.len();
+        let n = strip.thread_order().len();
         assert_eq!(n, 5);
         let before = strip.y.clone();
         let before_h = strip.total_height();
         for k in 0..n {
-            let t = strip.thread_order[k];
+            let t = strip.thread_order()[k];
             let y = strip.y.get(&RowId::Thread(t)).copied().unwrap();
             strip.begin_drag(t, y, y);
             strip.tick(0.0, &idx, None);
@@ -1820,14 +2031,280 @@ mod tests {
             lifted.iter().all(|(k, _)| k.kind != kind::FUNCTION_CALL),
             "the dragged thread lifted a sampled-frame lane: {lifted:?}"
         );
-        // And it still carries the lanes it should: the scope, the rail, the state.
-        for want in [kind::API_SCOPE, kind::VALUE, kind::THREAD_STATE] {
+        // And it still carries the lanes it should: the scope and the state.
+        // The graph is a track of its own now and stays at rest.
+        for want in [kind::API_SCOPE, kind::THREAD_STATE] {
             assert!(
                 lifted.iter().any(|(k, _)| k.kind == want),
                 "the dragged thread dropped a {want} lane: {lifted:?}"
             );
         }
+        assert!(
+            lifted.iter().all(|(k, _)| k.kind != kind::VALUE),
+            "the graph is its own track and must not lift with the thread: {lifted:?}"
+        );
+        assert!(strip.rest_layout().iter().any(|(k, _)| k.kind == kind::VALUE));
         strip.end_drag();
+    }
+
+    fn row_ids(strip: &TrackStrip) -> Vec<RowId> {
+        strip.rows().iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn graphs_and_async_blocks_are_tracks_of_their_own_under_their_thread() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::API_SCOPE, 1, 1, 0, 0));
+        idx.insert(ev(kind::API_TRACK, 1, 1, 0, 0));
+        idx.insert(ev(kind::API_TRACK, 1, 1, 1, 0));
+        idx.insert(ev(kind::VALUE, 1, 1, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 1, 2, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let t1 = ThreadId { pid: 1, tid: 1 };
+        let graph = LaneKey { pid: 1, tid: 1, kind: kind::VALUE, depth: 1, extra: 0 };
+        assert_eq!(
+            strip.track_order,
+            vec![
+                TrackKey::Thread(t1),
+                TrackKey::Async(t1),
+                TrackKey::Value(graph),
+                TrackKey::Thread(ThreadId { pid: 1, tid: 2 })
+            ],
+            "a thread, then its async block and its graph, then the next thread"
+        );
+        let ids = row_ids(&strip);
+        let at = |id: RowId| ids.iter().position(|i| *i == id).unwrap_or_else(|| panic!("{id:?} in {ids:?}"));
+        assert!(at(RowId::Thread(t1)) < at(RowId::Async(t1)));
+        assert!(at(RowId::Async(t1)) < at(RowId::Lane(graph)));
+        assert!(
+            !ids.iter().any(|id| matches!(id, RowId::Lane(k) if k.kind == kind::API_TRACK)),
+            "async lanes pack under their block's head row, not as rows: {ids:?}"
+        );
+        // The async block is as tall as its two depth lanes, and the thread
+        // row no longer counts them.
+        let async_h = strip.rows().iter().find(|r| r.id == RowId::Async(t1)).unwrap().height;
+        let lane = LaneKey { pid: 1, tid: 1, kind: kind::API_TRACK, depth: 0, extra: 0 };
+        assert!((async_h - 2.0 * (lane_height(lane) + lane_gap(lane))).abs() < 0.01);
+        let (_, thread_h) = strip.thread_band(t1).unwrap();
+        let scope = LaneKey { pid: 1, tid: 1, kind: kind::API_SCOPE, depth: 0, extra: 0 };
+        assert!((thread_h - (THREAD_H + lane_height(scope) + lane_gap(scope))).abs() < 0.01);
+        // Both async lanes have a Y inside the block.
+        let ay = strip.y[&RowId::Async(t1)];
+        let d0 = strip.layout().iter().find(|(k, _)| *k == lane).unwrap().1;
+        let d1 = strip.layout().iter().find(|(k, _)| k.kind == kind::API_TRACK && k.depth == 1).unwrap().1;
+        assert!((d0 - ay).abs() < 0.01 && d1 > d0 && d1 < ay + async_h);
+        // Hovering inside the block hits its head.
+        assert_eq!(strip.hit_at_y(ay + async_h - 1.0), Some(RowId::Async(t1)));
+    }
+
+    #[test]
+    fn a_graph_drags_on_its_own_and_lifts_nothing_else() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::API_SCOPE, 1, 1, 0, 0));
+        idx.insert(ev(kind::VALUE, 1, 1, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 1, 2, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let t1 = ThreadId { pid: 1, tid: 1 };
+        let t2 = ThreadId { pid: 1, tid: 2 };
+        let graph = LaneKey { pid: 1, tid: 1, kind: kind::VALUE, depth: 1, extra: 0 };
+        let gy = strip.y[&RowId::Lane(graph)];
+        let before = strip.y.clone();
+        strip.begin_drag(TrackKey::Value(graph), gy, gy + 5.0);
+        strip.tick(0.0, &idx, None);
+        assert_eq!(strip.dragging_track(), Some(TrackKey::Value(graph)));
+        assert!(strip.dragging_thread().is_none(), "a graph drag is not a thread drag");
+        assert_eq!(strip.drag_layout().iter().map(|(k, _)| *k).collect::<Vec<_>>(), vec![graph]);
+        assert!(strip.rest_layout().iter().any(|(k, _)| k.kind == kind::API_SCOPE && k.tid == 1));
+        // A press that has not moved leaves every row where it was.
+        for (id, y0) in &before {
+            let y1 = strip.y[id];
+            assert!((y1 - y0).abs() < 0.01, "{id:?} moved {y0} -> {y1} on a press");
+        }
+        // Dragged past the second thread it lands after it, on its own.
+        strip.update_drag(gy + 5.0 + 200.0);
+        strip.tick(0.0, &idx, None);
+        strip.end_drag();
+        assert_eq!(
+            strip.track_order,
+            vec![TrackKey::Thread(t1), TrackKey::Thread(t2), TrackKey::Value(graph)]
+        );
+        strip.tick(0.0, &idx, None);
+        let ids = row_ids(&strip);
+        assert_eq!(ids.last(), Some(&RowId::Lane(graph)));
+        // A sync keeps the user's order.
+        strip.sync(&idx, None);
+        assert_eq!(strip.track_order[2], TrackKey::Value(graph));
+    }
+
+    #[test]
+    fn a_track_moves_into_another_process_as_a_guest_and_can_go_home() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::API_SCOPE, 1, 1, 0, 0));
+        idx.insert(ev(kind::VALUE, 1, 1, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 4, 7, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let graph = LaneKey { pid: 1, tid: 1, kind: kind::VALUE, depth: 1, extra: 0 };
+        let key = TrackKey::Value(graph);
+        assert!(!strip.is_guest(key));
+        // Drag the graph below process 4's thread.
+        let gy = strip.y[&RowId::Lane(graph)];
+        let far = strip.total_height() + 40.0;
+        strip.begin_drag(key, gy, gy);
+        strip.update_drag(far);
+        strip.tick(0.0, &idx, None);
+        strip.end_drag();
+        strip.tick(0.0, &idx, None);
+        assert!(strip.is_guest(key), "the graph is now a guest of process 4");
+        assert_eq!(strip.host_pid(key), 4);
+        assert_eq!(key.owner_pid(), 1, "and still process 1's");
+        assert_eq!(strip.guests_in_process(4), 1);
+        let ids = row_ids(&strip);
+        let p4 = ids.iter().position(|i| *i == RowId::Process(4)).unwrap();
+        let g = ids.iter().position(|i| *i == RowId::Lane(graph)).unwrap();
+        assert!(g > p4, "drawn in process 4's section: {ids:?}");
+        assert!(ids.contains(&RowId::Process(1)), "process 1 keeps its header");
+        // The placement survives a sync.
+        strip.sync(&idx, None);
+        strip.tick(0.0, &idx, None);
+        assert_eq!(strip.host_pid(key), 4);
+        // Home again: under its own thread.
+        strip.send_home(key);
+        strip.tick(0.0, &idx, None);
+        assert!(!strip.is_guest(key));
+        let ids = row_ids(&strip);
+        let t1 = ids.iter().position(|i| *i == RowId::Thread(ThreadId { pid: 1, tid: 1 })).unwrap();
+        let g = ids.iter().position(|i| *i == RowId::Lane(graph)).unwrap();
+        let p4 = ids.iter().position(|i| *i == RowId::Process(4)).unwrap();
+        assert!(t1 < g && g < p4, "{ids:?}");
+    }
+
+    #[test]
+    fn a_whole_thread_can_be_a_guest_and_its_section_stays_to_take_it_back() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(4, 7, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let t1 = ThreadId { pid: 1, tid: 1 };
+        // Process 1's only thread goes under process 4: process 1 is empty
+        // but still listed, and process 4 shows both threads.
+        strip.place(TrackKey::Thread(t1), 4, 0);
+        strip.tick(0.0, &idx, None);
+        let ids = row_ids(&strip);
+        assert!(ids.contains(&RowId::Process(1)), "{ids:?}");
+        let p4 = ids.iter().position(|i| *i == RowId::Process(4)).unwrap();
+        assert_eq!(ids[p4 + 1], RowId::Thread(t1), "slot 0 of process 4: {ids:?}");
+        assert_eq!(ids[p4 + 2], RowId::Thread(ThreadId { pid: 4, tid: 7 }));
+        assert!(strip.is_guest(TrackKey::Thread(t1)));
+        // Hiding the thread hides it wherever it is; showing its process's
+        // threads brings it back, still a guest.
+        strip.toggle_hidden(t1);
+        strip.tick(0.0, &idx, None);
+        assert!(!row_ids(&strip).contains(&RowId::Thread(t1)));
+        assert_eq!(strip.hidden_in_process(1), 1, "hidden counts against its own process");
+        strip.show_process_threads(1);
+        strip.tick(0.0, &idx, None);
+        assert!(row_ids(&strip).contains(&RowId::Thread(t1)));
+        assert!(strip.is_guest(TrackKey::Thread(t1)));
+    }
+
+    #[test]
+    fn a_host_that_leaves_the_rail_sends_its_guests_home() {
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::API_SCOPE, 1, 1, 0, 0));
+        idx.insert(ev(kind::VALUE, 1, 1, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 4, 7, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        let graph = LaneKey { pid: 1, tid: 1, kind: kind::VALUE, depth: 1, extra: 0 };
+        strip.place(TrackKey::Value(graph), 4, 0);
+        assert!(strip.is_guest(TrackKey::Value(graph)));
+        // A capture filter narrows the rail to process 1: process 4 goes,
+        // and the graph is home again rather than lost with it.
+        strip.sync(&idx, Some(1));
+        strip.tick(0.0, &idx, Some(1));
+        assert!(!strip.process_order.contains(&4));
+        assert!(!strip.is_guest(TrackKey::Value(graph)));
+        assert!(row_ids(&strip).contains(&RowId::Lane(graph)));
+    }
+
+    #[test]
+    fn a_drag_past_a_middle_section_settles_where_the_pointer_is() {
+        // Three sections; the pointer ends just under the third's (folded)
+        // header. The hole opening and closing as the drag moves shifts the
+        // rows below it, so the target is judged frame by frame against the
+        // rows as drawn -- and must settle on the third section, not the
+        // second, over successive frames at the same pointer position.
+        let mut idx = TrackIndex::default();
+        idx.insert(ev(kind::API_SCOPE, 1, 1, 0, 0));
+        idx.insert(ev(kind::VALUE, 1, 1, 0, 0));
+        for depth in 0..8u8 {
+            idx.insert(ev(kind::API_SCOPE, 2, 5, depth, 0));
+        }
+        idx.insert(ev(kind::VALUE, 2, 5, 0, 0));
+        idx.insert(ev(kind::API_SCOPE, 3, 9, 0, 0));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.toggle(RowId::Process(3));
+        strip.tick(1.0, &idx, None);
+        let graph = LaneKey { pid: 1, tid: 1, kind: kind::VALUE, depth: 1, extra: 0 };
+        let gy = strip.y[&RowId::Lane(graph)];
+        let p3 = strip.y[&RowId::Process(3)];
+        strip.begin_drag(TrackKey::Value(graph), gy, gy + 10.0);
+        // Straight to just under process 3's header (as drawn at rest: the
+        // graph leaving its section shifts everything below up by its
+        // height, so aim from where the header will be drawn).
+        let h = strip.block_h(TrackKey::Value(graph));
+        let mut target = p3 - h + PROCESS_H + 6.0 + 10.0;
+        for _ in 0..4 {
+            strip.update_drag(target);
+            strip.tick(0.0, &idx, None);
+            // Keep the pointer under the header as it is drawn now.
+            target = strip.y[&RowId::Process(3)] + PROCESS_H + 6.0 + 10.0;
+        }
+        strip.update_drag(target);
+        strip.end_drag();
+        assert_eq!(strip.host_pid(TrackKey::Value(graph)), 3, "order: {:?}", strip.track_order);
+    }
+
+    #[test]
+    fn dropping_into_a_collapsed_section_lands_under_its_header() {
+        let mut idx = TrackIndex::default();
+        idx.insert(scope(1, 1, 1));
+        idx.insert(scope(1, 2, 2));
+        idx.insert(scope(4, 7, 1));
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        strip.tick(1.0, &idx, None);
+        strip.toggle(RowId::Process(4));
+        strip.tick(0.0, &idx, None);
+        let t2 = ThreadId { pid: 1, tid: 2 };
+        let y = strip.y[&RowId::Thread(t2)];
+        strip.begin_drag(t2, y, y);
+        strip.update_drag(strip.total_height() + 30.0);
+        strip.tick(0.0, &idx, None);
+        let hole = strip.insert_y().expect("a hole");
+        let p4 = strip.y[&RowId::Process(4)];
+        assert!((hole - (p4 + PROCESS_H)).abs() < 0.01, "hole {hole} right under the folded header at {p4}");
+        strip.end_drag();
+        assert_eq!(strip.host_pid(TrackKey::Thread(t2)), 4);
+        // The drop unfolds the section: what was put there is seen there.
+        assert!(!strip.collapsed(RowId::Process(4)));
+        strip.tick(0.0, &idx, None);
+        let ids = row_ids(&strip);
+        let p4 = ids.iter().position(|i| *i == RowId::Process(4)).unwrap();
+        assert_eq!(ids[p4 + 1], RowId::Thread(t2), "{ids:?}");
+        // And a later sync does not fold it back.
+        strip.sync(&idx, None);
+        assert!(!strip.collapsed(RowId::Process(4)));
     }
 
     #[test]
@@ -1894,19 +2371,19 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let mid = strip.thread_order[1];
+        let mid = strip.thread_order()[1];
         strip.toggle_hidden(mid);
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let first = strip.thread_order[0];
-        let last = strip.thread_order[2];
+        let first = strip.thread_order()[0];
+        let last = strip.thread_order()[2];
         let y0 = strip.y.get(&RowId::Thread(first)).copied().unwrap_or(0.0);
         strip.begin_drag(first, y0, y0);
         strip.update_drag(y0 + 80.0);
         strip.end_drag();
-        assert_eq!(strip.thread_order[1], mid);
-        assert_eq!(strip.thread_order[0], last);
-        assert_eq!(strip.thread_order[2], first);
+        assert_eq!(strip.thread_order()[1], mid);
+        assert_eq!(strip.thread_order()[0], last);
+        assert_eq!(strip.thread_order()[2], first);
     }
 
     fn ev(kind_id: u8, pid: u32, tid: u32, depth: u8, extra: u8) -> LiveEvent {
@@ -1991,9 +2468,9 @@ mod tests {
         assert_eq!(strip.rows()[0].id, RowId::Machine(MachineId::Local));
         assert_eq!(strip.rows()[1].id, RowId::Scheduler);
         assert!(strip.rows().iter().any(|r| matches!(r.id, RowId::Thread(_))));
-        let th = strip.thread_order[0];
+        let th = strip.thread_order()[0];
         assert_eq!(th, ThreadId { pid: 1, tid: 100 });
-        assert!(!strip.thread_order.iter().any(|t| t.pid == 0 && t.tid == 0));
+        assert!(!strip.thread_order().iter().any(|t| t.pid == 0 && t.tid == 0));
     }
 
     #[test]
@@ -2122,7 +2599,7 @@ mod tests {
         assert_eq!(sched.len(), 3, "max core 2 ⇒ Core 0..2");
         assert_eq!(
             strip
-                .thread_order
+                .thread_order()
                 .iter()
                 .filter(|t| t.tid == 10 || t.tid == 20)
                 .count(),
@@ -2139,7 +2616,7 @@ mod tests {
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
         assert!(
-            strip.thread_order.is_empty(),
+            strip.thread_order().is_empty(),
             "scheduler sentinels must not become process/thread rows"
         );
         assert!(strip.process_order.is_empty());
@@ -2158,7 +2635,7 @@ mod tests {
         let mut strip = TrackStrip::default();
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
-        let th = strip.thread_order[0];
+        let th = strip.thread_order()[0];
         let (y, h) = strip.thread_band(th).unwrap();
         assert!(h > THREAD_H);
         assert_eq!(strip.hit_at_y(y + THREAD_H + 1.0), Some(RowId::Thread(th)));
@@ -2171,7 +2648,7 @@ mod tests {
         strip.sync(&idx, None);
         strip.tick(1.0, &idx, None);
         assert_eq!(strip.hidden_in_process(1), 0);
-        assert!(strip.thread_order.contains(&th));
+        assert!(strip.thread_order().contains(&th));
     }
 
     /// Per-frame cost of the track layout on a large sampled capture.

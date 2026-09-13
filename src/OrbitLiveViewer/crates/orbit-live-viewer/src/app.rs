@@ -45,7 +45,7 @@ use crate::timeline::{
     snap_instances_to_layout, split_drag_instances, upload_mode, GpuDirtyKey, TimelineGpu,
     TimelineGpuSlot, TimelinePayload, UploadMode, ViewUniforms,
 };
-use crate::tracks::{RowId, ThreadId, TrackRow, TrackStrip, THREAD_H};
+use crate::tracks::{RowId, TrackKey, TrackRow, TrackStrip, THREAD_H};
 use crate::vscroll::{clamp_offset, max_offset, VScrollInertia};
 
 const FOLLOW_NS: f64 = 2_000_000_000.0;
@@ -4018,7 +4018,7 @@ impl OrbitLiveApp {
                         } else {
                             ClipLabelSet::All
                         },
-                        self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
+                        self.tracks.dragging_track(),
                         &mut self.clip_labels,
                     );
                 }
@@ -4043,7 +4043,7 @@ impl OrbitLiveApp {
                             &self.last_instances,
                             -self.listing_pan_pts,
                             ClipLabelSet::Dragged,
-                            self.tracks.dragging_thread().map(|t| (t.pid, t.tid)),
+                            self.tracks.dragging_track(),
                             &mut self.clip_labels,
                         );
                     }
@@ -4216,13 +4216,13 @@ impl OrbitLiveApp {
         pass: HeaderPass,
         interactive: bool,
     ) {
-        let dragged = self.tracks.dragging_thread();
+        let dragged = self.tracks.dragging_track();
         let rows: Vec<TrackRow> = self.tracks.rows().to_vec();
         let core_util = self.core_utilization(self.t0.max(0.0) as u64, self.t1.max(0.0) as u64);
         let clip = ui.clip_rect();
         for row in &rows {
             let on_drag = dragged
-                .map(|t| TrackStrip::row_on_thread(row.id, t))
+                .map(|k| TrackStrip::row_on_track(row.id, k))
                 .unwrap_or(false);
             match pass {
                 HeaderPass::All => {}
@@ -4243,9 +4243,22 @@ impl OrbitLiveApp {
                     RowId::Machine(_) => "row:machine".to_string(),
                     RowId::Process(p) => format!("row:process:{p}"),
                     RowId::Thread(t) => format!("row:thread:{}:{}", t.pid, t.tid),
+                    RowId::Async(t) => format!("row:async:{}:{}", t.pid, t.tid),
                     RowId::Lane(l) => format!("row:lane:{}:{}:{}", l.pid, l.tid, l.kind),
                 };
                 note_ui_rect(&label, r);
+                // A guest row says so too, on screen or not: whose it is and
+                // where it was put.
+                let track = match row.id {
+                    RowId::Thread(t) => Some(TrackKey::Thread(t)),
+                    RowId::Async(t) => Some(TrackKey::Async(t)),
+                    RowId::Lane(l) if l.kind == kind::VALUE => Some(TrackKey::Value(l)),
+                    _ => None,
+                };
+                if let Some(key) = track.filter(|k| self.tracks.is_guest(*k)) {
+                    let owner = key.owner();
+                    note_ui_rect(&format!("guest:{}:{}:{}", owner.pid, owner.tid, self.tracks.host_pid(key)), r);
+                }
             }
             if !header_row_intersects_clip(r.min.y, r.height(), clip.min.y, clip.max.y) {
                 continue;
@@ -4281,31 +4294,11 @@ impl OrbitLiveApp {
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
                     );
                 }
-                let hover_thread = match hover_row {
-                    Some(RowId::Thread(t)) => Some(t),
-                    Some(RowId::Lane(k)) if !k.is_scheduler() => Some(ThreadId {
-                        pid: k.pid,
-                        tid: k.tid,
-                    }),
-                    _ => None,
-                };
-                let highlight = match row.id {
-                    RowId::Thread(t) if hover_thread == Some(t) => true,
-                    RowId::Lane(k)
-                        if hover_thread
-                            == Some(ThreadId {
-                                pid: k.pid,
-                                tid: k.tid,
-                            }) =>
-                    {
-                        true
-                    }
-                    _ => hover_row == Some(row.id) && !matches!(row.id, RowId::Thread(_)),
-                };
-                if highlight
-                    && !dragging
-                    && !matches!(row.id, RowId::Lane(k) if k.kind == kind::VALUE)
-                {
+                // Each track highlights on its own: a thread's block, an
+                // async block, a graph. They are separate rows now, so a
+                // hover on one says which one a drag would lift.
+                let highlight = hover_row == Some(row.id);
+                if highlight && !dragging {
                     let band_hl = if let RowId::Thread(t) = row.id {
                         self.tracks
                             .thread_band(t)
@@ -4564,7 +4557,10 @@ impl OrbitLiveApp {
                     }
                 }
                 if resp.drag_started() {
-                    if let Some(p) = resp.interact_pointer_pos() {
+                    // The grab point is where the button went down, not
+                    // where the pointer is when egui calls it a drag (a
+                    // frame or two later): the row must not jump under it.
+                    if let Some(p) = press_origin(ui).or(resp.interact_pointer_pos()) {
                         if !chevron_hit.contains(p) && !hide.contains(p) {
                             self.tracks.begin_drag(th, row.y, p.y - head.top());
                         }
@@ -4600,13 +4596,14 @@ impl OrbitLiveApp {
                 } else {
                     format!("thread  {}  {tname}", th.tid)
                 };
-                ui.painter().text(
+                let label_r = ui.painter().text(
                     Pos2::new(title.left() + text_x, title.center().y),
                     Align2::LEFT_CENTER,
                     thread_label,
                     FontId::new(11.0, FontFamily::Proportional),
                     theme::TEXT(),
                 );
+                self.paint_guest_badge(ui, title, label_r.right(), hide.left() - 4.0, TrackKey::Thread(th));
                 let hide_r =
                     ui.interact(hide, ui.id().with(("hide", th.pid, th.tid)), Sense::click());
                 ui.painter().text(
@@ -4625,6 +4622,67 @@ impl OrbitLiveApp {
                     self.relayout_tracks();
                 }
                 hide_r.on_hover_text("Hide thread");
+            }
+            RowId::Async(th) => {
+                // A thread's async spans, as a track of their own: the head
+                // row is the first lane, so the label sits on it and the
+                // whole block drags together.
+                let tname = self.thread_display_name(th.pid, th.tid);
+                let label = if tight {
+                    format!("async  {}", th.tid)
+                } else {
+                    format!("async  {}  {tname}", th.tid)
+                };
+                let text_x = if tight { 38.0 } else { 64.0 };
+                if !interactive {
+                    ui.painter().text(
+                        Pos2::new(r.left() + text_x, r.center().y),
+                        Align2::LEFT_CENTER,
+                        label,
+                        FontId::new(10.5, FontFamily::Proportional),
+                        theme::MUTED(),
+                    );
+                    return;
+                }
+                let key = TrackKey::Async(th);
+                let dragging = self.tracks.is_dragging(key);
+                let title = Rect::from_min_size(r.min, Vec2::new(r.width(), 20.0_f32.min(r.height())));
+                if !tight {
+                    let handle = Rect::from_min_size(
+                        Pos2::new(title.left() + 20.0, title.top()),
+                        Vec2::new(14.0, title.height()),
+                    );
+                    paint_handle_dots(ui.painter(), handle, dragging);
+                }
+                let resp = ui.interact(r, ui.id().with(("as", th.pid, th.tid)), Sense::click_and_drag());
+                if resp.drag_started() {
+                    if let Some(p) = press_origin(ui).or(resp.interact_pointer_pos()) {
+                        self.tracks.begin_drag(key, row.y, p.y - head.top());
+                    }
+                }
+                if resp.dragged() {
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        self.tracks.update_drag(p.y - head.top());
+                    }
+                }
+                if resp.drag_stopped() {
+                    self.tracks.end_drag();
+                }
+                let chip = theme::display_argb(orbit_live_event::thread_scope_color(th.tid, 1));
+                let chip_r = Rect::from_center_size(
+                    Pos2::new(title.left() + if tight { 28.0 } else { 54.0 }, title.center().y),
+                    Vec2::splat(6.0),
+                );
+                ui.painter().rect_filled(chip_r, theme::TRACK_RADIUS, c32(chip));
+                let label_r = ui.painter().text(
+                    Pos2::new(title.left() + text_x, title.center().y),
+                    Align2::LEFT_CENTER,
+                    label,
+                    FontId::new(10.5, FontFamily::Proportional),
+                    theme::MUTED(),
+                );
+                self.paint_guest_badge(ui, title, label_r.right(), title.right() - 8.0, key);
+                resp.on_hover_text("Async spans of this thread. Drag to move the track, into another process too.");
             }
             RowId::Lane(key) => {
                 if key.is_scheduler() {
@@ -4653,24 +4711,26 @@ impl OrbitLiveApp {
                     );
                     return;
                 }
+                // A graph is a track of its own: its handle lifts it alone,
+                // not the thread it came from.
+                let track = TrackKey::Value(key);
                 if key.kind == kind::VALUE {
-                    let th = ThreadId {
-                        pid: key.pid,
-                        tid: key.tid,
-                    };
-                    let drag_r = Rect::from_min_max(
-                        Pos2::new(r.left() + 18.0, r.top()),
-                        Pos2::new(r.right() - 8.0, r.bottom()),
-                    );
+                    let dragging = self.tracks.is_dragging(track);
+                    if !tight {
+                        let handle = Rect::from_center_size(
+                            Pos2::new(r.left() + 27.0, r.center().y),
+                            Vec2::new(14.0, 20.0),
+                        );
+                        paint_handle_dots(ui.painter(), handle, dragging);
+                    }
                     let resp = ui.interact(
-                        drag_r,
-                        ui.id().with(("vdrag", th.pid, th.tid)),
-                        Sense::drag(),
+                        r,
+                        ui.id().with(("vdrag", key.pid, key.tid, key.depth, key.extra)),
+                        Sense::click_and_drag(),
                     );
                     if resp.drag_started() {
-                        if let Some(p) = resp.interact_pointer_pos() {
-                            let ty = self.tracks.thread_band(th).map(|(y, _)| y).unwrap_or(row.y);
-                            self.tracks.begin_drag(th, ty, p.y - head.top());
+                        if let Some(p) = press_origin(ui).or(resp.interact_pointer_pos()) {
+                            self.tracks.begin_drag(track, row.y, p.y - head.top());
                         }
                     }
                     if resp.dragged() {
@@ -4684,8 +4744,12 @@ impl OrbitLiveApp {
                 }
                 let name = value_lane_name(&self.index, &self.intern, key);
                 let latest = latest_value_label(&self.index, key, &self.intern);
+                let guest = key.kind == kind::VALUE && self.tracks.is_guest(track);
+                // A guest graph's label moves up to make its lower half the
+                // badge's: the row is tall enough for two lines.
+                let label_y = if guest { r.center().y - 9.0 } else { r.center().y };
                 ui.painter().text(
-                    Pos2::new(r.left() + 40.0, r.center().y),
+                    Pos2::new(r.left() + 40.0, label_y),
                     Align2::LEFT_CENTER,
                     if latest.is_empty() {
                         name
@@ -4695,8 +4759,74 @@ impl OrbitLiveApp {
                     FontId::new(10.5, FontFamily::Proportional),
                     theme::MUTED(),
                 );
+                if guest {
+                    let lower = Rect::from_min_max(Pos2::new(r.left(), r.center().y), r.right_bottom());
+                    self.paint_guest_badge(ui, lower, r.left() + 40.0, r.right() - 8.0, track);
+                }
             }
         }
+    }
+
+    /// The mark a moved track carries: "from <pid> <process>", right-aligned
+    /// to `right` on the head row, in the owner's words rather than the
+    /// host's. Clicking it sends the track home. Nothing for a track under
+    /// its own process.
+    fn paint_guest_badge(&mut self, ui: &mut Ui, row: Rect, label_right: f32, right: f32, key: TrackKey) {
+        if !self.tracks.is_guest(key) {
+            return;
+        }
+        let owner = key.owner();
+        let name = self.process_display_name(owner.pid);
+        let font = FontId::new(9.5, fonts::medium());
+        // With the process name when the header column has room after the
+        // row's own label, the bare pid when it does not.
+        let long = if name.is_empty() {
+            format!("from {}", owner.pid)
+        } else {
+            format!("from {}  {name}", owner.pid)
+        };
+        let mut galley = ui.painter().layout_no_wrap(long, font.clone(), theme::TEXT());
+        if right - (galley.size().x + 12.0) < label_right + 6.0 {
+            galley = ui.painter().layout_no_wrap(format!("from {}", owner.pid), font.clone(), theme::TEXT());
+        }
+        let w = galley.size().x + 12.0;
+        let chip = Rect::from_min_max(
+            Pos2::new((right - w).max(label_right + 6.0), row.center().y - 8.0),
+            Pos2::new(right, row.center().y + 8.0),
+        );
+        let salt = match key {
+            TrackKey::Thread(_) => 0u8,
+            TrackKey::Async(_) => 1,
+            TrackKey::Value(_) => 2,
+        };
+        let hit = ui.interact(chip, ui.id().with(("guest", owner.pid, owner.tid, salt)), Sense::click());
+        let accent = theme::display_argb(orbit_live_event::thread_scope_color(owner.tid, 1));
+        let painter = ui.painter();
+        painter.rect_filled(chip, 3.0, theme::process_track_wash_role(owner.pid, theme::WashRole::Process));
+        painter.rect_stroke(
+            chip,
+            3.0,
+            Stroke::new(1.0, if hit.hovered() { theme::TEXT() } else { c32(accent) }),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            chip.center(),
+            Align2::CENTER_CENTER,
+            galley.text(),
+            font,
+            if hit.hovered() { theme::TEXT() } else { theme::MUTED() },
+        );
+        if !self.in_self_pane {
+            note_ui_rect(&format!("badge:{}:{}:{salt}", owner.pid, owner.tid), chip);
+        }
+        if hit.clicked() {
+            self.tracks.send_home(key);
+            self.relayout_tracks();
+        }
+        hit.on_hover_text(format!(
+            "This track belongs to process {}  {name}; it was moved here.\nClick to send it back.",
+            owner.pid
+        ));
     }
 
     fn timeline_payload(
@@ -4713,7 +4843,7 @@ impl OrbitLiveApp {
         let layout = self.tracks.layout().to_vec();
         let rest_layout = self.tracks.rest_layout();
         let drag_layout = self.tracks.drag_layout();
-        let dragged = self.tracks.dragging_thread().map(|t| (t.pid, t.tid));
+        let dragged = self.tracks.dragging_track();
         // The listing window. Zoomed in, and once the span holds still, the
         // instances are listed for a window half a view wider on each side;
         // a pan that stays inside it changes one uniform (the origin) and
@@ -5013,7 +5143,7 @@ impl OrbitLiveApp {
             // without this the pixel-column LOD reports no worker activity at
             // all, even with the pool running.
             dev.absorb_worker_spans(&raster_spans);
-            let lift = dragged.and_then(|(pid, tid)| {
+            let lift = dragged.and_then(|key| {
                 let mut frame = collect_instances_layout_opts(
                     &self.index,
                     t0,
@@ -5029,7 +5159,7 @@ impl OrbitLiveApp {
                     },
                 );
                 let d = self.tracks.scale;
-                frame.instances.retain(|i| i.pid == pid && i.tid == tid);
+                frame.instances.retain(|i| key.owns(i.pid, i.tid, i.kind));
                 if frame.instances.is_empty() {
                     return None;
                 }
@@ -7866,7 +7996,7 @@ impl OrbitLiveApp {
     /// not a thread track.
     fn thread_at_y(&self, y: f32) -> Option<u32> {
         match self.tracks.hit_at_y(y)? {
-            RowId::Thread(t) => Some(t.tid),
+            RowId::Thread(t) | RowId::Async(t) => Some(t.tid),
             RowId::Lane(k) if !k.is_scheduler() && !is_self_pid(k.pid) => Some(k.tid),
             _ => None,
         }
@@ -8278,7 +8408,9 @@ fn row_process_wash(id: RowId, dragging: bool) -> Color32 {
     match id {
         RowId::Scheduler | RowId::Machine(_) => theme::RAIL(),
         RowId::Process(pid) => theme::process_track_wash_role(pid, theme::WashRole::Process),
-        RowId::Thread(t) => {
+        // By the owner's pid, never the host's: a guest keeps its own
+        // process's tint, which is the first thing that says it is one.
+        RowId::Thread(t) | RowId::Async(t) => {
             if dragging {
                 theme::process_track_wash_role(t.pid, theme::WashRole::Process)
             } else {
@@ -9883,6 +10015,13 @@ fn chevron(ui: &mut Ui, row: Rect, x: f32, open: bool, id: (&str, u32, u32)) -> 
     resp.clicked()
 }
 
+/// Where the primary button went down, for a drag that should keep the
+/// grabbed row under the pointer rather than where the pointer had got to
+/// by the time egui reported the drag.
+fn press_origin(ui: &Ui) -> Option<Pos2> {
+    ui.input(|i| i.pointer.press_origin())
+}
+
 fn paint_handle_dots(painter: &egui::Painter, r: Rect, active: bool) {
     let color = if active {
         theme::INSERT()
@@ -10702,7 +10841,7 @@ fn paint_clip_labels(
     instances: &[ScopeInstance],
     x_shift: f32,
     set: ClipLabelSet,
-    dragged: Option<(u32, u32)>,
+    dragged: Option<TrackKey>,
     cache: &mut ClipLabelCache,
 ) {
     if instances.is_empty() {
@@ -10722,8 +10861,8 @@ fn paint_clip_labels(
         if inst.kind == kind::VALUE {
             continue;
         }
-        if let Some((pid, tid)) = dragged {
-            let on = inst.pid == pid && inst.tid == tid;
+        if let Some(key) = dragged {
+            let on = key.owns(inst.pid, inst.tid, inst.kind);
             match set {
                 ClipLabelSet::All => {}
                 ClipLabelSet::Rest if on => continue,
@@ -10819,7 +10958,7 @@ mod tests {
 
     #[test]
     fn thread_background_does_not_depend_on_tid_parity() {
-        let row = |tid| RowId::Thread(ThreadId { pid: 42, tid });
+        let row = |tid| RowId::Thread(crate::tracks::ThreadId { pid: 42, tid });
         assert_eq!(row_process_wash(row(10), false), row_process_wash(row(11), false));
     }
 
@@ -11808,7 +11947,7 @@ mod tests {
         strip.process_sort = ing.process_sort.clone();
         strip.sync(&idx, None);
         assert!(strip.process_order.contains(&9));
-        assert!(strip.thread_order.iter().any(|t| t.pid == 9 && t.tid == 3));
+        assert!(strip.thread_order().iter().any(|t| t.pid == 9 && t.tid == 3));
         assert!(std::mem::size_of::<LiveEvent>() == 32);
     }
 
