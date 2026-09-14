@@ -564,6 +564,103 @@ def api_python(run):
     return _instrumented_app(run, "python", 10)
 
 
+@scenario("track-move", "Graph and async tracks move on their own, into another process, and come home")
+def track_move(run):
+    """A thread's graphs and its async block are tracks of their own -- rows
+    with a handle -- and any track can be dropped under another process,
+    where it keeps its owner's tint and carries a "from <pid>" badge that
+    sends it home. Proven on the Rust test app, which graphs two values and
+    runs an async job, by dragging a graph into the service's section."""
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    app = Target(_build_app("rust"))
+    try:
+        run.service.post("/api/capture/start", {"pid": app.pid})
+        time.sleep(5.0)
+        run.open_viewer("?collapse=scheduler")
+        pid = app.pid
+        # The app's threads on screen (the service's rows folded above them).
+        _thread_rows(run, pid)
+        graphs = run.wait_for(
+            lambda: {k: v for k, v in run.rects_matching(f"row:lane:{pid}:").items()
+                     if k.endswith(f":{KIND_VALUE}")} or None,
+            "a graph row of the app", timeout=20,
+        )
+        asyncs = run.rects_matching(f"row:async:{pid}:")
+        check_at_least(len(asyncs), 1, "async rows of the app (the async job's track)")
+        # 1. Own rows: the async block is not inside its thread's row.
+        label, (ax, ay, aw, ah) = sorted(asyncs.items(), key=lambda kv: kv[1][1])[0]
+        tid = int(label.split(":")[3])
+        tx, ty, tw, th = run.rect(f"row:thread:{pid}:{tid}")
+        check(ay >= ty + th - 0.5, f"the async row (y {ay}) must sit below its thread's block (y {ty}, h {th})")
+        # 2. A graph dragged into the service's section becomes its guest.
+        glabel, (gx, gy, gw, gh) = sorted(graphs.items(), key=lambda kv: kv[1][1])[0]
+        gtid = int(glabel.split(":")[3])
+        service_pid = run.service.get("/api/status").get("service_pid")
+        check(service_pid, "the service reports its pid")
+        # Fold every other process (the GPU telemetry rows, say) so the
+        # service's header, and the graph once it lands under it, are on
+        # screen: a row below the fold is laid out but not painted, and the
+        # badge is painted on the row.
+        for label in list(run.rects_matching("row:process:")):
+            if label in (f"row:process:{pid}", f"row:process:{service_pid}"):
+                continue
+            other = label.split(":")[2]
+            for _ in range(6):
+                if not run.rects_matching(f"row:thread:{other}:"):
+                    break
+                px, py, pw, ph = run.rect(label)
+                run.chrome.move(px + 16, py + ph * 0.5)
+                time.sleep(0.15)
+                run.chrome.click(px + 16, py + ph * 0.5)
+                time.sleep(0.4)
+            check(not run.rects_matching(f"row:thread:{other}:"), f"could not fold process {other}")
+        sx, sy, sw, sh = run.rect(f"row:process:{service_pid}")
+        gx, gy, gw, gh = run.rect(glabel)
+        # Drop just under the service's header: it is folded, and the hole
+        # opens right under a folded header.
+        x = gx + gw * 0.5
+        y0 = gy + gh * 0.5
+        y1 = sy + sh + 6
+
+        def mouse(kind, px, py):
+            run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+        mouse("mousePressed", x, y0)
+        steps = 12
+        for i in range(1, steps + 1):
+            mouse("mouseMoved", x, y0 + (y1 - y0) * i / steps)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        mouse("mouseReleased", x, y1)
+        time.sleep(0.5)
+        run.wait_for(lambda: run.rects_matching(f"guest:{pid}:{gtid}:{service_pid}") or None,
+                     "the graph to be a guest of the service's section")
+        badge = run.wait_for(lambda: run.rects_matching(f"badge:{pid}:{gtid}:") or None, "the 'from <pid>' badge")
+        gx2, gy2, _, _ = run.rect(glabel)
+        sx2, sy2, _, sh2 = run.rect(f"row:process:{service_pid}")
+        rail = sorted((round(v[1]), k) for k, v in run.rects_matching("row:").items())
+        check(gy2 > sy2, f"the graph (y {gy2}) must now be drawn under the service's header (y {sy2}); rail: {rail}")
+        run.rect(f"row:process:{pid}")  # the app's own header stays, to take the graph back
+        # The picture: a graph under the wrong process, badged as a guest.
+        run.chrome.move(gx + 4, 4)  # park the pointer off the rows
+        run.shot("46-track-moved", settle=1.0)
+        # 3. The badge sends it home.
+        bl, (bx, by, bw, bh) = next(iter(badge.items()))
+        run.chrome.click(bx + bw * 0.5, by + bh * 0.5)
+        time.sleep(0.5)
+        run.wait_for(lambda: not run.rects_matching(f"guest:{pid}:{gtid}:"), "the guest mark to go")
+        gx3, gy3, _, _ = run.rect(glabel)
+        tx3, ty3, _, th3 = run.rect(f"row:thread:{pid}:{gtid}")
+        check(gy3 >= ty3 + th3 - 0.5, f"home again: the graph (y {gy3}) sits under its thread (y {ty3}, h {th3})")
+        sx3, sy3, _, _ = run.rect(f"row:process:{service_pid}")
+        check(gy3 < sy3, "and above the service's section")
+        run.service.post("/api/capture/stop")
+        return f"async row of thread {tid} on its own; graph of thread {gtid} moved under pid {service_pid} and back"
+    finally:
+        app.proc.kill()
+
+
 @scenario("self-instrumentation", "The service profiles its own capture loop with the public API")
 def self_instrumentation(run):
     # Any target will do; what is under test is that the service's own
@@ -1257,10 +1354,27 @@ def service_lanes(run):
     _week_capture(run)
     run.open_viewer("?collapse=scheduler")
     service_pid = WeekCapture.service_pid
+    # The service's rows arrive folded (they are there for when they are
+    # wanted), under every other process: fold those so the service's header
+    # is on screen to click, then unfold it to see the lanes.
+    def fold_toggle(label, want_rows):
+        for _ in range(6):
+            if bool(run.rects_matching(f"row:thread:{label.split(':')[2]}:")) == want_rows:
+                return
+            px, py, pw, ph = run.rect(label)
+            run.chrome.move(px + 16, py + ph * 0.5)
+            time.sleep(0.15)
+            run.chrome.click(px + 16, py + ph * 0.5)
+            time.sleep(0.4)
+    for label in list(run.rects_matching("row:process:")):
+        if label != f"row:process:{service_pid}":
+            fold_toggle(label, False)
+    fold_toggle(f"row:process:{service_pid}", True)
     lanes = run.wait_for(
         lambda: {k: v for k, v in run.rects_matching(f"row:lane:{service_pid}:").items()
                  if k.endswith(f":{KIND_VALUE}")} or None,
-        f"value lanes of the service (pid {service_pid})",
+        f"value lanes of the service (pid {service_pid}); rail: "
+        f"{sorted((round(v[1]), k) for k, v in run.rects_matching('row:').items())[:40]}",
     )
     check_at_least(len(lanes), 1, "value lanes under the service process")
     run.shot("19-service-lanes", settle=1.0)

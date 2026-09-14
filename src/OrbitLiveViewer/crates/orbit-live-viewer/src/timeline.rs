@@ -4,6 +4,7 @@
 //! pixel-column raster and blit it. Zoomed-in frames upload visible SDF
 //! instances only.
 
+use crate::tracks::TrackKey;
 use egui::PaintCallback;
 use egui_wgpu::wgpu;
 use egui_wgpu::{Callback, CallbackResources, CallbackTrait, ScreenDescriptor};
@@ -299,15 +300,15 @@ fn punch_raster_thread(raster: &mut orbit_live_render::RasterizedFrame, pid: u32
 /// Later GPU instances win. Dragged thread scopes go in `fg` so they paint last.
 pub fn split_drag_instances(
     instances: Vec<ScopeInstance>,
-    dragged: Option<(u32, u32)>,
+    dragged: Option<TrackKey>,
 ) -> (Vec<ScopeInstance>, Vec<ScopeInstance>) {
-    let Some((pid, tid)) = dragged else {
+    let Some(key) = dragged else {
         return (instances, Vec::new());
     };
     let mut bg = Vec::with_capacity(instances.len());
     let mut fg = Vec::new();
     for inst in instances {
-        if inst.pid == pid && inst.tid == tid {
+        if key.owns(inst.pid, inst.tid, inst.kind) {
             fg.push(inst);
         } else {
             bg.push(inst);
@@ -1330,7 +1331,7 @@ mod tests {
             event_flags: 0,
             flags: 0.0,
         };
-        let (bg, fg) = split_drag_instances(vec![mk(1), mk(2), mk(3)], Some((1, 2)));
+        let (bg, fg) = split_drag_instances(vec![mk(1), mk(2), mk(3)], Some(TrackKey::Thread(crate::tracks::ThreadId { pid: 1, tid: 2 })));
         assert_eq!(bg.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![1, 3]);
         assert_eq!(fg.iter().map(|i| i.tid).collect::<Vec<_>>(), vec![2]);
         let (all, none) = split_drag_instances(vec![mk(1)], None);
@@ -1442,7 +1443,7 @@ mod tests {
         let open = collect_instances_layout(&idx, 0, 100, 64.0, strip.layout(), None);
         assert_eq!(open.instances.len(), 2);
         let hide = strip
-            .thread_order
+            .thread_order()
             .iter()
             .copied()
             .find(|t| t.tid == 2)

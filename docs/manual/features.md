@@ -149,15 +149,23 @@ opens on first load with a service and closes with its ×. Its rows:
 ## 4. The timeline
 
 - **Rows.** A machine row, the scheduler (one lane per core), then one row
-  per process with its threads under it. Value lanes (`service cpu %`,
-  `service rss MiB`, `events per pass`, any `orbit_value` from an
-  instrumented app) sit under the thread that emitted them. Screenshot:
-  `19-service-lanes.png`.
+  per process with its tracks under it. A thread is a track (its states,
+  samples and scopes packed under its row); a thread's async spans are a
+  track of their own (`async  <tid>  <name>`), and so is each value graph
+  (`service cpu %`, `service rss MiB`, `events per pass`, any `orbit_value`
+  from an instrumented app). New ones start out under the thread that
+  emitted them. Screenshot: `19-service-lanes.png`.
 - **Collapse.** The chevron on a process, machine or thread row folds it.
   `?collapse=scheduler` in the URL folds the scheduler on load.
-- **Reorder and hide.** Threads drag within a process, processes within a
-  machine, machines as a whole. The hide button on a thread row hides it;
-  "Show hidden threads" brings them back.
+- **Reorder and hide.** Every track has a handle: threads, async tracks and
+  graphs each drag on their own, within their process or into another one
+  -- a graph next to the thread it feeds in a different process, say. A
+  track under a process that is not its own keeps its owner's tint and
+  carries a `from <pid> <process>` badge; clicking the badge sends it back
+  under its thread. Hiding a thread hides its tracks wherever they are.
+  Processes drag within a machine, machines as a whole. The hide button on
+  a thread row hides it; "Show hidden threads" brings them back.
+  Screenshot: `46-track-moved.png`.
 - **Navigation.** Wheel over the ruler zooms, Ctrl+wheel zooms anywhere,
   drag pans, W/S zoom and A/D pan while held, Home or a double-click on the
   ruler fits the capture. The window cannot pan before the first event or
