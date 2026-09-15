@@ -1,0 +1,62 @@
+{
+  "workload": [
+    {
+      "function": "tanhf32x",
+      "safety": "",
+      "outcome": "received",
+      "calls": 1362696
+    },
+    {
+      "function": "__expm1_fma",
+      "safety": "",
+      "outcome": "received",
+      "calls": 1239780
+    },
+    {
+      "function": "render_frame",
+      "safety": "",
+      "outcome": "received",
+      "calls": 1989
+    },
+    {
+      "function": "ai_tick",
+      "safety": "",
+      "outcome": "received",
+      "calls": 2012
+    },
+    {
+      "function": "audio_mix",
+      "safety": "",
+      "outcome": "received",
+      "calls": 2258
+    },
+    {
+      "function": "__syscall_cancel_arch",
+      "safety": "",
+      "outcome": "received",
+      "calls": 2110
+    },
+    {
+      "function": "worker",
+      "safety": "",
+      "outcome": "no-events",
+      "detail": "armed, but no calls were recorded (not exercised in the window)"
+    },
+    {
+      "function": "main",
+      "safety": "",
+      "outcome": "no-events",
+      "detail": "armed, but no calls were recorded (not exercised in the window)"
+    }
+  ],
+  "crash-demo": [
+    {
+      "function": "crash_in_here",
+      "safety": "",
+      "outcome": "crash",
+      "signal": "SIGSEGV",
+      "backtrace": "Program received signal SIGSEGV, Segmentation fault.\n#0  0x00005555555551d9 in crash_in_here (p=0x0) at tools/hook_test/crash_demo.c:16\n#1  0x0000555555555266 in main () at tools/hook_test/crash_demo.c:26",
+      "detail": "the target died (SIGSEGV) while only crash_in_here was hooked"
+    }
+  ]
+}
