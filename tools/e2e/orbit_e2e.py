@@ -1863,6 +1863,12 @@ def code_views(run):
     rust = example("code:example:rust")
     check(rust["mode"] == "Source" and rust["rows"] > 500 and rust["source"].endswith("uprobes.rs"), f"rust example: {rust}")
     run.shot("27-code-source", settle=0.5)
+    # Copy the whole listing: the Copy button reports how much text it put on
+    # the clipboard (one line per row, so at least a character per row).
+    run.click("code:copy")
+    copied = run.wait_for(lambda: (code().get("copied") or 0) > rust["rows"] and code() or None,
+                          "the code copied to the clipboard", timeout=10)
+    check(copied["copied"] >= rust["rows"], f"copied {copied['copied']} chars for {rust['rows']} rows")
     cpp = example("code:example:cpp")
     check(cpp["rows"] > 500 and cpp["source"].endswith(".cpp"), f"C++ example: {cpp}")
     # The service's own function, disassembled live, its source interleaved.
