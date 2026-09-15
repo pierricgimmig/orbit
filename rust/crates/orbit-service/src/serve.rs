@@ -640,13 +640,16 @@ fn capture_loop(
     target_pid: i32,
     store: Arc<SampleStore>,
     gpu_helper: Option<String>,
-    hooks: Vec<HookSpec>,
+    armed_hooks: Vec<crate::hook_journal::ArmedHook>,
     show_all_processes: bool,
     uprobe_duplicate_filter: bool,
     mut frida: Option<crate::frida::FridaSession>,
     mut scopes: ScopeSource,
     capture_start_ns: u64,
 ) {
+    // The hook specs the engines arm; the armed set also carries each hook's
+    // size and safety verdict, kept for the crash journal.
+    let hooks: Vec<HookSpec> = armed_hooks.iter().map(|a| a.spec.clone()).collect();
     // GPU telemetry rides the same helper-process path the file mode uses:
     // the static service cannot dlopen NVML, so a helper streams pod events
     // in and they are converted to viewer lanes here.
@@ -877,6 +880,20 @@ fn capture_loop(
       }
     };
 
+    // The crash journal: which functions were armed, with their entry bytes
+    // and safety verdicts, plus a maps snapshot -- written now, while the
+    // target is alive, so that if a hook kills it the loop below can name the
+    // suspect. Engine label matches the request vocabulary.
+    let engine_label = if frida.is_some() { "frida" } else { "kernel_uprobes" };
+    let hooks_armed = has_target && !armed_hooks.is_empty() && (uprobes.is_some() || frida.is_some());
+    if hooks_armed {
+        if let Some(path) = crate::hook_journal::write_journal(target_pid, engine_label, &armed_hooks) {
+            eprintln!("orbit-service: hook journal written to {}", path.display());
+        }
+    }
+    // Set once, when the target is first seen to have died with hooks armed.
+    let mut crash_reported = false;
+
     // Real thread states, from the scheduler's tracepoints. When they cannot
     // be opened the projection below still gives every thread a RUNNING bar,
     // so the timeline degrades rather than emptying. The capture's epoch was
@@ -997,6 +1014,23 @@ fn capture_loop(
 
     while running.load(Ordering::Relaxed) {
         let _pass = orbit_api::scope("capture pass");
+        // Did a hook just kill the target? If the process is gone while a
+        // capture with hooks armed is still running, read the kernel's crash
+        // line and, when there is one or a dangerous hook was armed, name the
+        // suspect and publish the report. Once per capture.
+        if hooks_armed && !crash_reported && !crate::hook_journal::process_alive(target_pid) {
+            crash_reported = true;
+            let kernel = crate::hook_journal::scan_kernel_crash(target_pid);
+            let blame = kernel.is_some() || armed_hooks.iter().any(|h| !h.safety.is_safe());
+            let report = crate::hook_journal::build_and_write(target_pid, engine_label, &armed_hooks, kernel);
+            eprintln!("orbit-service: {}", report.summary);
+            if let Some(path) = &report.path {
+                eprintln!("orbit-service: hook crash report written to {}", path.display());
+            }
+            if blame {
+                service.set_hook_crash(report.json.to_string());
+            }
+        }
         // The background symbol load finished: swap it in and start draining
         // the sampling rings (which buffered while it built). Even a stripped
         // binary resolves to module+offset here, not bare hex.
@@ -1801,6 +1835,10 @@ pub fn run_on(
             let show_all_processes = wants_all_processes(body);
             let uprobe_duplicate_filter = wants_duplicate_filter(body);
             let mut hooks = Vec::new();
+            // Per-hook size and safety verdict, in the same order as `hooks`,
+            // gathered while the index is here so the crash journal can name a
+            // suspect without re-reading symbols.
+            let mut hook_meta: Vec<(u64, crate::hook_safety::HookSafety)> = Vec::new();
             if !ids.is_empty() {
                 // The index for this process, loading it now if the viewer
                 // never asked (a hook picked from a report needs no search
@@ -1840,6 +1878,13 @@ pub fn run_on(
                                 resolved.len()
                             );
                         }
+                        hook_meta = resolved
+                            .iter()
+                            .map(|h| {
+                                let size = index.by_id(h.function_id).map(|f| f.size).unwrap_or(0);
+                                (size, index.safety_of(h.function_id))
+                            })
+                            .collect();
                         hooks = resolved;
                     }
                     None => eprintln!(
@@ -1854,6 +1899,14 @@ pub fn run_on(
                 return Err("No selected functions could be resolved".into());
             }
             hooks.truncate(MAX_HOOKS);
+            hook_meta.truncate(hooks.len());
+            // The armed set with its evidence, for the crash journal.
+            let armed_hooks: Vec<crate::hook_journal::ArmedHook> = hooks
+                .iter()
+                .cloned()
+                .zip(hook_meta.into_iter().chain(std::iter::repeat((0, crate::hook_safety::HookSafety::not_analysed()))))
+                .map(|(spec, (size, safety))| crate::hook_journal::ArmedHook { spec, size, safety })
+                .collect();
             // Include synchronous injection and trampoline installation in
             // self-profiling. Transfer this reader into the worker so its
             // cursors and capture flag have one owner, including error paths.
@@ -1892,7 +1945,7 @@ pub fn run_on(
                         pid,
                         store,
                         helper,
-                        hooks,
+                        armed_hooks,
                         show_all_processes,
                         uprobe_duplicate_filter,
                         frida,

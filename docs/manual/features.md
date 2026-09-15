@@ -145,6 +145,25 @@ opens on first load with a service and closes with its ×. Its rows:
 - **HOOKED** counts the hooked functions and opens the **Functions**
   view; "Unhook all" clears them. After Record, the line says what was
   armed ("instrumenting N of M functions") or why nothing was.
+- **Hook safety.** Instrumenting a function that is not a clean entry point
+  can crash the target: a symbol that points at padding or data, a uprobe
+  landing mid-instruction, an inline hook relocating a branch wrongly. The
+  service decodes each function's entry (`hook_safety`, x86) and the
+  Functions list flags the dangerous ones with a ⚠ and a reason on hover:
+  an entry that does not decode or is a `ret`/trap (the symbol is not a
+  function), a function too small for a probe, or a relative branch in the
+  first bytes an inline trampoline would overwrite. `/api/functions/search`
+  carries the verdict (`safety`: safe / risky / unsafe / unknown; unknown
+  is a non-x86 module, not judged). Screenshot: `46-hook-danger-cue.png`.
+- **Crash diagnostics.** When the target dies mid-capture with hooks armed,
+  the service writes a crash report (`orbit-hook-crash-<pid>.json`, next to
+  a pre-arming `orbit-hooks-<pid>.json` journal) naming the prime suspect
+  and listing every armed hook with its entry bytes, disassembled entry and
+  safety verdict. The suspect is matched by the kernel's faulting
+  instruction pointer when the kernel log is readable (`CAP_SYSLOG`, or
+  `kernel.dmesg_restrict=0`), else by the most dangerous armed hook. On a
+  confirmed crash the viewer shows a red banner and a ☠ on the culprit row
+  (`/api/status`'s `hook_crash`).
 
 ## 4. The timeline
 
