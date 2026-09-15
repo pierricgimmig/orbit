@@ -565,6 +565,36 @@ pub fn build_rows(mode: CodeMode, doc: Option<&CodeDoc>, disasm: Option<&Disasse
     }
 }
 
+/// The rows as plain text for the clipboard, one line each, mirroring what
+/// the panel paints minus the gutter: a source line as written (no line
+/// number, so it pastes back as code), an instruction as `address  text`
+/// with its `; target` when it calls somewhere, a note as its text. This is
+/// what the Copy button hands over and, row for row, what a drag-selection
+/// across the whole view would yield.
+pub fn rows_to_text(rows: &[CodeRow], doc: Option<&CodeDoc>, disasm: Option<&Disassembly>) -> String {
+    let mut out = String::new();
+    for row in rows {
+        match row {
+            CodeRow::Source { line } => {
+                if let Some(text) = doc.and_then(|d| d.lines.get(*line)) {
+                    out.push_str(text);
+                }
+            }
+            CodeRow::Asm { index } => {
+                if let Some(ins) = disasm.and_then(|d| d.lines.get(*index)) {
+                    out.push_str(&format!("{:x}  {}", ins.address, ins.text));
+                    if !ins.target.is_empty() {
+                        out.push_str(&format!("  ; {}", ins.target));
+                    }
+                }
+            }
+            CodeRow::Note { text } => out.push_str(text),
+        }
+        out.push('\n');
+    }
+    out
+}
+
 impl CodeDoc {
     /// Where to open a file worth reading: the first line that begins a
     /// function body, past the licence, the imports and the module docs.
@@ -695,5 +725,31 @@ mod tests {
         assert!(examples.first_body_line() > 20, "{}", examples.first_body_line());
         assert!(CodeDoc::new(EXAMPLE_CPP_PATH, EXAMPLE_CPP).first_body_line() > 40);
         assert_eq!(CodeDoc::new(EXAMPLE_CPP_PATH, EXAMPLE_CPP).lang, Language::Cpp);
+    }
+
+    #[test]
+    fn copy_text_is_the_listing_without_the_gutter() {
+        let doc = CodeDoc::new("/x/a.c", "int a;\nint b;\nint c;");
+        let mut d = Disassembly::default();
+        d.lines = vec![
+            DisasmLine { address: 0x1000, text: "mov eax, 1".into(), line: 1, file: "/x/a.c".into(), ..Default::default() },
+            DisasmLine { address: 0x1005, text: "call 0x2000".into(), target: "do_thing".into(), line: 1, file: "/x/a.c".into(), ..Default::default() },
+        ];
+        // Source: the lines as written, so it pastes back as code.
+        let src = build_rows(CodeMode::Source, Some(&doc), None);
+        assert_eq!(rows_to_text(&src, Some(&doc), None), "int a;\nint b;\nint c;\n");
+        // Disassembly: address, instruction, and the call target as a comment.
+        let asm = build_rows(CodeMode::Disassembly, None, Some(&d));
+        assert_eq!(rows_to_text(&asm, None, Some(&d)), "1000  mov eax, 1\n1005  call 0x2000  ; do_thing\n");
+        // Both: the source line above the instructions it produced.
+        let both = build_rows(CodeMode::Both, Some(&doc), Some(&d));
+        assert_eq!(
+            rows_to_text(&both, Some(&doc), Some(&d)),
+            "int a;\n1000  mov eax, 1\n1005  call 0x2000  ; do_thing\n"
+        );
+        // A note carries its own text; missing docs degrade to blank lines,
+        // never a panic.
+        let notes = vec![CodeRow::Note { text: "b.h:7".into() }, CodeRow::Source { line: 9 }];
+        assert_eq!(rows_to_text(&notes, Some(&doc), None), "b.h:7\n\n");
     }
 }

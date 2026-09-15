@@ -889,6 +889,9 @@ pub struct OrbitLiveApp {
     code_loading: bool,
     /// Row to scroll into view once, after a load.
     code_scroll_to: Option<usize>,
+    /// Characters last copied from the code view (the Copy button), for the
+    /// `code.copied` readout the e2e harness asserts on.
+    code_copied_chars: usize,
     /// Functions view sort: column index (hooked, function, size, module) and descending.
     functions_sort: (u8, bool),
     selected_hooks: Vec<FunctionHit>,
@@ -1250,7 +1253,7 @@ impl OrbitLiveApp {
             VIEWER_BUILD,
             if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
             format!(
-                "{{\"mode\":\"{}\",\"rows\":{},\"source\":{:?},\"disasm\":{:?},\"instructions\":{},\"error\":{:?},\"loading\":{}}}",
+                "{{\"mode\":\"{}\",\"rows\":{},\"source\":{:?},\"disasm\":{:?},\"instructions\":{},\"error\":{:?},\"loading\":{},\"copied\":{}}}",
                 self.code_mode.label(),
                 self.code_rows.len(),
                 self.code_doc.as_ref().map(|d| d.path.as_str()).unwrap_or(""),
@@ -1258,6 +1261,7 @@ impl OrbitLiveApp {
                 self.code_disasm.as_ref().map(|d| d.lines.len()).unwrap_or(0),
                 self.code_error,
                 self.code_loading,
+                self.code_copied_chars,
             ),
             match &self.rect_result {
                 Some(r) => format!(
@@ -1561,6 +1565,7 @@ impl OrbitLiveApp {
             code_mode: crate::code::CodeMode::Both,
             code_rows: Vec::new(),
             code_rows_key: (255, 0, 0),
+            code_copied_chars: 0,
             code_error: String::new(),
             code_loading: false,
             code_scroll_to: None,
@@ -2235,9 +2240,14 @@ impl OrbitLiveApp {
         let capturing = s.capturing;
         self.status = s;
         // A deep-linked report has no capture-stop transition to ride on, so
-        // it asks once, as soon as the service is talking.
+        // it asks once, as soon as the service is talking -- and opens the
+        // panel: `?report=code` (or any `?report=`) means the operator asked
+        // to see it, but `show_whole_capture_report` only requests the data,
+        // and nothing else opens the panel until a live capture stops. Without
+        // this a deep-linked report tab stays behind a closed panel.
         if self.pending_report_request {
             self.pending_report_request = false;
+            self.open_right_tab(self.report_tab);
             self.show_whole_capture_report();
             self.net.get_modules(self.selected_pid.unwrap_or(0));
         }
@@ -6856,6 +6866,20 @@ impl OrbitLiveApp {
                 }
             });
             ui.add_space(8.0);
+            // Copy the whole listing as plain text. Individual lines and
+            // ranges are selectable in the view (drag, then Ctrl+C); this is
+            // the "all of it" shortcut, and the reliable path on a headless
+            // browser where a synthetic drag-select is awkward.
+            let has_code = self.code_doc.is_some() || self.code_disasm.is_some();
+            let copy = pill(ui, "Copy", false).on_hover_text("Copy the whole listing to the clipboard");
+            note_ui_rect("code:copy", copy.rect);
+            if copy.clicked() && has_code {
+                let rows = crate::code::build_rows(self.code_mode, self.code_doc.as_ref(), self.code_disasm.as_ref());
+                let text = crate::code::rows_to_text(&rows, self.code_doc.as_ref(), self.code_disasm.as_ref());
+                self.code_copied_chars = text.chars().count();
+                ui.ctx().copy_text(text);
+            }
+            ui.add_space(8.0);
             let what = match (&self.code_disasm, &self.code_doc) {
                 (Some(d), _) => format!("{}  {}  {} instructions", d.function.name, d.function.module, d.lines.len()),
                 (None, Some(doc)) => format!("{}  {}  {} lines", doc.name(), doc.lang.label(), doc.lines.len()),
@@ -6945,7 +6969,9 @@ impl OrbitLiveApp {
         let mut widest = avail_w;
         for i in first..last {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, row_h), Sense::hover());
-            let painter = ui.painter();
+            // An owned handle so the row's background and gutter can be painted
+            // before the selectable text label is placed on top.
+            let painter = ui.painter().clone();
             let hovered = pointer.is_some_and(|p| rect.contains(p));
             let row = &self.code_rows[i];
             let is_annotation = matches!(row, CodeRow::Source { .. } | CodeRow::Note { .. }) && self.code_mode == CodeMode::Both;
@@ -6957,9 +6983,12 @@ impl OrbitLiveApp {
                 painter.rect_filled(rect, 0.0, theme::REPORT_ROW_ALT());
             }
             let text_x = rect.left() + gutter_w + 8.0;
-            match row {
-                CodeRow::Source { line } => {
-                    let Some(doc) = &self.code_doc else { continue };
+            // The code text of the row as a coloured job, or None for a note
+            // (painted plainly below). Placed as a selectable label after the
+            // gutter, so a drag selects across rows and Ctrl+C (or the Copy
+            // button) yields the text -- see `code::rows_to_text`.
+            let job: Option<egui::text::LayoutJob> = match row {
+                CodeRow::Source { line } => self.code_doc.as_ref().map(|doc| {
                     painter.text(
                         Pos2::new(rect.left() + gutter_w - 4.0, rect.center().y),
                         Align2::RIGHT_CENTER,
@@ -6968,17 +6997,13 @@ impl OrbitLiveApp {
                         theme::MUTED(),
                     );
                     let text = &doc.lines[*line];
-                    let spans = doc.spans(*line);
                     let mut job = egui::text::LayoutJob::default();
-                    for s in spans {
+                    for s in doc.spans(*line) {
                         job.append(&text[s.start..s.end], 0.0, egui::TextFormat { font_id: mono.clone(), color: token_color(s.kind), ..Default::default() });
                     }
-                    let galley = ui.fonts(|f| f.layout_job(job));
-                    widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
-                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT());
-                }
-                CodeRow::Asm { index } => {
-                    let Some(d) = &self.code_disasm else { continue };
+                    job
+                }),
+                CodeRow::Asm { index } => self.code_disasm.as_ref().map(|d| {
                     let ins = &d.lines[*index];
                     painter.text(
                         Pos2::new(rect.left() + gutter_w - 4.0, rect.center().y),
@@ -7004,10 +7029,8 @@ impl OrbitLiveApp {
                             job.append(&format!("   {tail}"), 0.0, egui::TextFormat { font_id: FontId::monospace(font - 1.5), color: Color32::from_rgb(0x5A, 0x60, 0x66), ..Default::default() });
                         }
                     }
-                    let galley = ui.fonts(|f| f.layout_job(job));
-                    widest = widest.max(gutter_w + 8.0 + galley.size().x + 16.0);
-                    painter.galley(Pos2::new(text_x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT());
-                }
+                    job
+                }),
                 CodeRow::Note { text } => {
                     painter.text(
                         Pos2::new(text_x, rect.center().y),
@@ -7016,7 +7039,22 @@ impl OrbitLiveApp {
                         FontId::monospace(font - 1.0),
                         theme::MUTED(),
                     );
+                    None
                 }
+            };
+            if let Some(job) = job {
+                // Measure for the horizontal extent, then place the same text
+                // as a selectable label filling the row height at text_x.
+                let width = ui.fonts(|f| f.layout_job(job.clone())).size().x;
+                widest = widest.max(gutter_w + 8.0 + width + 16.0);
+                let text_rect = Rect::from_min_size(Pos2::new(text_x, rect.top()), Vec2::new(width.max(1.0), rect.height()));
+                ui.put(
+                    text_rect,
+                    egui::Label::new(job)
+                        .selectable(true)
+                        .halign(egui::Align::Min)
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
             }
         }
         if last < self.code_rows.len() {

@@ -307,7 +307,11 @@ in the URL opens a tab on load.
   `UprobesUnwindingVisitor.cpp`), opened at their first function, and the
   running orbit-service's own `UprobeSession::drain_up_to`, disassembled
   live from its binary with its source interleaved, the way a hooked
-  function in a `-g` build reads. Screenshots: `26-code-both.png`,
+  function in a `-g` build reads. The text is selectable: drag across lines
+  to select a range and Ctrl+C copies it; **Copy** in the toolbar copies the
+  whole listing at once. A copied source line comes back as written (no line
+  number, so it pastes as code); a copied instruction comes back as
+  `address  instruction  ; target`. Screenshots: `26-code-both.png`,
   `27-code-source.png`.
 
 ## 7. Capture files
