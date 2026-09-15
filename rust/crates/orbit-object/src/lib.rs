@@ -60,6 +60,10 @@ pub struct ObjectSegment {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ElfMetadata {
     pub is_64_bit: bool,
+    /// The ELF `e_machine` (e.g. `EM_X86_64` = 62, `EM_AARCH64` = 183), so a
+    /// tool that only understands one architecture (a decoder, say) can tell
+    /// whether it may look at this file's code.
+    pub machine: u16,
     /// Lower-case hex of the `NT_GNU_BUILD_ID` note descriptor; empty if absent.
     pub build_id: String,
     /// `DT_SONAME`, or empty when the file has none.
@@ -109,6 +113,7 @@ where
 
     let mut metadata = ElfMetadata {
         is_64_bit: header.is_type_64(),
+        machine: header.e_machine(endian),
         ..Default::default()
     };
 

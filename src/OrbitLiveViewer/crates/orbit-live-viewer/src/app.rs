@@ -166,6 +166,28 @@ enum ClipLabelSet {
     Dragged,
 }
 
+/// A target crash the service blamed on a hook, parsed from `/api/status`'s
+/// `hook_crash` JSON. Just what the banner and the row cue need.
+#[derive(Clone, Debug, Default)]
+struct HookCrash {
+    summary: String,
+    /// The suspected function's id, so its row gets the ☠. 0 when unknown.
+    suspect_id: u64,
+}
+
+impl HookCrash {
+    fn parse(json: &str) -> Option<HookCrash> {
+        if json.trim().is_empty() {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_str(json).ok()?;
+        Some(HookCrash {
+            summary: value.get("summary").and_then(|v| v.as_str()).unwrap_or("a hook crashed the target").to_string(),
+            suspect_id: value.get("suspect").and_then(|s| s.get("function_id")).and_then(|v| v.as_u64()).unwrap_or(0),
+        })
+    }
+}
+
 /// Native `TimeGraph::OnMouseWheel` vs `TimelineUi::OnMouseWheel`.
 #[derive(Clone, Copy)]
 enum WheelMode {
@@ -618,6 +640,12 @@ pub struct OrbitLiveApp {
     /// not contain it are not shown, and a tree opens along the paths to
     /// the rows that do. C++ Orbit's filter box over the sampling report.
     report_filter: String,
+    /// A target crash blamed on a hook (from `/api/status`'s `hook_crash`),
+    /// shown as a banner and a ☠ on the culprit row until dismissed.
+    hook_crash: Option<HookCrash>,
+    /// The raw `hook_crash` JSON last applied, so a dismissed banner does not
+    /// return every status poll but a *new* crash does.
+    hook_crash_seen: String,
     /// Function ids selected in a report by a left-drag, for a batch hook
     /// toggle. Keyed by id so a selection survives a re-sort or re-filter.
     report_selection: std::collections::HashSet<u64>,
@@ -1581,6 +1609,8 @@ impl OrbitLiveApp {
             reupload_next_frame: false,
             draw_readout: String::new(),
             report_filter: String::new(),
+            hook_crash: None,
+            hook_crash_seen: String::new(),
             report_selection: std::collections::HashSet::new(),
             report_drag: None,
             core_util: std::collections::HashMap::new(),
@@ -2220,6 +2250,12 @@ impl OrbitLiveApp {
     fn apply_status(&mut self, s: StatusJson) {
         self.got_status = true;
         self.last_status_seen_s = self.now_s;
+        // A hook crash the service reported: show it once. A dismissed banner
+        // stays dismissed until the JSON changes (a different crash).
+        if s.hook_crash != self.hook_crash_seen {
+            self.hook_crash_seen = s.hook_crash.clone();
+            self.hook_crash = HookCrash::parse(&s.hook_crash);
+        }
         // A capture started from the API (not this viewer) still names its
         // target: the Functions view and the hook menu need a process.
         if s.target_pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
@@ -2501,6 +2537,7 @@ impl OrbitLiveApp {
                     // This frame is the WebSocket's stats push, which carries
                     // no control state; keep what /api/status last said.
                     instrumentation: self.status.instrumentation.clone(),
+                    hook_crash: self.status.hook_crash.clone(),
                     wire: self.status.wire.clone(),
                 });
                 // An opened capture is all here once the service reports it
@@ -3317,6 +3354,7 @@ impl OrbitLiveApp {
             return;
         }
         self.hooked_hint(ui);
+        self.hook_crash_banner(ui);
         let filter = self.report_filter.trim().to_lowercase();
         let mut rows: Vec<usize> = self
             .functions
@@ -3496,15 +3534,46 @@ impl OrbitLiveApp {
             x += widths[0] + col_gap;
             // function
             let name_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(name_w, row_h));
-            let label = ui.interact(name_rect, ui.id().with(("fnname", i)), Sense::click());
+            let mut label = ui.interact(name_rect, ui.id().with(("fnname", i)), Sense::click());
+            // The danger cue: a warning sign before the name when the entry is
+            // risky or unsafe to hook, a skull for one a crash report has
+            // blamed. The glyph takes a fixed lead so the names still line up.
+            let crashed = self.hook_crash.as_ref().is_some_and(|c| c.suspect_id == f.function_id);
+            let (cue, cue_color, cue_reason) = if crashed {
+                ("\u{2620}", Color32::from_rgb(0xE5, 0x73, 0x73), self.hook_crash.as_ref().map(|c| c.summary.clone()).unwrap_or_default())
+            } else {
+                match f.safety.as_str() {
+                    "unsafe" => ("\u{26A0}", Color32::from_rgb(0xE5, 0x73, 0x73), f.safety_reason.clone()),
+                    "risky" => ("\u{26A0}", Color32::from_rgb(0xD8, 0xA6, 0x57), f.safety_reason.clone()),
+                    _ => ("", theme::TEXT(), String::new()),
+                }
+            };
+            let name_x = if cue.is_empty() {
+                name_rect.left()
+            } else {
+                ui.painter().text(
+                    Pos2::new(name_rect.left(), name_rect.center().y),
+                    Align2::LEFT_CENTER,
+                    cue,
+                    FontId::new(font, FontFamily::Proportional),
+                    cue_color,
+                );
+                name_rect.left() + 16.0
+            };
             ui.painter().text(
-                name_rect.left_center(),
+                Pos2::new(name_x, name_rect.center().y),
                 Align2::LEFT_CENTER,
-                truncate_to_width(&f.name, name_w - 4.0, font),
+                truncate_to_width(&f.name, name_w - 4.0 - (name_x - name_rect.left()), font),
                 FontId::new(font, FontFamily::Proportional),
                 if hooked { theme::ACCENT() } else { theme::TEXT() },
             );
+            if !cue_reason.is_empty() {
+                label = label.on_hover_text(cue_reason);
+            }
             note_ui_rect(&format!("fn:{}", f.name), name_rect);
+            if !cue.is_empty() {
+                note_ui_rect(&format!("danger:{}", f.name), name_rect);
+            }
             if let Some(action) = hook_menu(
                 &label, f.function_id,
                 if selected { all_selected_hooked } else { hooked },
@@ -7045,6 +7114,8 @@ impl OrbitLiveApp {
                         name: name.to_string(),
                         module: module.to_string(),
                         size: 0,
+                        safety: String::new(),
+                        safety_reason: String::new(),
                     });
                 }
             }
@@ -7205,6 +7276,24 @@ impl OrbitLiveApp {
             (format!("{n} function(s) hooked — press Record to instrument them"), theme::ACCENT())
         };
         ui.label(RichText::new(text).color(color).size(self.ui_tweaks.report_font - 0.5));
+    }
+
+    /// A loud banner when a hook was blamed for the target's death: the
+    /// suspect, how it was judged, and a hint to look at the ☠ row. Dismissable.
+    fn hook_crash_banner(&mut self, ui: &mut Ui) {
+        let Some(crash) = self.hook_crash.clone() else { return };
+        let font = self.ui_tweaks.report_font;
+        let bg = Color32::from_rgb(0x4A, 0x1F, 0x1F);
+        let frame = egui::Frame::new().fill(bg).inner_margin(egui::Margin::symmetric(8, 5)).corner_radius(4.0);
+        frame.show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("\u{2620} the target crashed").color(Color32::from_rgb(0xFF, 0xB4, 0xB4)).size(font).strong());
+                ui.label(RichText::new(&crash.summary).color(Color32::from_rgb(0xEE, 0xD2, 0xD2)).size(font - 0.5));
+                if pill(ui, "Dismiss", false).clicked() {
+                    self.hook_crash = None;
+                }
+            });
+        });
     }
 
     /// Marks every node of the current tree expanded.
@@ -10964,7 +11053,7 @@ mod tests {
 
     #[test]
     fn captured_names_resolve_only_to_unique_functions() {
-        let first = FunctionHit { function_id: 1, name: "work".into(), module: "one".into(), size: 16 };
+        let first = FunctionHit { function_id: 1, name: "work".into(), module: "one".into(), size: 16, safety: String::new(), safety_reason: String::new() };
         let other = FunctionHit { function_id: 2, module: "two".into(), ..first.clone() };
         assert_eq!(unique_named_function("work", [&first, &first].into_iter()).unwrap().function_id, 1);
         assert!(unique_named_function("work", [&first, &other].into_iter()).is_none());

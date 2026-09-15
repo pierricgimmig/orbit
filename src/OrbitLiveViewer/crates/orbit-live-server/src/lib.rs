@@ -133,6 +133,8 @@ pub struct LiveService {
     /// under the hook picker, because a hook that was ticked but never armed
     /// is otherwise indistinguishable from a function that simply never ran.
     pub instrumentation_status: Mutex<String>,
+    /// A JSON summary of a target crash blamed on a hook, empty when none.
+    pub hook_crash: Mutex<String>,
     /// Optional: aggregates sampled callstacks over a time range into a
     /// sampling report. Set separately from `ControlHooks` so a service that
     /// does not sample (or predates this) needs no change.
@@ -275,6 +277,7 @@ impl LiveService {
             demo: AtomicBool::new(false),
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
+            hook_crash: Mutex::new(String::new()),
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
             sampling_report_scope: Mutex::new(None),
@@ -307,6 +310,19 @@ impl LiveService {
 
     pub fn instrumentation_status(&self) -> String {
         self.instrumentation_status.lock().clone()
+    }
+
+    /// A JSON summary of a target crash blamed on dynamic instrumentation
+    /// (the culprit hook and where it faulted), empty when none. The service
+    /// sets it; `/api/status` carries it; the viewer shows a banner and marks
+    /// the function. Not cleared on its own -- it survives the capture that
+    /// produced it so the operator sees what happened.
+    pub fn set_hook_crash(&self, summary: impl Into<String>) {
+        *self.hook_crash.lock() = summary.into();
+    }
+
+    pub fn hook_crash(&self) -> String {
+        self.hook_crash.lock().clone()
     }
 
     #[allow(clippy::type_complexity)]

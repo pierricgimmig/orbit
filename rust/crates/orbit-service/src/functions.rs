@@ -44,6 +44,10 @@ pub struct InstrumentableFunction {
 pub struct FunctionIndex {
     functions: Vec<InstrumentableFunction>,
     module_count: usize,
+    /// Per-function hook-safety verdict, keyed by id (see `hook_safety`). A
+    /// side map so `InstrumentableFunction` stays lean and its many
+    /// constructors are untouched; a missing entry means "not analysed".
+    safety: HashMap<u64, crate::hook_safety::HookSafety>,
 }
 
 impl FunctionIndex {
@@ -57,7 +61,7 @@ impl FunctionIndex {
     #[cfg(target_os = "linux")]
     pub fn for_pid_with_progress(pid: i32, progress: impl Fn(usize, usize) + Sync) -> FunctionIndex {
         let Ok(content) = std::fs::read(format!("/proc/{pid}/maps")) else {
-            return FunctionIndex { functions: Vec::new(), module_count: 0 };
+            return FunctionIndex { functions: Vec::new(), module_count: 0, safety: HashMap::new() };
         };
         // The unique executable module paths, in first-seen order. One mapping
         // per file is enough: the offsets are the file's, not the mapping's, so
@@ -79,7 +83,7 @@ impl FunctionIndex {
         // own worker (each also emits its own "load symbols: <file>" scope).
         // One scope around the whole thing: it launches the workers and blocks
         // here until they return, so its span is the total symbol-loading time.
-        let mut functions: Vec<InstrumentableFunction> = {
+        let mut pairs: Vec<(InstrumentableFunction, crate::hook_safety::HookSafety)> = {
             let _total = orbit_api::scope(format!("load symbols ({module_count} modules)"));
             crate::par_map(&paths, |path| {
                 let functions = Self::functions_of_module(path);
@@ -92,22 +96,32 @@ impl FunctionIndex {
         };
         // Two symbols can share an address (aliases); the id is the address,
         // so keep one of each to stop a hook being armed twice.
-        functions.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.name.cmp(&b.name)));
-        functions.dedup_by_key(|function| function.id);
-        FunctionIndex { functions, module_count }
+        pairs.sort_by(|a, b| a.0.id.cmp(&b.0.id).then_with(|| a.0.name.cmp(&b.0.name)));
+        pairs.dedup_by_key(|pair| pair.0.id);
+        let mut functions = Vec::with_capacity(pairs.len());
+        let mut safety = HashMap::with_capacity(pairs.len());
+        for (function, verdict) in pairs {
+            safety.insert(function.id, verdict);
+            functions.push(function);
+        }
+        FunctionIndex { functions, module_count, safety }
     }
 
     #[cfg(target_os = "linux")]
     /// Every instrumentable function of one module file. Pure per-module work,
     /// so it runs on a worker thread; the self-profile scope is named for the
     /// file so the cost of each shows on the service's track.
-    fn functions_of_module(path: &str) -> Vec<InstrumentableFunction> {
+    fn functions_of_module(path: &str) -> Vec<(InstrumentableFunction, crate::hook_safety::HookSafety)> {
         let module = path.rsplit('/').next().unwrap_or(path).to_string();
         let _load = orbit_api::scope(format!("load symbols: {module}"));
         let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
-        let segments = parse_elf_metadata(&bytes, path)
-            .map(|metadata| metadata.loadable_segments)
-            .unwrap_or_default();
+        let metadata = parse_elf_metadata(&bytes, path).ok();
+        let segments = metadata.as_ref().map(|m| m.loadable_segments.clone()).unwrap_or_default();
+        // The machine and class drive the entry decode; default to x86-64 when
+        // the header did not parse (assess falls back to "unsafe" per function
+        // rather than guessing a prologue).
+        let machine = metadata.as_ref().map(|m| m.machine).unwrap_or(crate::hook_safety::EM_X86_64);
+        let is_64_bit = metadata.as_ref().map(|m| m.is_64_bit).unwrap_or(true);
         // The detached debug file first, so a distribution's stripped library
         // offers its internal functions too; see symbolize.rs.
         let Ok(symbols) = crate::symbolize::symbol_source(&bytes, Some(path)) else {
@@ -121,14 +135,19 @@ impl FunctionIndex {
             let Some(file_offset) = file_offset_of(&segments, symbol.address) else {
                 continue;
             };
-            out.push(InstrumentableFunction {
+            let function = InstrumentableFunction {
                 id: function_id(path, file_offset),
                 name: pretty_name(&symbol.mangled_name),
                 module: module.clone(),
                 module_path: path.to_string(),
                 file_offset,
                 size: symbol.size,
-            });
+            };
+            // The verdict is computed from the module file (the same bytes the
+            // uprobe/Frida engines relocate), not the live process, so it is
+            // available before a capture and costs one decode per function.
+            let verdict = crate::hook_safety::assess_in_module(&bytes, machine, is_64_bit, file_offset, symbol.size);
+            out.push((function, verdict));
         }
         out
     }
@@ -165,7 +184,9 @@ impl FunctionIndex {
         candidates.dedup_by_key(|(f, _)| f.id);
         let functions: Vec<_> = candidates.into_iter().map(|(f, _)| f).collect();
         let module_count = functions.iter().map(|f| &f.module_path).collect::<std::collections::HashSet<_>>().len();
-        FunctionIndex { functions, module_count }
+        // Frida returns names, not code; the entry decode is a Linux/ELF path,
+        // so macOS functions are simply not analysed.
+        FunctionIndex { functions, module_count, safety: HashMap::new() }
     }
 
     pub fn len(&self) -> usize {
@@ -187,6 +208,12 @@ impl FunctionIndex {
 
     pub fn by_id(&self, id: u64) -> Option<&InstrumentableFunction> {
         self.functions.iter().find(|function| function.id == id)
+    }
+
+    /// The hook-safety verdict for a function id, or "not analysed" when the
+    /// index has none (a non-x86 or macOS index, or an unknown id).
+    pub fn safety_of(&self, id: u64) -> crate::hook_safety::HookSafety {
+        self.safety.get(&id).cloned().unwrap_or_else(crate::hook_safety::HookSafety::not_analysed)
     }
 
     /// Case-insensitive substring search, shortest names first.
@@ -249,11 +276,16 @@ impl FunctionIndex {
             .search(query, limit)
             .into_iter()
             .map(|function| {
+                let safety = self.safety_of(function.id);
                 serde_json::json!({
                     "function_id": function.id,
                     "name": function.name,
                     "module": function.module,
                     "size": function.size,
+                    // The hook-safety cue: "safe" | "risky" | "unsafe" |
+                    // "unknown", with a human reason for the tooltip.
+                    "safety": safety.level.as_str(),
+                    "safety_reason": safety.reason,
                 })
             })
             .collect();
@@ -401,6 +433,7 @@ mod tests {
     fn search_is_case_insensitive_and_prefers_the_plainest_match() {
         let index = FunctionIndex {
             module_count: 1,
+            safety: std::collections::HashMap::new(),
             functions: vec![
                 InstrumentableFunction {
                     id: 1,
@@ -430,6 +463,7 @@ mod tests {
     fn search_is_multi_token_and_order_free() {
         let index = FunctionIndex {
             module_count: 1,
+            safety: std::collections::HashMap::new(),
             functions: vec![
                 InstrumentableFunction {
                     id: 1,
@@ -462,6 +496,7 @@ mod tests {
         // and optional injection packaging. Live discovery belongs in native E2E.
         let index = FunctionIndex {
             module_count: 2,
+            safety: std::collections::HashMap::new(),
             functions: vec![
                 InstrumentableFunction { id: 1, name: "first".into(), module: "a".into(), module_path: "/a".into(), file_offset: 1, size: 4 },
                 InstrumentableFunction { id: 2, name: "second".into(), module: "b".into(), module_path: "/b".into(), file_offset: 2, size: 4 },

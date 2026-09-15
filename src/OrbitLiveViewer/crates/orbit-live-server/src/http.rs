@@ -254,6 +254,8 @@ struct StatusBody {
     /// Dynamic-instrumentation outcome for the running capture; empty when
     /// no functions were selected.
     instrumentation: String,
+    /// JSON summary of a target crash blamed on a hook, empty when none.
+    hook_crash: String,
     /// The event batch format on the WebSocket: raw, packed or deflate.
     wire: &'static str,
     /// When the capture began on the capture clock; 0 until the loop says.
@@ -287,6 +289,7 @@ impl StatusBody {
             machine: "local".into(),
             hooks: svc.has_hooks(),
             instrumentation: svc.instrumentation_status(),
+            hook_crash: svc.hook_crash(),
             // From the guard already held: `svc.wire()` would take the same
             // lock again and hang the status route.
             wire: cfg.wire.name(),
