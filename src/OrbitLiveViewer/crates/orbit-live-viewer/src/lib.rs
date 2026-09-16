@@ -26,6 +26,7 @@ mod fonts;
 #[cfg(feature = "egui")]
 mod net;
 mod rect_select;
+mod report_copy;
 mod self_pane;
 #[cfg(feature = "egui")]
 mod theme;

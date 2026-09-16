@@ -245,6 +245,15 @@ in the URL opens a tab on load.
   Escape in the box, or its ×, clears it. C++ Orbit's filter over the
   sampling report. Screenshot: `25-report-filter.png`.
 
+- **Select and copy.** Left-drag over the rows of a report table (Flat,
+  Top-down, Bottom-up, Modules, Functions) to select a range — they
+  highlight, and drag also feeds the batch-hook. **Ctrl/Cmd+C**, or the
+  **Copy** button by the title, puts the selected rows on the clipboard —
+  the whole table when nothing is selected — as an aligned monospace table
+  with a header (percentages right-aligned, call-tree names indented by
+  depth), which pastes cleanly into a document or chat. The button reads
+  "Copy N" while a selection stands. Screenshot: `48-report-copy.png`.
+
 - **Flat** a hooked checkbox, then self and inclusive percentages per
   function, with module; ticking the box hooks the function for the next
   Record, as in C++ Orbit's sampling report. Every column header sorts

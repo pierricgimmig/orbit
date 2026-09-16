@@ -624,6 +624,12 @@ pub struct OrbitLiveApp {
     /// A left-drag selecting rows in progress: the anchor's y relative to the
     /// rows' top, and the selection to union with (the prior one under shift).
     report_drag: Option<(f32, std::collections::HashSet<u64>)>,
+    /// The rows of the report tab drawn this frame, in view order, so Ctrl+C
+    /// and the Copy button can lay the selection (or all of it) out as text.
+    report_view: crate::report_copy::ReportView,
+    /// Characters the last report copy put on the clipboard, for the
+    /// `report_copied` readout the harness asserts on.
+    report_copied_chars: usize,
     /// Per-core busy fraction (0..1) over the visible window, for the htop-like
     /// utilization readout on each scheduler "Core N" header. Keyed by core id
     /// (`LaneKey::extra`), cached by window + throttled so it costs one pass
@@ -1192,7 +1198,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?},\"report_copied\":{},\"report_sel\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1276,6 +1282,8 @@ impl OrbitLiveApp {
             },
             orbit_live_event::theme::active().key,
             self.gpu_backend,
+            self.report_copied_chars,
+            self.report_selection.len(),
         );
         if text == self.sel_readout {
             return;
@@ -1588,6 +1596,8 @@ impl OrbitLiveApp {
             report_filter: String::new(),
             report_selection: std::collections::HashSet::new(),
             report_drag: None,
+            report_view: crate::report_copy::ReportView::default(),
+            report_copied_chars: 0,
             core_util: std::collections::HashMap::new(),
             core_util_key: None,
             core_util_at: -10.0,
@@ -3355,6 +3365,16 @@ impl OrbitLiveApp {
                     if sort_desc { ord.reverse() } else { ord }
                 });
             }
+        }
+        // Record the rows for Ctrl+C / Copy, in this on-screen order.
+        {
+            let mut view = crate::report_copy::ReportView::new(
+                &["function", "size", "module"], &[false, true, false]);
+            for &i in &rows {
+                let f = &self.functions[i];
+                view.push(f.function_id, vec![f.name.clone(), f.size.to_string(), f.module.clone()]);
+            }
+            self.report_view = view;
         }
         const MAX_ROWS: usize = 500;
         let capped = !self.functions_show_all && rows.len() > MAX_ROWS;
@@ -6348,6 +6368,18 @@ impl OrbitLiveApp {
                         self.describe_selection_named()
                     };
                     ui.label(RichText::new(desc).color(theme::MUTED()).size(11.0));
+                    // Copy the report: the drag-selected rows, or all of them.
+                    // Ctrl+C does the same; this is the discoverable handle.
+                    if self.report_tab_is_table() && !self.report_view.is_empty() {
+                        let n = self.report_view.copy_count(&self.report_selection);
+                        let label = if self.report_selection.is_empty() { "Copy".to_string() } else { format!("Copy {n}") };
+                        let resp = ui.small_button(label).on_hover_text("Copy the selected rows, or all — also Ctrl+C");
+                        note_ui_rect("report:copy", resp.rect);
+                        if resp.clicked() {
+                            let ctx = ui.ctx().clone();
+                            self.copy_report(&ctx);
+                        }
+                    }
                 });
                 ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
@@ -6508,6 +6540,26 @@ impl OrbitLiveApp {
                                 ReportTab::Code => self.code_rows(ui),
                             }
                         });
+                }
+                // Ctrl+C copies the report table (the row renderers above just
+                // recorded it). The Code tab has its own selectable text, so
+                // egui's own copy handles it; the other tabs are not row
+                // tables. A copy event is consumed either way.
+                if self.report_tab_is_table() {
+                    // A browser fires a `copy` event on Ctrl/Cmd+C, which egui
+                    // delivers as `Event::Copy`; also accept the key directly so
+                    // a synthetic keypress works and nothing is missed. Not when
+                    // a text field (the filter box) has focus -- its own copy
+                    // wins there.
+                    let focused = ui.memory(|m| m.focused().is_some());
+                    let wants_copy = ui.input(|i| {
+                        i.events.iter().any(|e| matches!(e, egui::Event::Copy))
+                            || (!focused && i.modifiers.command && i.key_pressed(egui::Key::C))
+                    });
+                    if wants_copy {
+                        let ctx = ui.ctx().clone();
+                        self.copy_report(&ctx);
+                    }
                 }
             });
         self.paint_report_splitter(ctx, inner.response.rect, screen_w);
@@ -6685,6 +6737,20 @@ impl OrbitLiveApp {
                     .color(theme::MUTED())
                     .size(self.ui_tweaks.report_font - 0.5),
             );
+        }
+        // Record the rows for Ctrl+C / Copy, in this on-screen order.
+        {
+            let mut view = crate::report_copy::ReportView::new(
+                &["self%", "incl%", "function", "module"], &[true, true, false, false]);
+            for r in &rows {
+                view.push(r.function_id, vec![
+                    crate::report_copy::pct(r.self_percent),
+                    crate::report_copy::pct(r.inclusive_percent),
+                    r.name.clone(),
+                    r.module.clone(),
+                ]);
+            }
+            self.report_view = view;
         }
         // Laid out by hand, like the Functions view: only the rows inside
         // the clip rect become widgets. The egui grid of 200 rows cost
@@ -7245,6 +7311,30 @@ impl OrbitLiveApp {
         ui.label(RichText::new(text).color(color).size(self.ui_tweaks.report_font - 0.5));
     }
 
+    /// The report tabs whose rows are recorded for copy (an aligned table).
+    /// Code has its own selectable text; Live/Inspector/Selection are not
+    /// row tables of this kind.
+    fn report_tab_is_table(&self) -> bool {
+        matches!(
+            self.report_tab,
+            ReportTab::Flat | ReportTab::TopDown | ReportTab::BottomUp | ReportTab::Modules | ReportTab::Functions
+        )
+    }
+
+    /// Put the report on the clipboard: the drag-selected rows, or the whole
+    /// table when nothing is selected, laid out as an aligned monospace table.
+    fn copy_report(&mut self, ctx: &Context) {
+        if !self.report_tab_is_table() {
+            return;
+        }
+        let text = self.report_view.to_text(&self.report_selection);
+        if text.is_empty() {
+            return;
+        }
+        self.report_copied_chars = text.chars().count();
+        ctx.copy_text(text);
+    }
+
     /// Marks every node of the current tree expanded.
     ///
     /// Walks the tree that was actually delivered, so this cannot expand past
@@ -7284,6 +7374,10 @@ impl OrbitLiveApp {
         // with the grid's checkboxes and context menus.
         let area = ui.available_rect_before_wrap();
         let mut geom: Vec<(u64, Rect)> = Vec::new();
+        // Collected for Ctrl+C / Copy: (id, depth, inclusive%, self, parent%,
+        // name, module) in the order drawn. A local so the closure need not
+        // borrow self; `report_view` is built from it after the grid.
+        let mut view_rows: Vec<(u64, usize, f64, u64, f64, String, String)> = Vec::new();
         egui::Grid::new("orbit_call_tree_rows")
             .num_columns(6)
             .spacing([self.ui_tweaks.report_col_gap, self.ui_tweaks.report_row_gap])
@@ -7334,6 +7428,11 @@ impl OrbitLiveApp {
                         }
                     }
                     geom.push((if is_thread { 0 } else { node.function_id }, crect));
+                    view_rows.push((
+                        if is_thread { 0 } else { node.function_id },
+                        depth, node.inclusive_percent, node.exclusive, node.of_parent_percent,
+                        node.name.clone(), node.module.clone(),
+                    ));
                     // Inclusive as a bar, the way the native Inclusive column
                     // paints it: the shape of the hot path is visible down the
                     // column without reading a single number.
@@ -7404,6 +7503,22 @@ impl OrbitLiveApp {
                     }
                 }
             });
+        {
+            let mut view = crate::report_copy::ReportView::new(
+                &["inclusive", "self", "of parent", "function", "module"],
+                &[true, true, true, false, false]);
+            for (id, depth, incl, excl, ofp, name, module) in view_rows {
+                let indented = format!("{}{name}", "  ".repeat(depth));
+                view.push(id, vec![
+                    crate::report_copy::pct(incl as f32),
+                    if excl > 0 { excl.to_string() } else { String::new() },
+                    crate::report_copy::pct(ofp as f32),
+                    indented,
+                    module,
+                ]);
+            }
+            self.report_view = view;
+        }
         self.select_grid_rows(ui, area, &geom);
         for (action, id, name, module) in tree_actions {
             self.apply_row_hook_action(action, id, &name, &module);
@@ -7480,11 +7595,20 @@ impl OrbitLiveApp {
                 });
                 ui.end_row();
                 let filter = self.report_filter.trim().to_lowercase();
-                for row in modules
+                let shown: Vec<&crate::net::ModuleRow> = modules
                     .modules
                     .iter()
                     .filter(|m| filter.is_empty() || contains_ci(&m.name, &filter) || contains_ci(&m.path, &filter))
-                {
+                    .collect();
+                // Record for Ctrl+C / Copy. Modules have no function id, so a
+                // copy of a modules table is always the whole (filtered) list.
+                let mut view = crate::report_copy::ReportView::new(
+                    &["symbols", "module", "path"], &[true, false, false]);
+                for m in &shown {
+                    view.push(0, vec![m.function_count.to_string(), m.name.clone(), m.path.clone()]);
+                }
+                self.report_view = view;
+                for row in shown {
                     ui.label(
                         RichText::new(row.function_count.to_string())
                             .color(theme::TEXT())
