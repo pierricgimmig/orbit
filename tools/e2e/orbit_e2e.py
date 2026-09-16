@@ -1141,6 +1141,53 @@ def batch_hook(run):
     return f"{label!r}: hooked {after - before} functions in one drag"
 
 
+@scenario("report-copy", "Drag-select sampling-report rows and copy them to the clipboard")
+def report_copy(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    _week_capture(run)
+    run.open_viewer("?collapse=scheduler&report=flat")
+    run.wait_for(lambda: run.sel().get("tab") == "Flat", "the Flat tab")
+    rows = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    check_at_least(len(rows), 4, "flat report rows")
+    ordered = sorted(rows.values(), key=lambda r: r[1])
+    canvas_h = run.chrome.eval("document.querySelector('canvas').clientHeight")
+    visible = [r for r in ordered if 0 <= r[1] < canvas_h - 20]
+    check_at_least(len(visible), 4, "rows in view to drag over")
+    # Click-drag over a range of rows, in the name area (not the checkbox
+    # column), to select them.
+    x = visible[0][0] + 90
+    y0 = visible[1][1] + 3
+    y1 = visible[min(5, len(visible) - 1)][1] + 3
+
+    def mouse(kind, px, py):
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1)
+
+    mouse("mousePressed", x, y0)
+    for i in range(1, 9):
+        mouse("mouseMoved", x, y0 + (y1 - y0) * i / 8)
+        time.sleep(0.02)
+    mouse("mouseReleased", x, y1)
+    time.sleep(0.3)
+    selected = run.sel().get("report_sel") or 0
+    check_at_least(selected, 2, f"a drag should select several rows (got {selected})")
+    # Ctrl+C copies the selected rows.
+    run.chrome.call("Input.dispatchKeyEvent", type="keyDown", key="c", code="KeyC",
+                    windowsVirtualKeyCode=67, modifiers=2)
+    run.chrome.call("Input.dispatchKeyEvent", type="keyUp", key="c", code="KeyC",
+                    windowsVirtualKeyCode=67, modifiers=2)
+    copied = run.wait_for(lambda: (run.sel().get("report_copied") or 0) > 0 and run.sel().get("report_copied") or None,
+                          "the report copied to the clipboard", timeout=5)
+    # A copy of N rows is at least N lines' worth of text; a header too.
+    check_at_least(copied, selected * 4, f"copied {copied} chars for {selected} selected rows")
+    run.shot("48-report-copy", settle=0.5)
+    # The Copy button copies as well (and, with no selection, the whole table).
+    run.click("report:copy")
+    time.sleep(0.3)
+    check((run.sel().get("report_copied") or 0) > 0, "the Copy button put nothing on the clipboard")
+    return f"selected {selected} rows, copied {copied} chars with Ctrl+C"
+
+
 @scenario("color-schemes", "Each colour scheme reskins the whole viewer")
 def color_schemes(run):
     if run.chrome is None:
