@@ -34,3 +34,7 @@ third_party/py-spy/
 # Packaged macOS service and manual instrumentation SDK
 /dist/macos/
 /dist/macos-universal/
+
+# Poster-project suite outputs (captures, perf.data, logs, local summaries)
+/docs/stockfish-orbit-loop/runs/
+/tools/stockfish-orbit-loop/runs/
