@@ -1,0 +1,25 @@
+# In-repo demo target. Orbit does not vendor any external engine.
+name = "fixture"
+project = "tools/optimize-loop/fixture"
+binary = "workload.py"
+
+[build]
+command = []
+
+[bench]
+command = ["python3", "workload.py", "--bench"]
+repeat = 8
+timeout_sec = 30
+
+[bench.metric]
+regex = 'ORBIT_METRIC\s+throughput=(?P<value>[-+0-9.eE]+)'
+name = "throughput"
+unit = "iters_per_sec"
+
+[correctness]
+command = ["python3", "workload.py", "--self-test"]
+expect_returncode = 0
+
+[capture]
+command = ["python3", "workload.py", "--work", "2"]
+duration_ms = 2000

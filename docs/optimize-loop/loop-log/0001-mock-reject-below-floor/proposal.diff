@@ -1,0 +1,4 @@
+--- a/workload.py
++++ b/workload.py
+@@ -0,0 +1 @@
++# optimize-loop mock: not applied

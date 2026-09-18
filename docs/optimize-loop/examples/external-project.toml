@@ -1,0 +1,43 @@
+# Copy this file, point `project` at a checkout that is *not* part of Orbit.
+# Example (out of tree — do not add it as a submodule):
+#   git clone https://github.com/official-stockfish/Stockfish.git /tmp/Stockfish
+#   then set project + build/bench commands for that tree.
+name = "external-example"
+project = "/abs/path/to/your/project"
+
+[build]
+command = ["make", "-j"]
+workdir = "."
+timeout_sec = 1800
+
+[bench]
+command = ["./build/myapp", "--bench"]
+repeat = 20
+timeout_sec = 120
+
+[bench.metric]
+# Preferred: print a line  ORBIT_METRIC throughput=123456
+# Or set a regex with a named group `value`:
+regex = 'ORBIT_METRIC\s+throughput=(?P<value>[-+0-9.eE]+)'
+name = "throughput"
+
+# Alternative: entire stdout is JSON, then:
+# json_path = "nps"
+
+[correctness]
+command = ["./build/myapp", "--self-test"]
+expect_returncode = 0
+
+[secondary]
+command = ["./build/myapp", "--speed"]
+
+[secondary.metric]
+regex = 'ORBIT_METRIC\s+throughput=(?P<value>[-+0-9.eE]+)'
+
+[capture]
+# Workload launched as a child; Orbit attaches to that PID (no protocol assumed).
+command = ["./build/myapp", "--work"]
+duration_ms = 4000
+
+[env]
+# EXAMPLE_FLAG = "1"
