@@ -259,20 +259,24 @@ def run_suite(
         "host": os.uname().nodename if hasattr(os, "uname") else "",
     }
     if not skip_build:
-        print("  build...", flush=True)
+        print("  build...", file=sys.stderr, flush=True)
         summary["build"] = run_build(target)
     if not skip_secondary:
-        print("  secondary...", flush=True)
+        print("  secondary...", file=sys.stderr, flush=True)
         summary["secondary"] = run_secondary(target)
     if not skip_bench:
-        print(f"  bench ×{bench_iters or target.bench_repeat}...", flush=True)
+        print(f"  bench ×{bench_iters or target.bench_repeat}...", file=sys.stderr, flush=True)
         summary["bench"] = run_bench(target, bench_iters)
-        print(f"    mean={summary['bench'].get('mean')} ± {summary['bench'].get('stdev')}", flush=True)
+        print(
+            f"    mean={summary['bench'].get('mean')} ± {summary['bench'].get('stdev')}",
+            file=sys.stderr,
+            flush=True,
+        )
     if not skip_correctness:
-        print("  correctness...", flush=True)
+        print("  correctness...", file=sys.stderr, flush=True)
         summary["correctness"] = run_correctness(target)
     if capture_mode != "none":
-        print(f"  capture {capture_mode}...", flush=True)
+        print(f"  capture {capture_mode}...", file=sys.stderr, flush=True)
         cap_dir = out_dir / "capture"
         summary["profile"] = capture.run_profile(
             capture_mode,
@@ -296,7 +300,7 @@ def run_suite(
     md_path.write_text(render_markdown(summary))
     _update_latest_pointer(out_dir)
     summary["_path"] = str(json_path)
-    print(f"\nwrote {json_path}\nwrote {md_path}")
+    print(f"\nwrote {json_path}\nwrote {md_path}", file=sys.stderr)
     return summary
 
 

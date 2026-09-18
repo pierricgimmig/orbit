@@ -106,3 +106,7 @@ block.
 
 Suite outputs: `docs/optimize-loop/runs/` (gitignored).
 Attempt log: [`loop-log/`](loop-log/) (small JSON/MD, committed).
+
+Recorded fixture live **0005** (2026-09-18): no-op comment on `workload.py`,
+throughput **+0.015%** (inside 1σ), fingerprint unchanged, **gate reject**,
+file reverted. Mock 0001–0004 still exercise the four gate cases.

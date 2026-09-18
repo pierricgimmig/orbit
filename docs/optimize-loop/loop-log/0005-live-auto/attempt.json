@@ -1,0 +1,297 @@
+{
+  "id": "0005",
+  "mode": "live",
+  "timestamp": "20260918T145205Z",
+  "proposal_kind": "noop_experiment",
+  "applied": true,
+  "reverted": true,
+  "decision": "reject",
+  "config": "docs/optimize-loop/examples/fixture.toml",
+  "hotspots": [],
+  "hotspot_quality": "empty",
+  "hotspot_reason": "no hotspot rows; capture skipped or produced nothing",
+  "hotspot_classification": {
+    "quality": "empty",
+    "reason": "no hotspot rows; capture skipped or produced nothing",
+    "libc_like": [],
+    "other": [],
+    "count": 0
+  },
+  "diff": "--- a/workload.py\n+++ b/workload.py\n@@ -1,3 +1,4 @@\n+# optimize-loop 0005: intentional no-op. Gate should reject if capture is poor.\n #!/usr/bin/env python3\n # Copyright (c) 2026 The Orbit Authors. All rights reserved.\n # Use of this source code is governed by a BSD-style license that can be\n",
+  "target_path": "workload.py",
+  "baseline_suite": {
+    "ok": true,
+    "summary_path": "/workspace/docs/optimize-loop/runs/20260918T145205Z/summary.json",
+    "bench": {
+      "ok": true,
+      "command": [
+        "python3",
+        "workload.py",
+        "--bench"
+      ],
+      "iterations": 6,
+      "metric": "throughput",
+      "unit": "iters_per_sec",
+      "values": [
+        13367829.4627,
+        13233938.3394,
+        13233400.34,
+        13377080.3098,
+        13371759.1337,
+        13225721.8071
+      ],
+      "mean": 13301621.56545,
+      "stdev": 77450.2604839935,
+      "min": 13225721.8071,
+      "max": 13377080.3098,
+      "fingerprint": "1817696232",
+      "fingerprints": [
+        "1817696232",
+        "1817696232",
+        "1817696232",
+        "1817696232",
+        "1817696232",
+        "1817696232"
+      ],
+      "runs": [
+        {
+          "iteration": 1,
+          "returncode": 0,
+          "value": 13367829.4627,
+          "fingerprint": "1817696232"
+        },
+        {
+          "iteration": 2,
+          "returncode": 0,
+          "value": 13233938.3394,
+          "fingerprint": "1817696232"
+        },
+        {
+          "iteration": 3,
+          "returncode": 0,
+          "value": 13233400.34,
+          "fingerprint": "1817696232"
+        },
+        {
+          "iteration": 4,
+          "returncode": 0,
+          "value": 13377080.3098,
+          "fingerprint": "1817696232"
+        },
+        {
+          "iteration": 5,
+          "returncode": 0,
+          "value": 13371759.1337,
+          "fingerprint": "1817696232"
+        },
+        {
+          "iteration": 6,
+          "returncode": 0,
+          "value": 13225721.8071,
+          "fingerprint": "1817696232"
+        }
+      ]
+    }
+  },
+  "baseline": {
+    "ok": true,
+    "command": [
+      "python3",
+      "workload.py",
+      "--bench"
+    ],
+    "iterations": 6,
+    "metric": "throughput",
+    "unit": "iters_per_sec",
+    "values": [
+      13367829.4627,
+      13233938.3394,
+      13233400.34,
+      13377080.3098,
+      13371759.1337,
+      13225721.8071
+    ],
+    "mean": 13301621.56545,
+    "stdev": 77450.2604839935,
+    "min": 13225721.8071,
+    "max": 13377080.3098,
+    "fingerprint": "1817696232",
+    "fingerprints": [
+      "1817696232",
+      "1817696232",
+      "1817696232",
+      "1817696232",
+      "1817696232",
+      "1817696232"
+    ],
+    "runs": [
+      {
+        "iteration": 1,
+        "returncode": 0,
+        "value": 13367829.4627,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 2,
+        "returncode": 0,
+        "value": 13233938.3394,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 3,
+        "returncode": 0,
+        "value": 13233400.34,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 4,
+        "returncode": 0,
+        "value": 13377080.3098,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 5,
+        "returncode": 0,
+        "value": 13371759.1337,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 6,
+        "returncode": 0,
+        "value": 13225721.8071,
+        "fingerprint": "1817696232"
+      }
+    ]
+  },
+  "rebuild": {
+    "ok": true,
+    "skipped": true
+  },
+  "after": {
+    "ok": true,
+    "command": [
+      "python3",
+      "workload.py",
+      "--bench"
+    ],
+    "iterations": 6,
+    "metric": "throughput",
+    "unit": "iters_per_sec",
+    "values": [
+      13338113.7131,
+      13227586.0144,
+      13503237.1848,
+      13346448.4434,
+      13265463.6835,
+      13140920.817
+    ],
+    "mean": 13303628.309366666,
+    "stdev": 123757.18764147242,
+    "min": 13140920.817,
+    "max": 13503237.1848,
+    "fingerprint": "1817696232",
+    "fingerprints": [
+      "1817696232",
+      "1817696232",
+      "1817696232",
+      "1817696232",
+      "1817696232",
+      "1817696232"
+    ],
+    "runs": [
+      {
+        "iteration": 1,
+        "returncode": 0,
+        "value": 13338113.7131,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 2,
+        "returncode": 0,
+        "value": 13227586.0144,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 3,
+        "returncode": 0,
+        "value": 13503237.1848,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 4,
+        "returncode": 0,
+        "value": 13346448.4434,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 5,
+        "returncode": 0,
+        "value": 13265463.6835,
+        "fingerprint": "1817696232"
+      },
+      {
+        "iteration": 6,
+        "returncode": 0,
+        "value": 13140920.817,
+        "fingerprint": "1817696232"
+      }
+    ]
+  },
+  "after_suite": {
+    "ok": true,
+    "summary_path": "/workspace/docs/optimize-loop/runs/20260918T145206Z/summary.json",
+    "compare": {
+      "baseline_path": "/workspace/docs/optimize-loop/runs/20260918T145205Z/summary.json",
+      "metric": "throughput",
+      "bench_mean": {
+        "baseline": 13301621.56545,
+        "current": 13303628.309366666,
+        "delta": 2006.7439166661352,
+        "delta_percent": 0.015086460750608838
+      },
+      "bench_stdev": {
+        "baseline": 77450.2604839935,
+        "current": 123757.18764147242
+      },
+      "fingerprint": {
+        "baseline": "1817696232",
+        "current": "1817696232"
+      },
+      "correctness_passed": {
+        "baseline": true,
+        "current": true
+      },
+      "secondary": {
+        "baseline": null,
+        "current": null,
+        "delta_percent": null
+      }
+    }
+  },
+  "gate": {
+    "accepted": false,
+    "decision": "reject",
+    "min_gain_percent": 0.5,
+    "sigma": 1.0,
+    "baseline_mean": 13301621.56545,
+    "current_mean": 13303628.309366666,
+    "baseline_stdev": 77450.2604839935,
+    "delta": 2006.7439166661352,
+    "delta_percent": 0.015086460750608838,
+    "sigma_threshold": 77450.2604839935,
+    "fingerprint_ok": true,
+    "reasons": [
+      "mean gain 0.015% is not > 0.5%",
+      "delta 2,007 is not outside 1\u03c3 (threshold 7.745e+04 from baseline stdev)"
+    ]
+  },
+  "revert": {
+    "ok": true,
+    "restored": [
+      "workload.py"
+    ],
+    "git_status": "M ../suite.py\n?? ../../../docs/optimize-loop/loop-log/",
+    "pushed": false,
+    "note": "Working tree restored. Nothing was committed or pushed."
+  }
+}
