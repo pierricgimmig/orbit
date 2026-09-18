@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "stockfish-orbit-loop": {
-      "command": "python3",
-      "args": ["-u", "tools/stockfish-orbit-loop/mcp/server.py"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
-}

@@ -35,6 +35,9 @@ third_party/py-spy/
 /dist/macos/
 /dist/macos-universal/
 
-# Poster-project suite outputs (captures, perf.data, logs, local summaries)
+# Optimize-loop suite outputs (captures, perf.data, logs, local summaries)
+/docs/optimize-loop/runs/
+/tools/optimize-loop/runs/
+# Legacy path from the removed stockfish-branded tree
 /docs/stockfish-orbit-loop/runs/
 /tools/stockfish-orbit-loop/runs/
