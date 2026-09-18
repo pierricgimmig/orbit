@@ -4,15 +4,16 @@ Poster project: an AI-agent-driven profiling and optimization loop on
 [official Stockfish](https://github.com/official-stockfish/Stockfish)
 that should eventually produce a meaningful upstream Stockfish PR.
 
-This folder is **setup + the Phase 2 benchmarking/profiling suite**. Later
-phases (Orbit MCP tools, the agent loop, and Stockfish source changes) are
-out of scope. Nothing here is submitted to Stockfish upstream.
+This folder is **setup + the Phase 2 suite + Phase 3 MCP tools**. Later
+phases (the autonomous agent loop and Stockfish source changes) are out of
+scope. Nothing here is submitted to Stockfish upstream.
 
 | Phase | Status | What |
 | --- | --- | --- |
 | 1 | done | Official Stockfish git submodule + Linux build |
-| 2 | this PR | Repeatable speedtest / bench / perft / Orbit-or-perf capture |
-| 3–5 | later | MCP tools, agent loop, engine changes |
+| 2 | done | Repeatable speedtest / bench / perft / Orbit-or-perf capture |
+| 3 | this PR | Stdio MCP so an external model can drive the suite |
+| 4–5 | later | Autonomous agent loop, engine changes, upstream PR |
 
 ## Pinned Stockfish revision
 
@@ -257,8 +258,182 @@ perf CLI                    not installed (kernel 6.12.94+)
 `--baseline` / `--compare` print nps deltas. A 3-iteration re-bench against
 the 20-iteration summary printed `+0.51%` (run-to-run noise).
 
+## Phase 3: MCP tools (agent control)
+
+This Orbit repo has **no** `orbit mcp` / `orbit mcp init` CLI.
+[`docs/TODO.md`](../TODO.md) item 12 is explicit: the agent-native surface
+today is `orbit-scope` plus HTTP `POST /api/scope`. The MCP layer over that
+CLI is **not done**, and it would be about instrumenting an agent, not
+driving Stockfish.
+
+Phase 3 therefore adds a **stockfish-specific stdio MCP server** in-tree:
+
+[`tools/stockfish-orbit-loop/mcp/server.py`](../../tools/stockfish-orbit-loop/mcp/server.py)
+
+JSON-RPC 2.0, MCP `2024-11-05` (also accepts later protocol versions).
+Newline-delimited JSON **and** LSP-style `Content-Length` frames (Cursor /
+the official MCP SDKs use the latter). Tool results are structured JSON
+inside the MCP `content[0].text` field.
+
+The server never talks to Claude / OpenAI / Grok and never reads API keys.
+
+### Start / connect
+
+From the repo root (stdio; leave it running for a host to attach):
+
+```sh
+python3 -u tools/stockfish-orbit-loop/mcp/server.py
+```
+
+Helpers that do **not** stay up as a server:
+
+```sh
+python3 tools/stockfish-orbit-loop/mcp/server.py --list-tools
+python3 tools/stockfish-orbit-loop/mcp/server.py --call stockfish_get_summary
+python3 tools/stockfish-orbit-loop/mcp/server.py --call stockfish_inspect_hotspots '{"limit":10}'
+python3 tools/stockfish-orbit-loop/mcp/smoke.py
+```
+
+**Cursor:** copy
+[`tools/stockfish-orbit-loop/mcp/cursor-mcp.example.json`](../../tools/stockfish-orbit-loop/mcp/cursor-mcp.example.json)
+into `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (user). Restart
+MCP / reload the window. The example is:
+
+```json
+{
+  "mcpServers": {
+    "stockfish-orbit-loop": {
+      "command": "python3",
+      "args": ["-u", "tools/stockfish-orbit-loop/mcp/server.py"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+**Claude Desktop:** same `mcpServers` object in
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+or `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Set `cwd` to
+the orbit checkout.
+
+Do not invent `orbit mcp init` — it is not in this tree.
+
+### LLM API keys (host, not this server)
+
+Keys stay on the **agent host**. Do not commit them, do not put them in
+the MCP `env` block unless you are deliberately forwarding them to some
+*other* process.
+
+| Provider | Typical env var | Also |
+| --- | --- | --- |
+| Claude | `ANTHROPIC_API_KEY` | Cursor login / dashboard |
+| OpenAI | `OPENAI_API_KEY` | Cursor login / dashboard |
+| Grok | `XAI_API_KEY` | Cursor login / dashboard |
+
+This MCP process is a local toolchain. The model that *calls* the tools
+is whatever the host already configured.
+
+### Tools
+
+| Name | What |
+| --- | --- |
+| `stockfish_run_suite` | Wrap `run_suite.py` (speedtest, bench, perft, capture) |
+| `stockfish_get_summary` | Latest `summary.json` (`runs/latest`, or `path=`) |
+| `stockfish_inspect_hotspots` | Top symbols from that summary's profile |
+| `stockfish_apply_patch` | Preview or write a file **only** under `stockfish/` |
+| `stockfish_rebuild` | `make -j profile-build` or `build` in `stockfish/src` |
+| `stockfish_rerun_compare` | Re-run vs a baseline summary; return nps deltas |
+
+`stockfish_apply_patch` defaults to **dry-run** (`apply=false`): it returns
+the unified diff and does not write. `apply=true` writes the working tree
+only. It refuses paths that escape `stockfish/` or touch `.git`. It never
+`git commit`, `git push`, or force-pushes.
+
+Each suite run updates `docs/stockfish-orbit-loop/runs/latest` (symlink, or
+`latest.path` if the filesystem cannot symlink) so `get_summary` /
+`inspect_hotspots` / `rerun_compare` can find the newest capture without
+an explicit path.
+
+### Sample tool I/O
+
+`--call` prints the same JSON a `tools/call` result wraps in
+`content[0].text`.
+
+List:
+
+```sh
+python3 tools/stockfish-orbit-loop/mcp/server.py --list-tools
+```
+
+```json
+{
+  "tools": [
+    {"name": "stockfish_run_suite", "description": "Run the Stockfish Orbit profiling+benchmark suite ..."},
+    {"name": "stockfish_get_summary", "description": "Fetch the latest structured suite summary JSON ..."},
+    {"name": "stockfish_inspect_hotspots", "description": "Return the top symbols / hotspot table ..."},
+    {"name": "stockfish_apply_patch", "description": "Propose or apply a file edit inside the stockfish/ submodule only. ..."},
+    {"name": "stockfish_rebuild", "description": "Rebuild Stockfish from stockfish/src ..."},
+    {"name": "stockfish_rerun_compare", "description": "Re-run the bench suite against a baseline summary ..."}
+  ]
+}
+```
+
+Stdio handshake (NDJSON; Content-Length is the same JSON with headers):
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"example"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"stockfish_inspect_hotspots","arguments":{"limit":5,"path":"/tmp/sf-suite-5/summary.json"}}}
+```
+
+`stockfish_inspect_hotspots` (file-mode capture on this VM; serve-mode
+still records 0 callstack samples):
+
+```json
+{
+  "ok": true,
+  "backend": "orbit-file",
+  "samples": 137,
+  "hotspots": [
+    {"symbol": "__nss_database_lookup", "self": 57, "self_percent": 46.72},
+    {"symbol": "__madvise", "self": 36, "self_percent": 29.51},
+    {"symbol": "Stockfish::hash_bytes(char const*, unsigned long)", "self": 14, "self_percent": 11.48}
+  ]
+}
+```
+
+`stockfish_apply_patch` dry-run (nothing written):
+
+```json
+{
+  "ok": true,
+  "applied": false,
+  "dry_run": true,
+  "pushed": false,
+  "path": "src/orbit_loop_note.txt",
+  "diff": "--- /dev/null\n+++ b/src/orbit_loop_note.txt\n..."
+}
+```
+
+`stockfish_rerun_compare` / `stockfish_run_suite` return `ok`, `summary_path`,
+`speedtest_nps`, `bench_nps`, and a `compare` object with
+`bench_nps_mean.delta_percent` when a baseline is set. Full recorded suite
+numbers stay in [`sample-run.md`](sample-run.md).
+
+A short MCP-driven suite (1× bench, no speedtest/perft/capture) is what
+`mcp/smoke.py` runs.
+
+### Blockers (unchanged from Phase 2)
+
+- HTTP `orbit-service` capture: rings open, **0 callstack samples**.
+- File-mode on search **worker** tids: 0 samples even as root. UCI leader works.
+- No `linux-perf` package on kernel `6.12.94+`.
+- File-mode leaf PCs on this VM are often startup / libc (`__madvise`), not
+  search hot paths — useful as a plumbing check, not yet an optimization map.
+- Phase 4 (closed autonomous loop) is not this server.
+
 ## Out of scope (later phases)
 
-- Orbit MCP tools against this binary
-- The agent profiling and optimization loop
+- Full autonomous closed loop (Phase 4)
 - Stockfish game-logic changes or an upstream PR

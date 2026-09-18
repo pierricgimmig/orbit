@@ -1090,6 +1090,20 @@ def default_out_dir() -> Path:
     return ROOT / "docs" / "stockfish-orbit-loop" / "runs" / stamp
 
 
+def _update_latest_pointer(out_dir: Path) -> None:
+    """Point runs/latest at this suite output so MCP tools can find it."""
+    runs = ROOT / "docs" / "stockfish-orbit-loop" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest"
+    target = out_dir.resolve()
+    try:
+        if latest.is_symlink() or latest.exists():
+            latest.unlink()
+        latest.symlink_to(target, target_is_directory=True)
+    except OSError:
+        (runs / "latest.path").write_text(str(target) + "\n")
+
+
 def load_summary(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     data["_path"] = str(path)
@@ -1243,6 +1257,7 @@ def main(argv: list[str] | None = None) -> int:
     md_path = out_dir / "summary.md"
     json_path.write_text(json.dumps(summary, indent=2, default=str) + "\n")
     md_path.write_text(render_markdown(summary))
+    _update_latest_pointer(out_dir)
     print(f"\nwrote {json_path}\nwrote {md_path}")
     if summary.get("bench") and summary["bench"].get("nps"):
         nps = summary["bench"]["nps"]
