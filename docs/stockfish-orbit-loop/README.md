@@ -89,10 +89,15 @@ The first build downloads `nn-134a887f4c8f.nnue` from
 gitignored inside the submodule.
 
 The Linux `perf` CLI is **optional**. This cloud kernel (`6.12.94+`) had no
-matching `linux-perf` package. The suite still profiles through
-`orbit-service` (this fork's capture service, which talks to
-`perf_event_open` itself). If `perf` is on `PATH`, `--capture auto` will use
-it when Orbit is unavailable.
+matching `linux-perf` package. The suite profiles through **this** fork's
+`orbit-service` (`perf_event_open` in-process). If `perf` is on `PATH`,
+`--capture auto` uses it when Orbit is unavailable.
+
+Serve-mode sampling of another process needed
+`sudo sysctl -w kernel.perf_event_paranoid=1` on this VM (default was 2).
+The suite does that automatically when `sudo -n` works. System-wide
+scheduling still needs paranoid ≤ 0. File-mode currently records samples
+on the UCI thread-group leader; worker tids returned 0 samples even as root.
 
 ## Build
 
@@ -238,9 +243,19 @@ nps stats, perft pass/fail, hotspot rows).
 
 ### Recorded on this cloud VM
 
-Filled after the Phase 2 suite was executed on the same machine as Phase 1
-(see the PR report / `sample-run.md` if present). Re-run the commands above
-to replace these numbers.
+Full write-up: [`sample-run.md`](sample-run.md). Headline numbers from
+`python3 tools/stockfish-orbit-loop/run_suite.py` on 2026-09-18:
+
+```
+speedtest 4 512 20          5,143,082 nps
+bench 16 1 13 × 20          1,408,300 ± 20,734 nps
+smoke perft                 6/6 passed
+orbit-service file-mode     356 samples (HTTP report: 0 samples)
+perf CLI                    not installed (kernel 6.12.94+)
+```
+
+`--baseline` / `--compare` print nps deltas. A 3-iteration re-bench against
+the 20-iteration summary printed `+0.51%` (run-to-run noise).
 
 ## Out of scope (later phases)
 

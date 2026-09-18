@@ -116,6 +116,51 @@ def nproc() -> int:
     return os.cpu_count() or 1
 
 
+def demangle(name: str) -> str:
+    if not name.startswith("_Z"):
+        return name
+    filt = shutil.which("c++filt")
+    if not filt:
+        return name
+    try:
+        out = run([filt, "-n", name], check=False).stdout.strip()
+        return out or name
+    except Exception:  # noqa: BLE001
+        return name
+
+
+def relax_perf_paranoid(target: int = 1) -> dict[str, Any]:
+    """Lower kernel.perf_event_paranoid so orbit-service can sample.
+
+    At the cloud VM default (2), this Orbit's serve-mode sampler opened no
+    rings against Stockfish. File-mode and serve-mode both work at 1 for
+    same-user processes. Requires passwordless sudo; otherwise we record
+    the current value and continue.
+    """
+    path = Path("/proc/sys/kernel/perf_event_paranoid")
+    current = path.read_text().strip() if path.exists() else None
+    info: dict[str, Any] = {"before": current, "after": current, "changed": False}
+    try:
+        before = int(current) if current is not None else None
+    except ValueError:
+        before = None
+    if before is None or before <= target:
+        return info
+    if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0:
+        info["reason"] = "sudo -n not available; capture may have 0 samples"
+        return info
+    proc = subprocess.run(
+        ["sudo", "-n", "sysctl", f"kernel.perf_event_paranoid={target}"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    info["sysctl"] = (proc.stdout + proc.stderr).strip()
+    info["after"] = path.read_text().strip() if path.exists() else None
+    info["changed"] = info["after"] != current
+    return info
+
+
 def mean_stdev(values: list[float]) -> tuple[float, float]:
     if not values:
         return (0.0, 0.0)
@@ -390,23 +435,33 @@ def start_uci(binary: Path) -> subprocess.Popen[str]:
     return proc
 
 
-def uci_bench(proc: subprocess.Popen[str], args: list[str] | None = None) -> str:
+def uci_command(proc: subprocess.Popen[str], command: str, until: str, timeout: float = 180) -> str:
     assert proc.stdin and proc.stdout
-    cmd = "bench" if not args else "bench " + " ".join(args)
-    proc.stdin.write(cmd + "\n")
+    proc.stdin.write(command + "\n")
     proc.stdin.flush()
     lines = []
-    deadline = time.time() + 180
+    deadline = time.time() + timeout
     while time.time() < deadline:
         line = proc.stdout.readline()
         if not line:
             break
         lines.append(line)
-        if "Nodes/second" in line:
-            # One more blank / separator lines may follow; that's enough.
+        if until in line:
             time.sleep(0.05)
             break
     return "".join(lines)
+
+
+def uci_bench(proc: subprocess.Popen[str], args: list[str] | None = None) -> str:
+    cmd = "bench" if not args else "bench " + " ".join(args)
+    return uci_command(proc, cmd, "Nodes/second")
+
+
+def uci_movetime(proc: subprocess.Popen[str], ms: int) -> str:
+    assert proc.stdin
+    proc.stdin.write("ucinewgame\nposition startpos\n")
+    proc.stdin.flush()
+    return uci_command(proc, f"go movetime {ms}", "bestmove", timeout=ms / 1000 + 30)
 
 
 class OrbitHttpCapture:
@@ -472,8 +527,10 @@ class OrbitHttpCapture:
                 method="POST",
                 payload={"pid": target.pid},
             )
-            # A slightly deeper bench so the sampler has more than one second.
-            bench_text = uci_bench(target, ["16", "1", "14", "default", "depth"])
+            # Rings finish opening after start returns; give them a beat.
+            time.sleep(1.0)
+            # A few seconds of search so samples land in evaluate/search, not just init.
+            bench_text = uci_movetime(target, 4000)
             time.sleep(0.3)
             http_json(self.base + "/api/capture/stop", method="POST", payload={})
             time.sleep(0.8)
@@ -485,9 +542,11 @@ class OrbitHttpCapture:
             hotspots = []
             if isinstance(report, dict):
                 for row in (report.get("functions") or [])[:20]:
+                    raw = row.get("name") or "??"
                     hotspots.append(
                         {
-                            "symbol": row.get("name") or "??",
+                            "symbol": demangle(raw),
+                            "symbol_raw": raw,
                             "module": row.get("module") or "",
                             "self": row.get("self"),
                             "inclusive": row.get("inclusive"),
@@ -508,11 +567,11 @@ class OrbitHttpCapture:
             )
             return {
                 "backend": "orbit-http",
-                "ok": bool(hotspots) or bool((report or {}).get("samples")),
+                "ok": bool(hotspots) and bool((report or {}).get("samples")),
                 "command": (
                     f"{self.binary} --host 127.0.0.1 --serve {self.port} ; "
                     f"POST /api/capture/start pid={target.pid} ; "
-                    "stockfish bench 16 1 14 default depth"
+                    "stockfish go movetime 4000"
                 ),
                 "samples": (report or {}).get("samples") if isinstance(report, dict) else None,
                 "events_live": status.get("events_live"),
@@ -621,19 +680,111 @@ def capture_perf(stockfish: Path, out_dir: Path) -> dict[str, Any]:
     }
 
 
+def parse_maps(text: str) -> list[dict[str, Any]]:
+    maps = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        rng, perms, offset = parts[0], parts[1], parts[2]
+        path = parts[5] if len(parts) > 5 else ""
+        start_s, end_s = rng.split("-")
+        maps.append(
+            {
+                "start": int(start_s, 16),
+                "end": int(end_s, 16),
+                "offset": int(offset, 16),
+                "perms": perms,
+                "path": path,
+            }
+        )
+    return maps
+
+
+def runtime_to_file(pc: int, maps: list[dict[str, Any]]) -> tuple[str | None, int | None]:
+    for mapping in maps:
+        if mapping["start"] <= pc < mapping["end"] and "x" in mapping["perms"]:
+            return mapping["path"], pc - mapping["start"] + mapping["offset"]
+    return None, None
+
+
+def symbolize_pcs(stockfish: Path, maps_text: str, pcs: list[int]) -> dict[int, str]:
+    maps = parse_maps(maps_text)
+    out: dict[int, str] = {}
+    for pc in pcs:
+        path, elf_addr = runtime_to_file(pc, maps)
+        binary = path if path and Path(path).is_file() else str(stockfish)
+        if elf_addr is None:
+            out[pc] = f"{pc:#x}"
+            continue
+        proc = run(
+            ["addr2line", "-e", binary, "-f", "-C", "-p", f"{elf_addr:#x}"],
+            check=False,
+        )
+        name = proc.stdout.strip()
+        if not name or name.startswith("??"):
+            out[pc] = f"{Path(binary).name}+{elf_addr:#x}"
+        else:
+            # "foo at src.cpp:10" → keep the function, drop "?" file.
+            out[pc] = name.split(" at ")[0].strip()
+    return out
+
+
+def hotspots_from_pod_dump(dump_text: str, symbols: dict[int, str]) -> list[dict[str, Any]]:
+    """Aggregate leaf frames from orbit-pod-dump --top output."""
+    counts: dict[str, int] = {}
+    total = 0
+    block = re.compile(
+        r"^\s+(\d+)\s+samples\s+([0-9.]+)%.*?$\n\s+(0x[0-9a-fA-F]+)",
+        re.M,
+    )
+    for match in block.finditer(dump_text):
+        samples = int(match.group(1))
+        pc = int(match.group(3), 16)
+        name = symbols.get(pc, f"{pc:#x}")
+        counts[name] = counts.get(name, 0) + samples
+        total += samples
+    rows = []
+    for name, samples in sorted(counts.items(), key=lambda kv: -kv[1]):
+        rows.append(
+            {
+                "symbol": name,
+                "self": samples,
+                "self_percent": (100.0 * samples / total) if total else 0.0,
+            }
+        )
+    return rows
+
+
 def capture_orbit_file(orbit: Path, stockfish: Path, out_dir: Path) -> dict[str, Any]:
     """Fallback: orbit-service --pid <tid> --duration-ms --out (one thread)."""
     pod = out_dir / "capture.pod"
     target = start_uci(stockfish)
     log = out_dir / "orbit-file.log"
+    # Search runs on a worker thread, not the UCI tid. File-mode --pid is a tid.
+    # Do not send setoption here: ThreadPool::set reloads the net on the UCI
+    # thread and races the 4s capture window.
+    time.sleep(0.4)
+    others: list[int] = []
+    task_dir = Path(f"/proc/{target.pid}/task")
+    if task_dir.is_dir():
+        others = [int(p.name) for p in task_dir.iterdir() if p.name != str(target.pid)]
+    # File-mode sampling of a non-leader tid returned 0 samples on this VM
+    # even as root. The UCI thread group leader does produce samples.
+    sample_tid = target.pid
+    maps_text = ""
+    maps_path = Path(f"/proc/{target.pid}/maps")
+    if maps_path.exists():
+        maps_text = maps_path.read_text()
+        (out_dir / "maps.txt").write_text(maps_text)
     try:
         svc = subprocess.Popen(
             [
                 str(orbit),
                 "--pid",
-                str(target.pid),
+                str(sample_tid),
                 "--duration-ms",
-                "4000",
+                "6000",
                 "--out",
                 str(pod),
             ],
@@ -641,8 +792,8 @@ def capture_orbit_file(orbit: Path, stockfish: Path, out_dir: Path) -> dict[str,
             stderr=subprocess.STDOUT,
             text=True,
         )
-        time.sleep(0.2)
-        uci_bench(target, ["16", "1", "14", "default", "depth"])
+        time.sleep(0.4)
+        uci_movetime(target, 4000)
         try:
             out, _ = svc.communicate(timeout=20)
         except subprocess.TimeoutExpired:
@@ -651,18 +802,36 @@ def capture_orbit_file(orbit: Path, stockfish: Path, out_dir: Path) -> dict[str,
         log.write_text(out or "")
         dump_text = ""
         if ORBIT_POD_DUMP.is_file() and pod.exists():
-            dump = run([str(ORBIT_POD_DUMP), str(pod), "--top", "15"], check=False)
+            dump = run([str(ORBIT_POD_DUMP), str(pod), "--top", "20"], check=False)
             dump_text = dump.stdout + dump.stderr
             (out_dir / "orbit-pod-dump.txt").write_text(dump_text)
+        samples = 0
+        match = re.search(r"captured (\d+) samples", out or "")
+        if match:
+            samples = int(match.group(1))
+        pcs = [int(x, 16) for x in re.findall(r"^\s+(0x[0-9a-fA-F]+)$", dump_text, re.M)]
+        symbols = symbolize_pcs(stockfish, maps_text, pcs) if maps_text and pcs else {}
+        hotspots = hotspots_from_pod_dump(dump_text, symbols)
         return {
             "backend": "orbit-file",
-            "ok": pod.exists() and pod.stat().st_size > 0,
-            "command": f"{orbit} --pid {target.pid} --duration-ms 4000 --out {pod}",
-            "note": "File mode samples one tid (the UCI thread), not search workers.",
+            "ok": samples > 0,
+            "samples": samples,
+            "command": f"{orbit} --pid {sample_tid} --duration-ms 6000 --out {pod}",
+            "sample_tid": sample_tid,
+            "uci_pid": target.pid,
+            "worker_tids": others,
+            "note": (
+                "This Orbit file-mode capture (`orbit-service --pid --out`). "
+                f"Sampled thread-group leader tid {sample_tid} (workers {others} "
+                "returned 0 samples on this VM, including under sudo). "
+                "Leaf PCs symbolized with /proc/pid/maps + addr2line. "
+                "Serve-mode /api/sampling/report is tried first; it loaded "
+                "symbols but recorded 0 callstack samples here."
+            ),
             "pod": str(pod) if pod.exists() else None,
-            "log": out[-800:] if out else "",
+            "log": (out or "")[-800:],
             "dump_tail": dump_text[-800:],
-            "hotspots": [],
+            "hotspots": hotspots,
         }
     finally:
         if target.poll() is None:
@@ -690,7 +859,8 @@ def run_profile(mode: str, stockfish: Path, out_dir: Path, orbit: Path | None) -
             result = cap.capture_bench(stockfish)
             attempts.append(result)
             if result.get("ok") and mode != "all":
-                result["attempts"] = attempts
+                result = dict(result)
+                result["attempts"] = list(attempts)
                 return result
         except Exception as error:  # noqa: BLE001
             attempts.append(
@@ -703,6 +873,8 @@ def run_profile(mode: str, stockfish: Path, out_dir: Path, orbit: Path | None) -
             )
         finally:
             cap.stop()
+            # Let serve-mode release its perf rings before file-mode opens one.
+            time.sleep(1.5)
     elif want("orbit") and (not orbit or not orbit.is_file()):
         attempts.append(
             {
@@ -722,20 +894,22 @@ def run_profile(mode: str, stockfish: Path, out_dir: Path, orbit: Path | None) -
         perf_result = capture_perf(stockfish, out_dir)
         attempts.append(perf_result)
         if perf_result.get("ok") and mode != "all":
-            perf_result["attempts"] = attempts
+            perf_result = dict(perf_result)
+            perf_result["attempts"] = list(attempts)
             return perf_result
 
-    if want("orbit") and orbit and orbit.is_file() and mode in ("auto", "all"):
+    if want("orbit") and orbit and orbit.is_file() and mode in ("auto", "all", "orbit"):
         attempts.append(capture_orbit_file(orbit, stockfish, out_dir))
 
-    chosen = next((a for a in attempts if a.get("ok")), None)
+    chosen = next((dict(a) for a in attempts if a.get("ok")), None)
     if chosen is None:
         chosen = {
             "backend": "none",
             "ok": False,
             "reason": "no capture backend produced a profile",
         }
-    chosen["attempts"] = attempts
+    # Shallow-copied so nesting attempts cannot create a JSON cycle.
+    chosen["attempts"] = [{k: v for k, v in a.items() if k != "attempts"} for a in attempts]
     return chosen
 
 
@@ -806,8 +980,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "## Commands",
         "",
         "```",
-        f"speedtest: {speed.get('command')}",
-        f"bench:     {bench.get('command')}",
+        f"speedtest: {' '.join(map(str, speed.get('command') or [])) or speed.get('command')}",
+        f"bench:     {' '.join(map(str, bench.get('command') or [])) or bench.get('command')}",
         f"perft:     {perft.get('command')}",
         f"profile:   {profile.get('command')}",
         "```",
@@ -1002,6 +1176,13 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"suite output: {out_dir}", flush=True)
     print(f"stockfish:    {binary}  sha={summary['stockfish_sha']}", flush=True)
+    if args.capture != "none":
+        summary["perf_event_paranoid"] = relax_perf_paranoid(1)
+        print(
+            f"perf_event_paranoid: {summary['perf_event_paranoid'].get('before')} "
+            f"-> {summary['perf_event_paranoid'].get('after')}",
+            flush=True,
+        )
 
     if args.skip_speedtest:
         summary["speedtest"] = None
