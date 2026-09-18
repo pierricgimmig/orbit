@@ -231,9 +231,9 @@ def rebuild_stockfish(mode: str = "profile-build", jobs: int | None = None) -> d
             "error": "stockfish/src/Makefile missing; git submodule update --init stockfish",
         }
     j = str(jobs or os.cpu_count() or 1)
-    cmd = ["make", "-C", str(STOCKFISH_SRC), "-j", j]
-    if mode != "incremental":
-        cmd.append(mode)
+    # Stockfish's first Makefile target is `help`; bare `make -j` does not rebuild.
+    target = "build" if mode == "incremental" else mode
+    cmd = ["make", "-C", str(STOCKFISH_SRC), "-j", j, target]
     proc = _run(cmd, timeout=30 * 60)
     return {
         "ok": proc.returncode == 0,

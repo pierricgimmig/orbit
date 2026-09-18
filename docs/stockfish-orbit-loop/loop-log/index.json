@@ -1,0 +1,49 @@
+{
+  "attempts": [
+    {
+      "id": "0001",
+      "slug": "0001-mock-reject-below-floor",
+      "mode": "mock",
+      "decision": "reject",
+      "proposal_kind": "mock",
+      "delta_percent": 0.2,
+      "timestamp": "20260918T020102Z"
+    },
+    {
+      "id": "0002",
+      "slug": "0002-mock-reject-inside-sigma",
+      "mode": "mock",
+      "decision": "reject",
+      "proposal_kind": "mock",
+      "delta_percent": 0.6,
+      "timestamp": "20260918T020102Z"
+    },
+    {
+      "id": "0003",
+      "slug": "0003-mock-accept-above-sigma",
+      "mode": "mock",
+      "decision": "accept",
+      "proposal_kind": "mock",
+      "delta_percent": 2.0,
+      "timestamp": "20260918T020102Z"
+    },
+    {
+      "id": "0004",
+      "slug": "0004-mock-reject-fingerprint",
+      "mode": "mock",
+      "decision": "reject",
+      "proposal_kind": "mock",
+      "delta_percent": 5.0,
+      "timestamp": "20260918T020102Z"
+    },
+    {
+      "id": "0005",
+      "slug": "0005-live-auto",
+      "mode": "live",
+      "decision": "reject",
+      "proposal_kind": "noop_experiment",
+      "delta_percent": 1.6785552770413839,
+      "timestamp": "20260918T020111Z"
+    }
+  ]
+}

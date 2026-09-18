@@ -1,0 +1,11 @@
+--- a/src/misc.cpp
++++ b/src/misc.cpp
+@@ -16,6 +16,8 @@
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++// stockfish-orbit-loop 0005: intentional no-op experiment.
++// Capture quality was libc/startup, not a search hotspot. Gate should reject.
+ #include "misc.h"
+ 
+ #include <array>

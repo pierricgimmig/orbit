@@ -1,0 +1,30 @@
+{
+  "id": "0002",
+  "mode": "mock",
+  "timestamp": "20260918T020102Z",
+  "proposal_kind": "mock",
+  "diff": "--- a/src/misc.cpp\n+++ b/src/misc.cpp\n@@ -0,0 +1,2 @@\n+// stockfish-orbit-loop mock: not applied\n+\n",
+  "gate": {
+    "accepted": false,
+    "decision": "reject",
+    "min_gain_percent": 0.5,
+    "sigma": 1.0,
+    "baseline_mean": 1000000.0,
+    "current_mean": 1006000.0,
+    "baseline_stdev": 15000.0,
+    "delta_nps": 6000.0,
+    "delta_percent": 0.6,
+    "sigma_threshold_nps": 15000.0,
+    "fingerprint_ok": true,
+    "reasons": [
+      "delta 6,000 nps is not outside 1\u03c3 (threshold 15,000 nps from baseline stdev)"
+    ]
+  },
+  "decision": "reject",
+  "reverted": true,
+  "applied": false,
+  "expect": "reject",
+  "gate_selftest_ok": true,
+  "hotspot_quality": "poor",
+  "hotspot_reason": "mock fixture; no capture"
+}

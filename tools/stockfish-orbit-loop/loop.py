@@ -79,12 +79,15 @@ def classify_hotspots(hotspots: list[dict[str, Any]]) -> dict[str, Any]:
     for row in hotspots:
         symbol = str(row.get("symbol") or "")
         low = symbol.lower()
-        if any(h.lower() in symbol or h.lower() in low for h in SEARCH_HINTS):
-            search_like.append(symbol)
-        elif any(h.lower() in low for h in LIBC_OR_RT):
+        # Libc/startup first: demangled signatures often embed Stockfish::Search::
+        # types (e.g. ThreadPool::set(..., Search::SharedState)) without being
+        # a search hot path.
+        if any(h.lower() in low for h in LIBC_OR_RT):
             libc_like.append(symbol)
         elif any(h in symbol for h in STARTUP_HINTS):
             startup_like.append(symbol)
+        elif any(h in symbol for h in SEARCH_HINTS):
+            search_like.append(symbol)
         elif symbol:
             other.append(symbol)
     if search_like:

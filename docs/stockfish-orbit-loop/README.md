@@ -527,6 +527,30 @@ docs/stockfish-orbit-loop/loop-log/NNNN-<slug>/decision.md
 
 Until those land, the loop’s honest live path is **no-op → gate reject**.
 
+### Recorded on this VM (2026-09-18)
+
+`python3 tools/stockfish-orbit-loop/loop.py --mode mock` wrote attempts
+0001–0004: reject +0.20%, reject +0.60% inside 1σ, accept +2.00% above 1σ,
+reject fingerprint mismatch.
+
+Live attempt **0005** (`--proposal auto --bench-iters 10 --hotspots-from`
+the Phase 2 file-mode summary):
+
+| | |
+| --- | --- |
+| Hotspots | `__nss_database_lookup` 47%, `__madvise` 30%, NNUE load / `hash_bytes` |
+| Proposal | Labeled no-op comment in `stockfish/src/misc.cpp` |
+| Baseline bench | 1,365,859 ± 59,898 nps (10×; one slow iter) |
+| After bench | 1,388,786 ± 28,278 nps |
+| Δ | **+1.68%** (+22,927 nps) |
+| Fingerprint | 1,648,567 unchanged |
+| Gate | **reject** — delta < 1σ (threshold 59,898 nps) |
+| Revert | `src/misc.cpp` restored; `stockfish/` clean; not pushed |
+
+This is not an optimization win. The +1.68% is noise; the gate did its job.
+
+Log: [`loop-log/0005-live-auto/`](loop-log/0005-live-auto/).
+
 ## Phase 5 (stub)
 
 Poster writeup and candidate official-Stockfish PR text belong in Phase 5,
