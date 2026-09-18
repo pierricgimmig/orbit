@@ -4,17 +4,16 @@ Poster project: an AI-agent-driven profiling and optimization loop on
 [official Stockfish](https://github.com/official-stockfish/Stockfish)
 that should eventually produce a meaningful upstream Stockfish PR.
 
-This folder is **setup + the Phase 2 suite + Phase 3 MCP tools + Phase 4
-loop**. Phase 5 (poster writeup / upstream PR text) is still later.
-Nothing here is submitted to Stockfish upstream.
+This folder is the **poster project** (Phases 1–5). Start with
+[`POSTER.md`](POSTER.md). Nothing here is submitted to Stockfish upstream.
 
 | Phase | Status | What |
 | --- | --- | --- |
 | 1 | done | Official Stockfish git submodule + Linux build |
 | 2 | done | Repeatable speedtest / bench / perft / Orbit-or-perf capture |
 | 3 | done | Stdio MCP so an external model can drive the suite |
-| 4 | this PR | Closed loop: propose → rebuild → gate → accept or revert |
-| 5 | later | Poster writeup; upstream PR text only if a patch ever accepts |
+| 4 | done | Closed loop: propose → rebuild → gate → accept or revert |
+| 5 | this PR | Poster story + official-stockfish PR **template** (not a submission) |
 
 ## Pinned Stockfish revision
 
@@ -551,13 +550,16 @@ This is not an optimization win. The +1.68% is noise; the gate did its job.
 
 Log: [`loop-log/0005-live-auto/`](loop-log/0005-live-auto/).
 
-## Phase 5 (stub)
+## Phase 5: poster story
 
-Poster writeup and candidate official-Stockfish PR text belong in Phase 5,
-and only if a later iteration accepts a real, reviewable patch. This PR
-does not push to `official-stockfish`.
+- Case study: [`POSTER.md`](POSTER.md)
+- Official-stockfish PR **template** (do not submit): [`UPSTREAM-PR-TEMPLATE.md`](UPSTREAM-PR-TEMPLATE.md)
+- Status / next experiment: see the end of `POSTER.md`
 
-## Out of scope (later)
+There is still **no** accepted Stockfish optimization. Do not open a PR
+against official-stockfish from this tree.
 
-- Full Phase 5 poster / upstream PR
+## Out of scope
+
+- A real official-stockfish pull request (needs a gate-accepted patch first)
 - Stockfish game-logic “optimizations” invented from libc profiles
