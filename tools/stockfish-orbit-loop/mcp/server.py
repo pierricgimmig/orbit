@@ -133,6 +133,29 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "stockfish_run_loop",
+        "description": (
+            "Phase 4 closed loop: baseline suite, inspect hotspots, propose a small "
+            "stockfish/ experiment (auto = no-op when capture is libc/startup), "
+            "rebuild, compare, accept only if mean nps gain > 0.5% and outside 1σ. "
+            "mode=mock is CI-safe (no make / no tree writes). Never git push."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["mock", "live"], "default": "mock"},
+                "proposal": {"type": "string", "enum": ["auto", "noop"]},
+                "baseline": {"type": "string"},
+                "hotspots_from": {"type": "string"},
+                "bench_iters": {"type": "integer"},
+                "min_gain_percent": {"type": "number"},
+                "sigma": {"type": "number"},
+                "rebuild_mode": {"type": "string", "enum": ["incremental", "build", "profile-build"]},
+                "log_dir": {"type": "string", "description": "Attempt log directory"},
+            },
+        },
+    },
 ]
 
 
@@ -170,6 +193,21 @@ def _dispatch(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
             bench_iters=args.get("bench_iters"),
             perft=args.get("perft") or "smoke",
             capture=args.get("capture") or "none",
+        )
+    if name == "stockfish_run_loop":
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import loop as orbit_loop  # noqa: WPS433
+
+        return orbit_loop.run_loop(
+            mode=args.get("mode") or "mock",
+            proposal=args.get("proposal") or "auto",
+            baseline=args.get("baseline"),
+            hotspots_from=args.get("hotspots_from"),
+            bench_iters=args.get("bench_iters"),
+            min_gain_percent=args.get("min_gain_percent"),
+            sigma=args.get("sigma"),
+            rebuild_mode=args.get("rebuild_mode"),
+            log_dir=args.get("log_dir"),
         )
     return {"ok": False, "error": f"unknown tool: {name}"}
 

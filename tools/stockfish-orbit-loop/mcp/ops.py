@@ -187,16 +187,53 @@ def rerun_compare(
     return result
 
 
+def revert_stockfish(paths: list[str] | None = None) -> dict[str, Any]:
+    """Restore tracked files under stockfish/; delete untracked experiment files.
+
+    Never git clean -fd (that would wipe NNUE nets and build outputs).
+    Never commit or push.
+    """
+    stockfish = STOCKFISH.resolve()
+    restored: list[str] = []
+    removed: list[str] = []
+    if paths:
+        for rel in paths:
+            dest = _safe_stockfish_path(rel)
+            rel_posix = dest.relative_to(stockfish).as_posix()
+            tracked = _run(["git", "-C", str(STOCKFISH), "ls-files", "--error-unmatch", rel_posix])
+            if tracked.returncode == 0:
+                checkout = _run(["git", "-C", str(STOCKFISH), "checkout", "--", rel_posix])
+                if checkout.returncode != 0:
+                    return {"ok": False, "error": checkout.stderr or checkout.stdout, "path": rel_posix}
+                restored.append(rel_posix)
+            elif dest.is_file():
+                dest.unlink()
+                removed.append(rel_posix)
+    else:
+        _run(["git", "-C", str(STOCKFISH), "checkout", "--", "."])
+    status = _run(["git", "-C", str(STOCKFISH), "status", "--short"])
+    return {
+        "ok": True,
+        "restored": restored,
+        "removed": removed,
+        "git_status": status.stdout.strip(),
+        "pushed": False,
+        "note": "Working tree restored. Nothing was committed or pushed.",
+    }
+
+
 def rebuild_stockfish(mode: str = "profile-build", jobs: int | None = None) -> dict[str, Any]:
-    if mode not in ("profile-build", "build"):
-        return {"ok": False, "error": "mode must be profile-build or build"}
+    if mode not in ("profile-build", "build", "incremental"):
+        return {"ok": False, "error": "mode must be profile-build, build, or incremental"}
     if not (STOCKFISH_SRC / "Makefile").is_file():
         return {
             "ok": False,
             "error": "stockfish/src/Makefile missing; git submodule update --init stockfish",
         }
     j = str(jobs or os.cpu_count() or 1)
-    cmd = ["make", "-C", str(STOCKFISH_SRC), "-j", j, mode]
+    cmd = ["make", "-C", str(STOCKFISH_SRC), "-j", j]
+    if mode != "incremental":
+        cmd.append(mode)
     proc = _run(cmd, timeout=30 * 60)
     return {
         "ok": proc.returncode == 0,

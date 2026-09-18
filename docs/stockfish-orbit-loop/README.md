@@ -4,16 +4,17 @@ Poster project: an AI-agent-driven profiling and optimization loop on
 [official Stockfish](https://github.com/official-stockfish/Stockfish)
 that should eventually produce a meaningful upstream Stockfish PR.
 
-This folder is **setup + the Phase 2 suite + Phase 3 MCP tools**. Later
-phases (the autonomous agent loop and Stockfish source changes) are out of
-scope. Nothing here is submitted to Stockfish upstream.
+This folder is **setup + the Phase 2 suite + Phase 3 MCP tools + Phase 4
+loop**. Phase 5 (poster writeup / upstream PR text) is still later.
+Nothing here is submitted to Stockfish upstream.
 
 | Phase | Status | What |
 | --- | --- | --- |
 | 1 | done | Official Stockfish git submodule + Linux build |
 | 2 | done | Repeatable speedtest / bench / perft / Orbit-or-perf capture |
-| 3 | this PR | Stdio MCP so an external model can drive the suite |
-| 4–5 | later | Autonomous agent loop, engine changes, upstream PR |
+| 3 | done | Stdio MCP so an external model can drive the suite |
+| 4 | this PR | Closed loop: propose → rebuild → gate → accept or revert |
+| 5 | later | Poster writeup; upstream PR text only if a patch ever accepts |
 
 ## Pinned Stockfish revision
 
@@ -447,9 +448,92 @@ working tree stayed clean.
 - No `linux-perf` package on kernel `6.12.94+`.
 - File-mode leaf PCs on this VM are often startup / libc (`__madvise`), not
   search hot paths — useful as a plumbing check, not yet an optimization map.
-- Phase 4 (closed autonomous loop) is not this server.
 
-## Out of scope (later phases)
+## Phase 4: the agent loop
 
-- Full autonomous closed loop (Phase 4)
-- Stockfish game-logic changes or an upstream PR
+Driver: [`tools/stockfish-orbit-loop/loop.py`](../../tools/stockfish-orbit-loop/loop.py).
+It calls the same Python APIs as the Phase 3 MCP tools (`ops.py`). There is
+also `stockfish_run_loop` on the MCP server. **No LLM is invoked.** The
+loop does not invent a fake nps win when the profile is libc/startup.
+
+```sh
+# CI-safe gate self-test (no make, stockfish/ untouched)
+python3 tools/stockfish-orbit-loop/loop.py --mode mock
+
+# One live iteration: baseline benches → classify hotspots → no-op experiment
+# → incremental rebuild → re-bench → gate → revert if reject
+python3 tools/stockfish-orbit-loop/loop.py --mode live --proposal auto \
+  --hotspots-from /path/to/summary.json \
+  --bench-iters 10 --skip-speedtest --perft off --capture none
+```
+
+MCP:
+
+```sh
+python3 tools/stockfish-orbit-loop/mcp/server.py --call stockfish_run_loop \
+  '{"mode":"mock","log_dir":"/tmp/sf-loop-mock"}'
+```
+
+### Gate (accept only if all hold)
+
+| Parameter | Default | Rule |
+| --- | --- | --- |
+| `min_gain_percent` | **0.5** | `after_mean` must exceed `baseline_mean` by more than 0.5% |
+| `sigma` | **1.0** | When baseline bench stdev exists, `delta_nps` must be **> 1σ** |
+| fingerprint | required | `bench.nodes_searched` must match; perft must not fail |
+
+A +0.6% move inside a 1.5% stdev is **rejected** (Phase 2 noise was ~1.5% /
++0.51% on a 3-iter re-bench). Missing stdev falls back to the percent floor
+only. `--min-gain-percent` / `--sigma` override the defaults.
+
+On reject the loop `git checkout --` the experiment paths under `stockfish/`
+and incrementally rebuilds so the binary matches HEAD. It never commits or
+pushes the submodule. On accept the working tree is left dirty and the
+patch is logged; still no upstream push.
+
+### Proposal policy (honesty)
+
+Orbit file-mode on this VM usually reports `__madvise` / `__nss_database_lookup`
+/ NNUE load — not `Search::` / `evaluate`. `--proposal auto` then applies a
+**labeled no-op** (a two-line comment in `stockfish/src/misc.cpp`) so the
+machinery can be proven. That is not an optimization. Search-like symbols
+do **not** auto-author a game-logic patch (Phase 4 will not fake a win).
+
+### Attempt log
+
+Written under [`docs/stockfish-orbit-loop/loop-log/`](loop-log/) (committed
+JSON/MD/diff only; heavy suite outputs stay in gitignored `runs/`):
+
+```
+docs/stockfish-orbit-loop/loop-log/index.md
+docs/stockfish-orbit-loop/loop-log/NNNN-<slug>/attempt.json
+docs/stockfish-orbit-loop/loop-log/NNNN-<slug>/proposal.diff
+docs/stockfish-orbit-loop/loop-log/NNNN-<slug>/decision.md
+```
+
+### What better Orbit search-thread sampling needs
+
+1. `kernel.perf_event_paranoid` ≤ 1 (≤ 0 for system-wide). The suite already
+   tries `sudo -n sysctl` to 1.
+2. `sudo setcap cap_perfmon,cap_sys_ptrace+ep rust/.../orbit-service` so
+   file-mode can follow workers without root.
+3. **Attach after search starts**, to **worker tids** (`ThreadPool` threads
+   that run `idle_loop` / `search`), not the UCI leader while it is blocked
+   in `getline`. Today worker-tid file-mode returns 0 samples even as root.
+4. Serve-mode `/api/capture/start` must actually fill callstack samples
+   (currently 0 on this VM even with rings open and 7k+ symbols loaded).
+5. A matching `linux-perf` package (absent on `6.12.94+`) for dwarf
+   `--call-graph` as a cross-check.
+
+Until those land, the loop’s honest live path is **no-op → gate reject**.
+
+## Phase 5 (stub)
+
+Poster writeup and candidate official-Stockfish PR text belong in Phase 5,
+and only if a later iteration accepts a real, reviewable patch. This PR
+does not push to `official-stockfish`.
+
+## Out of scope (later)
+
+- Full Phase 5 poster / upstream PR
+- Stockfish game-logic “optimizations” invented from libc profiles

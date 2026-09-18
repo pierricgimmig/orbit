@@ -70,6 +70,7 @@ def main() -> int:
         "stockfish_apply_patch",
         "stockfish_rebuild",
         "stockfish_rerun_compare",
+        "stockfish_run_loop",
     ]
     missing = [n for n in expected if n not in names]
     if missing:
@@ -173,6 +174,20 @@ def main() -> int:
         f"stockfish_run_suite: ok bench_nps={suite.get('bench_nps')} "
         f"summary={suite.get('summary_path')}"
     )
+
+    looped = json.loads(
+        _run(
+            [
+                "--call",
+                "stockfish_run_loop",
+                json.dumps({"mode": "mock", "log_dir": "/tmp/sf-loop-mock"}),
+            ]
+        ).stdout
+    )
+    if not looped.get("ok") or len(looped.get("attempts") or []) < 4:
+        print("run_loop mock failed:", looped, file=sys.stderr)
+        return 1
+    print(f"stockfish_run_loop mock: ok attempts={len(looped['attempts'])}")
     return 0
 
 
