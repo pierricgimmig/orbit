@@ -412,7 +412,7 @@ still records 0 callstack samples):
   "dry_run": true,
   "pushed": false,
   "path": "src/orbit_loop_note.txt",
-  "diff": "--- /dev/null\n+++ b/src/orbit_loop_note.txt\n..."
+  "diff": "--- a/src/orbit_loop_note.txt\n+++ b/src/orbit_loop_note.txt\n@@ -0,0 +1 @@\n+Phase 3 MCP dry-run only. Do not apply.\n"
 }
 ```
 
@@ -421,8 +421,24 @@ still records 0 callstack samples):
 `bench_nps_mean.delta_percent` when a baseline is set. Full recorded suite
 numbers stay in [`sample-run.md`](sample-run.md).
 
-A short MCP-driven suite (1× bench, no speedtest/perft/capture) is what
-`mcp/smoke.py` runs.
+### Recorded smoke (this VM)
+
+`python3 tools/stockfish-orbit-loop/mcp/smoke.py` on 2026-09-18:
+
+```
+tools: stockfish_run_suite, stockfish_get_summary, stockfish_inspect_hotspots,
+       stockfish_apply_patch, stockfish_rebuild, stockfish_rerun_compare
+ndjson initialize + tools/list: ok (6 tools)
+content-length initialize + tools/list: ok (6 tools)
+stockfish_get_summary: ok sha=031dfeb437fa6b06cdbdf4ef89dfb82f6b83c4d3
+stockfish_inspect_hotspots: backend=orbit-file rows=5
+stockfish_apply_patch dry-run: ok (not written)
+stockfish_apply_patch escape: refused
+stockfish_run_suite: ok bench_nps mean=1,369,241 (1× bench, no capture)
+```
+
+`runs/latest` then pointed at `/tmp/sf-mcp-smoke`. The `stockfish/` submodule
+working tree stayed clean.
 
 ### Blockers (unchanged from Phase 2)
 
