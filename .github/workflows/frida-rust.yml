@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: [main, rust]
   push:
-    branches: [rust, frida-instrumentation]
+    branches: [main, rust, frida-instrumentation]
   workflow_dispatch:
 permissions:
   contents: read

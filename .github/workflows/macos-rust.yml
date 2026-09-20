@@ -6,7 +6,7 @@ name: macos-rust
 
 on:
   push:
-    branches: [rust]
+    branches: [main, rust]
   pull_request:
     branches: [main, rust]
   workflow_dispatch:

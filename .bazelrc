@@ -12,6 +12,8 @@ common --enable_platform_specific_config
 # common --enable_platform_specific_config above selects by host OS.
 build:linux --cxxopt=-std=gnu++17
 build:linux --host_cxxopt=-std=gnu++17
+# Ubuntu Qt uses -reduce-relocations and requires PIC in its consumers.
+build:linux --force_pic
 
 build:windows --cxxopt=/std:c++20
 build:windows --host_cxxopt=/std:c++20
