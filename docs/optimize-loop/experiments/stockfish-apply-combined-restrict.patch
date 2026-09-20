@@ -1,0 +1,52 @@
+diff --git a/src/nnue/nnue_accumulator.cpp b/src/nnue/nnue_accumulator.cpp
+index b7fb950..c1ecda9 100644
+--- a/src/nnue/nnue_accumulator.cpp
++++ b/src/nnue/nnue_accumulator.cpp
+@@ -498,12 +498,22 @@ void apply_combined(Color                              perspective,
+     const auto& fromPsqtAcc = from.psqtAccumulation[perspective];
+     auto&       toPsqtAcc   = to.psqtAccumulation[perspective];
+ 
++    // `from` and `to` are distinct accumulator states and the transformer
++    // weights are a separate const object, so the source, destination and
++    // weight arrays provably do not alias. Telling the compiler that (restrict)
++    // lets a non-PGO build keep tiles in registers across the apply passes
++    // instead of reloading on the assumption a store might have touched them.
++    const i16* __restrict fromData     = fromAcc.data();
++    i16* __restrict       toData       = toAcc.data();
++    const i32* __restrict fromPsqtData = fromPsqtAcc.data();
++    i32* __restrict       toPsqtData   = toPsqtAcc.data();
++
+     Tile     acc;
+     PsqtTile psqt;
+ 
+     for (IndexType j = 0; j < Dimensions; increment_index(j))
+     {
+-        acc = load_tile(j, fromAcc.data());
++        acc = load_tile(j, fromData);
+ 
+         acc = apply_psq_features<-1, true>(j, acc, psqRemoved, featureTransformer);
+         acc = apply_psq_features<+1, true>(j, acc, psqAdded, featureTransformer);
+@@ -511,12 +521,12 @@ void apply_combined(Color                              perspective,
+         acc = apply_threat_features<-1>(j, acc, thrRemoved, featureTransformer);
+         acc = apply_threat_features<+1>(j, acc, thrAdded, featureTransformer);
+ 
+-        store_tile(j, toAcc.data(), acc);
++        store_tile(j, toData, acc);
+     }
+ 
+     for (IndexType j = 0; j < PSQTBuckets; increment_psqt_index(j))
+     {
+-        psqt = load_psqt(j, fromPsqtAcc.data());
++        psqt = load_psqt(j, fromPsqtData);
+ 
+         psqt = apply_psqt<-1>(j, psqt, psqRemoved, featureTransformer.psqtWeights.data());
+         psqt = apply_psqt<+1>(j, psqt, psqAdded, featureTransformer.psqtWeights.data());
+@@ -525,7 +535,7 @@ void apply_combined(Color                              perspective,
+           apply_psqt<-1>(j, psqt, thrRemoved, featureTransformer.threatAndPpPsqtWeights.data());
+         psqt = apply_psqt<+1>(j, psqt, thrAdded, featureTransformer.threatAndPpPsqtWeights.data());
+ 
+-        store_psqt(j, toPsqtAcc.data(), psqt);
++        store_psqt(j, toPsqtData, psqt);
+     }
+ }
+ 
