@@ -47,11 +47,14 @@ def main():
     with tempfile.TemporaryFile(mode='w+') as log:
         env = dict(os.environ, ORBIT_FRIDA_AGENT=str(Path(args.agent).resolve()) + ('.missing' if args.missing_agent else ''), ORBIT_FRIDA_HELPER=str(Path(args.helper).resolve()) + ('.missing' if args.missing_helper else ''))
         service = subprocess.Popen([args.service, '--host', '127.0.0.1', '--serve', str(port)], env=env, stdout=log, stderr=log)
-        target = subprocess.Popen([args.target], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        target = subprocess.Popen([args.target], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
         try:
             ready, _, _ = select.select([target.stdout], [], [], 10)
-            assert ready
-            pid = int(target.stdout.readline())
+            assert ready, 'target did not announce its PID within 10 seconds'
+            announcement = target.stdout.readline().strip()
+            assert announcement.isdecimal(), (
+                f'target failed before announcing its PID: exit={target.poll()}, stdout={announcement!r}')
+            pid = int(announcement)
             deadline = time.monotonic() + 30
             while True:
                 try:

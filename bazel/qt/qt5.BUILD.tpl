@@ -27,6 +27,9 @@ cc_library(
         _LIB + "/libdouble-conversion.so.3",
         _LIB + "/libmd4c.so.0",
         _LIB + "/libpcre2-16.so.0",
+        _LIB + "/libicui18n.so.70",
+        _LIB + "/libicuuc.so.70",
+        _LIB + "/libicudata.so.70",
     ],
 )
 
@@ -119,5 +122,8 @@ filegroup(
     srcs = [_LIB + "/libQt5Core.so.5"] + glob([
         _LIB + "/libdouble-conversion.so.3",
         _LIB + "/libpcre2-16.so.0",
+        _LIB + "/libicui18n.so.70",
+        _LIB + "/libicuuc.so.70",
+        _LIB + "/libicudata.so.70",
     ]),
 )

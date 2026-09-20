@@ -6,7 +6,7 @@ name: macos-rust
 
 on:
   push:
-    branches: [rust]
+    branches: [main, rust]
   pull_request:
     branches: [main, rust]
   workflow_dispatch:
@@ -39,6 +39,8 @@ jobs:
       - name: Build distributable service and SDK
         run: ./build-service-macos.sh
       - name: Build and run C and C++ consumers
+        env:
+          ORBIT_API_LIB: ${{ github.workspace }}/dist/macos/liborbit_api.dylib
         run: |
           ./src/OrbitTestC/build.sh
           ./src/OrbitTestCpp/build.sh
