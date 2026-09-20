@@ -59,6 +59,6 @@ rm -rf "$output/frida-python" # obsolete generated runtime
 mkdir -p "$output/licenses"
 cp tools/frida/licenses/* "$output/licenses/"
 cp rust/crates/orbit-api/include/orbit.h "$output/include/"
-cp src/OrbitTestPython/orbit.py "$output/"
+cp rust/crates/orbit-api/python/orbit_api/__init__.py "$output/orbit_api.py"
 cp docs/building_macos.md "$output/README.md"
 echo "Built $output; run $output/orbit-service --host 127.0.0.1 --serve 3000"
