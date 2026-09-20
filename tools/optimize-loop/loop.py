@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,7 @@ def evaluate_gate(
     baseline_fingerprint: str | None = None,
     current_fingerprint: str | None = None,
     correctness_passed: bool | None = None,
+    noise_floor_percent: float | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     fingerprint_ok = True
@@ -100,10 +102,24 @@ def evaluate_gate(
         reasons.append(
             f"delta {delta:,.4g} is not outside {sigma:g}σ (threshold {sigma_threshold:,.4g} from baseline stdev)"
         )
-    if gain_ok and sigma_ok and fingerprint_ok and delta_percent is not None:
+    # Between-run noise floor. The 1σ test uses the baseline's *within-run*
+    # spread, but on a shared/thermally-variable box the dominant noise is
+    # *between* runs, and a no-op can drift past 1σ (seen on Stockfish: two
+    # bench batches ~2x apart). Require the gain to also clear the measured
+    # run-to-run noise, so a phantom win is rejected.
+    noise_ok = True
+    if noise_floor_percent is not None and delta_percent is not None:
+        noise_ok = delta_percent > noise_floor_percent
+        if not noise_ok:
+            reasons.append(
+                f"mean gain {delta_percent:.3f}% is within the measured run-to-run noise "
+                f"({noise_floor_percent:.3f}%) — likely benchmark drift, not a real win"
+            )
+    if gain_ok and sigma_ok and noise_ok and fingerprint_ok and delta_percent is not None:
         extra = f"and {delta:,.4g} > {sigma:g}σ" if sigma_threshold is not None else "(no stdev; percent gate only)"
-        reasons.append(f"gain {delta_percent:.3f}% > {min_gain_percent}% {extra}")
-    accepted = bool(fingerprint_ok and gain_ok and sigma_ok and delta_percent is not None)
+        floor = f", above the {noise_floor_percent:.3f}% noise floor" if noise_floor_percent is not None else ""
+        reasons.append(f"gain {delta_percent:.3f}% > {min_gain_percent}% {extra}{floor}")
+    accepted = bool(fingerprint_ok and gain_ok and sigma_ok and noise_ok and delta_percent is not None)
     return {
         "accepted": accepted,
         "decision": "accept" if accepted else "reject",
@@ -115,6 +131,8 @@ def evaluate_gate(
         "delta": delta,
         "delta_percent": delta_percent,
         "sigma_threshold": sigma_threshold,
+        "noise_floor_percent": noise_floor_percent,
+        "noise_ok": noise_ok,
         "fingerprint_ok": fingerprint_ok,
         "reasons": reasons,
     }
@@ -245,6 +263,16 @@ def run_mock(log_dir: Path, min_gain_percent: float, sigma: float) -> dict[str, 
             "cf": "bbb",
             "expect": "reject",
         },
+        {
+            # Passes 1σ (tight within-run stdev) but the gain is inside the
+            # measured between-run noise floor: a phantom win on a noisy box.
+            "slug": "mock-reject-inside-noise-floor",
+            "b": 1_000_000.0,
+            "c": 1_039_000.0,
+            "s": 1_000.0,
+            "noise": 8.0,
+            "expect": "reject",
+        },
     ]
     results = []
     failed = False
@@ -257,6 +285,7 @@ def run_mock(log_dir: Path, min_gain_percent: float, sigma: float) -> dict[str, 
             sigma=sigma,
             baseline_fingerprint=fixture.get("bf"),
             current_fingerprint=fixture.get("cf"),
+            noise_floor_percent=fixture.get("noise"),
         )
         ok = gate["decision"] == fixture["expect"]
         failed = failed or (not ok)
@@ -331,6 +360,32 @@ def run_live(args: argparse.Namespace) -> dict[str, Any]:
         return {"ok": False, **attempt}
     attempt["baseline"] = baseline.get("bench")
 
+    # Calibrate the run-to-run noise floor before touching anything: re-measure
+    # the baseline binary in a few independent batches (bench only, no rebuild)
+    # and take the spread between batch means. A real win must beat this, which
+    # is what stops a no-op from being accepted on a noisy box.
+    baseline_mean0 = (attempt["baseline"] or {}).get("mean")
+    batch_means: list[float] = [baseline_mean0] if baseline_mean0 else []
+    for _ in range(max(0, args.noise_batches - 1)):
+        nb = ops.run_suite(
+            config=args.config, bench_iters=args.bench_iters,
+            capture="none", skip_build=True, skip_correctness=True,
+        )
+        nm = (ops.load_summary(nb.get("summary_path")).get("bench") or {}).get("mean")
+        if nm:
+            batch_means.append(nm)
+    between_stdev = statistics.pstdev(batch_means) if len(batch_means) >= 2 else None
+    noise_floor_percent = (
+        100.0 * between_stdev / statistics.fmean(batch_means)
+        if between_stdev is not None and batch_means else None
+    )
+    attempt["noise_calibration"] = {
+        "batches": len(batch_means),
+        "batch_means": batch_means,
+        "between_stdev": between_stdev,
+        "noise_floor_percent": noise_floor_percent,
+    }
+
     applied = ops.apply_patch(
         config=args.config,
         path=proposal["target_path"],
@@ -367,15 +422,19 @@ def run_live(args: argparse.Namespace) -> dict[str, Any]:
     attempt["after_suite"] = {"ok": after_run.get("ok"), "summary_path": after_run.get("summary_path"), "compare": after_run.get("compare")}
 
     b, a = attempt["baseline"] or {}, attempt["after"] or {}
+    # The 1σ test uses the larger of the within-run and between-run spreads, so
+    # a benchmark whose real noise is between runs is not waved through.
+    effective_stdev = max(b.get("stdev") or 0.0, between_stdev or 0.0) or None
     gate = evaluate_gate(
         baseline_mean=b.get("mean"),
         current_mean=a.get("mean"),
-        baseline_stdev=b.get("stdev"),
+        baseline_stdev=effective_stdev,
         min_gain_percent=args.min_gain_percent,
         sigma=args.sigma,
         baseline_fingerprint=b.get("fingerprint"),
         current_fingerprint=a.get("fingerprint"),
         correctness_passed=(after.get("correctness") or {}).get("passed"),
+        noise_floor_percent=noise_floor_percent,
     )
     attempt["gate"] = gate
     attempt["decision"] = gate["decision"]
@@ -418,6 +477,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--after-out")
     parser.add_argument("--hotspots-from")
     parser.add_argument("--bench-iters", type=int, default=8)
+    parser.add_argument("--noise-batches", type=int, default=3,
+                        help="baseline batches used to measure the between-run noise floor the gate must beat")
     parser.add_argument("--capture", choices=("auto", "orbit", "none"), default="none")
     parser.add_argument("--min-gain-percent", type=float, default=DEFAULT_MIN_GAIN_PERCENT)
     parser.add_argument("--sigma", type=float, default=DEFAULT_SIGMA)

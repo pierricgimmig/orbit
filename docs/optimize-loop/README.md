@@ -78,10 +78,16 @@ Accept only if **all** hold:
 | Parameter | Default | Rule |
 | --- | --- | --- |
 | `min_gain_percent` | **0.5** | after mean must beat baseline by more than 0.5% |
-| `sigma` | **1.0** | when baseline stdev exists, delta must be **> 1σ** |
+| `sigma` | **1.0** | delta must be **> 1σ**, σ = the larger of the within-run and between-run baseline spread |
+| `noise_batches` | **3** | baseline is re-measured in this many batches; the gain must also beat the measured **run-to-run noise floor** |
 | fingerprint / correctness | required | `ORBIT_FINGERPRINT` must match; correctness must not fail |
 
-Reject restores the experiment files in the target tree.
+The **noise floor** exists because a benchmark drifts between runs (thermal,
+frequency scaling, contention) by more than its within-run spread. On a shared
+box a no-op can drift past 1σ and read as a win; measuring the between-batch
+spread of the baseline and requiring the gain to clear it rejects that phantom.
+On Stockfish the between-run spread has been seen from 0.5% to ~2×, so this
+matters. Reject restores the experiment files in the target tree.
 
 ## Capture quality (honesty)
 
