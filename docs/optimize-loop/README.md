@@ -94,8 +94,7 @@ labeled **no-op** when hotspots look poor.
 
 Better sampling: `kernel.perf_event_paranoid` ≤ 1 (≤ 0 system-wide);
 `setcap cap_perfmon,cap_sys_ptrace+ep` on `orbit-service`; attach after
-the child is in its hot path; a matching `linux-perf` package when the
-kernel has one.
+the child is in its hot path.
 
 ## API keys
 
@@ -104,9 +103,16 @@ block.
 
 ## Logs
 
-Suite outputs: `docs/optimize-loop/runs/` (gitignored).
-Attempt log: [`loop-log/`](loop-log/) (small JSON/MD, committed).
+Both are generated on the machine that ran them and are gitignored, not
+checked in (they are machine- and time-specific):
 
-Recorded fixture live **0005** (2026-09-18): no-op comment on `workload.py`,
-throughput **+0.015%** (inside 1σ), fingerprint unchanged, **gate reject**,
-file reverted. Mock 0001–0004 still exercise the four gate cases.
+- Suite outputs: `docs/optimize-loop/runs/`.
+- Per-attempt loop log: `docs/optimize-loop/loop-log/` (`loop.py` writes one
+  `NNNN-*/` folder per attempt — `attempt.json`, `decision.md`,
+  `proposal.diff` — plus an `index.{json,md}` roll-up, and recreates the
+  directory on demand).
+
+A `mock` loop (`--mode mock`) writes four attempts exercising the gate cases
+(below-floor, inside-1σ, above-1σ accept, fingerprint change) without touching
+any target tree — a quick way to see the log format and the accept/reject
+rules.

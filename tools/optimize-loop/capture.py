@@ -1,7 +1,7 @@
 # Copyright (c) 2026 The Orbit Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-"""Attach Orbit or perf to a generic child PID (no target-specific protocol)."""
+"""Attach Orbit to a generic child PID (no target-specific protocol)."""
 
 from __future__ import annotations
 
@@ -209,8 +209,8 @@ def capture_orbit_http(
             "command": f"{orbit} --serve ; capture pid of: {cmd}",
             "service_log": str(log_path),
             "note": (
-                "Generic PID attach. Serve-mode on this VM has historically "
-                "opened rings but recorded 0 callstack samples."
+                "Generic PID attach via orbit-service serve mode. Falls back to "
+                "orbit file-mode (--pid --out) if serve mode records no samples."
             ),
         }
     finally:
@@ -293,44 +293,6 @@ def capture_orbit_file(
             target.kill()
 
 
-def capture_perf(cmd: list[str], *, cwd: Path, env: dict[str, str] | None, out_dir: Path) -> dict[str, Any]:
-    perf = shutil.which("perf")
-    if not perf:
-        return {"backend": "perf", "ok": False, "skipped": True, "reason": "perf CLI is not installed"}
-    data = out_dir / "perf.data"
-    record = subprocess.run(
-        [perf, "record", "--call-graph", "dwarf", "-o", str(data), "--", *cmd],
-        cwd=cwd,
-        env=_merged_env(env),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=180,
-    )
-    report = subprocess.run(
-        [perf, "report", "--stdio", "--demangle", "-i", str(data)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    (out_dir / "perf-report.txt").write_text(report.stdout)
-    hotspots = []
-    row = re.compile(r"^\s+([0-9.]+)%\s+.*\[.\]\s+(.+)$")
-    for line in report.stdout.splitlines():
-        match = row.match(line)
-        if match:
-            hotspots.append({"self_percent": float(match.group(1)), "symbol": match.group(2).strip()})
-        if len(hotspots) >= 20:
-            break
-    return {
-        "backend": "perf",
-        "ok": bool(hotspots),
-        "hotspots": hotspots,
-        "command": f"perf record -- {' '.join(cmd)}",
-        "returncode": record.returncode,
-    }
-
-
 def run_profile(
     mode: str,
     cmd: list[str],
@@ -346,7 +308,13 @@ def run_profile(
     paranoid = relax_perf_paranoid(1)
 
     def want(name: str) -> bool:
-        return mode in ("auto", name, "all")
+        return mode in ("auto", name)
+
+    # A summary of every attempt, with no `attempts` key of its own, so it can
+    # be stored inside a chosen result without a self-reference (the list holds
+    # the chosen element too). json.dumps rejects the cycle otherwise.
+    def summarize(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{k: v for k, v in a.items() if k != "attempts"} for a in items]
 
     if want("orbit") and orbit:
         try:
@@ -356,10 +324,11 @@ def run_profile(
         except Exception as error:  # noqa: BLE001
             result = {"backend": "orbit-http", "ok": False, "error": str(error)}
         attempts.append(result)
-        if result.get("ok") and mode != "all":
-            result["attempts"] = attempts
-            result["perf_event_paranoid"] = paranoid
-            return result
+        if result.get("ok"):
+            chosen = dict(result)
+            chosen["attempts"] = summarize(attempts)
+            chosen["perf_event_paranoid"] = paranoid
+            return chosen
         try:
             file_result = capture_orbit_file(
                 orbit, cmd, cwd=cwd, env=env, out_dir=out_dir, duration_ms=duration_ms
@@ -367,20 +336,17 @@ def run_profile(
         except Exception as error:  # noqa: BLE001
             file_result = {"backend": "orbit-file", "ok": False, "error": str(error)}
         attempts.append(file_result)
-        if file_result.get("ok") and mode != "all":
+        if file_result.get("ok"):
             chosen = dict(file_result)
-            chosen["attempts"] = attempts
+            chosen["attempts"] = summarize(attempts)
             chosen["perf_event_paranoid"] = paranoid
             return chosen
     elif want("orbit"):
         attempts.append({"backend": "orbit", "ok": False, "skipped": True, "reason": "orbit-service not built"})
 
-    if want("perf"):
-        attempts.append(capture_perf(cmd, cwd=cwd, env=env, out_dir=out_dir))
-
     chosen = next((a for a in attempts if a.get("ok")), attempts[-1] if attempts else {"ok": False, "skipped": True})
     chosen = dict(chosen)
-    chosen["attempts"] = [{k: v for k, v in a.items() if k != "attempts"} for a in attempts]
+    chosen["attempts"] = summarize(attempts)
     chosen["perf_event_paranoid"] = paranoid
     if not attempts:
         chosen = {

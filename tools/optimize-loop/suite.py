@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--compare", nargs=2, metavar=("OLD", "NEW"))
     parser.add_argument("--bench-iters", type=int)
-    parser.add_argument("--capture", choices=("auto", "orbit", "perf", "all", "none"), default="auto")
+    parser.add_argument("--capture", choices=("auto", "orbit", "none"), default="auto")
     parser.add_argument("--skip-bench", action="store_true")
     parser.add_argument("--skip-correctness", action="store_true")
     parser.add_argument("--skip-build", action="store_true")

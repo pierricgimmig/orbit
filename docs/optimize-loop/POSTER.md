@@ -16,7 +16,7 @@ does not ship another project’s source as a git submodule.
 | --- | --- |
 | Config (TOML/JSON/YAML) | `project`, `build`, `bench`, `correctness`, `capture`, `env` |
 | `suite.py` | Runs those commands; parses a primary throughput metric; JSON+MD summary; `--compare` |
-| Capture | Attaches this repo’s `orbit-service` (or `perf`) to the **child PID** |
+| Capture | Attaches this repo’s `orbit-service` to the **child PID** |
 | MCP | Stdio tools `optimize_*` so an external model can drive the loop |
 | `loop.py` | Baseline → hotspots → patch (project only) → rebuild → gate → accept or revert |
 

@@ -418,7 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--after-out")
     parser.add_argument("--hotspots-from")
     parser.add_argument("--bench-iters", type=int, default=8)
-    parser.add_argument("--capture", choices=("auto", "orbit", "perf", "none"), default="none")
+    parser.add_argument("--capture", choices=("auto", "orbit", "none"), default="none")
     parser.add_argument("--min-gain-percent", type=float, default=DEFAULT_MIN_GAIN_PERCENT)
     parser.add_argument("--sigma", type=float, default=DEFAULT_SIGMA)
     return parser

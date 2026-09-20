@@ -35,9 +35,12 @@ third_party/py-spy/
 /dist/macos/
 /dist/macos-universal/
 
-# Optimize-loop suite outputs (captures, perf.data, logs, local summaries)
+# Optimize-loop outputs: suite runs and the per-attempt loop log are generated
+# on the machine that ran them (machine- and time-specific), so they are not
+# checked in. loop.py recreates loop-log/ on demand.
 /docs/optimize-loop/runs/
 /tools/optimize-loop/runs/
+/docs/optimize-loop/loop-log/
 # Legacy path from the removed stockfish-branded tree
 /docs/stockfish-orbit-loop/runs/
 /tools/stockfish-orbit-loop/runs/
