@@ -1,0 +1,48 @@
+# Processes the hook-test harness launches and instruments, one function at a
+# time. Add your own -- a demo you build, or a released binary such as a game.
+#
+#   python3 tools/hook_test/hook_harness.py --sudo
+#   python3 tools/hook_test/hook_harness.py --sudo --only workload
+#
+# Per target:
+#   name    a label for the report.
+#   build   optional shell command to build it first (run from the repo root).
+#   argv    the command to launch. $BUILT is the built path of a `build`
+#           that ends by producing `out` (see below), for convenience.
+#   out     optional: the path `build` produces and `argv` should run; the
+#           harness rebuilds only when it is missing.
+#   select  which functions to test:
+#             "report"        the hottest functions from a sampling capture
+#             "search:<q>"    functions whose name matches <q>
+#             "list:a,b,c"    exactly these names
+#   top     how many functions to take (report/search). Default 15.
+#   seconds capture seconds per function. Default 3.
+#   wait_go the process waits for a line on stdin before working; the harness
+#           sends it once the hook is armed (used by crash-prone demos).
+#   gdb     run under gdb to capture a backtrace on a crash (best with wait_go).
+
+[[target]]
+name = "workload"
+out = "/tmp/orbit-hook-workload"
+build = "cc -O2 -g -fno-omit-frame-pointer -o /tmp/orbit-hook-workload tools/hook_test/workload.c -lpthread -lm"
+argv = ["/tmp/orbit-hook-workload"]
+select = "report"
+top = 8
+
+[[target]]
+name = "crash-demo"
+out = "/tmp/orbit-hook-crash-demo"
+build = "cc -O0 -g -o /tmp/orbit-hook-crash-demo tools/hook_test/crash_demo.c"
+argv = ["/tmp/orbit-hook-crash-demo"]
+select = "list:crash_in_here"
+wait_go = true
+gdb = true
+
+# Example of a released binary (edit the path, then --only game):
+# [[target]]
+# name = "game"
+# argv = ["/opt/MyGame/Binaries/Linux/MyGame"]
+# select = "search:Tick"
+# top = 25
+# seconds = 5
+# gdb = true
