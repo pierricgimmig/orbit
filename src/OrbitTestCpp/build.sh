@@ -7,7 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(git -C . rev-parse --show-toplevel)
 INCLUDE="$ROOT/rust/crates/orbit-api/include"
-[ -f "$ROOT/rust/target/release/liborbit_api.so" ] || (cd "$ROOT/rust" && cargo build --release -p orbit-api)
+API_LIBRARY="$ROOT/rust/target/release/liborbit_api.so"
+if [[ $(uname -s) == Darwin ]]; then API_LIBRARY="$ROOT/rust/target/release/liborbit_api.dylib"; fi
+[ -f "$API_LIBRARY" ] || (cd "$ROOT/rust" && cargo build --release -p orbit-api)
 if [[ ${ORBIT_STATIC:-0} == 1 ]]; then
   NATIVE_LIBS=(-lpthread -ldl -lm)
   if [[ $(uname -s) == Darwin ]]; then NATIVE_LIBS=(-lSystem -liconv); fi
@@ -15,7 +17,9 @@ if [[ ${ORBIT_STATIC:-0} == 1 ]]; then
     -o OrbitTestCpp OrbitTestCpp.cpp "$ROOT/rust/target/release/liborbit_api.a" "${NATIVE_LIBS[@]}"
   echo "built $(pwd)/OrbitTestCpp (static, liborbit_api.a linked in)"
 else
-  DL=(-ldl); if [[ $(uname -s) == Darwin ]]; then DL=(); fi
+  # dlopen is in libSystem on macOS. Keep the array nonempty for Bash 3.2
+  # with nounset: expanding an empty array there is an unbound-variable error.
+  DL=(-ldl); if [[ $(uname -s) == Darwin ]]; then DL=(-lSystem); fi
   ${CXX:-c++} -O2 -g -std=c++17 -Wall -Wextra -I"$INCLUDE" -o OrbitTestCpp OrbitTestCpp.cpp -lpthread "${DL[@]}"
   echo "built $(pwd)/OrbitTestCpp (header-only; loads liborbit_api at run time)"
 fi
