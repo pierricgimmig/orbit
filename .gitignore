@@ -41,6 +41,3 @@ third_party/py-spy/
 /docs/optimize-loop/runs/
 /tools/optimize-loop/runs/
 /docs/optimize-loop/loop-log/
-# Legacy path from the removed stockfish-branded tree
-/docs/stockfish-orbit-loop/runs/
-/tools/stockfish-orbit-loop/runs/
