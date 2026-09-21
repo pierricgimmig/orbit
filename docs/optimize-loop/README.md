@@ -14,6 +14,9 @@ it. That checkout stays yours; never add it as an Orbit submodule.
 
 | Piece | Path |
 | --- | --- |
+| Baseline capture | [`tools/optimize-loop/baseline_capture.py`](../../tools/optimize-loop/baseline_capture.py) — sampling + coarse hooks → stream, bundle, report |
+| Baseline post | [`tools/optimize-loop/baseline_post.py`](../../tools/optimize-loop/baseline_post.py) — self-contained HTML with the capture embedded, hotspot tables, overview |
+| Stockfish example | [`tools/optimize-loop/examples/stockfish.toml`](../../tools/optimize-loop/examples/stockfish.toml) + `stockfish-bench.sh` (bit-exact fingerprint) |
 | Suite | [`tools/optimize-loop/suite.py`](../../tools/optimize-loop/suite.py) |
 | Loop + gate | [`tools/optimize-loop/loop.py`](../../tools/optimize-loop/loop.py) |
 | MCP | [`tools/optimize-loop/mcp/server.py`](../../tools/optimize-loop/mcp/server.py) |

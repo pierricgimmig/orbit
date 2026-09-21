@@ -30,6 +30,50 @@ claim a win the gate did not confirm.
   `optimize_rerun_compare`, `optimize_run_loop`. A minimal stdio client is
   enough (initialize → tools/call).
 
+## 0b. The baseline post — mandatory before any change
+
+Every target starts with a **baseline artifact**: a self-contained HTML post
+that carries a *real* Orbit capture and the analysis a reader needs to judge
+every later claim. It is the reference every optimization is measured
+against, and it is written before the first patch. Three steps, three tools:
+
+1. **Capture** — `python3 tools/optimize-loop/baseline_capture.py <binary>
+   <out_prefix> <seconds> <hook,hook,...> -- <args>`: sampling on every
+   thread plus 3–5 *coarse* hooks that outline the program's structure (the
+   entry point, the per-work-item function, the per-iteration function — each
+   called thousands of times, never millions). Exports the stream (to embed),
+   the bundle (the record) and the sampling report. Needs the sudo wrapper
+   for hooks; falls back to sampling only and says so.
+2. **Overview** — write `overview.md`: (a) what the capture shows (threads,
+   the hooked skeleton with its counts and durations); (b) how the program
+   works *as the profile sees it* — a call tree from the entry point down to
+   the hot leaves with self/inclusive percentages, grouped into the two or
+   three subsystems that own the time; (c) the correctness constraint and how
+   it is fingerprinted; (d) **candidate wins at the design/algorithmic level**,
+   not just instruction level — each with the domain it acts on (an upper
+   bound from the samples), the argument for why the output stays bit-exact,
+   and what would have to be measured; (e) what is *not* on the table.
+3. **Post** — `python3 tools/optimize-loop/baseline_post.py --capture-json …
+   --report-json … --stream … --bundle … --overview overview.md --title …
+   --out docs/blog/NN-slug.html`. The stream is gzipped and base64-embedded;
+   "Open in Orbit" / "Show here" hand it to the viewer next to the page
+   (`../viewer/index.html`, the site layout — same origin is required, a blob
+   URL cannot cross origins), "Download" saves the `.orbit.stream`. Add the
+   index card; copy the bundle under `docs/optimize-loop/runs/traces/`
+   (gitignored) and the overview + capture/report JSON under
+   `docs/optimize-loop/experiments/<target>-baseline/`.
+
+**The fingerprint must be bit-exact.** Do not fingerprint one number (a node
+count); hash the target's *entire* output with only timing-dependent tokens
+removed (`tools/optimize-loop/examples/stockfish-bench.sh`: SHA-256 of the
+bench output minus `time`/`nps`/`Total time`/`Nodes/second`). "Faster and the
+output changed" is a bug, not a win — the gate rejects it by construction.
+Verify the fingerprint is stable across two runs before trusting it.
+
+Baseline numbers (the bench mean, stdev and noise floor from
+`optimize_run_suite` + noise batches, pinned) go in the post's byline so the
+first `rerun_compare` has something honest to compare against.
+
 ## 1. Gather data — sampling first
 
 Run `optimize_run_suite` (capture `orbit`, or `auto`), then
