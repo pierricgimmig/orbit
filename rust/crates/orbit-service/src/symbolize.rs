@@ -260,13 +260,11 @@ fn find_symbol(symbols: &[(u64, u64, String)], address: u64) -> Option<&str> {
     }
 }
 
-/// Rust names are demangled (legacy `_ZN..E` with its hash dropped, and v0
-/// `_R..`); anything else passes through as the linker wrote it. Itanium
-/// C++ demangling stays with `abi::__cxa_demangle` in the C++ shims: blog
-/// post 02 records why the Rust crate for it was not good enough, and a
-/// static musl service has no libstdc++ to call.
+/// Rust and Itanium C++ names made readable, lazily and memoized; see
+/// `demangle.rs` for the rule (the C++ shims that once did this with
+/// `__cxa_demangle` are gone with LLVM, so this is the only demangler).
 fn demangle(name: &str) -> String {
-    format!("{:#}", rustc_demangle::demangle(name))
+    crate::demangle::pretty_cached(name)
 }
 
 /// The function symbols of one ELF image, sorted by address: from its
@@ -434,9 +432,9 @@ mod tests {
     }
 
     #[test]
-    fn rust_names_are_demangled_and_others_pass_through() {
+    fn rust_and_cpp_names_are_demangled_and_others_pass_through() {
         assert_eq!(demangle("_ZN4core3ptr13drop_in_place17h1234567890abcdefE"), "core::ptr::drop_in_place");
-        assert_eq!(demangle("_ZN3app6module8functionEv"), "_ZN3app6module8functionEv");
+        assert_eq!(demangle("_ZN3app6module8functionEv"), "app::module::function");
         assert_eq!(demangle("clock_gettime"), "clock_gettime");
     }
 

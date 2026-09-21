@@ -21,6 +21,7 @@ mod macos;
 mod hooks;
 mod frida;
 mod code;
+mod demangle;
 mod functions;
 mod interner;
 mod lan;

@@ -1,0 +1,92 @@
+diff --git a/src/nnue/nnue_accumulator.cpp b/src/nnue/nnue_accumulator.cpp
+index b7fb950..7a46321 100644
+--- a/src/nnue/nnue_accumulator.cpp
++++ b/src/nnue/nnue_accumulator.cpp
+@@ -36,6 +36,27 @@ namespace Stockfish::Eval::NNUE {
+ using namespace SIMD;
+ 
+ namespace {
++#include <cstdio>
++struct UpdateStats {
++    unsigned long long calls = 0, psq = 0, thr = 0, psq_pairs = 0, thr_pairs = 0, thr_hist[9] = {};
++    unsigned long long path_both = 0, path_incr = 0, path_hybrid = 0, path_refresh = 0, chain = 0;
++    unsigned long long refresh_psq = 0, refresh_thr = 0;
++    ~UpdateStats() {
++        std::fprintf(stderr, "ORBIT_STATS apply_combined calls=%llu psq/call=%.2f thr/call=%.2f psq_pairs=%llu thr_pairs=%llu\n",
++                     calls, calls ? double(psq) / calls : 0, calls ? double(thr) / calls : 0, psq_pairs, thr_pairs);
++        std::fprintf(stderr, "ORBIT_STATS thr_hist(<8,<16,<24,<32,<48,<64,<96,<128,>=128)=");
++        for (auto h : thr_hist) std::fprintf(stderr, "%llu ", h);
++        std::fprintf(stderr, "\nORBIT_STATS paths both=%llu incr=%llu hybrid=%llu refresh=%llu incremental_steps=%llu refresh_psq/refresh=%.1f refresh_thr/refresh=%.1f\n",
++                     path_both, path_incr, path_hybrid, path_refresh, chain,
++                     path_refresh ? double(refresh_psq) / path_refresh : 0, path_refresh ? double(refresh_thr) / path_refresh : 0);
++    }
++};
++static UpdateStats g_stats;
++template<typename A, typename B> static unsigned pairs(const A& a, const B& b) {
++    unsigned n = 0;
++    for (int i = 0; i < a.ssize(); ++i) for (int j = 0; j < b.ssize(); ++j) n += a[i] == b[j];
++    return n;
++}
+ 
+ template<bool Forward>
+ void update_accumulator_incremental(Color                     perspective,
+@@ -99,7 +120,8 @@ void AccumulatorStack::evaluate(const Position&           pos,
+     const usize last_black = find_last_usable_accumulator(BLACK);
+ 
+     if (accumulators[last_white].computed[WHITE] && accumulators[last_black].computed[BLACK])
+-        forward_update_incremental_both(pos, featureTransformer, last_white, last_black);
++    { g_stats.path_both++; g_stats.chain += (size - 1 - std::min(last_white, last_black));
++        forward_update_incremental_both(pos, featureTransformer, last_white, last_black); }
+     else
+     {
+         evaluate_side(WHITE, pos, featureTransformer, cache, last_white);
+@@ -116,7 +138,8 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
+     constexpr int MIN_PC_COUNT_HYBRID = 15;
+ 
+     if (accumulators[last_usable_accum].computed[perspective])
+-        forward_update_incremental(perspective, pos, featureTransformer, last_usable_accum);
++    { g_stats.path_incr++; g_stats.chain += (size - 1 - last_usable_accum);
++        forward_update_incremental(perspective, pos, featureTransformer, last_usable_accum); }
+ 
+     else
+     {
+@@ -129,11 +152,13 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
+             && dirtyPiece.add_sq == SQ_NONE  // excludes castling
+         )
+         {
++            g_stats.path_hybrid++;
+             update_accumulator_hybrid(perspective, pos, featureTransformer, mut_latest(),
+                                       accumulators[size - 2], cache);
+             return;
+         }
+ 
++        g_stats.path_refresh++;
+         update_accumulator_refresh_cache(perspective, featureTransformer, pos, mut_latest(), cache);
+         backward_update_incremental(perspective, pos, featureTransformer, last_usable_accum);
+     }
+@@ -483,6 +508,7 @@ sf_always_inline PsqtTile apply_psqt(IndexType                         j,
+     return acc;
+ }
+ 
++
+ void apply_combined(Color                              perspective,
+                     const FeatureTransformer&          featureTransformer,
+                     const AccumulatorState&            from,
+@@ -492,6 +518,9 @@ void apply_combined(Color                              perspective,
+                     const ThreatFeatureSet::IndexList& thrAdded,
+                     const ThreatFeatureSet::IndexList& thrRemoved) {
+ 
++    g_stats.calls++; g_stats.psq += psqAdded.size() + psqRemoved.size(); g_stats.thr += thrAdded.size() + thrRemoved.size();
++    g_stats.psq_pairs += pairs(psqAdded, psqRemoved); g_stats.thr_pairs += pairs(thrAdded, thrRemoved);
++    { unsigned t = thrAdded.size() + thrRemoved.size(); int b = t < 8 ? 0 : t < 16 ? 1 : t < 24 ? 2 : t < 32 ? 3 : t < 48 ? 4 : t < 64 ? 5 : t < 96 ? 6 : t < 128 ? 7 : 8; g_stats.thr_hist[b]++; }
+     const auto& fromAcc = from.accumulation[perspective];
+     auto&       toAcc   = to.accumulation[perspective];
+ 
+@@ -913,6 +942,7 @@ void update_accumulator_refresh_cache(Color                     perspective,
+     ThreatFeatureSet::IndexList active;
+     ThreatFeatureSet::append_active_indices(perspective, pos, active);
+     PairFeatureSet::append_active_indices(perspective, pos, active);
++    g_stats.refresh_psq += removed.size() + added.size(); g_stats.refresh_thr += active.size();
+ 
+     accumulator.computed[perspective] = true;
+ 
