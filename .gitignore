@@ -58,3 +58,8 @@ tools/media-kit/node/node_modules/
 /rust/crates/orbit-service/python/*.egg-info/
 integrations/unreal/OrbitProfiler/Intermediate/
 integrations/unreal/OrbitProfiler/Binaries/
+
+# optimize-loop generated outputs (runs, loop logs, traces) — machine/time-specific
+/docs/optimize-loop/runs/
+/tools/optimize-loop/runs/
+/docs/optimize-loop/loop-log/

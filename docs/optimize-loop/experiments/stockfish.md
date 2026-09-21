@@ -32,15 +32,37 @@ hotspots are the engine's own shape:
 Eval (NNUE) dominates: `apply_combined` + `propagate` + accumulator updates are
 over half the time.
 
-## 2. Hooking — not done here, and why
+## 2. Hooking — the "don't hook too-often" lesson, measured
 
-The plan was to hook a few functions for exact call counts and durations. Orbit
-uprobe hooking needs `CAP_SYS_ADMIN` (via `tools/sudo`), and `sudo -n` was not
-available in this environment, so hooking was skipped rather than faked. The
-methodology and its key caution are in the `perf-optimize-loop` skill: **never
-hook a function called too often** — a per-eval leaf like `apply_combined` fires
-millions of times and would flood the rings, distort timing, and drop events.
-Hook a coarser caller instead. Sampling was enough to pick a target here.
+Orbit uprobe hooking needs `CAP_SYS_ADMIN`, granted here by the passwordless
+`tools/sudo` wrapper (`(root) NOPASSWD: /usr/local/bin/orbit-service-sudo`;
+`sudo -n` on general commands still needs a password, but the wrapper does not).
+Two functions were hooked, one at a time, over a ~6 s `bench 512 4 20`:
+
+| hooked function | calls in ~6 s | outcome |
+| --- | --- | --- |
+| `apply_combined` (per-eval leaf) | **6,499,833** | **DROPPING EVENTS: ~1.07M scope records lost** — "hook fewer functions or lower the call rate"; 23,197 hits refused |
+| `Search::Worker::iterative_deepening()` (coarse) | **28** | clean; brackets each position's whole search |
+
+The rule from the `perf-optimize-loop` skill, shown with real numbers: a leaf
+called millions of times per second floods the scope rings and corrupts its own
+measurement. Hook a coarse *caller* instead — `iterative_deepening` sees 28
+calls with zero drops. Hooking attributes time and confirms a function matters;
+it is not for timing the tight leaf (sampling already shows the leaf is hot).
+
+## 2b. Before/after traces
+
+Full Orbit sampling captures of each build, saved as openable `.orbit.zip`
+bundles under `docs/optimize-loop/runs/traces/` (gitignored):
+
+| trace | samples | top of profile |
+| --- | --- | --- |
+| `stockfish-before.orbit.zip` | 15,469 | apply_combined 36.8%, propagate 9.8%, search 7.2% |
+| `stockfish-after.orbit.zip` | 15,543 | apply_combined 37.8%, evaluate 16%, search 12.5% |
+
+Open either with `orbit-service --serve`, then **Open** in the viewer. The eval
+share stays ~37% because `__restrict` sped the whole eval proportionally rather
+than removing a function; the win shows in nodes/second, not as a shrinking bar.
 
 ## 3. Analyse and change
 
