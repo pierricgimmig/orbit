@@ -150,11 +150,18 @@ def rerun_compare(
     out: str | None = None,
     bench_iters: int | None = None,
     capture: str = "none",
+    skip_build: bool = False,
 ) -> dict[str, Any]:
     base = latest_summary_path(baseline)
     if base is None:
         return {"ok": False, "error": "no baseline summary; pass baseline= or run optimize_run_suite first"}
-    result = run_suite(config=config, out=out, baseline=str(base), bench_iters=bench_iters, capture=capture)
+    # skip_build matters: a re-measure of the *same* binary (noise batches, or
+    # right after an explicit optimize_rebuild) must not rebuild, and an
+    # incremental rebuild can silently keep objects from a previous build
+    # variant (e.g. a profile-build), comparing a binary against itself.
+    result = run_suite(
+        config=config, out=out, baseline=str(base), bench_iters=bench_iters, capture=capture, skip_build=skip_build
+    )
     result["baseline_path"] = str(base)
     return result
 
