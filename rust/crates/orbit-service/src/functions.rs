@@ -483,17 +483,11 @@ mod tests {
     }
 }
 
-/// A Rust symbol demangled (legacy `_ZN..E` without its hash, and v0), a C
-/// or C++ one as it is: the Functions view and the disassembly read names,
-/// and `_ZN12orbit_service7uprobes..` is not one. The same rule the
-/// symbolizer applies to sampled frames.
+/// A Rust or C++ symbol made readable (`demangle.rs`): the Functions view,
+/// the hook scope names and the disassembly read names, and neither
+/// `_ZN12orbit_service7uprobes..` nor `_ZN9Stockfish6Search6Worker..Ev` is
+/// one. The same rule the symbolizer applies to sampled frames.
 fn pretty_name(mangled: &str) -> String {
-    if mangled.starts_with("_R") || (mangled.starts_with("_ZN") && mangled.ends_with('E')) {
-        let demangled = format!("{:#}", rustc_demangle::demangle(mangled));
-        if demangled != mangled {
-            return demangled;
-        }
-    }
-    mangled.to_string()
+    crate::demangle::pretty(mangled)
 }
 
