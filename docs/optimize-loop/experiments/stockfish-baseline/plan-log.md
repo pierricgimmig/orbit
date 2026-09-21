@@ -1,4 +1,4 @@
-# Plan log — Stockfish, iterating from the baseline (post 24)
+# Plan log — Stockfish, iterating from the baseline (post 25)
 
 Each entry: what was measured, what it changed in the plan. Newest last.
 
@@ -75,6 +75,6 @@ order: step-merging in the accumulator chain (bounded ~1–2 %, a day), lazy
 threat bookkeeping (≤ 2.7 %, needs the previous position's attack maps kept
 alive), and everything else is below the box's 0.6–0.8 % floor. The plain
 build's one large, bit-exact lever remains the profile-guided build
-(+4.3 % gated, post 23). For code-level wins above 1 % on this engine the
+(+4.3 % gated, post 24). For code-level wins above 1 % on this engine the
 honest reading of the profile is: change what is computed (Elo work with the
 fishtest gate), not how.

@@ -63,6 +63,17 @@ fix_debian_archive() {
     code="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")"
   fi
   case "${code}" in
+    bullseye)
+      # The live security index still advertises packages whose files were
+      # removed (including ca-certificates). Use a complete, fixed snapshot
+      # for this compatibility image; apt still verifies its signed metadata.
+      cat > /etc/apt/sources.list <<'SOURCES'
+deb http://snapshot.debian.org/archive/debian/20260801T000000Z bullseye main
+deb http://snapshot.debian.org/archive/debian-security/20260801T000000Z bullseye-security main
+SOURCES
+      echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
+      rm -f /etc/apt/sources.list.d/* || true
+      ;;
     stretch|buster)
       echo "deb http://archive.debian.org/debian ${code} main" > /etc/apt/sources.list
       echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive

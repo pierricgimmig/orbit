@@ -692,15 +692,20 @@ code,pre,kbd,samp,tt{font-family:var(--mono);}
   <h2 id="posts">Posts</h2>
 
   <div class="posts wide">
-    <a href="24-stockfish-under-orbit-the-baseline.html">
-      <span class="n">24 &middot; optimize loop</span>
+    <a href="25-stockfish-under-orbit-the-baseline.html">
+      <span class="n">25 &middot; optimize loop</span>
       <h3>Stockfish Under Orbit: The Baseline</h3>
       <p>The mandatory first step of the optimize loop, done for Stockfish: a real Orbit capture embedded in the page (open it in the viewer, inline or in a tab), the structure four coarse hooks reveal, the sampling hotspots, how the engine works as the profile sees it, and six design-level wins that leave the engine's output bit-exact.</p>
     </a>
-    <a href="23-two-phantoms-and-a-real-five-percent.html">
-      <span class="n">23 &middot; optimize loop</span>
+    <a href="24-two-phantoms-and-a-real-five-percent.html">
+      <span class="n">24 &middot; optimize loop</span>
       <h3>Two Phantoms and a Real Five Percent</h3>
       <p>An agent drives the profile&rarr;hook&rarr;change&rarr;measure loop against Stockfish a second time, with a written trace, before/after captures and uninstrumented end-to-end runs. It retracts a +2.5% it had claimed the day before (the compiler had changed five bytes), loses three well-motivated prefetch experiments to the gate, finds two bugs in the loop's own tooling, and ends with a gain nobody can argue with: +4.3% accepted, +6.0% in 16 of 16 interleaved runs.</p>
+    </a>
+    <a href="23-a-profiler-an-agent-can-drive.html">
+      <span class="n">23 &middot; tooling</span>
+      <h3>A Profiler an Agent Can Drive</h3>
+      <p>A closed optimize-and-profile loop you point at any external project through a config file — build, benchmark, profile with Orbit, propose a change, and accept it only if a statistical gate says the win is real. Exposed over MCP so a coding agent can run the whole cycle, with the wiring drawn out in full: JSON-RPC over stdio, seven sandboxed tools, no keys crossing the line. Shown profiling Stockfish.</p>
     </a>
     <a href="22-every-machine-in-one-timeline.html">
       <span class="n">22 &middot; aggregation</span>

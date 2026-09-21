@@ -34,7 +34,7 @@ cargo +1.88.0 run --release --manifest-path rust/Cargo.toml -p orbit-test-rust -
 C and C++ use `dist/macos/include/orbit.h` and `dist/macos/liborbit_api.a`:
 
 ```sh
-cc -I dist/macos/include your_app.c dist/macos/liborbit_api.a -lSystem -liconv -o your_app
+cc -DORBIT_STATIC -I dist/macos/include your_app.c dist/macos/liborbit_api.a -lSystem -liconv -o your_app
 ./src/OrbitTestC/build.sh
 ./src/OrbitTestCpp/build.sh
 ```
@@ -43,8 +43,8 @@ Python uses the same C ABI through the dylib:
 
 ```sh
 export ORBIT_API_LIB="$PWD/dist/macos/liborbit_api.dylib"
-export PYTHONPATH="$PWD/src/OrbitTestPython"
-python3 -c 'import orbit,time; assert orbit.init() == 0; exec("while True:\n with orbit.scope(\"Python work\"):\n  time.sleep(0.01)")'
+export PYTHONPATH="$PWD/dist/macos"
+python3 -c 'import orbit_api as orbit,time; assert orbit.init() == 0; exec("while True:\n with orbit.scope(\"Python work\"):\n  time.sleep(0.01)")'
 ```
 
 Producers can start before or during capture. Discovery runs every 250 ms;

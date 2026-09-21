@@ -707,7 +707,7 @@ kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); 
 <body>
 <svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs><marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs></svg>
 <header class="masthead"><div class="masthead-inner">
-<p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 23 &middot; The optimize loop on Stockfish, run two</p>
+<p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 24 &middot; The optimize loop on Stockfish, run two</p>
 <h1>Two Phantoms and a Real Five Percent</h1>
 <p class="dek">An agent drove Orbit's profile&rarr;hook&rarr;change&rarr;measure loop against Stockfish a second time, this time with a written trace of every step, before/after captures, and clean end-to-end runs with no profiler attached. It retracted a win it had claimed the day before, lost three well-motivated prefetch experiments to the gate, found two bugs in the loop's own tooling, and ended with one gain nobody can argue with: <strong>+4.3% accepted by the gate, +6.0% in 16 of 16 interleaved runs</strong>, fingerprint identical. That gain is Stockfish's own profile-guided build. What the loop actually produced is the method that tells the real gain from the two phantoms.</p>
 <p class="byline">Every number below is copied from tool output recorded in <code>docs/optimize-loop/experiments/stockfish-run2/trace.md</code>, appended as it happened. Box: i9-13900KF (8 P + 16 E cores), shared with the owner's other work while this ran. Tree read at <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a>, branch <code>loop</code>. Target: <code>official-stockfish/Stockfish</code> at <code>17a6c8f</code>, built out of tree, left clean.</p>
@@ -894,7 +894,7 @@ kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); 
 
 <p>The Stockfish tree is clean. The experiment folder holds the trace, the five patches, the driver, the interleaved benchmark script and its data, and both configs. The PGO binary is the one to run.</p>
 </article>
-<footer><div class="footer-inner">Post 23 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="22-every-machine-in-one-timeline.html">&larr; Post 22</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a> &middot; Stockfish at 17a6c8f, out of tree, left clean</div></footer>
+<footer><div class="footer-inner">Post 24 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="23-a-profiler-an-agent-can-drive.html">&larr; Post 23</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a> &middot; Stockfish at 17a6c8f, out of tree, left clean</div></footer>
 <button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
 <script>
 (function(){

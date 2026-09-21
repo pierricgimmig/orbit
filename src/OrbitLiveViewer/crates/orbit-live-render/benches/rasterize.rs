@@ -137,6 +137,7 @@ fn collect_y_cull(c: &mut Criterion) {
                     y_cull: Some(YCull::new(0.0, 80.0)),
                     early_out: true,
                     inline: false,
+                    per_lane_spans: false,
                 },
             ))
         });
@@ -166,6 +167,7 @@ fn collect_early_out(c: &mut Criterion) {
                     y_cull: None,
                     early_out: false,
                     inline: false,
+                    per_lane_spans: false,
                 },
             ))
         });
@@ -183,6 +185,7 @@ fn collect_early_out(c: &mut Criterion) {
                     y_cull: None,
                     early_out: true,
                     inline: false,
+                    per_lane_spans: false,
                 },
             ))
         });

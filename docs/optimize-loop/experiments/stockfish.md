@@ -4,7 +4,7 @@ Two runs of the optimize loop, with an agent (Claude) as the driver, against
 Stockfish — profile, hook, analyse, change code, measure. Written as it
 happened, noise, dead ends and one retraction included. Run 2's full
 chronological trace, patches, scripts and data are in
-[`stockfish-run2/`](stockfish-run2/); the narrative is blog post 23.
+[`stockfish-run2/`](stockfish-run2/); the narrative is blog post 24.
 
 ## Setup
 

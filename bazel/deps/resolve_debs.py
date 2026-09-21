@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Resolve Ubuntu .deb packages to pinned (url, sha256) pairs.
 
-Regenerates //bazel/deps:debs.bzl from the host's apt metadata. The generated
-file is checked in, so ordinary builds never need apt -- only a maintainer
+Regenerates //bazel/deps:debs.bzl from isolated Ubuntu 22.04 (Jammy) apt
+metadata. The generated file is checked in, so ordinary builds never need apt -- only a maintainer
 bumping the pinned dependency versions does.
 
 Usage: python3 bazel/deps/resolve_debs.py
@@ -11,6 +11,7 @@ Usage: python3 bazel/deps/resolve_debs.py
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # Packages are grouped per generated repository. Each group becomes one
@@ -22,21 +23,22 @@ GROUPS = {
         # moc, uic, rcc.
         "qtbase5-dev-tools",
         # Shared libraries and the Qt platform plugins.
-        "libqt5core5t64",
-        "libqt5gui5t64",
-        "libqt5widgets5t64",
-        "libqt5network5t64",
-        "libqt5test5t64",
-        "libqt5dbus5t64",
-        "libqt5concurrent5t64",
-        "libqt5xml5t64",
-        "libqt5sql5t64",
-        "libqt5printsupport5t64",
+        "libqt5core5a",
+        "libqt5gui5",
+        "libqt5widgets5",
+        "libqt5network5",
+        "libqt5test5",
+        "libqt5dbus5",
+        "libqt5concurrent5",
+        "libqt5xml5",
+        "libqt5sql5",
+        "libqt5printsupport5",
         # Transitive shared-library dependencies of libQt5Core/libQt5Gui that
-        # Ubuntu 26.04 does not ship in a default install.
+        # the build runner may not ship in a default install.
         "libdouble-conversion3",
         "libpcre2-16-0",
         "libmd4c0",
+        "libicu70",
     ],
     "opengl": [
         # GL/gl.h and friends.
@@ -56,10 +58,10 @@ GROUPS = {
 }
 
 
-def resolve(package: str) -> tuple[str, str, str]:
-    """Returns (version, url, sha256) for `package` at the host's apt version."""
+def resolve(package: str, apt_options: list[str]) -> tuple[str, str, str]:
+    """Returns (version, url, sha256) for `package` at the baseline apt version."""
     uris = subprocess.run(
-        ["apt-get", "download", "--print-uris", package],
+        ["apt-get", *apt_options, "download", "--print-uris", package],
         capture_output=True, text=True, check=True).stdout.strip()
     if not uris:
         raise SystemExit(f"apt-get download --print-uris {package} returned nothing")
@@ -69,7 +71,7 @@ def resolve(package: str) -> tuple[str, str, str]:
     url = re.sub(r"^https?://[^/]*archive\.ubuntu\.com/", "https://archive.ubuntu.com/", url)
     url = re.sub(r"^https?://[^/]*security\.ubuntu\.com/", "https://security.ubuntu.com/", url)
     show = subprocess.run(
-        ["apt-cache", "show", package], capture_output=True, text=True, check=True).stdout
+        ["apt-cache", *apt_options, "show", package], capture_output=True, text=True, check=True).stdout
     fields = {}
     for line in show.splitlines():
         if line.startswith(("SHA256:", "Version:")) and ":" in line:
@@ -82,7 +84,7 @@ def resolve(package: str) -> tuple[str, str, str]:
     return fields["Version"], url, fields["SHA256"]
 
 
-def main() -> int:
+def generate(apt_options: list[str]) -> int:
     out = [
         "# Copyright (c) 2026 The Orbit Authors. All rights reserved.",
         "# Use of this source code is governed by a BSD-style license that can be",
@@ -94,7 +96,7 @@ def main() -> int:
     for group, packages in GROUPS.items():
         out.append("%s_DEBS = [" % group.upper())
         for package in packages:
-            version, url, sha256 = resolve(package)
+            version, url, sha256 = resolve(package, apt_options)
             print(f"  {package} {version}", file=sys.stderr)
             out += [
                 "    struct(",
@@ -110,6 +112,34 @@ def main() -> int:
     target.write_text("\n".join(out))
     print(f"wrote {target}", file=sys.stderr)
     return 0
+
+
+def main() -> int:
+    # Never consult the developer's installed packages or mutate system apt.
+    # Otherwise regenerating on a newer distro silently raises CI's glibc floor.
+    with tempfile.TemporaryDirectory(prefix="orbit-jammy-apt-") as directory:
+        root = Path(directory)
+        (root / "lists" / "partial").mkdir(parents=True)
+        (root / "sources.list").write_text(
+            "deb https://archive.ubuntu.com/ubuntu jammy main universe\n"
+            "deb https://archive.ubuntu.com/ubuntu jammy-updates main universe\n"
+            "deb https://security.ubuntu.com/ubuntu jammy-security main universe\n"
+        )
+        options = []
+        for key, value in {
+            "Dir::Etc::sourcelist": str(root / "sources.list"),
+            "Dir::Etc::sourceparts": "-",
+            "Dir::Etc::preferences": "-",
+            "Dir::Etc::preferencesparts": "-",
+            "Dir::State::lists": str(root / "lists"),
+            "Dir::State::status": "/dev/null",
+            "Dir::Cache": directory,
+            "APT::Architecture": "amd64",
+            "APT::Get::List-Cleanup": "0",
+        }.items():
+            options.extend(["-o", f"{key}={value}"])
+        subprocess.run(["apt-get", *options, "update"], check=True)
+        return generate(options)
 
 
 if __name__ == "__main__":
