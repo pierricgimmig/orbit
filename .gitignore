@@ -52,3 +52,8 @@ third_party/py-spy/
 /rust/crates/orbit-service/python/build/
 /rust/crates/orbit-service/python/dist/
 /rust/crates/orbit-service/python/*.egg-info/
+
+# optimize-loop generated outputs (runs, loop logs, traces) — machine/time-specific
+/docs/optimize-loop/runs/
+/tools/optimize-loop/runs/
+/docs/optimize-loop/loop-log/
