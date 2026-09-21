@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>Two Phantoms and a Real Five Percent — Orbit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+<style>
+.diagram { overflow-x:auto; padding:16px 8px; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+.diagram svg { display:block; width:100%; min-width:700px; height:auto; }
+.diagram rect { fill:var(--ground); stroke:var(--line); stroke-width:1.5; }
+.diagram rect.accent { fill:var(--accent-wash); stroke:var(--accent); }
+.diagram rect.soft { fill:var(--surface-2); stroke:var(--line-strong); }
+.diagram rect.warn { fill:var(--warn-wash); stroke:var(--warn); }
+.diagram rect.bar { fill:var(--accent); stroke:none; }
+.diagram rect.bar.dim { fill:var(--line-strong); }
+.diagram circle.ok { fill:var(--good); stroke:none; }
+.diagram circle.wait { fill:var(--warn); stroke:none; }
+.diagram text { fill:var(--ink); font:16px Roboto,sans-serif; text-anchor:middle; }
+.diagram text.small { font-size:13px; fill:var(--ink-soft); }
+.diagram text.label { font-size:12px; letter-spacing:1px; fill:var(--muted); }
+.diagram text.mono { font-family:'Roboto Mono',monospace; font-size:14px; }
+.diagram text.left { text-anchor:start; }
+.diagram text.right { text-anchor:end; }
+.diagram path.arrow { fill:none; stroke:var(--accent); stroke-width:2; marker-end:url(#arrowhead); }
+.diagram path.arrow.both { marker-start:url(#arrowhead); }
+.diagram path.line { fill:none; stroke:var(--line-strong); stroke-width:2; }
+.diagram path.dash { fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:5 5; }
+.toc p { margin-bottom:0; } .doc table { font-size:15px; }
+.plan-phase { border-left:3px solid var(--accent); padding-left:1rem; margin:1.6rem 0; }
+.plan-phase h3 { margin-top:0; }
+.plan-phase p.accept { font-size:.95rem; color:var(--ink-soft); }
+.plan-phase p.accept b { color:var(--ink); }
+.callout { background:var(--accent-wash); border:1px solid var(--accent); border-radius:10px; padding:1rem 1.25rem; font-size:.98rem; }
+.callout.hold { background:var(--hold-wash); border-color:var(--hold); }
+.decisions li { margin-bottom:.75rem; }
+kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); border:1px solid var(--line-strong); border-radius:5px; padding:.05em .4em; }
+@media(max-width:900px) {
+  .doc { grid-template-columns:[full-start] 1.25rem [wide-start text-start] minmax(0,1fr) [text-end wide-end] 1.25rem [full-end]; }
+  .wide { max-width:100%; margin-left:0; margin-right:0; }
+}
+@media(max-width:760px) {
+  .diagram::after { content:"Scroll horizontally to see the full diagram →"; display:block; padding-top:12px; color:var(--muted); font-size:12px; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" aria-hidden="true" style="position:absolute"><defs><marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs></svg>
+<header class="masthead"><div class="masthead-inner">
+<p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 23 &middot; The optimize loop on Stockfish, run two</p>
+<h1>Two Phantoms and a Real Five Percent</h1>
+<p class="dek">An agent drove Orbit's profile&rarr;hook&rarr;change&rarr;measure loop against Stockfish a second time, this time with a written trace of every step, before/after captures, and clean end-to-end runs with no profiler attached. It retracted a win it had claimed the day before, lost three well-motivated prefetch experiments to the gate, found two bugs in the loop's own tooling, and ended with one gain nobody can argue with: <strong>+4.3% accepted by the gate, +6.0% in 16 of 16 interleaved runs</strong>, fingerprint identical. That gain is Stockfish's own profile-guided build. What the loop actually produced is the method that tells the real gain from the two phantoms.</p>
+<p class="byline">Every number below is copied from tool output recorded in <code>docs/optimize-loop/experiments/stockfish-run2/trace.md</code>, appended as it happened. Box: i9-13900KF (8 P + 16 E cores), shared with the owner's other work while this ran. Tree read at <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a>, branch <code>loop</code>. Target: <code>official-stockfish/Stockfish</code> at <code>17a6c8f</code>, built out of tree, left clean.</p>
+</div></header>
+
+<article class="doc">
+<p class="lede">The brief was blunt: <em>run again, make a trace of what you did, before/after Orbit captures, a blog post. Try to find an undeniable performance gain in Stockfish. Also measure end-to-end runs without instrumentation before/after to make sure it worked.</em> The previous run had ended with a claimed <strong>+2.56%, 14/14 paired wins</strong> from adding <code>__restrict</code> to one NNUE function. This post starts by taking that claim apart, because "undeniable" is a standard the first run did not meet, and the only way to earn it was to find out why.</p>
+
+<nav class="toc" aria-label="In this post"><b>The run</b><p><a href="#loop">The loop</a> &middot; <a href="#gather">Gather and hook</a> &middot; <a href="#phantom">The first phantom</a> &middot; <a href="#noise">A noisy box</a> &middot; <a href="#misses">Where the misses are</a> &middot; <a href="#prefetch">Three prefetches, three rejects</a> &middot; <a href="#pgo">The real five percent</a> &middot; <a href="#traces">Before and after</a> &middot; <a href="#tooling">What the loop got wrong</a> &middot; <a href="#lessons">Lessons</a></p></nav>
+
+<h2 id="loop">The loop, and who does what</h2>
+
+<p>The tooling in <code>tools/optimize-loop</code> is an MCP server with seven tools. Orbit gathers the data; a small gate decides; the agent supplies the hypotheses. This run used all seven, plus two things Orbit cannot do yet, which are called out where they appear.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 250" role="img" aria-labelledby="loop-title"><title id="loop-title">The loop: sampling and hooking through MCP feed the agent's hypothesis; a patch is applied, rebuilt, benchmarked and gated; an accept is confirmed by interleaved uninstrumented runs</title>
+<rect x="20" y="30" width="150" height="56" rx="8" class="accent"/><text x="95" y="53">optimize_run_suite</text><text x="95" y="74" class="small">Orbit sampling, 12,796 samples</text>
+<rect x="20" y="110" width="150" height="56" rx="8" class="accent"/><text x="95" y="133">hook (uprobes)</text><text x="95" y="154" class="small">call counts, drop check</text>
+<path class="arrow" d="M170 58 L230 58"/><path class="arrow" d="M170 138 L230 100"/>
+<rect x="230" y="60" width="150" height="76" rx="8" class="soft"/><text x="305" y="88">agent</text><text x="305" y="108" class="small">reads source, PEBS,</text><text x="305" y="124" class="small">writes a patch</text>
+<path class="arrow" d="M380 98 L440 98"/>
+<rect x="440" y="70" width="130" height="56" rx="8"/><text x="505" y="93" class="mono">apply_patch</text><text x="505" y="114" class="mono">rebuild</text>
+<path class="arrow" d="M570 98 L630 98"/>
+<rect x="630" y="70" width="130" height="56" rx="8"/><text x="695" y="93" class="mono">rerun_compare</text><text x="695" y="114" class="small">10 runs, pinned</text>
+<path class="arrow" d="M695 126 L695 170"/>
+<rect x="600" y="170" width="190" height="56" rx="8" class="warn"/><text x="695" y="193">gate</text><text x="695" y="214" class="small">fingerprint, &gt;0.5%, &gt;1&sigma;, &gt;noise floor</text>
+<path class="arrow" d="M600 198 L400 198"/>
+<rect x="230" y="170" width="170" height="56" rx="8" class="accent"/><text x="315" y="193">interleaved A/B</text><text x="315" y="214" class="small">no profiler, 16 rounds</text>
+<path class="dash" d="M230 198 L95 198 L95 166"/>
+<text x="150" y="222" class="label">REJECT: revert, next idea</text>
+<text x="800" y="150" class="label">accept</text>
+<text x="500" y="190" class="label">confirm</text>
+</svg></div><figcaption>The shape of one iteration. Orbit sampling and hooks (left) feed the agent; the patch goes through the MCP tools; the gate is the only thing that says "accept", and even then the win is confirmed by interleaving the two binaries with nothing attached.</figcaption></figure>
+
+<h2 id="gather">Gather and hook</h2>
+
+<p><code>optimize_run_suite</code> attached Orbit to a running <code>bench</code> and recorded <strong>12,796</strong> callstack samples at <code>perf_event_paranoid&nbsp;=&nbsp;-1</code>, no privilege. The shape is the engine's:</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>self %</th><th>function</th></tr></thead><tbody>
+<tr><td class="right mono">37.3</td><td><code>NNUE::apply_combined</code> — incremental accumulator update</td></tr>
+<tr><td class="right mono">9.2</td><td><code>NNUE::NetworkArchitecture::propagate</code></td></tr>
+<tr><td class="right mono">7.3</td><td><code>NNUE::update_accumulator_refresh_cache</code></td></tr>
+<tr><td class="right mono">6.5</td><td><code>Search::Worker::search&lt;NonPV&gt;</code></td></tr>
+<tr><td class="right mono">5.8</td><td><code>MovePicker::next_move</code></td></tr>
+<tr><td class="right mono">3.4</td><td><code>NNUE::update_accumulator_incremental</code></td></tr>
+</tbody></table></div>
+
+<p>Evaluation is over half the time, and one function is over a third. Hooking then answered the question sampling cannot: how often. Two hooks, one at a time, through the passwordless <code>orbit-service-sudo</code> wrapper (uprobes need <code>CAP_SYS_ADMIN</code>):</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>hooked</th><th>calls in ~7 s</th><th>outcome</th></tr></thead><tbody>
+<tr><td><code>apply_combined</code> (leaf)</td><td class="right mono">6,157,420</td><td><strong>DROPPING EVENTS</strong>; 22,813 hits refused. The status line's own advice: hook fewer functions or lower the call rate.</td></tr>
+<tr><td><code>Worker::iterative_deepening</code> (coarse)</td><td class="right mono">24</td><td>clean; one scope per position searched</td></tr>
+</tbody></table></div>
+
+<p>That is the skill's first rule with real numbers: a function called a million times a second cannot be timed by hooking it; the hook overhead becomes the measurement. Hook the caller, and let sampling say the leaf is hot.</p>
+
+<h2 id="phantom">The first phantom: <code>__restrict</code></h2>
+
+<p>Run one had ended on a code change with a plausible story. <code>apply_combined</code> reads one accumulator and writes another that provably do not alias, so telling the compiler (<code>__restrict</code>) should let it keep tiles in registers across the store passes. Measured single-shot: +1.53%, gate ACCEPT. Confirmed interleaved: +2.56%, 14 of 14. This run put the same patch, a sibling patch for <code>update_accumulator_refresh_cache</code> (where the store sits mid-loop, so the story was stronger), and both together through the MCP tools again.</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>variant</th><th>nps (10 runs)</th><th>&Delta;</th><th>gate</th><th>pinned interleaved, 16 rounds</th></tr></thead><tbody>
+<tr><td>baseline</td><td class="right mono">1,448,422</td><td class="right mono">&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+<tr><td><code>apply_combined</code> restrict</td><td class="right mono">1,417,550</td><td class="right mono">&minus;2.24%</td><td>reject</td><td class="mono">6/16 wins, &minus;0.81%</td></tr>
+<tr><td><code>refresh_cache</code> restrict</td><td class="right mono">1,461,714</td><td class="right mono">+0.81%</td><td>reject (&lt;1&sigma;)</td><td class="mono">5/16 wins, &minus;1.19%</td></tr>
+<tr><td>both</td><td class="right mono">1,470,774</td><td class="right mono">+1.43%</td><td>reject (&lt;1&sigma;)</td><td class="mono">7/16 wins, &minus;1.51%</td></tr>
+</tbody></table></div>
+
+<p>Yesterday's win would not come back. So instead of measuring harder, I looked at what the compiler had actually done with the hint, which is what should have happened before any benchmark was run:</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 200" role="img" aria-labelledby="diff-title"><title id="diff-title">apply_combined: 615 instructions before and after the restrict patch, 3089 versus 3094 bytes; refresh_cache: 1240 versus 1237 instructions</title>
+<text x="20" y="40" class="left label">apply_combined</text>
+<rect x="160" y="22" width="615" height="26" class="bar dim"/><text x="785" y="41" class="left small">615 insns &middot; 3,089 B &middot; baseline</text>
+<rect x="160" y="54" width="615" height="26" class="bar"/><text x="785" y="73" class="left small">615 insns &middot; 3,094 B &middot; __restrict</text>
+<text x="20" y="130" class="left label">refresh_cache</text>
+<rect x="160" y="112" width="620" height="26" class="bar dim"/><text x="785" y="131" class="left small">1,240 insns &middot; baseline</text>
+<rect x="160" y="144" width="618.5" height="26" class="bar"/><text x="785" y="163" class="left small">1,237 insns &middot; __restrict</text>
+<text x="450" y="192" class="small">bar length = instruction count (refresh_cache drawn at half scale)</text>
+</svg></div><figcaption>The generated code, from <code>objdump</code> of the four binaries. The hint changed <code>apply_combined</code> by five bytes and the same instruction count; it removed three instructions from <code>refresh_cache</code>. GCC with LTO had already assumed no aliasing. There was no mechanism, so there could not have been a 2.5% win from it.</figcaption></figure>
+
+<p>Then how did run one get 14 of 14? The most likely answer is in the next section: the interleaving was unpinned on a hybrid CPU, and whichever binary launched second in each pair tended to land somewhere slightly different. Fourteen coin flips coming up the same way is a strong signal of <em>something</em>, but not necessarily of the thing you changed. The retraction stands on the code diff, not on the re-measurement: a change that does not change the instructions cannot own a speedup.</p>
+
+<div class="note warn"><p class="note-label">Retracted</p><p>The experiment write-up from run one said the <code>__restrict</code> change was "real and reproducible" and "upstreamable on its own". It is neither. The document is corrected in the same commit as this post.</p></div>
+
+<h2 id="noise">A noisy box, and what is deterministic on it</h2>
+
+<p>The box that ran this is a 13900KF: eight performance cores with hyperthreads, sixteen efficiency cores, a <code>powersave</code> governor, and two of the owner's processes taking a core and a half between them for the whole session. An unpinned single-thread <code>bench</code> lands wherever the scheduler puts it, and the same binary read anywhere from 1.385 to 1.495 M nodes/s inside one batch of ten. That is an 8% spread on a benchmark whose interesting effects are 1&ndash;2%.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 230" role="img" aria-labelledby="noise-title"><title id="noise-title">Six pinned baseline runs: nodes per second vary 0.79 percent, cycles 0.49 percent, retired instructions 0.004 percent</title>
+<text x="20" y="40" class="left label">coefficient of variation, 6 pinned runs of the same binary</text>
+<text x="20" y="85" class="left">nodes / second</text><rect x="220" y="66" width="632" height="26" class="bar dim"/><text x="860" y="85" class="left small">0.79%</text>
+<text x="20" y="135" class="left">cycles:u</text><rect x="220" y="116" width="392" height="26" class="bar dim"/><text x="620" y="135" class="left small">0.49%</text>
+<text x="20" y="185" class="left">instructions:u</text><rect x="220" y="166" width="4" height="26" class="bar"/><text x="232" y="185" class="left small">0.004%</text>
+<text x="450" y="220" class="small">same binary, same input, pinned to one P-core with an idle sibling</text>
+</svg></div><figcaption>Three ways to read the same six runs. Wall-clock throughput drifts under 1% even pinned; cycles are a bit calmer; retired instructions are constant to five digits, because the bench is deterministic. Instructions cannot tell you a change is faster, but they tell you immediately whether it does less work or more, with no noise at all.</figcaption></figure>
+
+<p>Three controls came out of this and went into the skill. Pin the bench to one P-core whose hyperthread sibling is idle (<code>taskset</code>; a four-second <code>/proc/stat</code> survey picks the core). Read <code>instructions:u</code> next to nodes/s, so a "win" that retires the same instructions is suspect before it is celebrated. And let the CPU cool for twenty seconds after a sixteen-core build, because the first benchmark after a build is measurably slower and the loop was benchmarking immediately.</p>
+
+<h2 id="misses">Where the misses are</h2>
+
+<p>With the phantom gone, the honest position was: a 37% function, tightly coded, in a program tuned by a thousand people. To get a hypothesis with a mechanism, I needed something Orbit does not yet do: attribute <em>cache misses</em> to instructions. <code>perf record</code> with the precise event <code>mem_load_retired.l3_miss:upp</code> does that. The owner's rule is that Orbit is the profiler unless it cannot do the job; this is one of those, and it is now on the list.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 300" role="img" aria-labelledby="miss-title"><title id="miss-title">The piece-square weight table is 22528 columns of 2 KiB, 46 MB, larger than the 36 MB L3; each tile pass of apply_combined reads a 512 byte chunk of every changed column, and every line of those chunks misses L3</title>
+<text x="20" y="34" class="left label">psq weight table: 22,528 columns &times; 2 KiB = 46 MB &nbsp;(L3 = 36 MB)</text>
+<rect x="20" y="46" width="860" height="40" class="soft"/>
+<rect x="300" y="46" width="14" height="40" class="accent"/><rect x="520" y="46" width="14" height="40" class="accent"/>
+<text x="307" y="104" class="small">column A (removed)</text><text x="527" y="104" class="small">column B (added)</text>
+<text x="20" y="150" class="left label">one column, 2 KiB = 32 cache lines, read in four tile passes</text>
+<rect x="20" y="162" width="200" height="34" class="accent"/><rect x="220" y="162" width="200" height="34"/><rect x="420" y="162" width="200" height="34"/><rect x="620" y="162" width="200" height="34"/>
+<text x="120" y="184" class="small">tile 0 &middot; 8 lines</text><text x="320" y="184" class="small">tile 1</text><text x="520" y="184" class="small">tile 2</text><text x="720" y="184" class="small">tile 3</text>
+<text x="20" y="232" class="left label">L3 misses by load instruction (PEBS, 50K samples)</text>
+<rect x="20" y="244" width="422" height="22" class="bar"/><text x="450" y="260" class="left small">49% in apply_combined &mdash; of which ~55% are the eight loads of a psq chunk, evenly</text>
+<rect x="20" y="272" width="305" height="22" class="bar dim"/><text x="333" y="288" class="left small">35% in update_accumulator_refresh_cache</text>
+</svg></div><figcaption>What the precise profile said. The piece-square (HalfKA) columns are 2 KiB of <code>i16</code> in a table larger than the last-level cache; each tile pass reads a 512-byte chunk of every changed column; every line of every chunk misses L3 about equally, which means the hardware prefetcher is not streaming them. The threat columns, which Stockfish does prefetch, miss far less. That is a hypothesis with a mechanism.</figcaption></figure>
+
+<h2 id="prefetch">Three prefetches, three rejects</h2>
+
+<p>If the psq columns miss because nobody asked for them early, ask for them early. Three ways, each behavior-preserving (integer adds in the same order; fingerprint identical throughout), each measured pinned with <code>instructions:u</code>, <code>cycles:u</code> and nodes/s over six alternating pairs:</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>variant</th><th>where the prefetch is issued</th><th>instructions</th><th>cycles</th><th>nps</th><th>why it lost</th></tr></thead><tbody>
+<tr><td>P1</td><td>all 32 lines of each psq column, just before <code>apply_combined</code></td><td class="right mono">+2.1%</td><td class="right mono">+1.7%</td><td class="right mono">&minus;1.3%</td><td>up to 128 prefetches in a burst into ~16 fill buffers, microseconds before the loads: queueing, not lead time</td></tr>
+<tr><td>P2</td><td>next tile's 8-line chunk, inside the tile loop</td><td class="right mono">+7.9%</td><td class="right mono">+2.0%</td><td class="right mono">&minus;2.1%</td><td>the eight loads of a chunk already issue back to back; the core had the memory-level parallelism, the prefetch only added work</td></tr>
+<tr><td>P3</td><td>at <code>Worker::do_move</code>, next to the TT prefetch, for from/to/captured &times; both perspectives</td><td class="right mono">+3.4%</td><td class="right mono">+2.6%</td><td class="right mono">&minus;3.9%</td><td>real lead time, but 12 KiB per node for updates that often never happen (pruned nodes, TT hits): pollution</td></tr>
+</tbody></table></div>
+
+<p>The instruction column is the useful one. Each variant did exactly the extra work its prefetch count predicts, and none of it bought anything: the stall that PEBS attributes to those loads is not a serial latency the core is waiting on, it is eight misses in flight that the out-of-order window already overlaps with the threat-column work. A precise profile tells you where the misses are; it does not tell you they are on the critical path. Stockfish's own developers presumably found this the same way, and left the psq columns alone. Three rejects, all reverted; the patches are kept in the experiment folder as the record of what was tried.</p>
+
+<h2 id="pgo">The real five percent</h2>
+
+<p>That left the behaviour-preserving levers that change the build rather than the source. <code>-mtune=native</code> did nothing (&minus;0.27%, 6/16 interleaved). Stockfish's <code>profile-build</code> (PGO) is the other, and the gate's three attempts to accept it are the most instructive part of the run.</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>gate run</th><th>baseline (10)</th><th>noise batches</th><th>floor</th><th>PGO</th><th>verdict</th></tr></thead><tbody>
+<tr><td>1</td><td class="right mono">1,474,007</td><td class="mono">1,261,038 &middot; 1,487,658</td><td class="right mono">16.1%</td><td class="right mono">+9.0%</td><td><strong>refused</strong> — inside the floor</td></tr>
+<tr><td>2</td><td class="right mono">1,489,739</td><td class="mono">1,538,748 &middot; 1,552,906</td><td class="right mono">4.1%</td><td class="right mono">+0.3%</td><td><strong>invalid</strong> — see below</td></tr>
+<tr><td>3</td><td class="right mono">1,445,521 &plusmn; 0.72%</td><td class="mono">1,438,885 &middot; 1,433,271</td><td class="right mono">0.85%</td><td class="right mono">1,500,970 &nbsp;<strong>+4.29%</strong></td><td><strong>ACCEPT</strong> — &gt;0.5%, &gt;1&sigma;, above floor, fingerprint 1659671</td></tr>
+</tbody></table></div>
+
+<p>Run one is the gate doing its job on a bad box: something took the core for twenty seconds during the first noise batch (four runs at 0.90 M nodes/s), the measured floor came out at 16%, and a 9% gain was correctly refused as unprovable <em>on that evidence</em>. Run two is a bug in the loop, described below: the "baseline" it measured was the PGO binary. Run three, with clean builds and a cool-down, accepted.</p>
+
+<p>And then the confirmation the brief asked for: sixteen rounds, three binaries, rotated order, pinned, and <strong>no profiler attached at any point</strong>.</p>
+
+<figure class="wide"><div class="diagram" tabindex="0" role="region" aria-label="Scrollable diagram"><svg viewBox="0 0 900 300" role="img" aria-labelledby="ab-title"><title id="ab-title">Sixteen interleaved rounds: PGO is faster than baseline in every round, paired mean plus 5.99 percent, min plus 0.17, max plus 12.02; mtune wins 6 of 16 at minus 0.27 percent</title>
+<text x="20" y="30" class="left label">paired &Delta; vs baseline per round, uninstrumented, pinned cpu 2</text>
+<path class="line" d="M60 200 L880 200"/>
+<text x="40" y="204" class="right small">0</text><text x="40" y="104" class="right small">+10%</text><text x="40" y="154" class="right small">+5%</text><text x="40" y="254" class="right small">&minus;5%</text>
+<path class="dash" d="M60 100 L880 100"/><path class="dash" d="M60 150 L880 150"/><path class="dash" d="M60 250 L880 250"/>
+<rect class="bar" x="70" y="156.5" width="22" height="43.5"/><rect class="bar" x="120" y="122.9" width="22" height="77.1"/><rect class="bar" x="170" y="155.2" width="22" height="44.8"/><rect class="bar" x="220" y="143.0" width="22" height="57.0"/><rect class="bar" x="270" y="99.0" width="22" height="101.0"/><rect class="bar" x="320" y="174.9" width="22" height="25.1"/><rect class="bar" x="370" y="198.3" width="22" height="1.7"/><rect class="bar" x="420" y="142.6" width="22" height="57.4"/><rect class="bar" x="470" y="133.3" width="22" height="66.7"/><rect class="bar" x="520" y="175.6" width="22" height="24.4"/><rect class="bar" x="570" y="121.6" width="22" height="78.4"/><rect class="bar" x="620" y="115.2" width="22" height="84.8"/><rect class="bar" x="670" y="139.6" width="22" height="60.4"/><rect class="bar" x="720" y="79.8" width="22" height="120.2"/><rect class="bar" x="770" y="138.6" width="22" height="61.4"/><rect class="bar" x="820" y="145.1" width="22" height="54.9"/>
+<rect class="bar dim" x="95" y="200.0" width="14" height="7.9"/><rect class="bar dim" x="145" y="181.3" width="14" height="18.7"/><rect class="bar dim" x="195" y="200.0" width="14" height="13.2"/><rect class="bar dim" x="245" y="196.5" width="14" height="3.5"/><rect class="bar dim" x="295" y="144.4" width="14" height="55.6"/><rect class="bar dim" x="345" y="200.0" width="14" height="38.2"/><rect class="bar dim" x="395" y="200.0" width="14" height="59.9"/><rect class="bar dim" x="445" y="180.7" width="14" height="19.3"/><rect class="bar dim" x="495" y="200.0" width="14" height="17.1"/><rect class="bar dim" x="545" y="200.0" width="14" height="15.6"/><rect class="bar dim" x="595" y="167.2" width="14" height="32.8"/><rect class="bar dim" x="645" y="155.7" width="14" height="44.3"/><rect class="bar dim" x="695" y="200.0" width="14" height="10.3"/><rect class="bar dim" x="745" y="200.0" width="14" height="12.7"/><rect class="bar dim" x="795" y="200.0" width="14" height="25.2"/><rect class="bar dim" x="845" y="200.0" width="14" height="17.1"/>
+<text x="470" y="285" class="small">rounds 1&ndash;16 &nbsp;&middot;&nbsp; teal: PGO, paired mean +5.99%, 16/16 &nbsp;&middot;&nbsp; grey: -mtune=native, &minus;0.27%, 6/16</text>
+</svg></div><figcaption>The end-to-end check. Per-round paired deltas drawn to scale from <code>rr-final-16.json</code>: PGO in teal, <code>-mtune=native</code> in grey. PGO is faster in every one of sixteen rounds, worst round +0.17%, best +12.02%, mean +5.99%. Node count 1,659,671 in all 48 runs. Whatever the box was doing, it did it to both binaries, and one of them was faster every time.</figcaption></figure>
+
+<p>Is that the "undeniable gain in Stockfish" the brief asked for? It is undeniable, it is in Stockfish, and it is behavior-preserving. It is also not a discovery: <code>profile-build</code> is the build Stockfish releases use, and the loop's baseline was the plain build. What the loop found is not that PGO is faster; it is a method that can tell a 4% real gain from a 2.5% imaginary one on a shared machine, and every one of the five code changes it tried was, correctly, sent back.</p>
+
+<h2 id="traces">Before and after, in Orbit</h2>
+
+<p>Both binaries were captured with Orbit's own sampler over a six-second <code>bench 256 4 22</code>, exported as bundles, and saved under <code>docs/optimize-loop/runs/traces/</code> (gitignored, machine-specific). The PGO binary also took a coarse hook cleanly.</p>
+
+<div class="table-wrap wide"><table><thead><tr><th>capture</th><th>samples</th><th>bundle</th><th>top of profile (self %)</th></tr></thead><tbody>
+<tr><td><code>run2-before-baseline.orbit.zip</code></td><td class="right mono">15,554</td><td class="right mono">2.9 MB</td><td>apply_combined 37.6 &middot; propagate 9.3 &middot; search 7.3 &middot; next_move 6.7 &middot; refresh 4.9</td></tr>
+<tr><td><code>run2-after-pgo.orbit.zip</code></td><td class="right mono">15,570</td><td class="right mono">2.1 MB</td><td>apply_combined 37.1 &middot; <em>Network::evaluate 14.9</em> &middot; search 12.8 &middot; next_move 9.1 &middot; refresh 6.5</td></tr>
+<tr><td>hook <code>iterative_deepening</code> on PGO</td><td class="right mono">28 calls</td><td>&mdash;</td><td>clean, zero refused hits</td></tr>
+</tbody></table></div>
+
+<p>The after-profile is a different shape, not a smaller one. <code>propagate</code> is gone from the table because PGO inlined it into <code>Network::evaluate</code>; <code>search</code> and <code>next_move</code> grew because their hot paths were laid out and inlined more aggressively. The 37% leaf is untouched in both, which is consistent with everything above: that function is memory-bound and already tight, and the win came from everything around it.</p>
+
+<h2 id="tooling">What the loop got wrong about itself</h2>
+
+<p><strong>An incremental rebuild compared PGO to PGO.</strong> <code>optimize_rebuild</code> ran <code>make build</code> over object files left by the previous <code>profile-build</code>; <code>make</code> saw them as up to date and linked them, so gate run two's "baseline" was the PGO binary and the PGO "gain" was +0.28%. Build commands for build-level variants now clean first, and the finding is in the skill: an incremental build does not see a flag change.</p>
+
+<p><strong><code>optimize_rerun_compare</code> rebuilt implicitly with no way to say no.</strong> The noise-floor batches re-measure the <em>same</em> binary; they were going through a build each time. The tool now takes <code>skip_build</code>, and the driver passes it for every re-measure.</p>
+
+<p><strong>A fresh capture reported another process's losses.</strong> Every hooked run, on both days, showed the status line <em>"DROPPING EVENTS: 1071584 scope records lost"</em>, including a coarse hook with 24 calls in a brand-new service. The number never changed. The owner has a five-hour-old <code>samples</code> process with its scope ring still in <code>/dev/shm</code>; the service discovers every segment and, on first drain of one that has been written far past its capacity since nobody was reading, counts the lap as records lost. Not this capture's loss, and the status line should not carry it. Filed as a follow-up: start a discovered segment's cursor at its current write position, and attribute losses per producer.</p>
+
+<p><strong>Two things Orbit could not do, that the run needed:</strong> instruction-level attribution within a function, and precise cache-miss sampling. Both came from <code>perf</code>. The address is in every sample Orbit records; a per-address view of a selected function is the next feature this loop wants.</p>
+
+<h2 id="lessons">Lessons, now in the skill</h2>
+
+<ol>
+<li><strong>Diff the code before you benchmark the change.</strong> If the instructions did not change, the speedup is not yours. Five bytes is not a mechanism.</li>
+<li><strong>Read retired instructions next to throughput.</strong> They are deterministic on a deterministic bench, and they separate "does less work" from "got lucky" for free.</li>
+<li><strong>Pin, cool down, interleave.</strong> One P-core with an idle sibling; twenty seconds after a parallel build; rotate binaries per round and count paired wins. Sixteen of sixteen is a result; fourteen of fourteen unpinned was not.</li>
+<li><strong>A precise miss profile locates misses, not the critical path.</strong> Eight misses already in flight do not get faster by being asked for again.</li>
+<li><strong>Clean builds for build-level variants</strong>, and a re-measure must never rebuild.</li>
+<li><strong>Report rejects and retractions in full.</strong> This run's most useful output is a corrected document and five patches that did not work, kept so nobody tries them next.</li>
+</ol>
+
+<p>The Stockfish tree is clean. The experiment folder holds the trace, the five patches, the driver, the interleaved benchmark script and its data, and both configs. The PGO binary is the one to run.</p>
+</article>
+<footer><div class="footer-inner">Post 23 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="22-every-machine-in-one-timeline.html">&larr; Post 22</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a> &middot; Stockfish at 17a6c8f, out of tree, left clean</div></footer>
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>
+(function(){
+  var b=document.getElementById("orbit-theme-toggle");
+  function cur(){return document.documentElement.getAttribute("data-theme")||"light";}
+  function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}
+  lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});
+})();
+</script>
+</body></html>

@@ -1,0 +1,25 @@
+name = "stockfish"
+project = "/home/pierric/git/stockfish"
+
+[build]
+command = ["sh", "-c", "make -C src clean >/dev/null && make -C src -j16 build ARCH=native COMP=gcc"]
+workdir = "."
+timeout_sec = 1800
+
+[bench]
+command = ["<scratch>/sf-bench.sh"]
+repeat = 8
+timeout_sec = 120
+
+[bench.metric]
+regex = 'ORBIT_METRIC\s+throughput=(?P<value>[-+0-9.eE]+)'
+name = "nps"
+unit = "nodes_per_sec"
+
+[correctness]
+command = ["<scratch>/sf-bench.sh"]
+expect_returncode = 0
+
+[capture]
+command = ["<scratch>/sf-capture.sh"]
+duration_ms = 5000

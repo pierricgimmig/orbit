@@ -88,8 +88,34 @@ change is accepted only if **all** hold:
 Even after an accept, **confirm with an interleaved A/B**: alternate baseline
 and candidate runs (A,B,A,B,…) and count paired wins. Drift cancels; if the
 candidate is faster in nearly every paired round, the win is real. A single
-back-to-back mean can be luck. (On Stockfish, a `+1.5%` single-shot accept held
-up as `+2.56%`, 14/14 paired.)
+back-to-back mean can be luck. (On Stockfish, PGO held up as +5.99%, 16/16
+paired, pinned; an earlier "+2.56%, 14/14" for a `__restrict` change did not —
+see the next section for why.)
+
+### Measurement controls that turned out to be mandatory
+
+- **Diff the generated code before you benchmark.** `objdump` the hot function
+  in both binaries. If the instructions did not change (a `__restrict` hint
+  changed `apply_combined` by 5 bytes at the same instruction count), the
+  speedup is not yours, however many paired rounds it "won".
+- **Read `instructions:u` next to the metric** (`perf stat -e instructions:u,
+  cycles:u`). On a deterministic bench, retired instructions are constant to
+  ~0.005%; they separate "does less work" from "got lucky" with no noise.
+- **Pin the bench** to one performance core whose hyperthread sibling is idle
+  (`taskset -c N`; survey `/proc/stat` for a few seconds to pick N). On a
+  hybrid CPU an unpinned run lands anywhere and the spread is 5–8%.
+- **Cool down** ~20 s after a parallel build before benchmarking; the first
+  bench after a 16-core build is measurably slower.
+- **Clean builds for build-level variants** (flags, PGO). An incremental
+  `make build` over a previous `profile-build`'s objects links those objects:
+  you compare a binary against itself. Re-measures of the same binary must
+  not rebuild at all (`optimize_rerun_compare` … `skip_build=true`).
+- **A precise miss profile locates misses, not the critical path.** PEBS said
+  half of all L3 misses were eight loads in one function; three prefetch
+  variants (burst before the call, next-chunk inside the loop, and at
+  `do_move` with real lead time) all lost — the loads were already in flight
+  together. Instruction-level and precise-event attribution are things Orbit
+  cannot do yet; use `perf record`/`perf annotate` for exactly that and say so.
 
 ## 5. Iterate and leave clean
 

@@ -1,0 +1,42 @@
+{
+ "baseline": {
+  "mean": 1445521.4,
+  "stdev": 10404.236938222171,
+  "fingerprint": "1659671",
+  "batch_means": [
+   1445521.4,
+   1438884.6,
+   1433271.4
+  ],
+  "noise_floor_percent": 0.8511520568905866,
+  "effective_stdev": 10404.236938222171
+ },
+ "experiments": [
+  {
+   "label": "pgo",
+   "patch": "cfg:<scratch>/stockfish-pgo.toml",
+   "mean": 1500970.3,
+   "stdev": 12418.84184124179,
+   "fingerprint": "1659671",
+   "delta_percent": 4.290119034831087,
+   "gate": {
+    "accepted": true,
+    "decision": "accept",
+    "min_gain_percent": 0.5,
+    "sigma": 1.0,
+    "baseline_mean": 1439225.8,
+    "current_mean": 1500970.3,
+    "baseline_stdev": 10404.236938222171,
+    "delta": 61744.5,
+    "delta_percent": 4.290119034831087,
+    "sigma_threshold": 10404.236938222171,
+    "noise_floor_percent": 0.8511520568905866,
+    "noise_ok": true,
+    "fingerprint_ok": true,
+    "reasons": [
+     "gain 4.290% > 0.5% and 6.174e+04 > 1\u03c3, above the 0.851% noise floor"
+    ]
+   }
+  }
+ ]
+}
