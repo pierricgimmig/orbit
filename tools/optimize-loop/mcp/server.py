@@ -99,6 +99,7 @@ TOOLS: list[dict[str, Any]] = [
                 "out": {"type": "string"},
                 "bench_iters": {"type": "integer"},
                 "capture": {"type": "string", "enum": ["auto", "orbit", "none"]},
+                "skip_build": {"type": "boolean", "description": "Re-measure the current binary without rebuilding"},
             },
         },
     },
@@ -161,6 +162,7 @@ def _dispatch(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
             out=args.get("out"),
             bench_iters=args.get("bench_iters"),
             capture=args.get("capture") or "none",
+            skip_build=bool(args.get("skip_build")),
         )
     if name == "optimize_run_loop":
         import loop as orbit_loop

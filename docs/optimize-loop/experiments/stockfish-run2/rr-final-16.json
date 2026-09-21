@@ -1,0 +1,139 @@
+{
+ "summary": {
+  "rounds": 16,
+  "cpu": 2,
+  "bench": "128 1 13",
+  "wall_s": 69.6,
+  "binaries": {
+   "baseline": {
+    "n": 16,
+    "mean": 1438290.5625,
+    "stdev": 30360.22171355298,
+    "cv_pct": 2.1108545453278658,
+    "min": 1379610,
+    "max": 1483173,
+    "fingerprint": [
+     1659671
+    ]
+   },
+   "mtune": {
+    "n": 16,
+    "mean": 1433988.8125,
+    "stdev": 37453.42093390594,
+    "cv_pct": 2.6118349465091057,
+    "min": 1349326,
+    "max": 1488494,
+    "fingerprint": [
+     1659671
+    ],
+    "delta_pct_of_means": -0.2990876886880776,
+    "paired_mean_pct": -0.268308290026854,
+    "paired_min_pct": -5.993470824991342,
+    "paired_max_pct": 5.560586773137789,
+    "paired_wins": "6/16",
+    "paired_stdev_pct": 2.9332062452199557,
+    "fingerprint_same_as_baseline": true
+   },
+   "pgo": {
+    "n": 16,
+    "mean": 1524147.6875,
+    "stdev": 40247.56133873013,
+    "cv_pct": 2.6406601977493818,
+    "min": 1438189,
+    "max": 1595837,
+    "fingerprint": [
+     1659671
+    ],
+    "delta_pct_of_means": 5.969386662091791,
+    "paired_mean_pct": 5.9942273223356155,
+    "paired_min_pct": 0.1749576058955746,
+    "paired_max_pct": 12.019219295105326,
+    "paired_wins": "16/16",
+    "paired_stdev_pct": 2.853005227657094,
+    "fingerprint_same_as_baseline": true
+   }
+  }
+ },
+ "rounds": [
+  {
+   "baseline": 1471339,
+   "mtune": 1459693,
+   "pgo": 1535310
+  },
+  {
+   "mtune": 1476575,
+   "pgo": 1561308,
+   "baseline": 1449494
+  },
+  {
+   "pgo": 1549646,
+   "baseline": 1483173,
+   "mtune": 1463554
+  },
+  {
+   "baseline": 1467436,
+   "mtune": 1472645,
+   "pgo": 1551094
+  },
+  {
+   "mtune": 1488494,
+   "pgo": 1552545,
+   "baseline": 1410085
+  },
+  {
+   "pgo": 1438189,
+   "baseline": 1402934,
+   "mtune": 1349326
+  },
+  {
+   "baseline": 1449494,
+   "mtune": 1362619,
+   "pgo": 1452030
+  },
+  {
+   "mtune": 1458410,
+   "pgo": 1512917,
+   "baseline": 1430750
+  },
+  {
+   "pgo": 1538156,
+   "baseline": 1441938,
+   "mtune": 1417310
+  },
+  {
+   "baseline": 1463554,
+   "mtune": 1440686,
+   "pgo": 1499251
+  },
+  {
+   "mtune": 1433221,
+   "pgo": 1496547,
+   "baseline": 1387684
+  },
+  {
+   "pgo": 1496547,
+   "baseline": 1379610,
+   "mtune": 1440686
+  },
+  {
+   "baseline": 1433221,
+   "mtune": 1418522,
+   "pgo": 1519845
+  },
+  {
+   "mtune": 1406500,
+   "pgo": 1595837,
+   "baseline": 1424610
+  },
+  {
+   "pgo": 1568687,
+   "baseline": 1477890,
+   "mtune": 1440686
+  },
+  {
+   "baseline": 1439437,
+   "mtune": 1414894,
+   "pgo": 1518454
+  }
+ ]
+}
