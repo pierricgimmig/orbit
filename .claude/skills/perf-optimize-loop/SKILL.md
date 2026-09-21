@@ -161,6 +161,35 @@ see the next section for why.)
   together. Instruction-level and precise-event attribution are things Orbit
   cannot do yet; use `perf record`/`perf annotate` for exactly that and say so.
 
+## 4b. Re-plan on every result — the plan is a hypothesis, not a schedule
+
+The candidate list in the baseline post is where you *start*, not what you
+execute. After **every** measurement — a counter, a quick A/B, a gate result,
+a reject — stop and ask what it changed:
+
+- **Counters before code.** Before implementing a candidate, spend one
+  instrumented build counting the thing it relies on (how often the case
+  occurs, how big the lists are, which path is taken). On Stockfish this
+  killed one candidate outright (add/remove pairs were 0.5 % of entries) and
+  reshaped another (35 % of evaluations refresh) before any patch existed.
+  Print counters to stderr from a static destructor; check the fingerprint is
+  unchanged so the instrumentation did not alter the search.
+- **A reject is data.** Read *why* it lost (instructions up but cycles flat →
+  the work was already overlapped; instructions flat and cycles up → a
+  hint/layout hurt locality) and let that redirect the next experiment
+  rather than trying the next item on the list.
+- **Re-read the source the numbers point at.** Two of the baseline's
+  candidates on Stockfish were impossible by construction (every king move
+  changes every psq index; the table was already bucket-major) — ten minutes
+  of reading, found only because the counters made the question precise.
+- **Keep a plan log** (`docs/optimize-loop/experiments/<target>-baseline/
+  plan-log.md`): one entry per result — what was measured, what it closed,
+  what it opened, the updated ranking. The log is the deliverable when
+  nothing is accepted; a run that ends "five candidates closed by data, one
+  deferred with a bounded upper bound" is a good run.
+- **Stop when the upper bounds are below the noise floor.** Do not keep
+  spending builds on sub-1 % ideas on a box whose floor is 0.8 %; say so.
+
 ## 5. Iterate and leave clean
 
 Keep going on the next hotspot. **Leave the target tree clean** unless you are

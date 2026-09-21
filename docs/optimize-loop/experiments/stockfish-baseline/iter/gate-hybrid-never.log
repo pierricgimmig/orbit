@@ -1,0 +1,8 @@
+baseline via optimize_run_suite: mean=1389938 nps stdev=8321 (cv 0.60%) fp=af278ac38b7025a4-1659671 n=10
+noise batch 1: mean=1383596 (Δ vs baseline -0.46%) fp=af278ac38b7025a4-1659671
+noise batch 2: mean=1381924 (Δ vs baseline -0.58%) fp=af278ac38b7025a4-1659671
+noise floor: batch means [1389938, 1383596, 1381924] → between-batch stdev 3452 (0.25%), floor (max-min) 0.58%, σ used = max(within,between) = 8321
+[hybrid-never] optimize_apply_patch applied (13 diff lines)
+[hybrid-never] optimize_rebuild ok (?s)
+[hybrid-never] rerun_compare: mean=1385985 stdev=7764 fp=af278ac38b7025a4-1659671 n=10 → Δ +0.06% vs grand baseline 1385152; gate=reject: mean gain 0.060% is not > 0.5%; delta 832.6 is not outside 1σ (threshold 8,321 from baseline stdev); mean gain 0.060% is within the measured run-to-run noise (0.578%) — likely benchmark drift, not a real win
+experiments done; stockfish tree clean=True
