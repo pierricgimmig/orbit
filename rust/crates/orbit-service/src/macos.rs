@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::hooks::HookSpec;
+use crate::hook_journal::ArmedHook;
 use crate::report::SampleStore;
 use crate::scopes::ScopeSource;
 use crate::visible::VisibleProcesses;
@@ -230,7 +230,7 @@ pub fn capture_loop(
     target_pid: i32,
     _store: Arc<SampleStore>,
     gpu_helper: Option<String>,
-    _hooks: Vec<HookSpec>,
+    _hooks: Vec<ArmedHook>,
     show_all_processes: bool,
     _duplicate_filter: bool,
     mut frida: Option<crate::frida::FridaSession>,

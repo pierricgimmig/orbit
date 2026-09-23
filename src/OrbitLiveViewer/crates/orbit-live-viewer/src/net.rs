@@ -50,6 +50,11 @@ pub struct StatusJson {
     /// functions were armed, or why none were. Empty when none were asked for.
     #[serde(default)]
     pub instrumentation: String,
+    /// JSON summary of a target crash blamed on a hook (the culprit and where
+    /// it faulted), empty when none. The viewer shows a banner and marks the
+    /// function. See the service's `hook_journal`.
+    #[serde(default)]
+    pub hook_crash: String,
 }
 
 fn default_machine() -> String {
@@ -127,6 +132,13 @@ pub struct FunctionHit {
     pub module: String,
     #[serde(default)]
     pub size: u64,
+    /// Hook-safety cue: "safe" | "risky" | "unsafe" | "unknown" (or empty
+    /// from an older service). See the service's `hook_safety`.
+    #[serde(default)]
+    pub safety: String,
+    /// Why, for the tooltip.
+    #[serde(default)]
+    pub safety_reason: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

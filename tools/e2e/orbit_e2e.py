@@ -769,6 +769,109 @@ def instrumentation(run):
     return f"{message}; {spans} hooked spans, longest {longest/1e6:.2f} ms"
 
 
+@scenario("hook-danger-cue", "The Functions list flags entries that are dangerous to hook")
+def hook_danger_cue(run):
+    run.load_symbols()
+    # A broad search over the target's own module: the service tags each hit
+    # safe / risky / unsafe / unknown from the entry it would probe.
+    hits = run.service.get(f"/api/functions/search?pid={run.target.pid}&q=&limit=2000")["functions"]
+    check_at_least(len(hits), 50, "functions in the search")
+    check(all("safety" in h for h in hits), "every hit must carry a safety verdict")
+    counts = {}
+    for h in hits:
+        counts[h.get("safety", "?")] = counts.get(h.get("safety", "?"), 0) + 1
+    dangerous = [h for h in hits if h.get("safety") in ("risky", "unsafe")]
+    check_at_least(len(dangerous), 1, f"some entries should be flagged dangerous (verdicts: {counts})")
+    # Each dangerous hit must carry a reason for the tooltip.
+    check(all(h.get("safety_reason") for h in dangerous), "a flagged entry must say why")
+    painted = ""
+    if run.chrome is not None:
+        # Show the flag in the viewer. The report panel opens by deep link only
+        # where the panel-open fix is present; where it is not, this is a
+        # best-effort screenshot and the service-side assertions above stand.
+        # The viewer paints a ⚠ on each flagged row; the report panel opens by
+        # deep link only where the panel-open fix is present, so this is a
+        # best-effort screenshot and the service-side assertions above stand.
+        run.open_viewer("?report=functions")
+        try:
+            rows = run.wait_for(lambda: run.rects_matching("danger:") or None, "flagged rows", timeout=8)
+            run.shot("46-hook-danger-cue", settle=0.5)
+            painted = f"; {len(rows)} flagged rows painted"
+        except Failure:
+            painted = "; viewer cue not screenshotted (report panel needs the deep-link open fix)"
+    return f"{len(dangerous)} of {len(hits)} flagged dangerous; verdicts {counts}{painted}"
+
+
+@scenario("hook-crash", "A hooked function that crashes: the report names it from the kernel's faulting ip")
+def hook_crash(run):
+    # Only meaningful with a privileged service (uprobes) and a readable
+    # kernel log; both come with --sudo.
+    binary = os.path.join(SCRATCH, "orbit-e2e-crash-target")
+    subprocess.run(
+        ["gcc", "-O0", "-g", "-fno-omit-frame-pointer", "-o", binary, os.path.join(HERE, "crash_target.c")],
+        check=True,
+    )
+    app = Target([binary], stdin=True)
+    try:
+        run.service.post("/api/symbols/load", {"pid": app.pid})
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            if run.service.get(f"/api/symbols/status?pid={app.pid}").get("status") == "ready":
+                break
+            time.sleep(0.3)
+        hits = run.service.get(f"/api/functions/search?pid={app.pid}&q=orbit_crash_here&limit=8")["functions"]
+        exact = [h for h in hits if h["name"] == "orbit_crash_here"]
+        check(exact, f"orbit_crash_here not in the index: {hits[:3]}")
+        # Arm the uprobe, then let the target run into the crash.
+        run.service.post("/api/capture/start", {
+            "pid": app.pid,
+            "instrumented_functions": [{"function_id": exact[0]["function_id"]}],
+            "dynamic_instrumentation_method": "kernel_uprobes",
+        })
+        message = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            message = run.service.get("/api/status").get("instrumentation", "")
+            if message:
+                break
+            time.sleep(0.2)
+        if "no hooks armed" in message:
+            run.service.post("/api/capture/stop")
+            return f"skipped: {message.split('.')[0]} (run with --sudo)"
+        check("instrumenting 1 of 1" in message, f"the crash hook did not arm: {message}")
+        app.go()  # the target now calls orbit_crash_here and segfaults
+        # The service writes a crash report file whenever the target dies
+        # mid-capture with hooks armed; that is provable without any kernel-log
+        # access. Wait for it and check it names the crashing function.
+        report_path = os.path.join(os.environ.get("ORBIT_STATE_DIR", "/tmp"), f"orbit-hook-crash-{app.pid}.json")
+        run.wait_for(lambda: os.path.exists(report_path) or None, "the crash report file", timeout=25)
+        data = json.loads(open(report_path).read())
+        check(data.get("suspect", {}).get("name") == "orbit_crash_here",
+              f"the report did not name the crashing hook: {data.get('suspect')}")
+        # The full evidence is there: the armed hooks with their entry bytes.
+        check(any(h["name"] == "orbit_crash_here" and h["entry_bytes"] for h in data.get("armed", [])),
+              "the armed hook's entry bytes are missing from the report")
+        kernel = data.get("kernel")
+        note = ""
+        if kernel and kernel.get("kind"):
+            # The strong path: the kernel named the faulting instruction, so
+            # the suspect was matched by ip and the banner is published.
+            check(data["suspect"].get("basis", "").startswith("the kernel"),
+                  f"a kernel line was read but not used to place the suspect: {data['suspect']}")
+            run.wait_for(lambda: run.service.get("/api/status").get("hook_crash") or None,
+                         "the crash banner on /api/status", timeout=10)
+            note = f"segfault ip {kernel.get('ip'):#x} in {kernel.get('module')}"
+        else:
+            note = "kernel log unreadable (needs CAP_SYSLOG / dmesg_restrict=0); suspect by " + data["suspect"].get("basis", "?")
+        run.service.post("/api/capture/stop")
+        return f"{data['signal']}; suspect orbit_crash_here; {note}"
+    finally:
+        try:
+            app.proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001
+            app.proc.kill()
+
+
 # ------------------------------------------------------------------------ run
 
 
