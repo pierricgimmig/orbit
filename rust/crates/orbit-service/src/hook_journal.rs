@@ -23,6 +23,7 @@
 //! it); without it the report still names a suspect from the verdicts and says
 //! the kernel log was unreadable.
 
+#[cfg(target_os = "linux")]
 use std::io::Read;
 use std::path::PathBuf;
 
