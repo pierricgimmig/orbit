@@ -114,7 +114,10 @@ impl FunctionIndex {
     fn functions_of_module(path: &str) -> Vec<(InstrumentableFunction, crate::hook_safety::HookSafety)> {
         let module = path.rsplit('/').next().unwrap_or(path).to_string();
         let _load = orbit_api::scope(format!("load symbols: {module}"));
-        let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+        let bytes = crate::symbolize::map_file(path);
+        if bytes.is_empty() {
+            return Vec::new();
+        }
         let metadata = parse_elf_metadata(&bytes, path).ok();
         let segments = metadata.as_ref().map(|m| m.loadable_segments.clone()).unwrap_or_default();
         // The machine and class drive the entry decode; default to x86-64 when
