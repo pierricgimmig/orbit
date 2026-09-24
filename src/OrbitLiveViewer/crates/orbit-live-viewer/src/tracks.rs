@@ -221,6 +221,10 @@ pub struct TrackStrip {
     /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
     pub process_sort: HashMap<u32, i32>,
     pub thread_sort: HashMap<(u32, u32), i32>,
+    /// Process sections the user has arranged by hand (a track was dropped
+    /// in or out of them). The activity sort leaves those alone: a manual
+    /// order is a decision, the automatic one is only a default.
+    pub pinned_sections: FastSet<u32>,
     /// User order for whole machine trees, overriding MachineId::sort_key.
     pub machine_sort: HashMap<MachineId, i32>,
 }
@@ -352,6 +356,7 @@ impl Default for TrackStrip {
             user_toggled: FastSet::default(),
             process_sort: HashMap::new(),
             thread_sort: HashMap::new(),
+            pinned_sections: FastSet::default(),
             machine_sort: HashMap::new(),
         }
     }
@@ -517,6 +522,70 @@ impl TrackStrip {
         self.apply_layout(index, filter_pid);
     }
 
+    /// Orders the tracks of every section by how much they have to show:
+    /// scopes first (instrumented and manual spans, async lanes), then
+    /// sampled frames, so the busiest thread is on top by default. A thread
+    /// moves with its async block and graphs, in the order they already
+    /// have. Sections the user has arranged by hand are left as they are.
+    /// Returns whether anything moved; the caller decides how often to ask
+    /// (once a second reads well; every frame would fight the eye).
+    pub fn sort_by_activity(&mut self, index: &TrackIndex) -> bool {
+        let mut activity: FastMap<ThreadId, (u64, u64)> = FastMap::default();
+        for (k, lane) in index.lanes() {
+            let entry = activity.entry(ThreadId { pid: k.pid, tid: k.tid }).or_default();
+            if is_sampled_frame_lane(k, lane) {
+                entry.1 += lane.len() as u64;
+            } else if matches!(k.kind, kind::API_SCOPE | kind::FUNCTION_CALL | kind::API_TRACK) {
+                entry.0 += lane.len() as u64;
+            }
+        }
+        let sections: Vec<u32> = {
+            let mut seen = Vec::new();
+            for key in &self.track_order {
+                let pid = self.host_pid(*key);
+                if !seen.contains(&pid) {
+                    seen.push(pid);
+                }
+            }
+            seen
+        };
+        let mut moved = false;
+        for pid in sections {
+            if self.pinned_sections.contains(&pid) {
+                continue;
+            }
+            let slots: Vec<usize> =
+                (0..self.track_order.len()).filter(|i| self.host_pid(self.track_order[*i]) == pid).collect();
+            // Group the section's tracks by owner thread, keeping each
+            // group's own order (thread, then its async block and graphs).
+            let mut groups: Vec<(ThreadId, Vec<TrackKey>)> = Vec::new();
+            for &i in &slots {
+                let key = self.track_order[i];
+                let owner = key.owner();
+                match groups.iter_mut().find(|(t, _)| *t == owner) {
+                    Some((_, keys)) => keys.push(key),
+                    None => groups.push((owner, vec![key])),
+                }
+            }
+            let score = |t: &ThreadId| activity.get(t).copied().unwrap_or((0, 0));
+            groups.sort_by(|(a, _), (b, _)| {
+                let (sa, sb) = (score(a), score(b));
+                sb.0.cmp(&sa.0).then(sb.1.cmp(&sa.1)).then(a.tid.cmp(&b.tid))
+            });
+            let ordered: Vec<TrackKey> = groups.into_iter().flat_map(|(_, keys)| keys).collect();
+            for (i, key) in slots.into_iter().zip(ordered) {
+                if self.track_order[i] != key {
+                    self.track_order[i] = key;
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            self.layout_gen = self.layout_gen.wrapping_add(1);
+        }
+        moved
+    }
+
     pub fn toggle(&mut self, id: RowId) {
         if matches!(id, RowId::Lane(_)) {
             return;
@@ -666,6 +735,8 @@ impl TrackStrip {
     /// arriving from another section takes a new position after them.
     pub fn place(&mut self, key: TrackKey, pid: u32, slot: usize) {
         let was_here = self.host_pid(key) == pid;
+        self.pinned_sections.insert(self.host_pid(key));
+        self.pinned_sections.insert(pid);
         let mut slots: Vec<usize> = self
             .track_order
             .iter()
@@ -1721,6 +1792,45 @@ mod tests {
         strip.end_drag();
         assert_eq!(strip.thread_order()[0], second);
         assert_eq!(strip.thread_order()[1], first);
+    }
+
+    #[test]
+    fn activity_sort_puts_scopes_first_then_samples_and_respects_a_manual_order() {
+        let mut idx = TrackIndex::default();
+        // Thread 1: one scope. Thread 2: three scopes. Thread 3: one scope
+        // and many sampled frames -- ties with 1 on scopes, wins on samples.
+        idx.insert(scope(1, 1, 1));
+        for _ in 0..3 {
+            idx.insert(scope(1, 2, 2));
+        }
+        idx.insert(scope(1, 3, 3));
+        for _ in 0..8 {
+            idx.insert(ev(kind::FUNCTION_CALL, 1, 3, 0, orbit_live_event::extra::SAMPLED_FRAME));
+        }
+        let mut strip = TrackStrip::default();
+        strip.sync(&idx, None);
+        assert!(strip.sort_by_activity(&idx), "the arrival order is not the activity order");
+        let tids: Vec<u32> = strip.thread_order().iter().map(|t| t.tid).collect();
+        assert_eq!(tids, vec![2, 3, 1], "scopes desc, then samples desc");
+        assert!(!strip.sort_by_activity(&idx), "a second pass on the same data moves nothing");
+        // Thread 1 grows past thread 2: the next pass swaps them.
+        for _ in 0..5 {
+            idx.insert(scope(1, 1, 1));
+        }
+        strip.sync(&idx, None);
+        assert!(strip.sort_by_activity(&idx));
+        assert_eq!(strip.thread_order()[0].tid, 1);
+        // The user drags a track: that section is theirs from then on.
+        strip.tick(1.0, &idx, None);
+        let top = strip.thread_order()[0];
+        let y0 = strip.y.get(&RowId::Thread(top)).copied().unwrap_or(0.0);
+        strip.begin_drag(top, y0, y0);
+        strip.update_drag(y0 + 80.0);
+        strip.end_drag();
+        let manual: Vec<u32> = strip.thread_order().iter().map(|t| t.tid).collect();
+        assert_ne!(manual[0], 1, "the drag moved the top thread down");
+        assert!(!strip.sort_by_activity(&idx), "a hand-arranged section is not re-sorted");
+        assert_eq!(strip.thread_order().iter().map(|t| t.tid).collect::<Vec<_>>(), manual);
     }
 
     #[test]
