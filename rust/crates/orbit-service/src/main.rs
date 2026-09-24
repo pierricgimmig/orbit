@@ -23,6 +23,7 @@ mod hook_safety;
 mod hook_journal;
 mod frida;
 mod code;
+mod demangle;
 mod functions;
 mod interner;
 mod lan;
