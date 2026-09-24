@@ -612,6 +612,8 @@ pub struct OrbitLiveApp {
     selected_pid: Option<u32>,
     /// The last capture target picked automatically (see `adopt_capture_target`).
     adopted_target_pid: Option<u32>,
+    /// When the rail last re-sorted its tracks by activity.
+    last_activity_sort_s: f64,
     status: StatusJson,
     error: String,
     ring_bytes: String,
@@ -1468,6 +1470,7 @@ impl OrbitLiveApp {
             processes: Vec::new(),
             selected_pid: None,
             adopted_target_pid: None,
+            last_activity_sort_s: -1.0e9,
             status: StatusJson::default(),
             error: String::new(),
             ring_bytes: "67108864".into(),
@@ -3868,6 +3871,14 @@ impl OrbitLiveApp {
                 let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
                 self.refresh_track_filter();
                 self.tracks.sync(&self.index, filter);
+                // The default order follows the work: every so often (a
+                // tweak; once a second by default) the busiest tracks move
+                // to the top of their section.
+                let every = self.ui_tweaks.track_sort_every_s as f64;
+                if every > 0.0 && self.now_s - self.last_activity_sort_s >= every {
+                    self.last_activity_sort_s = self.now_s;
+                    self.tracks.sort_by_activity(&self.index);
+                }
             }
             self.tracks.tick(dt, &self.index, filter);
         }
@@ -8346,6 +8357,12 @@ impl OrbitLiveApp {
                 ui.add(egui::Slider::new(&mut t.report_font, 8.0..=18.0).text("font size"));
                 ui.add(egui::Slider::new(&mut t.report_bar_w, 20.0..=160.0).text("bar width"));
                 ui.add(egui::Slider::new(&mut t.report_indent, 0.0..=32.0).text("tree indent"));
+                ui.add(
+                    egui::Slider::new(&mut t.track_sort_every_s, 0.0..=10.0)
+                        .step_by(0.25)
+                        .text("activity sort every (s), 0 = off"),
+                )
+                .on_hover_text("Tracks are re-ordered by scope count, then sample count, so the busiest are on top. A section you rearrange by hand is left alone.");
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tracks").color(theme::MUTED()).size(10.5));
                 let mut scale = self.tracks.scale;
@@ -9925,6 +9942,9 @@ struct UiTweaks {
     report_font: f32,
     report_bar_w: f32,
     report_indent: f32,
+    /// How often the rail re-sorts tracks by activity (scopes, then
+    /// samples), in seconds; 0 turns the automatic order off.
+    track_sort_every_s: f32,
 }
 
 impl Default for UiTweaks {
@@ -9935,6 +9955,7 @@ impl Default for UiTweaks {
             report_font: 11.0,
             report_bar_w: 66.0,
             report_indent: 4.0,
+            track_sort_every_s: 1.0,
         }
     }
 }
@@ -9978,8 +9999,13 @@ fn save_theme(key: &str) {
 impl UiTweaks {
     fn to_json(self) -> String {
         format!(
-            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{}}}"#,
-            self.report_row_gap, self.report_col_gap, self.report_font, self.report_bar_w, self.report_indent
+            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{},"track_sort_every_s":{}}}"#,
+            self.report_row_gap,
+            self.report_col_gap,
+            self.report_font,
+            self.report_bar_w,
+            self.report_indent,
+            self.track_sort_every_s
         )
     }
 
@@ -10007,6 +10033,9 @@ impl UiTweaks {
         }
         if let Some(v) = field("report_indent") {
             t.report_indent = v.clamp(0.0, 32.0);
+        }
+        if let Some(v) = field("track_sort_every_s") {
+            t.track_sort_every_s = v.clamp(0.0, 10.0);
         }
         t
     }
@@ -11876,11 +11905,21 @@ mod tests {
 
     #[test]
     fn ui_tweaks_round_trip_and_tolerate_missing_keys() {
-        let t = UiTweaks { report_row_gap: 6.5, report_col_gap: 20.0, report_font: 12.0, report_bar_w: 80.0, report_indent: 16.0 };
+        let t = UiTweaks {
+            report_row_gap: 6.5,
+            report_col_gap: 20.0,
+            report_font: 12.0,
+            report_bar_w: 80.0,
+            report_indent: 16.0,
+            track_sort_every_s: 2.5,
+        };
         assert_eq!(UiTweaks::from_json(&t.to_json()), t);
         let partial = UiTweaks::from_json(r#"{"report_row_gap":9}"#);
         assert_eq!(partial.report_row_gap, 9.0);
         assert_eq!(partial.report_font, UiTweaks::default().report_font);
+        // A saved set from before the activity sort keeps its default (on, 1 s).
+        assert_eq!(partial.track_sort_every_s, 1.0);
+        assert_eq!(UiTweaks::from_json(r#"{"track_sort_every_s":0}"#).track_sort_every_s, 0.0);
         // Out-of-range values are clamped, garbage keeps the defaults.
         assert_eq!(UiTweaks::from_json(r#"{"report_font":900}"#).report_font, 18.0);
         assert_eq!(UiTweaks::from_json("nonsense"), UiTweaks::default());
