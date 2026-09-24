@@ -126,6 +126,26 @@ fn selection_after_process_refresh(selected: Option<u32>, incoming: &[ProcessJso
     selected.filter(|pid| incoming.iter().any(|p| p.pid == *pid))
 }
 
+/// A capture that names a target (status `target_pid`, or a CaptureStarted
+/// frame) picks that process when nothing is picked -- but only once per
+/// target. The process refresh drops a pid that has exited; if the next
+/// status poll adopted the same pid again, a killed target would flicker in
+/// and out of the picker at the refresh rate. Returns the new selection and
+/// the target now considered adopted.
+fn adopt_capture_target(
+    selected: Option<u32>,
+    adopted: Option<u32>,
+    target: u32,
+) -> (Option<u32>, Option<u32>) {
+    if target == 0 {
+        return (selected, adopted);
+    }
+    if selected.is_none() && adopted != Some(target) {
+        return (Some(target), Some(target));
+    }
+    (selected, Some(target))
+}
+
 fn sort_processes_by_cpu(processes: &mut [ProcessJson]) {
     processes.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(a.pid.cmp(&b.pid)));
 }
@@ -590,6 +610,8 @@ pub struct OrbitLiveApp {
     net: Net,
     processes: Vec<ProcessJson>,
     selected_pid: Option<u32>,
+    /// The last capture target picked automatically (see `adopt_capture_target`).
+    adopted_target_pid: Option<u32>,
     status: StatusJson,
     error: String,
     ring_bytes: String,
@@ -1445,6 +1467,7 @@ impl OrbitLiveApp {
             net,
             processes: Vec::new(),
             selected_pid: None,
+            adopted_target_pid: None,
             status: StatusJson::default(),
             error: String::new(),
             ring_bytes: "67108864".into(),
@@ -2278,8 +2301,11 @@ impl OrbitLiveApp {
         }
         // A capture started from the API (not this viewer) still names its
         // target: the Functions view and the hook menu need a process.
-        if s.target_pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
-            self.selected_pid = Some(s.target_pid);
+        if self.static_capture.is_none() {
+            let (selected, adopted) =
+                adopt_capture_target(self.selected_pid, self.adopted_target_pid, s.target_pid);
+            self.selected_pid = selected;
+            self.adopted_target_pid = adopted;
         }
         self.ring_bytes = s.ring_bytes.to_string();
         if let Some(p) = &s.spill_path {
@@ -2516,6 +2542,8 @@ impl OrbitLiveApp {
                 if pid > 0 && self.selected_pid.is_none() && self.static_capture.is_none() {
                     self.selected_pid = Some(pid);
                 }
+                // A fresh capture is a fresh adoption, even of a recycled pid.
+                self.adopted_target_pid = (pid > 0).then_some(pid);
                 self.user_set_view = false;
                 self.clear_file_trace();
                 self.index.clear();
@@ -11311,6 +11339,20 @@ mod tests {
         assert_eq!(selection_after_process_refresh(Some(20), &list), Some(20));
         assert_eq!(selection_after_process_refresh(Some(99), &list), None);
         assert_eq!(selection_after_process_refresh(None, &list), None);
+    }
+
+    #[test]
+    fn a_dead_capture_target_is_not_readopted_from_status() {
+        // Adopted once from the status target.
+        assert_eq!(adopt_capture_target(None, None, 42), (Some(42), Some(42)));
+        // The process refresh dropped it (the process exited): the next status
+        // poll, still naming 42, must leave the selection empty.
+        assert_eq!(adopt_capture_target(None, Some(42), 42), (None, Some(42)));
+        // A new capture on another pid is adopted again.
+        assert_eq!(adopt_capture_target(None, Some(42), 43), (Some(43), Some(43)));
+        // A user's own pick is never overridden, and no target changes nothing.
+        assert_eq!(adopt_capture_target(Some(7), Some(42), 43), (Some(7), Some(43)));
+        assert_eq!(adopt_capture_target(None, Some(42), 0), (None, Some(42)));
     }
 
     #[test]

@@ -617,9 +617,13 @@ impl LiveService {
         self.capture_pid.load(Ordering::Relaxed) as u32
     }
 
+    /// Idempotent: the capture worker marks the end itself (it may end on its
+    /// own when the target exits) and the Stop handler marks it again after
+    /// joining the worker; viewers must see one CaptureFinished, not two.
     pub fn mark_capture_finished(&self) {
-        self.capturing.store(false, Ordering::Relaxed);
-        self.broadcast_frame(&LiveFrame::CaptureFinished);
+        if self.capturing.swap(false, Ordering::Relaxed) {
+            self.broadcast_frame(&LiveFrame::CaptureFinished);
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {

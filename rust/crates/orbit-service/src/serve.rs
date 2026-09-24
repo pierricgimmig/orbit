@@ -1012,13 +1012,26 @@ fn capture_loop(
     let mut dropping_since_ns: Option<u64> = None;
     let mut dropping_start_lost: u64 = 0;
 
+    // The target's liveness is read from /proc a few times a second, not
+    // every pass: cheap, and fast enough that a capture ends within a
+    // refresh of the process list when its process does.
+    let mut last_alive_check_ns: u64 = 0;
     while running.load(Ordering::Relaxed) {
         let _pass = orbit_api::scope("capture pass");
+        let target_gone = has_target && {
+            let now = crate::now_monotonic_ns();
+            if now.saturating_sub(last_alive_check_ns) >= 250_000_000 {
+                last_alive_check_ns = now;
+                !crate::hook_journal::process_alive(target_pid)
+            } else {
+                false
+            }
+        };
         // Did a hook just kill the target? If the process is gone while a
         // capture with hooks armed is still running, read the kernel's crash
         // line and, when there is one or a dangerous hook was armed, name the
         // suspect and publish the report. Once per capture.
-        if hooks_armed && !crash_reported && !crate::hook_journal::process_alive(target_pid) {
+        if hooks_armed && !crash_reported && target_gone {
             crash_reported = true;
             let kernel = crate::hook_journal::scan_kernel_crash(target_pid);
             let blame = kernel.is_some() || armed_hooks.iter().any(|h| !h.safety.is_safe());
@@ -1030,6 +1043,17 @@ fn capture_loop(
             if blame {
                 service.set_hook_crash(report.json.to_string());
             }
+        }
+        // The target exited (or was killed): the capture ends with it, the
+        // same way Stop ends it, instead of running on against a pid that no
+        // longer exists -- which left the viewer showing a recording of a
+        // process the refresh had already dropped. The loop's tail below
+        // flushes and marks the capture finished.
+        if target_gone {
+            eprintln!("orbit-service: target pid {target_pid} exited; capture stopped");
+            service.set_instrumentation_status(format!("target {target_pid} exited; capture stopped"));
+            running.store(false, Ordering::Relaxed);
+            continue;
         }
         // The background symbol load finished: swap it in and start draining
         // the sampling rings (which buffered while it built). Even a stripped
@@ -1574,6 +1598,11 @@ fn capture_loop(
     if !hooks.is_empty() {
         eprintln!("orbit-service: {instrumented_calls} instrumented calls recorded");
     }
+    // The capture is over whichever way the loop ended: Stop from the API
+    // (whose handler also marks it, idempotently, after joining this thread)
+    // or the target exiting on its own. Without this the status kept saying
+    // "capturing" for a process that no longer existed.
+    service.mark_capture_finished();
 }
 
 /// Starts the live-viewer server and blocks. Returns only on error.

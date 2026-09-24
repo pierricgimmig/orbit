@@ -769,6 +769,53 @@ def instrumentation(run):
     return f"{message}; {spans} hooked spans, longest {longest/1e6:.2f} ms"
 
 
+@scenario("target-exits", "A capture ends when its target dies, and the viewer does not keep re-selecting the dead pid")
+def target_exits(run):
+    # A throwaway process of our own, so killing it costs the other scenarios
+    # nothing: the workload stays up for them.
+    victim = subprocess.Popen([sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"])
+    try:
+        run.service.post("/api/capture/start", {"pid": victim.pid, "sampling": True})
+        run.wait_for(lambda: run.service.get("/api/status").get("capturing"), "the capture to start", 10.0)
+        if run.chrome is not None:
+            # A viewer with nothing picked adopts the capture's target; one
+            # where an earlier scenario left a pick keeps it. Either way the
+            # selection must be settled before the kill.
+            time.sleep(2.5)
+            picked = run.sel().get("selected_pid")
+        victim.kill()
+        victim.wait(timeout=10)
+        # The service notices within a fraction of a second and ends the
+        # capture itself; before, it ran on against the dead pid until Stop.
+        run.wait_for(lambda: not run.service.get("/api/status").get("capturing"), "the capture to stop by itself", 5.0)
+        status = run.service.get("/api/status")
+        check("exited" in status.get("instrumentation", ""), f"status does not say the target exited: {status.get('instrumentation')!r}")
+        if run.chrome is None:
+            return f"capture stopped on its own: {status.get('instrumentation')}"
+        # The viewer drops a dead pid on its next process refresh and must not
+        # take it back from the status poll: after the refresh has had its
+        # turn, sample the selection for a while and demand it holds still and
+        # never names the dead process. Before the fix it flickered between
+        # the dead pid and nothing at the refresh rate.
+        if picked == victim.pid:
+            run.wait_for(lambda: run.sel().get("selected_pid") != victim.pid, "the dead pid to leave the picker", 5.0)
+        else:
+            time.sleep(1.5)
+        seen = []
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            seen.append(run.sel().get("selected_pid"))
+            time.sleep(0.2)
+        check(victim.pid not in seen, f"the dead pid came back into the selection: {seen}")
+        check(len(set(seen)) == 1, f"the selection flickered: {seen}")
+        return f"capture stopped on its own; selection held at {seen[0]} over {len(seen)} samples"
+    finally:
+        if victim.poll() is None:
+            victim.kill()
+        if run.service.get("/api/status").get("capturing"):
+            run.stop_capture()
+
+
 @scenario("hook-danger-cue", "The Functions list flags entries that are dangerous to hook")
 def hook_danger_cue(run):
     run.load_symbols()
