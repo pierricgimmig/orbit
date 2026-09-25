@@ -96,6 +96,9 @@ pub struct ScopeSource {
     pub links_seen: u64,
     pub events_pushed: u64,
     pub events_lost: u64,
+    /// Open scopes dropped because their ring lost records underneath them
+    /// (see `drain`): the spans that would otherwise have been drawn wrong.
+    pub scopes_discarded_on_loss: u64,
 }
 
 impl ScopeSource {
@@ -117,6 +120,7 @@ impl ScopeSource {
             links_seen: 0,
             events_pushed: 0,
             events_lost: 0,
+            scopes_discarded_on_loss: 0,
         }
     }
 
@@ -241,6 +245,14 @@ impl ScopeSource {
                 // instrumented process pays a relaxed load per call and writes
                 // nothing. This is also what turns on the service's own
                 // scopes, since it reads its own segment here like any other.
+                // Start reading at the rings' current write position, taken
+                // before the producer is told to write: whatever sits in the
+                // rings now was written for an earlier session (a previous
+                // capture of this process, another service), would be refused
+                // as pre-capture anyway, and -- when the producer had lapped
+                // the ring since -- counted as millions of records "lost" by
+                // this capture, which lost nothing yet.
+                let cursors = Cursors::at_write(reader.rings());
                 reader.set_capturing(true);
                 // An instrumented process gets rows, and its threads join the
                 // state focus on the next refresh.
@@ -248,7 +260,7 @@ impl ScopeSource {
                 self.segments.push(Segment {
                     pid,
                     reader,
-                    cursors: Cursors::for_rings(ring_count),
+                    cursors,
                     text: TextAssembler::new(),
                     awaiting_name: HashMap::new(),
                     open: HashMap::new(),
@@ -277,6 +289,22 @@ impl ScopeSource {
                 drain_from(segment.reader.rings(), &mut segment.cursors, now_ns, alive)
             };
             self.events_lost = self.events_lost.saturating_add(pass.dropped);
+            // A lapped ring lost records in the middle of this process's
+            // stream, STOPs among them. Every scope still open is now
+            // unreliable: left alone, a START whose STOP was lost runs to the
+            // end of the capture (a 5-second FEngineLoop::Tick), or gets
+            // closed by some later STOP on its thread (a 5-second
+            // dequeueInternal). Drop them: a lossy capture shows a gap, not
+            // a lie. Their STOPs, if they do arrive, are ignored as
+            // stop-without-start.
+            if pass.dropped > 0 {
+                let segment = &mut self.segments[index];
+                let discarded = segment.open.len() + segment.awaiting_name.len();
+                segment.open.clear();
+                segment.awaiting_name.clear();
+                segment.sync_depth.clear();
+                self.scopes_discarded_on_loss = self.scopes_discarded_on_loss.saturating_add(discarded as u64);
+            }
             // Sort this pass by timestamp before pairing. The rings arrive in
             // ring-index order, but a START and its STOP can be on different
             // rings -- an async scope is started on one thread and stopped on

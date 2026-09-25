@@ -409,6 +409,25 @@ mod tests {
     }
 
     #[test]
+    fn cursors_at_write_skip_what_an_earlier_session_wrote() {
+        let region = Region::new(2, 8);
+        let rings = region.rings();
+        for ts in 1..=3 {
+            rings.push(0, event(ts, 7));
+        }
+        let mut stale = crate::merge::Cursors::for_rings(2);
+        let replayed = crate::merge::drain(&rings, &mut stale, 100);
+        assert_eq!(replayed.slices[0].events.len(), 3, "a cursor at 0 replays the backlog");
+        let mut fresh = crate::merge::Cursors::at_write(&rings);
+        assert_eq!(fresh.read, vec![rings.write_cursor(0), rings.write_cursor(1)]);
+        let nothing = crate::merge::drain(&rings, &mut fresh, 100);
+        assert!(nothing.slices.iter().all(|s| s.events.is_empty()) && nothing.dropped == 0, "nothing old, nothing lost");
+        rings.push(0, event(50, 7));
+        let next = crate::merge::drain(&rings, &mut fresh, 100);
+        assert_eq!(next.slices[0].events.len(), 1, "the next record is read");
+    }
+
+    #[test]
     fn a_pushed_event_reads_back_committed() {
         let region = Region::new(2, 8);
         let rings = region.rings();
