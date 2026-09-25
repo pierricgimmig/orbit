@@ -247,6 +247,8 @@ pub struct CaptureStart {
     pub instrumented_function_ids: Vec<u64>,
     pub show_all_processes: bool,
     pub uprobe_duplicate_filter: bool,
+    /// Calls per second past which a hook is switched off; 0 = never.
+    pub max_hook_calls_per_s: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -717,7 +719,7 @@ mod wasm_impl {
                 .collect::<Vec<_>>()
                 .join(",");
             let body = format!(
-                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}],"show_all_processes":{},"uprobe_duplicate_filter":{}}}"#,
+                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}],"show_all_processes":{},"uprobe_duplicate_filter":{},"max_hook_calls_per_s":{}}}"#,
                 req.pid,
                 req.enable_api,
                 req.context_switches,
@@ -728,6 +730,7 @@ mod wasm_impl {
                 json_escape(&req.dynamic_instrumentation_method),
                 req.show_all_processes,
                 req.uprobe_duplicate_filter,
+                req.max_hook_calls_per_s,
             );
             self.send("POST", "/api/capture/start", body);
         }

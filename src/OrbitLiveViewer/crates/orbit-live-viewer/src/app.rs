@@ -2181,6 +2181,7 @@ impl OrbitLiveApp {
             instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
             show_all_processes: self.show_all_processes,
             uprobe_duplicate_filter: self.uprobe_duplicate_filter,
+            max_hook_calls_per_s: (self.ui_tweaks.hook_call_limit_k.max(0.0) * 1000.0) as u64,
         }
     }
 
@@ -3395,13 +3396,27 @@ impl OrbitLiveApp {
                 // ring overflowed -- so it reads amber even when hooks armed,
                 // not the muted grey of a clean run.
                 let lossy = self.status.instrumentation.contains("records lost");
+                // A hook switched off for firing past the call-rate limit is
+                // something the operator must see: it changes what the
+                // timeline shows from that moment on.
+                let unhooked = self.status.instrumentation.contains("auto-unhooked");
+                let text = if unhooked {
+                    format!("\u{26A0} {}", self.status.instrumentation)
+                } else {
+                    self.status.instrumentation.clone()
+                };
                 ui.label(
-                    RichText::new(&self.status.instrumentation).size(11.0).color(if armed && !lossy {
+                    RichText::new(text).size(11.0).color(if armed && !lossy && !unhooked {
                         theme::MUTED()
                     } else {
                         Color32::from_rgb(0xFF, 0xB3, 0x00)
                     }),
-                );
+                )
+                .on_hover_text(if unhooked {
+                    "A hooked function fired past the auto-unhook rate and was switched off mid-capture; an instant marks the moment on its track. The limit is in Settings."
+                } else {
+                    ""
+                });
             }
         });
     }
@@ -8396,6 +8411,13 @@ impl OrbitLiveApp {
                         .text("activity sort every (s), 0 = off"),
                 )
                 .on_hover_text("Tracks are re-ordered by scope count, then sample count, so the busiest are on top. A section you rearrange by hand is left alone.");
+                ui.add(
+                    egui::Slider::new(&mut t.hook_call_limit_k, 0.0..=2000.0)
+                        .logarithmic(true)
+                        .step_by(1.0)
+                        .text("auto-unhook above (k calls/s), 0 = off"),
+                )
+                .on_hover_text("A hooked function firing above this rate is switched off mid-capture and named on the status line -- for when a hook costs the target more than it tells you. Applies to the next Record.");
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tracks").color(theme::MUTED()).size(10.5));
                 let mut scale = self.tracks.scale;
@@ -9978,6 +10000,10 @@ struct UiTweaks {
     /// How often the rail re-sorts tracks by activity (scopes, then
     /// samples), in seconds; 0 turns the automatic order off.
     track_sort_every_s: f32,
+    /// Auto-unhook a function firing above this many thousand calls a
+    /// second, mid-capture; 0 (the default) never. For when a hook costs the
+    /// target more than it tells you.
+    hook_call_limit_k: f32,
 }
 
 impl Default for UiTweaks {
@@ -9989,6 +10015,7 @@ impl Default for UiTweaks {
             report_bar_w: 66.0,
             report_indent: 4.0,
             track_sort_every_s: 1.0,
+            hook_call_limit_k: 0.0,
         }
     }
 }
@@ -10032,13 +10059,14 @@ fn save_theme(key: &str) {
 impl UiTweaks {
     fn to_json(self) -> String {
         format!(
-            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{},"track_sort_every_s":{}}}"#,
+            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{},"track_sort_every_s":{},"hook_call_limit_k":{}}}"#,
             self.report_row_gap,
             self.report_col_gap,
             self.report_font,
             self.report_bar_w,
             self.report_indent,
-            self.track_sort_every_s
+            self.track_sort_every_s,
+            self.hook_call_limit_k
         )
     }
 
@@ -10069,6 +10097,9 @@ impl UiTweaks {
         }
         if let Some(v) = field("track_sort_every_s") {
             t.track_sort_every_s = v.clamp(0.0, 10.0);
+        }
+        if let Some(v) = field("hook_call_limit_k") {
+            t.hook_call_limit_k = v.clamp(0.0, 10_000.0);
         }
         t
     }
@@ -11945,6 +11976,7 @@ mod tests {
             report_bar_w: 80.0,
             report_indent: 16.0,
             track_sort_every_s: 2.5,
+            hook_call_limit_k: 250.0,
         };
         assert_eq!(UiTweaks::from_json(&t.to_json()), t);
         let partial = UiTweaks::from_json(r#"{"report_row_gap":9}"#);

@@ -408,9 +408,25 @@ impl ScopeSource {
         let name_id = match name_token(name) {
             Some((1, id)) => id,
             Some((2, id)) => {
+                // The hook switched itself off: an instant on the thread's
+                // track, where and when it happened, named for it
+                // ("auto-unhooked: <function>"), and a note for the status.
                 if !self.auto_unhooked.contains(&id) {
                     self.auto_unhooked.push(id);
                 }
+                let pid = self.segments[index].pid;
+                batch.push(LiveEvent {
+                    start_ns: event.timestamp_ns,
+                    duration_ns: 0,
+                    tid: event.tid,
+                    pid,
+                    kind: kind::API_SCOPE,
+                    depth: 0,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: id,
+                });
+                self.events_pushed += 1;
                 return;
             }
             _ => self.names.id_for(name),

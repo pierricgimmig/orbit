@@ -721,6 +721,10 @@ pub struct StartBody {
     /// off shows the ghost scopes it removes.
     #[serde(default = "default_true")]
     pub uprobe_duplicate_filter: bool,
+    /// Calls per second past which a hooked function is switched off
+    /// mid-capture (both engines); 0, the default, never.
+    #[serde(default)]
+    pub max_hook_calls_per_s: u64,
 }
 
 fn default_true() -> bool {

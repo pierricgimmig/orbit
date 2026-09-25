@@ -156,7 +156,10 @@ pub struct FridaSession {
     max_calls_per_s: u64,
 }
 impl FridaSession {
-    pub fn arm(pid: i32, hooks: &[HookSpec], name_ids: &[u32], max_calls_per_s: u64) -> Result<Self, String> {
+    /// `name_ids` name each hook's spans; `label_ids` name the marker a hook
+    /// leaves on the timeline when it switches itself off ("auto-unhooked:
+    /// <function>"), both interned by the service up front.
+    pub fn arm(pid: i32, hooks: &[HookSpec], name_ids: &[u32], label_ids: &[u32], max_calls_per_s: u64) -> Result<Self, String> {
         let _phase = orbit_api::scope("Frida: arm hooks");
         if pid <= 0 || pid as u32 == std::process::id() {
             return Err("Frida requires a target process other than orbit-service".into());
@@ -183,16 +186,21 @@ impl FridaSession {
         // Each hook's START carries a token naming a service-interned id,
         // not the function's text: one record per call whatever the name's
         // length. `display` is for the helper's own messages.
-        let names_by_id: HashMap<u32, String> =
-            hooks.iter().zip(name_ids).map(|(h, id)| (*id, h.name.clone())).collect();
+        let names_by_id: HashMap<u32, String> = hooks
+            .iter()
+            .zip(name_ids)
+            .zip(label_ids)
+            .flat_map(|((h, id), label)| [(*id, h.name.clone()), (*label, h.name.clone())])
+            .collect();
         let hooks: Vec<_> = hooks
             .iter()
             .zip(name_ids)
-            .map(|(h, id)| {
+            .zip(label_ids)
+            .map(|((h, id), label)| {
                 serde_json::json!({"function_id":h.function_id,
             "module_path":h.module_path,"file_offset":h.file_offset,
             "name":crate::scopes::name_token_text(1, *id),
-            "unhook_token":crate::scopes::name_token_text(2, *id),
+            "unhook_token":crate::scopes::name_token_text(2, *label),
             "display":h.name})
             })
             .collect();

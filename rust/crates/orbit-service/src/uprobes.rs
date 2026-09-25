@@ -313,7 +313,7 @@ impl UprobeSession {
     /// for the status. A function called a hundred thousand times a second
     /// is not something to time with a hook -- sampling already shows it is
     /// hot -- and left armed it costs the target and floods the rings.
-    pub fn enforce_call_limit(&mut self, max_calls_per_s: u64) -> Vec<String> {
+    pub fn enforce_call_limit(&mut self, max_calls_per_s: u64) -> Vec<(String, u64)> {
         if max_calls_per_s == 0 {
             return Vec::new();
         }
@@ -323,17 +323,17 @@ impl UprobeSession {
             .filter(|(_, rate)| rate.entries > max_calls_per_s)
             .map(|(function_id, rate)| (*function_id, rate.entries))
             .collect();
-        let mut lines = Vec::new();
+        let mut unhooked = Vec::new();
         for (function_id, entries) in offenders {
             for fd in self.fds_by_function.remove(&function_id).unwrap_or_default() {
                 let _ = orbit_perf_ring::ring::disable_fd(fd);
             }
             self.rates.remove(&function_id);
             let name = self.names.get(&function_id).cloned().unwrap_or_else(|| format!("function {function_id}"));
-            lines.push(format!("auto-unhooked {name}: {entries} calls/s (limit {max_calls_per_s})"));
+            unhooked.push((name, entries));
             self.auto_unhooked.push((function_id, entries));
         }
-        lines
+        unhooked
     }
 
     pub fn poll(&mut self) -> Vec<CompletedCall> {

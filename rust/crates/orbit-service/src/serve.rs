@@ -162,17 +162,24 @@ fn gpu_events(event: &WireEvent) -> Vec<LiveEvent> {
 /// Interns function names into the viewer's table, handing back the id the
 /// LiveEvent carries. The viewer renders the name; we only allocate ids.
 
-/// Calls per second past which a hooked function is switched off mid-capture
-/// (`ORBIT_MAX_HOOK_CALLS_PER_S`; 0 disables). A function this hot is not
-/// something to time with a hook -- sampling already shows it -- and armed it
-/// costs the target and floods the rings, taking every other hook's spans
-/// down with it. Both engines enforce it: the Frida agent in the target, the
-/// uprobe session by disabling the function's probes.
-pub fn max_hook_calls_per_s() -> u64 {
-    std::env::var("ORBIT_MAX_HOOK_CALLS_PER_S")
+/// Calls per second past which a hooked function is switched off mid-capture;
+/// 0, the default, never. Off by default because the shared ring keeps up
+/// with a million records a second now; the limit is for when a hook costs
+/// the target more than it tells you (a function at a million calls a
+/// second is not something to time with a hook -- sampling already shows
+/// it). The capture request's `max_hook_calls_per_s` sets it per capture;
+/// `ORBIT_MAX_HOOK_CALLS_PER_S` is the fallback. Both engines enforce it:
+/// the Frida agent in the target, the uprobe session by disabling probes.
+pub fn max_hook_calls_per_s(body: &str) -> u64 {
+    let requested = serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(100_000)
+        .and_then(|value| value.get("max_hook_calls_per_s").and_then(|v| v.as_u64()));
+    requested.unwrap_or_else(|| {
+        std::env::var("ORBIT_MAX_HOOK_CALLS_PER_S")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -657,6 +664,7 @@ fn capture_loop(
     armed_hooks: Vec<crate::hook_journal::ArmedHook>,
     show_all_processes: bool,
     uprobe_duplicate_filter: bool,
+    max_hook_calls_per_s: u64,
     mut frida: Option<crate::frida::FridaSession>,
     mut scopes: ScopeSource,
     capture_start_ns: u64,
@@ -1358,11 +1366,25 @@ fn capture_loop(
             let _probes = orbit_api::scope("read uprobes");
             // A function firing past the limit is switched off and named on
             // the status line; the rest of the hooks carry on.
-            for line in session.enforce_call_limit(max_hook_calls_per_s()) {
+            for (name, rate) in session.enforce_call_limit(max_hook_calls_per_s) {
+                let line = format!("auto-unhooked {name}: {rate} calls/s (limit {max_hook_calls_per_s})");
                 eprintln!("orbit-service: {line}");
                 uprobe_status.push_str("; ");
                 uprobe_status.push_str(&line);
                 service.set_instrumentation_status(uprobe_status.clone());
+                // And an instant on the target's row, so the moment shows on
+                // the timeline as well as on the status line.
+                batch.push(LiveEvent {
+                    start_ns: crate::now_monotonic_ns(),
+                    duration_ns: 0,
+                    tid: target_pid as u32,
+                    pid: target_pid as u32,
+                    kind: kind::API_SCOPE,
+                    depth: 0,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: names.id_for(&format!("auto-unhooked: {name}")),
+                });
             }
             for call in session.poll() {
                 instrumented_calls += 1;
@@ -1897,6 +1919,7 @@ pub fn run_on(
             let (ids, _method) = hook_request(body);
             let show_all_processes = wants_all_processes(body);
             let uprobe_duplicate_filter = wants_duplicate_filter(body);
+            let max_hook_calls_per_s = max_hook_calls_per_s(body);
             let mut hooks = Vec::new();
             // Per-hook size and safety verdict, in the same order as `hooks`,
             // gathered while the index is here so the crash journal can name a
@@ -1982,7 +2005,9 @@ pub fn run_on(
                 // record per call, see scopes.rs); the agent switches a hook
                 // off itself past the call-rate limit.
                 let name_ids: Vec<u32> = hooks.iter().map(|h| start_service.intern_string(&h.name)).collect();
-                let session = crate::frida::FridaSession::arm(pid, &hooks, &name_ids, max_hook_calls_per_s()).map_err(|error| {
+                let label_ids: Vec<u32> =
+                    hooks.iter().map(|h| start_service.intern_string(&format!("auto-unhooked: {}", h.name))).collect();
+                let session = crate::frida::FridaSession::arm(pid, &hooks, &name_ids, &label_ids, max_hook_calls_per_s).map_err(|error| {
                     start_running.store(false, Ordering::SeqCst);
                     start_service.set_instrumentation_status(&error);
                     error
@@ -2019,6 +2044,7 @@ pub fn run_on(
                         armed_hooks,
                         show_all_processes,
                         uprobe_duplicate_filter,
+                        max_hook_calls_per_s,
                         frida,
                         scopes,
                         capture_start_ns,
