@@ -614,6 +614,10 @@ pub struct OrbitLiveApp {
     adopted_target_pid: Option<u32>,
     /// When the rail last re-sorted its tracks by activity.
     last_activity_sort_s: f64,
+    /// The service's persisted user settings (`/api/settings`), the whole
+    /// object; None until the first reply. Edited in the capture strip and
+    /// PUT back whole, so keys this viewer does not know are kept.
+    server_settings: Option<serde_json::Value>,
     status: StatusJson,
     error: String,
     ring_bytes: String,
@@ -1478,6 +1482,7 @@ impl OrbitLiveApp {
             selected_pid: None,
             adopted_target_pid: None,
             last_activity_sort_s: -1.0e9,
+            server_settings: None,
             status: StatusJson::default(),
             error: String::new(),
             ring_bytes: "67108864".into(),
@@ -2181,7 +2186,6 @@ impl OrbitLiveApp {
             instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
             show_all_processes: self.show_all_processes,
             uprobe_duplicate_filter: self.uprobe_duplicate_filter,
-            max_hook_calls_per_s: (self.ui_tweaks.hook_call_limit_k.max(0.0) * 1000.0) as u64,
         }
     }
 
@@ -2304,6 +2308,10 @@ impl OrbitLiveApp {
     }
 
     fn apply_status(&mut self, s: StatusJson) {
+        if !self.got_status {
+            // First word from the service: read the settings it keeps.
+            self.net.get_settings();
+        }
         self.got_status = true;
         self.last_status_seen_s = self.now_s;
         // A hook crash the service reported: show it once. A dismissed banner
@@ -2395,6 +2403,9 @@ impl OrbitLiveApp {
         }
         if let Some(s) = inbox.status {
             self.apply_status(s);
+        }
+        if let Some(s) = inbox.settings {
+            self.server_settings = Some(s);
         }
         if let Some(p) = inbox.processes {
             self.apply_process_list(p);
@@ -3352,6 +3363,7 @@ impl OrbitLiveApp {
             {
                 self.uprobe_duplicate_filter = !self.uprobe_duplicate_filter;
             }
+            self.auto_unhook_control(ui);
             ui.label(
                 RichText::new(if self.user_space_hooks {
                     "requires permission to attach to the target"
@@ -7460,6 +7472,45 @@ impl OrbitLiveApp {
 
     /// The line above a report that says what is hooked and what to do
     /// about it: hooks arm on the next Record, not on the capture in view.
+    /// Auto-unhook: a checkbox and the rate, bound to the service's persisted
+    /// settings. A change is PUT back at once (the whole object, so other
+    /// keys survive) and applies to the next Record.
+    fn auto_unhook_control(&mut self, ui: &mut Ui) {
+        let Some(settings) = self.server_settings.as_mut() else { return };
+        let mut on = settings.get("auto_unhook").and_then(|v| v.as_bool()).unwrap_or(true);
+        let mut per_s = settings.get("max_hook_calls_per_s").and_then(|v| v.as_u64()).unwrap_or(100_000);
+        let mut k = (per_s as f64 / 1000.0).max(1.0);
+        let mut changed = false;
+        if ui
+            .checkbox(&mut on, "Auto-unhook")
+            .on_hover_text(
+                "Switch off a hooked function that fires past the rate, mid-capture, on either engine. \
+                 A function that hot is not something to time with a hook -- the samples already show it -- \
+                 and hooked it costs the target about a core. When it fires, the status line turns amber and \
+                 an instant marks the moment on the thread. Kept by the service (~/.config/orbit/settings.json).",
+            )
+            .changed()
+        {
+            changed = true;
+        }
+        if on {
+            ui.label(RichText::new("above").size(11.0).color(theme::MUTED()));
+            if ui
+                .add(egui::DragValue::new(&mut k).range(1.0..=10_000.0).speed(5.0).suffix(" k calls/s").max_decimals(0))
+                .changed()
+            {
+                per_s = (k.round() as u64).max(1) * 1000;
+                changed = true;
+            }
+        }
+        if changed {
+            settings["auto_unhook"] = serde_json::Value::Bool(on);
+            settings["max_hook_calls_per_s"] = serde_json::Value::from(per_s);
+            let body = settings.clone();
+            self.net.put_settings(&body);
+        }
+    }
+
     fn hooked_hint(&self, ui: &mut Ui) {
         // Always one line, so hooking a row does not shift the rows under
         // it: with nothing hooked the line says so, in the muted colour.
@@ -8411,13 +8462,6 @@ impl OrbitLiveApp {
                         .text("activity sort every (s), 0 = off"),
                 )
                 .on_hover_text("Tracks are re-ordered by scope count, then sample count, so the busiest are on top. A section you rearrange by hand is left alone.");
-                ui.add(
-                    egui::Slider::new(&mut t.hook_call_limit_k, 0.0..=2000.0)
-                        .logarithmic(true)
-                        .step_by(1.0)
-                        .text("auto-unhook above (k calls/s), 0 = off"),
-                )
-                .on_hover_text("A hooked function firing above this rate is switched off mid-capture and named on the status line -- for when a hook costs the target more than it tells you. Applies to the next Record.");
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tracks").color(theme::MUTED()).size(10.5));
                 let mut scale = self.tracks.scale;
@@ -10000,10 +10044,6 @@ struct UiTweaks {
     /// How often the rail re-sorts tracks by activity (scopes, then
     /// samples), in seconds; 0 turns the automatic order off.
     track_sort_every_s: f32,
-    /// Auto-unhook a function firing above this many thousand calls a
-    /// second, mid-capture; 0 (the default) never. For when a hook costs the
-    /// target more than it tells you.
-    hook_call_limit_k: f32,
 }
 
 impl Default for UiTweaks {
@@ -10015,7 +10055,6 @@ impl Default for UiTweaks {
             report_bar_w: 66.0,
             report_indent: 4.0,
             track_sort_every_s: 1.0,
-            hook_call_limit_k: 0.0,
         }
     }
 }
@@ -10059,14 +10098,13 @@ fn save_theme(key: &str) {
 impl UiTweaks {
     fn to_json(self) -> String {
         format!(
-            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{},"track_sort_every_s":{},"hook_call_limit_k":{}}}"#,
+            r#"{{"report_row_gap":{},"report_col_gap":{},"report_font":{},"report_bar_w":{},"report_indent":{},"track_sort_every_s":{}}}"#,
             self.report_row_gap,
             self.report_col_gap,
             self.report_font,
             self.report_bar_w,
             self.report_indent,
-            self.track_sort_every_s,
-            self.hook_call_limit_k
+            self.track_sort_every_s
         )
     }
 
@@ -10097,9 +10135,6 @@ impl UiTweaks {
         }
         if let Some(v) = field("track_sort_every_s") {
             t.track_sort_every_s = v.clamp(0.0, 10.0);
-        }
-        if let Some(v) = field("hook_call_limit_k") {
-            t.hook_call_limit_k = v.clamp(0.0, 10_000.0);
         }
         t
     }
@@ -11976,7 +12011,6 @@ mod tests {
             report_bar_w: 80.0,
             report_indent: 16.0,
             track_sort_every_s: 2.5,
-            hook_call_limit_k: 250.0,
         };
         assert_eq!(UiTweaks::from_json(&t.to_json()), t);
         let partial = UiTweaks::from_json(r#"{"report_row_gap":9}"#);

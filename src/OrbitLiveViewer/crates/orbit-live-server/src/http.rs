@@ -52,6 +52,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/demo/start", post(demo_start))
         .route("/api/demo/stop", post(demo_stop))
         .route("/api/config", get(get_config).put(put_config))
+        .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
         .route("/api/sampling/report", get(sampling_report))
@@ -721,10 +722,11 @@ pub struct StartBody {
     /// off shows the ghost scopes it removes.
     #[serde(default = "default_true")]
     pub uprobe_duplicate_filter: bool,
-    /// Calls per second past which a hooked function is switched off
-    /// mid-capture (both engines); 0, the default, never.
-    #[serde(default)]
-    pub max_hook_calls_per_s: u64,
+    /// Per-capture override of the auto-unhook limit (calls per second past
+    /// which a hooked function is switched off; 0 = never). Absent, the
+    /// persisted setting applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_hook_calls_per_s: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -950,6 +952,20 @@ impl ConfigBody {
             ring_buffer_bytes: cfg.ring_buffer_bytes,
             spill_path: cfg.spill_path.as_ref().map(|p| p.display().to_string()),
         }
+    }
+}
+
+/// The persisted user settings (`settings.rs`).
+async fn get_settings(State(svc): State<Arc<LiveService>>) -> Json<crate::Settings> {
+    Json(svc.settings())
+}
+
+/// Replaces and saves them. The body is the whole object as `GET` returns
+/// it; a key left out takes its default.
+async fn put_settings(State(svc): State<Arc<LiveService>>, Json(body): Json<crate::Settings>) -> Response {
+    match svc.update_settings(body) {
+        Ok(saved) => Json(saved).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 

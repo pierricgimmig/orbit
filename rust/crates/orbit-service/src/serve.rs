@@ -162,24 +162,17 @@ fn gpu_events(event: &WireEvent) -> Vec<LiveEvent> {
 /// Interns function names into the viewer's table, handing back the id the
 /// LiveEvent carries. The viewer renders the name; we only allocate ids.
 
-/// Calls per second past which a hooked function is switched off mid-capture;
-/// 0, the default, never. Off by default because the shared ring keeps up
-/// with a million records a second now; the limit is for when a hook costs
-/// the target more than it tells you (a function at a million calls a
-/// second is not something to time with a hook -- sampling already shows
-/// it). The capture request's `max_hook_calls_per_s` sets it per capture;
-/// `ORBIT_MAX_HOOK_CALLS_PER_S` is the fallback. Both engines enforce it:
-/// the Frida agent in the target, the uprobe session by disabling probes.
-pub fn max_hook_calls_per_s(body: &str) -> u64 {
+/// Calls per second past which a hooked function is switched off
+/// mid-capture; 0 means never. The persisted user setting (on at 100k by
+/// default; the viewer's Settings and `PUT /api/settings` change it, and it
+/// is kept in `~/.config/orbit/settings.json`) unless the capture request
+/// carries its own `max_hook_calls_per_s`. Both engines enforce it: the
+/// Frida agent in the target, the uprobe session by disabling probes.
+pub fn max_hook_calls_per_s(body: &str, service: &LiveService) -> u64 {
     let requested = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|value| value.get("max_hook_calls_per_s").and_then(|v| v.as_u64()));
-    requested.unwrap_or_else(|| {
-        std::env::var("ORBIT_MAX_HOOK_CALLS_PER_S")
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .unwrap_or(0)
-    })
+    requested.unwrap_or_else(|| service.settings().effective_max_hook_calls_per_s())
 }
 
 #[cfg(target_os = "linux")]
@@ -1919,7 +1912,7 @@ pub fn run_on(
             let (ids, _method) = hook_request(body);
             let show_all_processes = wants_all_processes(body);
             let uprobe_duplicate_filter = wants_duplicate_filter(body);
-            let max_hook_calls_per_s = max_hook_calls_per_s(body);
+            let max_hook_calls_per_s = max_hook_calls_per_s(body, &start_service);
             let mut hooks = Vec::new();
             // Per-hook size and safety verdict, in the same order as `hooks`,
             // gathered while the index is here so the crash journal can name a
