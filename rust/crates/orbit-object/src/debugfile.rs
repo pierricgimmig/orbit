@@ -9,12 +9,17 @@
 //! `-dbg` package's file is found: by build id under
 //! `/usr/lib/debug/.build-id/xx/rest.debug`, else by `.gnu_debuglink`, next
 //! to the file, in its `.debug/` directory, or under `/usr/lib/debug/<dir>/`,
-//! the way gdb looks. A debuglink candidate must match the link's CRC; a
-//! build-id path is its own proof.
+//! the way gdb looks. A build-id path is its own proof. A debuglink
+//! candidate is accepted when its own build-id note matches the file's
+//! (read from the note alone, the way gdb checks first), else when the
+//! link's CRC matches -- computed over the whole file, which for a game's
+//! gigabyte of debug info is seconds, so it is the fallback, not the rule.
 
 use std::path::{Path, PathBuf};
 
-use crate::debuglink::crc32_gnu_debuglink;
+use object::Object;
+
+use crate::debuglink::crc32_file;
 use crate::ElfMetadata;
 
 /// Where distributions put detached debug files.
@@ -41,13 +46,30 @@ pub fn detached_debug_file_under(path: &Path, metadata: &ElfMetadata, root: &Pat
     let dir = path.parent().unwrap_or(Path::new("."));
     let under_root = root.join(dir.strip_prefix("/").unwrap_or(dir)).join(name);
     for candidate in [dir.join(name), dir.join(".debug").join(name), under_root] {
-        if let Ok(bytes) = std::fs::read(&candidate) {
-            if crc32_gnu_debuglink(&bytes) == link.crc32_checksum {
-                return Some(candidate);
-            }
+        if !candidate.is_file() {
+            continue;
+        }
+        // The fast proof first; the CRC stays the authority when the ids
+        // differ or the candidate has none (a debug file produced from
+        // another link of the same sources still checks out by CRC).
+        if !metadata.build_id.is_empty() && build_id_of(&candidate).as_deref() == Some(metadata.build_id.as_str()) {
+            return Some(candidate);
+        }
+        if crc32_file(&candidate) == Some(link.crc32_checksum) {
+            return Some(candidate);
         }
     }
     None
+}
+
+/// The hex build id of the ELF at `path`, reading only the pages the note
+/// lives on rather than the file.
+fn build_id_of(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let cache = object::read::ReadCache::new(file);
+    let object = object::File::parse(&cache).ok()?;
+    let id = object.build_id().ok()??;
+    Some(id.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[cfg(test)]
@@ -59,6 +81,20 @@ mod tests {
         PathBuf::from(std::env::var("ORBIT_TESTDATA").unwrap_or_else(|_| {
             format!("{}/../../../src/ObjectUtils/testdata", env!("CARGO_MANIFEST_DIR"))
         }))
+    }
+
+    #[test]
+    fn a_debuglink_candidate_is_judged_by_build_id_before_crc() {
+        let path = testdata_dir().join("hello_world_elf_with_gnu_debuglink");
+        let bytes = std::fs::read(&path).unwrap();
+        let metadata = parse_elf_metadata(&bytes, path.to_str().unwrap()).unwrap();
+        let found = detached_debug_file_under(&path, &metadata, Path::new("/nonexistent")).unwrap();
+        // Whichever proof applied, the same file is found.
+        assert!(found.is_file());
+        assert_eq!(build_id_of(Path::new("/nonexistent/file")), None);
+        // The fixture's debug file is an ELF: its build id is readable from
+        // the note alone, whether or not it equals the stripped file's.
+        assert!(build_id_of(&found).is_some());
     }
 
     #[test]

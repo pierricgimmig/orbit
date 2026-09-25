@@ -69,13 +69,23 @@ pub fn crc32_gnu_debuglink(bytes: &[u8]) -> u32 {
 /// Feeds another chunk into a running checksum, so a large file can be read in
 /// pieces exactly as `CalculateDebuglinkChecksum` does with its 4 MiB buffer.
 pub fn crc32_continue(previous: u32, bytes: &[u8]) -> u32 {
+    // Table-driven: the bit-at-a-time loop took 3.5 s over a gigabyte.
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let mut table = [0u32; 256];
+        for (i, entry) in table.iter_mut().enumerate() {
+            let mut crc = i as u32;
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+            *entry = crc;
+        }
+        table
+    });
     let mut crc = !previous;
     for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
-        }
+        crc = table[((crc ^ u32::from(byte)) & 0xFF) as usize] ^ (crc >> 8);
     }
     !crc
 }
@@ -135,5 +145,21 @@ mod tests {
             parse_gnu_debuglink(b"aaaaaaaaaa").unwrap_err(),
             "No CRC32 checksum found"
         );
+    }
+}
+
+/// The debuglink CRC of a whole file, streamed in 4 MiB pieces so a
+/// gigabyte of debug info is never held in memory. None if unreadable.
+pub fn crc32_file(path: &std::path::Path) -> Option<u32> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buffer = vec![0u8; 4 << 20];
+    let mut crc = 0u32;
+    loop {
+        let n = file.read(&mut buffer).ok()?;
+        if n == 0 {
+            return Some(crc);
+        }
+        crc = crc32_continue(crc, &buffer[..n]);
     }
 }

@@ -32,7 +32,12 @@ use crate::functions::{file_offset_of, function_id};
 struct Module {
     start: u64,
     end: u64,
-    /// Address in the file corresponding to `start` (start - offset).
+    /// `start - offset - image base`: subtracting it from a runtime address
+    /// gives the file's *virtual* address, which is what the symbol table
+    /// is keyed by. The image base (the first PT_LOAD's vaddr minus its
+    /// file offset) is zero for the usual layout and 0x200000 for Unreal's
+    /// binaries; without it, every lookup compared a file offset to virtual
+    /// addresses and the game's own functions came back as `module+0x..`.
     bias: u64,
     name: String,
     /// Absolute path of the file, empty for the vDSO; with the loadable
@@ -163,7 +168,7 @@ impl Symbolizer {
                 symbols: sorted_symbols(&image, None),
             });
         }
-        let bytes = std::fs::read(&spec.path).unwrap_or_default();
+        let bytes = map_file(&spec.path);
         let symbols = sorted_symbols(&bytes, Some(&spec.path));
         let segments = parse_elf_metadata(&bytes, &spec.path)
             .map(|m| m.loadable_segments)
@@ -171,7 +176,7 @@ impl Symbolizer {
         Some(Module {
             start: spec.start,
             end: spec.end,
-            bias: spec.bias,
+            bias: spec.bias.wrapping_sub(image_base(&segments)),
             name: spec.name.clone(),
             path: spec.path.clone(),
             segments,
@@ -247,6 +252,17 @@ impl Module {
     }
 }
 
+/// The first PT_LOAD's virtual address minus its file offset: where the
+/// file's virtual address space starts relative to its bytes. Zero for the
+/// usual layout, 0x200000 for a binary linked with an image base (Unreal).
+fn image_base(segments: &[ObjectSegment]) -> u64 {
+    segments
+        .iter()
+        .min_by_key(|segment| segment.offset_in_file)
+        .map(|segment| segment.address.wrapping_sub(segment.offset_in_file))
+        .unwrap_or(0)
+}
+
 /// The last symbol starting at or before `address`, when the address falls
 /// inside it. Sizes of zero are common (assembly stubs), so a zero-sized
 /// symbol only matches its exact address.
@@ -274,15 +290,49 @@ pub(crate) fn symbol_source(bytes: &[u8], path: Option<&str>) -> Result<Vec<orbi
     if let Some(path) = path {
         if let Ok(metadata) = parse_elf_metadata(bytes, path) {
             if let Some(debug) = detached_debug_file(std::path::Path::new(path), &metadata) {
-                if let Ok(debug_bytes) = std::fs::read(&debug) {
-                    if let Ok(symbols) = load_symbols(&debug_bytes, SymbolTable::Debug) {
-                        return Ok(symbols);
-                    }
+                // Mapped, not read: an Unreal Shipping build's .debug is a
+                // gigabyte, of which the symbol and string tables are a few
+                // tens of megabytes. Reading all of it was most of the
+                // seconds between Record and the first sample on screen.
+                let debug_bytes = map_file(debug.to_str().unwrap_or_default());
+                if let Ok(symbols) = load_symbols(&debug_bytes, SymbolTable::Debug) {
+                    return Ok(symbols);
                 }
             }
         }
     }
     load_symbols(bytes, SymbolTable::Debug).or_else(|_| load_symbols(bytes, SymbolTable::Dynamic))
+}
+
+/// A file's bytes as a read-only mapping, so parsing a large image touches
+/// only the pages it needs; an empty buffer when it cannot be opened, which
+/// every parser here treats as "no symbols".
+pub(crate) fn map_file(path: &str) -> FileBytes {
+    let Ok(file) = std::fs::File::open(path) else { return FileBytes::Empty };
+    // SAFETY: the mapping is private and read-only. A file that changes
+    // underneath a mapping can yield torn bytes; the parsers bounds-check
+    // every read and treat garbage as an unparsable image, never as memory
+    // unsafety, and the files here are the target's own executables and
+    // their debug files, which nothing writes while it runs.
+    match unsafe { memmap2::Mmap::map(&file) } {
+        Ok(map) => FileBytes::Mapped(map),
+        Err(_) => FileBytes::Empty,
+    }
+}
+
+pub(crate) enum FileBytes {
+    Mapped(memmap2::Mmap),
+    Empty,
+}
+
+impl std::ops::Deref for FileBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            FileBytes::Mapped(map) => &map[..],
+            FileBytes::Empty => &[],
+        }
+    }
 }
 
 fn sorted_symbols(bytes: &[u8], path: Option<&str>) -> Vec<(u64, u64, String)> {
@@ -432,6 +482,18 @@ mod tests {
     }
 
     #[test]
+    fn image_base_comes_from_the_first_load_segment() {
+        use orbit_object::ObjectSegment;
+        let seg = |offset_in_file, address| ObjectSegment { offset_in_file, size_in_file: 0x1000, address, size_in_memory: 0x1000 };
+        // The usual layout: file offset 0 at virtual address 0 -> no correction.
+        assert_eq!(image_base(&[seg(0, 0), seg(0x2000, 0x3000)]), 0);
+        // Unreal's Shipping binary: first PT_LOAD at 0x200000; the text
+        // segment's own vaddr - offset (0x201000) is not the answer.
+        assert_eq!(image_base(&[seg(0, 0x200000), seg(0x3081000, 0x3282000)]), 0x200000);
+        assert_eq!(image_base(&[]), 0);
+    }
+
+    #[test]
     fn rust_and_cpp_names_are_demangled_and_others_pass_through() {
         assert_eq!(demangle("_ZN4core3ptr13drop_in_place17h1234567890abcdefE"), "core::ptr::drop_in_place");
         assert_eq!(demangle("_ZN3app6module8functionEv"), "app::module::function");
@@ -506,5 +568,32 @@ mod tests {
             ms2 * 1e6 / pcs.len() as f64,
             pc_ids.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod load_timing {
+    /// `ORBIT_SYMBOL_BENCH=<executable> cargo test --release -- --ignored
+    /// symbol_load_timing --nocapture`: where the seconds between Record and
+    /// the first sample go, for one image and its detached debug file.
+    #[test]
+    #[ignore]
+    fn symbol_load_timing() {
+        let Ok(path) = std::env::var("ORBIT_SYMBOL_BENCH") else { return };
+        let t = std::time::Instant::now();
+        let bytes = super::map_file(&path);
+        eprintln!("map: {:?} ({} MB)", t.elapsed(), bytes.len() / 1_048_576);
+        let t = std::time::Instant::now();
+        let metadata = orbit_object::parse_elf_metadata(&bytes, &path).ok();
+        eprintln!("parse_elf_metadata: {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let debug = metadata.as_ref().and_then(|m| orbit_object::detached_debug_file(std::path::Path::new(&path), m));
+        eprintln!("detached_debug_file: {:?} -> {:?}", t.elapsed(), debug);
+        let t = std::time::Instant::now();
+        let symbols = super::symbol_source(&bytes, Some(&path)).unwrap_or_default();
+        eprintln!("symbol_source: {:?} ({} symbols)", t.elapsed(), symbols.len());
+        let t = std::time::Instant::now();
+        let sorted = super::sorted_symbols(&bytes, Some(&path));
+        eprintln!("sorted_symbols (again, incl. sort): {:?} ({})", t.elapsed(), sorted.len());
     }
 }
