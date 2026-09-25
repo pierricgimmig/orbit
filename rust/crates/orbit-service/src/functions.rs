@@ -292,7 +292,9 @@ impl FunctionIndex {
                 })
             })
             .collect();
-        serde_json::json!({ "pid": pid, "status": "ready", "functions": hits }).to_string()
+        // `total` is the whole index: a viewer that asked for the first N
+        // can say how many it did not get (an Unreal build has 600k).
+        serde_json::json!({ "pid": pid, "status": "ready", "total": self.functions.len(), "functions": hits }).to_string()
     }
 }
 

@@ -96,6 +96,12 @@ pub struct ScopeSource {
     pub links_seen: u64,
     pub events_pushed: u64,
     pub events_lost: u64,
+    /// Open scopes dropped because their ring lost records underneath them
+    /// (see `drain`): the spans that would otherwise have been drawn wrong.
+    pub scopes_discarded_on_loss: u64,
+    /// Name ids of hooks the Frida agent switched off for firing over its
+    /// call-rate limit (a `\x02` marker record), in the order they arrived.
+    pub auto_unhooked: Vec<u32>,
 }
 
 impl ScopeSource {
@@ -117,6 +123,8 @@ impl ScopeSource {
             links_seen: 0,
             events_pushed: 0,
             events_lost: 0,
+            scopes_discarded_on_loss: 0,
+            auto_unhooked: Vec::new(),
         }
     }
 
@@ -232,30 +240,75 @@ impl ScopeSource {
                 }
             }
             if let Ok(reader) = opened {
-                let ring_count = reader.rings().ring_count();
                 self.warned_version_mismatch.remove(&pid);
-                eprintln!(
-                    "orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)"
-                );
-                // Tell the producer to start writing: until this, an
-                // instrumented process pays a relaxed load per call and writes
-                // nothing. This is also what turns on the service's own
-                // scopes, since it reads its own segment here like any other.
-                reader.set_capturing(true);
+                self.add_segment(pid, reader);
                 // An instrumented process gets rows, and its threads join the
                 // state focus on the next refresh.
                 visible.add_instrumented(pid);
-                self.segments.push(Segment {
-                    pid,
-                    reader,
-                    cursors: Cursors::for_rings(ring_count),
-                    text: TextAssembler::new(),
-                    awaiting_name: HashMap::new(),
-                    open: HashMap::new(),
-                    sync_depth: HashMap::new(),
-                });
             }
         }
+    }
+
+    /// A scope name id for a hooked function, from the same interner that
+    /// names every other scope and announced to the viewer now, so a START
+    /// token can carry it. Not the service's general string interner: that
+    /// one allocates just above the highest id it has seen, which is this
+    /// interner's range, and the next scope name interned here took the
+    /// same id and renamed every span of the hook after it.
+    pub fn intern_name(&mut self, name: &str) -> u32 {
+        let id = self.names.id_for(name.as_bytes());
+        for (id, name) in self.names.take_new() {
+            self.service.intern_id(id, &name);
+        }
+        id
+    }
+
+    /// Starts reading `pid`'s segment now rather than at the next discovery
+    /// tick. A Frida target writes from the moment its hooks arm; until its
+    /// segment is read and told to capture, everything it writes -- the first
+    /// half second of spans, and the marker a hook sends when it switches
+    /// itself off -- is silently not recorded. Called right after arming.
+    pub fn adopt(&mut self, pid: u32) {
+        if self.segments.iter().any(|s| s.pid == pid) {
+            return;
+        }
+        if let Ok(reader) = ScopeRingReader::open(pid) {
+            self.add_segment(pid, reader);
+        }
+    }
+
+    fn add_segment(&mut self, pid: u32, reader: ScopeRingReader) {
+        let ring_count = reader.rings().ring_count();
+        eprintln!("orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)");
+        // Start at the rings' write position: what an earlier session wrote
+        // is not replayed, and a lap it suffered is not booked as this
+        // capture's loss (a cursor at 0 said "11,610,727 records lost" before
+        // anything was recorded). A hooked target is adopted right after its
+        // hooks arm (`adopt`), so nothing it writes for this capture is
+        // missed.
+        let cursors = Cursors::at_write(reader.rings());
+        // Tell the producer to start writing: until this, an instrumented
+        // process pays a relaxed load per call and writes nothing. This is
+        // also what turns on the service's own scopes, since it reads its
+        // own segment here like any other.
+        reader.set_capturing(true);
+        self.segments.push(Segment {
+            pid,
+            reader,
+            cursors,
+            text: TextAssembler::new(),
+            awaiting_name: HashMap::new(),
+            open: HashMap::new(),
+            sync_depth: HashMap::new(),
+        });
+    }
+
+    /// A drain with no discovery, for the segments already adopted: the
+    /// capture loop calls it once before its setup (symbols, unwinder, rings
+    /// -- half a second on a big target) so a hooked target's first burst is
+    /// read out of the rings before it can lap them.
+    pub fn drain_now(&mut self, now_ns: u64, batch: &mut Vec<LiveEvent>) {
+        self.drain(now_ns, batch);
     }
 
     /// One pass: discover, drain, convert. Appends to `batch`.
@@ -277,6 +330,22 @@ impl ScopeSource {
                 drain_from(segment.reader.rings(), &mut segment.cursors, now_ns, alive)
             };
             self.events_lost = self.events_lost.saturating_add(pass.dropped);
+            // A lapped ring lost records in the middle of this process's
+            // stream, STOPs among them. Every scope still open is now
+            // unreliable: left alone, a START whose STOP was lost runs to the
+            // end of the capture (a 5-second FEngineLoop::Tick), or gets
+            // closed by some later STOP on its thread (a 5-second
+            // dequeueInternal). Drop them: a lossy capture shows a gap, not
+            // a lie. Their STOPs, if they do arrive, are ignored as
+            // stop-without-start.
+            if pass.dropped > 0 {
+                let segment = &mut self.segments[index];
+                let discarded = segment.open.len() + segment.awaiting_name.len();
+                segment.open.clear();
+                segment.awaiting_name.clear();
+                segment.sync_depth.clear();
+                self.scopes_discarded_on_loss = self.scopes_discarded_on_loss.saturating_add(discarded as u64);
+            }
             // Sort this pass by timestamp before pairing. The rings arrive in
             // ring-index order, but a START and its STOP can be on different
             // rings -- an async scope is started on one thread and stopped on
@@ -289,6 +358,7 @@ impl ScopeSource {
             // (tid, scope_id), so interleaving them is harmless.
             let mut events: Vec<ScopeEvent> =
                 pass.slices.into_iter().flat_map(|s| s.events).collect();
+
             events.sort_by_key(|e| e.timestamp_ns);
             for event in events {
                 self.accept(index, event, batch);
@@ -346,7 +416,36 @@ impl ScopeSource {
     }
 
     fn named(&mut self, index: usize, event: ScopeEvent, name: &[u8], batch: &mut Vec<LiveEvent>) {
-        let name_id = self.names.id_for(name);
+        // A hooked function's START names itself by a service-interned id
+        // rather than its text (`\x01` + 8 hex digits, see frida.rs), so a
+        // 200-character Unreal name costs one record instead of eight; a
+        // `\x02` token is the agent reporting it switched that hook off.
+        let name_id = match name_token(name) {
+            Some((1, id)) => id,
+            Some((2, id)) => {
+                // The hook switched itself off: an instant on the thread's
+                // track, where and when it happened, named for it
+                // ("auto-unhooked: <function>"), and a note for the status.
+                if !self.auto_unhooked.contains(&id) {
+                    self.auto_unhooked.push(id);
+                }
+                let pid = self.segments[index].pid;
+                batch.push(LiveEvent {
+                    start_ns: event.timestamp_ns,
+                    duration_ns: 0,
+                    tid: event.tid,
+                    pid,
+                    kind: kind::API_SCOPE,
+                    depth: 0,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: id,
+                });
+                self.events_pushed += 1;
+                return;
+            }
+            _ => self.names.id_for(name),
+        };
         // Bound the open set before borrowing the segment: a START whose STOP
         // never arrives stays open forever, so an unbounded run of them would
         // leak. Refuse new starts (sync or async) past the cap, counting them
@@ -438,5 +537,34 @@ fn span(open: Open, end_ns: u64) -> LiveEvent {
         extra: 0,
         _pad: if open.dynamic { orbit_live_event::event_flags::DYNAMIC } else { 0 },
         name_id: open.name_id,
+    }
+}
+
+/// `(kind, id)` of a name token: a control byte (1 = named by id, 2 = hook
+/// switched off) followed by the id as 8 hex digits. Anything else is text.
+fn name_token(name: &[u8]) -> Option<(u8, u32)> {
+    if name.len() != 9 || !(name[0] == 1 || name[0] == 2) {
+        return None;
+    }
+    let hex = std::str::from_utf8(&name[1..]).ok()?;
+    Some((name[0], u32::from_str_radix(hex, 16).ok()?))
+}
+
+/// The text a Frida hook sends per call in place of its name.
+pub fn name_token_text(kind: u8, id: u32) -> String {
+    format!("{}{id:08x}", kind as char)
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::{name_token, name_token_text};
+
+    #[test]
+    fn tokens_round_trip_and_text_is_left_alone() {
+        assert_eq!(name_token(name_token_text(1, 0x1234_abcd).as_bytes()), Some((1, 0x1234_abcd)));
+        assert_eq!(name_token(name_token_text(2, 7).as_bytes()), Some((2, 7)));
+        assert_eq!(name_token(b"FEngineLoop::Tick"), None);
+        assert_eq!(name_token(b"\x0100000zzz"), None);
+        assert_eq!(name_token(b"\x03deadbeef"), None);
     }
 }

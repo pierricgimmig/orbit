@@ -6,6 +6,7 @@
 //! call. This keeps the service's static-musl build independent of libfrida.
 use crate::hooks::HookSpec;
 use orbit_frida_transport::Transport;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -150,9 +151,15 @@ pub struct FridaSession {
     pub calls: u64,
     pub error: Option<String>,
     stopped: bool,
+    /// Hook display names by the name id their START tokens carry.
+    names_by_id: HashMap<u32, String>,
+    max_calls_per_s: u64,
 }
 impl FridaSession {
-    pub fn arm(pid: i32, hooks: &[HookSpec]) -> Result<Self, String> {
+    /// `name_ids` name each hook's spans; `label_ids` name the marker a hook
+    /// leaves on the timeline when it switches itself off ("auto-unhooked:
+    /// <function>"), both interned by the service up front.
+    pub fn arm(pid: i32, hooks: &[HookSpec], name_ids: &[u32], label_ids: &[u32], max_calls_per_s: u64) -> Result<Self, String> {
         let _phase = orbit_api::scope("Frida: arm hooks");
         if pid <= 0 || pid as u32 == std::process::id() {
             return Err("Frida requires a target process other than orbit-service".into());
@@ -176,15 +183,30 @@ impl FridaSession {
                 return Err(std::io::Error::last_os_error().to_string());
             }
         }
+        // Each hook's START carries a token naming a service-interned id,
+        // not the function's text: one record per call whatever the name's
+        // length. `display` is for the helper's own messages.
+        let names_by_id: HashMap<u32, String> = hooks
+            .iter()
+            .zip(name_ids)
+            .zip(label_ids)
+            .flat_map(|((h, id), label)| [(*id, h.name.clone()), (*label, h.name.clone())])
+            .collect();
         let hooks: Vec<_> = hooks
             .iter()
-            .map(|h| {
+            .zip(name_ids)
+            .zip(label_ids)
+            .map(|((h, id), label)| {
                 serde_json::json!({"function_id":h.function_id,
-            "module_path":h.module_path,"file_offset":h.file_offset,"name":h.name})
+            "module_path":h.module_path,"file_offset":h.file_offset,
+            "name":crate::scopes::name_token_text(1, *id),
+            "unhook_token":crate::scopes::name_token_text(2, *label),
+            "display":h.name})
             })
             .collect();
         let helper = Helper::launch(
-            serde_json::json!({"pid":pid,"agent":agent,"transport":file.path(),"hooks":hooks}),
+            serde_json::json!({"pid":pid,"agent":agent,"transport":file.path(),"hooks":hooks,
+                "max_calls_per_s":max_calls_per_s}),
         )?;
         let ready = helper.response()?;
         if ready["armed"].as_u64() != Some(hooks.len() as u64) {
@@ -197,6 +219,8 @@ impl FridaSession {
             calls: 0,
             error: None,
             stopped: false,
+            names_by_id,
+            max_calls_per_s,
         })
     }
     pub fn poll(&mut self) {
@@ -221,16 +245,32 @@ impl FridaSession {
         }
         self.mapping.disable();
     }
-    pub fn status(&self, shared_records_lost: u64) -> String {
-        format!(
-            "Frida: {} completed API scopes, {} shared scope records lost{}",
-            self.calls,
-            shared_records_lost,
-            self.error
-                .as_ref()
-                .map(|e| format!("; {e}"))
-                .unwrap_or_default()
-        )
+    /// The status line. `auto_unhooked` are the name ids the agent reported
+    /// switching off (see `scopes.rs`).
+    pub fn status(&self, shared_records_lost: u64, auto_unhooked: &[u32]) -> String {
+        let mut line = format!("Frida: {} completed API scopes", self.calls);
+        if shared_records_lost > 0 {
+            // The shared scope ring lapped: STOPs were among the losses and
+            // the open spans were discarded rather than drawn wrong.
+            line.push_str(&format!(
+                ", {shared_records_lost} shared scope records lost (spans discarded; hook fewer or colder functions)"
+            ));
+        }
+        if !auto_unhooked.is_empty() {
+            let names: Vec<&str> = auto_unhooked
+                .iter()
+                .map(|id| self.names_by_id.get(id).map(String::as_str).unwrap_or("?"))
+                .collect();
+            line.push_str(&format!(
+                "; auto-unhooked over {} calls/s: {}",
+                self.max_calls_per_s,
+                names.join(", ")
+            ));
+        }
+        if let Some(e) = &self.error {
+            line.push_str(&format!("; {e}"));
+        }
+        line
     }
 }
 

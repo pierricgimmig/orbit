@@ -40,19 +40,42 @@ impl TelemetryHelper {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
+        // The pipe must not block the capture pass: a blocking read here
+        // waited for the helper's next line -- ~75 ms -- on every pass, and
+        // the pass ran at 10 Hz while the scope rings lapped underneath it.
+        #[cfg(unix)]
+        if let Some(stdout) = child.stdout.as_ref() {
+            use std::os::fd::AsRawFd;
+            let fd = stdout.as_raw_fd();
+            // SAFETY: fcntl on a descriptor this process owns.
+            unsafe {
+                let flags = libc::fcntl(fd, libc::F_GETFL);
+                if flags >= 0 {
+                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                }
+            }
+        }
         Ok(TelemetryHelper { child, pending: Vec::new(), events: 0, decode_errors: 0 })
     }
 
     /// Reads whatever the helper has produced and returns the whole events in
-    /// it, keeping any partial trailing record for next time. Non-blocking in
-    /// effect: it only consumes what is already buffered in the pipe.
+    /// it, keeping any partial trailing record for next time. Non-blocking:
+    /// the pipe is O_NONBLOCK, so it only consumes what is already buffered.
     pub fn drain(&mut self) -> Vec<Event> {
         let Some(stdout) = self.child.stdout.as_mut() else { return Vec::new() };
         let mut chunk = [0u8; 16 * 1024];
-        match stdout.read(&mut chunk) {
-            Ok(0) => {}
-            Ok(count) => self.pending.extend_from_slice(&chunk[..count]),
-            Err(_) => return Vec::new(),
+        loop {
+            match stdout.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => {
+                    self.pending.extend_from_slice(&chunk[..count]);
+                    if count < chunk.len() {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(_) => return Vec::new(),
+            }
         }
 
         let mut events = Vec::new();

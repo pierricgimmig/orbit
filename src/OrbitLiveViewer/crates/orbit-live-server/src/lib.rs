@@ -2,6 +2,8 @@
 
 pub mod demo;
 pub mod http;
+pub mod settings;
+pub use settings::Settings;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -135,6 +137,9 @@ pub struct LiveService {
     pub instrumentation_status: Mutex<String>,
     /// A JSON summary of a target crash blamed on a hook, empty when none.
     pub hook_crash: Mutex<String>,
+    /// User settings kept on disk (`settings.rs`); the source of truth for
+    /// choices made in the viewer, whichever browser made them.
+    pub settings: Mutex<Settings>,
     /// Optional: aggregates sampled callstacks over a time range into a
     /// sampling report. Set separately from `ControlHooks` so a service that
     /// does not sample (or predates this) needs no change.
@@ -278,6 +283,7 @@ impl LiveService {
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
             hook_crash: Mutex::new(String::new()),
+            settings: Mutex::new(Settings::load()),
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
             sampling_report_scope: Mutex::new(None),
@@ -323,6 +329,19 @@ impl LiveService {
 
     pub fn hook_crash(&self) -> String {
         self.hook_crash.lock().clone()
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().clone()
+    }
+
+    /// Replaces the settings and writes them to disk; the in-memory copy
+    /// changes only when the write succeeded, so what a client reads back
+    /// is what will survive a restart.
+    pub fn update_settings(&self, new: Settings) -> Result<Settings, String> {
+        new.save()?;
+        *self.settings.lock() = new.clone();
+        Ok(new)
     }
 
     #[allow(clippy::type_complexity)]

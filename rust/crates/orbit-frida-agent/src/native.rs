@@ -17,13 +17,9 @@ mod profile;
 extern "C" {
     fn orbit_gum_init();
     fn orbit_gum_ignore(ignore: i32);
-    fn orbit_gum_attach(
-        address: u64,
-        generation: u32,
-        name: *const c_char,
-        status: *mut i32,
-    ) -> *mut c_void;
+    fn orbit_gum_attach(address: u64, generation: u32, name: *const c_char, unhook_token: *const c_char, status: *mut i32) -> *mut c_void;
     fn orbit_gum_detach(listener: *mut c_void);
+    fn orbit_gum_set_call_limit(max_calls_per_s: u64);
     fn orbit_gum_resolve(path: *const c_char, offset: u64) -> u64;
     fn orbit_gum_symbols(
         emit: unsafe extern "C" fn(
@@ -146,9 +142,15 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
     if hooks.is_empty() || hooks.len() > 16 {
         return Err("select between 1 and 16 hooks".into());
     }
+    // Past this many calls a second a hook mutes itself (gum.c); 0 = never.
+    unsafe { orbit_gum_set_call_limit(config["max_calls_per_s"].as_u64().unwrap_or(0)) };
     for hook in hooks {
         let path = CString::new(hook["module_path"].as_str().ok_or("missing module path")?)?;
+        // `name` is what each START carries (a token naming an interned id,
+        // or the text for an older service); `display` is for messages.
         let name = CString::new(hook["name"].as_str().ok_or("missing function name")?)?;
+        let display = CString::new(hook["display"].as_str().or(hook["name"].as_str()).unwrap_or(""))?;
+        let unhook_token = CString::new(hook["unhook_token"].as_str().unwrap_or(""))?;
         let offset = hook["file_offset"]
             .as_u64()
             .ok_or("invalid function offset")?;
@@ -161,7 +163,7 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
         if address == 0 {
             return Err(format!(
                 "function outside executable mappings: {}",
-                name.to_string_lossy()
+                display.to_string_lossy()
             )
             .into());
         }
@@ -169,8 +171,8 @@ fn run(stream: &mut ControlStream) -> Result<(), Box<dyn std::error::Error>> {
         let listener = profile::measure(
             stream,
             profiling,
-            &format!("Frida: install trampoline: {}", name.to_string_lossy()),
-            || unsafe { orbit_gum_attach(address, generation, name.as_ptr(), &mut status) },
+            &format!("Frida: install trampoline: {}", display.to_string_lossy()),
+            || unsafe { orbit_gum_attach(address, generation, name.as_ptr(), unhook_token.as_ptr(), &mut status) },
         );
         if listener.is_null() {
             return Err(format!(

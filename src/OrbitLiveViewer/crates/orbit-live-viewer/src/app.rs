@@ -614,6 +614,10 @@ pub struct OrbitLiveApp {
     adopted_target_pid: Option<u32>,
     /// When the rail last re-sorted its tracks by activity.
     last_activity_sort_s: f64,
+    /// The service's persisted user settings (`/api/settings`), the whole
+    /// object; None until the first reply. Edited in the capture strip and
+    /// PUT back whole, so keys this viewer does not know are kept.
+    server_settings: Option<serde_json::Value>,
     status: StatusJson,
     error: String,
     ring_bytes: String,
@@ -931,6 +935,13 @@ pub struct OrbitLiveApp {
     /// Functions view.
     functions: Vec<FunctionHit>,
     functions_pid: Option<u32>,
+    /// How many functions the service has for `functions_pid`; more than
+    /// `functions.len()` when the list was capped and the rest is reached
+    /// by searching the service.
+    functions_total: usize,
+    /// The filter text last sent to the service's search, so the same words
+    /// are not asked again every frame.
+    functions_server_query: String,
     functions_requested: bool,
     /// List every function, not the first 500 matches.
     functions_show_all: bool,
@@ -1471,6 +1482,7 @@ impl OrbitLiveApp {
             selected_pid: None,
             adopted_target_pid: None,
             last_activity_sort_s: -1.0e9,
+            server_settings: None,
             status: StatusJson::default(),
             error: String::new(),
             ring_bytes: "67108864".into(),
@@ -1621,6 +1633,8 @@ impl OrbitLiveApp {
             symbols_started_s: 0.0,
             functions: Vec::new(),
             functions_pid: None,
+            functions_total: 0,
+            functions_server_query: String::new(),
             functions_requested: false,
             functions_show_all: false,
             flat_sort: (1, true),
@@ -2294,6 +2308,10 @@ impl OrbitLiveApp {
     }
 
     fn apply_status(&mut self, s: StatusJson) {
+        if !self.got_status {
+            // First word from the service: read the settings it keeps.
+            self.net.get_settings();
+        }
         self.got_status = true;
         self.last_status_seen_s = self.now_s;
         // A hook crash the service reported: show it once. A dismissed banner
@@ -2386,6 +2404,9 @@ impl OrbitLiveApp {
         if let Some(s) = inbox.status {
             self.apply_status(s);
         }
+        if let Some(s) = inbox.settings {
+            self.server_settings = Some(s);
+        }
         if let Some(p) = inbox.processes {
             self.apply_process_list(p);
         }
@@ -2450,10 +2471,20 @@ impl OrbitLiveApp {
         }
         if let Some(list) = inbox.function_list {
             self.functions_pid = Some(list.pid);
+            self.functions_total = list.total.max(list.functions.len());
             self.functions = list.functions;
             self.functions_requested = false;
+            self.functions_server_query.clear();
         }
-        let _ = inbox.function_hits;
+        // Hits from the service's search over the whole index: the ones the
+        // capped list does not have join it, so they can be hooked like any
+        // other row.
+        if let Some(hits) = inbox.function_hits {
+            if Some(hits.pid) == self.functions_pid {
+                let known: HashSet<u64> = self.functions.iter().map(|f| f.function_id).collect();
+                self.functions.extend(hits.functions.into_iter().filter(|h| !known.contains(&h.function_id)));
+            }
+        }
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
             let seeded_into_empty = self.processes.is_empty();
             for (pid, name) in [
@@ -3332,6 +3363,7 @@ impl OrbitLiveApp {
             {
                 self.uprobe_duplicate_filter = !self.uprobe_duplicate_filter;
             }
+            self.auto_unhook_control(ui);
             ui.label(
                 RichText::new(if self.user_space_hooks {
                     "requires permission to attach to the target"
@@ -3376,13 +3408,27 @@ impl OrbitLiveApp {
                 // ring overflowed -- so it reads amber even when hooks armed,
                 // not the muted grey of a clean run.
                 let lossy = self.status.instrumentation.contains("records lost");
+                // A hook switched off for firing past the call-rate limit is
+                // something the operator must see: it changes what the
+                // timeline shows from that moment on.
+                let unhooked = self.status.instrumentation.contains("auto-unhooked");
+                let text = if unhooked {
+                    format!("\u{26A0} {}", self.status.instrumentation)
+                } else {
+                    self.status.instrumentation.clone()
+                };
                 ui.label(
-                    RichText::new(&self.status.instrumentation).size(11.0).color(if armed && !lossy {
+                    RichText::new(text).size(11.0).color(if armed && !lossy && !unhooked {
                         theme::MUTED()
                     } else {
                         Color32::from_rgb(0xFF, 0xB3, 0x00)
                     }),
-                );
+                )
+                .on_hover_text(if unhooked {
+                    "A hooked function fired past the auto-unhook rate and was switched off mid-capture; an instant marks the moment on its track. The limit is in Settings."
+                } else {
+                    ""
+                });
             }
         });
     }
@@ -3412,6 +3458,13 @@ impl OrbitLiveApp {
         self.hooked_hint(ui);
         self.hook_crash_banner(ui);
         let filter = self.report_filter.trim().to_lowercase();
+        // The list holds the first 200k; a big binary (Unreal: 600k+) has
+        // more. Words in the box also search the service's whole index, and
+        // whatever comes back joins the list (see drain_net).
+        if self.functions_total > self.functions.len() && filter.len() >= 3 && filter != self.functions_server_query {
+            self.functions_server_query = filter.clone();
+            self.net.search_functions(pid, &filter, 500);
+        }
         let mut rows: Vec<usize> = self
             .functions
             .iter()
@@ -3454,10 +3507,17 @@ impl OrbitLiveApp {
         let capped = !self.functions_show_all && rows.len() > MAX_ROWS;
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(if capped {
-                    format!("{} of {} functions match; the first {MAX_ROWS} are listed", rows.len(), self.functions.len())
-                } else {
-                    format!("{} of {} functions", rows.len(), self.functions.len())
+                RichText::new({
+                    let loaded = if self.functions_total > self.functions.len() {
+                        format!("{} of {} functions loaded (type 3+ letters to search the rest)", self.functions.len(), self.functions_total)
+                    } else {
+                        format!("{} functions", self.functions.len())
+                    };
+                    if capped {
+                        format!("{} match; the first {MAX_ROWS} are listed · {loaded}", rows.len())
+                    } else {
+                        format!("{} match · {loaded}", rows.len())
+                    }
                 })
                 .color(theme::MUTED())
                 .size(font - 0.5),
@@ -7412,6 +7472,45 @@ impl OrbitLiveApp {
 
     /// The line above a report that says what is hooked and what to do
     /// about it: hooks arm on the next Record, not on the capture in view.
+    /// Auto-unhook: a checkbox and the rate, bound to the service's persisted
+    /// settings. A change is PUT back at once (the whole object, so other
+    /// keys survive) and applies to the next Record.
+    fn auto_unhook_control(&mut self, ui: &mut Ui) {
+        let Some(settings) = self.server_settings.as_mut() else { return };
+        let mut on = settings.get("auto_unhook").and_then(|v| v.as_bool()).unwrap_or(true);
+        let mut per_s = settings.get("max_hook_calls_per_s").and_then(|v| v.as_u64()).unwrap_or(100_000);
+        let mut k = (per_s as f64 / 1000.0).max(1.0);
+        let mut changed = false;
+        if ui
+            .checkbox(&mut on, "Auto-unhook")
+            .on_hover_text(
+                "Switch off a hooked function that fires past the rate, mid-capture, on either engine. \
+                 A function that hot is not something to time with a hook -- the samples already show it -- \
+                 and hooked it costs the target about a core. When it fires, the status line turns amber and \
+                 an instant marks the moment on the thread. Kept by the service (~/.config/orbit/settings.json).",
+            )
+            .changed()
+        {
+            changed = true;
+        }
+        if on {
+            ui.label(RichText::new("above").size(11.0).color(theme::MUTED()));
+            if ui
+                .add(egui::DragValue::new(&mut k).range(1.0..=10_000.0).speed(5.0).suffix(" k calls/s").max_decimals(0))
+                .changed()
+            {
+                per_s = (k.round() as u64).max(1) * 1000;
+                changed = true;
+            }
+        }
+        if changed {
+            settings["auto_unhook"] = serde_json::Value::Bool(on);
+            settings["max_hook_calls_per_s"] = serde_json::Value::from(per_s);
+            let body = settings.clone();
+            self.net.put_settings(&body);
+        }
+    }
+
     fn hooked_hint(&self, ui: &mut Ui) {
         // Always one line, so hooking a row does not shift the rows under
         // it: with nothing hooked the line says so, in the muted colour.

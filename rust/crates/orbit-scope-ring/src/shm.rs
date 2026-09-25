@@ -25,11 +25,14 @@ use std::sync::atomic::Ordering;
 /// This is the number that matters, not the per-ring size: a process is
 /// entitled to know what instrumenting it will cost in resident memory, and
 /// eight megabytes is small enough not to be an argument.
-pub const DEFAULT_BUDGET_BYTES: usize = 8 * 1024 * 1024;
+/// 32 MiB: a hooked game writes a million records a second in bursts, and
+/// the reader drains every few milliseconds; 8 MiB (128k slots) lapped
+/// under two hot Unreal functions before the reader's next pass.
+pub const DEFAULT_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 
 pub use crate::ring::DEFAULT_RING_COUNT;
 
-/// Slots per ring at the default budget and ring count: 8192 slots, 512 KiB.
+/// Slots per ring at the default budget and ring count: 32768 slots, 2 MiB.
 ///
 /// A thread emitting a hundred thousand events a second fills about five
 /// hundred slots between five-millisecond drains, so there is an order of
@@ -643,9 +646,9 @@ mod tests {
     #[test]
     fn the_default_budget_is_what_it_claims() {
         assert_eq!(DEFAULT_RING_COUNT, 16);
-        assert_eq!(DEFAULT_SLOTS_PER_RING, 8192);
+        assert_eq!(DEFAULT_SLOTS_PER_RING, 32768);
         let bytes = crate::ring::layout_size(DEFAULT_RING_COUNT, DEFAULT_SLOTS_PER_RING);
-        assert!(bytes <= DEFAULT_BUDGET_BYTES + 64 * 1024, "{bytes} bytes for 8 MiB budget");
+        assert!(bytes <= DEFAULT_BUDGET_BYTES + 64 * 1024, "{bytes} bytes for the default budget");
         assert!(bytes > DEFAULT_BUDGET_BYTES / 2, "and not wastefully under it");
     }
 

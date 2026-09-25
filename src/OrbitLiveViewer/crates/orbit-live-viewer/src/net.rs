@@ -150,6 +150,9 @@ pub struct FunctionSearchJson {
     pub pid: u32,
     #[serde(default)]
     pub status: String,
+    /// How many functions the service indexed, listed or not.
+    #[serde(default)]
+    pub total: usize,
     #[serde(default)]
     pub functions: Vec<FunctionHit>,
 }
@@ -278,6 +281,9 @@ pub struct ServiceFrame {
 #[derive(Default)]
 pub struct Inbox {
     pub status: Option<StatusJson>,
+    /// The service's persisted user settings (`/api/settings`), as the raw
+    /// object so keys this viewer does not know survive a round trip.
+    pub settings: Option<serde_json::Value>,
     pub processes: Option<Vec<ProcessJson>>,
     pub error: Option<String>,
     pub frames: Vec<Vec<u8>>,
@@ -588,6 +594,7 @@ mod wasm_impl {
             let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
             Inbox {
                 status: inbox.status.take(),
+                settings: inbox.settings.take(),
                 processes: inbox.processes.take(),
                 sampling: inbox.sampling.take(),
                 error: inbox.error.take(),
@@ -617,6 +624,33 @@ mod wasm_impl {
             if closed {
                 start_ws(self.inbox.clone(), self.ws.clone());
             }
+        }
+
+        /// The persisted user settings; the reply lands in `Inbox::settings`.
+        pub fn get_settings(&self) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text("/api/settings")
+                    .await
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("/api/settings: {e}")));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(v) => g.settings = Some(v),
+                    Err(e) => g.error = Some(e),
+                }
+            });
+        }
+
+        /// Replaces the persisted user settings with `settings` (the whole
+        /// object); the service saves them and echoes what it kept.
+        pub fn put_settings(&self, settings: &serde_json::Value) {
+            if self.offline {
+                return;
+            }
+            self.send("PUT", "/api/settings", settings.to_string());
         }
 
         pub fn get_status(&self) {
@@ -1285,6 +1319,8 @@ mod native_impl {
             Inbox::default()
         }
         pub fn get_status(&self) {}
+        pub fn get_settings(&self) {}
+        pub fn put_settings(&self, _settings: &serde_json::Value) {}
         pub fn reconnect_ws_if_closed(&self) {}
         pub fn get_sampling_report(&self, _ranges: &[(u64, u64, Option<u32>)]) {}
         pub fn get_sampling_report_scope(&self, _name_id: u32) {}
