@@ -150,6 +150,9 @@ pub struct FunctionSearchJson {
     pub pid: u32,
     #[serde(default)]
     pub status: String,
+    /// How many functions the service indexed, listed or not.
+    #[serde(default)]
+    pub total: usize,
     #[serde(default)]
     pub functions: Vec<FunctionHit>,
 }

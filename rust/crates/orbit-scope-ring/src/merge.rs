@@ -102,6 +102,19 @@ impl Cursors {
             stalled_since_ns: vec![0; ring_count],
         }
     }
+
+    /// Cursors that skip everything already in the rings: reading begins
+    /// with the next record each producer commits. For a segment that
+    /// existed before this reader (an earlier capture of the same process),
+    /// `for_rings` would replay -- or, past a lap, count as lost -- records
+    /// that belong to that earlier session.
+    pub fn at_write(rings: &Rings) -> Cursors {
+        let mut cursors = Cursors::for_rings(rings.ring_count());
+        for (ring, read) in cursors.read.iter_mut().enumerate() {
+            *read = rings.write_cursor(ring);
+        }
+        cursors
+    }
 }
 
 /// Copies the committed prefix out of every ring.

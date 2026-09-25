@@ -1433,8 +1433,8 @@ fn capture_loop(
         }
         if lost_delta > 0 && !overflow_stopped {
             service.set_instrumentation_status(format!(
-                "DROPPING EVENTS: {} scope records lost -- hook fewer functions or lower the call rate",
-                scopes.events_lost
+                "DROPPING EVENTS: {} scope records lost, {} open scopes discarded -- hook fewer or colder functions, or hook with Uprobes (kernel), which does not go through the shared ring",
+                scopes.events_lost, scopes.scopes_discarded_on_loss
             ));
         }
 

@@ -222,8 +222,16 @@ impl FridaSession {
         self.mapping.disable();
     }
     pub fn status(&self, shared_records_lost: u64) -> String {
+        // Frida hooks write START/STOP through the shared scope ring, whose
+        // ceiling is under a million records a second; a hot function loses
+        // STOPs first and its spans go wrong. Say what to do about it.
+        let advice = if shared_records_lost > 0 {
+            " -- spans of the affected scopes were discarded; hook fewer or colder functions, or switch the hook method to Uprobes (kernel), which does not go through the shared ring"
+        } else {
+            ""
+        };
         format!(
-            "Frida: {} completed API scopes, {} shared scope records lost{}",
+            "Frida: {} completed API scopes, {} shared scope records lost{advice}{}",
             self.calls,
             shared_records_lost,
             self.error

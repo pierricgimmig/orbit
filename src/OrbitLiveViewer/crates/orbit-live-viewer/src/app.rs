@@ -931,6 +931,13 @@ pub struct OrbitLiveApp {
     /// Functions view.
     functions: Vec<FunctionHit>,
     functions_pid: Option<u32>,
+    /// How many functions the service has for `functions_pid`; more than
+    /// `functions.len()` when the list was capped and the rest is reached
+    /// by searching the service.
+    functions_total: usize,
+    /// The filter text last sent to the service's search, so the same words
+    /// are not asked again every frame.
+    functions_server_query: String,
     functions_requested: bool,
     /// List every function, not the first 500 matches.
     functions_show_all: bool,
@@ -1621,6 +1628,8 @@ impl OrbitLiveApp {
             symbols_started_s: 0.0,
             functions: Vec::new(),
             functions_pid: None,
+            functions_total: 0,
+            functions_server_query: String::new(),
             functions_requested: false,
             functions_show_all: false,
             flat_sort: (1, true),
@@ -2450,10 +2459,20 @@ impl OrbitLiveApp {
         }
         if let Some(list) = inbox.function_list {
             self.functions_pid = Some(list.pid);
+            self.functions_total = list.total.max(list.functions.len());
             self.functions = list.functions;
             self.functions_requested = false;
+            self.functions_server_query.clear();
         }
-        let _ = inbox.function_hits;
+        // Hits from the service's search over the whole index: the ones the
+        // capped list does not have join it, so they can be hooked like any
+        // other row.
+        if let Some(hits) = inbox.function_hits {
+            if Some(hits.pid) == self.functions_pid {
+                let known: HashSet<u64> = self.functions.iter().map(|f| f.function_id).collect();
+                self.functions.extend(hits.functions.into_iter().filter(|h| !known.contains(&h.function_id)));
+            }
+        }
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
             let seeded_into_empty = self.processes.is_empty();
             for (pid, name) in [
@@ -3412,6 +3431,13 @@ impl OrbitLiveApp {
         self.hooked_hint(ui);
         self.hook_crash_banner(ui);
         let filter = self.report_filter.trim().to_lowercase();
+        // The list holds the first 200k; a big binary (Unreal: 600k+) has
+        // more. Words in the box also search the service's whole index, and
+        // whatever comes back joins the list (see drain_net).
+        if self.functions_total > self.functions.len() && filter.len() >= 3 && filter != self.functions_server_query {
+            self.functions_server_query = filter.clone();
+            self.net.search_functions(pid, &filter, 500);
+        }
         let mut rows: Vec<usize> = self
             .functions
             .iter()
@@ -3454,10 +3480,17 @@ impl OrbitLiveApp {
         let capped = !self.functions_show_all && rows.len() > MAX_ROWS;
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(if capped {
-                    format!("{} of {} functions match; the first {MAX_ROWS} are listed", rows.len(), self.functions.len())
-                } else {
-                    format!("{} of {} functions", rows.len(), self.functions.len())
+                RichText::new({
+                    let loaded = if self.functions_total > self.functions.len() {
+                        format!("{} of {} functions loaded (type 3+ letters to search the rest)", self.functions.len(), self.functions_total)
+                    } else {
+                        format!("{} functions", self.functions.len())
+                    };
+                    if capped {
+                        format!("{} match; the first {MAX_ROWS} are listed · {loaded}", rows.len())
+                    } else {
+                        format!("{} match · {loaded}", rows.len())
+                    }
                 })
                 .color(theme::MUTED())
                 .size(font - 0.5),
