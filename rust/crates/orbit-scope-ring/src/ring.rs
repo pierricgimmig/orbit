@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn cursors_at_resident_tail_read_the_backlog_without_counting_a_lap_as_loss() {
+    fn cursors_at_write_skip_an_earlier_session_without_counting_its_lap_as_loss() {
         let region = Region::new(2, 8);
         let rings = region.rings();
         // 12 records into a ring of 8: the first 4 are gone.
@@ -419,15 +419,15 @@ mod tests {
         let mut from_zero = crate::merge::Cursors::for_rings(2);
         let counted = crate::merge::drain(&rings, &mut from_zero, 100);
         assert_eq!(counted.dropped, 4, "a cursor at 0 books the lap as loss");
-        let mut tail = crate::merge::Cursors::at_resident_tail(&rings);
-        assert_eq!(tail.read, vec![4, 0]);
-        let resident = crate::merge::drain(&rings, &mut tail, 100);
-        assert_eq!(resident.dropped, 0, "what a lap destroyed is not this reader's loss");
-        assert_eq!(resident.slices[0].events.len(), 8, "what is still there is read");
-        assert_eq!(resident.slices[0].events[0].timestamp_ns, 5);
+        let mut fresh = crate::merge::Cursors::at_write(&rings);
+        assert_eq!(fresh.read, vec![12, 0]);
+        let nothing = crate::merge::drain(&rings, &mut fresh, 100);
+        assert_eq!(nothing.dropped, 0, "an earlier session's lap is not this reader's loss");
+        assert!(nothing.slices.iter().all(|s| s.events.is_empty()), "and its backlog is not replayed");
         rings.push(0, event(50, 7));
-        let next = crate::merge::drain(&rings, &mut tail, 100);
-        assert_eq!(next.slices[0].events.len(), 1, "and reading continues from there");
+        let next = crate::merge::drain(&rings, &mut fresh, 100);
+        assert_eq!(next.slices[0].events.len(), 1, "the next record is read");
+        assert_eq!(next.slices[0].events[0].timestamp_ns, 50);
     }
 
     #[test]

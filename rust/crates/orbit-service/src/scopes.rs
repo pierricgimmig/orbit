@@ -249,6 +249,20 @@ impl ScopeSource {
         }
     }
 
+    /// A scope name id for a hooked function, from the same interner that
+    /// names every other scope and announced to the viewer now, so a START
+    /// token can carry it. Not the service's general string interner: that
+    /// one allocates just above the highest id it has seen, which is this
+    /// interner's range, and the next scope name interned here took the
+    /// same id and renamed every span of the hook after it.
+    pub fn intern_name(&mut self, name: &str) -> u32 {
+        let id = self.names.id_for(name.as_bytes());
+        for (id, name) in self.names.take_new() {
+            self.service.intern_id(id, &name);
+        }
+        id
+    }
+
     /// Starts reading `pid`'s segment now rather than at the next discovery
     /// tick. A Frida target writes from the moment its hooks arm; until its
     /// segment is read and told to capture, everything it writes -- the first
@@ -266,13 +280,13 @@ impl ScopeSource {
     fn add_segment(&mut self, pid: u32, reader: ScopeRingReader) {
         let ring_count = reader.rings().ring_count();
         eprintln!("orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)");
-        // Start at the oldest record still in the rings. A hooked target
-        // writes from the moment its hooks arm, before this reader finds its
-        // segment, and those records are wanted (the drain refuses anything
-        // older than the capture). What an earlier session wrote and a lap
-        // since destroyed is not this capture's loss -- a cursor at 0 booked
-        // it as millions of records "lost" before anything was recorded.
-        let cursors = Cursors::at_resident_tail(reader.rings());
+        // Start at the rings' write position: what an earlier session wrote
+        // is not replayed, and a lap it suffered is not booked as this
+        // capture's loss (a cursor at 0 said "11,610,727 records lost" before
+        // anything was recorded). A hooked target is adopted right after its
+        // hooks arm (`adopt`), so nothing it writes for this capture is
+        // missed.
+        let cursors = Cursors::at_write(reader.rings());
         // Tell the producer to start writing: until this, an instrumented
         // process pays a relaxed load per call and writes nothing. This is
         // also what turns on the service's own scopes, since it reads its
@@ -344,6 +358,7 @@ impl ScopeSource {
             // (tid, scope_id), so interleaving them is harmless.
             let mut events: Vec<ScopeEvent> =
                 pass.slices.into_iter().flat_map(|s| s.events).collect();
+
             events.sort_by_key(|e| e.timestamp_ns);
             for event in events {
                 self.accept(index, event, batch);

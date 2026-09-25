@@ -103,18 +103,18 @@ impl Cursors {
         }
     }
 
-    /// Cursors at the oldest record still resident in each ring. A segment
-    /// that existed before this reader (an earlier capture of the same
-    /// process, a hooked target that started writing before the reader
-    /// found it) may hold a backlog: what is still in the ring is read --
-    /// the consumer refuses anything older than its capture -- and what a
-    /// lap already destroyed is not counted as this reader's loss, which
-    /// `for_rings` (a cursor at 0) would do, by the million.
-    pub fn at_resident_tail(rings: &Rings) -> Cursors {
+    /// Cursors at each ring's current write position: reading begins with
+    /// the next record a producer commits. For a segment that existed before
+    /// this reader (an earlier capture of the same process), `for_rings` (a
+    /// cursor at 0) would replay that session's backlog and, past a lap,
+    /// book it as this reader's loss by the million. Starting one lap back
+    /// is no good either: the slot a lap back is the one a producer may be
+    /// overwriting right now, and a reader parked on an uncommitted slot
+    /// waits for a commit that never comes with that claim number.
+    pub fn at_write(rings: &Rings) -> Cursors {
         let mut cursors = Cursors::for_rings(rings.ring_count());
-        let capacity = rings.slots_per_ring() as u64;
         for (ring, read) in cursors.read.iter_mut().enumerate() {
-            *read = rings.write_cursor(ring).saturating_sub(capacity);
+            *read = rings.write_cursor(ring);
         }
         cursors
     }
