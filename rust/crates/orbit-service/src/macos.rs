@@ -233,6 +233,7 @@ pub fn capture_loop(
     _hooks: Vec<ArmedHook>,
     show_all_processes: bool,
     _duplicate_filter: bool,
+    _max_hook_calls_per_s: u64,
     mut frida: Option<crate::frida::FridaSession>,
     mut scopes: ScopeSource,
     capture_start_ns: u64,
@@ -264,7 +265,7 @@ pub fn capture_loop(
             scopes.poll(&mut visible, now, &mut batch);
             if let Some(session) = frida.as_mut() {
                 session.poll();
-                service.set_instrumentation_status(session.status(scopes.events_lost));
+                service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
             }
             if last_names.elapsed() >= Duration::from_secs(1) {
                 names.refresh(
@@ -291,7 +292,7 @@ pub fn capture_loop(
     if let Some(session) = frida.as_mut() {
         session.stop();
         session.poll();
-        service.set_instrumentation_status(session.status(scopes.events_lost));
+        service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
     }
     scopes.poll(&mut visible, crate::now_monotonic_ns(), &mut batch);
     scopes.finish(crate::now_monotonic_ns(), &mut batch);
@@ -346,6 +347,7 @@ pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
         Vec::new(),
         true,
         true,
+        0,
         None,
         scopes,
         capture_start_ns,
