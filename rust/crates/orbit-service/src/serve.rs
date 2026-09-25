@@ -161,6 +161,20 @@ fn gpu_events(event: &WireEvent) -> Vec<LiveEvent> {
 
 /// Interns function names into the viewer's table, handing back the id the
 /// LiveEvent carries. The viewer renders the name; we only allocate ids.
+
+/// Calls per second past which a hooked function is switched off mid-capture
+/// (`ORBIT_MAX_HOOK_CALLS_PER_S`; 0 disables). A function this hot is not
+/// something to time with a hook -- sampling already shows it -- and armed it
+/// costs the target and floods the rings, taking every other hook's spans
+/// down with it. Both engines enforce it: the Frida agent in the target, the
+/// uprobe session by disabling the function's probes.
+pub fn max_hook_calls_per_s() -> u64 {
+    std::env::var("ORBIT_MAX_HOOK_CALLS_PER_S")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(100_000)
+}
+
 #[cfg(target_os = "linux")]
 struct FrameNames {
     service: Arc<LiveService>,
@@ -678,6 +692,15 @@ fn capture_loop(
     let has_target = target_pid > 0;
     // The scope reader and epoch were established before Frida attachment.
     service.mark_capture_started(target_pid.max(0) as u32, capture_start_ns);
+    // A Frida target has been writing since its hooks armed; empty its rings
+    // once now, before the setup below takes its half second.
+    {
+        let mut early: Vec<LiveEvent> = Vec::new();
+        scopes.drain_now(crate::now_monotonic_ns(), &mut early);
+        if !early.is_empty() {
+            service.push_events(&early);
+        }
+    }
     // Do not block the capture on symbol loading: start with an empty
     // symbolizer (every address resolves to its hex form) and build the real
     // one on a background thread. Scheduling, sampling and thread states stream
@@ -825,6 +848,8 @@ fn capture_loop(
     for hook in &hooks {
         hook_names.insert(hook.function_id, names.id_for(&hook.name));
     }
+    // The uprobe status line as armed; an auto-unhook appends to it.
+    let mut uprobe_status = String::new();
     let mut uprobes = {
       let _phase = orbit_api::scope("arm instrumentation");
       if frida.is_some() {
@@ -874,7 +899,8 @@ fn capture_loop(
             for failure in &report.failures {
                 message.push_str(&format!("; {failure}"));
             }
-            service.set_instrumentation_status(message);
+            service.set_instrumentation_status(message.clone());
+            uprobe_status = message;
             Some(session)
         }
       }
@@ -1326,10 +1352,18 @@ fn capture_loop(
         // sampled flame graph rather than mixed into it.
         if let Some(session) = frida.as_mut() {
             session.poll();
-            service.set_instrumentation_status(session.status(scopes.events_lost));
+            service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
         }
         if let Some(session) = uprobes.as_mut() {
             let _probes = orbit_api::scope("read uprobes");
+            // A function firing past the limit is switched off and named on
+            // the status line; the rest of the hooks carry on.
+            for line in session.enforce_call_limit(max_hook_calls_per_s()) {
+                eprintln!("orbit-service: {line}");
+                uprobe_status.push_str("; ");
+                uprobe_status.push_str(&line);
+                service.set_instrumentation_status(uprobe_status.clone());
+            }
             for call in session.poll() {
                 instrumented_calls += 1;
                 batch.push(LiveEvent {
@@ -1504,7 +1538,7 @@ fn capture_loop(
     if let Some(session) = frida.as_mut() {
         session.stop();
         session.poll();
-        service.set_instrumentation_status(session.status(scopes.events_lost));
+        service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
     }
 
     // Manual scopes still open when the capture stops are closed at its end
@@ -1944,11 +1978,19 @@ pub fn run_on(
             scopes.begin_self_capture();
             let _capture = orbit_api::start("capture");
             let frida = if !hooks.is_empty() && engine == crate::frida::Engine::Frida {
-                Some(crate::frida::FridaSession::arm(pid, &hooks).map_err(|error| {
+                // Each hook names its scopes by a service-interned id (one
+                // record per call, see scopes.rs); the agent switches a hook
+                // off itself past the call-rate limit.
+                let name_ids: Vec<u32> = hooks.iter().map(|h| start_service.intern_string(&h.name)).collect();
+                let session = crate::frida::FridaSession::arm(pid, &hooks, &name_ids, max_hook_calls_per_s()).map_err(|error| {
                     start_running.store(false, Ordering::SeqCst);
                     start_service.set_instrumentation_status(&error);
                     error
-                })?)
+                })?;
+                // The hooks are live: read the target's segment from now on,
+                // not from the loop's first discovery tick.
+                scopes.adopt(pid as u32);
+                Some(session)
             } else { None };
             let service = start_service.clone();
             let running = start_running.clone();

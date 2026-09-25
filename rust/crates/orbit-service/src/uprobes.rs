@@ -123,6 +123,13 @@ struct CpuRing {
     attached_fds: Vec<i32>,
 }
 
+/// One second of a function's entries, for the call-rate limit.
+#[derive(Default)]
+struct CallRate {
+    window_start_ns: u64,
+    entries: u64,
+}
+
 impl Drop for CpuRing {
     fn drop(&mut self) {
         for fd in self.attached_fds.drain(..) {
@@ -158,6 +165,13 @@ pub struct UprobeSession {
     /// looking at what the kernel delivered around a lost hit.
     dump: Option<std::io::BufWriter<std::fs::File>>,
     names: HashMap<u64, String>,
+    /// Every perf fd (leaders and attached) per function, so one function's
+    /// probes can be switched off on their own.
+    fds_by_function: HashMap<u64, Vec<i32>>,
+    /// Entries per function in the current one-second window.
+    rates: HashMap<u64, CallRate>,
+    /// Functions switched off for firing over the limit, with the rate seen.
+    pub auto_unhooked: Vec<(u64, u64)>,
     /// Per thread, the last entry that was let through: `(sp, ip, cpu)`.
     /// At most one, as in the C++ -- it is the last entry, not a shadow
     /// stack. Taken on the next entry and on every return.
@@ -203,6 +217,9 @@ impl UprobeSession {
                 }
             }),
             names: hooks.iter().map(|h| (h.function_id, h.name.clone())).collect(),
+            fds_by_function: HashMap::new(),
+            rates: HashMap::new(),
+            auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),
@@ -250,6 +267,7 @@ impl UprobeSession {
                                     continue;
                                 }
                                 session.by_stream.insert(id, (hook.function_id, is_return));
+                                session.fds_by_function.entry(hook.function_id).or_default().push(ring.fd());
                                 ring_of_cpu.insert(*cpu, session.rings.len());
                                 session.rings.push(CpuRing { ring, attached_fds: Vec::new() });
                                 armed_here += 1;
@@ -266,6 +284,7 @@ impl UprobeSession {
                                         continue;
                                     }
                                     session.by_stream.insert(id, (hook.function_id, is_return));
+                                    session.fds_by_function.entry(hook.function_id).or_default().push(fd);
                                     session.rings[i].attached_fds.push(fd);
                                     armed_here += 1;
                                 }
@@ -289,6 +308,34 @@ impl UprobeSession {
     }
 
     /// Drains every CPU's ring and returns the calls that can now be closed.
+    /// Switches off every function whose entries exceeded `max_calls_per_s`
+    /// in its current one-second window, and returns one line per function
+    /// for the status. A function called a hundred thousand times a second
+    /// is not something to time with a hook -- sampling already shows it is
+    /// hot -- and left armed it costs the target and floods the rings.
+    pub fn enforce_call_limit(&mut self, max_calls_per_s: u64) -> Vec<String> {
+        if max_calls_per_s == 0 {
+            return Vec::new();
+        }
+        let offenders: Vec<(u64, u64)> = self
+            .rates
+            .iter()
+            .filter(|(_, rate)| rate.entries > max_calls_per_s)
+            .map(|(function_id, rate)| (*function_id, rate.entries))
+            .collect();
+        let mut lines = Vec::new();
+        for (function_id, entries) in offenders {
+            for fd in self.fds_by_function.remove(&function_id).unwrap_or_default() {
+                let _ = orbit_perf_ring::ring::disable_fd(fd);
+            }
+            self.rates.remove(&function_id);
+            let name = self.names.get(&function_id).cloned().unwrap_or_else(|| format!("function {function_id}"));
+            lines.push(format!("auto-unhooked {name}: {entries} calls/s (limit {max_calls_per_s})"));
+            self.auto_unhooked.push((function_id, entries));
+        }
+        lines
+    }
+
     pub fn poll(&mut self) -> Vec<CompletedCall> {
         let flags = uprobe_sample_flags();
         for cpu in self.rings.iter_mut() {
@@ -459,6 +506,12 @@ impl UprobeSession {
                     }
                 }
                 self.open.entry(hit.tid).or_default().push(hit.sp);
+                let rate = self.rates.entry(hit.function_id).or_default();
+                if hit.timestamp_ns.saturating_sub(rate.window_start_ns) >= 1_000_000_000 {
+                    rate.window_start_ns = hit.timestamp_ns;
+                    rate.entries = 0;
+                }
+                rate.entries += 1;
                 self.calls.process_function_entry(
                     hit.tid,
                     hit.function_id,
@@ -574,6 +627,9 @@ mod tests {
             duplicate_filter: true,
             dump: None,
             names: HashMap::new(),
+            fds_by_function: HashMap::new(),
+            rates: HashMap::new(),
+            auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),

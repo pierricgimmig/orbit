@@ -13,7 +13,19 @@
 
 extern uint64_t orbit_frida_start(uint32_t, const char *, size_t);
 extern void orbit_frida_stop(uint32_t, uint64_t);
-typedef struct { uint32_t generation; char * name; size_t len; } Hook;
+// Calls a second past which a hook mutes itself: keeps counting nothing,
+// emits nothing, and tells the service once via its unhook token. A function
+// this hot floods the shared ring and takes every other hook's spans with it.
+static volatile uint64_t call_limit = 0;
+void orbit_gum_set_call_limit(uint64_t max_calls_per_s) { call_limit = max_calls_per_s; }
+typedef struct {
+  uint32_t generation;
+  char * name; size_t len;
+  char * unhook_token; size_t unhook_len;
+  volatile gint64 calls;          // entries in the current window
+  volatile gint64 window_start_us;
+  volatile gint muted;
+} Hook;
 typedef struct { uint32_t generation; uint64_t handle; } Invocation;
 static pthread_once_t initialized = PTHREAD_ONCE_INIT;
 static void initialize(void) { gum_init_embedded(); }
@@ -28,6 +40,28 @@ static void enter(GumInvocationContext * ic, gpointer data) {
   Hook * h = data;
   Invocation * call = gum_invocation_context_get_listener_invocation_data(ic, sizeof(Invocation));
   call->generation = h->generation;
+  if (h->muted) { call->handle = 0; return; }
+  if (call_limit != 0) {
+    // The rate is judged over 100 ms windows against a tenth of the limit:
+    // a function at a million calls a second is muted after ~10k calls,
+    // before its burst can lap a ring, rather than after 100k.
+    gint64 now_us = g_get_monotonic_time();
+    gint64 n = __atomic_add_fetch(&h->calls, 1, __ATOMIC_RELAXED);
+    if (now_us - h->window_start_us >= 100000) {
+      // A new window; the race between threads here only blurs the count.
+      h->window_start_us = now_us;
+      h->calls = 0;
+    } else if ((uint64_t)n > call_limit / 10 && g_atomic_int_compare_and_exchange(&h->muted, 0, 1)) {
+      // One marker record, then silence: the service names the hook on its
+      // status line and draws nothing more for it.
+      if (h->unhook_len != 0) {
+        uint64_t marker = orbit_frida_start(h->generation, h->unhook_token, h->unhook_len);
+        orbit_frida_stop(h->generation, marker);
+      }
+      call->handle = 0;
+      return;
+    }
+  }
   call->handle = orbit_frida_start(h->generation, h->name, h->len);
 }
 static void leave(GumInvocationContext * ic, gpointer data) {
@@ -38,13 +72,17 @@ static void leave(GumInvocationContext * ic, gpointer data) {
 static void free_hook(gpointer data) {
   Hook * h = data;
   g_free(h->name);
+  g_free(h->unhook_token);
   g_free(h);
 }
-void * orbit_gum_attach(uint64_t address, uint32_t generation, const char * name, int * status) {
+void * orbit_gum_attach(uint64_t address, uint32_t generation, const char * name, const char * unhook_token, int * status) {
   Hook * h = g_new0(Hook, 1);
   h->generation = generation;
   h->name = g_strdup(name);
   h->len = strlen(name);
+  h->unhook_token = g_strdup(unhook_token != NULL ? unhook_token : "");
+  h->unhook_len = strlen(h->unhook_token);
+  h->window_start_us = g_get_monotonic_time();
   GumInvocationListener * listener = gum_make_call_listener(enter, leave, h, free_hook);
   GumInterceptor * i = gum_interceptor_obtain();
   *status = gum_interceptor_attach(i, GSIZE_TO_POINTER(address), listener, NULL);
