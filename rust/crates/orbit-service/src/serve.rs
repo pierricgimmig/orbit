@@ -2004,9 +2004,9 @@ pub fn run_on(
                 // Each hook names its scopes by a service-interned id (one
                 // record per call, see scopes.rs); the agent switches a hook
                 // off itself past the call-rate limit.
-                let name_ids: Vec<u32> = hooks.iter().map(|h| start_service.intern_string(&h.name)).collect();
+                let name_ids: Vec<u32> = hooks.iter().map(|h| scopes.intern_name(&h.name)).collect();
                 let label_ids: Vec<u32> =
-                    hooks.iter().map(|h| start_service.intern_string(&format!("auto-unhooked: {}", h.name))).collect();
+                    hooks.iter().map(|h| scopes.intern_name(&format!("auto-unhooked: {}", h.name))).collect();
                 let session = crate::frida::FridaSession::arm(pid, &hooks, &name_ids, &label_ids, max_hook_calls_per_s).map_err(|error| {
                     start_running.store(false, Ordering::SeqCst);
                     start_service.set_instrumentation_status(&error);
