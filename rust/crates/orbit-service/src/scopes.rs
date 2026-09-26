@@ -159,7 +159,13 @@ impl ScopeSource {
     /// does so on the first drain -- which is after the symbolizer is built,
     /// the rings opened and the uprobes armed. Without this those setup phases,
     /// and the whole-capture scope, are emitted while the segment is still
-    /// inert and lost. Opened here at cursor 0, the first drain reads them.
+    /// inert and lost. Opened here at the rings' write position, before the
+    /// flag goes on, the first drain reads them -- and nothing older. The
+    /// segment outlives a capture: at cursor 0 the second capture replayed
+    /// every scope the service wrote during the first (a hundred thousand
+    /// and more, each refused as older than the capture and counted as
+    /// dropped), booked a lap of its own ring as this capture's loss, and
+    /// carried the first capture's unclosed scopes as extra depth.
     pub fn begin_self_capture(&mut self) {
         // Touch the manual API so the producer segment exists. The call writes
         // nothing (capturing is not set yet) but materialises the segment.
@@ -169,12 +175,12 @@ impl ScopeSource {
             return;
         }
         if let Ok(reader) = ScopeRingReader::open(self_pid) {
+            let cursors = Cursors::at_write(reader.rings());
             reader.set_capturing(true);
-            let ring_count = reader.rings().ring_count();
             self.segments.push(Segment {
                 pid: self_pid,
                 reader,
-                cursors: Cursors::for_rings(ring_count),
+                cursors,
                 text: TextAssembler::new(),
                 awaiting_name: HashMap::new(),
                 open: HashMap::new(),

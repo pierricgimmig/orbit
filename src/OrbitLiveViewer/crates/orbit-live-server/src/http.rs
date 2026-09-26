@@ -880,10 +880,11 @@ async fn functions_search(
 ) -> Response {
     let pid = q.pid.unwrap_or(0);
     let query = q.q.unwrap_or_default();
-    // A search wants a handful; the Functions view asks for its first
-    // 200k and searches the service for the rest. The cap bounds one
-    // response, not the index.
-    let limit = q.limit.unwrap_or(24).min(1_000_000);
+    // A search wants a handful; the Functions view asks for the whole
+    // index (u32::MAX) and filters on its own. No cap here: the largest
+    // index seen (an Unreal Shipping build, 400k functions) is ~100 MB of
+    // JSON built in about a second.
+    let limit = q.limit.unwrap_or(24);
     match hooks_clone(&svc) {
         Some(h) => match (h.search_functions_json)(pid, &query, limit) {
             Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
@@ -1170,6 +1171,7 @@ async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
         }
     }
     let mut rx = svc.subscribe();
+    let mut lag_reported = false;
     loop {
         tokio::select! {
             incoming = stream.next() => {
@@ -1189,13 +1191,40 @@ async fn ws_loop(socket: WebSocket, svc: Arc<LiveService>) {
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // This viewer fell behind the broadcast and frames
-                        // were dropped -- a burst of names and batches, as
-                        // opening a capture sends. Rather than leave it with
-                        // holes it cannot see, start it over: a fresh Hello
-                        // plus the whole ring, which the viewer takes as a
-                        // reset. Anything broadcast meanwhile follows.
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        if svc.is_capturing() {
+                            // A viewer that cannot keep up with a live
+                            // capture goes on with a gap. It gets the names
+                            // and strings again, since a name it missed
+                            // would leave a track unlabelled for good; the
+                            // events it missed stay in the ring for the
+                            // report and the export. Starting it over with
+                            // the whole ring instead (below) took longer
+                            // than the slack it had, so it lagged again
+                            // before the snapshot was through and again
+                            // after that: the view reset every few seconds
+                            // to the start of the capture and never reached
+                            // the present.
+                            if !lag_reported {
+                                lag_reported = true;
+                                eprintln!(
+                                    "orbit-live-server: a viewer fell {skipped} frame(s) behind the live capture; \
+                                     it continues with a gap"
+                                );
+                            }
+                            for frame in svc.names_and_status_frames() {
+                                if !send_frame(&mut sink, frame).await {
+                                    return;
+                                }
+                            }
+                            continue;
+                        }
+                        // Otherwise the burst was finite -- opening a
+                        // capture posts its names and batches all at once
+                        // -- and rather than leave the viewer with holes it
+                        // cannot see, start it over: a fresh Hello plus the
+                        // whole ring, which the viewer takes as a reset.
+                        // Anything broadcast meanwhile follows.
                         for frame in svc.hello_and_snapshot_frames() {
                             if !send_frame(&mut sink, frame).await {
                                 return;

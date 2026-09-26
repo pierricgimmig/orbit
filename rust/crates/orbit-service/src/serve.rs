@@ -647,6 +647,119 @@ struct SampledThread {
     task: Option<orbit_perf_ring::RingBuffer>,
 }
 
+/// What a capture's sampling rings yielded, for the summary at its end.
+#[derive(Default)]
+struct SampleCounters {
+    records: u64,
+    parsed: u64,
+    short_regs: u64,
+}
+
+/// Reads every sampling ring out once. Sampled callstacks: unwind,
+/// symbolize, and lay each frame out as a span one sampling period wide at
+/// its stack depth. Consecutive samples in the same function abut, so the
+/// timeline reads as a flame graph rather than a picket fence.
+#[allow(clippy::too_many_arguments)]
+fn drain_samples(
+    threads: &mut [SampledThread],
+    unwinder: &mut ProcessUnwinder,
+    symbolizer: &Symbolizer,
+    pc_ids: &mut crate::report::FastMap<u64, u32>,
+    names: &mut FrameNames,
+    store: &SampleStore,
+    target_pid: i32,
+    period_ns: u64,
+    sample_flags: SampleFlags,
+    counters: &mut SampleCounters,
+    batch: &mut Vec<LiveEvent>,
+) {
+    for thread in threads.iter_mut() {
+        let ring = &mut thread.sample;
+        while let Ok(Some(record)) = ring.read_record() {
+            let Some(header) = PerfEventHeader::parse(&record) else { continue };
+            if { header.kind } != record_type::SAMPLE {
+                continue;
+            }
+            counters.records += 1;
+            let Some(sample) = parse_record_sample(&record, sample_flags, true) else {
+                continue;
+            };
+            counters.parsed += 1;
+            let (Some(regs), Some(stack)) = (sample.regs.as_deref(), sample.stack_data.as_deref()) else {
+                continue;
+            };
+            if regs.len() < REGS_USER_ALL_COUNT {
+                counters.short_regs += 1;
+                continue;
+            }
+            #[cfg(target_arch = "x86_64")]
+            let start = StartRegs { ip: regs[8], sp: regs[7], frame_pointer: regs[6], link: 0 };
+            #[cfg(target_arch = "aarch64")]
+            let start = StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] };
+            let outcome = {
+                let _unwind = orbit_api::scope("unwind");
+                unwinder.unwind(start, start.sp, stack, 64)
+            };
+            // frames[0] is the sampled pc; a flame graph stacks the
+            // outermost caller at depth 0, so walk them in reverse.
+            let depth_count = outcome.frames.len().min(u8::MAX as usize);
+            // Innermost-first ids, for the report's self/inclusive
+            // counts; the timeline spans below want them reversed.
+            let frame_ids: Vec<u32> = {
+                let _symbolize = orbit_api::scope("symbolize");
+                outcome
+                    .frames
+                    .iter()
+                    .take(depth_count)
+                    .map(|pc| {
+                        *pc_ids.entry(*pc).or_insert_with(|| names.id_for_frame(&symbolizer.resolve_frame(*pc)))
+                    })
+                    .collect()
+            };
+            // One tick on the thread's sample bar, named by the leaf
+            // frame so hovering it says what was running without a
+            // lookup. Drawn as an instant: see LiveEvent::end_ns.
+            batch.push(LiveEvent {
+                start_ns: sample.time,
+                duration_ns: period_ns,
+                tid: sample.tid,
+                pid: target_pid as u32,
+                kind: kind::SAMPLE,
+                depth: 0,
+                extra: 0,
+                _pad: 0,
+                name_id: frame_ids.first().copied().unwrap_or(0),
+            });
+            for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
+                batch.push(LiveEvent {
+                    start_ns: sample.time,
+                    duration_ns: period_ns,
+                    tid: sample.tid,
+                    pid: target_pid as u32,
+                    kind: kind::FUNCTION_CALL,
+                    depth: index as u8,
+                    extra: orbit_live_event::extra::SAMPLED_FRAME,
+                    _pad: 0,
+                    name_id,
+                });
+            }
+            store.push(StoredSample { timestamp_ns: sample.time, tid: sample.tid, frames: frame_ids });
+        }
+    }
+}
+
+/// The line a capture logs when its symbols land.
+fn announce_symbols(built: &Symbolizer) {
+    if built.module_count() > 0 {
+        eprintln!(
+            "orbit-service: symbolizing {} files ({} mappings), {} symbols",
+            built.file_count(),
+            built.module_count(),
+            built.symbol_count()
+        );
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn capture_loop(
     service: Arc<LiveService>,
@@ -974,9 +1087,7 @@ fn capture_loop(
 
     let mut switches = ContextSwitchManager::new();
     let mut instrumented_calls: u64 = 0;
-    let mut sample_records: u64 = 0;
-    let mut samples_parsed: u64 = 0;
-    let mut samples_short_regs: u64 = 0;
+    let mut samples = SampleCounters::default();
     let mut batch: Vec<LiveEvent> = Vec::with_capacity(256);
     let mut scope_batch: Vec<LiveEvent> = Vec::with_capacity(256);
     // How long the loop sleeps between drains. This is also how often events
@@ -1086,13 +1197,7 @@ fn capture_loop(
         // the sampling rings (which buffered while it built). Even a stripped
         // binary resolves to module+offset here, not bare hex.
         if let Ok(built) = symbolizer_rx.try_recv() {
-            if built.module_count() > 0 {
-                eprintln!(
-                    "orbit-service: symbolizing {} modules, {} symbols",
-                    built.module_count(),
-                    built.symbol_count()
-                );
-            }
+            announce_symbols(&built);
             symbolizer = built;
             symbols_ready = true;
         }
@@ -1184,10 +1289,6 @@ fn capture_loop(
                 }
             }
         }
-        // Sampled callstacks: unwind, symbolize, and lay each frame out as a
-        // span one sampling period wide at its stack depth. Consecutive
-        // samples in the same function abut, so the timeline reads as a flame
-        // graph rather than a picket fence.
         drop(_switches);
         if sampling_works {
             // Thread births and deaths, from every sampled thread's task
@@ -1241,90 +1342,20 @@ fn capture_loop(
         // them meanwhile, so they arrive named rather than as bare addresses.
         let _samples = orbit_api::scope("read samples");
         if let (true, Some(unwinder)) = (symbols_ready, unwinder.as_mut()) {
-            for thread in threads.iter_mut() {
-                let ring = &mut thread.sample;
-                while let Ok(Some(record)) = ring.read_record() {
-                    let Some(header) = PerfEventHeader::parse(&record) else { continue };
-                    if { header.kind } != record_type::SAMPLE {
-                        continue;
-                    }
-                    sample_records += 1;
-                    let Some(sample) = parse_record_sample(&record, sample_flags, true) else {
-                        continue;
-                    };
-                    samples_parsed += 1;
-                    let (Some(regs), Some(stack)) =
-                        (sample.regs.as_deref(), sample.stack_data.as_deref())
-                    else {
-                        continue;
-                    };
-                    if regs.len() < REGS_USER_ALL_COUNT {
-                        samples_short_regs += 1;
-                        continue;
-                    }
-                    #[cfg(target_arch = "x86_64")]
-                    let start = StartRegs { ip: regs[8], sp: regs[7], frame_pointer: regs[6], link: 0 };
-                    #[cfg(target_arch = "aarch64")]
-                    let start =
-                        StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] };
-                    let outcome = {
-                        let _unwind = orbit_api::scope("unwind");
-                        unwinder.unwind(start, start.sp, stack, 64)
-                    };
-                    // frames[0] is the sampled pc; a flame graph stacks the
-                    // outermost caller at depth 0, so walk them in reverse.
-                    let depth_count = outcome.frames.len().min(u8::MAX as usize);
-                    // Innermost-first ids, for the report's self/inclusive
-                    // counts; the timeline spans below want them reversed.
-                    let frame_ids: Vec<u32> = {
-                        let _symbolize = orbit_api::scope("symbolize");
-                        outcome
-                            .frames
-                            .iter()
-                            .take(depth_count)
-                            .map(|pc| {
-                                *pc_ids.entry(*pc).or_insert_with(|| {
-                                    names.id_for_frame(&symbolizer.resolve_frame(*pc))
-                                })
-                            })
-                            .collect()
-                    };
-                    // One tick on the thread's sample bar, named by the leaf
-                    // frame so hovering it says what was running without a
-                    // lookup. Drawn as an instant: see LiveEvent::end_ns.
-                    batch.push(LiveEvent {
-                        start_ns: sample.time,
-                        duration_ns: period_ns,
-                        tid: sample.tid,
-                        pid: target_pid as u32,
-                        kind: kind::SAMPLE,
-                        depth: 0,
-                        extra: 0,
-                        _pad: 0,
-                        name_id: frame_ids.first().copied().unwrap_or(0),
-                    });
-                    for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
-                        batch.push(LiveEvent {
-                            start_ns: sample.time,
-                            duration_ns: period_ns,
-                            tid: sample.tid,
-                            pid: target_pid as u32,
-                            kind: kind::FUNCTION_CALL,
-                            depth: index as u8,
-                            extra: orbit_live_event::extra::SAMPLED_FRAME,
-                            _pad: 0,
-                            name_id,
-                        });
-                    }
-                    store.push(StoredSample {
-                        timestamp_ns: sample.time,
-                        tid: sample.tid,
-                        frames: frame_ids,
-                    });
-                }
-            }
+            drain_samples(
+                &mut threads,
+                unwinder,
+                &symbolizer,
+                &mut pc_ids,
+                &mut names,
+                &store,
+                target_pid,
+                period_ns,
+                sample_flags,
+                &mut samples,
+                &mut batch,
+            );
         }
-
         drop(_samples);
         if let Some(tracer) = thread_states.as_mut() {
             let _states = orbit_api::scope("read thread states");
@@ -1538,6 +1569,56 @@ fn capture_loop(
         orbit_api::span_async(format!("DROPPED {lost} events"), start, crate::now_monotonic_ns());
     }
 
+    // Samples still held for the symbols. A capture stopped before its
+    // symbol load finished -- the first capture of a big binary, stopped
+    // within a second or two -- lost every sample it took: the rings were
+    // never read. Wait for the load, within reason, then read them out once
+    // more; a load that is still not done resolves them by address rather
+    // than losing them.
+    if let (true, Some(unwinder)) = (sampling_works, unwinder.as_mut()) {
+        if !symbols_ready {
+            let _wait = orbit_api::scope("wait for symbols");
+            match symbolizer_rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(built) => {
+                    announce_symbols(&built);
+                    symbolizer = built;
+                }
+                Err(_) => eprintln!(
+                    "orbit-service: symbols were still loading when the capture stopped; \
+                     its samples are named by address"
+                ),
+            }
+        }
+        let mut tail: Vec<LiveEvent> = Vec::new();
+        drain_samples(
+            &mut threads,
+            unwinder,
+            &symbolizer,
+            &mut pc_ids,
+            &mut names,
+            &store,
+            target_pid,
+            period_ns,
+            sample_flags,
+            &mut samples,
+            &mut tail,
+        );
+        if !tail.is_empty() {
+            service.push_events(&tail);
+        }
+    }
+    // The helper is a child process: stopped and reaped here, or it lingers
+    // as a zombie for every capture the service has run.
+    if let Some(helper) = telemetry.take() {
+        let mut tail: Vec<LiveEvent> = Vec::new();
+        for event in helper.shutdown() {
+            tail.extend(gpu_events(&event));
+        }
+        if !tail.is_empty() {
+            service.push_events(&tail);
+        }
+    }
+
     if let Some(tracer) = thread_states.as_mut() {
         let end_ns = crate::now_monotonic_ns();
         let tail: Vec<LiveEvent> = tracer
@@ -1634,14 +1715,14 @@ fn capture_loop(
         status.push_str(&summary);
         service.set_instrumentation_status(status);
     }
-    eprintln!("orbit-service: {samples_parsed} callstack samples recorded");
+    eprintln!("orbit-service: {} callstack samples recorded", samples.parsed);
     // Only worth a line when it happened: a sample whose register set came
     // back short is one the unwinder could not start from.
-    let unparsed = sample_records.saturating_sub(samples_parsed);
-    if unparsed > 0 || samples_short_regs > 0 {
+    let unparsed = samples.records.saturating_sub(samples.parsed);
+    if unparsed > 0 || samples.short_regs > 0 {
         eprintln!(
-            "orbit-service: {unparsed} sample(s) failed to parse, \
-             {samples_short_regs} had too few registers"
+            "orbit-service: {unparsed} sample(s) failed to parse, {} had too few registers",
+            samples.short_regs
         );
     }
     if !hooks.is_empty() {
@@ -2054,10 +2135,13 @@ pub fn run_on(
         stop_capture: Arc::new(move || {
             let mut worker = stop_worker.lock().map_err(|_| "capture worker poisoned".to_string())?;
             stop_running.store(false, Ordering::SeqCst);
+            // A second Stop -- the viewer's, after the worker already ended
+            // with its target, or a double click while the first joins --
+            // has nothing to stop and nothing to say.
             if let Some(handle) = worker.take() {
                 handle.join().map_err(|_| "capture worker panicked".to_string())?;
+                eprintln!("orbit-service: capture stopped");
             }
-            eprintln!("orbit-service: capture stopped");
             Ok(())
         }),
         load_symbols: Arc::new(move |pid| load_symbols_for(&load_state, pid)),
