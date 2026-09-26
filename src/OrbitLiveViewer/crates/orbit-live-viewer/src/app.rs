@@ -957,6 +957,7 @@ pub struct OrbitLiveApp {
     /// Functions view sort: column index (hooked, function, size, module) and descending.
     functions_sort: (u8, bool),
     selected_hooks: Vec<FunctionHit>,
+    presets: crate::presets::State,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
     /// Chrome-trace file session (not Demo, not the 64 MB ring).
@@ -1638,6 +1639,7 @@ impl OrbitLiveApp {
             code_scroll_to: None,
             functions_sort: (1, false),
             selected_hooks: Vec::new(),
+            presets: crate::presets::State::default(),
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
             trace_load: None,
@@ -2366,6 +2368,7 @@ impl OrbitLiveApp {
     }
 
     fn drain_net(&mut self) {
+        crate::logging::flush();
         let inbox = self.net.take();
         self.http_ok = inbox.http_ok;
         self.ws_ok = inbox.ws_ok;
@@ -2449,9 +2452,25 @@ impl OrbitLiveApp {
             }
         }
         if let Some(list) = inbox.function_list {
-            self.functions_pid = Some(list.pid);
-            self.functions = list.functions;
-            self.functions_requested = false;
+            if self.selected_pid == Some(list.pid) {
+                self.functions_pid = Some(list.pid);
+                self.functions = list.functions;
+                self.functions_requested = false;
+            }
+        }
+        for (generation, result) in inbox.preset_functions {
+            if generation == self.presets.generation {
+                self.presets.resolving = false;
+                self.presets.pending = false;
+                match result {
+                    Ok(list) if self.selected_pid == Some(list.pid) && list.status == "ready" => {
+                        self.presets.reports = crate::presets::apply(&self.presets.loaded, &list.functions, &mut self.selected_hooks);
+                        self.presets.message.clear();
+                    }
+                    Ok(_) => self.presets.message = "Process changed while resolving presets. Apply again when symbols are ready.".into(),
+                    Err(error) => self.presets.message = error,
+                }
+            }
         }
         let _ = inbox.function_hits;
         if self.status.demo && self.processes.iter().all(|p| p.pid != 1) {
@@ -2483,6 +2502,12 @@ impl OrbitLiveApp {
             self.service_frame = Some(fr);
         }
         if let Some(e) = inbox.error {
+            // Once per distinct error: a status poll failing every second
+            // while the service is down would otherwise fill the log with
+            // the same line.
+            if e != self.error {
+                log::warn!(target: "orbit_live_viewer::net", "{e}");
+            }
             self.error = e;
         }
         self.ws_queue.extend(inbox.frames);
@@ -2574,6 +2599,7 @@ impl OrbitLiveApp {
                 ring_bytes,
             } => {
                 self.apply_status(StatusJson {
+                    log_path: None,
                     capturing,
                     demo,
                     events_live,
@@ -2773,6 +2799,9 @@ impl OrbitLiveApp {
     }
 
     fn transport_overflow_items(&mut self, ui: &mut Ui) {
+        let presets = ui.button("Instrumentation presets…");
+        note_ui_rect("Presets", presets.rect);
+        if presets.clicked() { self.presets.open = true; ui.close(); }
         ui.set_min_width(220.0);
         if !self.status.hooks || !self.status.capturing {
             if ui
@@ -2845,6 +2874,14 @@ impl OrbitLiveApp {
                 .font(FontId::monospace(10.5))
                 .color(theme::MUTED()),
         );
+        if let Some(path) = &self.status.log_path {
+            ui.label(
+                RichText::new(format!("service log {path}"))
+                    .font(FontId::monospace(10.5))
+                    .color(theme::MUTED()),
+            )
+            .on_hover_text("The service's log file. This page's own log lines are relayed into it too.");
+        }
         ui.label(
             RichText::new(format!("renderer {}", self.gpu_backend))
                 .font(FontId::monospace(10.5))
@@ -3346,6 +3383,7 @@ impl OrbitLiveApp {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             section_label(ui, "HOOKED");
+            if ui.button("Presets…").clicked() { self.presets.open = true; }
             // Which functions are hooked lives in the Functions view (every
             // symbol of the process, a hooked column), as in C++ Orbit, and
             // in the sampling report's right-click. This line only counts.
@@ -3392,6 +3430,9 @@ impl OrbitLiveApp {
     /// narrowing it. Ticking a row hooks it for the next Record, exactly as
     /// the sampling report's right-click does.
     fn function_rows(&mut self, ui: &mut Ui) {
+        let presets = ui.button("Presets…");
+        note_ui_rect("Presets", presets.rect);
+        if presets.clicked() { self.presets.open = true; }
         let font = self.ui_tweaks.report_font;
         let Some(pid) = self.selected_pid else {
             ui.label(RichText::new("Select a process to list its functions.").color(theme::MUTED()).size(font));
@@ -3684,6 +3725,8 @@ impl OrbitLiveApp {
                     self.report_selection.clear();
                     self.report_drag = None;
                 }
+                self.presets.queue();
+                self.functions_requested = false;
                 self.loaded_symbol_pid = Some(pid);
                 self.symbols_started_s = now;
                 self.symbols = SymbolsStatusJson {
@@ -3707,6 +3750,20 @@ impl OrbitLiveApp {
                     self.net.load_symbols(pid);
                 }
                 self.net.get_symbols_status(pid);
+            }
+            if self.presets.pending && !self.presets.resolving && self.symbols.status == "ready" {
+                let keys: std::collections::BTreeSet<_> = self.presets.loaded.iter()
+                    .flat_map(|p| p.functions.iter()).collect();
+                match serde_json::to_string(&keys) {
+                    Ok(keys) => {
+                        self.presets.resolving = true;
+                        self.net.resolve_preset_functions(pid, self.presets.generation, keys);
+                    }
+                    Err(error) => {
+                        self.presets.pending = false;
+                        self.presets.message = error.to_string();
+                    }
+                }
             }
             // Live rows and scope menus also need symbols to resolve hook targets.
             if self.symbols.status == "ready"
@@ -8324,6 +8381,76 @@ impl OrbitLiveApp {
         }
     }
 
+    fn presets_window(&mut self, ctx: &Context) {
+        if !self.presets.open { return; }
+        let mut open = true;
+        egui::Window::new("Instrumentation presets").open(&mut open)
+            .default_width(520.0).default_pos(ctx.screen_rect().center() - Vec2::new(260.0, 180.0)).show(ctx, |ui| {
+                ui.label("Save hooked functions as portable files. Load several to combine them.");
+                ui.label("Selections apply to the next capture. No process IDs, addresses or directory paths are saved.");
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    let name = ui.text_edit_singleline(&mut self.presets.name);
+                    note_ui_rect("preset:name", name.rect);
+                    let save = ui.add_enabled(!self.selected_hooks.is_empty(), egui::Button::new("Save selection…"));
+                    note_ui_rect("preset:save", save.rect);
+                    if save.clicked() {
+                        let catalogue = if self.functions_pid == self.selected_pid { self.functions.as_slice() } else { &[] };
+                        let result = crate::presets::Preset::from_selection(&self.presets.name, &self.selected_hooks, catalogue)
+                            .and_then(|p| crate::presets::save(&p));
+                        self.presets.message = result.err().unwrap_or_default();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let load = ui.add_enabled(self.presets.import.is_none(), egui::Button::new("Load presets…"));
+                    note_ui_rect("preset:load", load.rect);
+                    if load.clicked() { self.presets.import = Some(crate::presets::open(ctx.clone())); }
+                    let apply = ui.add_enabled(!self.presets.loaded.is_empty(), egui::Button::new("Apply again"));
+                    note_ui_rect("preset:apply", apply.rect);
+                    if apply.clicked() { self.presets.queue(); self.presets.message.clear(); }
+                    if !self.presets.loaded.is_empty() && ui.button("Forget loaded presets").on_hover_text("Keep the current hooked selection, but stop reapplying these files when you change process").clicked() {
+                        self.presets.loaded.clear();
+                        self.presets.queue();
+                    }
+                });
+                if self.presets.pending {
+                    ui.label(if self.selected_pid.is_none() { "Select a process to resolve the loaded presets." }
+                        else if self.symbols.status != "ready" { "Waiting for the selected process's symbols…" }
+                        else { "Resolving preset functions…" });
+                }
+                if !self.presets.message.is_empty() {
+                    let message = ui.label(&self.presets.message);
+                    note_ui_rect("preset:error", message.rect);
+                }
+                let count = ui.label(format!("{} loaded preset(s) · {} functions hooked", self.presets.loaded.len(), self.selected_hooks.len()));
+                note_ui_rect("preset:count", count.rect);
+                egui::ScrollArea::vertical().max_height(350.0).show(ui, |ui| {
+                    for report in &self.presets.reports {
+                        let summary = format!("{}: {} matched, {} added, {} missing, {} ambiguous",
+                            report.name, report.matched, report.added, report.missing.len(), report.ambiguous.len());
+                        let row = ui.label(&summary);
+                        note_ui_rect(&format!("preset:report:{summary}"), row.rect);
+                        if !report.missing.is_empty() || !report.ambiguous.is_empty() {
+                            ui.label("Unresolved functions were skipped; exact module and symbol names must match this build.");
+                            ui.collapsing(format!("Details for {}", report.name), |ui| {
+                                for (reason, entries) in [("Missing", &report.missing), ("Ambiguous", &report.ambiguous)] {
+                                    for f in entries.iter().take(50) { ui.label(format!("{reason}: {} · {}", f.module, f.name)); }
+                                    if entries.len() > 50 { ui.label(format!("{} more {reason} functions", entries.len() - 50)); }
+                                }
+                                if ui.button("Copy all unresolved functions").clicked() {
+                                    let text = report.missing.iter().map(|f| format!("Missing: {} · {}", f.module, f.name))
+                                        .chain(report.ambiguous.iter().map(|f| format!("Ambiguous: {} · {}", f.module, f.name)))
+                                        .collect::<Vec<_>>().join("\n");
+                                    ui.ctx().copy_text(text);
+                                }
+                            });
+                        }
+                    }
+                });
+            });
+        self.presets.open = open;
+    }
+
     /// The UI knobs window: what the report rows look like, live.
     /// The settings, one window behind the gear: the process and its
     /// symbols, what to collect, unwinding, hooks and what is hooked, then
@@ -8412,6 +8539,7 @@ impl OrbitLiveApp {
 
 impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.presets.receive();
         self.now_s = ctx.input(|i| i.time);
         self.pointer_readout = ctx.input(|i| {
             let p = &i.pointer;
@@ -8599,6 +8727,7 @@ impl eframe::App for OrbitLiveApp {
                 self.sampling_panel(ctx);
             }
             self.tweaks_window(ctx);
+            self.presets_window(ctx);
             self.paint_scope_menu(ctx);
             {
                 let _pane = devf.scope(TID_UI, NAME_SELF_PANE);
@@ -9112,7 +9241,7 @@ const INSTRUMENTATION_TYPE_LEGEND: &str = "Instrumentation type\n\
     MS — manual scope: orbit_start / orbit_stop in the code\n\
     MA — manual async: an async span drawn on its own track";
 
-const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
+pub(crate) const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
     Some(build) => build,
     None => "dev",
 };

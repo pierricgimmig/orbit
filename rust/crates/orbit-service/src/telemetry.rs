@@ -34,12 +34,15 @@ pub struct TelemetryHelper {
 impl TelemetryHelper {
     /// Spawns `path` with `args`, reading its stdout as a pod event stream.
     pub fn spawn(path: &str, args: &[String]) -> std::io::Result<TelemetryHelper> {
-        let child = Command::new(path)
+        let mut child = Command::new(path)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()?;
+        if let Some(stderr) = child.stderr.take() {
+            crate::logging::relay_stderr(stderr, "orbit-gpu-helper");
+        }
         Ok(TelemetryHelper { child, pending: Vec::new(), events: 0, decode_errors: 0 })
     }
 

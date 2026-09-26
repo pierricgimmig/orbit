@@ -145,6 +145,7 @@ pub unsafe extern "C" fn orbit_live_server_set_callbacks(cb: OrbitLiveCallbacks)
     let search = cb.search_functions_json;
     with_service(move |svc| {
         let hooks = ControlHooks {
+            resolve_functions_json: std::sync::Arc::new(|_, _| Err("Portable presets require the Rust service".into())),
             list_processes_json: std::sync::Arc::new(move || {
                 if let Some(func) = list {
                     call_json_out(func, user_data, 1 << 20, "list_processes")

@@ -193,11 +193,11 @@ impl UprobeSession {
             dump: std::env::var_os("ORBIT_UPROBE_DUMP").and_then(|path| {
                 match std::fs::File::create(&path) {
                     Ok(f) => {
-                        eprintln!("orbit-service: dumping raw uprobe hits to {}", path.to_string_lossy());
+                        log::info!("dumping raw uprobe hits to {}", path.to_string_lossy());
                         Some(std::io::BufWriter::new(f))
                     }
                     Err(e) => {
-                        eprintln!("orbit-service: could not open uprobe dump {}: {e}", path.to_string_lossy());
+                        log::warn!("could not open uprobe dump {}: {e}", path.to_string_lossy());
                         None
                     }
                 }

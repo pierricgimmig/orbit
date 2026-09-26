@@ -40,7 +40,7 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+atomics,+bulk-memory,+mutabl
 export CARGO_PROFILE_RELEASE_PANIC=abort
 # The build the viewer reports about itself (More menu, the wordmark's
 # tooltip, window.__orbit_sel.build): what a running page was built from.
-export ORBIT_VIEWER_BUILD="$(date -u +%Y-%m-%dT%H:%MZ) $(git -C "$(dirname "$0")" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+export ORBIT_VIEWER_BUILD="$(date -u +%Y-%m-%dT%H:%MZ) $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)"
 
 echo "Building wasm pack with ${NIGHTLY} -Z build-std + --features wasm-threads"
 rustup run "$NIGHTLY" cargo build \

@@ -27,6 +27,7 @@ mod demangle;
 mod functions;
 mod interner;
 mod lan;
+mod logging;
 mod names;
 #[cfg(target_os = "linux")]
 mod privileges;
@@ -164,6 +165,11 @@ fn parse_args() -> Args {
                 let target = iter.next().unwrap_or_default();
                 std::process::exit(python_usdt::print_probes(&target));
             }
+            "--log-dir" => {
+                // Read up front by logging::open_file (it must work after
+                // --serve too); here it only consumes its value.
+                iter.next();
+            }
             "--uprobe-dump" => {
                 // Every raw probe hit to a file, for looking at what the
                 // kernel delivered around a lost one (uprobes.rs). A flag
@@ -176,7 +182,7 @@ fn parse_args() -> Args {
                 let v = iter.next().unwrap_or_default();
                 match orbit_live_server::WireFormat::parse(&v) {
                     Some(w) => args.wire = w,
-                    None => eprintln!("orbit-service: unknown --wire {v:?}; use raw, packed or deflate"),
+                    None => log::warn!("unknown --wire {v:?}; use raw, packed or deflate"),
                 }
             }
             "--serve" => {
@@ -192,7 +198,7 @@ fn parse_args() -> Args {
                 if let Err(error) =
                     serve::run_on(&host, port, args.gpu_helper.clone().or_else(default_gpu_helper), args.wire)
                 {
-                    eprintln!("orbit-service: could not start the live viewer: {error}");
+                    log::error!("could not start the live viewer: {error}");
                     std::process::exit(2);
                 }
                 std::process::exit(0);
@@ -209,14 +215,18 @@ fn parse_args() -> Args {
                      orbit-service --slice <in.orbit.zip> <out.orbit.zip> <t0_ns> <t1_ns>  cut a \
                      saved capture to a window, reading only the row groups inside it\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
-                     [--out <path>] [--gpu-helper <path>]"
+                     [--out <path>] [--gpu-helper <path>]\n\
+                     \n\
+                     Every run also logs to ~/.orbitprofiler/logs/orbit-service-<time>-<pid>.log \
+                     (the invoking user's home under sudo). --log-dir <dir> or ORBIT_LOG_DIR \
+                     puts it elsewhere; ORBIT_LOG=debug says more."
                 );
                 if cfg!(target_os = "macos") {
                     eprintln!("macOS: manual capture only; --out must end in .orbit.zip; --freq-hz is unused");
                 }
                 std::process::exit(0);
             }
-            other => eprintln!("orbit-service: ignoring unknown argument {other}"),
+            other => log::warn!("ignoring unknown argument {other}"),
         }
     }
     args
@@ -234,22 +244,28 @@ fn start_regs(regs: &[u64]) -> StartRegs {
 }
 
 fn main() {
+    // stderr from here on, and the file once a real run begins (serve mode
+    // or a file capture; --help and the one-shot tools leave no log behind).
+    logging::install();
     // No arguments at all means "bring up the UI": start the live viewer and
     // let the operator drive captures from it, rather than guessing what they
     // wanted to profile.
     if std::env::args().count() == 1 {
         if let Err(error) = serve::run(serve::DEFAULT_PORT, default_gpu_helper()) {
-            eprintln!("orbit-service: could not start the live viewer: {error}");
+            log::error!("could not start the live viewer: {error}");
             std::process::exit(2);
         }
         return;
     }
 
     let args = parse_args();
+    if let Err(error) = logging::open_file(None) {
+        log::warn!("no log file: {error}");
+    }
 
     #[cfg(target_os = "macos")]
     if let Err(error) = macos::capture_file(args) {
-        eprintln!("orbit-service: {error}");
+        log::error!("{error}");
         std::process::exit(2);
     }
     #[cfg(target_os = "linux")]
@@ -283,13 +299,13 @@ fn capture_file_linux(args: Args) {
             Ok(ring) => match ring.enable() {
                 Ok(()) => Some(ring),
                 Err(error) => {
-                    eprintln!("orbit-service: could not enable the sampling ring: {error}");
+                    log::warn!("could not enable the sampling ring: {error}");
                     None
                 }
             },
             Err(error) => {
-                eprintln!(
-                    "orbit-service: cannot sample tid {target_tid}: {error}\n\n{}",
+                log::warn!(
+                    "cannot sample tid {target_tid}: {error}\n\n{}",
                     access.report(&program_path)
                 );
                 None
@@ -310,8 +326,8 @@ fn capture_file_linux(args: Args) {
         }
     }
     if switch_rings.is_empty() {
-        eprintln!(
-            "orbit-service: scheduling capture unavailable (no per-CPU context-switch rings).\n\n{}",
+        log::warn!(
+            "scheduling capture unavailable (no per-CPU context-switch rings).\n\n{}",
             access.report(&program_path)
         );
     }
@@ -325,7 +341,7 @@ fn capture_file_linux(args: Args) {
         match TelemetryHelper::spawn(path, &[]) {
             Ok(helper) => Some(helper),
             Err(error) => {
-                eprintln!("orbit-service: could not start GPU helper {path}: {error}");
+                log::warn!("could not start GPU helper {path}: {error}");
                 None
             }
         }
@@ -336,8 +352,8 @@ fn capture_file_linux(args: Args) {
     let mut unwinder = match ProcessUnwinder::for_pid(target_pid) {
         Ok(unwinder) => Some(unwinder),
         Err(error) => {
-            eprintln!(
-                "orbit-service: cannot read /proc/{target_pid}/maps: {error}\n\
+            log::warn!(
+                "cannot read /proc/{target_pid}/maps: {error}\n\
                  \x20 (the process may have exited, or belong to another user)\n\
                  \x20 continuing without stack sampling"
             );
@@ -520,8 +536,8 @@ fn capture_file_linux(args: Args) {
     if let Some(helper) = gpu_helper.take() {
         gpu_events = helper.events_received();
         if helper.decode_errors() > 0 {
-            eprintln!(
-                "orbit-service: GPU helper stream had {} malformed record(s)",
+            log::info!(
+                "GPU helper stream had {} malformed record(s)",
                 helper.decode_errors()
             );
         }
@@ -553,7 +569,7 @@ fn capture_file_linux(args: Args) {
     match std::fs::File::create(&out_path).and_then(|mut file| file.write_all(&bytes)) {
         Ok(()) => {}
         Err(error) => {
-            eprintln!("orbit-service: could not write {out_path}: {error}");
+            log::error!("could not write {out_path}: {error}");
             std::process::exit(2);
         }
     }
@@ -570,20 +586,20 @@ fn capture_file_linux(args: Args) {
             .collect();
         frames.sort_by_key(|f| f.id);
         match orbit_capture::write_dataset(dir, &arrow_events, |_| String::new(), &arrow_samples, &frames) {
-            Ok(m) => eprintln!(
-                "orbit-service: wrote Arrow dataset to {dir}: {} events, {} samples, {} frames",
+            Ok(m) => log::info!(
+                "wrote Arrow dataset to {dir}: {} events, {} samples, {} frames",
                 m.events, m.samples, m.frames
             ),
             Err(error) => {
-                eprintln!("orbit-service: could not write Arrow dataset to {dir}: {error}");
+                log::error!("could not write Arrow dataset to {dir}: {error}");
                 std::process::exit(2);
             }
         }
     }
 
     let modules = unwinder.as_ref().map_or(0, |u| u.modules_loaded());
-    eprintln!(
-        "orbit-service: captured {samples} samples ({interned} distinct callstacks), \
+    log::info!(
+        "captured {samples} samples ({interned} distinct callstacks), \
          {slices} scheduling slices, {gpu_events} GPU telemetry events, \
          {modules} modules; wrote {len} pod bytes to {out_path}",
         len = bytes.len(),
@@ -600,15 +616,15 @@ fn capture_file_linux(args: Args) {
         missing.push("scheduling slices");
     }
     if !missing.is_empty() {
-        eprintln!(
-            "orbit-service: ran in reduced mode -- no {}. The capture still contains \
+        log::warn!(
+            "ran in reduced mode -- no {}. The capture still contains \
              machine metadata{}.",
             missing.join(" and "),
             if gpu_events > 0 { " and GPU telemetry" } else { "" }
         );
         let capabilities = access.capabilities();
         if !capabilities.own_process_sampling || !capabilities.system_wide {
-            eprintln!("\n{}", access.report(&program_path));
+            log::warn!("\n{}", access.report(&program_path));
         }
     }
 }

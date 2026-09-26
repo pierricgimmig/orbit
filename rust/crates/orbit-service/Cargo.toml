@@ -41,6 +41,8 @@ path = "src/main.rs"
 
 [dependencies]
 tempfile = "3"
+# The log facade; logging.rs is the one implementation (stderr and a file).
+log = "0.4"
 orbit-frida-transport = { path = "../orbit-frida-transport" }
 libc = "0.2"
 # Pure Rust; already in the tree through orbit-capture. Used by the wire bench only.
@@ -57,6 +59,7 @@ rustc-demangle = "0.1"
 memmap2 = "0.9"
 cpp_demangle = "0.5"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 orbit-maps = { path = "../orbit-maps" }
 orbit-object = { path = "../orbit-object" }

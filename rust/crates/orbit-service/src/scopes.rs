@@ -105,7 +105,7 @@ impl ScopeSource {
         // a position to do it.
         let swept = orbit_scope_ring::sweep_dead_segments();
         if swept > 0 {
-            eprintln!("orbit-service: swept {swept} scope segment(s) left by dead processes");
+            log::info!("swept {swept} scope segment(s) left by dead processes");
         }
         ScopeSource {
             service,
@@ -225,8 +225,8 @@ impl ScopeSource {
                         && self.warned_version_mismatch.insert(pid)
                     {
                         let ours = orbit_scope_ring::VERSION;
-                        eprintln!(
-                            "orbit-service: manual instrumentation: pid {pid} has an Orbit                              segment at protocol version {found}, but this service reads                              version {ours}. Its scopes are skipped -- update its liborbit_api                              (or the orbit-api package) to match this service."
+                        log::warn!(
+                            "manual instrumentation: pid {pid} has an Orbit                              segment at protocol version {found}, but this service reads                              version {ours}. Its scopes are skipped -- update its liborbit_api                              (or the orbit-api package) to match this service."
                         );
                     }
                 }
@@ -234,8 +234,8 @@ impl ScopeSource {
             if let Ok(reader) = opened {
                 let ring_count = reader.rings().ring_count();
                 self.warned_version_mismatch.remove(&pid);
-                eprintln!(
-                    "orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)"
+                log::info!(
+                    "manual instrumentation: opened segment of pid {pid} ({ring_count} rings)"
                 );
                 // Tell the producer to start writing: until this, an
                 // instrumented process pays a relaxed load per call and writes

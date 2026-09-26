@@ -403,7 +403,7 @@ mod tests {
     fn this_process_symbolizes_its_own_code() {
         let started = std::time::Instant::now();
         let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
-        eprintln!(
+        log::info!(
             "SYMBOLIZER_LOAD modules={} symbols={} ms={:.1}",
             symbolizer.module_count(),
             symbolizer.symbol_count(),

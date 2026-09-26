@@ -84,6 +84,34 @@ them (`setcap`, `sysctl`, or `sudo`, with this binary's real path filled in),
 and still writes a valid capture -- machine metadata and GPU telemetry need no
 privileges at all.
 
+## Logs
+
+Every run keeps a log, the way the C++ service and the Qt UI did with
+`ORBIT_LOG`: what goes to stderr also goes to
+`~/.orbitprofiler/logs/orbit-service-<utc time>-<pid>.log`, and files older
+than a week are removed when a new one opens. Under `sudo` the directory is
+the invoking user's and the file is chowned to them, so `./rust.sh --sudo`
+leaves a log you can read and delete. The banner and `GET /api/status`
+(`log_path`) say where it is.
+
+```
+[2026-09-26T14:03:22.123456] [INFO ] [serve.rs:773] 3 sampling ring(s) at 1000 Hz, unwinder ready
+[2026-09-26T14:03:24.010775] [WARN ] [viewer 7c1e orbit_live_viewer::net] WebSocket closed
+[2026-09-26T14:03:24.100031] [INFO ] [orbit-frida-helper] agent injected into pid 4242
+```
+
+UTC time to the microsecond, the level, where the line came from, the
+message. The origin is `file:line` for the service's own lines, the helper's
+name for a line a child process (`orbit-frida-helper`, `orbit-gpu-helper`)
+wrote to its stderr, and `viewer <page> <module>` for a line the browser
+viewer relayed through `POST /api/log` -- the viewer sends its own log
+(everything it prints to the console, and a panic) so one file has both
+ends of a session. Two open tabs get different page ids.
+
+`--log-dir <dir>` or `ORBIT_LOG_DIR` puts the file elsewhere; `ORBIT_LOG=debug`
+(or `trace`) says more. `--help`, `--slice` and the other one-shot tools leave
+no log behind.
+
 ## Backends
 
 `ObjectUtils` has one implementation now; `ORBIT_OBJECT_BACKEND` is gone with
