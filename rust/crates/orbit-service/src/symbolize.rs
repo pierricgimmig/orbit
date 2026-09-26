@@ -25,8 +25,18 @@
 
 use orbit_maps::{parse_maps, PROT_EXEC};
 use orbit_object::{detached_debug_file, load_symbols, parse_elf_metadata, ObjectSegment, SymbolTable};
+use std::sync::{Arc, Mutex};
 
 use crate::functions::{file_offset_of, function_id};
+
+/// What one file contributes: its loadable segments and its function
+/// symbols sorted by address. Loaded once per file and shared by every
+/// mapping of it, and kept across captures (see [`FILE_CACHE`]).
+struct LoadedFile {
+    segments: Vec<ObjectSegment>,
+    /// Function symbols sorted by address, for binary search.
+    symbols: Vec<(u64, u64, String)>,
+}
 
 /// One executable mapping, and the symbols of the file behind it.
 struct Module {
@@ -44,10 +54,49 @@ struct Module {
     /// segments it turns a symbol's address into the file offset the
     /// function index keys hooks by.
     path: String,
-    segments: Vec<ObjectSegment>,
-    /// Function symbols sorted by address, for binary search.
-    symbols: Vec<(u64, u64, String)>,
+    file: Arc<LoadedFile>,
 }
+
+impl Module {
+    fn symbols(&self) -> &[(u64, u64, String)] {
+        &self.file.symbols
+    }
+}
+
+/// A file as the cache knows it: its path, and the size and modification
+/// time that say whether the bytes on disk are still the ones loaded. The
+/// vDSO has no file and one image per kernel, so its identity is its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    key: String,
+    len: u64,
+    mtime_ns: u128,
+}
+
+impl FileIdentity {
+    fn of(key: &str) -> FileIdentity {
+        let meta = if key == VDSO { None } else { std::fs::metadata(key).ok() };
+        FileIdentity {
+            key: key.to_string(),
+            len: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            mtime_ns: meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        }
+    }
+}
+
+const VDSO: &str = "[vdso]";
+
+/// The files of the last symbolizer built. A capture rebuilds its symbolizer
+/// from scratch, and a game's 1 GB debug file is the same one the previous
+/// capture of it read a minute ago: the next build takes each file it still
+/// needs from here and reads only what is new or changed on disk. Replaced
+/// wholesale on every build, so it never holds more than one process's
+/// worth of symbols.
+static FILE_CACHE: Mutex<Vec<(FileIdentity, Arc<LoadedFile>)>> = Mutex::new(Vec::new());
 
 /// One executable mapping's coordinates, before its symbols are loaded: the
 /// unit of work parallelised across [`crate::par_map`]. Plain data, so `Sync`.
@@ -58,6 +107,13 @@ struct ModuleSpec {
     name: String,
     path: String,
     vdso: bool,
+}
+
+impl ModuleSpec {
+    /// What the file behind this mapping is keyed by in the cache.
+    fn file_key(&self) -> String {
+        if self.vdso { VDSO.to_string() } else { self.path.clone() }
+    }
 }
 
 pub struct Symbolizer {
@@ -94,8 +150,7 @@ impl Symbolizer {
                     bias,
                     name,
                     path: String::new(),
-                    segments: Vec::new(),
-                    symbols,
+                    file: Arc::new(LoadedFile { segments: Vec::new(), symbols }),
                 })
                 .collect(),
         }
@@ -139,57 +194,112 @@ impl Symbolizer {
                 vdso: false,
             });
         }
-        // One scope around the whole load: it launches the workers and blocks
-        // here until they return, so its span is the total symbol-loading time.
-        // The per-file "load symbols: <file>" scopes run on the workers under it.
-        let modules: Vec<Module> = {
-            let _total = orbit_api::scope(format!("load symbols ({} modules)", specs.len()));
-            crate::par_map(&specs, Self::module_of_spec)
-                .into_iter()
-                .flatten()
-                .collect()
-        };
+        // One load per *file*, shared by every mapping of it. A file is
+        // usually one executable mapping, but not always: a hook engine that
+        // patches function entries makes their pages writable one at a time,
+        // and every patched page splits the text mapping in two. Fourteen
+        // hooks in an Unreal game turned its one text mapping into fifteen,
+        // and a load per mapping read the 1 GB debug file fifteen times over
+        // -- 8 million symbols in memory for 600 thousand distinct ones, and
+        // the samples held until the load finished arrived seconds late.
+        let mut keys: Vec<String> = Vec::new();
+        for spec in &specs {
+            let key = spec.file_key();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        let files = Self::load_files(&keys);
+        let modules: Vec<Module> = specs
+            .into_iter()
+            .filter_map(|spec| {
+                let file = files.iter().find(|(key, _)| *key == spec.file_key())?.1.clone();
+                // The vDSO's bias is its mapping's start; a file's is adjusted
+                // by the image base its segments declare (see `Module::bias`).
+                let bias = if spec.vdso { spec.bias } else { spec.bias.wrapping_sub(image_base(&file.segments)) };
+                Some(Module { start: spec.start, end: spec.end, bias, name: spec.name, path: spec.path, file })
+            })
+            .collect();
         Symbolizer { modules }
     }
 
-    /// Loads one module's symbols, on a worker thread. A self-profile scope
-    /// names the file so the cost of each load shows on the service's track.
-    fn module_of_spec(spec: &ModuleSpec) -> Option<Module> {
-        let _load = orbit_api::scope(format!("load symbols: {}", spec.name));
-        if spec.vdso {
-            let image = vdso_image()?;
-            return Some(Module {
-                start: spec.start,
-                end: spec.end,
-                bias: spec.bias,
-                name: spec.name.clone(),
-                path: String::new(),
-                segments: Vec::new(),
-                symbols: sorted_symbols(&image, None),
-            });
+    /// The symbol tables of `keys` (file paths, or [`VDSO`]): from the cache
+    /// where the file on disk is unchanged since it was read, loaded in
+    /// parallel otherwise. The cache is left holding exactly these.
+    fn load_files(keys: &[String]) -> Vec<(String, Arc<LoadedFile>)> {
+        let identities: Vec<FileIdentity> = keys.iter().map(|key| FileIdentity::of(key)).collect();
+        let previous = std::mem::take(&mut *FILE_CACHE.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut files: Vec<(FileIdentity, Arc<LoadedFile>)> = Vec::with_capacity(identities.len());
+        let mut missing: Vec<FileIdentity> = Vec::new();
+        for identity in identities {
+            match previous.iter().find(|(known, _)| *known == identity) {
+                Some((_, file)) => files.push((identity, file.clone())),
+                None => missing.push(identity),
+            }
         }
-        let bytes = map_file(&spec.path);
-        let symbols = sorted_symbols(&bytes, Some(&spec.path));
-        let segments = parse_elf_metadata(&bytes, &spec.path)
-            .map(|m| m.loadable_segments)
-            .unwrap_or_default();
-        Some(Module {
-            start: spec.start,
-            end: spec.end,
-            bias: spec.bias.wrapping_sub(image_base(&segments)),
-            name: spec.name.clone(),
-            path: spec.path.clone(),
-            segments,
-            symbols,
-        })
+        // One scope around the whole load: it launches the workers and blocks
+        // here until they return, so its span is the total symbol-loading time.
+        // The per-file "load symbols: <file>" scopes run on the workers under it.
+        if !missing.is_empty() {
+            let _total = orbit_api::scope(format!(
+                "load symbols ({} files, {} cached)",
+                missing.len(),
+                files.len()
+            ));
+            // `par_map` hands results back in completion order, so each
+            // carries the identity it was loaded for.
+            files.extend(crate::par_map(&missing, |identity| {
+                (identity.clone(), Arc::new(Self::load_file(&identity.key)))
+            }));
+        }
+        *FILE_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = files.clone();
+        files.into_iter().map(|(identity, file)| (identity.key, file)).collect()
     }
 
+    /// Loads one file's symbols, on a worker thread. A self-profile scope
+    /// names the file so the cost of each load shows on the service's track.
+    fn load_file(key: &str) -> LoadedFile {
+        let name = key.rsplit('/').next().unwrap_or(key);
+        let _load = orbit_api::scope(format!("load symbols: {name}"));
+        if key == VDSO {
+            let symbols = vdso_image().map(|image| sorted_symbols(&image, None)).unwrap_or_default();
+            return LoadedFile { segments: Vec::new(), symbols };
+        }
+        let bytes = map_file(key);
+        let symbols = sorted_symbols(&bytes, Some(key));
+        let segments = parse_elf_metadata(&bytes, key).map(|m| m.loadable_segments).unwrap_or_default();
+        LoadedFile { segments, symbols }
+    }
+
+    /// Executable mappings, one per mapping in the process.
     pub fn module_count(&self) -> usize {
         self.modules.len()
     }
 
+    /// Distinct files behind the mappings.
+    pub fn file_count(&self) -> usize {
+        let mut seen: Vec<*const LoadedFile> = Vec::new();
+        for module in &self.modules {
+            let ptr = Arc::as_ptr(&module.file);
+            if !seen.contains(&ptr) {
+                seen.push(ptr);
+            }
+        }
+        seen.len()
+    }
+
+    /// Symbols loaded, each file counted once however many times it is mapped.
     pub fn symbol_count(&self) -> usize {
-        self.modules.iter().map(|module| module.symbols.len()).sum()
+        let mut seen: Vec<*const LoadedFile> = Vec::new();
+        let mut total = 0;
+        for module in &self.modules {
+            let ptr = Arc::as_ptr(&module.file);
+            if !seen.contains(&ptr) {
+                seen.push(ptr);
+                total += module.file.symbols.len();
+            }
+        }
+        total
     }
 
     /// The best label available for an address, with the module it came from
@@ -220,7 +330,7 @@ impl Symbolizer {
         };
         // Addresses in the file are the runtime address minus the load bias.
         let file_address = address.wrapping_sub(module.bias);
-        if let Some(name) = find_symbol(&module.symbols, file_address) {
+        if let Some(name) = find_symbol(module.symbols(), file_address) {
             return demangle(name);
         }
         format!("{}+{:#x}", module.name, file_address)
@@ -238,15 +348,16 @@ impl Module {
             return 0;
         }
         let file_address = address.wrapping_sub(self.bias);
-        let index = self.symbols.partition_point(|(start, _, _)| *start <= file_address);
-        let Some((start, size, _)) = index.checked_sub(1).and_then(|i| self.symbols.get(i)) else {
+        let symbols = self.symbols();
+        let index = symbols.partition_point(|(start, _, _)| *start <= file_address);
+        let Some((start, size, _)) = index.checked_sub(1).and_then(|i| symbols.get(i)) else {
             return 0;
         };
         let inside = if *size == 0 { *start == file_address } else { file_address < start + size };
         if !inside {
             return 0;
         }
-        file_offset_of(&self.segments, *start)
+        file_offset_of(&self.file.segments, *start)
             .map(|offset| function_id(&self.path, offset))
             .unwrap_or(0)
     }
@@ -422,10 +533,10 @@ mod tests {
     fn the_vdso_is_a_module_with_names() {
         let symbolizer = Symbolizer::for_pid(std::process::id() as i32);
         let vdso = symbolizer.modules.iter().find(|m| m.name == "[vdso]").expect("a [vdso] module");
-        assert!(!vdso.symbols.is_empty(), "the vDSO image has a dynamic symbol table");
+        assert!(!vdso.symbols().is_empty(), "the vDSO image has a dynamic symbol table");
         // clock_gettime is what a program asking the time in a loop samples in.
         let (offset, _, name) = vdso
-            .symbols
+            .symbols()
             .iter()
             .find(|(_, _, n)| n.contains("clock_gettime"))
             .expect("clock_gettime in the vDSO");
@@ -452,12 +563,12 @@ mod tests {
         let dynsym = load_symbols(&bytes, SymbolTable::Dynamic).map(|s| s.len()).unwrap_or(0);
         if has_debug_file {
             assert!(
-                libc.symbols.len() > dynsym,
+                libc.symbols().len() > dynsym,
                 "with libc6-dbg installed the module has more than its {dynsym} exported names, got {}",
-                libc.symbols.len()
+                libc.symbols().len()
             );
         } else {
-            assert_eq!(libc.symbols.len(), dynsym, "without a debug file the dynamic table is all there is");
+            assert_eq!(libc.symbols().len(), dynsym, "without a debug file the dynamic table is all there is");
         }
     }
 
@@ -595,5 +706,34 @@ mod load_timing {
         let t = std::time::Instant::now();
         let sorted = super::sorted_symbols(&bytes, Some(&path));
         eprintln!("sorted_symbols (again, incl. sort): {:?} ({})", t.elapsed(), sorted.len());
+    }
+
+    /// `ORBIT_SYMBOL_BENCH_PID=<pid> cargo test --release -- --ignored
+    /// symbol_load_timing_pid --nocapture`: the whole `Symbolizer::for_pid`
+    /// a capture builds, with the modules that carry the most symbols, for
+    /// a process that is running now.
+    #[test]
+    #[ignore]
+    fn symbol_load_timing_pid() {
+        let Ok(pid) = std::env::var("ORBIT_SYMBOL_BENCH_PID") else { return };
+        let pid: i32 = pid.trim().parse().expect("ORBIT_SYMBOL_BENCH_PID is a pid");
+        let t = std::time::Instant::now();
+        let symbolizer = super::Symbolizer::for_pid(pid);
+        eprintln!(
+            "for_pid: {:?} ({} files, {} mappings, {} symbols)",
+            t.elapsed(),
+            symbolizer.file_count(),
+            symbolizer.module_count(),
+            symbolizer.symbol_count()
+        );
+        let t = std::time::Instant::now();
+        let again = super::Symbolizer::for_pid(pid);
+        eprintln!("for_pid again, from the file cache: {:?} ({} symbols)", t.elapsed(), again.symbol_count());
+        let mut by_size: Vec<(usize, &str)> =
+            symbolizer.modules.iter().map(|m| (m.symbols().len(), m.path.as_str())).collect();
+        by_size.sort_unstable_by(|a, b| b.cmp(a));
+        for (count, path) in by_size.iter().take(12) {
+            eprintln!("  {count:>9}  {path}");
+        }
     }
 }

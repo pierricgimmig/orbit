@@ -370,3 +370,35 @@ fn nothing_from_before_the_capture_start_reaches_the_ring() {
     assert_eq!(svc.stats().events_live, 1);
     assert_eq!(svc.dropped_before_start(), 0);
 }
+
+#[test]
+fn a_provisional_start_after_the_real_one_is_not_broadcast() {
+    let svc = LiveService::new(small_cfg()).unwrap();
+    let mut rx = svc.subscribe();
+    let started = |rx: &mut tokio::sync::broadcast::Receiver<Vec<u8>>| {
+        let mut starts = Vec::new();
+        while let Ok(bytes) = rx.try_recv() {
+            for frame in decode_all(&bytes).unwrap() {
+                if let LiveFrame::CaptureStarted { start_ns, .. } = frame {
+                    starts.push(start_ns);
+                }
+            }
+        }
+        starts
+    };
+    // The usual order: the handler's 0, then the loop's clock. Both reach
+    // the viewers, which take the second as the capture's origin.
+    svc.mark_capture_started(7, 0);
+    svc.mark_capture_started(7, 1_000);
+    assert_eq!(started(&mut rx), vec![0, 1_000]);
+    // The race lost: the loop marked first. The handler's 0 would have
+    // told every viewer to start over at origin 0; it is swallowed.
+    svc.mark_capture_finished();
+    svc.mark_capture_started(7, 2_000);
+    svc.push_events(&[ev(300)]);
+    svc.mark_capture_started(7, 0);
+    assert_eq!(started(&mut rx), vec![2_000]);
+    assert_eq!(svc.capture_start_ns(), 2_000);
+    assert_eq!(svc.live_end_ns(), 3_004, "the live edge was not reset by the late 0");
+    assert!(svc.is_capturing());
+}
