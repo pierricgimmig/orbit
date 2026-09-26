@@ -2368,6 +2368,7 @@ impl OrbitLiveApp {
     }
 
     fn drain_net(&mut self) {
+        crate::logging::flush();
         let inbox = self.net.take();
         self.http_ok = inbox.http_ok;
         self.ws_ok = inbox.ws_ok;
@@ -2501,6 +2502,12 @@ impl OrbitLiveApp {
             self.service_frame = Some(fr);
         }
         if let Some(e) = inbox.error {
+            // Once per distinct error: a status poll failing every second
+            // while the service is down would otherwise fill the log with
+            // the same line.
+            if e != self.error {
+                log::warn!(target: "orbit_live_viewer::net", "{e}");
+            }
             self.error = e;
         }
         self.ws_queue.extend(inbox.frames);
@@ -2592,6 +2599,7 @@ impl OrbitLiveApp {
                 ring_bytes,
             } => {
                 self.apply_status(StatusJson {
+                    log_path: None,
                     capturing,
                     demo,
                     events_live,
@@ -2866,6 +2874,14 @@ impl OrbitLiveApp {
                 .font(FontId::monospace(10.5))
                 .color(theme::MUTED()),
         );
+        if let Some(path) = &self.status.log_path {
+            ui.label(
+                RichText::new(format!("service log {path}"))
+                    .font(FontId::monospace(10.5))
+                    .color(theme::MUTED()),
+            )
+            .on_hover_text("The service's log file. This page's own log lines are relayed into it too.");
+        }
         ui.label(
             RichText::new(format!("renderer {}", self.gpu_backend))
                 .font(FontId::monospace(10.5))
@@ -9225,7 +9241,7 @@ const INSTRUMENTATION_TYPE_LEGEND: &str = "Instrumentation type\n\
     MS — manual scope: orbit_start / orbit_stop in the code\n\
     MA — manual async: an async span drawn on its own track";
 
-const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
+pub(crate) const VIEWER_BUILD: &str = match option_env!("ORBIT_VIEWER_BUILD") {
     Some(build) => build,
     None => "dev",
 };

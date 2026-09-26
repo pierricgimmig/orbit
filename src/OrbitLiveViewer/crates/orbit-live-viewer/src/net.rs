@@ -32,6 +32,9 @@ pub struct StatusJson {
     /// The batch format on the WebSocket, as the server names it.
     #[serde(default)]
     pub wire: String,
+    /// The service's log file, where this page's lines are relayed to.
+    #[serde(default)]
+    pub log_path: Option<String>,
     #[serde(default)]
     pub ring_bytes: u64,
     pub spill_path: Option<String>,
@@ -542,6 +545,8 @@ mod wasm_impl {
 
     impl Net {
         pub fn connect() -> Self {
+            // A service is there: its log file takes this page's lines.
+            crate::logging::set_relay(true);
             let inbox = Arc::new(Mutex::new(Inbox::default()));
             let ws = Arc::new(Mutex::new(None));
             start_ws(inbox.clone(), ws.clone());
@@ -1022,9 +1027,13 @@ mod wasm_impl {
         }
 
         fn send(&self, method: &'static str, path: &'static str, body: String) {
+            // Every command the page gives the service, in the log: these
+            // are clicks (Record, Stop, Demo, config), not per-frame pulls.
+            log::info!(target: "orbit_live_viewer::net", "{method} {path} {}", body.chars().take(200).collect::<String>());
             let inbox = self.inbox.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Err(e) = send_text(method, path, &body).await {
+                    log::warn!(target: "orbit_live_viewer::net", "{method} {e}");
                     inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(e);
                 }
             });
@@ -1181,6 +1190,7 @@ mod wasm_impl {
 
         let inbox_open = inbox.clone();
         let onopen = Closure::wrap(Box::new(move |_ev: JsValue| {
+            log::info!(target: "orbit_live_viewer::net", "WebSocket open");
             if let Ok(mut g) = inbox_open.lock() {
                 g.ws_ok = true;
             }
@@ -1212,6 +1222,7 @@ mod wasm_impl {
         let inbox_close = inbox;
         let slot_close = slot.clone();
         let onclose = Closure::wrap(Box::new(move |_ev: JsValue| {
+            log::warn!(target: "orbit_live_viewer::net", "WebSocket closed");
             if let Ok(mut g) = inbox_close.lock() {
                 g.ws_ok = false;
                 g.error = Some("WebSocket closed".into());
@@ -1246,7 +1257,7 @@ mod wasm_impl {
         if let Ok(mut g) = inbox.lock() {
             g.error = Some(msg.to_string());
         }
-        web_sys::console::error_1(&JsValue::from_str(msg));
+        log::error!(target: "orbit_live_viewer::net", "{msg}");
     }
 
     fn json_escape(s: &str) -> String {

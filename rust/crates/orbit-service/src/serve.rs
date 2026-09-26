@@ -300,8 +300,8 @@ fn load_symbols_for(state: &Arc<Mutex<SymbolState>>, pid: u32) -> Result<(), Str
                     format!("no symbols found for pid {pid} (unreadable /proc, or stripped binaries)");
                 return;
             }
-            eprintln!(
-                "orbit-service: indexed {} functions across {} modules for pid {pid}",
+            log::info!(
+                "indexed {} functions across {} modules for pid {pid}",
                 index.len(),
                 index.module_count()
             );
@@ -657,7 +657,7 @@ fn capture_loop(
         match TelemetryHelper::spawn(path, &["--interval-ms".to_string(), "100".to_string()]) {
             Ok(helper) => Some(helper),
             Err(error) => {
-                eprintln!("orbit-service: GPU helper {path} did not start: {error}");
+                log::warn!("GPU helper {path} did not start: {error}");
                 None
             }
         }
@@ -754,7 +754,7 @@ fn capture_loop(
     let mut last_thread_scan_ns: u64 = crate::now_monotonic_ns();
     let sampling_works = !threads.is_empty();
     if has_target && threads.is_empty() {
-        eprintln!("orbit-service: no sampling rings for pid {target_pid} (permissions?)");
+        log::warn!("no sampling rings for pid {target_pid} (permissions?)");
     }
     let mut unwinder = {
         let _phase = orbit_api::scope("open unwinder");
@@ -764,14 +764,14 @@ fn capture_loop(
             (true, Err(error)) => {
                 // Not fatal, and worth saying out loud: without an unwinder
                 // there are no callstacks, but the sample bar below still works.
-                eprintln!("orbit-service: no unwinder for pid {target_pid} ({error}); \
+                log::warn!("no unwinder for pid {target_pid} ({error}); \
                            sample ticks only, no callstacks");
                 None
             }
         }
     };
-    eprintln!(
-        "orbit-service: {} sampling ring(s) at {SAMPLE_HZ} Hz, unwinder {}",
+    log::info!(
+        "{} sampling ring(s) at {SAMPLE_HZ} Hz, unwinder {}",
         threads.len(),
         if unwinder.is_some() { "ready" } else { "unavailable" }
     );
@@ -788,8 +788,8 @@ fn capture_loop(
         }
     }
     if switch_rings.is_empty() {
-        eprintln!(
-            "orbit-service: capture started but no context-switch rings opened \
+        log::warn!(
+            "capture started but no context-switch rings opened \
              (needs perf_event_paranoid <= 0); the timeline will stay empty"
         );
     }
@@ -801,20 +801,20 @@ fn capture_loop(
     // service's own setup scopes are recorded; a target's or descendant's
     // segment is discovered and opened lazily during the loop.
     if show_all_processes {
-        eprintln!(
-            "orbit-service: every process was requested; rows stay with the target, \
+        log::info!(
+            "every process was requested; rows stay with the target, \
              orbit-service and instrumented processes (the Scheduler track is machine-wide)"
         );
     }
     if has_target {
-        eprintln!(
-            "orbit-service: showing pid {target_pid} and {} related process(es); \
+        log::info!(
+            "showing pid {target_pid} and {} related process(es); \
              the Scheduler track stays machine-wide",
             visible.len().saturating_sub(1)
         );
     } else {
-        eprintln!(
-            "orbit-service: no target process: capturing the scheduler, orbit-service, \
+        log::info!(
+            "no target process: capturing the scheduler, orbit-service, \
              and every process with manual instrumentation"
         );
     }
@@ -836,14 +836,14 @@ fn capture_loop(
         None
     } else {
         let (session, report) = UprobeSession::arm(target_pid, &hooks, uprobe_duplicate_filter);
-        eprintln!(
-            "orbit-service: armed {} of {} hooks ({} probes)",
+        log::info!(
+            "armed {} of {} hooks ({} probes)",
             report.armed_functions,
             hooks.len(),
             report.probe_count
         );
         for failure in &report.failures {
-            eprintln!("orbit-service: hook not armed -- {failure}");
+            log::warn!("hook not armed -- {failure}");
         }
         if report.probe_count == 0 {
             // The kernel gates the uprobe PMU on capable(CAP_SYS_ADMIN) in
@@ -856,7 +856,7 @@ fn capture_loop(
                 "no hooks armed: uprobes need CAP_SYS_ADMIN. Run the service with sudo, ",
                 "or: sudo setcap cap_sys_admin,cap_perfmon,cap_dac_read_search+ep <orbit-service>"
             );
-            eprintln!("orbit-service: {message}");
+            log::info!("{message}");
             service.set_instrumentation_status(message);
             None
         } else {
@@ -888,7 +888,7 @@ fn capture_loop(
     let hooks_armed = has_target && !armed_hooks.is_empty() && (uprobes.is_some() || frida.is_some());
     if hooks_armed {
         if let Some(path) = crate::hook_journal::write_journal(target_pid, engine_label, &armed_hooks) {
-            eprintln!("orbit-service: hook journal written to {}", path.display());
+            log::info!("hook journal written to {}", path.display());
         }
     }
     // Set once, when the target is first seen to have died with hooks armed.
@@ -915,22 +915,22 @@ fn capture_loop(
                 seeded += tracer.seed_initial_states(*pid as i32, capture_start_ns);
             }
             tracer.set_focus(Focus::from_pids(focus_pids.iter().copied()));
-            eprintln!(
-                "orbit-service: thread states from {} tracepoint ring(s) for {} thread(s) of {} process(es), {seeded} initial state(s); other processes get RUNNING from context switches",
+            log::info!(
+                "thread states from {} tracepoint ring(s) for {} thread(s) of {} process(es), {seeded} initial state(s); other processes get RUNNING from context switches",
                 tracepoint_report.rings,
                 tracer.focus().thread_count(),
                 focus_pids.len()
             );
         }
         None => {
-            eprintln!(
-                "orbit-service: no scheduling tracepoints; thread bars will show only \
+            log::info!(
+                "no scheduling tracepoints; thread bars will show only \
                  RUNNING (tracepoints need CAP_PERFMON and a readable tracefs)"
             );
         }
     }
     for failure in &tracepoint_report.failures {
-        eprintln!("orbit-service: tracepoint unavailable -- {failure}");
+        log::warn!("tracepoint unavailable -- {failure}");
     }
     // Threads whose real states are traced need no projection; everything
     // else visible -- the rest of the machine when "all processes" is on, or
@@ -1036,9 +1036,9 @@ fn capture_loop(
             let kernel = crate::hook_journal::scan_kernel_crash(target_pid);
             let blame = kernel.is_some() || armed_hooks.iter().any(|h| !h.safety.is_safe());
             let report = crate::hook_journal::build_and_write(target_pid, engine_label, &armed_hooks, kernel);
-            eprintln!("orbit-service: {}", report.summary);
+            log::warn!("{}", report.summary);
             if let Some(path) = &report.path {
-                eprintln!("orbit-service: hook crash report written to {}", path.display());
+                log::warn!("hook crash report written to {}", path.display());
             }
             if blame {
                 service.set_hook_crash(report.json.to_string());
@@ -1050,7 +1050,7 @@ fn capture_loop(
         // process the refresh had already dropped. The loop's tail below
         // flushes and marks the capture finished.
         if target_gone {
-            eprintln!("orbit-service: target pid {target_pid} exited; capture stopped");
+            log::warn!("target pid {target_pid} exited; capture stopped");
             service.set_instrumentation_status(format!("target {target_pid} exited; capture stopped"));
             running.store(false, Ordering::Relaxed);
             continue;
@@ -1060,8 +1060,8 @@ fn capture_loop(
         // binary resolves to module+offset here, not bare hex.
         if let Ok(built) = symbolizer_rx.try_recv() {
             if built.module_count() > 0 {
-                eprintln!(
-                    "orbit-service: symbolizing {} modules, {} symbols",
+                log::info!(
+                    "symbolizing {} modules, {} symbols",
                     built.module_count(),
                     built.symbol_count()
                 );
@@ -1191,7 +1191,7 @@ fn capture_loop(
             }
             for tid in born {
                 if sample_thread(&mut threads, tid) {
-                    eprintln!("orbit-service: thread {tid} born, sampling it ({} threads)", threads.len());
+                    log::info!("thread {tid} born, sampling it ({} threads)", threads.len());
                 }
             }
             if !died.is_empty() {
@@ -1203,8 +1203,8 @@ fn capture_loop(
                 let _scan = orbit_api::scope("scan threads");
                 let opened = scan_threads(&mut threads);
                 if opened > 0 {
-                    eprintln!(
-                        "orbit-service: the /proc scan found {opened} thread(s) no fork record announced ({} threads)",
+                    log::info!(
+                        "the /proc scan found {opened} thread(s) no fork record announced ({} threads)",
                         threads.len()
                     );
                 }
@@ -1404,7 +1404,7 @@ fn capture_loop(
                 overflow_stop_window_ns / 1_000_000_000,
                 scopes.events_lost
             );
-            eprintln!("orbit-service: {msg}");
+            log::info!("{msg}");
             // The frida status is re-set after the loop, so park the reason on
             // the session's error where status() keeps surfacing it; set the
             // status directly too for the no-frida (manual API) case.
@@ -1516,8 +1516,8 @@ fn capture_loop(
             service.push_events(&tail);
         }
         if scopes.segment_count() > 0 {
-            eprintln!(
-                "orbit-service: manual instrumentation: {} segment(s), {} events, {} links (not drawn yet)",
+            log::info!(
+                "manual instrumentation: {} segment(s), {} events, {} links (not drawn yet)",
                 scopes.segment_count(),
                 scopes.events_pushed,
                 scopes.links_seen
@@ -1525,7 +1525,7 @@ fn capture_loop(
         }
         let refused = service.dropped_before_start();
         if refused > 0 {
-            eprintln!("orbit-service: {refused} event(s) started before the capture and were dropped");
+            log::warn!("{refused} event(s) started before the capture and were dropped");
         }
     }
 
@@ -1577,7 +1577,7 @@ fn capture_loop(
                 report.parse_failures, report.unknown_stream, report.without_regs
             ));
         }
-        eprintln!("orbit-service: {summary}");
+        log::info!("{summary}");
         let mut status = service.instrumentation_status();
         if !status.is_empty() {
             status.push_str("; ");
@@ -1585,18 +1585,18 @@ fn capture_loop(
         status.push_str(&summary);
         service.set_instrumentation_status(status);
     }
-    eprintln!("orbit-service: {samples_parsed} callstack samples recorded");
+    log::info!("{samples_parsed} callstack samples recorded");
     // Only worth a line when it happened: a sample whose register set came
     // back short is one the unwinder could not start from.
     let unparsed = sample_records.saturating_sub(samples_parsed);
     if unparsed > 0 || samples_short_regs > 0 {
-        eprintln!(
-            "orbit-service: {unparsed} sample(s) failed to parse, \
+        log::warn!(
+            "{unparsed} sample(s) failed to parse, \
              {samples_short_regs} had too few registers"
         );
     }
     if !hooks.is_empty() {
-        eprintln!("orbit-service: {instrumented_calls} instrumented calls recorded");
+        log::info!("{instrumented_calls} instrumented calls recorded");
     }
     // The capture is over whichever way the loop ended: Stop from the API
     // (whose handler also marks it, idempotently, after joining this thread)
@@ -1619,6 +1619,13 @@ pub fn run_on(
     gpu_helper: Option<String>,
     wire: orbit_live_server::WireFormat,
 ) -> Result<(), String> {
+    let log_path = match crate::logging::open_file(None) {
+        Ok(path) => Some(path),
+        Err(error) => {
+            log::warn!("no log file: {error}");
+            None
+        }
+    };
     let config = ServerConfig {
         bind: format!("{host}:{port}").parse().map_err(|_| "bad bind address".to_string())?,
         ring_buffer_bytes: 256 << 20,
@@ -1627,11 +1634,28 @@ pub fn run_on(
     };
     let service = LiveService::new(config)?;
     intern_gpu_lane_names(&service);
+    // The viewer's own log lines (POST /api/log) go into the same file, so
+    // one file has both ends of a session.
+    service.set_viewer_log(Arc::new(|batch| {
+        for line in &batch.lines {
+            let level = match line.level.as_str() {
+                "error" => log::Level::Error,
+                "warn" => log::Level::Warn,
+                "debug" => log::Level::Debug,
+                "trace" => log::Level::Trace,
+                _ => log::Level::Info,
+            };
+            crate::logging::relay(&batch.page, line.t_ms, level, &line.target, &line.message);
+        }
+    }));
+    if let Some(path) = &log_path {
+        service.set_log_path(path.display().to_string());
+    }
     // The service instruments its own capture loop with the public API, so
     // it appears in the viewer as one more process using it. Failing here
     // only means the service goes unprofiled; it is not a reason to stop.
     if let Err(errno) = orbit_api::init() {
-        eprintln!("orbit-service: self-instrumentation off (orbit_init errno {errno})");
+        log::warn!("self-instrumentation off (orbit_init errno {errno})");
     }
     // And the live server's sends and encodes with the same API: the server
     // crate has a hook rather than a dependency on orbit-api.
@@ -1878,7 +1902,7 @@ pub fn run_on(
                     .ok()
                     .and_then(|state| (state.pid == pid as u32).then(|| state.index.clone()).flatten());
                 if index.is_none() && pid > 0 {
-                    eprintln!("orbit-service: loading symbols for pid {pid} before arming {} hook(s)", ids.len());
+                    log::info!("loading symbols for pid {pid} before arming {} hook(s)", ids.len());
                     let symbol_started = std::time::Instant::now();
                     let fresh = FunctionIndex::for_pid(pid);
                     if !fresh.is_empty() {
@@ -1900,11 +1924,11 @@ pub fn run_on(
                     Some(index) => {
                         let (resolved, unknown) = hooks_from_ids(&index, &ids);
                         for id in &unknown {
-                            eprintln!("orbit-service: no such function id {id}, hook skipped");
+                            log::warn!("no such function id {id}, hook skipped");
                         }
                         if resolved.len() > MAX_HOOKS {
-                            eprintln!(
-                                "orbit-service: {} functions selected, instrumenting the first {MAX_HOOKS}",
+                            log::info!(
+                                "{} functions selected, instrumenting the first {MAX_HOOKS}",
                                 resolved.len()
                             );
                         }
@@ -1917,8 +1941,8 @@ pub fn run_on(
                             .collect();
                         hooks = resolved;
                     }
-                    None => eprintln!(
-                        "orbit-service: {} functions selected but no symbols could be loaded for pid {pid}; \
+                    None => log::warn!(
+                        "{} functions selected but no symbols could be loaded for pid {pid}; \
                          starting without instrumentation",
                         ids.len()
                     ),
@@ -1962,7 +1986,7 @@ pub fn run_on(
             // in C++ Orbit. Leaving the old ring behind let the view pan
             // into the previous session's time.
             if let Err(error) = start_service.clear_ring() {
-                eprintln!("orbit-service: could not clear the ring: {error}");
+                log::warn!("could not clear the ring: {error}");
             }
             let store = start_store.clone();
             let helper = start_helper.clone();
@@ -1988,7 +2012,7 @@ pub fn run_on(
                     error.to_string()
                 })?;
             *worker = Some(handle);
-            eprintln!("orbit-service: capture started (pid {pid})");
+            log::info!("capture started (pid {pid})");
             Ok(())
         }),
         stop_capture: Arc::new(move || {
@@ -1997,7 +2021,7 @@ pub fn run_on(
             if let Some(handle) = worker.take() {
                 handle.join().map_err(|_| "capture worker panicked".to_string())?;
             }
-            eprintln!("orbit-service: capture stopped");
+            log::info!("capture stopped");
             Ok(())
         }),
         load_symbols: Arc::new(move |pid| load_symbols_for(&load_state, pid)),
@@ -2047,7 +2071,11 @@ pub fn run_on(
     println!();
     println!("  Pick a process in the Capture strip and press Record.");
     println!("  Ctrl-C to stop the server.");
+    if let Some(path) = &log_path {
+        println!("  Log: {}", path.display());
+    }
     println!();
+    log::info!("serving the live viewer on {host}:{port}");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

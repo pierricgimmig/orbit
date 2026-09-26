@@ -157,7 +157,7 @@ impl FunctionIndex {
 
     #[cfg(target_os = "macos")]
     pub fn for_pid(pid: i32) -> FunctionIndex {
-        let rows = crate::frida::symbols(pid).unwrap_or_else(|e| { eprintln!("orbit-service: {e}"); Vec::new() });
+        let rows = crate::frida::symbols(pid).unwrap_or_else(|e| { log::warn!("{e}"); Vec::new() });
         Self::from_frida_rows(rows)
     }
 
