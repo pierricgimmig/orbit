@@ -182,6 +182,13 @@ pub struct LiveService {
     #[allow(clippy::type_complexity)]
     pub agent_scope:
         Mutex<Option<std::sync::Arc<dyn Fn(AgentScope) -> Result<String, String> + Send + Sync>>>,
+    /// Optional: where lines the browser viewer sends to `POST /api/log`
+    /// go. The service owns the log file, so it installs this; without it
+    /// the route prints the viewer's warnings and errors to stderr.
+    #[allow(clippy::type_complexity)]
+    pub viewer_log: Mutex<Option<std::sync::Arc<dyn Fn(ViewerLogBatch) + Send + Sync>>>,
+    /// The service's log file, for `/api/status`; empty when it has none.
+    pub log_path: Mutex<Option<String>>,
     /// Optional: what the service does before the ring is emptied by
     /// `/api/capture/clear` -- refuse while capturing, drop its sample
     /// store. The ring, names and viewers are the server's own business.
@@ -257,6 +264,34 @@ pub enum AgentAction {
     Value { name: String, value: f64 },
 }
 
+/// Log lines from one browser viewer page, as `POST /api/log` receives
+/// them. The viewer batches what it logged (its console lines) and sends
+/// them every so often, so the service's log file holds both ends of a
+/// session. `page` is a short id the page picks for itself, telling two
+/// open tabs apart.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+pub struct ViewerLogBatch {
+    #[serde(default)]
+    pub page: String,
+    #[serde(default)]
+    pub lines: Vec<ViewerLogLine>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+pub struct ViewerLogLine {
+    /// The viewer's wall clock (`Date.now()`), milliseconds since the epoch.
+    #[serde(default)]
+    pub t_ms: u64,
+    /// `error`, `warn`, `info`, `debug` or `trace`.
+    #[serde(default)]
+    pub level: String,
+    /// The Rust module (or JS file) the line came from.
+    #[serde(default)]
+    pub target: String,
+    #[serde(default)]
+    pub message: String,
+}
+
 /// Thread and process names of the current capture.
 #[derive(Default)]
 struct CaptureNames {
@@ -290,6 +325,8 @@ impl LiveService {
             capture_open: Mutex::new(None),
             capture_clear: Mutex::new(None),
             agent_scope: Mutex::new(None),
+            viewer_log: Mutex::new(None),
+            log_path: Mutex::new(None),
             names: Mutex::new(CaptureNames::default()),
             demo_stop: Mutex::new(None),
             data_gen: AtomicU64::new(0),
@@ -358,6 +395,16 @@ impl LiveService {
 
     pub fn set_capture_clear(&self, clear: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>) {
         *self.capture_clear.lock() = Some(clear);
+    }
+
+    /// Installs the sink for viewer log lines (`POST /api/log`).
+    pub fn set_viewer_log(&self, sink: std::sync::Arc<dyn Fn(ViewerLogBatch) + Send + Sync>) {
+        *self.viewer_log.lock() = Some(sink);
+    }
+
+    /// Names the service's log file in `/api/status`.
+    pub fn set_log_path(&self, path: impl Into<String>) {
+        *self.log_path.lock() = Some(path.into());
     }
 
     /// Empties the capture: ring and names gone, every viewer told to start

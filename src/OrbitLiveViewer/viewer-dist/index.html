@@ -93,9 +93,25 @@
     // Double-tap-to-zoom is a separate path again.
     document.addEventListener("dblclick", (e) => e.preventDefault(), { passive: false });
 
+    // What goes wrong before or outside the wasm -- the pack did not load,
+    // a JS error, a wasm trap surfacing as an exception -- goes to the
+    // service's log file too, the way the viewer's own lines do once it
+    // runs. sendBeacon is fire-and-forget and works while the page is
+    // going away; on a static site with no service the request just fails.
+    function relayLog(level, message) {
+      try {
+        const text = String((message && (message.stack || message.message)) || message).slice(0, 4000);
+        const body = JSON.stringify({ page: "js", lines: [{ t_ms: Date.now(), level, target: "index.html", message: text }] });
+        navigator.sendBeacon("/api/log", body);
+      } catch (_) {}
+    }
+    window.addEventListener("error", (e) => relayLog("error", e.error || e.message));
+    window.addEventListener("unhandledrejection", (e) => relayLog("error", e.reason));
+
     const fallback = document.getElementById("fallback");
     function showFallback(err) {
       console.error(err);
+      relayLog("error", "viewer failed to start: " + ((err && (err.stack || err.message)) || err));
       canvas.style.display = "none";
       fallback.style.display = "block";
     }

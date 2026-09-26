@@ -62,6 +62,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/capture/open", post(capture_open))
         .route("/api/capture/clear", post(capture_clear))
         .route("/api/scope", post(agent_scope))
+        .route("/api/log", post(viewer_log))
         .route(
             "/api/capture/import",
             post(capture_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
@@ -259,6 +260,8 @@ struct StatusBody {
     hook_crash: String,
     /// The event batch format on the WebSocket: raw, packed or deflate.
     wire: &'static str,
+    /// The service's log file, where the viewer's own lines also end up.
+    log_path: Option<String>,
     /// When the capture began on the capture clock; 0 until the loop says.
     capture_start_ns: u64,
     /// Events refused for starting before that, this capture.
@@ -294,6 +297,7 @@ impl StatusBody {
             // From the guard already held: `svc.wire()` would take the same
             // lock again and hang the status route.
             wire: cfg.wire.name(),
+            log_path: svc.log_path.lock().clone(),
             capture_start_ns: svc.capture_start_ns(),
             dropped_before_start: svc.dropped_before_start(),
             target_pid: svc.capture_pid(),
@@ -558,6 +562,39 @@ async fn agent_scope(State(svc): State<Arc<LiveService>>, Json(body): Json<Scope
         Ok(Err(error)) => (StatusCode::BAD_REQUEST, error).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
+}
+
+/// `POST /api/log`: a batch of the viewer's own log lines, for the
+/// service's log file. The body is JSON whatever its content type says,
+/// because the viewer sends it with `navigator.sendBeacon`, which labels a
+/// string body `text/plain` and is the one way to get a line out of a page
+/// that is panicking or closing. Sizes are capped: a page in a logging loop
+/// must not fill the service's disk.
+async fn viewer_log(State(svc): State<Arc<LiveService>>, body: String) -> Response {
+    const MAX_LINES: usize = 512;
+    const MAX_MESSAGE: usize = 4096;
+    let Ok(mut batch) = serde_json::from_str::<crate::ViewerLogBatch>(&body) else {
+        return (StatusCode::BAD_REQUEST, "expected {\"page\":..,\"lines\":[{t_ms,level,target,message}]}").into_response();
+    };
+    batch.lines.truncate(MAX_LINES);
+    batch.page = batch.page.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
+    for line in &mut batch.lines {
+        if line.message.len() > MAX_MESSAGE {
+            let cut = (0..=MAX_MESSAGE).rev().find(|&i| line.message.is_char_boundary(i)).unwrap_or(0);
+            line.message.truncate(cut);
+            line.message.push_str("...");
+        }
+    }
+    let sink = svc.viewer_log.lock().clone();
+    match sink {
+        Some(sink) => sink(batch),
+        None => {
+            for line in batch.lines.iter().filter(|l| matches!(l.level.as_str(), "error" | "warn")) {
+                eprintln!("viewer {}: {}: {}: {}", batch.page, line.level, line.target, line.message);
+            }
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// `POST /api/capture/clear`: empties the capture -- the ring, the names,
@@ -1416,6 +1453,38 @@ mod isolation_tests {
         assert_eq!(seen[1], AgentScope { track: "agent".into(), action: AgentAction::Stop, timestamp_ns: None });
         assert_eq!(seen[2].action, AgentAction::Value { name: "tests".into(), value: 42.5 });
         assert_eq!(seen.len(), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn viewer_log_lines_reach_the_sink_capped_and_whatever_the_content_type() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<crate::ViewerLogBatch>::new()));
+        let svc = test_service();
+        let sink = seen.clone();
+        svc.set_viewer_log(std::sync::Arc::new(move |batch| sink.lock().unwrap().push(batch)));
+        let base = spawn_router(svc).await;
+        let post = |content_type: &str, body: &str| {
+            let out = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "5", "-X", "POST", "-H", &format!("content-type: {content_type}"), "-d", body])
+                .arg(format!("{base}/api/log"))
+                .output()
+                .expect("curl");
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        // sendBeacon sends text/plain; a JSON content type must work too.
+        assert!(post("text/plain;charset=UTF-8", r#"{"page":"7c1e","lines":[{"t_ms":1700000000123,"level":"warn","target":"orbit_live_viewer::net","message":"WebSocket closed"}]}"#).contains("204"));
+        let long = "x".repeat(10_000);
+        assert!(post("application/json", &format!(r#"{{"page":"a/b<c>d","lines":[{{"level":"info","message":"{long}"}}]}}"#)).contains("204"));
+        assert!(post("application/json", "not json").contains("400"));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].page, "7c1e");
+        assert_eq!(seen[0].lines[0].t_ms, 1_700_000_000_123);
+        assert_eq!(seen[0].lines[0].level, "warn");
+        assert_eq!(seen[0].lines[0].target, "orbit_live_viewer::net");
+        assert_eq!(seen[0].lines[0].message, "WebSocket closed");
+        assert_eq!(seen[1].page, "abcd", "the page id is sanitised");
+        assert!(seen[1].lines[0].message.len() < 4200, "long messages are cut");
+        assert!(seen[1].lines[0].message.ends_with("..."));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

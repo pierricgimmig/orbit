@@ -64,13 +64,18 @@ impl Helper {
         let mut child = Command::new(helper_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
                 format!(
                     "start Frida helper: {e}; run tools/frida/build.sh or set ORBIT_FRIDA_HELPER"
                 )
             })?;
+        // What the helper (and Frida inside it) says on stderr still reaches
+        // the terminal, and now the log file too.
+        if let Some(stderr) = child.stderr.take() {
+            crate::logging::relay_stderr(stderr, "orbit-frida-helper");
+        }
         let input = child.stdin.take();
         let stdout = child.stdout.take().unwrap();
         let (send, replies) = mpsc::channel();

@@ -238,7 +238,7 @@ pub fn capture_loop(
     capture_start_ns: u64,
 ) {
     if gpu_helper.is_some() {
-        eprintln!("orbit-service: GPU helper capture is not supported on macOS");
+        log::warn!("GPU helper capture is not supported on macOS");
     }
     service.set_instrumentation_status(if frida.is_some() { "Frida: functions armed" } else { "macOS: manual instrumentation; CPU sampling and scheduling are not yet available" });
     service.mark_capture_started(target_pid.max(0) as u32, capture_start_ns);
@@ -301,8 +301,8 @@ pub fn capture_loop(
         |p, t, n| service.set_thread_name(p, t, n),
     );
     service.push_events(&batch);
-    eprintln!(
-        "orbit-service: manual capture finished: {} segments, {} events, {} lost records",
+    log::info!(
+        "manual capture finished: {} segments, {} events, {} lost records",
         scopes.segment_count(),
         scopes.events_pushed,
         scopes.events_lost
@@ -363,8 +363,8 @@ pub(super) fn capture_file(args: crate::Args) -> Result<(), String> {
     );
     std::fs::write(&output, bundle.to_zip().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    eprintln!(
-        "orbit-service: wrote {} manual events to {output}",
+    log::info!(
+        "wrote {} manual events to {output}",
         events.len()
     );
     Ok(())
