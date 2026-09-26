@@ -295,6 +295,7 @@ pub struct Inbox {
     pub function_hits: Option<FunctionSearchJson>,
     /// Every function of a process, for the Functions view.
     pub function_list: Option<FunctionSearchJson>,
+    pub preset_functions: Vec<(u64, Result<FunctionSearchJson, String>)>,
     /// The code views: a disassembly and a source file, or why not.
     pub disassembly: Option<Result<crate::code::Disassembly, String>>,
     pub source: Option<Result<crate::code::SourceFile, String>>,
@@ -602,6 +603,7 @@ mod wasm_impl {
                 modules: inbox.modules.take(),
                 function_hits: inbox.function_hits.take(),
                 function_list: inbox.function_list.take(),
+                preset_functions: std::mem::take(&mut inbox.preset_functions),
                 disassembly: inbox.disassembly.take(),
                 source: inbox.source.take(),
             }
@@ -900,6 +902,17 @@ mod wasm_impl {
                     Ok(s) => g.function_hits = Some(s),
                     Err(e) => g.error = Some(e),
                 }
+            });
+        }
+
+        /// Resolve portable identities against the complete symbol index.
+        pub fn resolve_preset_functions(&self, pid: u32, generation: u64, keys: String) {
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let body = format!(r#"{{"pid":{pid},"functions":{keys}}}"#);
+                let result = send_text("POST", "/api/functions/resolve", &body).await
+                    .and_then(|text| parse_function_search_json(&text));
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).preset_functions.push((generation, result));
             });
         }
 
@@ -1302,6 +1315,7 @@ mod native_impl {
         pub fn get_symbols_status(&self, _pid: u32) {}
         pub fn search_functions(&self, _pid: u32, _q: &str, _limit: u32) {}
         pub fn list_functions(&self, _pid: u32) {}
+        pub fn resolve_preset_functions(&self, _pid: u32, _generation: u64, _keys: String) {}
         pub fn start_demo(&self) {}
         pub fn stop_demo(&self) {}
         pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}

@@ -322,3 +322,11 @@ Callstack samples are resolved on the service and ingested as nested
 OrbitApp / CaptureData / the Qt client, ELF/DWARF in WASM/JS, sampling
 reports, GPU/Vulkan tracks, presets, a dual end-time index, or changing
 the 32-byte `LiveEvent` layout. VALUE stays off GPU LODs.
+
+## Instrumentation presets
+
+Use **More → Instrumentation presets**, or **Presets** in Functions/settings, to
+save hooked functions and load several selections together. Files use exact
+module filenames and function names, so installation paths and runtime IDs can
+change. See [the preset guide](../../docs/instrumentation-presets.md) for the
+format, composition, and unresolved-symbol handling.

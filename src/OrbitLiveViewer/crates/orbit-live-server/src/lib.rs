@@ -111,6 +111,8 @@ pub struct ControlHooks {
     pub symbols_status_json: std::sync::Arc<dyn Fn(u32) -> Result<String, String> + Send + Sync>,
     pub search_functions_json:
         std::sync::Arc<dyn Fn(u32, &str, u32) -> Result<String, String> + Send + Sync>,
+    /// Exact portable preset keys, resolved against the entire symbol index.
+    pub resolve_functions_json: std::sync::Arc<dyn Fn(u32, &str) -> Result<String, String> + Send + Sync>,
     /// The code views: a function of a process disassembled with its
     /// source lines, a source file a disassembly named, and an example
     /// disassembly of the service's own binary.

@@ -46,6 +46,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/symbols/load", post(symbols_load))
         .route("/api/symbols/status", get(symbols_status))
         .route("/api/functions/search", get(functions_search))
+        .route("/api/functions/resolve", post(functions_resolve).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/api/code/disassembly", get(code_disassembly))
         .route("/api/code/source", get(code_source))
         .route("/api/code/example", get(code_example))
@@ -1527,5 +1528,28 @@ mod isolation_tests {
             resp.headers().get("cross-origin-resource-policy").unwrap(),
             "same-origin"
         );
+    }
+}
+
+#[derive(Deserialize)]
+struct ResolveFunctionsBody {
+    pid: u32,
+    functions: Vec<serde_json::Value>,
+}
+
+async fn functions_resolve(
+    State(svc): State<Arc<LiveService>>,
+    Json(body): Json<ResolveFunctionsBody>,
+) -> Response {
+    if body.functions.len() > 100_000 {
+        return (StatusCode::BAD_REQUEST, "Too many preset functions").into_response();
+    }
+    let keys = serde_json::to_string(&body.functions).unwrap();
+    match hooks_clone(&svc) {
+        Some(h) => match (h.resolve_functions_json)(body.pid, &keys) {
+            Ok(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
+            Err(error) => (StatusCode::CONFLICT, error).into_response(),
+        },
+        None => (StatusCode::NOT_IMPLEMENTED, "Function resolution requires a capture service").into_response(),
     }
 }

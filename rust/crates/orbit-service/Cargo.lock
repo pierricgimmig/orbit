@@ -981,6 +981,7 @@ dependencies = [
  "orbit-unwind",
  "orbit-wire",
  "rustc-demangle",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

@@ -273,11 +273,29 @@ impl FunctionIndex {
         serde_json::json!({ "pid": pid, "status": "ready", "modules": modules }).to_string()
     }
 
+    /// Resolve all exact module/name pairs in one pass, without the search
+    /// endpoint's result limit. Return every address so the viewer can reject
+    /// ambiguous identities rather than silently selecting one.
+    pub fn resolve_json(&self, pid: u32, keys: &str) -> Result<String, String> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Key { module: String, name: String }
+        let keys: Vec<Key> = serde_json::from_str(keys).map_err(|e| e.to_string())?;
+        if keys.len() > 100_000 { return Err("Too many preset functions".into()); }
+        let wanted: std::collections::HashSet<_> = keys.iter().map(|k| (k.module.as_str(), k.name.as_str())).collect();
+        let hits: Vec<_> = self.functions.iter().filter(|f| {
+            wanted.contains(&(f.module.rsplit(['/', '\\']).next().unwrap_or(&f.module), f.name.as_str()))
+        }).collect();
+        Ok(self.hits_json(pid, hits))
+    }
+
     /// The `/api/functions/search` shape the viewer parses.
     pub fn search_json(&self, pid: u32, query: &str, limit: usize) -> String {
-        let hits: Vec<serde_json::Value> = self
-            .search(query, limit)
-            .into_iter()
+        self.hits_json(pid, self.search(query, limit))
+    }
+
+    fn hits_json(&self, pid: u32, functions: Vec<&InstrumentableFunction>) -> String {
+        let hits: Vec<serde_json::Value> = functions.into_iter()
             .map(|function| {
                 let safety = self.safety_of(function.id);
                 serde_json::json!({
@@ -334,6 +352,26 @@ pub(crate) fn function_id(module_path: &str, file_offset: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presets_resolve_beyond_search_limit_and_return_all_ambiguous_matches() {
+        let make = |id, module: &str, name: &str| InstrumentableFunction {
+            id, module: module.into(), name: name.into(), module_path: "/another/install/game".into(),
+            file_offset: id, size: 4,
+        };
+        let mut functions = vec![make(1, "Game", "filler"); 200_001];
+        functions.extend([make(2, "Game", "tick(int)"), make(3, "Game", "tick(int)"),
+            make(4, "Other", "tick(int)"), make(5, "Game", "tick(float)")]);
+        let index = FunctionIndex { functions, module_count: 2, safety: HashMap::new() };
+        let result: serde_json::Value = serde_json::from_str(&index.resolve_json(42,
+            r#"[{"module":"Game","name":"tick(int)"}]"#).unwrap()).unwrap();
+        assert_eq!(result["pid"], 42);
+        let hits = result["functions"].as_array().unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0]["function_id"], 2);
+        assert_eq!(hits[1]["function_id"], 3);
+        assert!(index.resolve_json(42, r#"[{"module":"Game"}]"#).is_err());
+    }
 
     #[test]
     fn mach_o_aliases_keep_the_public_function_name() {

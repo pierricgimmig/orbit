@@ -25,6 +25,8 @@ mod local_report;
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;
+#[cfg(feature = "egui")]
+mod presets;
 mod rect_select;
 mod report_copy;
 mod self_pane;

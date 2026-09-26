@@ -1829,6 +1829,7 @@ pub fn run_on(
     let load_state = symbols.clone();
     let status_state = symbols.clone();
     let search_state = symbols.clone();
+    let resolve_state = symbols.clone();
 
     let code_state = symbols.clone();
     let source_allow: crate::code::SourceAllowList = Arc::new(Mutex::new(std::collections::HashSet::new()));
@@ -2018,6 +2019,13 @@ pub fn run_on(
         }),
         source_json: Arc::new(move |path| crate::code::source_json(path, &source_allow)),
         example_disassembly_json: Arc::new(move || crate::code::example_disassembly_json(&example_allow)),
+        resolve_functions_json: Arc::new(move |pid, keys| {
+            let state = resolve_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
+            match (&state.index, state.pid == pid) {
+                (Some(index), true) => index.resolve_json(pid, keys),
+                _ => Err("Load symbols for the selected process before applying presets".into()),
+            }
+        }),
         search_functions_json: Arc::new(move |pid, query, limit| {
             let state = search_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
             match (&state.index, state.pid == pid) {
