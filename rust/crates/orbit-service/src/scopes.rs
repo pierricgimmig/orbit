@@ -285,7 +285,7 @@ impl ScopeSource {
 
     fn add_segment(&mut self, pid: u32, reader: ScopeRingReader) {
         let ring_count = reader.rings().ring_count();
-        eprintln!("orbit-service: manual instrumentation: opened segment of pid {pid} ({ring_count} rings)");
+        log::info!("manual instrumentation: opened segment of pid {pid} ({ring_count} rings)");
         // Start at the rings' write position: what an earlier session wrote
         // is not replayed, and a lap it suffered is not booked as this
         // capture's loss (a cursor at 0 said "11,610,727 records lost" before
