@@ -648,6 +648,7 @@ struct SampledThread {
 }
 
 /// What a capture's sampling rings yielded, for the summary at its end.
+#[cfg(target_os = "linux")]
 #[derive(Default)]
 struct SampleCounters {
     records: u64,
@@ -659,6 +660,7 @@ struct SampleCounters {
 /// symbolize, and lay each frame out as a span one sampling period wide at
 /// its stack depth. Consecutive samples in the same function abut, so the
 /// timeline reads as a flame graph rather than a picket fence.
+#[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn drain_samples(
     threads: &mut [SampledThread],
@@ -749,6 +751,7 @@ fn drain_samples(
 }
 
 /// The line a capture logs when its symbols land.
+#[cfg(target_os = "linux")]
 fn announce_symbols(built: &Symbolizer) {
     if built.module_count() > 0 {
         log::info!(
