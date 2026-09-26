@@ -322,3 +322,36 @@ Callstack samples are resolved on the service and ingested as nested
 OrbitApp / CaptureData / the Qt client, ELF/DWARF in WASM/JS, sampling
 reports, GPU/Vulkan tracks, presets, a dual end-time index, or changing
 the 32-byte `LiveEvent` layout. VALUE stays off GPU LODs.
+
+## Instrumentation presets
+
+Use **More → Instrumentation presets**, or **Presets** in Functions/settings, to
+save hooked functions and load several selections together. Files use exact
+module filenames and function names, so installation paths and runtime IDs can
+change. See [the preset guide](../../docs/instrumentation-presets.md) for the
+format, composition, and unresolved-symbol handling.
+
+## Logs
+
+The viewer logs to the browser console and relays the same lines to the
+service, which writes them into its own log file
+(`~/.orbitprofiler/logs/orbit-service-*.log`, see
+[rust/README.md](../../rust/README.md#logs)) tagged `viewer <page id>
+<module>`, so a session reads as one file from both ends: what the page asked
+for, what the socket did, a panic, and what the service made of it. **More**
+shows the file's path under the build line.
+
+In the Rust code use the `log` macros (`log::info!`, `log::warn!`,
+`log::error!`); `logging.rs` prints them and batches them to `POST /api/log`
+about twice a second (at once for a warning) with `navigator.sendBeacon`, which
+still works from a panic hook. Info lines from the viewer's own crates and
+warnings from everything else (eframe, wgpu) are kept. Nothing is sent while
+the page is showing a capture file from a static site. A failure before the
+wasm runs (the pack did not load, a JS error) is relayed by `index.html` the
+same way, as page `js`.
+
+`POST /api/log` takes `{"page":"7c1e","lines":[{"t_ms":<Date.now()>,
+"level":"warn","target":"orbit_live_viewer::net","message":"..."}]}`, at
+most 512 lines of 4 KB each per call, and answers 204. Anything that can
+reach the service may use it; a line's origin in the file is `viewer <page>
+<target>`.

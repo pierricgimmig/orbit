@@ -21,10 +21,13 @@ mod code;
 mod dev;
 mod live;
 mod local_report;
+mod logging;
 #[cfg(feature = "egui")]
 mod fonts;
 #[cfg(feature = "egui")]
 mod net;
+#[cfg(feature = "egui")]
+mod presets;
 mod rect_select;
 mod report_copy;
 mod self_pane;
@@ -233,11 +236,18 @@ pub fn mark_wasm_pool_ready(n: u32) {
 #[cfg(all(feature = "egui", target_arch = "wasm32"))]
 #[wasm_bindgen]
 pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
-    console_error_panic_hook::set_once();
+    // Console plus a relay to the service's log file (logging.rs). The
+    // viewer's own lines at info; eframe's ("event handlers installed.")
+    // and the rest at warn and above, as before.
+    logging::install();
     install_wasm_clock();
-    // Warnings and errors only: eframe's own info lines ("event handlers
-    // installed.") are noise in a user's console.
-    eframe::WebLogger::init(log::LevelFilter::Warn).ok();
+    log::info!(
+        "viewer build {} starting; {}",
+        crate::app::VIEWER_BUILD,
+        web_sys::window()
+            .and_then(|w| w.navigator().user_agent().ok())
+            .unwrap_or_else(|| "unknown user agent".into())
+    );
     // Default to the WebGL2 backend. WebGPU (Dawn) init fails on some
     // Linux/NVIDIA drivers -- "vkGetSemaphoreFdKHR ... VK_ERROR_INITIALIZATION
     // _FAILED" -- and once picked, wgpu cannot fall back mid-run; WebGL2 draws
@@ -249,6 +259,8 @@ pub async fn start_eframe(canvas: web_sys::HtmlCanvasElement) -> Result<(), JsVa
         {
             setup.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
+    } else {
+        log::info!("?webgpu: asking for the WebGPU backend");
     }
     eframe::WebRunner::new()
         .start(

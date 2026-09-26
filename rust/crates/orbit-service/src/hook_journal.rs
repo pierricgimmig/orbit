@@ -181,8 +181,8 @@ pub fn scan_kernel_crash(pid: i32) -> Option<KernelCrash> {
             // path's CAP_SYS_ADMIN is not always accepted. Say so, with the fix.
             static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                eprintln!(
-                    "orbit-service: cannot read /dev/kmsg (errno {errno}); a hook crash will be \
+                log::warn!(
+                    "cannot read /dev/kmsg (errno {errno}); a hook crash will be \
                      reported without the faulting instruction. For that, grant the service \
                      CAP_SYSLOG or set kernel.dmesg_restrict=0."
                 );

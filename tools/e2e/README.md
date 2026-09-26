@@ -121,3 +121,11 @@ The focused `toolbar_layout.py` Playwright check covers the single-row toolbar,
 CPU reordering while the process menu is open, symbol progress, shortcuts, and
 Inspector/Selection sharing the right pane. Run it against a current service:
 `python3 tools/e2e/toolbar_layout.py --url http://127.0.0.1:44771/`.
+
+Preset regression:
+
+    python3 tools/e2e/presets.py --url http://127.0.0.1:44771/
+
+Browser API fixtures exercise multi-file import, portable JSON download,
+additive/idempotent selection, missing/ambiguous symbols, invalid files, and
+process switching with a late response.
