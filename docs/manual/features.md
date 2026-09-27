@@ -489,6 +489,17 @@ in the URL opens a tab on load.
   `window.__orbit_self` (the frame-phase breakdown while the Self pane is
   open). `tools/e2e/orbit_e2e.py` clicks by label through these.
 
+- **Skills for coding agents.** `skills/` holds three agent skills in the
+  `SKILL.md` format Claude Code, Codex and Cursor read: `orbit` (drive the
+  profiler: build or run the service, capture over HTTP, read reports, hook
+  functions, capture files, settings, the viewer and the e2e suite),
+  `orbit-timeline` (an agent's, script's or queue's own activity on the
+  timeline through `orbit-scope`, `POST /api/scope` and `POST /api/events`)
+  and `orbit-instrument` (`orbit.h`, the Rust crate, the Python package, the
+  wheels, Unreal). `tools/install/install_skills.sh [agents|claude|cursor|codex|--dir D]`
+  copies them into the user-level skill directories. A feature change
+  updates the skill in the same pull request, as it updates this file.
+
 - **The web site.** `python3 tools/site/build_site.py` builds a static
   directory (viewer, a capture on the front page, this manual, the blog,
   screenshots, the e2e report); `python3 tools/site/serve.py --dir site

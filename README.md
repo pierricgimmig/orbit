@@ -184,4 +184,12 @@ Open `http://<host>:44766/`. Build, protocol, renderer choice, tests and
 benches: [`src/OrbitLiveViewer/README.md`](src/OrbitLiveViewer/README.md).
 Run book: [`docs/manual/live-viewer.md`](docs/manual/live-viewer.md).
 
+## Skills for coding agents
+
+`skills/` holds agent skills (`SKILL.md`, the format Claude Code, Codex and
+Cursor read) that explain how to drive the profiler over HTTP, put an
+agent's own activity on the timeline, and instrument a program.
+`tools/install/install_skills.sh` copies them into the user-level skill
+directories; [`skills/README.md`](skills/README.md) lists them.
+
 [orbit_youtube_presentation]: contrib/logos/orbit_presentation_youtube.png
