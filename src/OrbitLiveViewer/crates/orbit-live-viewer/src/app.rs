@@ -6683,90 +6683,104 @@ impl OrbitLiveApp {
                             }
                         }
                     }
-                    if matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) { return; }
-                    ui.add_space(8.0);
-                    let filter = ui.add(
-                        egui::TextEdit::singleline(&mut self.report_filter)
-                            .id_salt("orbit_report_filter")
-                            .desired_width(150.0)
-                            .hint_text("filter functions")
-                            .font(FontId::monospace(11.0))
-                            .background_color(theme::INPUT()),
-                    );
-                    note_ui_rect("report_filter", filter.rect);
-                    // Escape makes the box surrender focus in the same frame, so
-                    // the key is seen on the frame focus is lost.
-                    if (filter.has_focus() || filter.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape)) {
-                        self.report_filter.clear();
-                    }
-                    if !self.report_filter.is_empty() && icon_pill(ui, "×", "Clear the filter").clicked() {
-                        self.report_filter.clear();
-                    }
-                    // Expand/collapse all, as the native tree's context menu
-                    // offers. Only on the two tree tabs, and here, under the
-                    // tabs, so the title row above them never shifts.
-                    if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
-                        ui.add_space(8.0);
-                        if pill(ui, "Expand all", false)
-                            .on_hover_text("Expand every node of this tree")
-                            .clicked()
-                        {
-                            self.tree_expand_threshold = 0.0;
-                            self.expand_all_tree_nodes();
-                        }
-                        if pill(ui, "Collapse all", false)
-                            .on_hover_text("Collapse every node back to its roots")
-                            .clicked()
-                        {
-                            self.tree_expand_threshold = 100.0;
-                            self.tree_expanded.clear();
-                        }
-                        // The expansion slider of C++ Orbit's call tree: how
-                        // large a node's share of the samples must be for it
-                        // to arrive open. Left, everything; right, only the
-                        // hottest path.
-                        ui.add_space(8.0);
-                        let mut threshold = self.tree_expand_threshold;
-                        // The slider first and the text after it, at a fixed
-                        // width: with the text before the slider, "open all"
-                        // and "open > 12%" were different widths, the slider
-                        // moved under a still pointer, the value followed, the
-                        // text changed back -- a flicker on every press.
-                        let slider = ui
-                            .scope(|ui| {
-                                // The knob is the rail's height / 2.5, and the
-                                // rail is the taller of the Body text and the
-                                // interact height: three quarters of both.
-                                let style = ui.style_mut();
-                                style.spacing.interact_size.y = 13.5;
-                                style.spacing.slider_width = 84.0;
-                                if let Some(body) = style.text_styles.get_mut(&egui::TextStyle::Body) {
-                                    body.size = 10.0;
-                                }
-                                ui.add(egui::Slider::new(&mut threshold, 0.0..=100.0).show_value(false).step_by(1.0))
-                            })
-                            .inner;
-                        note_ui_rect("tree_expand_slider", slider.rect);
-                        if slider.changed() && (threshold - self.tree_expand_threshold).abs() >= 0.5 {
-                            self.tree_expand_threshold = threshold;
-                            if let Some(tree) = &self.tree {
-                                self.tree_expanded = expandable_paths_over(&tree.roots, threshold);
-                            }
-                        }
-                        ui.add_sized(
-                            Vec2::new(78.0, ui.spacing().interact_size.y),
-                            egui::Label::new(
-                                RichText::new(if self.tree_expand_threshold <= 0.0 {
-                                    "open all".to_string()
-                                } else {
-                                    format!("open > {:.0}%", self.tree_expand_threshold)
-                                })
-                                .color(theme::MUTED())
-                                .size(self.ui_tweaks.report_font - 0.5),
-                            ),
-                        );
-                    }
                 });
+                if !matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) {
+                    // The filter on a line of its own, the panel's full
+                    // width. On these tabs it is the control used most, and
+                    // squeezed in after the tab strip at 150 px it read as an
+                    // afterthought and was the first thing to be pushed off
+                    // the row when the panel narrowed.
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let clear_w = if self.report_filter.is_empty() { 0.0 } else { 32.0 + ui.spacing().item_spacing.x };
+                        let hint = if self.report_tab == ReportTab::Modules { "filter modules" } else { "filter functions" };
+                        let filter = ui.add(
+                            egui::TextEdit::singleline(&mut self.report_filter)
+                                .id_salt("orbit_report_filter")
+                                .desired_width((ui.available_width() - clear_w).max(80.0))
+                                .hint_text(hint)
+                                .font(FontId::monospace(12.0))
+                                .margin(egui::Margin::symmetric(8, 5))
+                                .background_color(theme::INPUT()),
+                        );
+                        note_ui_rect("report_filter", filter.rect);
+                        // Escape makes the box surrender focus in the same frame, so
+                        // the key is seen on the frame focus is lost.
+                        if (filter.has_focus() || filter.lost_focus()) && ui.input(|i| i.key_pressed(Key::Escape)) {
+                            self.report_filter.clear();
+                        }
+                        if !self.report_filter.is_empty() && icon_pill(ui, "×", "Clear the filter").clicked() {
+                            self.report_filter.clear();
+                        }
+                    });
+                    // Expand/collapse all, as the native tree's context menu
+                    // offers. Only on the two tree tabs, on a row of their
+                    // own under the filter, so the rows above never shift.
+                    if matches!(self.report_tab, ReportTab::TopDown | ReportTab::BottomUp) {
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            if pill(ui, "Expand all", false)
+                                .on_hover_text("Expand every node of this tree")
+                                .clicked()
+                            {
+                                self.tree_expand_threshold = 0.0;
+                                self.expand_all_tree_nodes();
+                            }
+                            if pill(ui, "Collapse all", false)
+                                .on_hover_text("Collapse every node back to its roots")
+                                .clicked()
+                            {
+                                self.tree_expand_threshold = 100.0;
+                                self.tree_expanded.clear();
+                            }
+                            // The expansion slider of C++ Orbit's call tree: how
+                            // large a node's share of the samples must be for it
+                            // to arrive open. Left, everything; right, only the
+                            // hottest path.
+                            ui.add_space(8.0);
+                            let mut threshold = self.tree_expand_threshold;
+                            // The slider first and the text after it, at a fixed
+                            // width: with the text before the slider, "open all"
+                            // and "open > 12%" were different widths, the slider
+                            // moved under a still pointer, the value followed, the
+                            // text changed back -- a flicker on every press.
+                            let slider = ui
+                                .scope(|ui| {
+                                    // The knob is the rail's height / 2.5, and the
+                                    // rail is the taller of the Body text and the
+                                    // interact height: three quarters of both.
+                                    let style = ui.style_mut();
+                                    style.spacing.interact_size.y = 13.5;
+                                    style.spacing.slider_width = 84.0;
+                                    if let Some(body) = style.text_styles.get_mut(&egui::TextStyle::Body) {
+                                        body.size = 10.0;
+                                    }
+                                    ui.add(egui::Slider::new(&mut threshold, 0.0..=100.0).show_value(false).step_by(1.0))
+                                })
+                                .inner;
+                            note_ui_rect("tree_expand_slider", slider.rect);
+                            if slider.changed() && (threshold - self.tree_expand_threshold).abs() >= 0.5 {
+                                self.tree_expand_threshold = threshold;
+                                if let Some(tree) = &self.tree {
+                                    self.tree_expanded = expandable_paths_over(&tree.roots, threshold);
+                                }
+                            }
+                            ui.add_sized(
+                                Vec2::new(78.0, ui.spacing().interact_size.y),
+                                egui::Label::new(
+                                    RichText::new(if self.tree_expand_threshold <= 0.0 {
+                                        "open all".to_string()
+                                    } else {
+                                        format!("open > {:.0}%", self.tree_expand_threshold)
+                                    })
+                                    .color(theme::MUTED())
+                                    .size(self.ui_tweaks.report_font - 0.5),
+                                ),
+                            );
+                        });
+                    }
+                    ui.add_space(2.0);
+                }
                 if matches!(self.report_tab, ReportTab::Inspector | ReportTab::Selection) {
                     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                         if self.report_tab == ReportTab::Inspector { self.chrome(ui); }
