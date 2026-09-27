@@ -42,6 +42,12 @@ mod vscroll;
 
 #[cfg(feature = "egui")]
 pub use app::OrbitLiveApp;
+/// The native window's service address (`http://host:port`); see the
+/// `orbit-live-viewer-native` binary.
+#[cfg(not(target_arch = "wasm32"))]
+pub use net::{set_service_url, service_url, DEFAULT_SERVICE_URL};
+#[cfg(not(target_arch = "wasm32"))]
+pub use dev::set_capture_path;
 
 #[wasm_bindgen]
 pub struct LiveViewer {
