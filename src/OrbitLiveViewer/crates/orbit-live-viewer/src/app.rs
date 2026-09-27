@@ -8521,6 +8521,7 @@ impl OrbitLiveApp {
         if let Some(bar) = hovered {
             let text = format!("{}\n{} samples, {:.1}% of the selection", bar.name, bar.samples, bar.percent);
             egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), egui::Id::new("orbit_flame_tip"), |ui| {
+                ui.set_max_width(hover_box_width(ui.ctx().screen_rect().width()));
                 ui.label(RichText::new(text).size(font));
             });
         }
@@ -8811,6 +8812,14 @@ impl eframe::App for OrbitLiveApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.presets.receive();
         self.now_s = ctx.input(|i| i.time);
+        // Hover boxes wrap at egui's default 500 px, which turned a long
+        // templated name into a tall, narrow column while most of the window
+        // sat empty beside it. Let them use most of the width instead; the
+        // box is still only as wide as its text needs.
+        let tooltip_w = hover_box_width(ctx.screen_rect().width());
+        if ctx.style().spacing.tooltip_width != tooltip_w {
+            ctx.style_mut(|style| style.spacing.tooltip_width = tooltip_w);
+        }
         self.pointer_readout = ctx.input(|i| {
             let p = &i.pointer;
             format!(
@@ -11011,6 +11020,7 @@ fn show_scope_tooltip(
     .gap(8.0)
     .show(|ui| {
         ui.set_min_width(148.0);
+        ui.set_max_width(hover_box_width(ui.ctx().screen_rect().width()));
         if pick.kind == kind::SCHEDULING_SLICE {
             let tname = intern
                 .get(pick.tid)
@@ -11518,6 +11528,13 @@ fn elide_to_width(s: &str, max_w: f32, measure: &mut impl FnMut(&str) -> f32) ->
         out.push('…');
         out
     }
+}
+
+/// How wide a hover box may grow before its text wraps: most of the window,
+/// never less than egui's default. A long templated function name reads on
+/// one or two lines instead of twenty.
+fn hover_box_width(window_w: f32) -> f32 {
+    (window_w * 0.85 - 24.0).max(500.0)
 }
 
 fn live_repaint(demo: bool, capturing: bool, dragging: bool, selected: bool) -> bool {
@@ -12474,6 +12491,13 @@ mod tests {
             timeslice_label_fitting("Tick", "18.000 ms", 80.0, &mut measure),
             "Tick 18.000 ms"
         );
+    }
+
+    #[test]
+    fn hover_boxes_use_most_of_the_window_but_never_less_than_the_default() {
+        assert_eq!(hover_box_width(2000.0), 2000.0 * 0.85 - 24.0);
+        assert_eq!(hover_box_width(300.0), 500.0, "a small window keeps egui's default");
+        assert!(hover_box_width(1280.0) > 1000.0);
     }
 
     #[test]
