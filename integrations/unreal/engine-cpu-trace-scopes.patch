@@ -1,0 +1,102 @@
+Orbit scopes from TRACE_CPUPROFILER_EVENT_SCOPE*, for Unreal Engine 5.8.
+See integrations/unreal/README.md, level 3. Copy orbit.h to
+Engine/Source/Runtime/Core/Public/ProfilingDebugging/ first, then
+`patch -p1 < engine-cpu-trace-scopes.patch` from the engine root.
+
+--- a/Engine/Source/Runtime/Core/Public/ProfilingDebugging/CpuProfilerTrace.h
++++ b/Engine/Source/Runtime/Core/Public/ProfilingDebugging/CpuProfilerTrace.h
+@@ -14,6 +14,17 @@
+ #include "Trace/Detail/Channel.inl"
+ #include "Trace/Trace.h"
+ 
++// Orbit: every TRACE_CPUPROFILER_EVENT_SCOPE* also opens a scope in a
++// capturing orbit-service. One header, nothing to link; without a loaded
++// liborbit_api this is a single predictable branch per scope, the same
++// cost as the CpuChannel check. See <orbit>/integrations/unreal/README.md.
++#ifndef UE_ORBIT_CPU_TRACE
++#define UE_ORBIT_CPU_TRACE 1
++#endif
++#if UE_ORBIT_CPU_TRACE
++#include "ProfilingDebugging/orbit.h"
++#endif
++
+ // IWYU pragma: end_exports
+ 
+ #if !defined(CPUPROFILERTRACE_ENABLED)
+@@ -352,6 +363,59 @@
+ };
+ 
+ // Advanced macro for integrating e.g. stats/named events with CPU trace.
++#if UE_ORBIT_CPU_TRACE
++// The Orbit side of TRACE_CPUPROFILER_EVENT_SCOPE_USE: a scope for the
++// duration of the Insights event, whatever form its name takes.
++struct FOrbitCpuTraceScope
++{
++	orbit_scope Handle = 0;
++
++	FORCEINLINE explicit FOrbitCpuTraceScope(const ANSICHAR* Name, bool bCondition)
++	{
++		if (bCondition && orbit_available())
++		{
++			Handle = orbit_start(Name, strlen(Name));
++		}
++	}
++
++	FORCEINLINE explicit FOrbitCpuTraceScope(const TCHAR* Name, bool bCondition)
++	{
++		if (bCondition && orbit_available())
++		{
++			ANSICHAR Narrow[256];
++			int32 Len = 0;
++			for (; Len < 255 && Name[Len]; ++Len)
++			{
++				Narrow[Len] = (Name[Len] < 128) ? static_cast<ANSICHAR>(Name[Len]) : '?';
++			}
++			Handle = orbit_start(Narrow, Len);
++		}
++	}
++
++	FORCEINLINE explicit FOrbitCpuTraceScope(const FName& Name, bool bCondition)
++	{
++		if (bCondition && orbit_available())
++		{
++			ANSICHAR Plain[NAME_SIZE];
++			Name.GetPlainANSIString(Plain);
++			Handle = orbit_start(Plain, strlen(Plain));
++		}
++	}
++
++	FORCEINLINE ~FOrbitCpuTraceScope()
++	{
++		if (Handle)
++		{
++			orbit_stop(Handle);
++		}
++	}
++};
++#define UE_ORBIT_CPU_TRACE_SCOPE(ScopeName, NameStr, Condition) \
++	FOrbitCpuTraceScope UE_JOIN(ScopeName, _Orbit)(NameStr, (Condition));
++#else
++#define UE_ORBIT_CPU_TRACE_SCOPE(ScopeName, NameStr, Condition)
++#endif
++
+ // Declares a CPU timing event for future use, conditionally and with a particular variable name for storing the id.
+ #define TRACE_CPUPROFILER_EVENT_DECLARE(DeclName) \
+ 	static uint32 DeclName;
+@@ -359,12 +423,14 @@
+ // Advanced macro for integrating e.g. stats/named events with CPU trace.
+ // Traces a scoped event previously declared with TRACE_CPUPROFILER_EVENT_DECLARE, conditionally.
+ #define TRACE_CPUPROFILER_EVENT_SCOPE_USE(DeclName, NameStr, ScopeName, Condition) \
+-	FCpuProfilerTrace::FEventScope ScopeName(DeclName, NameStr, Condition, __FILE__, __LINE__);
++	FCpuProfilerTrace::FEventScope ScopeName(DeclName, NameStr, Condition, __FILE__, __LINE__); \
++	UE_ORBIT_CPU_TRACE_SCOPE(ScopeName, NameStr, Condition)
+ 
+ // Advanced macro for integrating e.g. stats/named events with CPU trace
+ // Traces a scoped event previously declared with TRACE_CPUPROFILER_EVENT_DECLARE, conditionally
+ #define TRACE_CPUPROFILER_EVENT_SCOPE_USE_ON_CHANNEL(DeclName, NameStr, ScopeName, Channel, Condition) \
+-	FCpuProfilerTrace::FEventScope ScopeName(DeclName, NameStr, Channel, Condition, __FILE__, __LINE__);
++	FCpuProfilerTrace::FEventScope ScopeName(DeclName, NameStr, Channel, Condition, __FILE__, __LINE__); \
++	UE_ORBIT_CPU_TRACE_SCOPE(ScopeName, NameStr, Condition)
+ 
+ // Advanced macro that will check if CpuChannel is enabled and, if so, declares a new CPU event and starts it.
+ #define TRACE_CPUPROFILER_EVENT_MANUAL_START(EventNameStr) \
