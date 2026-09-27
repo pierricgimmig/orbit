@@ -52,3 +52,5 @@ third_party/py-spy/
 /rust/crates/orbit-service/python/build/
 /rust/crates/orbit-service/python/dist/
 /rust/crates/orbit-service/python/*.egg-info/
+integrations/unreal/OrbitProfiler/Intermediate/
+integrations/unreal/OrbitProfiler/Binaries/

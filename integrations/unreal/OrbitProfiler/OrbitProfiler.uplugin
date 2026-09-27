@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Orbit Profiler",
+	"Description": "Sends Unreal's named events, stat scopes and frame boundaries to a running orbit-service, and gives game modules the Orbit manual-instrumentation API (orbit.h).",
+	"Category": "Developer Tools",
+	"CreatedBy": "The Orbit Authors",
+	"CreatedByURL": "https://github.com/pierricgimmig/orbit",
+	"DocsURL": "https://github.com/pierricgimmig/orbit/blob/main/integrations/unreal/README.md",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "OrbitProfiler",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [ "Linux", "Win64", "Mac" ]
+		}
+	]
+}

@@ -431,6 +431,13 @@ in the URL opens a tab on load.
   scenarios capture them with `ORBIT_API_LIB` naming the tree's library.
   Screenshots: `07-api-rust.png`, `08-api-c.png`, `09-api-cpp.png`,
   `10-api-python.png`.
+- **Unreal Engine.** `integrations/unreal/` has the `OrbitProfiler` plugin
+  (one Core-only module: registers Orbit as an Unreal external profiler, so
+  `-Orbit -statnamedevents` sends every `SCOPED_NAMED_EVENT`,
+  `SCOPE_CYCLE_COUNTER` and engine named event to a capturing service, plus
+  a `frame` instant per frame, and gives game modules `orbit.h`), an
+  optional one-header engine patch for `TRACE_CPUPROFILER_EVENT_SCOPE*`,
+  and the guide. Screenshot: `unreal-named-events.png`.
 - **What reaches the timeline.** Scopes nest per thread, async spans get
   their own track, `instant` is a zero-length mark, `link` joins a start to
   a later thread, `value` draws a lane.
