@@ -269,6 +269,15 @@ function passArray8ToWasm0(arg, malloc) {
     return ptr;
 }
 /**
+ * Called after JS `initThreadPool` resolves. `n == 1` keeps collect/raster
+ * sequential (SAB missing / init failed).
+ * @param {number} n
+ */
+export function markWasmPoolReady(n) {
+    wasm.markWasmPoolReady(n);
+}
+
+/**
  * Browser entry: eframe WebRunner on the given canvas. Native window is not used.
  * JS must call `initThreadPool` (when present) *before* this, then
  * `markWasmPoolReady`.
@@ -278,15 +287,6 @@ function passArray8ToWasm0(arg, malloc) {
 export function start_eframe(canvas) {
     const ret = wasm.start_eframe(canvas);
     return ret;
-}
-
-/**
- * Called after JS `initThreadPool` resolves. `n == 1` keeps collect/raster
- * sequential (SAB missing / init failed).
- * @param {number} n
- */
-export function markWasmPoolReady(n) {
-    wasm.markWasmPoolReady(n);
 }
 
 /**
@@ -306,7 +306,7 @@ export function wbg_rayon_start_worker(receiver) {
 }
 
 function __wbg_adapter_38(arg0, arg1) {
-    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h056678154e7d6ade(arg0, arg1);
+    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h18935d0080176858(arg0, arg1);
 }
 
 function __wbg_adapter_41(arg0, arg1, arg2) {
@@ -3315,7 +3315,7 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1484 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbindgen_closure_wrapper1546 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 148, __wbg_adapter_38);
         return ret;
     };

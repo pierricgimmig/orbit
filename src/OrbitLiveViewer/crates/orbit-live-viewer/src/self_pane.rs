@@ -250,33 +250,42 @@ impl SelfProfile {
                     .size(9.5),
             );
             ui.add_space(10.0);
+            // Values in a monospace font, padded to a fixed number of
+            // characters: every glyph is the same width and a value that
+            // gains a digit fills space that was already reserved, so the
+            // row never shifts. In a proportional face "reused" flicking
+            // between 0 and 14 moved everything after it, every frame.
             let stat = |ui: &mut egui::Ui, k: &str, v: String| {
                 ui.label(egui::RichText::new(k).color(theme::MUTED()).size(10.0));
-                ui.label(egui::RichText::new(v).color(theme::TEXT()).size(10.0));
+                ui.label(
+                    egui::RichText::new(v)
+                        .font(egui::FontId::monospace(10.0))
+                        .color(theme::TEXT()),
+                );
                 ui.add_space(8.0);
             };
-            stat(ui, "fps", format!("{:.0}", self.fps));
+            stat(ui, "fps", format!("{:>3.0}", self.fps));
             stat(
                 ui,
                 "frame",
                 format!(
-                    "{:.2} / {:.2} / {:.2} ms",
+                    "{:>6.2} / {:>6.2} / {:>6.2} ms",
                     self.last_ms(),
                     self.avg_ms(),
                     self.max_ms()
                 ),
             );
-            stat(ui, "prims", format!("{}", self.prims));
-            stat(ui, "lanes", format!("{}", self.lanes_kept));
-            stat(ui, "reused", format!("{}", self.lanes_reused));
-            stat(ui, "pool", format!("{}", self.pool_threads));
+            stat(ui, "prims", format!("{:>7}", self.prims));
+            stat(ui, "lanes", format!("{:>4}", self.lanes_kept));
+            stat(ui, "reused", format!("{:>4}", self.lanes_reused));
+            stat(ui, "pool", format!("{:>2}", self.pool_threads));
             stat(
                 ui,
                 "workers",
                 if self.worker_dropped > 0 {
-                    format!("{} (+{} dropped)", self.worker_kept, self.worker_dropped)
+                    format!("{:>3} (+{} dropped)", self.worker_kept, self.worker_dropped)
                 } else {
-                    format!("{}", self.worker_kept)
+                    format!("{:>3}", self.worker_kept)
                 },
             );
             if ui
