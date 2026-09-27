@@ -191,6 +191,15 @@ process idea in its simplest form. Not done: the MCP layer, and links
 (the viewer does not draw links yet). Note: a capture start empties the
 ring, so agent scopes made before Record are gone once it starts.
 
+`POST /api/events` (orbit-live-server `ingest.rs`) is the batch form for a
+producer with structure of its own: it names processes and threads by pid
+and tid, sends finished spans, instants and values, and can stamp them on
+the wall clock. The `q` work queue uses it to show each task as a process
+and each agent as a thread. Still not done: edges between rows (task
+dependencies) need a protocol frame and a viewer that draws it, and an
+open span can only be shown as adjacent segments since the ring is
+append-only.
+
 ## 13. Capture sharing — S3 store + URL
 
 Serialize a slice, upload to an S3 bucket, hand out a single URL.

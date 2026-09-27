@@ -63,6 +63,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/capture/open", post(capture_open))
         .route("/api/capture/clear", post(capture_clear))
         .route("/api/scope", post(agent_scope))
+        .route("/api/events", post(ingest_events).layer(axum::extract::DefaultBodyLimit::max(EVENTS_BODY_LIMIT)))
         .route("/api/log", post(viewer_log))
         .route(
             "/api/capture/import",
@@ -563,6 +564,21 @@ async fn agent_scope(State(svc): State<Arc<LiveService>>, Json(body): Json<Scope
         Ok(Err(error)) => (StatusCode::BAD_REQUEST, error).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
+}
+
+/// `POST /api/events`: a batch of processes, threads, spans, instants and
+/// values from an outside producer, filed under the pids and tids the
+/// caller chose. See [`crate::ingest`]. Unlike `/api/scope` this needs no
+/// service hook: names and events go straight to the ring and the viewers.
+const EVENTS_BODY_LIMIT: usize = 32 * 1024 * 1024;
+
+async fn ingest_events(
+    State(svc): State<Arc<LiveService>>,
+    Json(body): Json<crate::ingest::EventsBody>,
+) -> Response {
+    let now = crate::ingest::ClockNow::read();
+    let summary = crate::ingest::ingest(&svc, body, now);
+    Json(summary).into_response()
 }
 
 /// `POST /api/log`: a batch of the viewer's own log lines, for the
@@ -1504,6 +1520,63 @@ mod isolation_tests {
         assert_eq!(seen[1], AgentScope { track: "agent".into(), action: AgentAction::Stop, timestamp_ns: None });
         assert_eq!(seen[2].action, AgentAction::Value { name: "tests".into(), value: 42.5 });
         assert_eq!(seen.len(), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn external_events_land_in_the_ring_with_their_names() {
+        use orbit_live_protocol::{decode_frame, LiveFrame};
+        let svc = test_service();
+        let mut viewer = svc.subscribe();
+        let base = spawn_router(svc.clone()).await;
+        let post = |body: &str| {
+            let out = std::process::Command::new("curl")
+                .args(["-si", "--max-time", "5", "-X", "POST", "-H", "content-type: application/json", "-d", body])
+                .arg(format!("{base}/api/events"))
+                .output()
+                .expect("curl");
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        let reply = post(
+            r##"{"processes":[{"pid":7001,"name":"#1 Benchmark"}],
+                "threads":[{"pid":7001,"tid":8001,"name":"agent-a"}],
+                "spans":[{"pid":7001,"tid":8001,"name":"claim","start_ns":100,"duration_ns":50}],
+                "instants":[{"pid":7001,"tid":8001,"name":"note","timestamp_ns":120}],
+                "values":[{"pid":7001,"tid":7001,"name":"progress","timestamp_ns":130,"value":40}]}"##,
+        );
+        assert!(reply.contains("200"), "{reply}");
+        assert!(reply.contains(r#""accepted":3"#), "{reply}");
+        assert!(reply.contains(r#""named":2"#), "{reply}");
+        assert!(post("not json").contains("400"));
+        assert!(post("{}").contains(r#""accepted":0"#), "an empty batch is fine");
+
+        let (_, events) = svc.ring().snapshot();
+        assert_eq!(events.len(), 3);
+        assert_eq!(svc.intern.lock().get(events[0].name_id), Some("claim"));
+
+        // Viewers saw the names, the interned strings and the batch.
+        let mut kinds = Vec::new();
+        while let Ok(bytes) = viewer.try_recv() {
+            let (frame, _) = decode_frame(&bytes).expect("frame");
+            kinds.push(match frame {
+                LiveFrame::ProcessName { pid, name } => format!("process {pid} {name}"),
+                LiveFrame::ThreadName { pid, tid, name } => format!("thread {pid} {tid} {name}"),
+                LiveFrame::InternedString { text, .. } => format!("intern {text}"),
+                LiveFrame::EventBatch { events } => format!("batch {}", events.len()),
+                other => format!("{other:?}"),
+            });
+        }
+        assert_eq!(
+            kinds,
+            vec![
+                "process 7001 #1 Benchmark",
+                "thread 7001 8001 agent-a",
+                "intern claim",
+                "intern note",
+                "intern progress",
+                "batch 3",
+            ],
+            "{kinds:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
