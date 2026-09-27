@@ -950,6 +950,18 @@ pub struct OrbitLiveApp {
     tree_sort: (u8, bool),
     module_sort: (u8, bool),
     live_sort: (u8, bool),
+    /// The Live table's row order as last sorted, by key. While a capture
+    /// runs the rows are re-sorted once a second, not every frame -- a table
+    /// whose rows swap places sixty times a second cannot be read -- and once
+    /// more when the capture finishes. Between sorts, rows keep this order
+    /// and new ones join at the bottom.
+    live_order: Vec<crate::live::LiveKey>,
+    live_order_sorted_s: f64,
+    /// The sort the held order was computed under; a header click re-sorts
+    /// at once.
+    live_order_sort: (u8, bool),
+    /// The capture just ended: sort one last time, whatever the clock says.
+    live_resort_pending: bool,
     /// The code views' state: the source document, the disassembly, how
     /// they read, the rows built from them, and what went wrong.
     code_doc: Option<crate::code::CodeDoc>,
@@ -1646,7 +1658,11 @@ impl OrbitLiveApp {
             flat_sort: (1, true),
             tree_sort: (1, true),
             module_sort: (0, true),
-            live_sort: (3, true),
+            live_sort: (2, true),
+            live_order: Vec::new(),
+            live_order_sorted_s: -1.0,
+            live_order_sort: (2, true),
+            live_resort_pending: true,
             code_doc: None,
             code_disasm: None,
             code_mode: crate::code::CodeMode::Both,
@@ -2374,6 +2390,8 @@ impl OrbitLiveApp {
         // may not arrive over the socket once the capture ends).
         if self.was_capturing && !capturing {
             self.show_whole_capture_report();
+            // The final order of the Live table: once, on the finished counts.
+            self.live_resort_pending = true;
         }
         self.was_capturing = capturing;
     }
@@ -2692,6 +2710,7 @@ impl OrbitLiveApp {
                 }
             }
             LiveFrame::CaptureFinished => {
+                self.live_resort_pending = true;
                 // A live capture that just stopped stays where it was -- the
                 // last Follow window (~2s) -- instead of zooming out to the
                 // whole capture. Fitting there was a jarring jump and dropped
@@ -8194,20 +8213,41 @@ impl OrbitLiveApp {
                             .and_then(|f| f.as_ref()).map_or("", |f| f.module.as_str());
                         let hooked = |r: &crate::live::LiveRow| resolved.get(&r.key())
                             .and_then(|f| f.as_ref()).is_some_and(|f| self.is_hooked(f.function_id));
-                        rows.sort_by(|a, b| {
-                            let an = self.intern.get(a.name_id).unwrap_or("");
-                            let bn = self.intern.get(b.name_id).unwrap_or("");
-                            let ord = match col {
-                                0 => a.type_label().cmp(b.type_label()),
-                                1 => cmp_ci(an, bn), 2 => a.count.cmp(&b.count),
-                                3 => a.total_ns.cmp(&b.total_ns), 4 => a.avg_ns().cmp(&b.avg_ns()),
-                                5 => a.min_ns.cmp(&b.min_ns), 6 => a.max_ns.cmp(&b.max_ns),
-                                7 => a.std_dev_ns().cmp(&b.std_dev_ns()),
-                                9 => hooked(a).cmp(&hooked(b)),
-                                _ => cmp_ci(module(a), module(b)),
-                            };
-                            (if desc { ord.reverse() } else { ord }).then(a.name_id.cmp(&b.name_id))
-                        });
+                        // Sorting is what makes the table jump: while a
+                        // capture runs, counts change every frame and rows
+                        // would trade places at frame rate. So the order is
+                        // held and refreshed once a second (LIVE_SORT_EVERY_S)
+                        // while capturing, once more when the capture ends,
+                        // and at once on a header click; with no capture
+                        // running it simply follows the data.
+                        let capturing = self.recording || self.status.capturing;
+                        let resort = !capturing
+                            || self.live_resort_pending
+                            || self.live_order_sort != self.live_sort
+                            || self.live_order.is_empty()
+                            || self.now_s - self.live_order_sorted_s >= LIVE_SORT_EVERY_S;
+                        if resort {
+                            rows.sort_by(|a, b| {
+                                let an = self.intern.get(a.name_id).unwrap_or("");
+                                let bn = self.intern.get(b.name_id).unwrap_or("");
+                                let ord = match col {
+                                    0 => a.type_label().cmp(b.type_label()),
+                                    1 => cmp_ci(an, bn), 2 => a.count.cmp(&b.count),
+                                    3 => a.total_ns.cmp(&b.total_ns), 4 => a.avg_ns().cmp(&b.avg_ns()),
+                                    5 => a.min_ns.cmp(&b.min_ns), 6 => a.max_ns.cmp(&b.max_ns),
+                                    7 => a.std_dev_ns().cmp(&b.std_dev_ns()),
+                                    9 => hooked(a).cmp(&hooked(b)),
+                                    _ => cmp_ci(module(a), module(b)),
+                                };
+                                (if desc { ord.reverse() } else { ord }).then(a.name_id.cmp(&b.name_id))
+                            });
+                            self.live_order = rows.iter().map(|r| r.key()).collect();
+                            self.live_order_sorted_s = self.now_s;
+                            self.live_order_sort = self.live_sort;
+                            self.live_resort_pending = false;
+                        } else {
+                            rows = crate::live::arrange_by(rows, &self.live_order);
+                        }
                         ui.end_row();
                         let filter = self.report_filter.trim().to_lowercase();
                         for r in rows
@@ -10271,6 +10311,8 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
 }
 
 /// How often the Live tab recomputes while events stream in.
+/// How often the Live table re-sorts while a capture runs.
+const LIVE_SORT_EVERY_S: f64 = 1.0;
 const LIVE_STATS_MIN_INTERVAL_S: f64 = 0.25;
 
 /// A file the viewer opens as an Orbit capture rather than a Chrome trace.

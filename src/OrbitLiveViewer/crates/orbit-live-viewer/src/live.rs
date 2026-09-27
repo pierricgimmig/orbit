@@ -235,6 +235,24 @@ impl LiveTable {
     }
 }
 
+/// `rows` in the order of `order` (by key), rows the order does not know
+/// after them in the order given. What the Live table shows between two
+/// sorts: yesterday's order with today's numbers, new rows at the bottom.
+pub fn arrange_by(rows: Vec<LiveRow>, order: &[LiveKey]) -> Vec<LiveRow> {
+    let position: std::collections::HashMap<LiveKey, usize> =
+        order.iter().enumerate().map(|(i, k)| (*k, i)).collect();
+    let mut known: Vec<(usize, LiveRow)> = Vec::with_capacity(rows.len());
+    let mut fresh: Vec<LiveRow> = Vec::new();
+    for row in rows {
+        match position.get(&row.key()) {
+            Some(i) => known.push((*i, row)),
+            None => fresh.push(row),
+        }
+    }
+    known.sort_by_key(|(i, _)| *i);
+    known.into_iter().map(|(_, r)| r).chain(fresh).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +354,30 @@ mod tests {
         assert_eq!(h[2], 2); // 2, 3
         assert_eq!(h[10], 1); // 1000
         assert_eq!(h[11], 1); // 1500
+    }
+
+    #[test]
+    fn a_held_order_keeps_its_rows_and_appends_the_new_ones() {
+        let mut t = LiveTable::default();
+        for (name, n) in [(1u32, 3), (2, 1), (3, 2)] {
+            for i in 0..n {
+                t.push(&ev(i * 100, 10, 1, kind::API_SCOPE, name));
+            }
+        }
+        let by_count: Vec<LiveKey> = {
+            let mut rows = t.sorted_rows();
+            rows.sort_by(|a, b| b.count.cmp(&a.count));
+            rows.iter().map(|r| r.key()).collect()
+        };
+        assert_eq!(by_count.iter().map(|k| k.name_id).collect::<Vec<_>>(), vec![1, 3, 2]);
+        // More events arrive: name 2 is now the busiest, and name 4 is new.
+        for i in 0..5 {
+            t.push(&ev(1000 + i * 100, 10, 1, kind::API_SCOPE, 2));
+        }
+        t.push(&ev(2000, 10, 1, kind::API_SCOPE, 4));
+        let rows: Vec<LiveRow> = t.sorted_rows().into_iter().cloned().collect();
+        let held = arrange_by(rows, &by_count);
+        assert_eq!(held.iter().map(|r| r.name_id).collect::<Vec<_>>(), vec![1, 3, 2, 4], "old order, new row last");
+        assert_eq!(held[2].count, 6, "the numbers are today's");
     }
 }
