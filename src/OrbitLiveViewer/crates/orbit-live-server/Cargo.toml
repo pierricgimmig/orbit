@@ -12,6 +12,7 @@ orbit-live-render = { path = "../orbit-live-render" }
 orbit-live-ring = { path = "../orbit-live-ring" }
 axum = { version = "0.7", features = ["ws"] }
 futures-util = "0.3"
+libc = "0.2"
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

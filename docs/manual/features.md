@@ -464,6 +464,17 @@ in the URL opens a tab on load.
   "action": "start"|"stop"|"instant"|"value", "name": ..., "value": ...,
   "timestamp_ns": ...}`. A `stop` with nothing open is refused, so a script
   cannot corrupt the track.
+- **`POST /api/events`** takes a batch from a producer that knows its own
+  structure: `{"clock": "monotonic_ns"|"unix_ns", "processes": [{pid,
+  name}], "threads": [{pid, tid, name}], "spans": [{pid, tid, name,
+  start_ns, duration_ns, depth, track: "scope"|"async"}], "instants": [{pid,
+  tid, name, timestamp_ns}], "values": [{pid, tid, name, timestamp_ns,
+  value}]}`. Every list is optional. Rows are named as given, so a work
+  queue can show each task as a process and each agent as a thread of it;
+  `unix_ns` timestamps are moved onto the capture clock by the service.
+  The reply counts what was accepted and what was refused for starting
+  before the running capture. The `q orbit` bridge in
+  github.com/pierricgimmig/q is the first producer.
 - **HTTP API.** `/api/status`, `/api/processes`, `/api/capture/start|stop|export|import|open|clear`,
   `/api/symbols/load|status|modules`, `/api/functions/search`,
   `/api/sampling/report` and `/api/sampling/tree` (with `t0`, `t1`, `tid`

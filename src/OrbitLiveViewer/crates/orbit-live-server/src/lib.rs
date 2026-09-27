@@ -3,6 +3,7 @@
 pub mod bench;
 pub mod demo;
 pub mod http;
+pub mod ingest;
 pub mod settings;
 pub use settings::Settings;
 
