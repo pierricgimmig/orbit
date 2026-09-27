@@ -136,6 +136,9 @@ pub fn process_list_json() -> String {
 /// Sim time advances 20 ms per 20 ms wall tick so a 2 s follow window shows
 /// millisecond-wide boxes (instanced LOD), not 60 ns specks.
 pub fn start(svc: &Arc<LiveService>, scopes_per_sec: u64) -> Result<(), String> {
+    if svc.bench.running.load(Ordering::Relaxed) {
+        return Err("the benchmark is running; stop it first".into());
+    }
     if svc.demo.swap(true, Ordering::Relaxed) {
         return Err("demo producer is already running".into());
     }

@@ -52,6 +52,10 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/code/example", get(code_example))
         .route("/api/demo/start", post(demo_start))
         .route("/api/demo/stop", post(demo_stop))
+        .route("/api/bench", get(bench_status))
+        .route("/api/bench/start", post(bench_start))
+        .route("/api/bench/rate", post(bench_rate))
+        .route("/api/bench/stop", post(bench_stop))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/frame", get(frame))
@@ -318,11 +322,16 @@ async fn processes(State(svc): State<Arc<LiveService>>) -> Response {
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         },
         None => {
-            if svc.demo.load(std::sync::atomic::Ordering::Relaxed) || svc.live_end_ns() > 0 {
-                crate::demo::process_list_json()
-            } else {
-                "[]".into()
+            let mut list: Vec<serde_json::Value> =
+                if svc.demo.load(std::sync::atomic::Ordering::Relaxed) || svc.live_end_ns() > 0 {
+                    serde_json::from_str(&crate::demo::process_list_json()).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+            if svc.bench.running.load(std::sync::atomic::Ordering::Relaxed) {
+                list.push(serde_json::json!({"pid": crate::bench::BENCH_PID, "name": "orbit-bench"}));
             }
+            serde_json::to_string(&list).unwrap_or_else(|_| "[]".into())
         }
     };
     ([(header::CONTENT_TYPE, "application/json")], raw).into_response()
@@ -971,6 +980,52 @@ async fn demo_start(State(svc): State<Arc<LiveService>>, Json(body): Json<DemoBo
 
 async fn demo_stop(State(svc): State<Arc<LiveService>>) -> Response {
     crate::demo::stop(&svc);
+    StatusCode::OK.into_response()
+}
+
+/// The benchmark producer (`bench.rs`): `threads` threads of nested fake
+/// scopes, `depth_min..=depth_max` deep, at `rate` events per second. Every
+/// field is optional; the defaults are 16 threads, 8 to 16 deep, a million
+/// a second. `rate` alone can be changed while it runs.
+#[derive(Deserialize, Default)]
+struct BenchBody {
+    threads: Option<u32>,
+    depth_min: Option<u32>,
+    depth_max: Option<u32>,
+    rate: Option<u64>,
+}
+
+async fn bench_status(State(svc): State<Arc<LiveService>>) -> Response {
+    ([(header::CONTENT_TYPE, "application/json")], crate::bench::status_json(&svc)).into_response()
+}
+
+async fn bench_start(State(svc): State<Arc<LiveService>>, body: Option<Json<BenchBody>>) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let defaults = crate::bench::BenchParams::default();
+    let params = crate::bench::BenchParams {
+        threads: body.threads.unwrap_or(defaults.threads),
+        depth_min: body.depth_min.unwrap_or(defaults.depth_min),
+        depth_max: body.depth_max.unwrap_or(defaults.depth_max),
+        rate: body.rate.unwrap_or(defaults.rate),
+    };
+    match crate::bench::start(&svc, params) {
+        Ok(()) => ([(header::CONTENT_TYPE, "application/json")], crate::bench::status_json(&svc)).into_response(),
+        Err(e) => (StatusCode::CONFLICT, e).into_response(),
+    }
+}
+
+async fn bench_rate(State(svc): State<Arc<LiveService>>, Json(body): Json<BenchBody>) -> Response {
+    match body.rate {
+        Some(rate) => {
+            crate::bench::set_rate(&svc, rate);
+            ([(header::CONTENT_TYPE, "application/json")], crate::bench::status_json(&svc)).into_response()
+        }
+        None => (StatusCode::BAD_REQUEST, "rate is required").into_response(),
+    }
+}
+
+async fn bench_stop(State(svc): State<Arc<LiveService>>) -> Response {
+    crate::bench::stop(&svc);
     StatusCode::OK.into_response()
 }
 

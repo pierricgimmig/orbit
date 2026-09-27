@@ -1,5 +1,6 @@
 //! HTTP + WebSocket live viewer, served from the same process as Orbit Service.
 
+pub mod bench;
 pub mod demo;
 pub mod http;
 pub mod settings;
@@ -131,6 +132,8 @@ pub struct LiveService {
     live_tx: broadcast::Sender<Vec<u8>>,
     pub capturing: AtomicBool,
     pub demo: AtomicBool,
+    /// The benchmark producer's knobs and counters (`bench.rs`).
+    pub bench: bench::BenchState,
     pub hooks: Mutex<Option<ControlHooks>>,
     /// One line about dynamic instrumentation for the capture in progress:
     /// how many functions were armed, or why none were. The viewer shows it
@@ -322,6 +325,7 @@ impl LiveService {
             live_tx,
             capturing: AtomicBool::new(false),
             demo: AtomicBool::new(false),
+            bench: bench::BenchState::default(),
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
             hook_crash: Mutex::new(String::new()),

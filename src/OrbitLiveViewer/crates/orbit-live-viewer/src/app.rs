@@ -852,6 +852,19 @@ pub struct OrbitLiveApp {
     listing_pool_ema_us: Option<f32>,
     self_profile: crate::self_pane::SelfProfile,
     self_pane_open: bool,
+    /// The Benchmark window (More menu, F3): the service's fake-scope
+    /// producer, with a rate knob that moves while it runs.
+    bench_open: bool,
+    bench_threads: u32,
+    bench_depth_min: u32,
+    bench_depth_max: u32,
+    /// Events per second, the slider's value; sent when it moves.
+    bench_rate: f64,
+    bench_rate_sent: f64,
+    bench_sent_s: f64,
+    bench_polled_s: f64,
+    /// What `/api/bench` last said.
+    bench_status: serde_json::Value,
     /// A capture bundle was posted to the service; the next CaptureFinished
     /// is its arrival, and the view fits to it.
     import_pending: bool,
@@ -1610,6 +1623,15 @@ impl OrbitLiveApp {
             listing_pool_ema_us: None,
             self_profile: crate::self_pane::SelfProfile::default(),
             self_pane_open: false,
+            bench_open: false,
+            bench_threads: 16,
+            bench_depth_min: 8,
+            bench_depth_max: 16,
+            bench_rate: 1_000_000.0,
+            bench_rate_sent: 0.0,
+            bench_sent_s: 0.0,
+            bench_polled_s: 0.0,
+            bench_status: serde_json::Value::Null,
             import_pending: false,
             import_started: false,
             hello_count: 0,
@@ -1867,6 +1889,98 @@ impl OrbitLiveApp {
         self.recording = false;
         self.net.stop_capture();
         self.net.stop_demo();
+        self.net.stop_bench();
+    }
+
+    /// Start the benchmark producer. With nothing recording it starts a
+    /// capture of its own, like the demo; during a capture it joins it.
+    fn start_bench(&mut self) {
+        self.error.clear();
+        if !self.recording && !self.status.capturing && !self.status.demo {
+            self.clear_file_trace();
+            self.recording = true;
+            self.live_edge_ns = DEMO_ORIGIN_NS;
+            self.follow = true;
+        }
+        if self.bench_depth_max < self.bench_depth_min {
+            self.bench_depth_max = self.bench_depth_min;
+        }
+        let rate = self.bench_rate.round().max(1.0) as u64;
+        self.bench_rate_sent = self.bench_rate;
+        self.bench_sent_s = self.now_s;
+        self.net.start_bench(self.bench_threads, self.bench_depth_min, self.bench_depth_max, rate);
+        self.bench_polled_s = 0.0;
+    }
+
+    /// The Benchmark window: threads, depth, the rate slider (logarithmic,
+    /// one event a second to a million) that is sent to the service as it
+    /// moves, Start / Stop, and what the service achieved.
+    fn bench_window(&mut self, ctx: &Context) {
+        if !self.bench_open { return; }
+        if self.now_s - self.bench_polled_s > 0.5 {
+            self.bench_polled_s = self.now_s;
+            self.net.get_bench();
+        }
+        let running = self.bench_status.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
+        let achieved = self.bench_status.get("achieved").and_then(|v| v.as_u64()).unwrap_or(0);
+        let emitted = self.bench_status.get("emitted").and_then(|v| v.as_u64()).unwrap_or(0);
+        let mut open = true;
+        egui::Window::new("Benchmark").open(&mut open)
+            .resizable(false).default_width(360.0)
+            .default_pos(ctx.screen_rect().center() - Vec2::new(180.0, 120.0))
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Fake scopes from the service, as fast as asked: a known, steady load for the ring, the wire and the viewer.").size(11.0).color(theme::MUTED()));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("threads").size(11.0).color(theme::MUTED()));
+                    ui.add_enabled(!running, egui::DragValue::new(&mut self.bench_threads).range(1..=64));
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("depth").size(11.0).color(theme::MUTED()));
+                    ui.add_enabled(!running, egui::DragValue::new(&mut self.bench_depth_min).range(1..=32));
+                    ui.label(RichText::new("to").size(11.0).color(theme::MUTED()));
+                    ui.add_enabled(!running, egui::DragValue::new(&mut self.bench_depth_max).range(1..=32));
+                });
+                if self.bench_depth_max < self.bench_depth_min {
+                    self.bench_depth_max = self.bench_depth_min;
+                }
+                ui.add_space(8.0);
+                let slider = ui.add(
+                    egui::Slider::new(&mut self.bench_rate, 1.0..=1_000_000.0)
+                        .logarithmic(true)
+                        .custom_formatter(|v, _| fmt_int(v.round() as u64))
+                        .text(RichText::new("events / s").size(11.0).color(theme::MUTED())),
+                );
+                note_ui_rect("bench:rate", slider.rect);
+                // Sent as it moves, at most ten times a second, so the
+                // service follows the drag rather than the release.
+                if running
+                    && (self.bench_rate - self.bench_rate_sent).abs() >= 0.5
+                    && self.now_s - self.bench_sent_s >= 0.1
+                {
+                    self.bench_rate_sent = self.bench_rate;
+                    self.bench_sent_s = self.now_s;
+                    self.net.set_bench_rate(self.bench_rate.round().max(1.0) as u64);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let toggle = pill(ui, if running { "Stop" } else { "Start" }, running);
+                    note_ui_rect("bench:toggle", toggle.rect);
+                    if toggle.clicked() {
+                        if running {
+                            self.net.stop_bench();
+                        } else {
+                            self.start_bench();
+                        }
+                    }
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(format!("{:>9} / s   {:>13} total", fmt_int(achieved), fmt_int(emitted)))
+                            .font(FontId::monospace(11.0))
+                            .color(if running { theme::TEXT() } else { theme::MUTED() }),
+                    );
+                });
+            });
+        self.bench_open = open;
     }
 
     fn process_display_name(&self, pid: u32) -> String {
@@ -2438,6 +2552,10 @@ impl OrbitLiveApp {
             self.track_order_applied_s = -1.0;
             self.server_settings = Some(s);
         }
+        if let Some(b) = inbox.bench {
+            self.bench_status = b;
+            self.needs_repaint = true;
+        }
         if let Some(p) = inbox.processes {
             self.apply_process_list(p);
         }
@@ -2905,6 +3023,10 @@ impl OrbitLiveApp {
         let own = ui.selectable_label(self.self_pane_open, "Self   F2");
         note_ui_rect("Self", own.rect);
         if own.clicked() { self.self_pane_open = !self.self_pane_open; ui.close(); }
+        let bench = ui.selectable_label(self.bench_open, "Benchmark   F3")
+            .on_hover_text("Fake scopes from the service at a rate you set while it runs");
+        note_ui_rect("Benchmark", bench.rect);
+        if bench.clicked() { self.bench_open = !self.bench_open; ui.close(); }
         ui.separator();
         if ui
             .selectable_label(self.capture_open, "UI knobs")
@@ -5824,6 +5946,7 @@ impl OrbitLiveApp {
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::R)) { self.toggle_report(); }
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::I)) { self.open_right_tab(ReportTab::Inspector); }
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::F2)) { self.self_pane_open = !self.self_pane_open; }
+            if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::F3)) { self.bench_open = !self.bench_open; }
         }
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             self.follow = !self.follow;
@@ -9021,6 +9144,7 @@ impl eframe::App for OrbitLiveApp {
             }
             self.tweaks_window(ctx);
             self.presets_window(ctx);
+            self.bench_window(ctx);
             self.paint_scope_menu(ctx);
             {
                 let _pane = devf.scope(TID_UI, NAME_SELF_PANE);

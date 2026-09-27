@@ -287,6 +287,8 @@ pub struct Inbox {
     /// The service's persisted user settings (`/api/settings`), as the raw
     /// object so keys this viewer does not know survive a round trip.
     pub settings: Option<serde_json::Value>,
+    /// `/api/bench`: the benchmark producer's knobs and counters.
+    pub bench: Option<serde_json::Value>,
     pub processes: Option<Vec<ProcessJson>>,
     pub error: Option<String>,
     pub frames: Vec<Vec<u8>>,
@@ -601,6 +603,7 @@ mod wasm_impl {
             Inbox {
                 status: inbox.status.take(),
                 settings: inbox.settings.take(),
+                bench: inbox.bench.take(),
                 processes: inbox.processes.take(),
                 sampling: inbox.sampling.take(),
                 error: inbox.error.take(),
@@ -979,6 +982,50 @@ mod wasm_impl {
                 return;
             }
             self.send("POST", "/api/capture/stop", "{}".into());
+        }
+
+        /// The benchmark producer's state, for the Benchmark window.
+        pub fn get_bench(&self) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = get_text("/api/bench")
+                    .await
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("/api/bench: {e}")));
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(v) => g.bench = Some(v),
+                    Err(e) => g.error = Some(e),
+                }
+            });
+        }
+
+        pub fn start_bench(&self, threads: u32, depth_min: u32, depth_max: u32, rate: u64) {
+            if self.offline {
+                return;
+            }
+            self.send(
+                "POST",
+                "/api/bench/start",
+                format!(r#"{{"threads":{threads},"depth_min":{depth_min},"depth_max":{depth_max},"rate":{rate}}}"#),
+            );
+        }
+
+        /// The live knob: a new rate for a running benchmark.
+        pub fn set_bench_rate(&self, rate: u64) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/bench/rate", format!(r#"{{"rate":{rate}}}"#));
+        }
+
+        pub fn stop_bench(&self) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/bench/stop", "{}".into());
         }
 
         pub fn start_demo(&self) {
@@ -1363,6 +1410,10 @@ mod native_impl {
         pub fn search_functions(&self, _pid: u32, _q: &str, _limit: u32) {}
         pub fn list_functions(&self, _pid: u32) {}
         pub fn resolve_preset_functions(&self, _pid: u32, _generation: u64, _keys: String) {}
+        pub fn get_bench(&self) {}
+        pub fn start_bench(&self, _threads: u32, _depth_min: u32, _depth_max: u32, _rate: u64) {}
+        pub fn set_bench_rate(&self, _rate: u64) {}
+        pub fn stop_bench(&self) {}
         pub fn start_demo(&self) {}
         pub fn stop_demo(&self) {}
         pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}
