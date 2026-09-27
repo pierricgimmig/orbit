@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>try{var t=localStorage.getItem("orbit-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<meta charset="utf-8">
+<title>What the Agents Are Doing</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+  :root {
+    --ground: #f1f4f0;
+    --surface: #fafbf9;
+    --surface-2: #e7ece6;
+    --ink: #131a17;
+    --ink-soft: #3c4741;
+    --muted: #62716a;
+    --line: #d3dbd3;
+    --line-strong: #b7c3ba;
+    --accent: #1F7B95;
+    --accent-deep: #155E72;
+    --accent-wash: #E1EEF2;
+    --warn: #8a6212;
+    --warn-wash: #f4ecda;
+    --hold: #9c4a28;
+    --hold-wash: #f3e5dd;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Newsreader", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 36rem;
+    --wide: 58rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1412;
+      --surface: #161d1a;
+      --surface-2: #1d2622;
+      --ink: #e7ede9;
+      --ink-soft: #c3cdc8;
+      --muted: #8fa098;
+      --line: #29332e;
+      --line-strong: #3b4842;
+      --accent: #58B4CE;
+      --accent-deep: #7CC9DE;
+      --accent-wash: #123039;
+      --warn: #d9ae5a;
+      --warn-wash: #2a2417;
+      --hold: #e0906a;
+      --hold-wash: #2b1c14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f1412;
+    --surface: #161d1a;
+    --surface-2: #1d2622;
+    --ink: #e7ede9;
+    --ink-soft: #c3cdc8;
+    --muted: #8fa098;
+    --line: #29332e;
+    --line-strong: #3b4842;
+    --accent: #58B4CE;
+    --accent-deep: #7CC9DE;
+    --accent-wash: #123039;
+    --warn: #d9ae5a;
+    --warn-wash: #2a2417;
+    --hold: #e0906a;
+    --hold-wash: #2b1c14;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .masthead-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 3.5rem 1.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6.5vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .dek {
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 40rem;
+    margin: 0;
+  }
+
+  .byline {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* -------------------------------------------------------- stat strip */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    margin-top: 0.8rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .stat b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.32rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    font-family: var(--display);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------ layout */
+
+  .doc {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr)
+      [wide-start] minmax(0, 11rem)
+      [text-start] minmax(0, var(--measure))
+      [text-end] minmax(0, 11rem)
+      [wide-end] minmax(1.25rem, 1fr)
+      [full-end];
+    row-gap: 1.25rem;
+    padding: 3rem 0 5rem;
+  }
+
+  .doc > * { grid-column: text; margin: 0; }
+  .doc > .wide { grid-column: wide; }
+
+  /* ---------------------------------------------------------- headings */
+
+  .doc > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.9rem;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin-top: 3.2rem;
+    padding-top: 1.1rem;
+    border-top: 2px solid var(--ink);
+    grid-column: wide;
+  }
+
+  .doc > h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.16rem;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    margin-top: 1.5rem;
+  }
+
+  .doc > h4 {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 0.78rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 1.1rem;
+  }
+
+  /* --------------------------------------------------------- rich text */
+
+  .doc > p { text-wrap: pretty; }
+
+  .lede {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-underline-offset: 0.16em;
+    text-decoration-thickness: 1px;
+  }
+
+  a:focus-visible,
+  .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  .doc > ul, .doc > ol { padding-left: 1.15rem; }
+  .doc > ul li, .doc > ol li { margin-bottom: 0.45rem; }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------- table */
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    font-family: var(--display);
+  }
+
+  th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.62rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.v {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  td.was { color: var(--muted); }
+  td.now { color: var(--ink); }
+  .bump { color: var(--accent-deep); font-weight: 600; }
+  .hold-t { color: var(--hold); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figure */
+
+  figure {
+    margin: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.35rem 1.35rem 1rem;
+  }
+
+  .fig-scroll { overflow-x: auto; }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 30rem;
+    color: var(--ink-soft);
+  }
+
+  figcaption {
+    font-family: var(--display);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    margin-top: 0.9rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--line);
+  }
+
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ------------------------------------------------------------- notes */
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 0.95rem 1.1rem;
+    font-size: 0.97rem;
+  }
+
+  .note.warn { border-left-color: var(--warn); background: var(--warn-wash); }
+  .note.hold { border-left-color: var(--hold); background: var(--hold-wash); }
+
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
+  .note.warn .note-label { color: var(--warn); }
+  .note.hold .note-label { color: var(--hold); }
+
+  /* ----------------------------------------------------------- verdict */
+
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem 0.9rem;
+    align-items: baseline;
+    background: var(--accent-wash);
+    border: 1px solid var(--line);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.95rem;
+  }
+
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    white-space: nowrap;
+  }
+
+  .verdict dd { margin: 0; }
+
+  /* ------------------------------------------------------------ ledger */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .ledger section {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem 1.3rem;
+  }
+
+  .ledger h3 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    margin: 0 0 0.85rem;
+    font-weight: 500;
+  }
+
+  .ledger .for h3 { color: var(--accent); }
+  .ledger .against h3 { color: var(--hold); }
+
+  .ledger ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .ledger li b {
+    display: block;
+    font-family: var(--display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    margin-bottom: 0.15rem;
+  }
+
+  .ledger li { color: var(--ink-soft); }
+
+  /* ------------------------------------------------------------- tiers */
+
+  .tier {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    padding: 1rem 1.15rem;
+  }
+
+  .tier.go { border-left-color: var(--accent); }
+  .tier.maybe { border-left-color: var(--warn); }
+  .tier.stop { border-left-color: var(--hold); }
+
+  .tier .rank {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.28rem;
+    white-space: nowrap;
+  }
+
+  .tier.go .rank { color: var(--accent); }
+  .tier.maybe .rank { color: var(--warn); }
+  .tier.stop .rank { color: var(--hold); }
+
+  .tier h3 {
+    font-family: var(--display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tier p { margin: 0; font-size: 0.95rem; }
+  .tier p + p { margin-top: 0.5rem; }
+  .tier .rank + * { grid-column: 2; }
+  .tier > :not(.rank) { grid-column: 2; }
+
+  /* -------------------------------------------------------------- code */
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 0.95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0;
+    tab-size: 2;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .c { color: var(--muted); }
+  .k { color: var(--accent-deep); }
+
+  /* --------------------------------------------------------------- toc */
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 1.1rem 1.25rem;
+  }
+
+  .toc h2 {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.7rem;
+    font-weight: 500;
+  }
+
+  .toc ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2;
+    column-gap: 2rem;
+    font-family: var(--display);
+    font-size: 0.87rem;
+  }
+
+  .toc li { margin-bottom: 0.34rem; break-inside: avoid; }
+  .toc a { color: var(--ink-soft); text-decoration: none; }
+  .toc a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  @media (max-width: 34rem) {
+    .toc ol { columns: 1; }
+    figure svg { min-width: 26rem; }
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    padding: 2rem 1.25rem 3rem;
+  }
+
+  .footer-inner {
+    max-width: var(--wide);
+    margin: 0 auto;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ------------------------------------------------------------ hurdles */
+
+  .hurdle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--warn);
+    padding: 0.9rem 1.1rem;
+  }
+
+  .hurdle .num {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 0.32rem;
+    white-space: nowrap;
+  }
+
+  .hurdle h3 {
+    font-family: var(--display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.008em;
+  }
+
+  .hurdle p { margin: 0; font-size: 0.94rem; }
+  .hurdle p + p { margin-top: 0.45rem; }
+  .hurdle > :not(.num) { grid-column: 2; }
+  .hurdle.solved { border-left-color: var(--accent); }
+  .hurdle.solved .num { color: var(--accent); }
+
+  /* ------------------------------------------------------------ evidence */
+
+  .evidence td.up { color: var(--hold); }
+  .evidence td.down { color: var(--accent-deep); font-weight: 600; }
+  .evidence td.flat { color: var(--muted); }
+
+  /* ------------------------------------------------------------- index */
+
+  .posts { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+           border: 1px solid var(--line); }
+  .posts a { display: block; background: var(--surface); padding: 1.05rem 1.2rem;
+             text-decoration: none; color: inherit; }
+  .posts a:hover { background: var(--surface-2); }
+  .posts .n { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+              color: var(--accent); text-transform: uppercase; }
+  .posts h3 { font-family: var(--display); font-size: 1.12rem; font-weight: 600;
+              margin: 0.25rem 0 0.3rem; letter-spacing: -0.012em; }
+  .posts p { margin: 0; font-size: 0.93rem; color: var(--muted); line-height: 1.5; }
+  .embed { background: #0b0c0e; border: 1px solid var(--line); }
+  .embed iframe { display: block; width: 100%; height: 520px; border: 0; }
+  .embed-head { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.7rem; color: var(--accent-deep); }
+  @media (max-width: 720px) { .embed iframe { height: 420px; } }
+  table.lanes { width: 100%; border-collapse: collapse; font-family: var(--display); font-size: 0.88rem; margin: 1rem 0 1.4rem; }
+  table.lanes th, table.lanes td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.lanes th { color: var(--muted); font-weight: 600; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; }
+  table.lanes td.n { font-family: var(--mono); white-space: nowrap; }
+</style>
+
+<style>
+  figure { margin: 0.5rem 0; background: var(--surface); border: 1px solid var(--line); padding: 1.35rem 1.35rem 1rem; }
+  figcaption { font-family: var(--display); font-size: 0.8rem; line-height: 1.45; color: var(--muted); margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+  .embed { background: #0b0c0e; border: 1px solid var(--line); }
+  .embed iframe { display: block; width: 100%; height: 640px; border: 0; }
+  .embed-head { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.7rem; }
+  .embed-head.off { color: var(--accent-deep); } .embed-head.on { color: var(--hold); }
+  @media (max-width: 720px) { .embed iframe { height: 460px; } }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Orbit shared look: clean, light by default, dark on demand. Injected after
+   each post's own styles so it re-values the design tokens they use. One
+   accent, the Orbit blue. Light is the default; dark is opt-in via the
+   [data-theme="dark"] the toggle sets (kept at 0,2,0 specificity so it wins
+   over each post's own prefers-color-scheme block). */
+:root{
+  --display:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --body:"Roboto","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --measure:38rem; --wide:60rem;
+}
+:root:not([data-theme="dark"]){
+  --ground:#ffffff; --surface:#f4f6f8; --surface-2:#eceef1;
+  --ink:#1f2328; --ink-soft:#3c4149; --muted:#5f6772;
+  --line:#e3e6ea; --line-strong:#cfd4da;
+  --accent:#2f6fb0; --accent-deep:#245488; --accent-bright:#2f6fb0; --accent-wash:#e9f1fa;
+  --warn:#8a6d1a; --warn-wash:#f6efdb; --hold:#a2502c; --hold-wash:#f4e7df; --good:#2e7d4f;
+  --text:#1f2328; --text-dim:#3c4149; --text-faint:#5f6772;
+  --rule:#e3e6ea; --rule-strong:#cfd4da; --code-bg:#f4f6f8; --selected:#e9f1fa;
+  --shadow:0 1px 2px rgba(31,35,40,.06),0 1px 3px rgba(31,35,40,.10);
+  --tok-kw:#8250df; --tok-type:#0b7285; --tok-fn:#1f6feb; --tok-num:#b5330f;
+  --tok-com:#6a737d; --tok-attr:#6f42c1; --tok-str:#0a7a2f;
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --ground:#0e1217; --surface:#171b21; --surface-2:#1e232b;
+  --ink:#e6e9ee; --ink-soft:#c2c8d0; --muted:#8b939e;
+  --line:#262c34; --line-strong:#38404a;
+  --accent:#6aa9e0; --accent-deep:#8fc0ee; --accent-bright:#6aa9e0; --accent-wash:#15263a;
+  --warn:#d6b25e; --warn-wash:#2a2413; --hold:#e0946a; --hold-wash:#2b1d16; --good:#5cba82;
+  --text:#e6e9ee; --text-dim:#c2c8d0; --text-faint:#8b939e;
+  --rule:#262c34; --rule-strong:#38404a; --code-bg:#171b21; --selected:#15263a;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.3);
+  --tok-kw:#c58fff; --tok-type:#5ec8d8; --tok-fn:#79b8ff; --tok-num:#ff9e64;
+  --tok-com:#8b939e; --tok-attr:#c58fff; --tok-str:#7ee0a0;
+  color-scheme:dark;
+}
+/* Unify typography even where a post hard-codes its fonts (post 16). */
+body{font-family:var(--body);}
+h1,h2,h3,h4,h5,h6{font-family:var(--display);}
+code,pre,kbd,samp,tt{font-family:var(--mono);}
+.orbit-theme-toggle{position:fixed;bottom:1rem;right:1rem;z-index:50;
+  display:inline-flex;align-items:center;gap:.4rem;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.02em;
+  color:var(--muted);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:.35rem .7rem;cursor:pointer;line-height:1;box-shadow:var(--shadow);}
+.orbit-theme-toggle:hover{color:var(--ink);border-color:var(--line-strong);}
+</style>
+</head><body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Orbit C++ &rarr; Rust &middot; Post 24</p>
+    <h1>What the Agents Are Doing</h1>
+    <p class="dek">Several coding agents work a queue at once. Their notes say what they meant to do; their own transcripts say what they did, to the second, without anyone asking. A design for getting both onto one live timeline, and a prototype that already draws the second half.</p>
+    <p class="byline">The queue is <a href="https://github.com/pierricgimmig/q">q</a>; the timeline is Orbit. The prototype is <code>tools/agents/transcript_to_orbit.py</code> on this branch. Everything measured below is a real session of the agent that wrote this post.</p>
+    <div class="stats">
+      <div class="stat"><b>1,419</b><span>timeline records from one agent session, drawn with nothing added to the agent</span></div>
+      <div class="stat"><b>173</b><span>tool calls in that session, each a span from call to result</span></div>
+      <div class="stat"><b>74%</b><span>of its working time was the model generating, not tools running</span></div>
+      <div class="stat"><b>0</b><span>bytes of tool output or prompt text that leave the machine</span></div>
+    </div>
+  </div>
+</header>
+
+<article class="doc">
+
+  <p class="lede">With one agent you watch the terminal. With four, on four tasks, you watch <code>q top</code>: a table of statuses and a percent each agent last reported. That tells you where the work stands. It does not tell you what an agent is doing <em>right now</em>, whether the thing it has been doing for six minutes is a build or a stall, or where its last hour actually went. This post is about closing that gap with what the agents already produce.</p>
+
+  <h2 id="have">What is already there</h2>
+
+  <p>Three pieces exist today, and the design is mostly about lining them up.</p>
+
+  <p><b>The task log.</b> Every q task carries an append-only, timestamped, actor-attributed log. The queue writes the state changes itself (<code>task_claimed</code> with the agent id, <code>task_started</code> with the branch, <code>task_completed</code> with the summary). The agent adds <code>q log ID "…"</code> notes, <code>--progress 40</code>, and artifacts; <code>--attach report=PATH</code> stores a report's text in the database so it outlives the file. This is the agent's <em>intent</em>: what it says it is about to do, what it found, what it decided.</p>
+
+  <p><b>The bridge.</b> <code>q orbit</code> (q PR <a href="https://github.com/pierricgimmig/q/pull/26">#26</a>) tails that log and posts it to a running <code>orbit-service</code>. Each task is a process, each agent that claims it is a thread of that process, status phases are spans, notes and heartbeats are marks, progress is a value lane, and a note written <code>[explore] @begin …</code> opens a span on a sub-thread named <code>explore</code>. <code>q exec -- cargo test</code> (PR <a href="https://github.com/pierricgimmig/q/pull/27">#27</a>) adds a span per process the agent launches, with its exit code as a mark. Orbit's side is <code>POST /api/events</code> (<a href="https://github.com/pierricgimmig/orbit/pull/87">#87</a>, merged): a batch of named processes, threads, spans, instants and values, stamped on the wall clock and converted to the capture clock by the service, so a producer on another machine works as is.</p>
+
+  <p><b>Orbit itself.</b> Attached to a build or a test run the agent launched, it draws that process the way it draws anything: samples, scheduling, scopes.</p>
+
+  <p>What all three have in common is that the agent has to <em>do</em> something for them: write a note, wrap a command in <code>q exec</code>, attach a profiler. That is the right design for intent. It is the wrong one for the record of what happened, because the record already exists.</p>
+
+  <h2 id="left">What an agent leaves behind without being asked</h2>
+
+  <p>Claude Code writes every session to <code>~/.claude/projects/&lt;cwd&gt;/&lt;session&gt;.jsonl</code>, one JSON record per line, as it goes. The session that produced this post is 1,647 lines and 10&nbsp;MB, and the records that matter are few:</p>
+
+  <table class="lanes">
+    <tr><th>Record</th><th>Carries</th><th>On the timeline</th></tr>
+    <tr><td class="n">assistant · tool_use</td><td>tool name, its input (for Bash: the command and the one-line description the agent gave it), an id, a timestamp</td><td>the start of a span named by that description</td></tr>
+    <tr><td class="n">user · tool_result</td><td>the same id, the output, a timestamp</td><td>the end of that span: its duration is the tool's real wall time</td></tr>
+    <tr><td class="n">assistant · text</td><td>what the agent said, and <code>usage</code> with output and cached input tokens</td><td>a mark, and two value lanes</td></tr>
+    <tr><td class="n">user · text</td><td>the prompt</td><td>a mark</td></tr>
+    <tr><td class="n">isSidechain</td><td>true on everything a sub-agent does, linked by <code>parentUuid</code></td><td>a thread per sub-agent, so parallel agents draw in parallel</td></tr>
+    <tr><td class="n">every record</td><td><code>cwd</code>, <code>gitBranch</code>, <code>sessionId</code>, <code>version</code></td><td>the process name and its identity</td></tr>
+  </table>
+
+  <p>One more thing falls out of the timestamps. Between a tool result and the next assistant message nothing runs but the model. That gap is the model's own time, generating, and it is measurable per turn without any instrumentation of the model at all.</p>
+
+  <p>Codex does the same in <code>~/.codex/sessions/</code>: <code>response_item</code> records of type <code>custom_tool_call</code> and <code>custom_tool_call_output</code>, <code>reasoning</code> items, <code>token_count</code> events, 7,837 lines in the one session on this machine. The shape differs, the content is the same, and a second reader for it is a mapping, not a design.</p>
+
+  <p>And Claude Code's hooks (<code>PreToolUse</code>, <code>PostToolUse</code>, <code>Stop</code>, <code>SubagentStop</code>) hand a script JSON on stdin with the <code>session_id</code>, the <code>transcript_path</code>, the tool name and its input. They are the push form of the same record. Their most useful field here is the transcript path, because it is the one thing a queue cannot discover on its own.</p>
+
+  <h2 id="design">The design: three lanes, one timeline</h2>
+
+  <figure class="wide">
+    <svg viewBox="0 0 960 300" role="img" aria-label="Three sources feed one timeline: the q log through q orbit, the agent's transcript through a tailer, and Orbit attached to the processes the agent launches; all land on the task's process in orbit-service and the viewer.">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <!-- sources -->
+      <rect x="16" y="24" width="250" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="141" y="50" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">intent: the q log</text>
+      <text x="141" y="70" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">notes, progress, artifacts, state changes</text>
+      <text x="141" y="86" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">written by the agent, on purpose</text>
+
+      <rect x="16" y="114" width="250" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="141" y="140" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">action: the transcript</text>
+      <text x="141" y="160" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">every tool call and result, the model's turns,</text>
+      <text x="141" y="176" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">sub-agents, tokens; written by the harness</text>
+
+      <rect x="16" y="204" width="250" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="141" y="230" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">machine: the processes</text>
+      <text x="141" y="250" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">the build, the tests, the benchmark:</text>
+      <text x="141" y="266" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">Orbit attached, or q exec spans</text>
+
+      <!-- readers -->
+      <rect x="330" y="24" width="180" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="420" y="56" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">q orbit</text>
+      <text x="420" y="76" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">tails events_since</text>
+
+      <rect x="330" y="114" width="180" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="420" y="146" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">transcript tailer</text>
+      <text x="420" y="166" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">names and timings only</text>
+
+      <rect x="330" y="204" width="180" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="420" y="236" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">orbit-service capture</text>
+      <text x="420" y="256" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">samples, sched, scopes</text>
+
+      <line x1="266" y1="60" x2="326" y2="60" stroke="currentColor" marker-end="url(#a3)"/>
+      <line x1="266" y1="150" x2="326" y2="150" stroke="currentColor" marker-end="url(#a3)"/>
+      <line x1="266" y1="240" x2="326" y2="240" stroke="currentColor" marker-end="url(#a3)"/>
+
+      <!-- sink -->
+      <rect x="590" y="24" width="180" height="252" rx="6" fill="currentColor" fill-opacity="0.08" stroke="currentColor"/>
+      <text x="680" y="56" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">POST /api/events</text>
+      <text x="680" y="80" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">clock: unix_ns</text>
+      <text x="680" y="120" text-anchor="middle" font-size="11" fill="currentColor">process = the task</text>
+      <text x="680" y="140" text-anchor="middle" font-size="11" fill="currentColor">thread = the agent</text>
+      <text x="680" y="160" text-anchor="middle" font-size="11" fill="currentColor">sub-threads = sub-agents</text>
+      <text x="680" y="196" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">spans: phases, tools, model</text>
+      <text x="680" y="214" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">marks: notes, prompts, exits</text>
+      <text x="680" y="232" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">lanes: progress, tokens</text>
+
+      <line x1="510" y1="60" x2="586" y2="80" stroke="currentColor" marker-end="url(#a3)"/>
+      <line x1="510" y1="150" x2="586" y2="150" stroke="currentColor" marker-end="url(#a3)"/>
+      <line x1="510" y1="240" x2="586" y2="220" stroke="currentColor" marker-end="url(#a3)"/>
+
+      <rect x="830" y="114" width="114" height="72" rx="6" fill="currentColor" fill-opacity="0.05" stroke="currentColor"/>
+      <text x="887" y="146" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">the viewer</text>
+      <text x="887" y="166" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">live, per task</text>
+      <line x1="770" y1="150" x2="826" y2="150" stroke="currentColor" marker-end="url(#a3)"/>
+    </svg>
+    <figcaption>Three sources, one sink. The first and third exist. The second is the prototype below, and the thing that joins it to the first is one field on the claim.</figcaption>
+  </figure>
+
+  <p>The join is the only new piece of queue design. Today <code>q orbit</code> draws an agent thread from the log alone, and the tailer draws a session from the transcript alone; they do not know about each other. They should, and the key is the transcript path: an agent that claims a task tells the queue where its transcript is, and the bridge tails it under that agent's thread.</p>
+
+  <pre class="wide"><code># proposed: the transcript travels with the claim
+q start 29 --claim-token $T --branch agent/task-29 --transcript "$CLAUDE_TRANSCRIPT"
+
+# or, with no cooperation from the agent at all, a SessionStart / PreToolUse hook
+# that reads transcript_path from stdin and writes it next to the task id it already keeps:
+jq -r .transcript_path &gt; .claude/q-transcript   # q orbit picks it up from the claim's cwd</code></pre>
+
+  <p>With that one field, <code>q orbit</code> becomes the tailer too: the agent's thread under the task's process shows <code>claimed</code>, then <code>in_progress</code>, then inside it every tool call as it happens, the model's turns between them, its sub-agents on their own threads, and its notes as marks laid over the spans that were running when it wrote them. Intent on top of action, same thread, same clock. A note that says <em>"running the e2e suite"</em> followed by a span <code>Bash: run the e2e suite</code> that is still open eleven minutes later is a stall you can see. A <code>model</code> span that runs long before every reply is a context that has grown too big, and the <code>context tokens</code> lane says so next to it.</p>
+
+  <h2 id="proto">The prototype</h2>
+
+  <p><code>tools/agents/transcript_to_orbit.py</code> is the second lane on its own: about 250 lines, no dependencies, and no change to the agent. It follows the newest transcript (or one you name, or every one touched in the last hour with <code>--all</code>), keeps a file offset and a partial line, and posts a batch to <code>/api/events</code> every second. <code>--once</code> replays and exits; <code>--since 45m</code> replays only recent history; <code>--summary</code> prints where the time went.</p>
+
+  <pre class="wide"><code>$ python3 tools/agents/transcript_to_orbit.py --file ~/.claude/projects/-home-pierric-git-orbit/07fa151f….jsonl --once --summary
+07fa151f: 1419 records, accepted 1419, dropped 0
+
+07fa151f  /home/pierric/git/orbit
+  model        1714.9 s   (39 replies, 7 prompts)
+  Bash          612.0 s   (173 calls)
+  Read            0.6 s   (11 calls)
+  Skill           0.0 s   (2 calls)
+  still running: Bash: Write the transcript tailer and dry-run it on this session'…</code></pre>
+
+  <p>That last line is the prototype noticing itself: the tool call that ran it had no result yet when it read the file. Below is the last three quarters of an hour of the same session, as the viewer draws it. Red spans are the model; green and blue are tool calls, named by the description the agent gave each command; the two lanes are output tokens per reply and the size of the context.</p>
+
+  <figure class="wide">
+    <p class="embed-head">One agent session &mdash; the last 45 minutes, live viewer, real records</p>
+    <div class="embed"><iframe src="../viewer/index.html?capture=../blog/captures/24-agent-session.orbit.stream&collapse=scheduler" title="A Claude Code session as an Orbit timeline: tool calls, model turns, token lanes" loading="lazy"></iframe></div>
+    <figcaption>Process <b>claude orbit · 07fa151f</b>, thread <b>agent</b>. Hover a span for its full name. The long red spans are the model composing a large edit; the long green one is a wasm build it waited on.</figcaption>
+  </figure>
+
+  <p>The mapping in full: the process is the session, named for its directory and short id; <code>agent</code> is the main conversation and each sidechain root gets a thread; a span per tool call from <code>tool_use</code> to its <code>tool_result</code>, nested by the number of calls still open on that thread; a <code>model</code> span from every result (or prompt) to the next assistant message; marks for prompts, replies and the moment a call starts (so a call with no result yet is still visible); <code>output tokens</code> and <code>context tokens</code> lanes from <code>usage</code>. What leaves the machine is names, timestamps and counts. Command output, file contents and prompt bodies stay in the transcript; the one string that travels is the agent's own description of a command, cut at sixty characters.</p>
+
+  <h2 id="numbers">What two sessions say</h2>
+
+  <table class="lanes">
+    <tr><th>Session</th><th>Model time</th><th>Tool time</th><th>Tool calls</th><th>Replies / prompts</th></tr>
+    <tr><td class="n">07fa151f (this one)</td><td class="n">1,715 s</td><td class="n">613 s</td><td class="n">186</td><td class="n">39 / 7</td></tr>
+    <tr><td class="n">86bfe1a8 (a sibling on the same repo)</td><td class="n">644 s</td><td class="n">1,620 s</td><td class="n">69</td><td class="n">29 / 4</td></tr>
+  </table>
+
+  <p>Two agents on the same codebase, opposite shapes. One spends three quarters of its working time generating and runs many short commands; the other runs a third as many commands and waits on them for most of its time: builds, and polling a pull request's checks. Neither shape is visible from <code>q top</code>, and the difference is the difference between an agent that needs a faster model and one that needs a faster build. The transcript already knew.</p>
+
+  <div class="note">
+    <p class="note-label">Honest note</p>
+    <p>"Model time" is the gap between a result and the next assistant record, which also contains the harness's own overhead and the streaming of the reply. It is an upper bound on generation and a fair measure of "the agent was thinking, not the tool". Idle time while a session waits for a person is excluded, because a prompt resets the clock.</p>
+  </div>
+
+  <h2 id="honest">What is proven, and what is a proposal</h2>
+
+  <p>Proven: the prototype reads real Claude Code transcripts, this session's and a sibling's, and a service built from Orbit's <code>main</code> accepted every record it posted (1,419 and 358 in the two runs above, none dropped). The capture embedded above is the service's own export of that run. The summary numbers are computed from the same records.</p>
+
+  <p>A proposal: the transcript path on the claim and <code>q orbit</code> tailing it under the agent's thread. A mapping, not yet written: Codex rollouts. Untested: sub-agent threads, because neither session here spawned one, and the hook recipe inside a live session. Remote agents need the tailer where the transcript is, posting to a central Orbit, which the wall-clock stamp already allows.</p>
+
+</article>
+
+<footer>
+  <div class="footer-inner">
+    Post 24 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="23-a-profiler-an-agent-can-drive.html">&larr; Post 23</a><br>
+    Plan: <a href="../rust-port-plan.html">Two Backends, One Test Suite</a>
+  </div>
+</footer>
+
+<button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
+<script>(function(){var b=document.getElementById("orbit-theme-toggle");if(!b)return;function cur(){var t=document.documentElement.getAttribute("data-theme");return t||"light";}function lab(){b.textContent=cur()==="dark"?"Light":"Dark";}lab();b.addEventListener("click",function(){var n=cur()==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("orbit-theme",n);}catch(e){}lab();});})();</script>
+</body>
+</html>

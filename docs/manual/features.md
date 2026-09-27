@@ -460,6 +460,17 @@ in the URL opens a tab on load.
   `agent`), `--url` the service (default `http://127.0.0.1:44766`, env
   `ORBIT_TRACK` / `ORBIT_URL`). The scopes appear under a process named for
   the track. Screenshot: `18-agent-track.png`.
+- **An agent's own transcript on the timeline.**
+  `tools/agents/transcript_to_orbit.py` follows a Claude Code session file
+  (`~/.claude/projects/<cwd>/<session>.jsonl`, the newest by default, `--all`
+  for every recent one) and posts it to `/api/events`: the session is a
+  process, the conversation is the `agent` thread with a thread per
+  sub-agent, every tool call is a span from call to result named by the
+  agent's description of it, the gap before each reply is a `model` span,
+  prompts and replies are marks, and `output tokens` / `context tokens` are
+  lanes. `--once`, `--since 45m`, `--summary` (where the time went), and
+  `--dry-run`. Only names, timestamps and counts leave the machine. Dev blog
+  post 24 is the design around it.
 - **`POST /api/scope`** is what the CLI calls: `{"track": "agent",
   "action": "start"|"stop"|"instant"|"value", "name": ..., "value": ...,
   "timestamp_ns": ...}`. A `stop` with nothing open is refused, so a script
