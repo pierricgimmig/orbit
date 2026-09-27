@@ -8,9 +8,75 @@ use crate::hooks::HookSpec;
 use orbit_frida_transport::Transport;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsRawFd;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
+
+/// An exclusive claim on one target, held for the life of a Frida capture.
+///
+/// Two services must never instrument the same process at once: each injects
+/// its own manually mapped agent and installs a second Gum interceptor over
+/// the same function prologues, and two interceptors rewriting the same entry
+/// bytes corrupt the target -- it dies in its own allocator, not in ours. So
+/// a target is leased before its agent is injected, and a second service that
+/// finds the lease held refuses rather than inject on top.
+///
+/// The lease is a `flock` on a per-pid file. The kernel releases an `flock`
+/// when the holding file description closes, so a service that crashed
+/// mid-capture frees its lease automatically: the next arm reclaims it with
+/// no stale-lock cleanup, no timeout, and no pid liveness dance.
+struct TargetLease {
+    _file: std::fs::File,
+}
+
+impl TargetLease {
+    fn path(pid: i32) -> std::path::PathBuf {
+        std::path::PathBuf::from(format!("/tmp/orbit-frida-{pid}.lease"))
+    }
+
+    /// Claims `pid`, or reports who holds it. The file records the holding
+    /// service's pid so a refusal can name it; the record is advisory (the
+    /// `flock` is the truth) and only ever read for that message.
+    fn acquire(pid: i32) -> Result<Self, String> {
+        use std::io::Read;
+        let path = Self::path(pid);
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| format!("could not open the capture lease for pid {pid}: {e}"))?;
+        // A privileged service and its unprivileged neighbour must contend on
+        // the same file, so it is world-writable; nothing sensitive is in it.
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666));
+        }
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let mut held = String::new();
+            let _ = file.read_to_string(&mut held);
+            let holder = held.trim();
+            let who = if holder.is_empty() {
+                "another orbit-service".to_string()
+            } else {
+                format!("orbit-service (pid {holder})")
+            };
+            return Err(format!(
+                "pid {pid} is already being instrumented by {who}. Two profilers cannot hook the \
+                 same process at once -- stop that capture first."
+            ));
+        }
+        use std::io::{Seek, SeekFrom};
+        let _ = file.set_len(0);
+        let _ = file.seek(SeekFrom::Start(0));
+        let _ = write!(file, "{}", std::process::id());
+        let _ = file.flush();
+        Ok(Self { _file: file })
+    }
+}
 
 fn agent_path() -> Result<std::path::PathBuf, String> {
     let name = if cfg!(target_os = "macos") { "liborbit_frida_agent.dylib" } else { "liborbit_frida_agent.so" };
@@ -153,6 +219,10 @@ pub struct FridaSession {
     helper: Helper,
     mapping: Transport,
     _file: tempfile::NamedTempFile,
+    // Held until the session drops, so no other service can inject into the
+    // same target meanwhile. Declared after `helper` so it is released only
+    // once the agent has been asked to detach (fields drop in order).
+    _lease: TargetLease,
     pub calls: u64,
     pub error: Option<String>,
     stopped: bool,
@@ -169,6 +239,9 @@ impl FridaSession {
         if pid <= 0 || pid as u32 == std::process::id() {
             return Err("Frida requires a target process other than orbit-service".into());
         }
+        // Claim the target before injecting: a second service that already
+        // holds it would otherwise be fought over the same prologues.
+        let lease = TargetLease::acquire(pid)?;
         let agent = agent_path()?;
         let file = tempfile::Builder::new()
             .prefix("orbit-frida-")
@@ -221,6 +294,7 @@ impl FridaSession {
             helper,
             mapping,
             _file: file,
+            _lease: lease,
             calls: 0,
             error: None,
             stopped: false,
@@ -309,5 +383,31 @@ mod tests {
         }
         assert_eq!(Engine::parse("kernel_uprobes").unwrap(), Engine::Uprobes);
         assert!(Engine::parse("typo").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_target_is_leased_to_one_service_at_a_time() {
+        // A pid nothing else in the test process leases. `flock` is keyed on
+        // the open file description, so a second acquire from this same
+        // process is refused exactly as another service's would be.
+        let pid = 2_000_000 + (std::process::id() as i32 % 1000);
+        let _ = std::fs::remove_file(TargetLease::path(pid));
+        let first = match TargetLease::acquire(pid) {
+            Ok(lease) => lease,
+            Err(e) => panic!("first claim succeeds: {e}"),
+        };
+        let refused = TargetLease::acquire(pid);
+        assert!(refused.is_err(), "a second claim while the first is held must be refused");
+        assert!(
+            refused.err().unwrap().contains(&std::process::id().to_string()),
+            "the refusal names the holding service's pid"
+        );
+        drop(first);
+        // Released on drop: the next claim goes through.
+        if let Err(e) = TargetLease::acquire(pid) {
+            panic!("reclaim after release succeeds: {e}");
+        }
+        let _ = std::fs::remove_file(TargetLease::path(pid));
     }
 }

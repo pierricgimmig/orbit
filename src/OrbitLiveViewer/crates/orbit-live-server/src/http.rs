@@ -806,7 +806,14 @@ async fn capture_start(
                     svc.mark_capture_started(body.pid, 0);
                     StatusCode::OK.into_response()
                 }
-                Ok(Err(e)) => (StatusCode::CONFLICT, e).into_response(),
+                Ok(Err(e)) => {
+                    // The reason goes to the viewer, and to the log: a start
+                    // that failed because hooking killed the target is the
+                    // line a crash investigation needs, and the viewer's
+                    // copy is gone with the next click.
+                    eprintln!("orbit-live-server: capture did not start: {e}");
+                    (StatusCode::CONFLICT, e).into_response()
+                }
                 Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
             }
         }
