@@ -2,6 +2,8 @@
 
 pub mod demo;
 pub mod http;
+pub mod settings;
+pub use settings::Settings;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -137,6 +139,9 @@ pub struct LiveService {
     pub instrumentation_status: Mutex<String>,
     /// A JSON summary of a target crash blamed on a hook, empty when none.
     pub hook_crash: Mutex<String>,
+    /// User settings kept on disk (`settings.rs`); the source of truth for
+    /// choices made in the viewer, whichever browser made them.
+    pub settings: Mutex<Settings>,
     /// Optional: aggregates sampled callstacks over a time range into a
     /// sampling report. Set separately from `ControlHooks` so a service that
     /// does not sample (or predates this) needs no change.
@@ -303,7 +308,12 @@ impl LiveService {
     pub fn new(config: ServerConfig) -> Result<Arc<Self>, String> {
         let ring = EventRing::with_bytes(config.ring_buffer_bytes, config.spill_path.as_deref())
             .map_err(|e| e.to_string())?;
-        let (live_tx, _) = broadcast::channel(256);
+        // Frames a viewer may fall behind by before it is told it lagged.
+        // A capture's drain pass is one batch every few milliseconds plus a
+        // frame per new name, so 256 was under a second of slack -- and
+        // the moment symbols landed and thousands of frame names went out
+        // at once, every viewer lagged.
+        let (live_tx, _) = broadcast::channel(2048);
         let svc = Arc::new(Self {
             config: Mutex::new(config),
             ring: Mutex::new(Arc::new(ring)),
@@ -315,6 +325,7 @@ impl LiveService {
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
             hook_crash: Mutex::new(String::new()),
+            settings: Mutex::new(Settings::load()),
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
             sampling_report_scope: Mutex::new(None),
@@ -362,6 +373,19 @@ impl LiveService {
 
     pub fn hook_crash(&self) -> String {
         self.hook_crash.lock().clone()
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().clone()
+    }
+
+    /// Replaces the settings and writes them to disk; the in-memory copy
+    /// changes only when the write succeeded, so what a client reads back
+    /// is what will survive a restart.
+    pub fn update_settings(&self, new: Settings) -> Result<Settings, String> {
+        new.save()?;
+        *self.settings.lock() = new.clone();
+        Ok(new)
     }
 
     #[allow(clippy::type_complexity)]
@@ -644,12 +668,19 @@ impl LiveService {
         }
     }
 
-    /// A capture began. The HTTP handler calls this with `start_ns` 0 the
-    /// moment the request is accepted; the capture loop calls it again with
-    /// the real clock once it has one, and that is the value the guard on
-    /// every push uses. A 0 never overwrites a real start.
+    /// A capture began. The HTTP handler calls this with `start_ns` 0 when
+    /// the start request returns; the capture loop calls it with the real
+    /// clock once it has one, and that is the value the guard on every
+    /// push uses. A 0 never overwrites a real start -- and once the real
+    /// one is in, a 0 is not even broadcast: the two race (the loop's
+    /// thread is spawned before the request returns), and a viewer that got
+    /// the real start and then a 0 threw away everything it had received
+    /// and put the capture's origin at zero, which showed as an empty pane.
     pub fn mark_capture_started(&self, pid: u32, start_ns: u64) {
-        self.capturing.store(true, Ordering::Relaxed);
+        let was_capturing = self.capturing.swap(true, Ordering::Relaxed);
+        if start_ns == 0 && was_capturing && self.capture_start_ns.load(Ordering::Relaxed) > 0 {
+            return;
+        }
         if pid > 0 {
             self.capture_pid.store(pid as u64, Ordering::Relaxed);
         }
@@ -659,6 +690,11 @@ impl LiveService {
         }
         self.live_end_ns.store(start_ns, Ordering::Relaxed);
         self.broadcast_frame(&LiveFrame::CaptureStarted { pid, start_ns });
+    }
+
+    /// Whether a capture is running now.
+    pub fn is_capturing(&self) -> bool {
+        self.capturing.load(Ordering::Relaxed)
     }
 
     /// The pid of the running or last capture; 0 when there is none.
@@ -703,6 +739,26 @@ impl LiveService {
             version: VERSION,
             event_size: LIVE_EVENT_SIZE as u16,
         })];
+        frames.extend(self.names_and_status_frames());
+        let (_, mut events) = self.ring().snapshot();
+        if let Some((a, b)) = window {
+            events.retain(|e| e.start_ns >= a && e.start_ns <= b);
+        }
+        if !events.is_empty() {
+            // Chunk so one WS message stays reasonable.
+            let wire = self.wire();
+            for chunk in events.chunks(2048) {
+                frames.push(encode_event_batch_with(chunk, wire));
+            }
+        }
+        frames
+    }
+
+    /// Every interned string, thread and process name, and the status: what
+    /// a viewer needs to label what it has. Idempotent on the viewer's side,
+    /// so a viewer that fell behind can be sent them again without a reset.
+    pub fn names_and_status_frames(&self) -> Vec<Vec<u8>> {
+        let mut frames = Vec::new();
         {
             let intern = self.intern.lock();
             for (id, text) in intern.iter() {
@@ -727,17 +783,6 @@ impl LiveService {
         }
         let stats = self.stats();
         frames.push(encode_frame(&self.status_frame(&stats)));
-        let (_, mut events) = self.ring().snapshot();
-        if let Some((a, b)) = window {
-            events.retain(|e| e.start_ns >= a && e.start_ns <= b);
-        }
-        if !events.is_empty() {
-            // Chunk so one WS message stays reasonable.
-            let wire = self.wire();
-            for chunk in events.chunks(2048) {
-                frames.push(encode_event_batch_with(chunk, wire));
-            }
-        }
         frames
     }
 

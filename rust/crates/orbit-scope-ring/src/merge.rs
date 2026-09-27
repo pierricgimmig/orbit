@@ -102,6 +102,22 @@ impl Cursors {
             stalled_since_ns: vec![0; ring_count],
         }
     }
+
+    /// Cursors at each ring's current write position: reading begins with
+    /// the next record a producer commits. For a segment that existed before
+    /// this reader (an earlier capture of the same process), `for_rings` (a
+    /// cursor at 0) would replay that session's backlog and, past a lap,
+    /// book it as this reader's loss by the million. Starting one lap back
+    /// is no good either: the slot a lap back is the one a producer may be
+    /// overwriting right now, and a reader parked on an uncommitted slot
+    /// waits for a commit that never comes with that claim number.
+    pub fn at_write(rings: &Rings) -> Cursors {
+        let mut cursors = Cursors::for_rings(rings.ring_count());
+        for (ring, read) in cursors.read.iter_mut().enumerate() {
+            *read = rings.write_cursor(ring);
+        }
+        cursors
+    }
 }
 
 /// Copies the committed prefix out of every ring.

@@ -142,6 +142,20 @@ opens on first load with a service and closes with its ×. Its rows:
   twice on a thread migration (dropped, the C++ `UprobesUnwindingVisitor`
   rule). Off, hits are paired by count alone, as a plain stack; the
   status line after the capture counts what each rule did.
+- **Auto-unhook** (on by default, 100k calls/s) switches off a hooked
+  function that fires past the rate, mid-capture, on both engines: the
+  Frida agent mutes it in the target, the uprobe session disables its
+  probes. A function that hot is not something to time with a hook -- the
+  samples already show it -- and hooked it costs the target about a core
+  for spans no timeline can draw. When it fires, the instrumentation line
+  turns amber with a ⚠ naming the function and its rate, and an instant
+  `auto-unhooked: <function>` marks the moment on the thread where it
+  happened. The checkbox and the rate are **user settings the service
+  keeps on disk** (`~/.config/orbit/settings.json`, `$XDG_CONFIG_HOME`
+  honoured; the invoking user's home under sudo), so they hold across
+  browsers and restarts; `GET`/`PUT /api/settings` reads and replaces
+  them, and a capture request may carry its own `max_hook_calls_per_s`
+  (0 = never) for one capture.
 - **HOOKED** counts the hooked functions and opens the **Functions**
   view; "Unhook all" clears them. After Record, the line says what was
   armed ("instrumenting N of M functions") or why nothing was.

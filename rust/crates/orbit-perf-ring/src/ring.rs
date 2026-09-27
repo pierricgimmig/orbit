@@ -242,6 +242,10 @@ pub fn close_fd(fd: i32) {
     sys::close(fd)
 }
 
+pub fn disable_fd(fd: i32) -> io::Result<()> {
+    sys::perf_event_disable(fd)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

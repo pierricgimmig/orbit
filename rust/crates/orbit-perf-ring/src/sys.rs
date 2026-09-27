@@ -41,6 +41,16 @@ pub fn perf_event_enable(fd: i32) -> io::Result<()> {
     Ok(())
 }
 
+/// `PERF_EVENT_IOC_DISABLE`, `_IO('$', 1)`: the probe stays installed but
+/// fires no more records -- how a hook is switched off mid-capture.
+pub fn perf_event_disable(fd: i32) -> io::Result<()> {
+    // SAFETY: plain ioctl on a perf fd.
+    if unsafe { libc::ioctl(fd, 0x2401, 0) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// `PERF_EVENT_IOC_SET_OUTPUT`, `_IO('$', 5)`: this event writes its
 /// records into `leader_fd`'s ring instead of needing one of its own.
 pub fn perf_event_set_output(fd: i32, leader_fd: i32) -> io::Result<()> {
