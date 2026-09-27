@@ -28,6 +28,11 @@ pub struct Settings {
     pub auto_unhook: bool,
     #[serde(default = "default_limit")]
     pub max_hook_calls_per_s: u64,
+    /// The viewer's track order file: one process-name pattern per line,
+    /// matched processes first on the rail in file order. The viewer reads
+    /// and writes it; the service only keeps it. Empty means no file.
+    #[serde(default)]
+    pub track_order: String,
     /// Keys this build does not know, carried through a load/save cycle.
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
@@ -43,7 +48,12 @@ fn default_limit() -> u64 {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { auto_unhook: true, max_hook_calls_per_s: DEFAULT_MAX_HOOK_CALLS_PER_S, other: Default::default() }
+        Settings {
+            auto_unhook: true,
+            max_hook_calls_per_s: DEFAULT_MAX_HOOK_CALLS_PER_S,
+            track_order: String::new(),
+            other: Default::default(),
+        }
     }
 }
 
