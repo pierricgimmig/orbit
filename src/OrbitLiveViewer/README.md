@@ -239,6 +239,18 @@ The viewer is a separate workspace, so `--workspace` no longer reaches it.
 `cargo test` inside `crates/orbit-live-viewer` still compiles the eframe app +
 callback on native (no window).
 
+### Native window
+
+The same app as a binary, for development and for profiling the viewer
+with native tools; the pack remains what ships. See
+[`docs/native-viewer.md`](../../docs/native-viewer.md) for the trade-offs.
+
+```
+cd crates/orbit-live-viewer
+cargo build --release --bin orbit-live-viewer-native
+target/release/orbit-live-viewer-native --url http://127.0.0.1:44766
+```
+
 ### WASM pack (eframe WebRunner)
 
 Needs `wasm32-unknown-unknown` and `wasm-bindgen-cli` matching `wasm-bindgen 0.2.100`:

@@ -1327,55 +1327,839 @@ pub use wasm_impl::Net;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native_impl {
+    //! The same `Net` as the browser's, for the native window: blocking
+    //! HTTP/1.1 and a WebSocket client over `std::net`, each request on a
+    //! short-lived thread, replies landing in the shared `Inbox` exactly
+    //! as the fetches do on wasm. No HTTP or WebSocket crate: the service is
+    //! plain HTTP on a local port (the same origin rule the browser lives
+    //! under), and the two protocols' client sides are a few hundred lines
+    //! against the ~200 crates a client library would drag in -- the reason
+    //! this crate is its own workspace.
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, Instant};
 
-    #[derive(Default)]
-    pub struct Net;
+    pub const DEFAULT_SERVICE_URL: &str = "http://127.0.0.1:44766";
+    static SERVICE_URL: OnceLock<String> = OnceLock::new();
+
+    /// Where the service is, `http://host:port`. The native binary sets it
+    /// from its arguments before the app starts; unset means the default
+    /// local port. Only the first call counts.
+    pub fn set_service_url(url: &str) {
+        let _ = SERVICE_URL.set(url.trim().trim_end_matches('/').to_string());
+    }
+
+    pub fn service_url() -> &'static str {
+        SERVICE_URL.get().map(String::as_str).unwrap_or(DEFAULT_SERVICE_URL)
+    }
+
+    /// `host:port` of the service, and the Host header to send.
+    fn endpoint() -> Result<(String, String), String> {
+        let url = service_url();
+        let rest = url
+            .strip_prefix("http://")
+            .ok_or_else(|| format!("service url must be http://host:port, got {url}"))?;
+        let host_port = rest.split('/').next().unwrap_or("");
+        let (host, port) = match host_port.rsplit_once(':') {
+            Some((h, p)) if p.parse::<u16>().is_ok() => (h.to_string(), p.to_string()),
+            _ => (host_port.to_string(), "80".to_string()),
+        };
+        Ok((format!("{host}:{port}"), host_port.to_string()))
+    }
+
+    fn connect() -> Result<TcpStream, String> {
+        let (addr, _) = endpoint()?;
+        let mut last = String::new();
+        for sock in std::net::ToSocketAddrs::to_socket_addrs(addr.as_str()).map_err(|e| format!("{addr}: {e}"))? {
+            match TcpStream::connect_timeout(&sock, Duration::from_secs(5)) {
+                Ok(s) => {
+                    let _ = s.set_read_timeout(Some(Duration::from_secs(60)));
+                    let _ = s.set_write_timeout(Some(Duration::from_secs(30)));
+                    let _ = s.set_nodelay(true);
+                    return Ok(s);
+                }
+                Err(e) => last = e.to_string(),
+            }
+        }
+        Err(format!("{addr}: {last}"))
+    }
+
+    /// One HTTP/1.1 request; the status and the body. `Connection: close`,
+    /// so the body is everything to EOF unless chunked.
+    fn request(method: &str, path: &str, body: Option<(&[u8], &str)>) -> Result<(u16, Vec<u8>), String> {
+        let (_, host) = endpoint()?;
+        let mut stream = connect()?;
+        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAccept: */*\r\n");
+        if let Some((bytes, content_type)) = body {
+            head.push_str(&format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n", bytes.len()));
+        }
+        head.push_str("\r\n");
+        stream.write_all(head.as_bytes()).map_err(|e| format!("{path}: {e}"))?;
+        if let Some((bytes, _)) = body {
+            stream.write_all(bytes).map_err(|e| format!("{path}: {e}"))?;
+        }
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).map_err(|e| format!("{path}: {e}"))?;
+        let split = find(&raw, b"\r\n\r\n").ok_or_else(|| format!("{path}: no response headers"))?;
+        let header = String::from_utf8_lossy(&raw[..split]).to_string();
+        let payload = &raw[split + 4..];
+        let status: u16 = header
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| format!("{path}: bad status line"))?;
+        let chunked = header
+            .lines()
+            .any(|l| l.to_ascii_lowercase().starts_with("transfer-encoding:") && l.to_ascii_lowercase().contains("chunked"));
+        let body = if chunked { dechunk(payload)? } else { payload.to_vec() };
+        Ok((status, body))
+    }
+
+    fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        hay.windows(needle.len()).position(|w| w == needle)
+    }
+
+    fn dechunk(mut data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        loop {
+            let line_end = find(data, b"\r\n").ok_or("chunked body: missing size line")?;
+            let size_text = std::str::from_utf8(&data[..line_end]).map_err(|_| "chunked body: bad size")?;
+            let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16)
+                .map_err(|_| "chunked body: bad size")?;
+            data = &data[line_end + 2..];
+            if size == 0 {
+                return Ok(out);
+            }
+            if data.len() < size + 2 {
+                return Err("chunked body: truncated".into());
+            }
+            out.extend_from_slice(&data[..size]);
+            data = &data[size + 2..];
+        }
+    }
+
+    fn get_text(path: &str) -> Result<String, String> {
+        let (status, body) = request("GET", path, None)?;
+        let text = String::from_utf8_lossy(&body).to_string();
+        if !(200..300).contains(&status) {
+            return Err(format!("{path}: {status} {text}"));
+        }
+        Ok(text)
+    }
+
+    fn get_bytes(path: &str) -> Result<Vec<u8>, String> {
+        let (status, body) = request("GET", path, None)?;
+        if !(200..300).contains(&status) {
+            return Err(format!("{path}: {status}"));
+        }
+        Ok(body)
+    }
+
+    fn send_text(method: &str, path: &str, body: &str) -> Result<String, String> {
+        let (status, reply) = request(method, path, Some((body.as_bytes(), "application/json")))?;
+        let text = String::from_utf8_lossy(&reply).to_string();
+        if !(200..300).contains(&status) {
+            return Err(format!("{path}: {status} {text}"));
+        }
+        Ok(text)
+    }
+
+    fn send_bytes(path: &str, bytes: &[u8], content_type: &str) -> Result<String, String> {
+        let (status, reply) = request("POST", path, Some((bytes, content_type)))?;
+        let text = String::from_utf8_lossy(&reply).to_string();
+        if !(200..300).contains(&status) {
+            return Err(format!("{status}: {text}"));
+        }
+        Ok(text)
+    }
+
+    fn spawn(name: &'static str, f: impl FnOnce() + Send + 'static) {
+        if let Err(e) = std::thread::Builder::new().name(name.to_string()).spawn(f) {
+            log::error!(target: "orbit_live_viewer::net", "could not spawn {name}: {e}");
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct Net {
+        inbox: Arc<Mutex<Inbox>>,
+        http_busy: Arc<AtomicBool>,
+        view_busy: Arc<AtomicBool>,
+        /// Whether a socket thread is alive; cleared when it ends.
+        ws_alive: Arc<AtomicBool>,
+        ws_last_try: Arc<Mutex<Option<Instant>>>,
+        /// A capture file was opened instead of a service: no socket, and
+        /// every request that would go to the service is dropped.
+        offline: bool,
+    }
+
+    impl Default for Net {
+        fn default() -> Self {
+            Self::connect()
+        }
+    }
 
     impl Net {
         pub fn connect() -> Self {
-            Self
+            let inbox = Arc::new(Mutex::new(Inbox::default()));
+            let ws_alive = Arc::new(AtomicBool::new(false));
+            start_ws(inbox.clone(), ws_alive.clone());
+            Self {
+                inbox,
+                http_busy: Arc::new(AtomicBool::new(false)),
+                view_busy: Arc::new(AtomicBool::new(false)),
+                ws_alive,
+                ws_last_try: Arc::new(Mutex::new(Some(Instant::now()))),
+                offline: false,
+            }
         }
-        pub fn from_capture_url(_url: &str) -> Self {
-            Self
+
+        /// A capture stream file (`/api/capture/export?format=stream` saved
+        /// to disk) fed in as if a service had sent it: a path on disk, or an
+        /// `http://` URL fetched once. No service, no socket.
+        pub fn from_capture_url(url: &str) -> Self {
+            let inbox = Arc::new(Mutex::new(Inbox::default()));
+            let url = url.to_string();
+            let fetch_into = inbox.clone();
+            spawn("orbit-net-capture", move || {
+                let result = if url.starts_with("http://") {
+                    request_absolute(&url)
+                } else {
+                    std::fs::read(&url).map_err(|e| e.to_string())
+                };
+                let mut g = fetch_into.lock().unwrap_or_else(|e| e.into_inner());
+                match result {
+                    Ok(bytes) => {
+                        g.bytes_in += bytes.len() as u64;
+                        g.frames.push(bytes);
+                        g.ws_ok = true;
+                        g.http_ok = true;
+                    }
+                    Err(e) => g.error = Some(format!("capture file: {e}")),
+                }
+            });
+            Self {
+                inbox,
+                http_busy: Arc::new(AtomicBool::new(false)),
+                view_busy: Arc::new(AtomicBool::new(false)),
+                ws_alive: Arc::new(AtomicBool::new(false)),
+                ws_last_try: Arc::new(Mutex::new(None)),
+                offline: true,
+            }
         }
+
         pub fn take(&self) -> Inbox {
-            Inbox::default()
+            let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
+            Inbox {
+                status: inbox.status.take(),
+                settings: inbox.settings.take(),
+                processes: inbox.processes.take(),
+                sampling: inbox.sampling.take(),
+                error: inbox.error.take(),
+                frames: std::mem::take(&mut inbox.frames),
+                timeline: inbox.timeline.take(),
+                frame: inbox.frame.take(),
+                http_ok: inbox.http_ok,
+                ws_ok: inbox.ws_ok,
+                bytes_in: inbox.bytes_in,
+                symbols: inbox.symbols.take(),
+                tree: inbox.tree.take(),
+                modules: inbox.modules.take(),
+                function_hits: inbox.function_hits.take(),
+                function_list: inbox.function_list.take(),
+                preset_functions: std::mem::take(&mut inbox.preset_functions),
+                disassembly: inbox.disassembly.take(),
+                source: inbox.source.take(),
+            }
         }
-        pub fn get_status(&self) {}
-        pub fn get_settings(&self) {}
-        pub fn put_settings(&self, _settings: &serde_json::Value) {}
-        pub fn reconnect_ws_if_closed(&self) {}
-        pub fn get_sampling_report(&self, _ranges: &[(u64, u64, Option<u32>)]) {}
-        pub fn get_sampling_report_scope(&self, _name_id: u32) {}
-        pub fn get_sampling_tree_scope(&self, _name_id: u32, _mode: &str) {}
-        pub fn get_sampling_tree(&self, _ranges: &[(u64, u64, Option<u32>)], _mode: &str) {}
-        pub fn get_modules(&self, _pid: u32) {}
-        pub fn get_disassembly(&self, _pid: u32, _function_id: u64) {}
-        pub fn get_example_disassembly(&self) {}
-        pub fn get_source(&self, _path: &str) {}
-        pub fn get_processes(&self) {}
-        pub fn pull_view(&self, _t0: u64, _t1: u64, _width: u32) {}
-        pub fn start_capture(&self, _req: &CaptureStart) {}
-        pub fn stop_capture(&self) {}
-        pub fn load_symbols(&self, _pid: u32) {}
-        pub fn get_symbols_status(&self, _pid: u32) {}
-        pub fn search_functions(&self, _pid: u32, _q: &str, _limit: u32) {}
-        pub fn list_functions(&self, _pid: u32) {}
-        pub fn resolve_preset_functions(&self, _pid: u32, _generation: u64, _keys: String) {}
-        pub fn start_demo(&self) {}
-        pub fn stop_demo(&self) {}
-        pub fn apply_config(&self, _ring_bytes: u64, _spill: &str) {}
+
+        /// Opens a new socket if the last one ended -- a service that was
+        /// restarted comes back without restarting the viewer. At most one
+        /// attempt a second; cheap when connected.
+        pub fn reconnect_ws_if_closed(&self) {
+            if self.offline || self.ws_alive.load(Ordering::SeqCst) {
+                return;
+            }
+            let mut last = self.ws_last_try.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+                return;
+            }
+            *last = Some(Instant::now());
+            start_ws(self.inbox.clone(), self.ws_alive.clone());
+        }
+
+        fn fetch<T: Send + 'static>(
+            &self,
+            path: String,
+            parse: impl Fn(String) -> Result<T, String> + Send + 'static,
+            land: impl Fn(&mut Inbox, Result<T, String>) + Send + 'static,
+        ) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            spawn("orbit-net", move || {
+                let result = get_text(&path).and_then(&parse);
+                let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                land(&mut g, result);
+            });
+        }
+
+        pub fn get_settings(&self) {
+            self.fetch(
+                "/api/settings".into(),
+                |t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("/api/settings: {e}")),
+                |g, r| match r {
+                    Ok(v) => g.settings = Some(v),
+                    Err(e) => g.error = Some(e),
+                },
+            );
+        }
+
+        pub fn put_settings(&self, settings: &serde_json::Value) {
+            if self.offline {
+                return;
+            }
+            self.send("PUT", "/api/settings", settings.to_string());
+        }
+
+        pub fn get_status(&self) {
+            if self.offline {
+                return;
+            }
+            if self.http_busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            let busy = self.http_busy.clone();
+            spawn("orbit-net-status", move || {
+                let result = get_text("/api/status").and_then(|t| parse_status_json(&t));
+                {
+                    let mut g = inbox.lock().unwrap_or_else(|e| e.into_inner());
+                    match result {
+                        Ok(s) => {
+                            g.status = Some(s);
+                            g.http_ok = true;
+                            g.error = None;
+                        }
+                        Err(e) => {
+                            g.http_ok = false;
+                            g.error = Some(e);
+                        }
+                    }
+                }
+                busy.store(false, Ordering::SeqCst);
+            });
+        }
+
+        pub fn get_processes(&self) {
+            self.fetch("/api/processes".into(), |t| parse_processes_json(&t), |g, r| match r {
+                Ok(p) => g.processes = Some(p),
+                Err(e) => g.error = Some(e),
+            });
+        }
+
+        pub fn pull_view(&self, t0: u64, t1: u64, width: u32) {
+            if self.offline {
+                return;
+            }
+            if self.view_busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                return;
+            }
+            let width = width.clamp(16, 4096);
+            let t1 = t1.max(t0 + 1);
+            let inbox = self.inbox.clone();
+            let busy = self.view_busy.clone();
+            spawn("orbit-net-view", move || {
+                let qs = format!("t0={t0}&t1={t1}&width={width}");
+                let result = (|| -> Result<(), String> {
+                    let tl = parse_timeline_json(&get_text(&format!("/api/timeline?{qs}"))?)?;
+                    if tl.lod == "instanced" && !tl.instances.is_empty() {
+                        inbox.lock().unwrap_or_else(|e| e.into_inner()).timeline = Some(tl);
+                        return Ok(());
+                    }
+                    let fr = parse_frame_body(&get_bytes(&format!("/api/frame?{qs}"))?)?;
+                    inbox.lock().unwrap_or_else(|e| e.into_inner()).frame = Some(fr);
+                    Ok(())
+                })();
+                if let Err(e) = result {
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(e);
+                }
+                busy.store(false, Ordering::SeqCst);
+            });
+        }
+
+        pub fn start_capture(&self, req: &CaptureStart) {
+            if self.offline {
+                return;
+            }
+            let fns: String = req
+                .instrumented_function_ids
+                .iter()
+                .map(|id| format!(r#"{{"function_id":{id}}}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            let body = format!(
+                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}],"show_all_processes":{},"uprobe_duplicate_filter":{}}}"#,
+                req.pid,
+                req.enable_api,
+                req.context_switches,
+                req.thread_states,
+                req.sampling,
+                req.samples_per_second,
+                json_escape(&req.unwinding),
+                json_escape(&req.dynamic_instrumentation_method),
+                req.show_all_processes,
+                req.uprobe_duplicate_filter,
+            );
+            self.send("POST", "/api/capture/start", body);
+        }
+
+        pub fn load_symbols(&self, pid: u32) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/symbols/load", format!(r#"{{"pid":{pid}}}"#));
+        }
+
+        pub fn get_symbols_status(&self, pid: u32) {
+            self.fetch(format!("/api/symbols/status?pid={pid}"), |t| parse_symbols_status_json(&t), move |g, r| match r {
+                Ok(mut s) => {
+                    if s.pid == 0 {
+                        s.pid = pid;
+                    }
+                    g.symbols = Some(s);
+                }
+                Err(e) => g.error = Some(e),
+            });
+        }
+
+        pub fn get_sampling_report(&self, ranges: &[(u64, u64, Option<u32>)]) {
+            let query = ranges_query(ranges);
+            self.fetch(format!("/api/sampling/report{query}"), |t| parse_sampling_report_json(&t), |g, r| {
+                g.sampling = r.ok();
+            });
+        }
+
+        pub fn get_sampling_report_scope(&self, name_id: u32) {
+            self.fetch(format!("/api/sampling/report?scope={name_id}"), |t| parse_sampling_report_json(&t), |g, r| {
+                g.sampling = r.ok();
+            });
+        }
+
+        pub fn get_sampling_tree_scope(&self, name_id: u32, mode: &str) {
+            self.fetch(format!("/api/sampling/tree?scope={name_id}&mode={mode}"), |t| parse_sampling_tree_json(&t), |g, r| {
+                g.tree = r.ok();
+            });
+        }
+
+        pub fn get_sampling_tree(&self, ranges: &[(u64, u64, Option<u32>)], mode: &str) {
+            let rq = ranges_query(ranges);
+            let sep = if rq.is_empty() { '?' } else { '&' };
+            self.fetch(format!("/api/sampling/tree{rq}{sep}mode={mode}"), |t| parse_sampling_tree_json(&t), |g, r| {
+                g.tree = r.ok();
+            });
+        }
+
+        pub fn get_disassembly(&self, pid: u32, function_id: u64) {
+            self.fetch(
+                format!("/api/code/disassembly?pid={pid}&function_id={function_id}"),
+                |t| serde_json::from_str::<crate::code::Disassembly>(&t).map_err(|e| format!("disassembly: {e}")),
+                |g, r| g.disassembly = Some(r),
+            );
+        }
+
+        pub fn get_example_disassembly(&self) {
+            self.fetch(
+                "/api/code/example".into(),
+                |t| serde_json::from_str::<crate::code::Disassembly>(&t).map_err(|e| format!("disassembly: {e}")),
+                |g, r| g.disassembly = Some(r),
+            );
+        }
+
+        pub fn get_source(&self, path: &str) {
+            self.fetch(
+                format!("/api/code/source?path={}", percent_encode(path)),
+                |t| serde_json::from_str::<crate::code::SourceFile>(&t).map_err(|e| format!("source: {e}")),
+                |g, r| g.source = Some(r),
+            );
+        }
+
+        pub fn get_modules(&self, pid: u32) {
+            self.fetch(format!("/api/symbols/modules?pid={pid}"), |t| parse_modules_json(&t), |g, r| {
+                g.modules = r.ok();
+            });
+        }
+
+        pub fn search_functions(&self, pid: u32, q: &str, limit: u32) {
+            let q = urlencoding_lite(q);
+            self.fetch(format!("/api/functions/search?pid={pid}&q={q}&limit={limit}"), |t| parse_function_search_json(&t), |g, r| match r {
+                Ok(s) => g.function_hits = Some(s),
+                Err(e) => g.error = Some(e),
+            });
+        }
+
+        pub fn resolve_preset_functions(&self, pid: u32, generation: u64, keys: String) {
+            let inbox = self.inbox.clone();
+            spawn("orbit-net-presets", move || {
+                let body = format!(r#"{{"pid":{pid},"functions":{keys}}}"#);
+                let result = send_text("POST", "/api/functions/resolve", &body).and_then(|t| parse_function_search_json(&t));
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).preset_functions.push((generation, result));
+            });
+        }
+
+        pub fn list_functions(&self, pid: u32) {
+            self.fetch(format!("/api/functions/search?pid={pid}&q=&limit=200000"), |t| parse_function_search_json(&t), |g, r| match r {
+                Ok(s) => g.function_list = Some(s),
+                Err(e) => g.error = Some(e),
+            });
+        }
+
+        pub fn stop_capture(&self) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/capture/stop", "{}".into());
+        }
+
+        pub fn start_demo(&self) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/demo/start", r#"{"scopes_per_sec":50000}"#.into());
+        }
+
+        pub fn stop_demo(&self) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/demo/stop", "{}".into());
+        }
+
+        pub fn clear_capture(&self) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/capture/clear", "{}".into());
+        }
+
+        pub fn import_capture(&self, bytes: Vec<u8>) {
+            if self.offline {
+                return;
+            }
+            let inbox = self.inbox.clone();
+            spawn("orbit-net-import", move || {
+                if let Err(e) = send_bytes("/api/capture/import", &bytes, "application/zip") {
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(format!("open capture: {e}"));
+                }
+            });
+        }
+
+        pub fn apply_config(&self, ring_bytes: u64, spill: &str) {
+            if self.offline {
+                return;
+            }
+            let spill_json = if spill.is_empty() { "null".to_string() } else { format!("\"{}\"", json_escape(spill)) };
+            self.send("PUT", "/api/config", format!(r#"{{"ring_buffer_bytes":{ring_bytes},"spill_path":{spill_json}}}"#));
+        }
+
+        // The viewer's self-profile relay is a browser feature (the page's
+        // own scopes go to the service to be drawn); the native window
+        // keeps its self-profile local.
         pub fn start_self(&self) {}
         pub fn stop_self(&self) {}
-        pub fn import_capture(&self, _bytes: Vec<u8>) {}
-        pub fn clear_capture(&self) {}
         pub fn push_self_scopes(&self, _scopes: &[orbit_live_event::dev::RelScope]) {}
+
+        fn send(&self, method: &'static str, path: &'static str, body: String) {
+            log::info!(target: "orbit_live_viewer::net", "{method} {path} {}", body.chars().take(200).collect::<String>());
+            let inbox = self.inbox.clone();
+            spawn("orbit-net-send", move || {
+                if let Err(e) = send_text(method, path, &body) {
+                    log::warn!(target: "orbit_live_viewer::net", "{method} {e}");
+                    inbox.lock().unwrap_or_else(|p| p.into_inner()).error = Some(e);
+                }
+            });
+        }
+    }
+
+    /// GET of a full `http://host:port/path` URL, for a capture file that
+    /// is not on the service.
+    fn request_absolute(url: &str) -> Result<Vec<u8>, String> {
+        let rest = url.strip_prefix("http://").ok_or("capture url must be http://")?;
+        let (host_port, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, "/"),
+        };
+        let addr = if host_port.contains(':') { host_port.to_string() } else { format!("{host_port}:80") };
+        let mut stream = TcpStream::connect(&addr).map_err(|e| format!("{addr}: {e}"))?;
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\n\r\n").as_bytes())
+            .map_err(|e| e.to_string())?;
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+        let split = find(&raw, b"\r\n\r\n").ok_or("no response headers")?;
+        let header = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
+        let payload = &raw[split + 4..];
+        if !header.starts_with("http/1.1 2") && !header.starts_with("http/1.0 2") {
+            return Err(header.lines().next().unwrap_or("").to_string());
+        }
+        if header.contains("transfer-encoding: chunked") { dechunk(payload) } else { Ok(payload.to_vec()) }
+    }
+
+    // --- WebSocket client (RFC 6455, binary frames in, pong and close out) ---
+
+    fn start_ws(inbox: Arc<Mutex<Inbox>>, alive: Arc<AtomicBool>) {
+        if alive.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        spawn("orbit-net-ws", move || {
+            if let Err(e) = run_ws(&inbox) {
+                push_err(&inbox, &format!("WebSocket: {e}"));
+            }
+            log::warn!(target: "orbit_live_viewer::net", "WebSocket closed");
+            if let Ok(mut g) = inbox.lock() {
+                g.ws_ok = false;
+                g.error = Some("WebSocket closed".into());
+            }
+            alive.store(false, Ordering::SeqCst);
+        });
+    }
+
+    fn run_ws(inbox: &Arc<Mutex<Inbox>>) -> Result<(), String> {
+        let (_, host) = endpoint()?;
+        let mut stream = connect()?;
+        // Frames arrive whenever the service has something; block for them.
+        let _ = stream.set_read_timeout(None);
+        let key = ws_key();
+        stream
+            .write_all(
+                format!(
+                    "GET /ws HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                     Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
+        // The handshake reply, then the first frames may follow in the same read.
+        let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+        let mut chunk = [0u8; 64 * 1024];
+        let header_end = loop {
+            if let Some(i) = find(&buf, b"\r\n\r\n") {
+                break i;
+            }
+            let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err("closed during handshake".into());
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        };
+        let reply = String::from_utf8_lossy(&buf[..header_end]).to_string();
+        if !reply.starts_with("HTTP/1.1 101") {
+            return Err(format!("handshake refused: {}", reply.lines().next().unwrap_or("")));
+        }
+        log::info!(target: "orbit_live_viewer::net", "WebSocket open");
+        if let Ok(mut g) = inbox.lock() {
+            g.ws_ok = true;
+        }
+        buf.drain(..header_end + 4);
+        let mut message: Vec<u8> = Vec::new();
+        loop {
+            // A complete frame at the front of `buf`, or read more.
+            match parse_frame(&buf) {
+                Some((fin, opcode, payload, used)) => {
+                    match opcode {
+                        0x1 | 0x2 | 0x0 => {
+                            message.extend_from_slice(payload);
+                            if fin {
+                                let bytes = std::mem::take(&mut message);
+                                if let Ok(mut g) = inbox.lock() {
+                                    g.ws_ok = true;
+                                    g.bytes_in += bytes.len() as u64;
+                                    g.frames.push(bytes);
+                                }
+                            }
+                        }
+                        0x8 => return Ok(()),
+                        0x9 => {
+                            let pong = client_frame(0xA, payload);
+                            stream.write_all(&pong).map_err(|e| e.to_string())?;
+                        }
+                        _ => {}
+                    }
+                    buf.drain(..used);
+                }
+                None => {
+                    let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        return Ok(());
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+            }
+        }
+    }
+
+    /// One frame from the front of `buf`: (fin, opcode, payload, bytes used),
+    /// or `None` when it is not all there yet.
+    fn parse_frame(buf: &[u8]) -> Option<(bool, u8, &[u8], usize)> {
+        if buf.len() < 2 {
+            return None;
+        }
+        let fin = buf[0] & 0x80 != 0;
+        let opcode = buf[0] & 0x0f;
+        let masked = buf[1] & 0x80 != 0;
+        let mut len = (buf[1] & 0x7f) as usize;
+        let mut at = 2;
+        if len == 126 {
+            if buf.len() < 4 {
+                return None;
+            }
+            len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+            at = 4;
+        } else if len == 127 {
+            if buf.len() < 10 {
+                return None;
+            }
+            len = u64::from_be_bytes(buf[2..10].try_into().ok()?) as usize;
+            at = 10;
+        }
+        let mask_len = if masked { 4 } else { 0 };
+        if buf.len() < at + mask_len + len {
+            return None;
+        }
+        // A server never masks; if one did, the payload would need unmasking,
+        // which this reader does not do. Orbit's server does not.
+        let payload = &buf[at + mask_len..at + mask_len + len];
+        Some((fin, opcode, payload, at + mask_len + len))
+    }
+
+    /// A masked client-to-server frame, as the protocol requires.
+    fn client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = vec![0x80 | opcode];
+        let len = payload.len();
+        if len < 126 {
+            out.push(0x80 | len as u8);
+        } else if len < 65536 {
+            out.push(0x80 | 126);
+            out.extend_from_slice(&(len as u16).to_be_bytes());
+        } else {
+            out.push(0x80 | 127);
+            out.extend_from_slice(&(len as u64).to_be_bytes());
+        }
+        let mask = pseudo_random_bytes(4);
+        out.extend_from_slice(&mask);
+        out.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+        out
+    }
+
+    fn ws_key() -> String {
+        base64(&pseudo_random_bytes(16))
+    }
+
+    /// Nonces for the handshake and masks: not secrets, just unpredictable
+    /// enough for the protocol's purpose (proxy cache busting).
+    fn pseudo_random_bytes(n: usize) -> Vec<u8> {
+        let mut x = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E3779B97F4A7C15)
+            ^ (std::process::id() as u64).rotate_left(32);
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    fn base64(bytes: &[u8]) -> String {
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+            out.push(T[(n >> 18) as usize & 63] as char);
+            out.push(T[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+            out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        }
+        out
+    }
+
+    fn push_err(inbox: &Arc<Mutex<Inbox>>, msg: &str) {
+        if let Ok(mut g) = inbox.lock() {
+            g.error = Some(msg.to_string());
+        }
+        log::error!(target: "orbit_live_viewer::net", "{msg}");
+    }
+
+    fn json_escape(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn urlencoding_lite(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.as_bytes() {
+            match *b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(*b as char),
+                _ => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn frames_parse_across_the_three_length_encodings_and_fragments() {
+            // Tiny binary frame, FIN.
+            let f = [0x82u8, 0x03, 1, 2, 3];
+            let (fin, op, payload, used) = parse_frame(&f).unwrap();
+            assert!(fin && op == 2 && payload == [1, 2, 3] && used == 5);
+            // 16-bit length, incomplete then complete.
+            let mut g = vec![0x82u8, 126, 0x01, 0x00];
+            assert!(parse_frame(&g).is_none());
+            g.extend(std::iter::repeat_n(7u8, 256));
+            let (_, _, payload, used) = parse_frame(&g).unwrap();
+            assert_eq!((payload.len(), used), (256, 260));
+            // 64-bit length header.
+            let mut h = vec![0x82u8, 127];
+            h.extend_from_slice(&70000u64.to_be_bytes());
+            assert!(parse_frame(&h).is_none());
+            h.extend(std::iter::repeat_n(1u8, 70000));
+            assert_eq!(parse_frame(&h).unwrap().3, 70010);
+            // A ping is opcode 9 and a client frame is masked.
+            let pong = client_frame(0xA, b"hi");
+            assert_eq!(pong[0], 0x8A);
+            assert_eq!(pong[1], 0x80 | 2);
+            assert_eq!(pong.len(), 2 + 4 + 2);
+        }
+
+        #[test]
+        fn chunked_bodies_are_reassembled() {
+            let body = b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
+            assert_eq!(dechunk(body).unwrap(), b"Wikipedia");
+        }
+
+        #[test]
+        fn base64_matches_the_standard_alphabet_and_padding() {
+            assert_eq!(base64(b"Man"), "TWFu");
+            assert_eq!(base64(b"Ma"), "TWE=");
+            assert_eq!(base64(b"M"), "TQ==");
+            assert_eq!(ws_key().len(), 24);
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native_impl::Net;
+pub use native_impl::{set_service_url, service_url, Net, DEFAULT_SERVICE_URL};
 
 #[cfg(test)]
 mod tests {

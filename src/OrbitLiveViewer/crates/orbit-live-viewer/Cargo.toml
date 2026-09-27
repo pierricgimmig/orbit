@@ -16,6 +16,13 @@ description = "eframe WebRunner live viewer: Orbit chrome + hybrid wgpu timeline
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The same app as a native window (`--url http://host:port`), for running
+# and profiling the viewer without a browser. The wasm pack is what ships.
+[[bin]]
+name = "orbit-live-viewer-native"
+path = "src/main.rs"
+required-features = ["egui"]
+
 [features]
 default = ["egui"]
 egui = ["dep:eframe", "dep:egui", "dep:egui-wgpu"]

@@ -263,8 +263,18 @@ pub fn query_capture_url_from_location() -> Option<String> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        None
+        CAPTURE_PATH.get().cloned()
     }
+}
+
+/// The native window's equivalent of `?capture=`: a file the binary was
+/// told to open instead of connecting to a service.
+#[cfg(not(target_arch = "wasm32"))]
+static CAPTURE_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_capture_path(path: &str) {
+    let _ = CAPTURE_PATH.set(path.to_string());
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
