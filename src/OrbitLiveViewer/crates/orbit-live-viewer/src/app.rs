@@ -969,6 +969,11 @@ pub struct OrbitLiveApp {
     functions_sort: (u8, bool),
     selected_hooks: Vec<FunctionHit>,
     presets: crate::presets::State,
+    /// The track order file: matched processes lead the rail (see `track_order`).
+    track_order: crate::track_order::State,
+    /// When the file-given process priorities were last recomputed from the
+    /// process names, which the service refreshes about once a second.
+    track_order_applied_s: f64,
     last_symbol_poll: f64,
     loaded_symbol_pid: Option<u32>,
     /// Chrome-trace file session (not Demo, not the 64 MB ring).
@@ -1654,6 +1659,8 @@ impl OrbitLiveApp {
             functions_sort: (1, false),
             selected_hooks: Vec::new(),
             presets: crate::presets::State::default(),
+            track_order: crate::track_order::State::default(),
+            track_order_applied_s: -1.0,
             last_symbol_poll: -1.0,
             loaded_symbol_pid: None,
             trace_load: None,
@@ -2408,6 +2415,9 @@ impl OrbitLiveApp {
             self.apply_status(s);
         }
         if let Some(s) = inbox.settings {
+            let text = s.get("track_order").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            self.track_order.from_settings(&text);
+            self.track_order_applied_s = -1.0;
             self.server_settings = Some(s);
         }
         if let Some(p) = inbox.processes {
@@ -3987,6 +3997,7 @@ impl OrbitLiveApp {
             {
                 let _sched = dev.scope(TID_UI, NAME_SCHEDULER);
                 self.refresh_track_filter();
+                self.apply_track_order();
                 self.tracks.sync(&self.index, filter);
                 // The default order follows the work: every so often (a
                 // tweak; once a second by default) the busiest tracks move
@@ -7568,6 +7579,124 @@ impl OrbitLiveApp {
         }
     }
 
+    /// The file-given process priorities the rail sorts by, from the
+    /// current rules and process names. Names change (a process is named
+    /// when the service first sees it, comm can change), so this is redone
+    /// about as often as the names refresh, and at once after an edit.
+    fn apply_track_order(&mut self) {
+        self.track_order.receive();
+        if self.track_order.rules.is_empty() {
+            if !self.tracks.process_priority.is_empty() {
+                self.tracks.process_priority.clear();
+                self.relayout_tracks();
+            }
+            self.track_order_applied_s = self.now_s;
+            return;
+        }
+        if self.track_order_applied_s >= 0.0 && self.now_s - self.track_order_applied_s < 1.0 {
+            return;
+        }
+        self.track_order_applied_s = self.now_s;
+        let mut pids: Vec<u32> = self.processes.iter().map(|p| p.pid).collect();
+        pids.extend(self.trace_processes.iter().map(|p| p.pid));
+        pids.extend(self.tracks.process_order.iter().copied());
+        pids.sort_unstable();
+        pids.dedup();
+        let mut priority: crate::tracks::FastMap<u32, usize> = Default::default();
+        for pid in pids {
+            let display = self.process_display_name(pid);
+            let path = self
+                .processes
+                .iter()
+                .find(|p| p.pid == pid)
+                .map(|p| p.path.clone())
+                .unwrap_or_default();
+            let base = path.rsplit('/').next().unwrap_or("").to_string();
+            let names = [display.as_str(), base.as_str(), path.as_str()];
+            if let Some(rank) = self.track_order.rules.rank(names.into_iter().filter(|n| !n.is_empty())) {
+                priority.insert(pid, rank);
+            }
+        }
+        if priority != self.tracks.process_priority {
+            self.tracks.process_priority = priority;
+            self.relayout_tracks();
+        }
+    }
+
+    /// Sends the track order text to the service's settings when it differs
+    /// from what was last exchanged. The whole object goes, so other keys
+    /// survive; a change applies to the rail at once.
+    fn sync_track_order_setting(&mut self) {
+        if self.track_order.text == self.track_order.synced {
+            return;
+        }
+        let Some(settings) = self.server_settings.as_mut() else { return };
+        settings["track_order"] = serde_json::Value::String(self.track_order.text.clone());
+        self.track_order.synced = self.track_order.text.clone();
+        let body = settings.clone();
+        self.net.put_settings(&body);
+    }
+
+    /// The track order file, in the settings window: the text as it stands,
+    /// loaded from or saved to a plain file so a layout can be shared.
+    fn track_order_control(&mut self, ui: &mut Ui, ctx: &Context) {
+        ui.label(RichText::new("Track order").color(theme::MUTED()).size(10.5)).on_hover_text(
+            "One process name pattern per line: `*` matches anything, `?` one character, case does not \
+             matter, `#` starts a comment. Matched against the process name, its executable's name and \
+             its path (a pattern with a `/` against the path only). Processes the file names come first \
+             on the rail, in file order; the rest keep their usual order. Kept by the service \
+             (~/.config/orbit/settings.json), so it holds across sessions.",
+        );
+        let edit = ui.add(
+            egui::TextEdit::multiline(&mut self.track_order.text)
+                .id_salt("orbit_track_order")
+                .font(FontId::monospace(11.0))
+                .desired_rows(5)
+                .desired_width(f32::INFINITY)
+                .hint_text("# e.g.\nMyGame*\norbit-service"),
+        );
+        if edit.changed() {
+            if self.track_order.reparse() {
+                self.track_order_applied_s = -1.0;
+            }
+        }
+        if edit.lost_focus() {
+            self.sync_track_order_setting();
+        }
+        ui.horizontal(|ui| {
+            let load = ui.add_enabled(self.track_order.import.is_none(), egui::Button::new("Load file…"));
+            if load.clicked() {
+                self.track_order.import = Some(crate::track_order::open(ctx.clone()));
+            }
+            if ui.add_enabled(!self.track_order.text.trim().is_empty(), egui::Button::new("Save file…")).clicked() {
+                if let Err(e) = crate::track_order::save(&self.track_order.text) {
+                    self.track_order.message = e;
+                }
+            }
+            if ui.add_enabled(!self.track_order.text.is_empty(), egui::Button::new("Clear")).clicked() {
+                self.track_order.text.clear();
+                self.track_order.reparse();
+                self.track_order_applied_s = -1.0;
+                self.sync_track_order_setting();
+            }
+            let n = self.track_order.rules.len();
+            let leading = self.tracks.process_priority.len();
+            let status = match (n, leading) {
+                (0, _) => "no rules".to_string(),
+                (n, 0) => format!("{n} rule(s), none match a process on the rail"),
+                (n, m) => format!("{n} rule(s), {m} process(es) lead the rail"),
+            };
+            ui.label(RichText::new(status).size(11.0).color(theme::MUTED()));
+        });
+        if !self.track_order.message.is_empty() {
+            ui.label(RichText::new(&self.track_order.message).size(11.0).color(theme::ACCENT()));
+        }
+        // A file pick that landed between frames is applied and persisted.
+        if self.track_order.import.is_none() && self.track_order.text != self.track_order.synced && !edit.has_focus() {
+            self.sync_track_order_setting();
+        }
+    }
+
     fn hooked_hint(&self, ui: &mut Ui) {
         // Always one line, so hooking a row does not shift the rows under
         // it: with nothing hooked the line says so, in the muted colour.
@@ -8596,6 +8725,8 @@ impl OrbitLiveApp {
                     self.tracks.scale = scale;
                     self.relayout_tracks();
                 }
+                ui.add_space(6.0);
+                self.track_order_control(ui, ctx);
                 ui.add_space(6.0);
                 if ui.button("Reset").clicked() {
                     self.ui_tweaks = UiTweaks::default();

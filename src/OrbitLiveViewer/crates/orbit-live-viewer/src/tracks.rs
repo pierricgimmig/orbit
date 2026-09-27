@@ -218,6 +218,10 @@ pub struct TrackStrip {
     /// message, which can come after its rows do.
     auto_folded: FastSet<u32>,
     user_toggled: FastSet<RowId>,
+    /// A process's line in the track order file (see `track_order`): the
+    /// rail puts these first, in file order, ahead of the tiers. Absent
+    /// means the file says nothing about it.
+    pub process_priority: FastMap<u32, usize>,
     /// Chrome `process_sort_index` / `thread_sort_index` (lower first).
     pub process_sort: HashMap<u32, i32>,
     pub thread_sort: HashMap<(u32, u32), i32>,
@@ -354,6 +358,7 @@ impl Default for TrackStrip {
             process_tier: FastMap::default(),
             auto_folded: FastSet::default(),
             user_toggled: FastSet::default(),
+            process_priority: FastMap::default(),
             process_sort: HashMap::new(),
             thread_sort: HashMap::new(),
             pinned_sections: FastSet::default(),
@@ -430,9 +435,11 @@ impl TrackStrip {
             };
             (tier, bucket)
         };
+        let file_rank = |p: u32| self.process_priority.get(&p).copied().unwrap_or(usize::MAX);
         pids.sort_by_key(|p| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
+                file_rank(*p),
                 rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,
@@ -441,6 +448,7 @@ impl TrackStrip {
         threads.sort_by_key(|t| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(t.pid)),
+                file_rank(t.pid),
                 rank(t.pid),
                 self.process_sort.get(&t.pid).copied().unwrap_or(0),
                 t.pid,
@@ -467,6 +475,7 @@ impl TrackStrip {
         self.process_order.sort_by_key(|p| {
             (
                 machine_rank(&self.machine_sort, MachineId::from_pid(*p)),
+                file_rank(*p),
                 rank(*p),
                 self.process_sort.get(p).copied().unwrap_or(0),
                 *p,

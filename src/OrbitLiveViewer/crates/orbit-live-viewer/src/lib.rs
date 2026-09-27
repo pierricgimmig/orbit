@@ -28,6 +28,7 @@ mod fonts;
 mod net;
 #[cfg(feature = "egui")]
 mod presets;
+mod track_order;
 mod rect_select;
 mod report_copy;
 mod self_pane;
