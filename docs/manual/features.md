@@ -483,6 +483,19 @@ in the URL opens a tab on load.
   screenshots, the e2e report); `python3 tools/site/serve.py --dir site
   --port 8081` serves it on the LAN. Screenshot: `22-website.png`.
 
+- **Benchmark.** More ▸ Benchmark (F3) opens a window that asks the service
+  for fake scopes as fast as you like: `threads` (16) threads of nested call
+  trees `depth` (8 to 16) deep, at a rate the slider sets, logarithmic from
+  one event a second to a million, sent to the service as it moves while the
+  benchmark runs. Start with nothing recording and it starts a capture of
+  its own on pseudo-process `orbit-bench`; start during a capture and it
+  joins it at the live edge. The readout is what the service achieved over
+  the last second and the total. Agents use `POST /api/bench/start`
+  (`threads`, `depth_min`, `depth_max`, `rate`, all optional),
+  `POST /api/bench/rate` (`rate`), `POST /api/bench/stop` and
+  `GET /api/bench`. A known, steady, adjustable load for the ring, the wire,
+  the listing and the LOD.
+
 ## 10. Screenshot index
 
 | File | Scenario | Shows |
