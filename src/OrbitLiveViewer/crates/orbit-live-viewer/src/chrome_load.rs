@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! Open / drop a Chrome Trace Event Format file into the live viewer.
+//! Open / drop a Chrome Trace Event Format or Perfetto proto file into the
+//! live viewer.
 //!
 //! Parsing is incremental: the UI pumps a budget of events each frame so the
 //! first scopes paint before the file is finished. Bytes are never turned into
@@ -10,7 +11,7 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use orbit_live_chrome::{ChromeIngestor, ChromeStream};
+use orbit_live_chrome::{ChromeIngestor, ChromeStream, Format};
 use orbit_live_event::LiveEvent;
 
 const PUMP_BUDGET: usize = 48_000;
@@ -55,6 +56,15 @@ impl TraceLoad {
         let _ = tx.send(ByteMsg::Chunk(bytes));
         let _ = tx.send(ByteMsg::Eof);
         Self::new(name, Some(n), rx)
+    }
+
+    /// The `path` shown for a loaded trace's processes: what kind of file
+    /// they came from.
+    pub fn source_label(&self) -> &'static str {
+        match self.stream.format() {
+            Format::Perfetto => "perfetto-trace",
+            _ => "chrome-trace",
+        }
     }
 
     pub fn progress_line(&self) -> String {
@@ -154,13 +164,27 @@ fn fmt_bytes(n: u64) -> String {
     }
 }
 
+/// Every extension a file picker or a drop may hand us. Perfetto
+/// traces are `.pftrace` / `.perfetto-trace` (`_trace`) / `.pb`; the format
+/// itself is sniffed from the bytes, so a `.gz` of either is fine.
+pub const TRACE_EXTENSIONS: &[&str] = &[
+    "json",
+    "json.gz",
+    "gz",
+    "zip",
+    "pftrace",
+    "pftrace.gz",
+    "perfetto-trace",
+    "perfetto_trace",
+    "perfetto-trace.gz",
+    "perfetto_trace.gz",
+    "pb",
+    "pb.gz",
+];
+
 pub fn is_trace_name(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    n.ends_with(".json")
-        || n.ends_with(".json.gz")
-        || n.ends_with(".gz")
-        || n.ends_with(".zip")
-        || n.is_empty()
+    n.is_empty() || TRACE_EXTENSIONS.iter().any(|ext| n.ends_with(&format!(".{ext}")))
 }
 
 /// Shared File from the hidden `<input>` or a window-level drop (WASM).
@@ -190,7 +214,7 @@ pub fn start_open_dialog(
 #[cfg(not(target_arch = "wasm32"))]
 fn native_open_dialog() -> Option<TraceLoad> {
     let path = rfd::FileDialog::new()
-        .add_filter("Chrome trace", &["json", "gz", "zip", "json.gz"])
+        .add_filter("Chrome / Perfetto trace", TRACE_EXTENSIONS)
         .pick_file()?;
     let name = path
         .file_name()
@@ -249,7 +273,8 @@ fn wasm_open_dialog(pending: &PendingFile) {
         return;
     };
     input.set_type("file");
-    input.set_accept(".json,.json.gz,.gz,.zip,application/json");
+    let accept: Vec<String> = TRACE_EXTENSIONS.iter().map(|e| format!(".{e}")).collect();
+    input.set_accept(&format!("{},application/json", accept.join(",")));
     let pending = pending.clone();
     let input_clone = input.clone();
     let onchange = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
@@ -525,6 +550,20 @@ mod tests {
         assert!(same_origin_trace_path("?trace=//evil/x.json").is_none());
         assert!(same_origin_trace_path("?trace=/traces/../secret.json").is_none());
         assert!(same_origin_trace_path("?trace=/tmp/x.txt").is_none());
+        assert_eq!(
+            same_origin_trace_path("?trace=/traces/scroll.pftrace"),
+            Some("/traces/scroll.pftrace".into())
+        );
+    }
+
+    #[test]
+    fn perfetto_names_are_traces() {
+        for n in ["a.pftrace", "A.PFTRACE", "b.perfetto-trace", "c.perfetto_trace.gz", "d.pb", "e.pb.gz"] {
+            assert!(is_trace_name(n), "{n}");
+        }
+        assert!(!is_trace_name("notes.txt"));
+        // `.orbit.zip` is a zip too; the app asks `is_bundle_name` first.
+        assert!(is_trace_name("x.zip"));
     }
 
 }

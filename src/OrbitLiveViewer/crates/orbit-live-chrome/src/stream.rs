@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! Stream-parse Chrome Trace Event Format JSON (array or `{traceEvents:[…]}`).
+//! Stream-parse Chrome Trace Event Format JSON (array or `{traceEvents:[…]}`)
+//! or a Perfetto proto trace (length-delimited `TracePacket`s).
 //!
-//! Bytes are pushed as they arrive. Complete events are deserialized one at a
-//! time — never a `Vec<Value>` of the whole file. gzip is **write-decoded as
-//! chunks arrive** (not buffered then inflated); zip is accepted when it holds
-//! a single deflated/stored JSON.
+//! Bytes are pushed as they arrive. Complete events / packets are decoded one
+//! at a time — never a `Vec<Value>` of the whole file. gzip is **write-decoded
+//! as chunks arrive** (not buffered then inflated); zip is accepted when it
+//! holds a single deflated/stored file. The format is sniffed from the first
+//! decoded bytes: `[` / `{` is JSON, a `0x0a` packet tag is Perfetto.
 
 use std::io::Write;
 
@@ -15,6 +17,8 @@ use flate2::write::MultiGzDecoder;
 use crate::ingest::{ChromeEvent, ChromeIngestor, StackFrame};
 use crate::json::{parse_json_string, skip_ws, value_end};
 use crate::id::FlexId;
+use crate::perfetto::PerfettoState;
+use crate::proto::varint;
 
 const COMPACT_EVERY: usize = 1 << 20;
 /// Skip `args` for memory-dump events so a heap snapshot cannot explode RAM.
@@ -29,6 +33,18 @@ enum Phase {
     AfterValue,
     Done,
 }
+
+/// What the decoded bytes turned out to be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Unknown,
+    Json,
+    Perfetto,
+}
+
+/// `Trace.packet` is field 1, length-delimited: every Perfetto file starts
+/// with this byte.
+const PACKET_TAG: u8 = 0x0a;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingKey {
@@ -66,8 +82,12 @@ pub struct ChromeStream {
     pending: PendingKey,
     decode: Decode,
     magic_buf: Vec<u8>,
+    format: Format,
+    perfetto: Option<Box<PerfettoState>>,
+    eof: bool,
     pub bytes_in: u64,
     pub bytes_decoded: u64,
+    /// JSON events or Perfetto packets decoded so far (the progress line).
     pub events_seen: u64,
     error: Option<String>,
 }
@@ -81,6 +101,9 @@ impl Default for ChromeStream {
             pending: PendingKey::None,
             decode: Decode::Identity,
             magic_buf: Vec::new(),
+            format: Format::Unknown,
+            perfetto: None,
+            eof: false,
             bytes_in: 0,
             bytes_decoded: 0,
             events_seen: 0,
@@ -96,6 +119,11 @@ impl ChromeStream {
 
     pub fn is_done(&self) -> bool {
         self.phase == Phase::Done && self.pos >= skip_ws(&self.raw, self.pos)
+    }
+
+    /// Sniffed from the first decoded bytes; `Unknown` until they arrive.
+    pub fn format(&self) -> Format {
+        self.format
     }
 
     pub fn pending_bytes(&self) -> usize {
@@ -269,8 +297,10 @@ impl ChromeStream {
         }
     }
 
-    /// Signal end-of-file so gzip/zip can flush.
+    /// Signal end-of-file so gzip/zip can flush, and so a proto stream
+    /// knows its last packet has arrived.
     pub fn finish_input(&mut self) {
+        self.eof = true;
         if matches!(self.decode, Decode::Gzip(_)) {
             self.finish_gzip();
             return;
@@ -316,6 +346,20 @@ impl ChromeStream {
     }
 
     fn step(&mut self, ing: &mut ChromeIngestor, out: &mut Vec<orbit_live_event::LiveEvent>) -> Step {
+        if self.format == Format::Unknown {
+            match self.sniff() {
+                Some(Format::Perfetto) => {
+                    self.format = Format::Perfetto;
+                    self.perfetto = Some(Box::default());
+                    ing.set_display_time_unit("ns");
+                }
+                Some(f) => self.format = f,
+                None => return Step::NeedBytes,
+            }
+        }
+        if self.format == Format::Perfetto {
+            return self.step_perfetto(ing, out);
+        }
         self.pos = skip_ws(&self.raw, self.pos);
         if self.pos >= self.raw.len() {
             return if self.phase == Phase::Done {
@@ -548,6 +592,72 @@ enum Step {
     Done,
 }
 
+impl ChromeStream {
+    /// JSON starts with `[` / `{` after optional whitespace; a Perfetto file
+    /// starts with the packet tag, which is also `\n`, so JSON is asked
+    /// first and only a tag that is not followed by a JSON opener is proto.
+    fn sniff(&self) -> Option<Format> {
+        let b = &self.raw[self.pos..];
+        if b.is_empty() {
+            return if self.eof { Some(Format::Json) } else { None };
+        }
+        let i = skip_ws(b, 0);
+        if i < b.len() && (b[i] == b'[' || b[i] == b'{') {
+            return Some(Format::Json);
+        }
+        if b[0] == PACKET_TAG {
+            return Some(Format::Perfetto);
+        }
+        if i >= b.len() && !self.eof && b.len() < 64 {
+            return None;
+        }
+        Some(Format::Json)
+    }
+
+    /// One `TracePacket`: `0x0a`, varint length, bytes. A tail that cannot
+    /// complete at EOF (a truncated capture) is dropped, not an error.
+    fn step_perfetto(&mut self, ing: &mut ChromeIngestor, out: &mut Vec<orbit_live_event::LiveEvent>) -> Step {
+        if self.phase == Phase::Done {
+            return Step::Done;
+        }
+        let rest = &self.raw[self.pos..];
+        let header = if rest.is_empty() {
+            None
+        } else if rest[0] != PACKET_TAG {
+            self.error = Some(format!(
+                "perfetto trace: expected a packet tag, got {:#04x} at byte {}",
+                rest[0],
+                self.bytes_decoded - rest.len() as u64
+            ));
+            return Step::Done;
+        } else {
+            varint(rest, 1).and_then(|(len, n)| {
+                let start = 1 + n;
+                let end = start.checked_add(usize::try_from(len).ok()?)?;
+                (end <= rest.len()).then_some((start, end))
+            })
+        };
+        let Some((start, end)) = header else {
+            if self.eof {
+                self.pos = self.raw.len();
+                if let Some(p) = self.perfetto.as_mut() {
+                    out.extend(p.finish(ing));
+                }
+                self.phase = Phase::Done;
+                return Step::Done;
+            }
+            return Step::NeedBytes;
+        };
+        let packet = &self.raw[self.pos + start..self.pos + end];
+        if let Some(p) = self.perfetto.as_mut() {
+            out.extend(p.on_packet(packet, ing));
+        }
+        self.pos += end;
+        self.events_seen += 1;
+        Step::Event
+    }
+}
+
 fn looks_like_json(b: &[u8]) -> bool {
     let i = skip_ws(b, 0);
     i < b.len() && (b[i] == b'[' || b[i] == b'{')
@@ -611,6 +721,7 @@ fn deserialize_dump_marker(bytes: &[u8]) -> Result<ChromeEvent, serde_json::Erro
         sf: None,
         stack: None,
         tts: None,
+        lane: None,
     })
 }
 
