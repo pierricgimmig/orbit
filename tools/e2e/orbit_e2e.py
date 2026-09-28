@@ -374,6 +374,15 @@ def capture_scheduling(run):
     check(status["capturing"], "service does not report capturing")
     check_at_least(status["events_live"], 1000, "events streamed during capture")
     run.open_viewer()
+    running = None
+    if run.chrome is not None:
+        # The timer right of Record counts the capture up while it runs.
+        first = run.wait_for(lambda: run.sel().get("capture_elapsed") or None,
+                             "the capture timer to run", timeout=10)
+        time.sleep(1.0)
+        running = run.sel().get("capture_elapsed")
+        check(running > first, f"the capture timer should advance while capturing ({first} -> {running})")
+        check(run.rects_matching("Timer"), "the timer is painted next to Record")
     run.shot("02-capture-live", settle=3.0)
     run.stop_capture()
     # A finished capture lands on the top-down call tree by default.
@@ -383,6 +392,20 @@ def capture_scheduling(run):
             "the report to default to Top-down after stop", timeout=10,
         )
         check(tab == "Top-down", f"a finished capture should default to Top-down, got {tab!r}")
+        # ...and the timer freezes at the capture's length.
+        frozen = run.sel().get("capture_elapsed")
+        time.sleep(1.0)
+        again = run.sel().get("capture_elapsed")
+        check(frozen == again and frozen >= running,
+              f"the timer should freeze at the capture's length after Stop ({running} -> {frozen}, {again})")
+        # ...which is the service's own measure of it.
+        status = run.service.get("/api/status")
+        if status.get("live_end_ns", 0) > status.get("capture_start_ns", 0) > 0:
+            length = (status["live_end_ns"] - status["capture_start_ns"]) / 1e9
+            check(abs(frozen - length) < 1.0,
+                  f"the frozen timer ({frozen}s) should match the capture's length ({length:.3f}s)")
+            return f"timer {running}s while capturing, {frozen}s after stop (capture {length:.3f}s)"
+        return f"timer {running}s while capturing, {frozen}s after stop"
 
 
 @scenario("sampling-report", "The whole-capture flat report names the workload's functions")

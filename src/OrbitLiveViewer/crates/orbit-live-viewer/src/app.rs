@@ -713,6 +713,9 @@ pub struct OrbitLiveApp {
     /// When the capture began, from `CaptureStarted`; 0 until the service
     /// says. Published so a harness can check nothing precedes it.
     capture_start_ns: u64,
+    /// The timer right of Record: how long the capture has been running,
+    /// then how long it ran, until Clear or the next Record.
+    capture_timer: CaptureTimer,
     /// The page opened a capture file (`?capture=<url>`) and has no
     /// service: nothing is polled, and the pills that need one are not
     /// shown. The static web site's mode.
@@ -1296,7 +1299,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?},\"report_copied\":{},\"report_sel\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"capture_elapsed\":{:.3},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?},\"report_copied\":{},\"report_sel\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1353,6 +1356,7 @@ impl OrbitLiveApp {
             self.flame_zoom.len(),
             match self.selected_pid { Some(p) => p.to_string(), None => "null".to_string() },
             self.recording || self.status.capturing,
+            self.capture_timer.shown_s,
             self.pointer_readout.clone(),
             VIEWER_BUILD,
             if self.draw_readout.is_empty() { "null" } else { self.draw_readout.as_str() },
@@ -1709,6 +1713,7 @@ impl OrbitLiveApp {
             in_self_pane: false,
             static_capture: static_capture.clone(),
             capture_start_ns: 0,
+            capture_timer: CaptureTimer::default(),
             settle_frames: 0,
             uploaded_prims_max: 0,
             reupload_next_frame: false,
@@ -1850,6 +1855,7 @@ impl OrbitLiveApp {
             self.live_edge_ns = DEMO_ORIGIN_NS;
             self.net.start_demo();
         }
+        self.capture_timer = CaptureTimer::default();
         self.follow = true;
     }
 
@@ -1858,6 +1864,7 @@ impl OrbitLiveApp {
         self.error.clear();
         self.recording = true;
         self.live_edge_ns = DEMO_ORIGIN_NS;
+        self.capture_timer = CaptureTimer::default();
         self.net.start_demo();
         self.follow = true;
     }
@@ -1878,6 +1885,7 @@ impl OrbitLiveApp {
         self.sampling = None;
         self.tree = None;
         self.live_edge_ns = 0;
+        self.capture_timer = CaptureTimer::default();
         self.t0 = 0.0;
         self.t1 = FOLLOW_NS;
         self.user_set_view = false;
@@ -1900,6 +1908,7 @@ impl OrbitLiveApp {
             self.clear_file_trace();
             self.recording = true;
             self.live_edge_ns = DEMO_ORIGIN_NS;
+            self.capture_timer = CaptureTimer::default();
             self.follow = true;
         }
         if self.bench_depth_max < self.bench_depth_min {
@@ -2474,6 +2483,12 @@ impl OrbitLiveApp {
         if s.live_end_ns > 0 {
             self.live_edge_ns = self.live_edge_ns.max(s.live_end_ns);
         }
+        // The capture's origin, for a viewer that joined after the
+        // `CaptureStarted` frame went by: the timer and the "nothing before
+        // the start" readout count from it.
+        if s.capture_start_ns > 0 {
+            self.capture_start_ns = s.capture_start_ns;
+        }
         let capturing = s.capturing;
         self.status = s;
         // A deep-linked report has no capture-stop transition to ride on, so
@@ -2762,6 +2777,9 @@ impl OrbitLiveApp {
                 // the service's own `CaptureStarted`.
                 self.capture_start_ns = start_ns;
                 self.live_edge_ns = if start_ns > 0 { start_ns } else { DEMO_ORIGIN_NS };
+                // A new capture, a new timer: it restarts on the next frame
+                // from the capture's own clock.
+                self.capture_timer = CaptureTimer::default();
             }
             LiveFrame::Status {
                 capturing,
@@ -2787,6 +2805,7 @@ impl OrbitLiveApp {
                     oldest_start_ns,
                     newest_end_ns,
                     live_end_ns: 0,
+                    capture_start_ns: 0,
                     ring_bytes,
                     spill_path: self.status.spill_path.clone(),
                     machine: self.status.machine.clone(),
@@ -3184,6 +3203,7 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_link_dot(ui);
             self.transport_record(ui);
+            self.paint_capture_timer(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
                 ui.label(
@@ -3295,6 +3315,7 @@ impl OrbitLiveApp {
                 if record_button(ui, recording).on_hover_text("Start/stop capture (X)").clicked() {
                     if recording { self.stop_record(); } else { self.start_record(); }
                 }
+                self.paint_capture_timer(ui);
                 self.transport_open(ui);
                 self.transport_save(ui);
                 if icon_button(ui, "Clear", "Empty the capture", paint_clear_icon).clicked() { self.clear_everything(); }
@@ -3310,6 +3331,30 @@ impl OrbitLiveApp {
             self.transport_more(ui);
             if fullscreen_pill(ui, self.fullscreen).clicked() { self.set_fullscreen(ui.ctx(), !self.fullscreen); }
         });
+    }
+
+    /// The capture timer, right of Record: how long the capture has been
+    /// running, on its own clock; after Stop, how long it ran, until Clear or
+    /// the next Record. Nothing until a capture has run.
+    fn paint_capture_timer(&self, ui: &mut Ui) {
+        let t = self.capture_timer;
+        if !t.running && t.shown_s <= 0.0 {
+            return;
+        }
+        let color = if t.running { theme::TEXT() } else { theme::MUTED() };
+        let resp = ui
+            .add(
+                egui::Label::new(
+                    RichText::new(format_elapsed(t.shown_s)).font(FontId::monospace(11.5)).color(color),
+                )
+                .sense(Sense::hover()),
+            )
+            .on_hover_text(if t.running {
+                "How long this capture has been running"
+            } else {
+                "How long the last capture ran"
+            });
+        note_ui_rect("Timer", resp.rect);
     }
 
     /// Save as a small menu: the whole capture, the selected slice when
@@ -9040,6 +9085,16 @@ impl eframe::App for OrbitLiveApp {
                     self.needs_repaint = true;
                 }
                 self.capture_was_active = capturing_now;
+                // The capture timer: the capture clock when it is known (the
+                // live edge past the start), the viewer's clock in between.
+                let observed_s = (self.capture_start_ns > 0 && self.live_edge_ns > self.capture_start_ns)
+                    .then(|| (self.live_edge_ns - self.capture_start_ns) as f64 / 1e9);
+                capture_timer_tick(
+                    &mut self.capture_timer,
+                    capturing_now || self.status.demo,
+                    observed_s,
+                    self.now_s,
+                );
                 {
                     let _follow = devf.scope(TID_UI, NAME_TICK_FOLLOW);
                     let steal = ctx.wants_keyboard_input();
@@ -11831,6 +11886,64 @@ fn format_ns(t: f64) -> String {
     }
 }
 
+/// The capture timer's state. `base_s` is the elapsed observed on the
+/// capture clock (live edge minus capture start) at viewer time
+/// `anchored_at_s`; between observations the viewer's clock carries it, so
+/// it ticks smoothly when no event arrives, and an observation that
+/// disagrees by more than `CAPTURE_TIMER_REANCHOR_S` re-anchors it (a viewer
+/// that joined late, a stalled socket). `shown_s` is what is drawn; it
+/// freezes when the capture stops.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CaptureTimer {
+    base_s: f64,
+    anchored_at_s: f64,
+    shown_s: f64,
+    running: bool,
+}
+
+const CAPTURE_TIMER_REANCHOR_S: f64 = 0.25;
+
+fn capture_timer_tick(t: &mut CaptureTimer, capturing: bool, observed_s: Option<f64>, now_s: f64) {
+    if capturing {
+        if !t.running {
+            let start = observed_s.unwrap_or(0.0);
+            *t = CaptureTimer { base_s: start, anchored_at_s: now_s, shown_s: start, running: true };
+            return;
+        }
+        let predicted = t.base_s + (now_s - t.anchored_at_s).max(0.0);
+        if let Some(observed) = observed_s {
+            if (observed - predicted).abs() > CAPTURE_TIMER_REANCHOR_S {
+                t.base_s = observed;
+                t.anchored_at_s = now_s;
+                t.shown_s = observed;
+                return;
+            }
+        }
+        t.shown_s = predicted;
+    } else if t.running {
+        // The capture's own length when the clock is known: the last status
+        // carries the live edge, and the stop latency would overshoot it.
+        t.running = false;
+        t.shown_s = observed_s.unwrap_or(t.shown_s);
+    }
+}
+
+/// `m:ss.t` under an hour, `h:mm:ss` from there: a timer, not a duration.
+fn format_elapsed(s: f64) -> String {
+    let s = s.max(0.0);
+    let hours = (s / 3600.0).floor();
+    if hours >= 1.0 {
+        let rest = s - hours * 3600.0;
+        let minutes = (rest / 60.0).floor();
+        let seconds = (rest - minutes * 60.0).floor();
+        format!("{hours:.0}:{minutes:02.0}:{seconds:02.0}")
+    } else {
+        let minutes = (s / 60.0).floor();
+        let tenths = ((s - minutes * 60.0) * 10.0).floor() / 10.0;
+        format!("{minutes:.0}:{tenths:04.1}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12636,6 +12749,64 @@ mod tests {
         assert_eq!(hover_box_width(2000.0), 2000.0 * 0.85 - 24.0);
         assert_eq!(hover_box_width(300.0), 500.0, "a small window keeps egui's default");
         assert!(hover_box_width(1280.0) > 1000.0);
+    }
+
+    #[test]
+    fn capture_timer_runs_on_the_viewer_clock_between_observations() {
+        let mut t = CaptureTimer::default();
+        capture_timer_tick(&mut t, true, None, 10.0);
+        assert!(t.running && t.shown_s == 0.0, "starts at zero when the capture clock is unknown");
+        capture_timer_tick(&mut t, true, None, 10.5);
+        assert!((t.shown_s - 0.5).abs() < 1e-9, "the viewer's clock carries it: {}", t.shown_s);
+        // An observation close to the prediction does not re-anchor (no jitter).
+        capture_timer_tick(&mut t, true, Some(0.9), 11.0);
+        assert!((t.shown_s - 1.0).abs() < 1e-9, "{}", t.shown_s);
+        assert_eq!(t.anchored_at_s, 10.0);
+    }
+
+    #[test]
+    fn capture_timer_reanchors_on_a_capture_clock_that_disagrees() {
+        // A viewer that joins a capture already 40 s old.
+        let mut t = CaptureTimer::default();
+        capture_timer_tick(&mut t, true, Some(40.0), 100.0);
+        assert_eq!(t.shown_s, 40.0);
+        capture_timer_tick(&mut t, true, Some(40.2), 100.2);
+        assert!((t.shown_s - 40.2).abs() < 1e-9);
+        // The socket stalled for a while: the capture clock says more.
+        capture_timer_tick(&mut t, true, Some(45.0), 101.0);
+        assert_eq!((t.shown_s, t.base_s, t.anchored_at_s), (45.0, 45.0, 101.0));
+    }
+
+    #[test]
+    fn capture_timer_freezes_at_the_captures_length_when_it_stops() {
+        let mut t = CaptureTimer::default();
+        capture_timer_tick(&mut t, true, Some(0.0), 0.0);
+        capture_timer_tick(&mut t, true, Some(5.9), 6.0);
+        capture_timer_tick(&mut t, false, Some(6.1), 6.3);
+        assert!(!t.running);
+        assert_eq!(t.shown_s, 6.1, "the capture clock's length, not the stop latency");
+        capture_timer_tick(&mut t, false, Some(6.1), 9.0);
+        assert_eq!(t.shown_s, 6.1, "frozen");
+        // Without a capture clock (the demo) the shown value is what stays.
+        let mut d = CaptureTimer::default();
+        capture_timer_tick(&mut d, true, None, 0.0);
+        capture_timer_tick(&mut d, true, None, 3.0);
+        capture_timer_tick(&mut d, false, None, 3.1);
+        assert_eq!(d.shown_s, 3.0);
+        // A new capture restarts from zero.
+        d = CaptureTimer::default();
+        capture_timer_tick(&mut d, true, Some(0.05), 20.0);
+        assert!(d.running && d.shown_s < 0.1);
+    }
+
+    #[test]
+    fn elapsed_reads_like_a_stopwatch() {
+        assert_eq!(format_elapsed(0.0), "0:00.0");
+        assert_eq!(format_elapsed(7.34), "0:07.3");
+        assert_eq!(format_elapsed(65.0), "1:05.0");
+        assert_eq!(format_elapsed(59.99), "0:59.9");
+        assert_eq!(format_elapsed(3725.2), "1:02:05");
+        assert_eq!(format_elapsed(-1.0), "0:00.0");
     }
 
     #[test]

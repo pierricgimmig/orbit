@@ -29,6 +29,11 @@ pub struct StatusJson {
     /// Demo/capture producer clock. Not ring newest_end (pid 2/3).
     #[serde(default)]
     pub live_end_ns: u64,
+    /// When the running (or last) capture began on its clock; 0 until the
+    /// service says. A viewer that connects mid-capture gets no
+    /// `CaptureStarted`, so this is how it learns the origin.
+    #[serde(default)]
+    pub capture_start_ns: u64,
     /// The batch format on the WebSocket, as the server names it.
     #[serde(default)]
     pub wire: String,
