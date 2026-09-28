@@ -64,6 +64,14 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   pulsing square on red to stop. The X key does the same. It captures the
   selected process, or everything the service sees when none is selected.
   Screenshot: `02-capture-live.png`.
+- **Capture timer.** Right of Record, `m:ss.t` (`h:mm:ss` past an hour):
+  how long the capture has been running, on the capture's own clock (the
+  live edge past `capture_start_ns`, carried by the viewer's clock between
+  frames so it never stalls); after Stop it stays, greyed, at the length
+  the capture had, until Clear or the next Record. Nothing is shown before
+  the first capture. `capture_elapsed` in `window.__orbit_sel`, label
+  `Timer` in `window.__orbit_ui`; the `capture-scheduling` scenario checks
+  that it advances while capturing and freezes after Stop.
 - **Open** opens a saved Orbit capture (`.orbit.zip`) or a Chrome trace
   (`.json` / `.json.gz`); dropping the file on the page does the same.
   Screenshot: `17-opened-slice.png` (a slice reopened through the API).
