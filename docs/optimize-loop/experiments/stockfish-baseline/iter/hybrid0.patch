@@ -1,0 +1,13 @@
+diff --git a/src/nnue/nnue_accumulator.cpp b/src/nnue/nnue_accumulator.cpp
+index b7fb950..47f965b 100644
+--- a/src/nnue/nnue_accumulator.cpp
++++ b/src/nnue/nnue_accumulator.cpp
+@@ -113,7 +113,7 @@ void AccumulatorStack::evaluate_side(Color                     perspective,
+                                      AccumulatorCaches&        cache,
+                                      usize                     last_usable_accum) noexcept {
+ 
+-    constexpr int MIN_PC_COUNT_HYBRID = 15;
++    constexpr int MIN_PC_COUNT_HYBRID = 0;
+ 
+     if (accumulators[last_usable_accum].computed[perspective])
+         forward_update_incremental(perspective, pos, featureTransformer, last_usable_accum);

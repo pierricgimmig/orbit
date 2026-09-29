@@ -1,0 +1,26 @@
+diff --git a/src/position.cpp b/src/position.cpp
+index 51a10b5..63c608a 100644
+--- a/src/position.cpp
++++ b/src/position.cpp
+@@ -1005,7 +1005,7 @@ void Position::do_move(Move                      m,
+     }
+ 
+     if (tt)
+-        prefetch(tt->first_entry(adjust_key50(k)));
++        prefetch<PrefetchRw::READ, PrefetchLoc::NONE>(tt->first_entry(adjust_key50(k)));
+     // Update the key with the final value
+     st->key = k;
+ 
+diff --git a/src/search.cpp b/src/search.cpp
+index 0033e59..741ce2f 100644
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -653,7 +653,7 @@ void Search::Worker::do_move(
+     // prefetch_key() does not model castling, en passant or promotion exactly.
+     // The correction-history prefetches also approximate castling and promotion.
+     // For these rare moves the prefetches land on unused lines.
+-    prefetch(tt.first_entry(pos.prefetch_key(move)));
++    prefetch<PrefetchRw::READ, PrefetchLoc::NONE>(tt.first_entry(pos.prefetch_key(move)));
+ 
+     bool capture = pos.capture_stage(move);
+ 

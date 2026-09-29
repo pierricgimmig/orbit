@@ -1,0 +1,276 @@
+{
+ "binary": "/home/pierric/git/stockfish/src/stockfish",
+ "args": [
+  "bench",
+  "256",
+  "4",
+  "22"
+ ],
+ "seconds": 10.0,
+ "hooks": [
+  {
+   "query": "6Engine2goE",
+   "function_id": 258691922637117,
+   "name": "_ZN9Stockfish6Engine2goERNS_6Search10LimitsTypeE",
+   "candidates": [
+    "_ZN9Stockfish6Engine2goERNS_6Search10LimitsTypeE",
+    "_ZN9Stockfish6Engine2goERNS_6Search10LimitsTypeE.cold"
+   ]
+  },
+  {
+   "query": "start_thinking",
+   "function_id": 102608903168133,
+   "name": "_ZNSt17_Function_handlerIFvvEZN9Stockfish10ThreadPool14start_thinkingERKNS1_10OptionsMapERNS1_8PositionERSt10unique_ptrISt5dequeINS1_9StateInfoESaISA_EESt14default_deleteISC_EENS1_6Search10LimitsTypeEEUlvE_E9_M_invokeERKSt9_Any_data",
+   "candidates": [
+    "_ZNSt17_Function_handlerIFvvEZN9Stockfish10ThreadPool14start_thinkingERKNS1_10OptionsMapERNS1_8PositionERSt10unique_ptrISt5dequeINS1_9StateInfoESaISA_EESt14default_deleteISC_EENS1_6Search10LimitsTypeEEUlvE_E9_M_invokeERKSt9_Any_data",
+    "_ZNSt17_Function_handlerIFvvEZN9Stockfish10ThreadPool14start_thinkingERKNS1_10OptionsMapERNS1_8PositionERSt10unique_ptrISt5dequeINS1_9StateInfoESaISA_EESt14default_deleteISC_EENS1_6Search10LimitsTypeEEUlvE_E10_M_managerERSt9_Any_dataRKSL_St18_Manager_operation"
+   ]
+  },
+  {
+   "query": "iterative_deepening",
+   "function_id": 202971716119270,
+   "name": "_ZN9Stockfish6Search6Worker19iterative_deepeningEv",
+   "candidates": [
+    "_ZN9Stockfish6Search6Worker19iterative_deepeningEv"
+   ]
+  },
+  {
+   "query": "6searchILNS_8NodeTypeE2",
+   "function_id": 39815738463313,
+   "name": "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE2EEEiRNS_8PositionEPNS0_5StackEiiib.constprop.0",
+   "candidates": [
+    "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE2EEEiRNS_8PositionEPNS0_5StackEiiib.constprop.0",
+    "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE2EEEiRNS_8PositionEPNS0_5StackEiiib.constprop.0.cold"
+   ]
+  }
+ ],
+ "wall_s": 11.4,
+ "status": {
+  "capturing": false,
+  "demo": false,
+  "events_live": 707270,
+  "events_capacity": 8388608,
+  "dropped": 0,
+  "spilled": 0,
+  "produced": 707270,
+  "oldest_start_ns": 1899604683027232,
+  "newest_end_ns": 1899614543611982,
+  "live_end_ns": 1899614641181913,
+  "ring_bytes": 268435456,
+  "spill_path": null,
+  "http_bind": "127.0.0.1:38147",
+  "machine": "local",
+  "hooks": true,
+  "instrumentation": "instrumenting 4 of 4 functions (256 probes); 2170 calls; 0 duplicate entries dropped, 0 entries with no return discarded, 0 returns with no entry dropped",
+  "wire": "packed",
+  "capture_start_ns": 1899604516106080,
+  "dropped_before_start": 0,
+  "target_pid": 3352473,
+  "service_pid": 3352438
+ },
+ "samples": 26056,
+ "top": [
+  [
+   37.36,
+   37.36,
+   "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L14apply_combinedENS_5ColorERKNS1_18FeatureTransformerERKNS1_16AccumulatorStateERS7_RKNS_9ValueListItLm32EEESE_RKNSB_ItLm256EEESH_"
+  ],
+  [
+   9.98,
+   9.98,
+   "_ZNK9Stockfish4Eval4NNUE19NetworkArchitecture9propagateEPKhRKNS1_7NNZInfoILm1024EEE"
+  ],
+  [
+   7.45,
+   98.65,
+   "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE0EEEiRNS_8PositionEPNS0_5StackEiiib"
+  ],
+  [
+   6.64,
+   12.57,
+   "_ZN9Stockfish10MovePicker9next_moveEv"
+  ],
+  [
+   4.57,
+   4.57,
+   "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L32update_accumulator_refresh_cacheENS_5ColorERKNS1_18FeatureTransformerERKNS_8PositionERNS1_16AccumulatorStateERNS1_17AccumulatorCachesE"
+  ],
+  [
+   3.39,
+   3.39,
+   "_ZN9Stockfish12_GLOBAL__N_1L22partial_insertion_sortEPNS_7ExtMoveES2_i"
+  ],
+  [
+   3.16,
+   38.28,
+   "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L35update_accumulator_incremental_bothERKNS1_18FeatureTransformerENS_6SquareES6_RNS1_16AccumulatorStateERKS7_"
+  ],
+  [
+   2.7,
+   2.73,
+   "_ZN9Stockfish4Eval4NNUE12_GLOBAL__N_1L25update_accumulator_hybridENS_5ColorERKNS_8PositionERKNS1_18FeatureTransformerERNS1_16AccumulatorStateERKSA_RNS1_17AccumulatorCachesE"
+  ],
+  [
+   2.32,
+   2.32,
+   "_ZNK9Stockfish18TranspositionTable5probeEm"
+  ],
+  [
+   2.19,
+   2.71,
+   "_ZNK9Stockfish8Position20update_piece_threatsILb1EEEvNS_5PieceEbNS_6SquareEPNS_12DirtyThreatsEm"
+  ],
+  [
+   1.96,
+   7.3,
+   "_ZN9Stockfish8Position7do_moveENS_4MoveERNS_9StateInfoEbRNS_7DirtiesEPKNS_18TranspositionTableEPKNS_15SharedHistoriesE"
+  ],
+  [
+   1.84,
+   1.84,
+   "_ZN9Stockfish12_GLOBAL__N_1L16correction_valueERKNS_6Search6WorkerERKNS_8PositionEPKNS1_5StackE"
+  ],
+  [
+   1.81,
+   60.5,
+   "_ZNK9Stockfish4Eval4NNUE7Network8evaluateERKNS_8PositionERNS1_16AccumulatorStackERNS1_17AccumulatorCachesE"
+  ],
+  [
+   1.47,
+   2.15,
+   "_ZNK9Stockfish8Position6see_geENS_4MoveEi"
+  ],
+  [
+   1.09,
+   8.27,
+   "_ZN9Stockfish6Search6Worker7do_moveERNS_8PositionENS_4MoveERNS_9StateInfoEbPNS0_5StackE"
+  ],
+  [
+   0.92,
+   0.92,
+   "_ZNK9Stockfish8Position22update_slider_blockersENS_5ColorE"
+  ],
+  [
+   0.89,
+   0.89,
+   "_ZNK9Stockfish8Position20update_piece_threatsILb0EEEvNS_5PieceEbNS_6SquareEPNS_12DirtyThreatsEm.constprop.0"
+  ],
+  [
+   0.8,
+   0.8,
+   "_ZN9Stockfish12_GLOBAL__N_1L29update_continuation_historiesEPNS_6Search5StackENS_5PieceENS_6SquareEi"
+  ],
+  [
+   0.77,
+   0.77,
+   "_ZNK9Stockfish7Attacks9DualMagic15both_attacks_bbEm"
+  ],
+  [
+   0.67,
+   27.51,
+   "_ZN9Stockfish6Search6Worker7qsearchILNS_8NodeTypeE0EEEiRNS_8PositionEPNS0_5StackEii"
+  ],
+  [
+   0.64,
+   61.14,
+   "_ZN9Stockfish6Search6Worker8evaluateERKNS_8PositionE"
+  ],
+  [
+   0.62,
+   0.62,
+   "_ZNK9Stockfish8Position12attackers_toENS_6SquareEm"
+  ],
+  [
+   0.58,
+   1.48,
+   "_ZNK9Stockfish8Position14set_check_infoEv"
+  ],
+  [
+   0.58,
+   0.58,
+   "_ZNK9Stockfish8Position11gives_checkENS_4MoveE"
+  ],
+  [
+   0.54,
+   0.54,
+   "_ZN9Stockfish4Eval4NNUE8Features11HalfKAv2_hm22append_changed_indicesENS_5ColorENS_6SquareERKNS_10DirtyPieceERNS_9ValueListItLm32EEESB_.isra.0"
+  ],
+  [
+   0.51,
+   0.79,
+   "_ZNK9Stockfish8Position5legalENS_4MoveE"
+  ],
+  [
+   0.4,
+   0.4,
+   "_ZN9Stockfish8Position9undo_moveENS_4MoveE"
+  ],
+  [
+   0.38,
+   0.38,
+   "_ZN9Stockfish12_GLOBAL__N_1L14generate_movesILNS_5ColorE0ELNS_9PieceTypeE4EEEPNS_4MoveERKNS_8PositionES5_m"
+  ],
+  [
+   0.34,
+   0.34,
+   "_ZN9Stockfish12_GLOBAL__N_1L14generate_movesILNS_5ColorE1ELNS_9PieceTypeE4EEEPNS_4MoveERKNS_8PositionES5_m"
+  ],
+  [
+   0.29,
+   88.45,
+   "_ZN9Stockfish6Search6Worker6searchILNS_8NodeTypeE1EEEiRNS_8PositionEPNS0_5StackEiiib.constprop.0"
+  ],
+  [
+   0.29,
+   0.29,
+   "_ZNK9Stockfish8Position18attackers_to_existENS_6SquareEmNS_5ColorE"
+  ],
+  [
+   0.21,
+   0.21,
+   "_ZN9Stockfish7TTEntry4saveEmibNS_5BoundEiNS_4MoveEih"
+  ],
+  [
+   0.21,
+   0.66,
+   "_ZN9Stockfish12_GLOBAL__N_1L16update_all_statsERKNS_8PositionEPNS_6Search5StackERNS4_6WorkerENS_4MoveENS_6SquareERNS_9ValueListIS9_Lm32EEESD_iS9_b"
+  ],
+  [
+   0.2,
+   0.2,
+   "_ZN9Stockfish12_GLOBAL__N_1L14generate_movesILNS_5ColorE0ELNS_9PieceTypeE3EEEPNS_4MoveERKNS_8PositionES5_m"
+  ],
+  [
+   0.2,
+   0.2,
+   "_ZN9Stockfish12_GLOBAL__N_1L14generate_movesILNS_5ColorE0ELNS_9PieceTypeE5EEEPNS_4MoveERKNS_8PositionES5_m"
+  ],
+  [
+   0.19,
+   0.19,
+   "_ZNK9Stockfish8Position19upcoming_repetitionEi"
+  ],
+  [
+   0.17,
+   0.17,
+   "_ZN9Stockfish12_GLOBAL__N_1L14generate_movesILNS_5ColorE1ELNS_9PieceTypeE3EEEPNS_4MoveERKNS_8PositionES5_m"
+  ],
+  [
+   0.15,
+   0.19,
+   "_ZNK9Stockfish8Position12pseudo_legalENS_4MoveE"
+  ],
+  [
+   0.15,
+   0.15,
+   "_ZN9Stockfish4Eval4NNUE8Features11FullThreats22append_changed_indicesENS_5ColorENS_6SquareERKNS_12DirtyThreatsERNS_9ValueListItLm256EEESB_PKaj.constprop.0"
+  ],
+  [
+   0.15,
+   0.15,
+   "_ZN9Stockfish12_GLOBAL__N_1L13value_from_ttEiii"
+  ]
+ ],
+ "stream_bytes": 13152479,
+ "bundle_bytes": 4801783
+}

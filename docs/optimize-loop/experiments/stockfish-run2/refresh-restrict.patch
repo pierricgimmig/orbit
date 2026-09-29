@@ -1,0 +1,57 @@
+diff --git a/src/nnue/nnue_accumulator.cpp b/src/nnue/nnue_accumulator.cpp
+index b7fb950..285a949 100644
+--- a/src/nnue/nnue_accumulator.cpp
++++ b/src/nnue/nnue_accumulator.cpp
+@@ -916,35 +916,46 @@ void update_accumulator_refresh_cache(Color                     perspective,
+ 
+     accumulator.computed[perspective] = true;
+ 
++    // The cache entry, the output accumulator, the index lists and the
++    // transformer weights are all distinct objects. Say so (restrict): the
++    // store back into the cache entry sits in the middle of each tile pass,
++    // and without this the compiler must assume it may have clobbered the
++    // `active` list and the weight pointers, reloading them for every one of
++    // the (hundreds of) threat features that follow.
++    i16* __restrict cacheAcc     = entry.accumulation.data();
++    i16* __restrict outAcc       = accumulator.accumulation[perspective].data();
++    i32* __restrict cachePsqt    = entry.psqtAccumulation.data();
++    i32* __restrict outPsqt      = accumulator.psqtAccumulation[perspective].data();
++
+     Tile     acc;
+     PsqtTile psqt;
+ 
+     for (IndexType j = 0; j < Dimensions; increment_index(j))
+     {
+-        acc = load_tile(j, entry.accumulation.data());
++        acc = load_tile(j, cacheAcc);
+ 
+         acc = apply_psq_features<-1>(j, acc, removed, featureTransformer);
+         acc = apply_psq_features<+1>(j, acc, added, featureTransformer);
+ 
+-        store_tile(j, &entry.accumulation[0], acc);
++        store_tile(j, cacheAcc, acc);
+ 
+         acc = apply_threat_features<+1>(j, acc, active, featureTransformer);
+ 
+-        store_tile(j, accumulator.accumulation[perspective].data(), acc);
++        store_tile(j, outAcc, acc);
+     }
+ 
+     for (IndexType j = 0; j < PSQTBuckets; increment_psqt_index(j))
+     {
+-        psqt = load_psqt(j, entry.psqtAccumulation.data());
++        psqt = load_psqt(j, cachePsqt);
+ 
+         psqt = apply_psqt<-1>(j, psqt, removed, featureTransformer.psqtWeights.data());
+         psqt = apply_psqt<+1>(j, psqt, added, featureTransformer.psqtWeights.data());
+ 
+-        store_psqt(j, entry.psqtAccumulation.data(), psqt);
++        store_psqt(j, cachePsqt, psqt);
+ 
+         psqt = apply_psqt<+1>(j, psqt, active, featureTransformer.threatAndPpPsqtWeights.data());
+ 
+-        store_psqt(j, accumulator.psqtAccumulation[perspective].data(), psqt);
++        store_psqt(j, outPsqt, psqt);
+     }
+ }
+ 

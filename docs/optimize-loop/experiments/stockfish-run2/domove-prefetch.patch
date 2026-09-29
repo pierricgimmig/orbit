@@ -1,0 +1,55 @@
+diff --git a/src/nnue/network.h b/src/nnue/network.h
+index 4bcae52..7f605f4 100644
+--- a/src/nnue/network.h
++++ b/src/nnue/network.h
+@@ -78,6 +78,19 @@ class Network {
+                                  AccumulatorStack&  accumulatorStack,
+                                  AccumulatorCaches& cache) const;
+ 
++    // Pull the piece-square weight column of (perspective, square, piece) into
++    // cache. The table is far larger than L3 and the accumulator update reads
++    // each changed column from cold on almost every node; calling this from
++    // the search's do_move, well before evaluate(), gives the loads lead time.
++    void prefetch_psq_column(Color perspective, Square s, Piece pc, Square ksq) const {
++        const IndexType idx = PSQFeatureSet::make_index(perspective, s, pc, ksq);
++        const char*     col = reinterpret_cast<const char*>(
++          &featureTransformer.weights[usize(idx) * FeatureTransformer::OutputDimensions]);
++        for (usize off = 0; off < FeatureTransformer::OutputDimensions * sizeof(WeightType);
++             off += CacheLineSize)
++            prefetch<PrefetchRw::READ, PrefetchLoc::LOW>(col + off);
++    }
++
+     void load_external(const std::filesystem::path&, const std::filesystem::path&, EvalFile&);
+     void load_internal(EvalFile&);
+ 
+diff --git a/src/search.cpp b/src/search.cpp
+index 0033e59..bf3512b 100644
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -665,6 +665,26 @@ void Search::Worker::do_move(
+         prefetch(&(*(ss - 1)->continuationCorrectionHistory)[pc][to]);
+         prefetch(&(*(ss - 3)->continuationCorrectionHistory)[pc][to]);
+         prefetch(&(*(ss - 5)->continuationCorrectionHistory)[pc][to]);
++
++        // NNUE piece-square weight columns the accumulator update will read
++        // for this move: the moved piece leaving `from` and landing on `to`,
++        // seen from both perspectives, and a captured piece. King moves
++        // refresh instead of update, and promotions / en passant land on
++        // unused lines, like the prefetches above.
++        if (type_of(pc) != KING)
++        {
++            const Square                from = move.from_sq();
++            const Piece                 captured = capture ? pos.piece_on(to) : NO_PIECE;
++            const Eval::NNUE::Network& net = network[numaAccessToken];
++            for (Color c : {WHITE, BLACK})
++            {
++                const Square ksq = pos.square<KING>(c);
++                net.prefetch_psq_column(c, from, pc, ksq);
++                net.prefetch_psq_column(c, to, pc, ksq);
++                if (captured != NO_PIECE)
++                    net.prefetch_psq_column(c, to, captured, ksq);
++            }
++        }
+     }
+ 
+     ++nodes;
