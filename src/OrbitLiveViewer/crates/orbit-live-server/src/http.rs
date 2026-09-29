@@ -58,6 +58,7 @@ pub fn router(service: Arc<LiveService>) -> Router {
         .route("/api/bench/stop", post(bench_stop))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/auto_profile", post(auto_profile))
         .route("/api/frame", get(frame))
         .route("/api/timeline", get(timeline))
         .route("/api/sampling/report", get(sampling_report))
@@ -264,6 +265,9 @@ struct StatusBody {
     instrumentation: String,
     /// JSON summary of a target crash blamed on a hook, empty when none.
     hook_crash: String,
+    /// Auto-profiling is on, and what it is doing (null before it runs).
+    auto_profile: bool,
+    auto_profile_status: serde_json::Value,
     /// The event batch format on the WebSocket: raw, packed or deflate.
     wire: &'static str,
     /// The service's log file, where the viewer's own lines also end up.
@@ -300,6 +304,8 @@ impl StatusBody {
             hooks: svc.has_hooks(),
             instrumentation: svc.instrumentation_status(),
             hook_crash: svc.hook_crash(),
+            auto_profile: svc.auto_profile(),
+            auto_profile_status: svc.auto_profile_status(),
             // From the guard already held: `svc.wire()` would take the same
             // lock again and hang the status route.
             wire: cfg.wire.name(),
@@ -790,6 +796,10 @@ pub struct StartBody {
     /// persisted setting applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_hook_calls_per_s: Option<u64>,
+    /// Start with auto-profiling on: the service samples, hooks what the
+    /// samples point at, and prunes it to a scopes-a-second budget.
+    #[serde(default)]
+    pub auto_profile: bool,
 }
 
 fn default_true() -> bool {
@@ -823,6 +833,9 @@ async fn capture_start(
     // pid 0 is a capture without a target: the scheduler, the service, and
     // every process instrumenting itself.
     let json = body.to_json();
+    // Each Record says whether its capture auto-profiles; set before the
+    // loop starts so its first pass already knows.
+    svc.set_auto_profile(body.auto_profile);
     match hooks_clone(&svc) {
         Some(h) => {
             let result = tokio::task::spawn_blocking(move || (h.start_capture)(&json)).await;
@@ -1066,6 +1079,18 @@ impl ConfigBody {
 }
 
 /// The persisted user settings (`settings.rs`).
+#[derive(Deserialize)]
+struct AutoProfileBody {
+    on: bool,
+}
+
+/// Turns auto-profiling on or off, for the capture running now and the next
+/// ones. Off leaves whatever it hooked as it stands.
+async fn auto_profile(State(svc): State<Arc<LiveService>>, Json(body): Json<AutoProfileBody>) -> Response {
+    svc.set_auto_profile(body.on);
+    Json(serde_json::json!({ "on": body.on, "status": svc.auto_profile_status() })).into_response()
+}
+
 async fn get_settings(State(svc): State<Arc<LiveService>>) -> Json<crate::Settings> {
     Json(svc.settings())
 }

@@ -794,6 +794,58 @@ def instrumentation(run):
     return f"{message}; {spans} hooked spans, longest {longest/1e6:.2f} ms"
 
 
+@scenario("auto-profile", "Auto-profiling hooks what the samples point at, prunes the hot ones and stays under its budget")
+def auto_profile(run):
+    run.load_symbols()
+    budget = run.service.get("/api/settings").get("auto_profile_scopes_per_s", 1000)
+    # No function picked: the service chooses. Kernel uprobes, whatever the
+    # method says, since only they can be armed mid-capture.
+    run.capture(seconds=0.5, auto_profile=True)
+    seen_log, hooked_max, statuses = [], 0, []
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        status = run.service.get("/api/status")
+        auto = status.get("auto_profile_status") or {}
+        statuses.append(auto)
+        for line in auto.get("log", []):
+            if line not in seen_log:
+                seen_log.append(line)
+        hooked_max = max(hooked_max, len(auto.get("hooked", [])))
+        if any("Permission denied" in l or "Operation not permitted" in l for l in seen_log):
+            run.stop_capture()
+            return "skipped: uprobes need CAP_SYS_ADMIN (run with --sudo)"
+        if auto.get("converged") and any("too hot" in l or "call-rate" in l for l in seen_log):
+            break
+        time.sleep(1.0)
+    check(status.get("auto_profile"), "the capture should say auto-profiling is on")
+    last = statuses[-1]
+    check_at_least(hooked_max, 1, f"functions auto-hooked (log: {seen_log[-6:]})")
+    check(last.get("total_per_s", 0) <= budget,
+          f"the hooked set costs {last.get('total_per_s')} scopes/s, over the {budget} budget")
+    check(any(l.startswith("unhooked") and ("too hot" in l or "call-rate" in l) for l in seen_log),
+          f"a hot function should have been unhooked: {seen_log}")
+    check(run.target.proc.poll() is None, "the target must survive auto-profiling")
+    if run.chrome is not None:
+        run.open_viewer("?collapse=scheduler")
+        run.shot("50-auto-profile", settle=2.0)
+    # Off: the hooks stay as they are. Read the set once the switch took
+    # (the status says on: false), so a step just before it is not a change.
+    run.service.post("/api/auto_profile", {"on": False})
+    off = run.wait_for(
+        lambda: (lambda a: a if a.get("on") is False else None)(run.service.get("/api/status").get("auto_profile_status") or {}),
+        "the status to say auto-profiling is off", timeout=10,
+    )
+    kept = sorted(h["name"] for h in off.get("hooked", []))
+    time.sleep(4.5)
+    after = run.service.get("/api/status")
+    still = sorted(h["name"] for h in (after.get("auto_profile_status") or {}).get("hooked", []))
+    check(not after.get("auto_profile"), "switched off")
+    check(still == kept, f"switching it off should leave the hooks as they were: {kept} -> {still}")
+    run.stop_capture()
+    return (f"{hooked_max} hooked at most, {len(kept)} kept at {last.get('total_per_s', 0):.0f} of {budget} scopes/s "
+            f"after {last.get('step')} steps; {sum(l.startswith('unhooked') for l in seen_log)} unhooked")
+
+
 @scenario("target-exits", "A capture ends when its target dies, and the viewer does not keep re-selecting the dead pid")
 def target_exits(run):
     # A throwaway process of our own, so killing it costs the other scenarios

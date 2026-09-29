@@ -63,6 +63,13 @@ pub struct StatusJson {
     /// function. See the service's `hook_journal`.
     #[serde(default)]
     pub hook_crash: String,
+    /// Auto-profiling is on, and what it is doing: step, budget, the scopes a
+    /// second it costs, the hooked set and its last actions (null before it
+    /// runs). See the service's `auto_profile.rs`.
+    #[serde(default)]
+    pub auto_profile: bool,
+    #[serde(default)]
+    pub auto_profile_status: serde_json::Value,
 }
 
 fn default_machine() -> String {
@@ -255,6 +262,7 @@ pub struct CaptureStart {
     pub instrumented_function_ids: Vec<u64>,
     pub show_all_processes: bool,
     pub uprobe_duplicate_filter: bool,
+    pub auto_profile: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -668,6 +676,14 @@ mod wasm_impl {
             self.send("PUT", "/api/settings", settings.to_string());
         }
 
+        /// Auto-profiling on or off for the running capture (and the next).
+        pub fn set_auto_profile(&self, on: bool) {
+            if self.offline {
+                return;
+            }
+            self.send("POST", "/api/auto_profile", format!(r#"{{"on":{on}}}"#));
+        }
+
         pub fn get_status(&self) {
             if self.offline {
                 return;
@@ -763,7 +779,7 @@ mod wasm_impl {
                 .collect::<Vec<_>>()
                 .join(",");
             let body = format!(
-                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}],"show_all_processes":{},"uprobe_duplicate_filter":{}}}"#,
+                r#"{{"pid":{},"enable_api":{},"context_switches":{},"thread_states":{},"sampling":{},"samples_per_second":{},"unwinding":"{}","dynamic_instrumentation_method":"{}","instrumented_functions":[{fns}],"show_all_processes":{},"uprobe_duplicate_filter":{},"auto_profile":{}}}"#,
                 req.pid,
                 req.enable_api,
                 req.context_switches,
@@ -774,6 +790,7 @@ mod wasm_impl {
                 json_escape(&req.dynamic_instrumentation_method),
                 req.show_all_processes,
                 req.uprobe_duplicate_filter,
+                req.auto_profile,
             );
             self.send("POST", "/api/capture/start", body);
         }
@@ -1397,6 +1414,7 @@ mod native_impl {
         pub fn get_status(&self) {}
         pub fn get_settings(&self) {}
         pub fn put_settings(&self, _settings: &serde_json::Value) {}
+        pub fn set_auto_profile(&self, _on: bool) {}
         pub fn reconnect_ws_if_closed(&self) {}
         pub fn get_sampling_report(&self, _ranges: &[(u64, u64, Option<u32>)]) {}
         pub fn get_sampling_report_scope(&self, _name_id: u32) {}
