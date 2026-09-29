@@ -377,6 +377,16 @@ fn wants_duplicate_filter(body: &str) -> bool {
         .unwrap_or(true)
 }
 
+/// Whether the capture asked Orbit to hook a detected AI framework's hot
+/// entry points automatically (`auto_hook_ai`). Absent means no: hooks are
+/// placed only when asked, so a capture never surprises the target.
+fn wants_auto_hook_ai(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value.get("auto_hook_ai").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
+}
+
 /// The function ids and method the viewer put in the capture request.
 fn hook_request(body: &str) -> (Vec<u64>, String) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -2022,12 +2032,18 @@ pub fn run_on(
             let show_all_processes = wants_all_processes(body);
             let uprobe_duplicate_filter = wants_duplicate_filter(body);
             let max_hook_calls_per_s = max_hook_calls_per_s(body, &start_service);
+            // Zero-code AI: detect the target's framework / GPU from its
+            // loaded modules and open devices, and -- only if the request
+            // opted in -- hook the framework's hot entry points automatically,
+            // so a training loop shows up as named scopes with nothing picked.
+            let auto_hook_ai = wants_auto_hook_ai(body);
+            let ai = if pid > 0 { crate::ai_detect::detect(pid as u32) } else { Default::default() };
             let mut hooks = Vec::new();
             // Per-hook size and safety verdict, in the same order as `hooks`,
             // gathered while the index is here so the crash journal can name a
             // suspect without re-reading symbols.
             let mut hook_meta: Vec<(u64, crate::hook_safety::HookSafety)> = Vec::new();
-            if !ids.is_empty() {
+            if !ids.is_empty() || (auto_hook_ai && !ai.frameworks.is_empty()) {
                 // The index for this process, loading it now if the viewer
                 // never asked (a hook picked from a report needs no search
                 // first). A few hundred milliseconds at most, once.
@@ -2036,7 +2052,7 @@ pub fn run_on(
                     .ok()
                     .and_then(|state| (state.pid == pid as u32).then(|| state.index.clone()).flatten());
                 if index.is_none() && pid > 0 {
-                    log::info!("loading symbols for pid {pid} before arming {} hook(s)", ids.len());
+                    log::info!("loading symbols for pid {pid} before arming hooks ({} picked)", ids.len());
                     let symbol_started = std::time::Instant::now();
                     let fresh = FunctionIndex::for_pid(pid);
                     if !fresh.is_empty() {
@@ -2074,14 +2090,48 @@ pub fn run_on(
                             })
                             .collect();
                         hooks = resolved;
+                        // The user's picks come first; auto-hooks fill what is
+                        // left of the cap, never displacing them.
+                        if auto_hook_ai && hooks.len() < MAX_HOOKS {
+                            let room = MAX_HOOKS - hooks.len();
+                            let extra: Vec<HookSpec> =
+                                crate::ai_detect::auto_hooks(&index, &ai.frameworks, room)
+                                    .into_iter()
+                                    .filter(|h| hooks.iter().all(|k| k.function_id != h.function_id))
+                                    .collect();
+                            if extra.is_empty() {
+                                log::info!(
+                                    "auto-hook: {} detected but none of its entry points \
+                                     resolved in the symbol index",
+                                    ai.summary()
+                                );
+                            } else {
+                                let names: Vec<&str> = extra.iter().map(|h| h.name.as_str()).collect();
+                                log::info!(
+                                    "auto-hook ({}): {} function(s): {}",
+                                    ai.summary(),
+                                    extra.len(),
+                                    names.join(", ")
+                                );
+                                // Same evidence as a pick, so the crash journal
+                                // can blame an auto-hook too.
+                                hook_meta.extend(extra.iter().map(|h| {
+                                    let size = index.by_id(h.function_id).map(|f| f.size).unwrap_or(0);
+                                    (size, index.safety_of(h.function_id))
+                                }));
+                                hooks.extend(extra);
+                            }
+                        }
                     }
                     None => log::warn!(
-                        "{} functions selected but no symbols could be loaded for pid {pid}; \
+                        "hooks requested ({} picked) but no symbols could be loaded for pid {pid}; \
                          starting without instrumentation",
                         ids.len()
                     ),
                 }
             }
+            // Explicit picks that resolved to nothing is an error the user
+            // must see; auto-hooks finding nothing is not.
             if !ids.is_empty() && hooks.is_empty() {
                 start_running.store(false, Ordering::SeqCst);
                 return Err("No selected functions could be resolved".into());
@@ -2158,6 +2208,13 @@ pub fn run_on(
                 })?;
             *worker = Some(handle);
             log::info!("capture started (pid {pid})");
+            // Publish the zero-code AI detection (made above, before the
+            // hooks) so the viewer shows the badge; empty resets a stale one
+            // from an earlier capture of a different process.
+            start_service.set_ai_status(if ai.is_ai() { ai.summary() } else { String::new() });
+            if ai.is_ai() {
+                log::info!("pid {pid} looks like an AI workload: {}", ai.summary());
+            }
             Ok(())
         }),
         stop_capture: Arc::new(move || {

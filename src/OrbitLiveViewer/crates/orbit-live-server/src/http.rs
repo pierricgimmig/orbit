@@ -264,6 +264,9 @@ struct StatusBody {
     instrumentation: String,
     /// JSON summary of a target crash blamed on a hook, empty when none.
     hook_crash: String,
+    /// Zero-code AI detection of the capture's target -- its framework and
+    /// GPU stack, read from loaded modules and open devices; empty when none.
+    ai: String,
     /// The event batch format on the WebSocket: raw, packed or deflate.
     wire: &'static str,
     /// The service's log file, where the viewer's own lines also end up.
@@ -300,6 +303,7 @@ impl StatusBody {
             hooks: svc.has_hooks(),
             instrumentation: svc.instrumentation_status(),
             hook_crash: svc.hook_crash(),
+            ai: svc.ai_status(),
             // From the guard already held: `svc.wire()` would take the same
             // lock again and hang the status route.
             wire: cfg.wire.name(),

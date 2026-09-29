@@ -2817,6 +2817,7 @@ impl OrbitLiveApp {
                     // no control state; keep what /api/status last said.
                     instrumentation: self.status.instrumentation.clone(),
                     hook_crash: self.status.hook_crash.clone(),
+                    ai: self.status.ai.clone(),
                     wire: self.status.wire.clone(),
                 });
                 // An opened capture is all here once the service reports it
@@ -3633,6 +3634,21 @@ impl OrbitLiveApp {
             }
             if n > 0 && pill(ui, "Unhook all", false).clicked() {
                 self.selected_hooks.clear();
+            }
+            // What the target is, found without touching it: the AI badge.
+            // Its own line and colour so "PyTorch + NVIDIA GPU (CUDA)" reads
+            // at a glance, not buried in the instrumentation status.
+            if !self.status.ai.is_empty() {
+                ui.label(
+                    RichText::new(format!("AI: {}", self.status.ai))
+                        .size(11.0)
+                        .color(Color32::from_rgb(0x66, 0xBB, 0x6A)),
+                )
+                .on_hover_text(
+                    "Detected from the process's loaded libraries and open GPU devices -- \
+                     no attach, no code change. A capture request with auto_hook_ai: true \
+                     also hooks the framework's hot entry points.",
+                );
             }
             // What actually happened to the hooked functions. Uprobes need
             // CAP_PERFMON, so "nothing was armed" is a normal outcome that has
