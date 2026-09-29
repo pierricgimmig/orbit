@@ -102,7 +102,7 @@ will not invent a performance win from that. `--proposal auto` applies a
 labeled **no-op** when hotspots look poor.
 
 Better sampling: `kernel.perf_event_paranoid` ≤ 1 (≤ 0 system-wide);
-`setcap cap_perfmon,cap_sys_ptrace+ep` on `orbit-service`; attach after
+run the service through the `tools/sudo` wrapper (`tools/sudo/install.sh`) for hooks; attach after
 the child is in its hot path.
 
 ## API keys
