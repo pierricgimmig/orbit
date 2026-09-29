@@ -44,7 +44,12 @@ def _as_cmd(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, list):
-        return [str(x) for x in value]
+        cmd = [str(x) for x in value]
+        # a script path given relative to this repo (tools/optimize-loop/examples/…)
+        # would otherwise be resolved against the target project's workdir
+        if cmd and "/" in cmd[0] and not Path(cmd[0]).is_absolute() and (ROOT / cmd[0]).is_file():
+            cmd[0] = str(ROOT / cmd[0])
+        return cmd
     raise SystemExit(f"command must be a string or list, got {type(value)}")
 
 

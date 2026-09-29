@@ -63,7 +63,8 @@ def main():
         hooks = []
     try:
         wait_http(base)
-        tgt = subprocess.Popen([binary, *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # output is never read: a pipe would fill and block the target mid-capture
+        tgt = subprocess.Popen([binary, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.4)
         pid = tgt.pid
         jget(base, "/api/symbols/load", "POST", {"pid": pid})

@@ -111,8 +111,9 @@ def _spawn_workload(
         cmd,
         cwd=cwd,
         env=_merged_env(env),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        # nobody reads the workload's output: a pipe would fill and block it mid-profile
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         text=True,
     )
 
