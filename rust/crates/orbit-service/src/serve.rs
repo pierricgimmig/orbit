@@ -357,6 +357,29 @@ fn hooks_from_ids(index: &FunctionIndex, ids: &[u64]) -> (Vec<HookSpec>, Vec<Str
     (hooks, unknown)
 }
 
+/// The log lines naming what a capture is about to hook: a header with the
+/// engine and the count, then one line per function with where it lives.
+/// Before this, a log said how many hooks armed but never which, and the
+/// request line that carried the ids was cut off before them.
+fn hook_list_lines(pid: i32, engine: crate::frida::Engine, hooks: &[HookSpec], sizes: &[u64]) -> Vec<String> {
+    let method = match engine {
+        crate::frida::Engine::Frida => "Frida",
+        crate::frida::Engine::Uprobes => "uprobes",
+    };
+    let mut lines = vec![format!("hooking {} function(s) in pid {pid} with {method}:", hooks.len())];
+    for (i, hook) in hooks.iter().enumerate() {
+        let module = std::path::Path::new(&hook.module_path)
+            .file_name()
+            .map_or(hook.module_path.as_str(), |name| name.to_str().unwrap_or_default());
+        let size = match sizes.get(i) {
+            Some(&size) if size > 0 => format!(", {size} bytes"),
+            _ => String::new(),
+        };
+        lines.push(format!("  {}. {} ({module} +{:#x}{size})", i + 1, hook.name, hook.file_offset));
+    }
+    lines
+}
+
 /// Whether the capture asked to see every process on the machine.
 ///
 /// Absent means no, which is what an older viewer sends: the narrow view is
@@ -2088,6 +2111,12 @@ pub fn run_on(
             }
             hooks.truncate(MAX_HOOKS);
             hook_meta.truncate(hooks.len());
+            if !hooks.is_empty() {
+                let sizes: Vec<u64> = hook_meta.iter().map(|(size, _)| *size).collect();
+                for line in hook_list_lines(pid, engine, &hooks, &sizes) {
+                    log::info!("{line}");
+                }
+            }
             // The armed set with its evidence, for the crash journal.
             let armed_hooks: Vec<crate::hook_journal::ArmedHook> = hooks
                 .iter()
@@ -2237,6 +2266,26 @@ pub fn run_on(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_hook_list_names_every_function_and_where_it_lives() {
+        let hook = |name: &str, module: &str, offset| HookSpec {
+            function_id: 1,
+            module_path: module.to_string(),
+            file_offset: offset,
+            name: name.to_string(),
+        };
+        let hooks = [hook("b3World_Step", "/home/me/box3d/build/bin/samples", 0x1a2b0), hook("main", "/usr/bin/app", 0x40)];
+        let lines = hook_list_lines(1234, crate::frida::Engine::Uprobes, &hooks, &[96]);
+        assert_eq!(
+            lines,
+            [
+                "hooking 2 function(s) in pid 1234 with uprobes:",
+                "  1. b3World_Step (samples +0x1a2b0, 96 bytes)",
+                "  2. main (app +0x40)",
+            ]
+        );
+    }
+
     use super::*;
     use orbit_tracing_state::context_switches::SchedulingSlice;
 
