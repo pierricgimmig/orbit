@@ -80,15 +80,18 @@ mark in the event's flags byte. The viewer preserves it through timeline picking
 and keeps statistics and histograms separate by process, name and source, so a
 manual scope and a dynamic scope with the same name remain distinct.
 
-## Open a Chrome trace
+## Open a Chrome or Perfetto trace
 
-Drag a Chrome Trace Event Format file onto the canvas, or click **Open**
-(Ctrl/Cmd+O). Accepted files: `.json`, `.json.gz`, `.gz`, and a `.zip`
-that holds one JSON. (The catapult `theverge_trace.json` fixture in the
-tables below was the load-test file; the pill that fetched it is gone.)
-Same-origin `/?trace=/path.json` fetches that path. Loading **does not
-start Demo** — it replaces the session with a capture-like
-machine/process/thread tree from `pid`/`tid` metadata.
+Drag a Chrome Trace Event Format file or a Perfetto proto trace onto the
+canvas, or click **Open** (Ctrl/Cmd+O). Accepted files: `.json`,
+`.json.gz`, `.pftrace`, `.perfetto-trace`, `.pb`, any of those `.gz`, and a
+`.zip` that holds one of them. The format is sniffed from the first decoded
+bytes (`[` / `{` is JSON, a `0x0a` packet tag is Perfetto), not from the
+name. (The catapult `theverge_trace.json` fixture in the tables below was
+the load-test file; the pill that fetched it is gone.) Same-origin
+`/?trace=/path.pftrace` fetches that path. Loading **does not start Demo**
+— it replaces the session with a capture-like machine/process/thread tree
+from `pid`/`tid` metadata.
 
 The initial time window **fits the real timed-event cluster** (B/E/X, async,
 counters — not `ph=M` at ts=0). **Home** or **double-click the ruler** fits
@@ -114,6 +117,43 @@ hover string keyed by intern id. `systemTraceEvents` is ingested when it is
 an event array or a Linux/Android `tracing_mark_write` string (theverge’s
 field is an empty list).
 
+### Perfetto proto traces
+
+A `.pftrace` is a stream of length-delimited `TracePacket`s. The crate walks
+them with a schema-less protobuf reader (`orbit-live-chrome/src/proto.rs`,
+no protoc, no generated code) and feeds the **same ingestor** the JSON path
+uses, so lanes, pairing, naming and hover args come out the same way.
+Timestamps are converted to the trace clock (BOOTTIME, or the snapshot's
+`primary_trace_clock`) through `clock_snapshot`, including Chrome's
+incremental sequence-scoped µs clocks.
+
+| Perfetto packet | Live viewer |
+|---|---|
+| `track_event` slice begin/end/instant on a thread track | `B`/`E`/`I` on that pid/tid |
+| ... on a process, global or named child track | nestable async `b`/`e`/`n`, one lane per **track name**; Chrome's unnamed per-id tracks lane by event name |
+| `track_event` counter, `counter` tracks (`unit_multiplier`, `is_incremental`) | `C` value series named by the track |
+| `chrome_histogram_sample` | `C` value series named by the histogram |
+| `track_event.legacy_event` (Chrome's `X`, `S`/`T`/`F`, `M`, `N`/`O`/`D`, ids, `bind_id`) | the JSON phase, verbatim |
+| `track_descriptor`, `thread_descriptor`, `process_descriptor`, `process_tree` | process / thread names and sort order |
+| `interned_data` + `sequence_flags` | per-sequence name / category / arg / callstack tables |
+| `debug_annotations` (nested, interned strings) | hover args |
+| `flow_ids` / `terminating_flow_ids` (first id of an event) | flow arrows |
+| `ftrace_events` `sched_switch` / `sched_waking`, plain and `compact_sched` | `SCHEDULING_SLICE` per core + `THREAD_STATE` (running / runnable / sleep kinds from `prev_state`) |
+| `ftrace_events` `print` (`B\|pid\|name` atrace marks) | scopes on the writing thread |
+| `chrome_events` (`trace_events`, `legacy_json_trace`, `legacy_ftrace_output`) | the JSON path, embedded |
+| `perf_sample` with an interned callstack | nested `FUNCTION_CALL` sample clips |
+
+Not mapped (counted in `stats.skipped_packets` / `skipped_other`):
+`extra_counter_values` (per-slice thread time), `sys_stats`, `process_stats`,
+`cpu_frequency`, GPU / memory snapshots, ETW, `track_event` callstacks
+(`callstack_iid`), and Chrome's `(` / `)` context phases. An event with
+several flow ids draws its first; flows on async lanes are not drawn.
+Packets are not time-ordered across producers: thread-state bars wait for
+the tid's process (a `process_tree` often sits at the end of the file) and
+sched comms name threads at the end; where two cores' ftrace bundles
+overlap out of order a sleep / runnable slice can be lost, while the
+per-core running slices are exact.
+
 The 64 MB capture ring is not used. Events go into the viewer's `TrackIndex`
 (32 bytes each + interned strings). wasm32 heap is capped at **2 GiB**
 (`build_wasm.sh --max-memory`). gzip is inflated as chunks arrive (not
@@ -123,7 +163,7 @@ buffered then decoded). A 1–2 GB uncompressed JSON is stream-parsed
 One enormous object (a heap dump, a layout-tree snapshot) still transits
 the scan window.
 
-Optional same-origin deep link: `/?trace=/traces/foo.json`.
+Optional same-origin deep link: `/?trace=/traces/foo.json` (or `.pftrace`).
 
 ### Measured ingest + view (this VM, 2026-08-30)
 
@@ -154,7 +194,22 @@ wan22 was streamed (gzip never materialized as a 3.08 GiB buffer; peak RSS
 is events + unique interned args — 12.1M intern ids, mostly per-event
 PyTorch args, measured **before** the 100k-entry args cap). wasm32 2 GiB
 cannot hold that intern table; the cap keeps clips and names and drops
-later hover strings. Perfetto `.pftrace` proto files were skipped.
+later hover strings.
+
+### Measured Perfetto ingest (this VM, 2026-09-28)
+
+Native `chrome_ingest` (release) on Perfetto's public `test/data` traces,
+checked against `trace_processor` counts. Events out include one
+scheduling slice plus one or two thread states per `sched_switch`.
+
+| Trace | File | Events out | trace_processor | Ingest |
+|---|---|---|---|---|
+| chrome_rendering_desktop.pftrace (Chrome, TrackEvent + legacy) | 8.3 MB | 111,475 | 111,472 slices, 5,000 flows (we draw 4,958) | 0.08 s / 17 MB RSS |
+| chrome_scroll_without_vsync.pftrace | 1.4 MB | 20,690 | 20,679 slices, 56 threads (81 lanes incl. async) | 0.02 s |
+| chrome_5672_histograms.pftrace.gz | 1.1 MB gz | 145,368 | 145,368 instants, 145,290 histogram samples | 0.09 s |
+| chrome_example_wikipedia.perfetto_trace.gz | 21.5 MB gz | 298,037 | 297,603 slices, 29,776 flows (we draw 21,138: multi-id events) | 0.18 s / 27 MB |
+| example_android_trace_30s.pb.gz (ftrace + atrace) | 4.7 MB gz | 839,279 | 384,623 sched_switch (exact), 20,746 slices | 0.13 s / 31 MB |
+| cpu_counters.pb (ftrace only) | 10 MB | 161,493 | 94,469 sched_switch (exact) | 0.03 s |
 
 ## Look (Orbit palette, not a barcode)
 

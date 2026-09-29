@@ -38,9 +38,15 @@ jobs:
           workspaces: |
             src/OrbitLiveViewer
             src/OrbitLiveViewer/crates/orbit-live-viewer
+            src/OrbitLiveViewer/crates/orbit-live-chrome
       - name: Test native crates
         working-directory: src/OrbitLiveViewer
         run: cargo test --workspace
+      # Its own workspace too (flate2 / serde_json stay out of the Bazel
+      # graph), so --workspace above does not reach it.
+      - name: Test Chrome JSON + Perfetto proto ingest
+        working-directory: src/OrbitLiveViewer/crates/orbit-live-chrome
+        run: cargo test
       - name: Test viewer crate (eframe + callback, no window)
         working-directory: src/OrbitLiveViewer/crates/orbit-live-viewer
         run: cargo test

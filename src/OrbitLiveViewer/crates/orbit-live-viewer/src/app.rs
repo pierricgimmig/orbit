@@ -2171,7 +2171,7 @@ impl OrbitLiveApp {
                     pid: *pid,
                     name: name.clone(),
                     cpu: 0.0,
-                    path: "chrome-trace".into(),
+                    path: load.source_label().into(),
                 });
             }
         }
@@ -2239,6 +2239,7 @@ impl OrbitLiveApp {
         }
         if done {
             if let Some(load) = self.trace_load.take() {
+                let source = load.source_label();
                 self.trace_args = load.ingestor.args;
                 self.trace_flows = load.ingestor.flows;
                 self.intern = load.ingestor.intern;
@@ -2253,7 +2254,7 @@ impl OrbitLiveApp {
                         pid,
                         name,
                         cpu: 0.0,
-                        path: "chrome-trace".into(),
+                        path: source.into(),
                     })
                     .collect();
                 self.trace_name = Some(load.name);
@@ -2283,7 +2284,7 @@ impl OrbitLiveApp {
             return;
         }
         if !chrome_load::is_trace_name(&name) {
-            self.error = format!("Not a Chrome trace: {name}");
+            self.error = format!("Not a Chrome or Perfetto trace: {name}");
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -2983,7 +2984,7 @@ impl OrbitLiveApp {
 
     fn transport_open(&mut self, ui: &mut Ui) {
         if pill(ui, "Open", false)
-            .on_hover_text("Open a saved Orbit capture (.orbit.zip) or a Chrome trace (.json / .json.gz) — or drop the file on the page")
+            .on_hover_text("Open a saved Orbit capture (.orbit.zip), a Chrome trace (.json / .json.gz) or a Perfetto trace (.pftrace / .pb) — or drop the file on the page")
             .clicked()
         {
             #[cfg(target_arch = "wasm32")]
@@ -3016,7 +3017,7 @@ impl OrbitLiveApp {
         }
         if ui
             .button("Open…")
-            .on_hover_text("Open a saved Orbit capture (.orbit.zip) or a Chrome trace (.json / .json.gz) — or drop the file on the page")
+            .on_hover_text("Open a saved Orbit capture (.orbit.zip), a Chrome trace (.json / .json.gz) or a Perfetto trace (.pftrace / .pb) — or drop the file on the page")
             .clicked()
         {
             #[cfg(target_arch = "wasm32")]
@@ -4397,7 +4398,7 @@ impl OrbitLiveApp {
                 ui.painter().text(
                     body.center(),
                     Align2::CENTER_CENTER,
-                    "Drop Chrome trace (.json / .json.gz)",
+                    "Drop a Chrome (.json / .json.gz) or Perfetto (.pftrace) trace",
                     FontId::new(15.0, fonts::medium()),
                     theme::TEXT(),
                 );
@@ -10517,7 +10518,8 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
 const LIVE_SORT_EVERY_S: f64 = 1.0;
 const LIVE_STATS_MIN_INTERVAL_S: f64 = 0.25;
 
-/// A file the viewer opens as an Orbit capture rather than a Chrome trace.
+/// A file the viewer opens as an Orbit capture rather than a Chrome or
+/// Perfetto trace.
 fn is_bundle_name(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(orbit_capture_suffix())
 }
@@ -10998,7 +11000,7 @@ fn paint_empty(ui: &Ui, rect: Rect, dropping: bool) {
         rect.center() + Vec2::new(0.0, -10.0),
         Align2::CENTER_CENTER,
         if dropping {
-            "Drop Chrome trace"
+            "Drop Chrome / Perfetto trace"
         } else {
             "Idle"
         },

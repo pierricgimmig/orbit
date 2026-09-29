@@ -73,6 +73,13 @@ pub struct IngestStats {
     pub system_trace: u64,
     pub skipped_other: u64,
     pub unmatched_end: u64,
+    /// Perfetto proto only: packets walked, packets of a kind nothing maps.
+    pub packets: u64,
+    pub skipped_packets: u64,
+    /// Perfetto proto only: `TrackEvent`s, ftrace sched switches (each
+    /// becomes a scheduling slice and a thread state), atrace marks.
+    pub track_event: u64,
+    pub sched: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +162,11 @@ pub struct ChromeEvent {
     #[serde(default)]
     #[allow(dead_code)]
     pub tts: Option<f64>,
+    /// Row an async / object event is drawn on when it is not the event
+    /// name: a Perfetto track carries many differently named slices on one
+    /// lane. JSON never sets it.
+    #[serde(skip)]
+    pub lane: Option<String>,
 }
 
 struct OpenDuration {
@@ -163,15 +175,43 @@ struct OpenDuration {
     name_id: u32,
     id: Option<u64>,
     args_id: Option<u32>,
+    /// `bind_id` / `flow_in` / `flow_out` as written on the `B` event.
+    /// JSON and Perfetto both put flow ids on the begin, not the end.
+    flow: Option<FlowBind>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FlowBind {
+    bind_id: u64,
+    flow_in: bool,
+    flow_out: bool,
+}
+
+impl FlowBind {
+    fn of(ev: &ChromeEvent) -> Option<Self> {
+        let bind_id = ev.bind_id.as_ref().map(FlexId::as_u64)?;
+        Some(Self {
+            bind_id,
+            flow_in: ev.flow_in == Some(true),
+            flow_out: ev.flow_out == Some(true),
+        })
+    }
 }
 
 struct OpenAsync {
     start_ns: u64,
     name_id: u32,
+    /// The lane the begin was drawn on. An end from another process (a
+    /// global id) closes the slice there, not on a lane of its own pid.
+    pid: u32,
     tid: u32,
     depth: u8,
     args_id: Option<u32>,
 }
+
+/// Pairing key for async begins / ends. `id2.global` ids are trace-wide by
+/// definition, so they pair across processes.
+const PID_ANY: u32 = u32::MAX;
 
 struct PendingSample {
     start_ns: u64,
@@ -276,9 +316,11 @@ impl ChromeIngestor {
             'X' => self.on_complete(ev),
             'I' | 'i' => self.on_instant(ev, false),
             'C' => self.on_counter(ev),
-            // Legacy async S/T/F, nestable n/o/d, and nestable b/e (catapult).
-            'S' | 'n' | 'b' => self.on_async_begin(ev),
-            'T' | 'o' => self.on_async_instant(ev),
+            // Legacy async S/T/F and nestable b/n/e (begin / instant / end).
+            // `o`/`d` are not in the spec but old catapult dumps use them
+            // as instant / end.
+            'S' | 'b' => self.on_async_begin(ev),
+            'T' | 'n' | 'o' => self.on_async_instant(ev),
             'F' | 'd' | 'e' => self.on_async_end(ev),
             's' | 't' | 'f' => self.on_flow(ev, ch),
             'M' => {
@@ -347,6 +389,26 @@ impl ChromeIngestor {
         }
     }
 
+    /// Seconds (the ftrace text clock) in this ingestor's `ts` unit.
+    fn seconds_to_unit(&self, s: f64) -> f64 {
+        match self.unit {
+            TimeUnit::Micros => s * 1_000_000.0,
+            TimeUnit::Nanos => s * 1_000_000_000.0,
+        }
+    }
+
+    /// One atrace mark (`B|pid|name`, `E|pid`, `C|pid|name|value`, ...)
+    /// already timestamped in this ingestor's unit, on thread `tid`.
+    /// Perfetto's `ftrace print` events arrive this way.
+    pub(crate) fn ingest_atrace_mark(&mut self, mark: &str, ts: f64, tid: u32) -> Vec<LiveEvent> {
+        let Some(mut ev) = systrace_mark_event(mark.trim(), ts) else {
+            return Vec::new();
+        };
+        ev.tid = Some(FlexId::Num(u64::from(tid)));
+        self.stats.system_trace += 1;
+        self.ingest(ev)
+    }
+
     /// Linux ftrace / Android atrace text from `systemTraceEvents`.
     /// Understands `tracing_mark_write: B|pid|name` (and E/C/S/T/F).
     pub fn ingest_systrace_text(&mut self, text: &str) -> Vec<LiveEvent> {
@@ -364,14 +426,13 @@ impl ChromeIngestor {
         }
         let (ts_us, mark) = if let Some(rest) = line.split_once("tracing_mark_write:") {
             let prefix = rest.0;
-            let ts = prefix
+            let seconds = prefix
                 .split_whitespace()
                 .rev()
                 .find_map(|t| t.strip_suffix(':').or(Some(t)))
                 .and_then(|t| t.parse::<f64>().ok())
-                .unwrap_or(0.0)
-                * 1_000_000.0;
-            (ts, rest.1.trim())
+                .unwrap_or(0.0);
+            (self.seconds_to_unit(seconds), rest.1.trim())
         } else if matches!(
             line.as_bytes().first(),
             Some(b'B' | b'E' | b'C' | b'S' | b'T' | b'F')
@@ -478,6 +539,7 @@ impl ChromeIngestor {
         let name_id = self.intern.intern(&name);
         let id = self.event_id(&ev);
         let args_id = self.intern_args(&ev);
+        let flow = FlowBind::of(&ev);
         self.note_thread(pid, tid);
         self.duration_stacks
             .entry((pid, tid))
@@ -488,6 +550,7 @@ impl ChromeIngestor {
                 name_id,
                 id,
                 args_id,
+                flow,
             });
         Vec::new()
     }
@@ -517,7 +580,9 @@ impl ChromeIngestor {
             kind::API_SCOPE,
         );
         self.remember_args(out, args_id);
-        self.maybe_bind_flow(&ev, out);
+        if let Some(flow) = FlowBind::of(&ev).or(open.flow) {
+            self.bind_flow(flow, out);
+        }
         vec![out]
     }
 
@@ -572,6 +637,7 @@ impl ChromeIngestor {
         self.note_thread(pid, tid);
         let out = self.scope_event(start_ns, 1, pid, tid, name_id, 0, kind::API_SCOPE);
         self.remember_args(out, args_id);
+        self.maybe_bind_flow(&ev, out);
         vec![out]
     }
 
@@ -610,7 +676,8 @@ impl ChromeIngestor {
         let id = self
             .event_id(ev)
             .unwrap_or_else(|| hash32(ev.name.as_deref().unwrap_or("").as_bytes()) as u64);
-        (pid, id)
+        let global = ev.id2.as_ref().is_some_and(|i| i.global.is_some());
+        (if global { PID_ANY } else { pid }, id)
     }
 
     fn async_tid(&mut self, pid: u32, name: &str) -> u32 {
@@ -631,21 +698,27 @@ impl ChromeIngestor {
         tid
     }
 
+    fn async_lane<'e>(ev: &'e ChromeEvent, name: &'e str) -> &'e str {
+        ev.lane.as_deref().unwrap_or(name)
+    }
+
     fn on_async_begin(&mut self, ev: ChromeEvent) -> Vec<LiveEvent> {
         self.stats.async_ev += 1;
-        let (pid, id) = self.async_key(&ev);
+        let (key_pid, id) = self.async_key(&ev);
+        let pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
         let start_ns = self.ts_ns(ev.ts);
         let name = ev.name.clone().unwrap_or_default();
         let name_id = self.intern.intern(&name);
-        let tid = self.async_tid(pid, &name);
+        let tid = self.async_tid(pid, Self::async_lane(&ev, &name));
         self.note_thread(pid, tid);
         let args_id = self.intern_args(&ev);
-        let stack = self.async_open.entry((pid, id)).or_default();
+        let stack = self.async_open.entry((key_pid, id)).or_default();
         let depth = *self.async_lane_open.get(&tid).unwrap_or(&0);
         *self.async_lane_open.entry(tid).or_insert(0) = depth.saturating_add(1);
         stack.push(OpenAsync {
             start_ns,
             name_id,
+            pid,
             tid,
             depth,
             args_id,
@@ -655,16 +728,15 @@ impl ChromeIngestor {
 
     fn on_async_instant(&mut self, ev: ChromeEvent) -> Vec<LiveEvent> {
         self.stats.async_ev += 1;
-        let (pid, id) = self.async_key(&ev);
+        let (key_pid, id) = self.async_key(&ev);
+        let own_pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
         let start_ns = self.ts_ns(ev.ts);
         let name = ev.name.clone().unwrap_or_default();
         let name_id = self.intern.intern(&name);
-        let tid = self
-            .async_open
-            .get(&(pid, id))
-            .and_then(|s| s.last())
-            .map(|o| o.tid)
-            .unwrap_or_else(|| self.async_tid(pid, &name));
+        let (pid, tid) = match self.async_open.get(&(key_pid, id)).and_then(|s| s.last()) {
+            Some(o) => (o.pid, o.tid),
+            None => (own_pid, self.async_tid(own_pid, Self::async_lane(&ev, &name))),
+        };
         let depth = *self.async_lane_open.get(&tid).unwrap_or(&0);
         let args_id = self.intern_args(&ev);
         self.note_thread(pid, tid);
@@ -675,12 +747,18 @@ impl ChromeIngestor {
 
     fn on_async_end(&mut self, ev: ChromeEvent) -> Vec<LiveEvent> {
         self.stats.async_ev += 1;
-        let (pid, id) = self.async_key(&ev);
+        let (key_pid, id) = self.async_key(&ev);
+        let own_pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
         let end_ns = self.ts_ns(ev.ts);
         let name = ev.name.clone().unwrap_or_default();
-        let tid = self.async_tid(pid, &name);
-        let stack = self.async_open.entry((pid, id)).or_default();
+        let stack = self.async_open.entry((key_pid, id)).or_default();
         let open = stack.pop();
+        // The lane the begin was drawn on; a nameless Perfetto `SLICE_END`
+        // must not mint an "async" row of its own.
+        let (pid, tid) = match &open {
+            Some(o) => (o.pid, o.tid),
+            None => (own_pid, self.async_tid(own_pid, Self::async_lane(&ev, &name))),
+        };
         if let Some(n) = self.async_lane_open.get_mut(&tid) {
             *n = n.saturating_sub(1);
         }
@@ -747,22 +825,27 @@ impl ChromeIngestor {
     }
 
     fn maybe_bind_flow(&mut self, ev: &ChromeEvent, live: LiveEvent) {
-        let Some(bind) = ev.bind_id.as_ref().map(FlexId::as_u64) else {
-            return;
-        };
+        if let Some(flow) = FlowBind::of(ev) {
+            self.bind_flow(flow, live);
+        }
+    }
+
+    fn bind_flow(&mut self, flow: FlowBind, live: LiveEvent) {
         let end = FlowEnd {
             start_ns: live.start_ns,
             pid: live.pid,
             tid: live.tid,
             name_id: live.name_id,
         };
-        if ev.flow_out == Some(true) {
-            self.flow_open.insert(bind, end);
-        }
-        if ev.flow_in == Some(true) {
-            if let Some(from) = self.flow_open.remove(&bind) {
+        // A step (in + out) closes the incoming edge before it re-opens
+        // the id for the next hop.
+        if flow.flow_in {
+            if let Some(from) = self.flow_open.remove(&flow.bind_id) {
                 self.flows.push(FlowEdge { from, to: end });
             }
+        }
+        if flow.flow_out {
+            self.flow_open.insert(flow.bind_id, end);
         }
     }
 
@@ -919,17 +1002,16 @@ impl ChromeIngestor {
         self.stats.object += 1;
         let pid = ev.pid.as_ref().map(FlexId::as_u32).unwrap_or(0);
         let name = ev.name.clone().unwrap_or_else(|| format!("object {ch}"));
+        let lane = ev.lane.clone().unwrap_or_else(|| name.clone());
         let tid = *self
             .object_tids
-            .entry((pid, name.clone()))
+            .entry((pid, lane.clone()))
             .or_insert_with(|| {
                 let t = self.next_object_tid;
                 self.next_object_tid = self.next_object_tid.wrapping_add(1);
                 t
             });
-        self.thread_names
-            .entry((pid, tid))
-            .or_insert_with(|| name.clone());
+        self.thread_names.entry((pid, tid)).or_insert(lane);
         let name_id = self.intern.intern(&name);
         let start_ns = self.ts_ns(ev.ts);
         let args_id = self.intern_args(&ev);
@@ -937,6 +1019,36 @@ impl ChromeIngestor {
         let out = self.scope_event(start_ns, 1, pid, tid, name_id, 0, kind::API_SCOPE);
         self.remember_args(out, args_id);
         vec![out]
+    }
+
+    /// Events built outside the `ph` dispatch (Perfetto scheduling slices
+    /// and thread states): name their threads, widen the content window,
+    /// and count them.
+    pub(crate) fn note_direct_events(&mut self, out: &[LiveEvent]) {
+        for e in out {
+            // A scheduling slice lanes by core and may carry a guessed pid
+            // (the tid) until the process tree arrives; it mints no row.
+            if e.kind != kind::SCHEDULING_SLICE {
+                self.note_thread(e.pid, e.tid);
+            }
+            self.expand_content(e.start_ns, e.end_ns());
+        }
+        self.stats.events_out += out.len() as u64;
+    }
+
+    /// Name a process or thread from a source that is not a `ph=M` event.
+    /// Later names win: a Perfetto process tree usually knows more than the
+    /// `pid N` placeholder a first event minted.
+    pub(crate) fn name_process(&mut self, pid: u32, name: &str) {
+        if !name.is_empty() {
+            self.process_names.insert(pid, name.to_string());
+        }
+    }
+
+    pub(crate) fn name_thread(&mut self, pid: u32, tid: u32, name: &str) {
+        if !name.is_empty() {
+            self.thread_names.insert((pid, tid), name.to_string());
+        }
     }
 
     fn on_memory_dump(&mut self, ev: ChromeEvent) -> Vec<LiveEvent> {
@@ -997,13 +1109,13 @@ impl ChromeIngestor {
             }
         }
         let asyncs = std::mem::take(&mut self.async_open);
-        for ((pid, _), stack) in asyncs {
+        for (_, stack) in asyncs {
             for open in stack {
                 let tid = open.tid;
                 let ev = self.scope_event(
                     open.start_ns,
                     end_ns.saturating_sub(open.start_ns).max(1),
-                    pid,
+                    open.pid,
                     tid,
                     open.name_id,
                     open.depth,
@@ -1063,7 +1175,8 @@ fn counter_series(base: &str, args: Option<&Value>) -> Vec<(String, f32)> {
     }
     map.iter()
         .filter_map(|(k, v)| {
-            if v.is_object() || v.is_array() || v.is_string() {
+            let numeric_string = v.as_str().is_some_and(|s| s.trim().parse::<f32>().is_ok());
+            if v.is_object() || v.is_array() || (v.is_string() && !numeric_string) {
                 return None;
             }
             Some((format!("{base}:{k}"), json_f32(v)))
@@ -1081,6 +1194,9 @@ fn json_f32(v: &Value) -> f32 {
                 0.0
             }
         }
+        // atrace `C|pid|name|value` marks and some exporters write the
+        // number as a string.
+        Value::String(s) => s.trim().parse::<f32>().unwrap_or(0.0),
         _ => 0.0,
     }
 }
@@ -1107,7 +1223,7 @@ const MAX_ARG_CHARS: usize = 512;
 /// become clips; they just have no args tooltip.
 const MAX_ARG_ENTRIES: usize = 100_000;
 
-fn systrace_mark_event(mark: &str, ts_us: f64) -> Option<ChromeEvent> {
+fn systrace_mark_event(mark: &str, ts: f64) -> Option<ChromeEvent> {
     let mut parts = mark.split('|');
     let ph = parts.next()?.trim();
     if ph.len() != 1 {
@@ -1133,7 +1249,7 @@ fn systrace_mark_event(mark: &str, ts_us: f64) -> Option<ChromeEvent> {
         name,
         cat: Some("systemTraceEvents".into()),
         ph: Some(ph.to_string()),
-        ts: Some(ts_us),
+        ts: Some(ts),
         dur: None,
         pid: Some(FlexId::Num(pid)),
         tid: Some(FlexId::Num(pid)),
@@ -1147,6 +1263,7 @@ fn systrace_mark_event(mark: &str, ts_us: f64) -> Option<ChromeEvent> {
         sf: None,
         stack: None,
         tts: None,
+        lane: None,
     })
 }
 

@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! Native ingest bench: stream a Chrome JSON/JSON.GZ into LiveEvents.
+//! Native ingest bench: stream a Chrome JSON / Perfetto proto trace (plain,
+//! .gz or .zip) into LiveEvents and print what came out.
 
 use std::io::Read;
 use std::time::Instant;
@@ -19,7 +20,7 @@ fn rss_bytes() -> Option<u64> {
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .expect("usage: chrome_ingest <trace.json|.json.gz>");
+        .expect("usage: chrome_ingest <trace.json|.json.gz|.pftrace|.pb.gz>");
     let meta = std::fs::metadata(&path).expect("stat");
     let compressed = meta.len();
     let t0 = Instant::now();
@@ -61,6 +62,7 @@ fn main() {
         std::process::exit(1);
     }
     println!("file\t{path}");
+    println!("format\t{:?}", stream.format());
     println!("compressed_bytes\t{compressed}");
     println!("decoded_bytes\t{}", stream.bytes_decoded);
     println!("bytes_in\t{}", stream.bytes_in);
@@ -79,7 +81,26 @@ fn main() {
     println!("flow\t{}", ing.stats.flow);
     println!("sample\t{}", ing.stats.sample);
     println!("memory_dump\t{}", ing.stats.memory_dump);
+    println!("object\t{}", ing.stats.object);
+    println!("system_trace\t{}", ing.stats.system_trace);
+    println!("unmatched_end\t{}", ing.stats.unmatched_end);
+    println!("skipped_other\t{}", ing.stats.skipped_other);
+    println!("packets\t{}", ing.stats.packets);
+    println!("skipped_packets\t{}", ing.stats.skipped_packets);
+    println!("track_event\t{}", ing.stats.track_event);
+    println!("sched\t{}", ing.stats.sched);
+    match ing.content_time_bounds() {
+        Some((a, b)) => println!("content_ns\t{a}\t{b}"),
+        None => println!("content_ns\t-"),
+    }
     println!("wall_s\t{:.3}", dt.as_secs_f64());
     println!("peak_rss_bytes\t{peak}");
     println!("ev_per_s\t{:.0}", events as f64 / dt.as_secs_f64().max(1e-6));
+    if std::env::var_os("ORBIT_DUMP_THREADS").is_some() {
+        let mut rows: Vec<_> = ing.thread_names.iter().collect();
+        rows.sort();
+        for ((pid, tid), name) in rows {
+            println!("thread\t{pid}\t{tid:#x}\t{name}");
+        }
+    }
 }

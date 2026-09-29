@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! Streaming Chrome Trace Event Format → 32-byte [`LiveEvent`]s.
+//! Streaming Chrome Trace Event Format and Perfetto proto traces →
+//! 32-byte [`LiveEvent`]s.
 //!
-//! Accepts a JSON array of events (legacy `chrome://tracing`) or a JSON object
-//! with `traceEvents[]`, plus `displayTimeUnit`, `stackFrames`, and `samples`.
-//! gzip and a single-file zip are decoded into the parser — the file is never
-//! materialized as a `Vec<serde_json::Value>`.
+//! JSON: an array of events (legacy `chrome://tracing`) or an object with
+//! `traceEvents[]`, plus `displayTimeUnit`, `stackFrames`, and `samples`.
+//! Proto: Perfetto `.pftrace` / `.perfetto-trace` / `.pb` (see
+//! [`perfetto`](crate::perfetto) for what maps). gzip and a single-file zip
+//! are decoded into the parser — the file is never materialized whole.
 //!
 //! [`LiveEvent`] stays 32 bytes. Args are interned as a compact hover string
 //! and looked up with [`ArgKey`]. Memory-dump (`ph: v`) payloads are skipped.
@@ -15,13 +17,15 @@
 mod id;
 mod ingest;
 mod json;
+mod perfetto;
+pub mod proto;
 mod stream;
 
 pub use ingest::{
     ArgKey, ChromeIngestor, FlowEdge, FlowEnd, IngestStats, TimeUnit, PID_GLOBAL, TID_ASYNC_BASE,
     TID_COUNTER_BASE, TID_GLOBAL, TID_OBJECT_BASE, TID_PROCESS_MARKERS,
 };
-pub use stream::{ingest_bytes, ingest_collect, ChromeStream};
+pub use stream::{ingest_bytes, ingest_collect, ChromeStream, Format};
 
 use orbit_live_event::LIVE_EVENT_SIZE;
 
@@ -259,7 +263,46 @@ mod tests {
         assert!(evs
             .iter()
             .any(|e| e.kind == kind::API_SCOPE && e.duration_ns == 10_000));
-        assert!(evs.iter().any(|e| e.kind == kind::VALUE));
+        assert!(
+            evs.iter().any(|e| e.kind == kind::VALUE && e.value_f32() == Some(7.0)),
+            "C|42|cpu|7 carries its value"
+        );
+    }
+
+    #[test]
+    fn global_async_ids_pair_across_processes() {
+        let json = r#"[
+          {"name":"nav","ph":"b","ts":0,"pid":1,"tid":1,"id2":{"global":"0x9"}},
+          {"name":"nav","ph":"e","ts":10,"pid":2,"tid":2,"id2":{"global":"0x9"}},
+          {"name":"loc","ph":"b","ts":0,"pid":1,"tid":1,"id2":{"local":"0x9"}},
+          {"name":"loc","ph":"e","ts":10,"pid":2,"tid":2,"id2":{"local":"0x9"}}
+        ]"#;
+        let (ing, evs) = collect(json);
+        let nav = evs
+            .iter()
+            .find(|e| ing.intern.get(e.name_id) == Some("nav"))
+            .unwrap();
+        assert_eq!((nav.pid, nav.duration_ns), (1, 10_000), "closed on the begin's lane");
+        assert_eq!(ing.stats.unmatched_end, 1, "local ids stay per process");
+    }
+
+    #[test]
+    fn b_event_flow_ids_bind_on_the_slice() {
+        // bind_id / flow_out sit on the B (JSON) or the begin (Perfetto);
+        // the E carries nothing. The edge must still be drawn.
+        let json = r#"[
+          {"name":"post","ph":"B","ts":10,"pid":1,"tid":1,"bind_id":"0x5","flow_out":true},
+          {"name":"post","ph":"E","ts":20,"pid":1,"tid":1},
+          {"name":"run","ph":"i","ts":30,"pid":1,"tid":2,"bind_id":"0x5","flow_in":true},
+          {"name":"step","ph":"X","ts":40,"dur":1,"pid":1,"tid":3,"bind_id":"0x6","flow_out":true},
+          {"name":"step","ph":"X","ts":50,"dur":1,"pid":1,"tid":4,"bind_id":"0x6","flow_in":true,"flow_out":true},
+          {"name":"step","ph":"X","ts":60,"dur":1,"pid":1,"tid":5,"bind_id":"0x6","flow_in":true}
+        ]"#;
+        let (ing, _evs) = collect(json);
+        assert_eq!(ing.flows.len(), 3, "{:?}", ing.flows);
+        assert_eq!((ing.flows[0].from.tid, ing.flows[0].to.tid), (1, 2));
+        assert_eq!((ing.flows[1].from.tid, ing.flows[1].to.tid), (3, 4));
+        assert_eq!((ing.flows[2].from.tid, ing.flows[2].to.tid), (4, 5));
     }
 
     #[test]
@@ -414,15 +457,25 @@ mod tests {
     }
 
     #[test]
-    fn nested_async_n_o_d() {
+    fn nestable_async_b_n_e_and_legacy_o_d() {
+        // Spec: b = begin, n = instant, e = end. Old catapult dumps also
+        // wrote o (instant) and d (end); both shapes pair on one lane.
         let json = r#"[
-          {"name":"job","ph":"n","ts":0,"pid":2,"id":1},
-          {"name":"step","ph":"o","ts":1,"pid":2,"id":1},
-          {"name":"job","ph":"d","ts":10,"pid":2,"id":1}
+          {"name":"job","ph":"b","ts":0,"pid":2,"id":1},
+          {"name":"step","ph":"n","ts":1,"pid":2,"id":1},
+          {"name":"job","ph":"e","ts":10,"pid":2,"id":1},
+          {"name":"job","ph":"b","ts":20,"pid":2,"id":2},
+          {"name":"step","ph":"o","ts":21,"pid":2,"id":2},
+          {"name":"job","ph":"d","ts":30,"pid":2,"id":2}
         ]"#;
         let (ing, evs) = collect(json);
         let tracks: Vec<_> = evs.iter().filter(|e| e.kind == kind::API_TRACK).collect();
-        assert!(tracks.iter().any(|e| e.duration_ns == 10_000));
+        assert_eq!(tracks.iter().filter(|e| e.duration_ns == 10_000).count(), 2);
+        assert_eq!(
+            tracks.iter().filter(|e| ing.intern.get(e.name_id) == Some("step")).count(),
+            2,
+            "n and o are instants, not opens: {tracks:?}"
+        );
         assert!(tracks
             .iter()
             .any(|e| ing.intern.get(e.name_id) == Some("step")));
