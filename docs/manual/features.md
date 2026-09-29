@@ -64,7 +64,9 @@ Left to right, in clusters separated by thin rules. A filled pill is on.
   pulsing square on red to stop. The X key does the same. It captures the
   selected process, or everything the service sees when none is selected.
   Screenshot: `02-capture-live.png`.
-- **Capture timer.** Right of Record, `m:ss.t` (`h:mm:ss` past an hour):
+- **Capture timer.** At the right end of the bar, left of More, `m:ss.t`
+  (`h:mm:ss` past an hour), in a slot kept whether or not it shows, so
+  starting a capture moves nothing:
   how long the capture has been running, on the capture's own clock (the
   live edge past `capture_start_ns`, carried by the viewer's clock between
   frames so it never stalls); after Stop it stays, greyed, at the length

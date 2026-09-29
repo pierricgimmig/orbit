@@ -376,13 +376,15 @@ def capture_scheduling(run):
     run.open_viewer()
     running = None
     if run.chrome is not None:
-        # The timer right of Record counts the capture up while it runs.
+        # The timer, left of More, counts the capture up while it runs.
         first = run.wait_for(lambda: run.sel().get("capture_elapsed") or None,
                              "the capture timer to run", timeout=10)
         time.sleep(1.0)
         running = run.sel().get("capture_elapsed")
         check(running > first, f"the capture timer should advance while capturing ({first} -> {running})")
-        check(run.rects_matching("Timer"), "the timer is painted next to Record")
+        timer = run.rect("Timer")
+        check(timer[0] > run.rect("Symbols")[0] and timer[0] < run.rect("More")[0],
+              f"the timer is painted between the status line and More: {timer}")
     run.shot("02-capture-live", settle=3.0)
     run.stop_capture()
     # A finished capture lands on the top-down call tree by default.

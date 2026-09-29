@@ -2954,8 +2954,9 @@ impl OrbitLiveApp {
 
     fn transport_record(&mut self, ui: &mut Ui) {
         let recording = self.recording || self.status.demo || self.status.capturing;
+        // "Rec" and "Stop" in one width, so pressing it moves nothing after it.
         if recording {
-            if pill(ui, "Stop", true)
+            if pill_min_w(ui, "Stop", true, RECORD_PILL_W)
                 .on_hover_text(if self.status.hooks && !self.status.demo {
                     "Stop capture"
                 } else {
@@ -2967,7 +2968,7 @@ impl OrbitLiveApp {
             }
         } else {
             let record_ok = true;
-            let resp = pill(ui, "Rec", false).on_hover_text(if self.status.hooks {
+            let resp = pill_min_w(ui, "Rec", false, RECORD_PILL_W).on_hover_text(if self.status.hooks {
                 if self.selected_pid.is_some() {
                     "Start a real OrbitService capture of the selected process"
                 } else {
@@ -3204,7 +3205,6 @@ impl OrbitLiveApp {
             ui.add_space(6.0);
             self.paint_link_dot(ui);
             self.transport_record(ui);
-            self.paint_capture_timer(ui);
             self.transport_more(ui);
             if let Some(load) = &self.trace_load {
                 ui.label(
@@ -3218,6 +3218,7 @@ impl OrbitLiveApp {
                 if fullscreen_pill(ui, self.fullscreen || self.immersive).clicked() {
                     self.set_fullscreen(ui.ctx(), !(self.fullscreen || self.immersive));
                 }
+                self.paint_capture_timer(ui);
             });
         });
     }
@@ -3316,7 +3317,6 @@ impl OrbitLiveApp {
                 if record_button(ui, recording).on_hover_text("Start/stop capture (X)").clicked() {
                     if recording { self.stop_record(); } else { self.start_record(); }
                 }
-                self.paint_capture_timer(ui);
                 self.transport_open(ui);
                 self.transport_save(ui);
                 if icon_button(ui, "Clear", "Empty the capture", paint_clear_icon).clicked() { self.clear_everything(); }
@@ -3329,33 +3329,32 @@ impl OrbitLiveApp {
             self.paint_search(ui);
             self.paint_track_filter(ui);
             self.paint_symbols_status(ui);
+            self.paint_capture_timer(ui);
             self.transport_more(ui);
             if fullscreen_pill(ui, self.fullscreen).clicked() { self.set_fullscreen(ui.ctx(), !self.fullscreen); }
         });
     }
 
-    /// The capture timer, right of Record: how long the capture has been
-    /// running, on its own clock; after Stop, how long it ran, until Clear or
-    /// the next Record. Nothing until a capture has run.
+    /// The capture timer, at the right end of the bar before More: how long
+    /// the capture has been running, on its own clock; after Stop, how long
+    /// it ran, until Clear or the next Record. Its slot is there, empty,
+    /// before the first capture, so starting one moves nothing: right of
+    /// Record, where it was, its appearing pushed every control after it.
     fn paint_capture_timer(&self, ui: &mut Ui) {
+        let font = FontId::monospace(11.5);
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(capture_timer_slot_w(ui, &font), 22.0), Sense::hover());
         let t = self.capture_timer;
         if !t.running && t.shown_s <= 0.0 {
             return;
         }
         let color = if t.running { theme::TEXT() } else { theme::MUTED() };
-        let resp = ui
-            .add(
-                egui::Label::new(
-                    RichText::new(format_elapsed(t.shown_s)).font(FontId::monospace(11.5)).color(color),
-                )
-                .sense(Sense::hover()),
-            )
-            .on_hover_text(if t.running {
-                "How long this capture has been running"
-            } else {
-                "How long the last capture ran"
-            });
-        note_ui_rect("Timer", resp.rect);
+        let text = ui.painter().text(rect.right_center(), Align2::RIGHT_CENTER, format_elapsed(t.shown_s), font, color);
+        resp.on_hover_text(if t.running {
+            "How long this capture has been running"
+        } else {
+            "How long the last capture ran"
+        });
+        note_ui_rect("Timer", text);
     }
 
     /// Save as a small menu: the whole capture, the selected slice when
@@ -3395,7 +3394,10 @@ impl OrbitLiveApp {
 
     fn paint_symbols_status(&mut self, ui: &mut Ui) {
         let text = self.symbol_status_line();
-        let width = (ui.available_width() - 105.0).max(0.0);
+        // What the bar keeps right of this: the timer's slot, More and the
+        // fullscreen pill.
+        let timer = capture_timer_slot_w(ui, &FontId::monospace(11.5)) + ui.spacing().item_spacing.x;
+        let width = (ui.available_width() - 105.0 - timer).max(0.0);
         let label = ui.add_sized(Vec2::new(width, 22.0),
             egui::Label::new(RichText::new(&text).size(10.5).color(theme::MUTED())).truncate());
         note_ui_rect("Symbols", label.rect);
@@ -9650,7 +9652,15 @@ fn tab_strip(ui: &mut Ui, labels: &[&str], selected: usize) -> Option<usize> {
     clicked
 }
 
+/// The narrow bar's Record/Stop pill: the wider of the two labels.
+const RECORD_PILL_W: f32 = 42.0;
+
 fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    pill_min_w(ui, label, selected, 0.0)
+}
+
+/// A [`pill`] at least `min_w` wide.
+fn pill_min_w(ui: &mut Ui, label: &str, selected: bool, min_w: f32) -> egui::Response {
     let fill = if selected {
         theme::ACCENT()
     } else {
@@ -9670,7 +9680,7 @@ fn pill(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         } else {
             Stroke::new(1.0, theme::HAIR())
         })
-        .min_size(Vec2::new(0.0, 22.0))
+        .min_size(Vec2::new(min_w, 22.0))
         .corner_radius(4),
     );
     note_ui_rect(label, resp.rect);
@@ -11928,6 +11938,12 @@ fn capture_timer_tick(t: &mut CaptureTimer, capturing: bool, observed_s: Option<
         t.running = false;
         t.shown_s = observed_s.unwrap_or(t.shown_s);
     }
+}
+
+/// The capture timer's slot: room for the widest it reads short of ten
+/// hours, `h:mm:ss`, so the digits never nudge what is beside it.
+fn capture_timer_slot_w(ui: &Ui, font: &FontId) -> f32 {
+    ui.fonts(|f| f.glyph_width(font, '0')) * 8.0
 }
 
 /// `m:ss.t` under an hour, `h:mm:ss` from there: a timer, not a duration.
