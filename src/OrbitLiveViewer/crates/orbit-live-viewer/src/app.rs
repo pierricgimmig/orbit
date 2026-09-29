@@ -1039,8 +1039,13 @@ struct RectResult {
     y1: f32,
     stats: crate::rect_select::RectStats,
     /// The detailed plain-text report (per-function, per-thread, per-scope),
-    /// identical to what went to the clipboard, rendered in the summary pane.
+    /// identical to what went to the clipboard.
     report_text: String,
+    /// The report's rows, to write again for the pane at its width.
+    report: crate::rect_select::Report,
+    /// The report as the pane shows it, with the name column it was written
+    /// for: long names elided so the numbers after them stay in view.
+    screen_text: (usize, String),
 }
 
 /// A marquee's stats for `window.__orbit_sel`, or null.
@@ -6252,8 +6257,9 @@ impl OrbitLiveApp {
             (b.x, b.y),
             self.tracks.scale,
         );
-        let (stats, text) =
+        let report =
             crate::rect_select::report(&picked, &self.intern, |p, t| self.thread_display_name(p, t));
+        let (stats, text) = (report.stats.clone(), report.text());
         if !text.is_empty() {
             ctx.copy_text(text.clone());
             self.rect_copied_at = self.now_s;
@@ -6272,6 +6278,8 @@ impl OrbitLiveApp {
             y1: a.y.max(b.y),
             stats,
             report_text: text,
+            report,
+            screen_text: (0, String::new()),
         });
     }
 
@@ -6714,11 +6722,19 @@ impl OrbitLiveApp {
     fn rect_summary_rows(&mut self, ui: &mut Ui) {
         // Drawn outside the Self pane's swap, so its marquee is in `self_tl`.
         let from_self = self.rect_in_self_pane && self.self_pane_open && self.self_tl.rect_result.is_some();
-        let res = if from_self { self.self_tl.rect_result.clone() } else { self.rect_result.clone() };
-        let Some(res) = res.filter(|r| r.stats.count > 0 && !r.report_text.is_empty()) else {
+        let slot = if from_self { &mut self.self_tl.rect_result } else { &mut self.rect_result };
+        let Some(res) = slot.as_mut().filter(|r| r.stats.count > 0 && !r.report_text.is_empty()) else {
             ui.label("Ctrl-drag over scopes to select a rectangle, in the capture or the Self pane.");
             return;
         };
+        // Written again only when the pane's width in characters changes.
+        let char_w = ui.fonts(|f| f.glyph_width(&FontId::monospace(11.0), '0')).max(1.0);
+        let name_cols = res.report.name_cols((ui.available_width() / char_w).floor() as usize);
+        if res.screen_text.0 != name_cols || res.screen_text.1.is_empty() {
+            res.screen_text = (name_cols, res.report.screen_text(name_cols));
+        }
+        let (report_text, screen_text, one_line) =
+            (res.report_text.clone(), res.screen_text.1.clone(), res.stats.one_line());
         let copied_at = if from_self { self.self_tl.rect_copied_at } else { self.rect_copied_at };
         ui.horizontal(|ui| {
             let clear = ui.small_button("Clear").on_hover_text("Clear the selection");
@@ -6731,17 +6747,17 @@ impl OrbitLiveApp {
                 .on_hover_text("Copy this report to the clipboard");
             note_ui_rect("selection:copy", copy.rect);
             if copy.clicked() {
-                ui.ctx().copy_text(res.report_text.clone());
+                ui.ctx().copy_text(report_text.clone());
                 if from_self { self.self_tl.rect_copied_at = self.now_s } else { self.rect_copied_at = self.now_s }
             }
         });
         if from_self {
             ui.label(RichText::new("In the Self pane: the viewer's own frames").color(theme::ACCENT()).size(11.0));
         }
-        ui.label(RichText::new(res.stats.one_line()).color(theme::MUTED()).size(11.0));
+        ui.label(RichText::new(one_line).color(theme::MUTED()).size(11.0));
         ui.add_space(6.0);
         // The parent scrolls both ways to preserve the report's columns.
-        ui.add(egui::Label::new(RichText::new(&res.report_text)
+        ui.add(egui::Label::new(RichText::new(screen_text)
             .font(FontId::monospace(11.0)).color(theme::TEXT()))
             .wrap_mode(egui::TextWrapMode::Extend));
     }
@@ -7322,10 +7338,13 @@ impl OrbitLiveApp {
             // function
             let name_rect = Rect::from_min_size(Pos2::new(x, row_rect.top()), Vec2::new(name_w, row_h));
             let label = ui.interact(name_rect, ui.id().with(("repname", first + n)), Sense::click());
+            let shown = truncate_to_width(&row.name, name_w - 4.0, font);
+            // An elided name reads whole on hover.
+            let label = if shown != row.name { label.on_hover_text(&row.name) } else { label };
             ui.painter().text(
                 name_rect.left_center(),
                 Align2::LEFT_CENTER,
-                truncate_to_width(&row.name, name_w - 4.0, font),
+                shown,
                 FontId::new(font, FontFamily::Proportional),
                 if hooked { theme::ACCENT() } else { theme::TEXT() },
             );
@@ -8401,6 +8420,9 @@ impl OrbitLiveApp {
         // The table fills the space above the histogram and scrolls on its own.
         let mut clicked: Option<crate::live::LiveKey> = None;
         let mut actions = Vec::new();
+        // The width the columns share, measured outside the scroll area: in
+        // it the content may grow sideways without bound.
+        let view_w = ui.available_width() - ui.spacing().scroll.allocated_width();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() })
@@ -8458,11 +8480,59 @@ impl OrbitLiveApp {
                         }
                         ui.end_row();
                         let filter = self.report_filter.trim().to_lowercase();
-                        for r in rows
+                        let shown: Vec<&crate::live::LiveRow> = rows
                             .iter()
                             .filter(|r| filter.is_empty() || self.intern.get(r.name_id).is_some_and(|n| contains_ci(n, &filter)))
                             .take(300)
-                        {
+                            .collect();
+                        let stat_cells = |compact: bool| -> Vec<[String; 6]> {
+                            let time = if compact { display_time_ns_compact } else { display_time_ns };
+                            shown
+                                .iter()
+                                .map(|r| [
+                                    r.count.to_string(),
+                                    time(r.total_ns),
+                                    time(r.avg_ns()),
+                                    time(r.min_ns),
+                                    time(r.max_ns),
+                                    time(r.std_dev_ns()),
+                                ])
+                                .collect()
+                        };
+                        let mut stats = stat_cells(false);
+                        // The numbers are what this table is for, so they
+                        // keep their natural widths and the function name
+                        // takes what is left, elided. A long templated name
+                        // used to push every number out of the panel.
+                        let name_w = {
+                            let digit = ui.fonts(|f| f.glyph_width(&FontId::monospace(font), '0'));
+                            let header = |h: &str| ui.fonts(|f| {
+                                f.layout_no_wrap(format!("{h}   "), FontId::proportional(font - 0.5), Color32::WHITE).size().x
+                            });
+                            let widest = |chars: usize| chars as f32 * digit;
+                            let fixed = header("hook").max(16.0)
+                                + header("type").max(widest(shown.iter().map(|r| r.type_label().len()).max().unwrap_or(0)))
+                                + 9.0 * self.ui_tweaks.report_col_gap;
+                            let numbers = |stats: &[[String; 6]]| -> f32 {
+                                ["count", "total", "avg", "min", "max", "std dev"].iter().enumerate()
+                                    .map(|(i, h)| header(h).max(widest(stats.iter().map(|s| s[i].chars().count()).max().unwrap_or(0))))
+                                    .sum()
+                            };
+                            let mut others = fixed + numbers(&stats);
+                            // Still too wide with the name at its floor: four
+                            // significant figures instead of three decimals,
+                            // so all six numbers stay in a narrow panel.
+                            if view_w - others < LIVE_NAME_MIN_W {
+                                stats = stat_cells(true);
+                                others = fixed + numbers(&stats);
+                            }
+                            let module_chars = shown.iter()
+                                .filter_map(|r| resolved.get(&r.key()).and_then(|f| f.as_ref()))
+                                .map(|f| f.module.chars().count()).max().unwrap_or(0);
+                            let module_w = header("module").max((module_chars as f32 * (font - 0.5) * 0.58).min(LIVE_MODULE_W));
+                            name_column_width(view_w, others, module_w, LIVE_NAME_MIN_W)
+                        };
+                        for (r, stat) in shown.into_iter().zip(stats) {
                             let focused = self.live_focus == Some(r.key());
                             let name = self.intern.get(r.name_id).unwrap_or("?").to_string();
                             let function = resolved.get(&r.key()).and_then(|f| f.as_ref());
@@ -8481,14 +8551,20 @@ impl OrbitLiveApp {
 
                             ui.label(RichText::new(r.type_label()).color(theme::MUTED()).monospace().size(font))
                                 .on_hover_text(INSTRUMENTATION_TYPE_LEGEND);
-                            let label = ui.add(
-                                egui::Label::new(
-                                    RichText::new(&name)
-                                        .color(if focused || hooked { theme::ACCENT() } else { theme::TEXT() })
-                                        .size(font),
+                            let label = ui.scope(|ui| {
+                                ui.set_max_width(name_w);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&name)
+                                            .color(if focused || hooked { theme::ACCENT() } else { theme::TEXT() })
+                                            .size(font),
+                                    )
+                                    .sense(Sense::click())
+                                    .truncate()
+                                    // The hover text below names it whole.
+                                    .show_tooltip_when_elided(false),
                                 )
-                                .sense(Sense::click()),
-                            );
+                            }).inner;
                             note_ui_rect(&format!("live:{name}"), label.rect);
                             note_ui_rect(&format!("live-type:{}:{name}", r.type_label()), label.rect);
                             if let Some(f) = function {
@@ -8499,17 +8575,10 @@ impl OrbitLiveApp {
                                 }
                             }
 
-                            if label.on_hover_text(format!("Process {}. Click for the duration histogram; drag rows to select functions", r.pid)).clicked() {
+                            if label.on_hover_text(format!("{name}\nProcess {}. Click for the duration histogram; drag rows to select functions", r.pid)).clicked() {
                                 clicked = Some(r.key());
                             }
-                            for v in [
-                                r.count.to_string(),
-                                display_time_ns(r.total_ns),
-                                display_time_ns(r.avg_ns()),
-                                display_time_ns(r.min_ns),
-                                display_time_ns(r.max_ns),
-                                display_time_ns(r.std_dev_ns()),
-                            ] {
+                            for v in stat {
                                 ui.label(RichText::new(v).color(theme::MUTED()).monospace().size(font));
                             }
                             ui.label(RichText::new(function.map_or("", |f| f.module.as_str())).color(theme::MUTED()).size(font - 0.5));
@@ -10550,6 +10619,20 @@ fn percent_bar(ui: &mut Ui, percent: f64, strong: bool, width: f32) {
 /// How often the Live table re-sorts while a capture runs.
 const LIVE_SORT_EVERY_S: f64 = 1.0;
 const LIVE_STATS_MIN_INTERVAL_S: f64 = 0.25;
+/// The Live table's function names shrink to this before a number column
+/// is pushed out of view.
+const LIVE_NAME_MIN_W: f32 = 80.0;
+/// The most the Live table's module column claims while names are elided.
+const LIVE_MODULE_W: f32 = 120.0;
+
+/// How wide a table's function name may be when the other columns take
+/// `others` of `view_w`: what is left after the module, or, when that is
+/// under `min_w`, what is left before it (the module, the last column, is
+/// what scrolls out first), and never under `min_w`.
+fn name_column_width(view_w: f32, others: f32, module_w: f32, min_w: f32) -> f32 {
+    let rest = view_w - others;
+    if rest - module_w >= min_w { rest - module_w } else { rest.max(min_w) }
+}
 
 /// A file the viewer opens as an Orbit capture rather than a Chrome or
 /// Perfetto trace.
@@ -11728,6 +11811,28 @@ fn display_time_ns(ns: u64) -> String {
     }
 }
 
+/// A duration in four significant figures, for a table short of room:
+/// "595.0 us" where `display_time_ns` writes "594.957 us".
+fn display_time_ns_compact(ns: u64) -> String {
+    if ns < 1_000 {
+        return format!("{ns} ns");
+    }
+    let (v, unit) = [(1e3, "us"), (1e6, "ms"), (1e9, "s"), (60e9, "min"), (3600e9, "h"), (86400e9, "days")]
+        .iter()
+        .rev()
+        .find(|(scale, _)| ns as f64 >= *scale)
+        .map(|(scale, unit)| (ns as f64 / scale, *unit))
+        .unwrap();
+    // Seconds run to 60 before minutes take over; the rest to 1000.
+    if v >= 100.0 {
+        format!("{v:.1} {unit}")
+    } else if v >= 10.0 {
+        format!("{v:.2} {unit}")
+    } else {
+        format!("{v:.3} {unit}")
+    }
+}
+
 /// `QtTextRenderer::AddTextTrailingCharsPrioritized`: keep `elapsed`, ellipsize the name.
 fn elide_to_width(s: &str, max_w: f32, measure: &mut impl FnMut(&str) -> f32) -> String {
     if s.is_empty() || measure(s) <= max_w {
@@ -11999,6 +12104,30 @@ mod tests {
             cpu: 0.0,
             path: path.into(),
         }
+    }
+
+    #[test]
+    fn compact_durations_keep_four_significant_figures_in_the_same_units() {
+        assert_eq!(display_time_ns_compact(500), "500 ns");
+        assert_eq!(display_time_ns_compact(75_564), "75.56 us");
+        assert_eq!(display_time_ns_compact(594_957), "595.0 us");
+        assert_eq!(display_time_ns_compact(3_023_000), "3.023 ms");
+        assert_eq!(display_time_ns_compact(12_899_000), "12.90 ms");
+        assert_eq!(display_time_ns_compact(90_000_000_000), "1.500 min");
+        // Never wider than the full form.
+        for ns in [999, 1_000, 99_999_999, 123_456_789_012] {
+            assert!(display_time_ns_compact(ns).len() <= display_time_ns(ns).len());
+        }
+    }
+
+    #[test]
+    fn a_long_name_gives_way_to_the_numbers_then_the_module_to_the_name() {
+        // Room for everything: the name takes what the module leaves.
+        assert_eq!(name_column_width(1000.0, 500.0, 120.0, 80.0), 380.0);
+        // Tight: the module scrolls out before the name drops under its floor.
+        assert_eq!(name_column_width(650.0, 500.0, 120.0, 80.0), 150.0);
+        // Too narrow even for the numbers: the name stops at the floor.
+        assert_eq!(name_column_width(400.0, 500.0, 120.0, 80.0), 80.0);
     }
 
     #[test]

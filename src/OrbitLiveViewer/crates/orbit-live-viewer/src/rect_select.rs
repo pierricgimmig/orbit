@@ -120,16 +120,56 @@ struct FnAgg {
     max_ns: u64,
 }
 
-/// Summarise the selected scopes and render the clipboard report. `thread_name`
-/// turns a `(pid, tid)` into a display name. Returns the stats for the on-screen
-/// readout and the full text for the clipboard.
+/// The name column of the clipboard text, and the widest the pane's gets
+/// when every name is shorter.
+pub const NAME_COLS: usize = 40;
+/// What the per-function rows print besides the name: indent, count and
+/// four durations.
+const NUMBER_COLS: usize = 2 + 1 + 6 + 4 * 12;
+/// The pane never elides a name below this, even if the numbers scroll.
+const MIN_NAME_COLS: usize = 12;
+
+/// One function's row of the breakdown.
+#[derive(Clone, Debug, Default)]
+struct FnRow {
+    name: String,
+    count: usize,
+    total_ns: u64,
+    min_ns: u64,
+    max_ns: u64,
+}
+
+/// One listed scope, timed from the selection start.
+#[derive(Clone, Debug, Default)]
+struct ScopeRow {
+    rel_ns: u64,
+    duration_ns: u64,
+    thread: String,
+    depth: u8,
+    name: String,
+}
+
+/// A marquee's report, kept as rows so it can be written whole for the
+/// clipboard, or with its names elided to the width of the pane.
+#[derive(Clone, Debug, Default)]
+pub struct Report {
+    pub stats: RectStats,
+    fns: Vec<FnRow>,
+    threads: Vec<(String, usize)>,
+    scopes: Vec<ScopeRow>,
+    /// Scopes past `MAX_LISTED`, counted, not listed.
+    unlisted: usize,
+}
+
+/// Summarise the selected scopes. `thread_name` turns a `(pid, tid)` into a
+/// display name.
 pub fn report<F: Fn(u32, u32) -> String>(
     picked: &[ScopeInstance],
     intern: &InternTable,
     thread_name: F,
-) -> (RectStats, String) {
+) -> Report {
     if picked.is_empty() {
-        return (RectStats::default(), String::new());
+        return Report::default();
     }
 
     let mut by_fn: HashMap<u32, FnAgg> = HashMap::new();
@@ -173,71 +213,126 @@ pub fn report<F: Fn(u32, u32) -> String>(
 
     let name = |id: u32| intern.get(id).map(str::to_string).unwrap_or_else(|| format!("#{id}"));
 
-    let mut text = String::new();
-    text.push_str("Orbit rectangle selection\n");
-    text.push_str(&format!(
-        "{} scopes · {} functions · {} thread{}\n",
-        stats.count,
-        stats.functions,
-        stats.threads,
-        if stats.threads == 1 { "" } else { "s" },
-    ));
-    text.push_str(&format!(
-        "duration: {} total across a {} window (min {}, max {})\n",
-        fmt_dur(stats.total_ns),
-        fmt_dur(stats.window_ns),
-        fmt_dur(stats.min_ns),
-        fmt_dur(stats.max_ns),
-    ));
-
     // Per-function, heaviest total first.
     let mut fns: Vec<&FnAgg> = by_fn.values().collect();
     fns.sort_by(|a, b| b.total_ns.cmp(&a.total_ns).then(a.name_id.cmp(&b.name_id)));
-    text.push_str("\nBy function — count, total, avg, min, max:\n");
-    for f in &fns {
-        let avg = f.total_ns / f.count.max(1) as u64;
-        text.push_str(&format!(
-            "  {:<40} {:>6}  {:>10}  {:>10}  {:>10}  {:>10}\n",
-            name(f.name_id),
-            f.count,
-            fmt_dur(f.total_ns),
-            fmt_dur(avg),
-            fmt_dur(f.min_ns),
-            fmt_dur(f.max_ns),
-        ));
-    }
-
     // Per-thread, busiest first.
     let mut threads: Vec<(&(u32, u32), &usize)> = by_thread.iter().collect();
     threads.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    text.push_str("\nBy thread — scopes:\n");
-    for ((pid, tid), n) in &threads {
-        text.push_str(&format!("  {:<40} {:>6}\n", thread_name(*pid, *tid), n));
-    }
-
     // The individual scopes, earliest first, timed from the selection start.
     let mut items: Vec<&ScopeInstance> = picked.iter().collect();
     items.sort_by(|a, b| a.start_ns.cmp(&b.start_ns).then(a.depth.cmp(&b.depth)));
-    text.push_str("\nScopes — t (from selection start), duration, thread, depth, name:\n");
-    for inst in items.iter().take(MAX_LISTED) {
-        let rel = inst.start_ns.saturating_sub(stats.first_start_ns);
-        text.push_str(&format!(
-            "  +{:>10}  {:>10}  {:<24}  d{:<2} {}\n",
-            fmt_dur(rel),
-            fmt_dur(inst.duration_ns),
-            thread_name(inst.pid, inst.tid),
-            inst.depth,
-            name(inst.name_id),
-        ));
+
+    Report {
+        fns: fns
+            .iter()
+            .map(|f| FnRow { name: name(f.name_id), count: f.count, total_ns: f.total_ns, min_ns: f.min_ns, max_ns: f.max_ns })
+            .collect(),
+        threads: threads.iter().map(|((pid, tid), n)| (thread_name(*pid, *tid), **n)).collect(),
+        scopes: items
+            .iter()
+            .take(MAX_LISTED)
+            .map(|inst| ScopeRow {
+                rel_ns: inst.start_ns.saturating_sub(stats.first_start_ns),
+                duration_ns: inst.duration_ns,
+                thread: thread_name(inst.pid, inst.tid),
+                depth: inst.depth,
+                name: name(inst.name_id),
+            })
+            .collect(),
+        unlisted: items.len().saturating_sub(MAX_LISTED),
+        stats,
     }
-    if items.len() > MAX_LISTED {
-        text.push_str(&format!(
-            "  … {} more not listed\n",
-            items.len() - MAX_LISTED
-        ));
+}
+
+impl Report {
+    /// The plain text for the clipboard: every name whole.
+    pub fn text(&self) -> String {
+        self.render(None)
     }
 
-    (stats, text)
+    /// The name column for a pane `cols` characters wide: what the numbers
+    /// leave, never under `MIN_NAME_COLS`, and no wider than the longest
+    /// name needs (or `NAME_COLS`, the clipboard's, when all are shorter).
+    pub fn name_cols(&self, cols: usize) -> usize {
+        let longest = self.fns.iter().map(|f| &f.name).chain(self.threads.iter().map(|t| &t.0))
+            .map(|n| n.chars().count()).max().unwrap_or(0);
+        cols.saturating_sub(NUMBER_COLS).clamp(MIN_NAME_COLS, longest.max(NAME_COLS))
+    }
+
+    /// The text for the pane, names elided to `name_cols` so the numbers
+    /// after them stay in view. The scope list's names come last and are
+    /// left whole.
+    pub fn screen_text(&self, name_cols: usize) -> String {
+        self.render(Some(name_cols))
+    }
+
+    fn render(&self, name_cols: Option<usize>) -> String {
+        if self.stats.count == 0 {
+            return String::new();
+        }
+        let w = name_cols.unwrap_or(NAME_COLS);
+        let fit = |s: &str, w: usize| if name_cols.is_some() { elide_chars(s, w) } else { s.to_string() };
+        let stats = &self.stats;
+        let mut text = String::new();
+        text.push_str("Orbit rectangle selection\n");
+        text.push_str(&format!(
+            "{} scopes · {} functions · {} thread{}\n",
+            stats.count,
+            stats.functions,
+            stats.threads,
+            if stats.threads == 1 { "" } else { "s" },
+        ));
+        text.push_str(&format!(
+            "duration: {} total across a {} window (min {}, max {})\n",
+            fmt_dur(stats.total_ns),
+            fmt_dur(stats.window_ns),
+            fmt_dur(stats.min_ns),
+            fmt_dur(stats.max_ns),
+        ));
+        text.push_str("\nBy function — count, total, avg, min, max:\n");
+        for f in &self.fns {
+            let avg = f.total_ns / f.count.max(1) as u64;
+            text.push_str(&format!(
+                "  {:<w$} {:>6}  {:>10}  {:>10}  {:>10}  {:>10}\n",
+                fit(&f.name, w),
+                f.count,
+                fmt_dur(f.total_ns),
+                fmt_dur(avg),
+                fmt_dur(f.min_ns),
+                fmt_dur(f.max_ns),
+            ));
+        }
+        text.push_str("\nBy thread — scopes:\n");
+        for (thread, n) in &self.threads {
+            text.push_str(&format!("  {:<w$} {:>6}\n", fit(thread, w), n));
+        }
+        text.push_str("\nScopes — t (from selection start), duration, thread, depth, name:\n");
+        for s in &self.scopes {
+            text.push_str(&format!(
+                "  +{:>10}  {:>10}  {:<24}  d{:<2} {}\n",
+                fmt_dur(s.rel_ns),
+                fmt_dur(s.duration_ns),
+                fit(&s.thread, 24),
+                s.depth,
+                s.name,
+            ));
+        }
+        if self.unlisted > 0 {
+            text.push_str(&format!("  … {} more not listed\n", self.unlisted));
+        }
+        text
+    }
+}
+
+/// `s` cut to `width` characters, the last an ellipsis, when it is longer.
+fn elide_chars(s: &str, width: usize) -> String {
+    if s.chars().count() <= width {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 /// Nanoseconds as a short human string: ns / µs / ms / s, three significant
@@ -361,7 +456,8 @@ mod tests {
         intern.insert_id(10, "step");
         intern.insert_id(11, "draw");
 
-        let (stats, text) = report(&[a, b, c], &intern, |_p, t| format!("tid{t}"));
+        let r = report(&[a, b, c], &intern, |_p, t| format!("tid{t}"));
+        let (stats, text) = (r.stats.clone(), r.text());
         assert_eq!(stats.count, 3);
         assert_eq!(stats.functions, 2);
         assert_eq!(stats.threads, 2);
@@ -378,9 +474,35 @@ mod tests {
     #[test]
     fn an_empty_selection_reports_nothing() {
         let intern = InternTable::default();
-        let (stats, text) = report(&[], &intern, |_, _| String::new());
+        let r = report(&[], &intern, |_, _| String::new());
+        let (stats, text) = (r.stats.clone(), r.text());
         assert_eq!(stats, RectStats::default());
         assert!(text.is_empty());
+    }
+
+    #[test]
+    fn the_pane_elides_a_long_name_to_its_width_and_the_clipboard_keeps_it() {
+        let mut a = inst(0.0, 0.0, 1.0, 1.0, kind::FUNCTION_CALL);
+        a.name_id = 10;
+        let long = format!("std::vector<{}>::push_back", "Widget".repeat(12));
+        let mut intern = InternTable::default();
+        intern.insert_id(10, &long);
+        let r = report(&[a], &intern, |_p, t| format!("tid{t}"));
+        let row = |t: &str| t.lines().find(|l| l.contains("std::vector")).unwrap().to_string();
+        assert!(row(&r.text()).contains(&long));
+        // An 80-column pane: the name takes what the numbers leave, and the
+        // whole row fits.
+        let w = r.name_cols(80);
+        assert_eq!(w, 80 - NUMBER_COLS);
+        let shown = row(&r.screen_text(w));
+        assert!(shown.contains('…') && !shown.contains(&long));
+        assert_eq!(shown.chars().count(), 80);
+        assert!(shown.contains("      1  "));
+        // A pane too narrow for the numbers keeps a readable stub of the name.
+        assert_eq!(r.name_cols(30), MIN_NAME_COLS);
+        // A wide one shows the name whole, padded no further than it needs.
+        assert_eq!(r.name_cols(400), long.chars().count());
+        assert!(row(&r.screen_text(r.name_cols(400))).contains(&long));
     }
 
     #[test]
