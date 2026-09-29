@@ -85,7 +85,7 @@ workloads. Read the self-% table: that is where the time is.
 
 Sampling gives time-%, not call counts. To get per-function call count and
 total/avg duration, hook the function with Orbit's uprobes (the service's
-`/api/capture/start` with `instrumented_functions` + `kernel_uprobes`, or the
+`/api/capture/start` with `instrumented_functions` + `dynamic_instrumentation_method: "kernel_uprobes"`, or the
 hook harness). **This needs privilege** (`CAP_SYS_ADMIN` via `sudo` /
 `tools/sudo`); if `sudo -n` is unavailable, say so and select from sampling
 instead — do not fake counts.
@@ -203,5 +203,6 @@ leave edits in someone else's checkout.
 - Report rejects plainly; a well-tuned target resists naive changes, and "the
   gate rejected my change" is a valid, useful result.
 - Build parity matters: compare like with like (same ARCH, same PGO state). A
-  non-PGO baseline has real headroom (PGO alone was +5.2% on Stockfish,
-  behavior-preserving) — note it, but attribute code-change wins to the code.
+  non-PGO baseline has real headroom (PGO alone was +4.3% gated, +6.0%
+  interleaved, on Stockfish, behavior-preserving) — note it, but attribute
+  code-change wins to the code.

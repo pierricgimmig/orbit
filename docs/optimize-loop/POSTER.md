@@ -28,7 +28,7 @@ plumbing demo. It is not a product benchmark.
 ```sh
 git clone https://github.com/pierricgimmig/orbit.git
 cd orbit
-git checkout rust   # or cursor/stockfish-orbit-loop-659b
+git checkout loop
 
 python3 tools/optimize-loop/suite.py --config docs/optimize-loop/examples/fixture.toml
 python3 tools/optimize-loop/loop.py --mode mock
@@ -76,5 +76,5 @@ hot path, `--proposal auto` stays on a labeled no-op.
 | --- | --- |
 | [`README.md`](README.md) | Commands and config schema |
 | [`examples/`](examples/) | Fixture + external-project templates |
-| [`loop-log/`](loop-log/) | Attempt JSON |
+| `loop-log/` (generated, gitignored) | Attempt JSON |
 | [`UPSTREAM-PR-TEMPLATE.md`](UPSTREAM-PR-TEMPLATE.md) | Generic “propose to project X” outline |

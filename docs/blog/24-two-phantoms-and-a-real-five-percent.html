@@ -767,7 +767,7 @@ kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); 
 
 <p>Run one had ended on a code change with a plausible story. <code>apply_combined</code> reads one accumulator and writes another that provably do not alias, so telling the compiler (<code>__restrict</code>) should let it keep tiles in registers across the store passes. Measured single-shot: +1.53%, gate ACCEPT. Confirmed interleaved: +2.56%, 14 of 14. This run put the same patch, a sibling patch for <code>update_accumulator_refresh_cache</code> (where the store sits mid-loop, so the story was stronger), and both together through the MCP tools again.</p>
 
-<div class="table-wrap wide"><table><thead><tr><th>variant</th><th>nps (10 runs)</th><th>&Delta;</th><th>gate</th><th>pinned interleaved, 16 rounds</th></tr></thead><tbody>
+<div class="table-wrap wide"><table><thead><tr><th>variant</th><th>nps (8 runs)</th><th>&Delta;</th><th>gate</th><th>pinned interleaved, 16 rounds</th></tr></thead><tbody>
 <tr><td>baseline</td><td class="right mono">1,448,422</td><td class="right mono">&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
 <tr><td><code>apply_combined</code> restrict</td><td class="right mono">1,417,550</td><td class="right mono">&minus;2.24%</td><td>reject</td><td class="mono">6/16 wins, &minus;0.81%</td></tr>
 <tr><td><code>refresh_cache</code> restrict</td><td class="right mono">1,461,714</td><td class="right mono">+0.81%</td><td>reject (&lt;1&sigma;)</td><td class="mono">5/16 wins, &minus;1.19%</td></tr>
@@ -894,7 +894,7 @@ kbd.ui { font-family:var(--mono); font-size:.85em; background:var(--surface-2); 
 
 <p>The Stockfish tree is clean. The experiment folder holds the trace, the five patches, the driver, the interleaved benchmark script and its data, and both configs. The PGO binary is the one to run.</p>
 </article>
-<footer><div class="footer-inner">Post 24 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="23-a-profiler-an-agent-can-drive.html">&larr; Post 23</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a> &middot; Stockfish at 17a6c8f, out of tree, left clean</div></footer>
+<footer><div class="footer-inner">Post 24 of the Orbit C++ &rarr; Rust conversion log &middot; <a href="index.html">All posts</a> &middot; <a href="23-a-profiler-an-agent-can-drive.html">&larr; Post 23</a> &middot; <a href="25-stockfish-under-orbit-the-baseline.html">Post 25 &rarr;</a><br>Tree read at: <a href="https://github.com/pierricgimmig/orbit/tree/3323c24f3">3323c24f3</a> &middot; Stockfish at 17a6c8f, out of tree, left clean</div></footer>
 <button class="orbit-theme-toggle" id="orbit-theme-toggle" type="button" aria-label="Toggle colour theme">Dark</button>
 <script>
 (function(){

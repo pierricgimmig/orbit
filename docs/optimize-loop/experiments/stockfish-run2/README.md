@@ -1,7 +1,7 @@
 # Stockfish, run 2 — the record
 
 Files from the second optimize-loop run on Stockfish (see
-`../stockfish.md` for the write-up and `docs/blog/23-*.html` for the story).
+`../stockfish.md` for the write-up and `docs/blog/24-two-phantoms-and-a-real-five-percent.html` for the story).
 They are a **record**, not a runnable kit: paths that pointed into the
 session's scratch directory are written as `<scratch>`.
 
