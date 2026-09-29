@@ -15,8 +15,8 @@
 //! tested without egui: the app layer only supplies the rectangle, the intern
 //! table, and a way to name a thread.
 
-use orbit_live_event::{kind, InternTable};
-use orbit_live_render::ScopeInstance;
+use orbit_live_event::{kind, InternTable, LaneKey};
+use orbit_live_render::{instance_for_event, lane_height, ScopeInstance, TrackIndex};
 use std::collections::HashMap;
 
 /// The most scopes the clipboard text lists individually before it stops and
@@ -32,33 +32,50 @@ pub fn is_selectable(k: u8) -> bool {
     matches!(k, kind::API_SCOPE | kind::FUNCTION_CALL)
 }
 
-/// Indices into `instances` whose rectangle intersects the body-local
-/// selection rectangle. `pan` is the timeline's `listing_pan_pts`: an
-/// instance's `x` is in content space, the selection is in body-local screen
-/// space, so the selection is shifted by `pan` to meet it -- the same
-/// correction [`orbit_live_render::pick_instance_at`] applies for a click.
+/// The scopes a body-local rectangle covers, read from the index: every
+/// lane of `layout` (lane, top y in the body) whose band the rectangle
+/// crosses gives its events that overlap the rectangle's time span, with
+/// `[t0, t1]` spread over `width`. Read from the index rather than from the
+/// frame's instances because a zoomed-out timeline paints pixel columns and
+/// keeps no instances -- which is where the Self pane's sub-millisecond
+/// frames almost always are, so a marquee there used to gather nothing.
+#[allow(clippy::too_many_arguments)]
 pub fn scopes_in_rect(
-    instances: &[ScopeInstance],
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    pan: f32,
-) -> Vec<usize> {
-    let sx0 = x0.min(x1) + pan;
-    let sx1 = x0.max(x1) + pan;
-    let sy0 = y0.min(y1);
-    let sy1 = y0.max(y1);
+    index: &TrackIndex,
+    layout: &[(LaneKey, f32)],
+    t0: u64,
+    t1: u64,
+    width: f32,
+    (x0, y0): (f32, f32),
+    (x1, y1): (f32, f32),
+    scale: f32,
+) -> Vec<ScopeInstance> {
+    if width <= 0.0 || t1 <= t0 {
+        return Vec::new();
+    }
+    let span = (t1 - t0) as f64;
+    let at = |x: f32| t0.saturating_add((x.clamp(0.0, width) as f64 / width as f64 * span) as u64);
+    let ta = at(x0.min(x1));
+    let tb = at(x0.max(x1)).max(ta + 1);
+    let (sy0, sy1) = (y0.min(y1), y0.max(y1));
     let mut out = Vec::new();
-    for (i, inst) in instances.iter().enumerate() {
-        if !is_selectable(inst.kind) {
+    for &(key, top) in layout {
+        if !is_selectable(key.kind) {
             continue;
         }
-        let ix1 = inst.x + inst.w.max(0.0);
-        let iy1 = inst.y + inst.h.max(0.0);
+        let h = lane_height(key) * scale.max(0.01);
         // Rectangle overlap (touching edges count, as a click does).
-        if ix1 >= sx0 && inst.x <= sx1 && iy1 >= sy0 && inst.y <= sy1 {
-            out.push(i);
+        if top + h < sy0 || top > sy1 {
+            continue;
+        }
+        let Some(lane) = index.lane(key) else { continue };
+        let events = lane.events();
+        let first = lane.first_ending_after(ta);
+        let last = events.partition_point(|e| e.start_ns < tb).max(first);
+        for e in &events[first..last] {
+            if e.end_ns() > ta && is_selectable(e.kind) {
+                out.push(instance_for_event(e, t0, t1, span, width, top, h, 0.0, None));
+            }
         }
     }
     out
@@ -241,6 +258,7 @@ pub fn fmt_dur(ns: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbit_live_event::LiveEvent;
 
     fn inst(x: f32, y: f32, w: f32, h: f32, kind: u8) -> ScopeInstance {
         ScopeInstance {
@@ -263,40 +281,62 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_rectangle_takes_the_scopes_it_overlaps_and_leaves_the_rest() {
-        let instances = vec![
-            inst(0.0, 0.0, 10.0, 8.0, kind::FUNCTION_CALL),  // inside
-            inst(100.0, 0.0, 10.0, 8.0, kind::FUNCTION_CALL), // far right, out
-            inst(5.0, 40.0, 10.0, 8.0, kind::FUNCTION_CALL),  // below, out
-        ];
-        let hit = scopes_in_rect(&instances, -2.0, -2.0, 20.0, 20.0, 0.0);
-        assert_eq!(hit, vec![0]);
+    /// A scope event on `tid` at `depth`, `[start, start + dur)` ns.
+    fn ev(kind: u8, tid: u32, depth: u8, start: u64, dur: u64) -> LiveEvent {
+        LiveEvent { start_ns: start, duration_ns: dur, tid, pid: 1, kind, depth, extra: 0, _pad: 0, name_id: 7 }
+    }
+
+    fn key(kind: u8, tid: u32, depth: u8) -> LaneKey {
+        LaneKey { pid: 1, tid, kind, depth, extra: 0 }
+    }
+
+    /// Two scope lanes, depth 0 at y=0 and depth 1 at y=21, over 0..1000 ns
+    /// drawn 100 px wide: 10 ns a pixel.
+    fn two_lanes() -> (TrackIndex, Vec<(LaneKey, f32)>) {
+        let mut index = TrackIndex::default();
+        index.insert(ev(kind::API_SCOPE, 1, 0, 100, 100)); // x 10..20, top lane
+        index.insert(ev(kind::API_SCOPE, 1, 0, 800, 50)); //  x 80..85, top lane
+        index.insert(ev(kind::API_SCOPE, 1, 1, 120, 30)); //  x 12..15, lower lane
+        let layout = vec![(key(kind::API_SCOPE, 1, 0), 0.0), (key(kind::API_SCOPE, 1, 1), 21.0)];
+        (index, layout)
     }
 
     #[test]
-    fn the_pan_offset_shifts_the_selection_into_content_space() {
-        let instances = vec![inst(500.0, 0.0, 10.0, 8.0, kind::FUNCTION_CALL)];
-        // The instance sits at content x=500; on screen, panned by 480, it is
-        // at body x=20. A body-local rect around x=20 must find it.
-        assert!(scopes_in_rect(&instances, 10.0, -2.0, 30.0, 12.0, 0.0).is_empty());
-        assert_eq!(
-            scopes_in_rect(&instances, 10.0, -2.0, 30.0, 12.0, 480.0),
-            vec![0]
-        );
+    fn a_rectangle_takes_the_scopes_it_overlaps_and_leaves_the_rest() {
+        let (index, layout) = two_lanes();
+        // x 5..30 over the top lane only: the first top scope, not the far
+        // one, not the lower lane's.
+        let hit = scopes_in_rect(&index, &layout, 0, 1000, 100.0, (5.0, 2.0), (30.0, 10.0), 1.0);
+        assert_eq!(hit.iter().map(|i| i.start_ns).collect::<Vec<_>>(), vec![100]);
+        // Taller: both lanes.
+        let hit = scopes_in_rect(&index, &layout, 0, 1000, 100.0, (5.0, 2.0), (30.0, 30.0), 1.0);
+        assert_eq!(hit.len(), 2);
+        // Dragged right to left and bottom to top is the same rectangle.
+        let back = scopes_in_rect(&index, &layout, 0, 1000, 100.0, (30.0, 30.0), (5.0, 2.0), 1.0);
+        assert_eq!(back, hit);
+    }
+
+    #[test]
+    fn scopes_far_narrower_than_a_pixel_are_still_gathered() {
+        // A 1 µs scope in a 2 s view: a thousandth of a pixel, drawn as a
+        // pixel column with no instance -- the Self pane's frames.
+        let mut index = TrackIndex::default();
+        index.insert(ev(kind::API_SCOPE, 1, 0, 1_000_000_000, 1_000));
+        let layout = vec![(key(kind::API_SCOPE, 1, 0), 0.0)];
+        let hit = scopes_in_rect(&index, &layout, 0, 2_000_000_000, 1000.0, (400.0, 0.0), (600.0, 20.0), 1.0);
+        assert_eq!(hit.len(), 1);
     }
 
     #[test]
     fn samples_values_and_scheduler_slices_are_not_scopes() {
-        let instances = vec![
-            inst(0.0, 0.0, 10.0, 8.0, kind::SAMPLE),
-            inst(0.0, 0.0, 10.0, 8.0, kind::VALUE),
-            inst(0.0, 0.0, 10.0, 8.0, kind::SCHEDULING_SLICE),
-            inst(0.0, 0.0, 10.0, 8.0, kind::THREAD_STATE),
-            inst(0.0, 0.0, 10.0, 8.0, kind::API_SCOPE),
-        ];
-        // Only the API scope survives.
-        assert_eq!(scopes_in_rect(&instances, -1.0, -1.0, 20.0, 20.0, 0.0), vec![4]);
+        let mut index = TrackIndex::default();
+        let mut layout = Vec::new();
+        for (tid, k) in [(1, kind::SAMPLE), (2, kind::VALUE), (3, kind::THREAD_STATE), (4, kind::FUNCTION_CALL)] {
+            index.insert(ev(k, tid, 0, 100, 100));
+            layout.push((key(k, tid, 0), 0.0));
+        }
+        let hit = scopes_in_rect(&index, &layout, 0, 1000, 100.0, (0.0, 0.0), (100.0, 50.0), 1.0);
+        assert_eq!(hit.iter().map(|i| i.kind).collect::<Vec<_>>(), vec![kind::FUNCTION_CALL]);
     }
 
     #[test]

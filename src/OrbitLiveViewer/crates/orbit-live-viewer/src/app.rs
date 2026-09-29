@@ -926,6 +926,9 @@ pub struct OrbitLiveApp {
     /// `timeline()` as the capture: its fields are swapped into place for
     /// the duration of the pane's draw and swapped back after.
     self_tl: TimelineState,
+    /// The last marquee was drawn in the Self pane, so the Selection tab
+    /// reports its scopes (the viewer's own) rather than the capture's.
+    rect_in_self_pane: bool,
     /// Which GPU timeline the current draw targets (0 capture, 1 self).
     gpu_slot: u8,
     /// `(canvas, rail)` colours to draw with instead of the theme's, so the
@@ -1038,6 +1041,17 @@ struct RectResult {
     /// The detailed plain-text report (per-function, per-thread, per-scope),
     /// identical to what went to the clipboard, rendered in the summary pane.
     report_text: String,
+}
+
+/// A marquee's stats for `window.__orbit_sel`, or null.
+fn rect_json(rect: &Option<RectResult>) -> String {
+    match rect {
+        Some(r) => format!(
+            "{{\"count\":{},\"functions\":{},\"threads\":{},\"total_ns\":{},\"window_ns\":{}}}",
+            r.stats.count, r.stats.functions, r.stats.threads, r.stats.total_ns, r.stats.window_ns,
+        ),
+        None => "null".to_string(),
+    }
 }
 
 /// Right-drag measure: two capture-clock timestamps (`CaptureWindow`).
@@ -1299,7 +1313,7 @@ impl OrbitLiveApp {
     fn publish_selection(&mut self) {
         let focus = self.thread_focus();
         let text = format!(
-            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"capture_elapsed\":{:.3},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"theme\":{:?},\"renderer\":{:?},\"report_copied\":{},\"report_sel\":{}}}",
+            "{{\"thread\":{},\"scope\":{},\"focus\":{},\"measure\":{},\"ranges\":[{}],\"report_open\":{},\"tweaks\":{},\"tab\":\"{}\",\"hellos\":{},\"wire\":\"{}\",\"ws_bps\":{:.0},\"report_w\":{:.0},\"report_collapsed\":{},\"scope_menu\":{},\"scope_report\":{},\"view\":[{:.0},{:.0}],\"content\":{},\"events\":{},\"hooks\":[{}],\"capture_start\":{},\"report_filter\":{:?},\"track_filter\":{:?},\"prims\":{},\"flame_zoom\":{},\"selected_pid\":{},\"recording\":{},\"capture_elapsed\":{:.3},\"pointer\":{},\"build\":{:?},\"draw\":{},\"code\":{},\"rect\":{},\"rect_self\":{},\"theme\":{:?},\"renderer\":{:?},\"report_copied\":{},\"report_sel\":{}}}",
             match self.selected_thread {
                 Some((p, t)) => format!("[{p},{t}]"),
                 None => "null".to_string(),
@@ -1371,17 +1385,8 @@ impl OrbitLiveApp {
                 self.code_loading,
                 self.code_copied_chars,
             ),
-            match &self.rect_result {
-                Some(r) => format!(
-                    "{{\"count\":{},\"functions\":{},\"threads\":{},\"total_ns\":{},\"window_ns\":{}}}",
-                    r.stats.count,
-                    r.stats.functions,
-                    r.stats.threads,
-                    r.stats.total_ns,
-                    r.stats.window_ns,
-                ),
-                None => "null".to_string(),
-            },
+            rect_json(&self.rect_result),
+            rect_json(&self.self_tl.rect_result),
             orbit_live_event::theme::active().key,
             self.gpu_backend,
             self.report_copied_chars,
@@ -1659,6 +1664,7 @@ impl OrbitLiveApp {
             scope_menu_fresh: false,
             scope_report: None,
             self_tl: TimelineState::fresh(),
+            rect_in_self_pane: false,
             gpu_slot: 0,
             canvas_override: None,
             capture_open: false,
@@ -4353,6 +4359,9 @@ impl OrbitLiveApp {
             self.last_lod = lod;
 
             let body_resp = ui.interact(body, ui.id().with("orbit_body"), Sense::click_and_drag());
+            if self.in_self_pane {
+                note_ui_rect("self:body", body);
+            }
             if !lifting {
                 let _input = dev.scope(TID_UI, NAME_HANDLE_INPUT);
                 // What a left drag does is decided when it starts. Ctrl held:
@@ -6232,15 +6241,17 @@ impl OrbitLiveApp {
             self.rect_result = None;
             return;
         }
-        let idx = crate::rect_select::scopes_in_rect(
-            &self.last_instances,
-            a.x,
-            a.y,
-            b.x,
-            b.y,
-            self.listing_pan_pts,
+        let t0 = self.t0.max(0.0) as u64;
+        let picked = crate::rect_select::scopes_in_rect(
+            &self.index,
+            self.tracks.layout(),
+            t0,
+            (self.t1 as u64).max(t0 + 1),
+            body.width().max(1.0),
+            (a.x, a.y),
+            (b.x, b.y),
+            self.tracks.scale,
         );
-        let picked: Vec<ScopeInstance> = idx.iter().map(|&i| self.last_instances[i]).collect();
         let (stats, text) =
             crate::rect_select::report(&picked, &self.intern, |p, t| self.thread_display_name(p, t));
         if !text.is_empty() {
@@ -6251,6 +6262,9 @@ impl OrbitLiveApp {
         let t0_ns = time_at_x(body.left() + a.x.min(b.x), body, self.t0, self.t1);
         let t1_ns = time_at_x(body.left() + a.x.max(b.x), body, self.t0, self.t1);
         if stats.count > 0 { self.open_right_tab(ReportTab::Selection); }
+        // Both timelines keep their own marquee (the Self pane draws on
+        // swapped-in state); the Selection tab follows the newest one.
+        self.rect_in_self_pane = self.in_self_pane;
         self.rect_result = Some(RectResult {
             t0_ns,
             t1_ns,
@@ -6698,23 +6712,32 @@ impl OrbitLiveApp {
 
     /// The committed marquee's report, in the shared right pane.
     fn rect_summary_rows(&mut self, ui: &mut Ui) {
-        let Some(res) = self.rect_result.clone().filter(|r| r.stats.count > 0 && !r.report_text.is_empty()) else {
-            ui.label("Ctrl-drag over scopes to select a rectangle.");
+        // Drawn outside the Self pane's swap, so its marquee is in `self_tl`.
+        let from_self = self.rect_in_self_pane && self.self_pane_open && self.self_tl.rect_result.is_some();
+        let res = if from_self { self.self_tl.rect_result.clone() } else { self.rect_result.clone() };
+        let Some(res) = res.filter(|r| r.stats.count > 0 && !r.report_text.is_empty()) else {
+            ui.label("Ctrl-drag over scopes to select a rectangle, in the capture or the Self pane.");
             return;
         };
+        let copied_at = if from_self { self.self_tl.rect_copied_at } else { self.rect_copied_at };
         ui.horizontal(|ui| {
             let clear = ui.small_button("Clear").on_hover_text("Clear the selection");
             note_ui_rect("selection:clear", clear.rect);
-            if clear.clicked() { self.rect_result = None; }
-            let flashing = self.now_s - self.rect_copied_at < 1.5;
+            if clear.clicked() {
+                if from_self { self.self_tl.rect_result = None } else { self.rect_result = None }
+            }
+            let flashing = self.now_s - copied_at < 1.5;
             let copy = ui.small_button(if flashing { "Copied" } else { "Copy" })
                 .on_hover_text("Copy this report to the clipboard");
             note_ui_rect("selection:copy", copy.rect);
             if copy.clicked() {
                 ui.ctx().copy_text(res.report_text.clone());
-                self.rect_copied_at = self.now_s;
+                if from_self { self.self_tl.rect_copied_at = self.now_s } else { self.rect_copied_at = self.now_s }
             }
         });
+        if from_self {
+            ui.label(RichText::new("In the Self pane: the viewer's own frames").color(theme::ACCENT()).size(11.0));
+        }
         ui.label(RichText::new(res.stats.one_line()).color(theme::MUTED()).size(11.0));
         ui.add_space(6.0);
         // The parent scrolls both ways to preserve the report's columns.
