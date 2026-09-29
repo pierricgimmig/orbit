@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
 """Quick analysis-phase A/B for a patch applied to the Stockfish tree:
 build, save the binary, check the bit-exact fingerprint, run N alternating
 pairs against the baseline binary pinned to one P-core reading nps,

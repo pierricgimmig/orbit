@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 The Orbit Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
 """Interleaved round-robin benchmark of several *uninstrumented* Stockfish
 binaries: no profiler attached, no build in between, order rotated per round
 so drift cancels. Reports per-binary means, and paired per-round deltas and
