@@ -551,8 +551,10 @@ mod tests {
         let _serial = WRITES.lock().unwrap_or_else(|p| p.into_inner());
         init().expect("init");
         // No service here, so nothing has set the capturing flag; the calls
-        // would all be no-ops. Stand in for the service and set it.
-        ScopeRingReader::open(std::process::id()).unwrap().set_capturing(true);
+        // would all be no-ops. Stand in for the service and set it, holding
+        // the reader: dropping it would return its count.
+        let service = ScopeRingReader::open(std::process::id()).unwrap();
+        service.set_capturing(true);
         let s = start(b"outer");
         assert_ne!(s, 0);
         let i = instant(b"marker");
@@ -631,7 +633,8 @@ mod tests {
     fn handles_encode_the_starting_thread() {
         let _serial = WRITES.lock().unwrap_or_else(|p| p.into_inner());
         init().expect("init");
-        ScopeRingReader::open(std::process::id()).unwrap().set_capturing(true);
+        let service = ScopeRingReader::open(std::process::id()).unwrap();
+        service.set_capturing(true);
         let h = start(b"h");
         let tid = orbit_scope_ring::platform::thread_id() & 0xFFFF_FFFF;
         assert_eq!(h >> 32, tid);

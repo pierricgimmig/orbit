@@ -367,6 +367,9 @@ pub struct ScopeRingReader {
     control: Mapping,
     rings: Rings,
     pid: u32,
+    /// This reader's count in `capturing`: `NO_LEASE`, a 1-based slot in
+    /// the lease table, or `UNSLOTTED_LEASE` when the table was full.
+    lease: std::sync::atomic::AtomicU32,
 }
 
 // SAFETY: as for the writer.
@@ -467,7 +470,7 @@ impl ScopeRingReader {
 
         // SAFETY: dimensions validated against the mapped length above.
         let rings = unsafe { Rings::from_raw(base, ring_count, slots_per_ring) };
-        Ok(ScopeRingReader { owner_fd: fd_owner, mapping, control, rings, pid })
+        Ok(ScopeRingReader { owner_fd: fd_owner, mapping, control, rings, pid, lease: std::sync::atomic::AtomicU32::new(NO_LEASE) })
     }
 
     /// Address in the producer's address space, not the reader's. Consumers
@@ -484,13 +487,88 @@ impl ScopeRingReader {
         unsafe { &*self.mapping.base.cast::<Header>() }.api_descriptor.load(Ordering::Acquire)
     }
 
-    /// Tells the producer whether it should be writing. Set true when a
-    /// capture starts, false when it stops. Release-ordered, so a producer
-    /// that sees `true` also sees a fully initialised segment behind it.
+    /// Tells the producer this reader wants it writing (true when a capture
+    /// starts) or no longer does (false when it stops). The producer writes
+    /// while any reader wants it: this takes or returns one count in
+    /// `capturing`, so a service stopping its capture no longer silences
+    /// another still reading the same segment. Idempotent per reader, and
+    /// dropping the reader returns its count. Release-ordered, so a producer
+    /// that sees the count also sees a fully initialised segment behind it.
     pub fn set_capturing(&self, on: bool) {
+        if on {
+            self.take_lease();
+        } else {
+            self.return_lease();
+        }
+    }
+
+    /// Readers currently holding a count, as the producer sees it.
+    pub fn capturing_readers(&self) -> u32 {
+        self.header().capturing.load(Ordering::Acquire)
+    }
+
+    fn header(&self) -> &Header {
         // SAFETY: control maps the header page read-write, alone.
-        let header = unsafe { &*self.control.base.cast::<Header>() };
-        header.capturing.store(u32::from(on), Ordering::Release);
+        unsafe { &*self.control.base.cast::<Header>() }
+    }
+
+    fn leases(&self) -> &ring::ReaderLeases {
+        // SAFETY: the control mapping is a whole page, and the table sits
+        // after the header inside it (asserted in ring.rs).
+        unsafe { &*self.control.base.add(ring::READER_LEASES_OFFSET).cast::<ring::ReaderLeases>() }
+    }
+
+    fn take_lease(&self) {
+        if self.lease.load(Ordering::Acquire) != NO_LEASE {
+            return;
+        }
+        self.free_dead_leases();
+        let me = std::process::id();
+        let mut lease = UNSLOTTED_LEASE;
+        for (slot, pid) in self.leases().pids.iter().enumerate() {
+            if pid.compare_exchange(0, me, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                lease = slot as u32 + 1;
+                break;
+            }
+        }
+        self.header().capturing.fetch_add(1, Ordering::Release);
+        self.lease.store(lease, Ordering::Release);
+    }
+
+    fn return_lease(&self) {
+        match self.lease.swap(NO_LEASE, Ordering::AcqRel) {
+            NO_LEASE => {}
+            UNSLOTTED_LEASE => self.drop_count(),
+            slot => {
+                let pid = &self.leases().pids[slot as usize - 1];
+                // Only the slot's holder returns its count: if another reader
+                // already freed it as dead (a recycled pid), it took the count.
+                if pid.compare_exchange(std::process::id(), 0, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                    self.drop_count();
+                }
+            }
+        }
+    }
+
+    /// Frees the slots of readers that exited while capturing, returning
+    /// their counts. Each slot is freed by exactly one compare-exchange, so a
+    /// count is returned once however many readers sweep at the same time.
+    fn free_dead_leases(&self) {
+        for pid in &self.leases().pids {
+            let holder = pid.load(Ordering::Acquire);
+            if holder != 0
+                && !process_alive(holder)
+                && pid.compare_exchange(holder, 0, Ordering::AcqRel, Ordering::Relaxed).is_ok()
+            {
+                self.drop_count();
+            }
+        }
+    }
+
+    /// Never below zero: a reader built before the count (a plain store of
+    /// 0 or 1) may have reset it under the leases.
+    fn drop_count(&self) {
+        let _ = self.header().capturing.fetch_update(Ordering::Release, Ordering::Relaxed, |n| n.checked_sub(1));
     }
 
     pub fn rings(&self) -> &Rings {
@@ -504,8 +582,20 @@ impl ScopeRingReader {
 
 impl Drop for ScopeRingReader {
     fn drop(&mut self) {
+        self.return_lease();
         let _ = &self.mapping;
     }
+}
+
+/// `ScopeRingReader::lease` values other than a slot number (1-based).
+const NO_LEASE: u32 = 0;
+const UNSLOTTED_LEASE: u32 = u32::MAX;
+
+/// Whether `pid` still runs. EPERM means it does, under another user.
+fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks the pid; nothing is delivered.
+    let signalled = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    signalled || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 /// CLOCK_MONOTONIC in nanoseconds.
@@ -586,6 +676,63 @@ mod tests {
         let event = reader.rings().committed(0, 0).expect("the event crossed the boundary");
         assert_eq!(event.timestamp_ns, 1234);
         assert_eq!(event.tid, 7);
+    }
+
+    #[test]
+    fn one_reader_stopping_leaves_the_producer_writing_for_another() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let mine = ScopeRingReader::open(writer.pid()).unwrap();
+        let other_service = ScopeRingReader::open(writer.pid()).unwrap();
+        mine.set_capturing(true);
+        mine.set_capturing(true);
+        other_service.set_capturing(true);
+        assert_eq!(mine.capturing_readers(), 2, "a repeated start is one count");
+        other_service.set_capturing(false);
+        other_service.set_capturing(false);
+        assert!(writer.is_capturing(), "the other service's stop must not silence mine");
+        drop(other_service);
+        assert_eq!(mine.capturing_readers(), 1, "and a stopped reader's drop returns nothing twice");
+        mine.set_capturing(false);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn dropping_a_capturing_reader_returns_its_count() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        ScopeRingReader::open(writer.pid()).unwrap().set_capturing(true);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn a_reader_that_died_capturing_is_not_counted_forever() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let reader = ScopeRingReader::open(writer.pid()).unwrap();
+        // A service killed mid-capture: its slot and its count are left behind.
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        reader.leases().pids[5].store(dead, Ordering::Release);
+        reader.header().capturing.fetch_add(1, Ordering::Release);
+        reader.set_capturing(true);
+        assert_eq!(reader.capturing_readers(), 1, "the dead reader's count was taken back");
+        reader.set_capturing(false);
+        assert!(!writer.is_capturing());
+    }
+
+    #[test]
+    fn a_count_reset_by_an_older_reader_never_goes_negative() {
+        let _guard = exclusive();
+        let writer = ScopeRingWriter::create(1, 8).unwrap();
+        let reader = ScopeRingReader::open(writer.pid()).unwrap();
+        reader.set_capturing(true);
+        // A service built before the count stores a plain 0 when it stops.
+        reader.header().capturing.store(0, Ordering::Release);
+        reader.set_capturing(false);
+        assert_eq!(reader.capturing_readers(), 0);
+        assert!(!writer.is_capturing());
     }
 
     #[test]
