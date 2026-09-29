@@ -2017,12 +2017,14 @@ def report_filter(run):
     run.capture(seconds=4.0)
     run.stop_capture()
     run.open_viewer("?collapse=scheduler&report=flat")
-    before = run.wait_for(lambda: run.rects_matching("report:") or None, "flat report rows", timeout=20)
+    # The rows, not the panel's Copy button, which is labelled report:copy.
+    def rows():
+        return {k: v for k, v in run.rects_matching("report:").items() if k != "report:copy"}
+    before = run.wait_for(lambda: rows() or None, "flat report rows", timeout=20)
     run.click("report_filter")
     run.chrome.call("Input.insertText", text="b3Mul")
     after = run.wait_for(
-        lambda: (lambda r: r if r and all("b3mul" in k.lower() for k in r) and len(r) < len(before) else None)(
-            run.rects_matching("report:")),
+        lambda: (lambda r: r if r and all("b3mul" in k.lower() for k in r) and len(r) < len(before) else None)(rows()),
         "only the rows containing the filter", timeout=10,
     )
     check(run.sel().get("report_filter") == "b3Mul", "the readout shows the filter")
@@ -2034,7 +2036,7 @@ def report_filter(run):
     run.click("report_filter")
     run.chrome.key("Escape")
     run.click("Flat")
-    run.wait_for(lambda: len(run.rects_matching("report:")) >= len(before), "the rows back after Escape", timeout=10)
+    run.wait_for(lambda: len(rows()) >= len(before), "the rows back after Escape", timeout=10)
     return f"{len(after)} of {len(before)} rows match 'b3Mul'"
 
 

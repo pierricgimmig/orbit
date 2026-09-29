@@ -270,6 +270,15 @@ function passArray8ToWasm0(arg, malloc) {
     return ptr;
 }
 /**
+ * Called after JS `initThreadPool` resolves. `n == 1` keeps collect/raster
+ * sequential (SAB missing / init failed).
+ * @param {number} n
+ */
+export function markWasmPoolReady(n) {
+    wasm.markWasmPoolReady(n);
+}
+
+/**
  * Browser entry: eframe WebRunner on the given canvas. Native window is not used.
  * JS must call `initThreadPool` (when present) *before* this, then
  * `markWasmPoolReady`.
@@ -279,15 +288,6 @@ function passArray8ToWasm0(arg, malloc) {
 export function start_eframe(canvas) {
     const ret = wasm.start_eframe(canvas);
     return ret;
-}
-
-/**
- * Called after JS `initThreadPool` resolves. `n == 1` keeps collect/raster
- * sequential (SAB missing / init failed).
- * @param {number} n
- */
-export function markWasmPoolReady(n) {
-    wasm.markWasmPoolReady(n);
 }
 
 /**
@@ -307,11 +307,11 @@ export function wbg_rayon_start_worker(receiver) {
 }
 
 function __wbg_adapter_38(arg0, arg1) {
-    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__h520d5d881b28609d(arg0, arg1);
+    wasm._dyn_core__ops__function__FnMut_____Output___R_as_wasm_bindgen__closure__WasmClosure___describe__invoke__hc0c30ffedb260198(arg0, arg1);
 }
 
 function __wbg_adapter_41(arg0, arg1, arg2) {
-    wasm.closure482_externref_shim(arg0, arg1, arg2);
+    wasm.closure481_externref_shim(arg0, arg1, arg2);
 }
 
 function takeFromExternrefTable0(idx) {
@@ -327,11 +327,11 @@ function __wbg_adapter_46(arg0, arg1) {
 }
 
 function __wbg_adapter_49(arg0, arg1, arg2) {
-    wasm.closure1165_externref_shim(arg0, arg1, arg2);
+    wasm.closure1164_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_1501(arg0, arg1, arg2, arg3) {
-    wasm.closure2896_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure2895_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_BinaryType = ["blob", "arraybuffer"];
@@ -3323,28 +3323,28 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1815 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 213, __wbg_adapter_38);
+    imports.wbg.__wbindgen_closure_wrapper1146 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 84, __wbg_adapter_38);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper2962 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 483, __wbg_adapter_41);
+    imports.wbg.__wbindgen_closure_wrapper2959 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 482, __wbg_adapter_41);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper2964 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 483, __wbg_adapter_41);
+    imports.wbg.__wbindgen_closure_wrapper2961 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 482, __wbg_adapter_41);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper2966 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 483, __wbg_adapter_46);
+    imports.wbg.__wbindgen_closure_wrapper2963 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 482, __wbg_adapter_46);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper4491 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 1166, __wbg_adapter_49);
+    imports.wbg.__wbindgen_closure_wrapper4488 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 1165, __wbg_adapter_49);
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper4493 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 1166, __wbg_adapter_49);
+    imports.wbg.__wbindgen_closure_wrapper4490 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 1165, __wbg_adapter_49);
         return ret;
     };
     imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {
