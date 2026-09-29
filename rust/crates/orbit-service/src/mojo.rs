@@ -402,10 +402,17 @@ impl Report {
 #[cfg(target_os = "linux")]
 pub fn report_for_file(path: &str) -> Result<Report, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
-    let segments = orbit_object::parse_elf_metadata(&bytes, path)
+    report_for_bytes(&bytes, path)
+}
+
+/// As [`report_for_file`], for an image already read; `path` is where it
+/// came from, for the listing and the detached debug-file lookup.
+#[cfg(target_os = "linux")]
+fn report_for_bytes(bytes: &[u8], path: &str) -> Result<Report, String> {
+    let segments = orbit_object::parse_elf_metadata(bytes, path)
         .map(|metadata| metadata.loadable_segments)
         .unwrap_or_default();
-    let symbols = crate::symbolize::symbol_source(&bytes, Some(path))?;
+    let symbols = crate::symbolize::symbol_source(bytes, Some(path))?;
     let names: Vec<&str> = symbols.iter().map(|symbol| symbol.mangled_name.as_str()).collect();
     let mojo = is_mojo_binary(names.iter().copied());
     let kernels = gpu_kernels(names.iter().copied());
@@ -433,17 +440,26 @@ pub fn report_for_file(path: &str) -> Result<Report, String> {
 /// is a Mojo binary, 1 when it is not, 2 when it could not be read.
 #[cfg(target_os = "linux")]
 pub fn print_functions(target: &str, as_json: bool) -> i32 {
-    let path = match target.parse::<u32>() {
-        Ok(pid) => match std::fs::read_link(format!("/proc/{pid}/exe")) {
-            Ok(exe) => exe.to_string_lossy().into_owned(),
-            Err(error) => {
-                eprintln!("orbit-service: pid {pid}: {error}");
-                return 2;
-            }
-        },
-        Err(_) => target.to_string(),
+    let report = match target.parse::<u32>() {
+        // The image through the magic link, not through the path it names:
+        // that still reads an executable that was deleted or replaced since
+        // the process started, and cannot be swapped under us between the
+        // lookup and the read. The path is for the listing and the detached
+        // debug-file lookup, which needs the file's own directory.
+        Ok(pid) => {
+            let exe = format!("/proc/{pid}/exe");
+            let (path, bytes) = match (std::fs::read_link(&exe), std::fs::read(&exe)) {
+                (Ok(path), Ok(bytes)) => (path.to_string_lossy().into_owned(), bytes),
+                (Err(error), _) | (_, Err(error)) => {
+                    eprintln!("orbit-service: pid {pid}: {error}");
+                    return 2;
+                }
+            };
+            report_for_bytes(&bytes, &path)
+        }
+        Err(_) => report_for_file(target),
     };
-    let report = match report_for_file(&path) {
+    let report = match report {
         Ok(report) => report,
         Err(error) => {
             eprintln!("orbit-service: {error}");
@@ -547,6 +563,36 @@ mod tests {
     fn a_non_mojo_name_passes_through() {
         assert_eq!(pretty("_ZN5orbit7capture5startEv"), "_ZN5orbit7capture5startEv");
         assert_eq!(pretty("main"), "main");
+        // Demangled C++ and Rust spellings, should one reach here, are not
+        // Mojo's: no argument list, a leading `<`, a clone suffix.
+        for name in [
+            "Stockfish::Search::Worker::iterative_deepening",
+            "<alloc::vec::Vec<T> as core::ops::Drop>::drop",
+            "ns::f(int) [clone .cold]",
+            "core::ptr::drop_in_place<alloc::vec::Vec<u8>>",
+        ] {
+            assert_eq!(pretty(name), name);
+        }
+    }
+
+    #[test]
+    fn malformed_names_come_out_without_a_panic() {
+        // Unbalanced brackets, empty pieces, a `)` with no `(`, nested
+        // parentheses, non-ASCII, and a very long one: whatever comes out,
+        // nothing panics and the function's own path is kept.
+        for name in [
+            "a::b(", "a::b)", "::)", "a::b(::SIMD[::DType(int), ::SIMDLength(1)", "a::b(]]]))",
+            "a::b(::DType(", "a::b(::SIMD[::DType(int), ::SIMDLength()])", "a::b((((()", "a::b(,,,)",
+            "a::b(c(d(e)))", "a::b[[[(x)", "m::f(é::ü(ß))", "x::y(::SIMD[::DType(int), ::SIMDLength(1)],\
+             ::SIMD[::DType(int), ::SIMDLength(1)])_closure_",
+        ] {
+            let out = pretty(name);
+            assert!(out.starts_with("a::b") || out.starts_with("::") || out.starts_with("m::f") || out.starts_with("x::y"), "{name} -> {out}");
+        }
+        let long = format!("m::f({})", "::SIMD[::DType(int), ::SIMDLength(1)],".repeat(5000));
+        assert!(pretty(&long).starts_with("m::f(Int, Int"));
+        let deep = format!("m::f({}x{})", "[".repeat(10_000), "]".repeat(10_000));
+        assert!(pretty(&deep).starts_with("m::f("));
     }
 
     #[test]

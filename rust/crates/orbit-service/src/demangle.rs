@@ -265,7 +265,17 @@ mod ispc {
 
 #[cfg(test)]
 mod tests {
-    use super::pretty;
+    use super::{pretty, pretty_cached};
+
+    #[test]
+    fn a_mojo_name_is_shortened_like_the_source_spells_it() {
+        let name = "orbit_test_mojo::simulate(::SIMD[::DType(int), ::SIMDLength(1)])";
+        assert_eq!(pretty(name), "orbit_test_mojo::simulate(Int)");
+        assert_eq!(pretty_cached(name), "orbit_test_mojo::simulate(Int)");
+        // The C++ rule still owns Itanium names, and a plain C name passes.
+        assert_eq!(pretty("_ZN2ns5KlassclEv"), "ns::Klass::operator()");
+        assert_eq!(pretty("orbit_crash_here"), "orbit_crash_here");
+    }
 
     #[test]
     fn rust_names_lose_their_hash() {

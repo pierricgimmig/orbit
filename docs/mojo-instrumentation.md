@@ -67,9 +67,11 @@ Read off `src/OrbitTestMojo/orbit_test_mojo`, built with `mojo build -g`:
     stays.
   - `gpu_kernels` reads the kernels and their `triple`/`arch` out of the
     launch stubs.
-- **Wired into the product:** the function index (`functions.rs`) and the
-  sampled-frame symbolizer (`symbolize.rs`) prettify Mojo names, so the
-  Functions view, search, hooks and the flame graph all read as Mojo source.
+- **Wired into the product:** the one shared naming rule (`demangle.rs`,
+  which the function index, the sampled-frame symbolizer and the disassembly
+  all go through) recognises a Mojo name and hands it to `mojo.rs`, so the
+  Functions view, search, hooks and the flame graph all read as Mojo source;
+  the symbolizer's memo caches the short form like any demangled name.
   `/api/functions/search` hits carry `"language": "mojo"`.
 - **`orbit-service --mojo-functions <pid|path> [--json]`** — discovery from
   the executable alone (a pid resolves to `/proc/<pid>/exe`), the analog of
