@@ -81,6 +81,11 @@ def evaluate_gate(
     ):
         fingerprint_ok = False
         reasons.append(f"fingerprint changed {baseline_fingerprint} → {current_fingerprint}")
+    elif baseline_fingerprint is not None and current_fingerprint is None:
+        # run_bench reports None when iterations disagree or the line vanished:
+        # a change that makes the output non-deterministic must not pass.
+        fingerprint_ok = False
+        reasons.append(f"fingerprint missing or inconsistent after change (baseline {baseline_fingerprint})")
     if correctness_passed is False:
         fingerprint_ok = False
         reasons.append("correctness command failed")

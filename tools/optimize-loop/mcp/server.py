@@ -121,6 +121,7 @@ TOOLS: list[dict[str, Any]] = [
                 "bench_iters": {"type": "integer"},
                 "min_gain_percent": {"type": "number"},
                 "sigma": {"type": "number"},
+                "noise_batches": {"type": "integer"},
                 "log_dir": {"type": "string"},
             },
         },
@@ -176,6 +177,7 @@ def _dispatch(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
             bench_iters=args.get("bench_iters"),
             min_gain_percent=args.get("min_gain_percent"),
             sigma=args.get("sigma"),
+            noise_batches=args.get("noise_batches"),
             log_dir=args.get("log_dir"),
         )
     return {"ok": False, "error": f"unknown tool: {name}"}
@@ -224,7 +226,7 @@ def handle_message(msg: dict[str, Any]) -> dict[str, Any] | None:
             return _err(id_, -32602, "missing tool name")
         try:
             payload = _dispatch(name, params.get("arguments") or {})
-        except Exception as exc:  # noqa: BLE001
+        except (Exception, SystemExit) as exc:  # noqa: BLE001
             payload = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()[-1500:]}
         return _ok(
             id_,
