@@ -3646,7 +3646,8 @@ impl OrbitLiveApp {
                 )
                 .on_hover_text(
                     "Detected from the process's loaded libraries and open GPU devices -- \
-                     no attach, no code change. Tick auto-hook to instrument its hot paths.",
+                     no attach, no code change. A capture request with auto_hook_ai: true \
+                     also hooks the framework's hot entry points.",
                 );
             }
             // What actually happened to the hooked functions. Uprobes need

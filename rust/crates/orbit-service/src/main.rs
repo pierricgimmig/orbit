@@ -184,6 +184,11 @@ fn parse_args() -> Args {
                     std::process::exit(2);
                 }
                 let json = std::env::args().any(|a| a == "--json");
+                // No process, or not ours to read: an error, not "not AI".
+                if let Err(error) = ai_detect::readable(pid) {
+                    eprintln!("orbit-service: cannot read /proc/{pid}/maps: {error}");
+                    std::process::exit(2);
+                }
                 let w = ai_detect::detect(pid);
                 if json {
                     println!("{}", ai_detect::to_json(&w));
@@ -195,6 +200,8 @@ fn parse_args() -> Args {
                 }
                 std::process::exit(if w.is_ai() { 0 } else { 1 });
             }
+            // Consumed by --detect-ai wherever it sits on the line.
+            "--json" => {}
             "--uprobe-dump" => {
                 // Every raw probe hit to a file, for looking at what the
                 // kernel delivered around a lost one (uprobes.rs). A flag
@@ -241,7 +248,7 @@ fn parse_args() -> Args {
                      saved capture to a window, reading only the row groups inside it\n\
                      orbit-service --detect-ai <pid> [--json]  zero-code: report the AI framework \
                      and GPU stack a process uses from its loaded modules and open devices \
-                     (exit 0 when found, 1 when not)\n\
+                     (exit 0 when found, 1 when not, 2 when the process cannot be read)\n\
                      orbit-service [--pid <tid>] [--duration-ms <n>] [--freq-hz <n>] \
                      [--out <path>] [--gpu-helper <path>]\n\
                      \n\

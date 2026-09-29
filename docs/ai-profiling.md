@@ -18,7 +18,10 @@ loaded and opened. `ai_detect.rs` reads `/proc/<pid>/maps` and
   `libcublas`/`libnvinfer`) or ROCm (`libamdhip64`/`librocm`/`libhsa`).
 - **GPU in use** from open device nodes: `/dev/nvidia*` (NVIDIA) or `/dev/kfd`
   (AMD). `/dev/dri/*` is excluded — any GL client opens it, so it is not a
-  compute signal.
+  compute signal. An open device node on its own is reported (`gpu_device_open`)
+  but does not make a process "AI": on NVIDIA every GL/Vulkan client opens
+  `/dev/nvidia*` too, so the badge and the exit code need a framework or a
+  compute library (`libcuda`, `libamdhip64`, …) mapped as well.
 
 At capture start the service logs `pid N looks like an AI workload: PyTorch +
 NVIDIA GPU (CUDA)` and publishes it as the `ai` field of `/api/status`, which
@@ -61,11 +64,13 @@ Knowing a process is "PyTorch + CUDA" is what lets everything else stay
 zero-code:
 
 - **Auto-hook the training loop.** `suggested_hooks(framework)` names the hot
-  native entry points (PyTorch: `at::native::`, `torch::autograd::`, `c10::`,
-  `cudaLaunchKernel`; TensorFlow: `tensorflow::OpKernel::Compute`; …). Orbit's
-  existing native dynamic instrumentation hooks these by symbol — so a capture
-  turns into named framework scopes with the user picking nothing. (Wiring
-  the suggestions into the auto-hook path is the next step.)
+  native entry points (PyTorch: `cudaLaunchKernel`,
+  `torch::autograd::Engine::execute`, `torch::optim::Optimizer::step`, the big
+  `at::native::` ops by name; TensorFlow: `tensorflow::OpKernel::Compute`; …).
+  Orbit's existing native dynamic instrumentation hooks these by symbol — so a
+  capture turns into named framework scopes with the user picking nothing
+  (the opt-in `auto_hook_ai` path above). The viewer has no control for it
+  yet; a client sets the flag on the capture request.
 - **Label the process** in the viewer (an "AI" badge / the framework name),
   so the angle is obvious from the process picker.
 - **Data loading vs. compute.** Framework + thread names (`pt_data_worker`,
@@ -112,5 +117,5 @@ summaries) rather than new capture plumbing.
       viewer; needs per-rank rollups.
 
 The homepage angle for the no-code promise is delivered by the Python
-(`python-ebpf-instrumentation.md`) and Mojo (`mojo-instrumentation.md`)
-landing sections.
+(`python-ebpf-instrumentation.md`) landing section; Mojo is in flight on its
+own branch.

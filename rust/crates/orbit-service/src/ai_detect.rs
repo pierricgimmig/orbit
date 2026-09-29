@@ -67,9 +67,12 @@ impl AiWorkload {
         self.gpu_stack.is_some() || self.gpu_device_open
     }
 
-    /// Anything AI-relevant at all.
+    /// Anything AI-relevant at all: a framework or a GPU *compute* library is
+    /// mapped. An open device node on its own is not enough -- on NVIDIA
+    /// every GL/Vulkan client opens `/dev/nvidia*` too (the same reason
+    /// `/dev/dri` is not read), so a game or a browser must not get the badge.
     pub fn is_ai(&self) -> bool {
-        !self.frameworks.is_empty() || self.uses_gpu()
+        !self.frameworks.is_empty() || self.gpu_stack.is_some()
     }
 
     /// A one-line summary for the log and the instrumentation status, e.g.
@@ -130,6 +133,19 @@ pub fn classify_modules<S: AsRef<str>>(module_paths: &[S]) -> (Vec<Framework>, O
         None
     };
     (fws.into_iter().collect(), gpu)
+}
+
+/// Whether `/proc/<pid>/maps` can be read at all: false for a pid that does
+/// not exist or belongs to another user, which a caller should tell apart
+/// from "nothing AI about it".
+#[cfg(target_os = "linux")]
+pub fn readable(pid: u32) -> Result<(), String> {
+    std::fs::File::open(format!("/proc/{pid}/maps")).map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn readable(_pid: u32) -> Result<(), String> {
+    Err("zero-code AI detection reads /proc; Linux only".into())
 }
 
 /// Detect a running process's AI workload from `/proc`, without touching it.
@@ -321,6 +337,10 @@ mod tests {
         assert_eq!(w.summary(), "PyTorch + NVIDIA GPU (CUDA)");
         assert_eq!(AiWorkload::default().summary(), "no AI framework or GPU detected");
         assert!(!AiWorkload::default().is_ai());
+        // A device node alone (any GL client on NVIDIA) is GPU use but not AI.
+        let gl = AiWorkload { frameworks: vec![], gpu_stack: None, gpu_device_open: true };
+        assert!(gl.uses_gpu() && !gl.is_ai());
+        assert_eq!(gl.summary(), "GPU device open");
     }
 
     #[test]
