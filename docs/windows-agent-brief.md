@@ -93,9 +93,11 @@ only non-portable one is `shm.rs` (~200 lines, POSIX `shm_open`/`mmap`).
   `CreateFileMappingW` / `MapViewOfFile` / `OpenFileMappingW` in the
   `Local\` namespace (`Local\orbit-scopes-<pid>` for `/dev/shm/orbit-scopes-<pid>`).
   The Linux layout is one segment: a control page (header: magic, version=2,
-  ring_count, slots_per_ring, event_size, pid, `capturing` flag, api_version)
-  plus the rings. The reader maps the rings **read-only** and the control page
-  **read-write** (it flips `capturing`). On Windows that is two `MapViewOfFile`
+  ring_count, slots_per_ring, event_size, pid, `capturing` reader count,
+  api_version, then a table of reader-lease pids) plus the rings. The reader
+  maps the rings **read-only** and the control page **read-write** (it takes
+  and returns a count in `capturing`; `process_alive` in shm.rs needs a
+  Windows `OpenProcess` equivalent). On Windows that is two `MapViewOfFile`
   calls on one section with different access -- keep that split; it is what
   lets the reader be a separate, less-trusted process.
 - `sweep_dead_segments` walks `/dev/shm` for segments of dead pids. There is

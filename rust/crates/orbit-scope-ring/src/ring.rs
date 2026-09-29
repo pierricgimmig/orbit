@@ -84,10 +84,17 @@ pub struct Header {
     pub slots_per_ring: u32,
     pub event_size: u32,
     pub pid: u32,
-    /// Set by the service while it is draining this segment, cleared when it
-    /// stops. A producer reads it before doing any work, so an instrumented
-    /// process that nobody is capturing pays a single relaxed load per call
-    /// instead of writing a record no one will ever read.
+    /// How many readers are draining this segment right now; the producer
+    /// writes while it is non-zero. A producer reads it before doing any
+    /// work, so an instrumented process that nobody is capturing pays a
+    /// single relaxed load per call instead of writing a record no one will
+    /// ever read.
+    ///
+    /// A count, not a flag: every orbit-service on the machine opens every
+    /// instrumented segment, the other services' own included, and a flag
+    /// cleared by whichever capture stopped first silenced the rest -- a
+    /// service's self-scopes vanished mid-capture when another service on
+    /// the box stopped one. Readers move it through [`ReaderLeases`].
     pub capturing: AtomicU32,
     /// Semantic version of the instrumentation calls.
     pub api_version: u32,
@@ -98,6 +105,28 @@ pub struct Header {
     pub api_descriptor: AtomicU64,
     pub _pad: [u32; 4],
 }
+
+/// Who holds a count in [`Header::capturing`]: one slot per reader, the
+/// reader's pid while it captures, zero when free. It sits right after the
+/// header on the control page, in bytes that were always zero and that no
+/// producer reads, so the layout version and every ring offset are
+/// unchanged. The table exists for one case: a reader that dies without
+/// stopping. The next reader to take a lease finds its pid gone, frees the
+/// slot and takes its count back, where a leaked count would keep the
+/// producer writing for no one until it exits.
+#[repr(C)]
+pub struct ReaderLeases {
+    pub pids: [AtomicU32; READER_SLOTS],
+}
+
+/// Readers that can hold a lease at once. More than that still capture;
+/// they just count without a slot, so a crash of theirs is not undone.
+pub const READER_SLOTS: usize = 64;
+
+/// Byte offset of [`ReaderLeases`] in the segment, on the control page.
+pub const READER_LEASES_OFFSET: usize = CACHE_LINE;
+
+const _: () = assert!(READER_LEASES_OFFSET + std::mem::size_of::<ReaderLeases>() <= 4096);
 
 /// Semantic version of the API. Bumped when the meaning of a call changes.
 pub const API_VERSION: u32 = 1;
