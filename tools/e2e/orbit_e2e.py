@@ -1256,6 +1256,38 @@ def self_pane(run):
     return f"{len(phases.get('phases', []))} phases, {phases.get('fps', 0):.0f} fps"
 
 
+@scenario("self-rect-select", "The Select marquee works in the Self pane too, and the Selection tab reports the viewer's own scopes")
+def self_rect_select(run):
+    if run.chrome is None:
+        return "skipped: --no-shots"
+    run.open_viewer()
+    run.click("More")
+    run.click("Self")
+    run.wait_for(lambda: run.ui().get("self:body"), "the Self pane's timeline", timeout=15)
+    time.sleep(3.0)  # a few seconds of frames to select over
+    x, y, w, h = run.rect("self:body")
+    x0, x1 = x + w * 0.3, x + w * 0.7
+    y0, y1 = y + 2, y + h - 2
+
+    def mouse(kind, px, py):
+        # Ctrl+left-drag, as on the capture's timeline (modifier bit 2).
+        run.chrome.call("Input.dispatchMouseEvent", type=kind, x=px, y=py, button="left", buttons=1, modifiers=2)
+
+    mouse("mousePressed", x0, y0)
+    for i in range(1, 11):
+        mouse("mouseMoved", x0 + (x1 - x0) * i / 10, y0 + (y1 - y0) * i / 10)
+        time.sleep(0.02)
+    mouse("mouseReleased", x1, y1)
+    rect = run.wait_for(lambda: run.sel().get("rect_self"), "the Self pane's committed marquee", timeout=10)
+    # Zoomed out, the frames are far narrower than a pixel and drawn as
+    # pixel columns: the marquee reads them from the index, not the frame.
+    check_at_least(rect.get("count", 0), 1, f"viewer scopes inside the Self pane's marquee: {rect}")
+    check(run.sel().get("tab") == "Selection", f"the Selection tab opens: {run.sel().get('tab')}")
+    check(run.sel().get("rect") is None, "the capture's own marquee is untouched")
+    run.shot("49-self-rect-select", settle=0.5)
+    return f"{rect['count']} scopes, {rect['functions']} functions in the Self pane"
+
+
 @scenario("live-tab", "The Live tab keeps per-scope statistics and a duration histogram")
 def live_tab(run):
     if run.chrome is None:
