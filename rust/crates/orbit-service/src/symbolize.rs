@@ -387,7 +387,7 @@ fn find_symbol(symbols: &[(u64, u64, String)], address: u64) -> Option<&str> {
     }
 }
 
-/// Rust and Itanium C++ names made readable, lazily and memoized; see
+/// Rust, Itanium C++ and Mojo names made readable, lazily and memoized; see
 /// `demangle.rs` for the rule (the C++ shims that once did this with
 /// `__cxa_demangle` are gone with LLVM, so this is the only demangler).
 fn demangle(name: &str) -> String {

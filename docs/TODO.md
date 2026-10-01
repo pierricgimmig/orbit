@@ -749,3 +749,23 @@ Reality check found on 2026-09-10: Ubuntu's `python3.14` ships `gc`/`import`/
 `audit` probes but **not** the per-function ones, so detect-and-degrade to
 sampling is the common path, not an edge case. Building the attach/capture
 needs a `--with-dtrace` Python with the function probes, privileges, and a GPU.
+
+## 45. Mojo: host and GPU in one timeline
+
+Same one-timeline-across-the-boundary angle as Python (44), but easier: Mojo
+compiles ahead of time to native code, so a Mojo function is a native symbol
+Orbit already hooks with kernel uprobes -- no interpreter, no probes, no eBPF.
+Its GPU kernels launch through the driver Orbit's GPU telemetry helper already
+watches, so host and device land on one timeline.
+
+**Status: built and proven on Mojo 1.0.0 + an RTX 4090 (2026-09-12).** Mojo
+does not mangle: `.symtab` holds `module::fn(::SIMD[::DType(int),
+::SIMDLength(1)])`-style names, which `mojo.rs` prettifies to
+`module::fn(Int)` for the function index and the symbolizer;
+`--mojo-functions <pid|path>` lists a binary's functions and the GPU kernels it
+carries (PTX, `sm_89`); search hits carry `language: mojo`. The `mojo` e2e
+hooks `simulate` and `step` of `src/OrbitTestMojo` with uprobes (1651 + 1652
+scopes in 6 s) with the GPU lanes alongside -- `45-mojo-host-gpu.png`.
+Details and what is still open (per-kernel spans need CUPTI records; the
+viewer does not draw the language chip yet) in
+[mojo-instrumentation.md](mojo-instrumentation.md).
