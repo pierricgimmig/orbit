@@ -170,6 +170,10 @@ pub struct UprobeSession {
     fds_by_function: HashMap<u64, Vec<i32>>,
     /// Entries per function in the current one-second window.
     rates: HashMap<u64, CallRate>,
+    /// Entry hits since `take_entry_hits`, per function. Completed calls are
+    /// not enough to tell a quiet function from one that was entered and
+    /// never returned.
+    entry_hits: HashMap<u64, u64>,
     /// Functions switched off for firing over the limit, with the rate seen.
     pub auto_unhooked: Vec<(u64, u64)>,
     /// Per thread, the last entry that was let through: `(sp, ip, cpu)`.
@@ -224,6 +228,7 @@ impl UprobeSession {
             names: hooks.iter().map(|h| (h.function_id, h.name.clone())).collect(),
             fds_by_function: HashMap::new(),
             rates: HashMap::new(),
+            entry_hits: HashMap::new(),
             auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
@@ -320,15 +325,20 @@ impl UprobeSession {
         Ok(armed_here)
     }
 
-    /// Takes one function's probes off the running session. Attached probes
-    /// are closed; a probe that leads a CPU's ring owns the ring every other
-    /// probe of that CPU writes into, so it is switched off instead. Records
-    /// already in the rings still pair (the stream ids stay known); a call
-    /// open at the time never closes and is counted as unclosed. False when
-    /// the function had no live probes.
+    /// Takes one function's probes off the running session. Return probes are
+    /// closed before entry probes: the other order lets returns land after
+    /// the entry probe is gone, and every one of them is counted as a return
+    /// with no entry. A probe that leads a CPU's ring owns the ring every
+    /// other probe of that CPU writes into, so it is switched off instead.
+    /// Records already in the rings still pair (the stream ids stay known); a
+    /// call open at the time never closes and is counted as unclosed. False
+    /// when the function had no live probes.
     pub fn remove_hook(&mut self, function_id: u64) -> bool {
-        let Some(fds) = self.fds_by_function.remove(&function_id) else { return false };
-        for fd in fds {
+        let Some(fds) = self.fds_by_function.remove(&function_id) else {
+            return false;
+        };
+        // Armed entry-then-return, so reversing closes the returns first.
+        for fd in fds.into_iter().rev() {
             match self.rings.iter_mut().find(|r| r.ring.fd() == fd) {
                 Some(_) => {
                     let _ = orbit_perf_ring::ring::disable_fd(fd);
@@ -363,7 +373,14 @@ impl UprobeSession {
             .collect();
         let mut unhooked = Vec::new();
         for (function_id, entries) in offenders {
-            for fd in self.fds_by_function.remove(&function_id).unwrap_or_default() {
+            // Returns before entries, same reason as `remove_hook`.
+            for fd in self
+                .fds_by_function
+                .remove(&function_id)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+            {
                 let _ = orbit_perf_ring::ring::disable_fd(fd);
             }
             self.rates.remove(&function_id);
@@ -372,6 +389,12 @@ impl UprobeSession {
             self.auto_unhooked.push((function_id, entries));
         }
         unhooked
+    }
+
+    /// Entry hits since the last call, and the counter starts over. Auto-profiling
+    /// uses this to tell "nothing called it" from "it was entered and did not return".
+    pub fn take_entry_hits(&mut self) -> HashMap<u64, u64> {
+        std::mem::take(&mut self.entry_hits)
     }
 
     pub fn poll(&mut self) -> Vec<CompletedCall> {
@@ -550,12 +573,9 @@ impl UprobeSession {
                     rate.entries = 0;
                 }
                 rate.entries += 1;
-                self.calls.process_function_entry(
-                    hit.tid,
-                    hit.function_id,
-                    hit.timestamp_ns,
-                    None,
-                );
+                *self.entry_hits.entry(hit.function_id).or_insert(0) += 1;
+                self.calls
+                    .process_function_entry(hit.tid, hit.function_id, hit.timestamp_ns, None);
             }
         }
         out
@@ -667,6 +687,7 @@ mod tests {
             names: HashMap::new(),
             fds_by_function: HashMap::new(),
             rates: HashMap::new(),
+            entry_hits: HashMap::new(),
             auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),

@@ -238,7 +238,7 @@ struct CaptureState {
 /// polls `/api/symbols/status` until it flips from `loading` to `ready`. That
 /// three-state shape is the viewer's, not ours: it already knows how to wait.
 #[derive(Default)]
-struct SymbolState {
+pub(crate) struct SymbolState {
     started: Option<std::time::Instant>,
     elapsed_ms: Option<u64>,
     functions_loaded: usize,
@@ -391,9 +391,7 @@ fn wants_all_processes(body: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the uprobe duplicate filter is on for this capture. Absent means
-/// on: the filter is the fix, the switch exists to see what it does.
-/// The start body asks for auto-profiling.
+/// The start body asks for auto-profiling. Absent means no.
 fn wants_auto_profile(body: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
@@ -401,6 +399,8 @@ fn wants_auto_profile(body: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the uprobe duplicate filter is on for this capture. Absent means
+/// on: the filter is the fix, the switch exists to see what it does.
 fn wants_duplicate_filter(body: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
@@ -811,6 +811,14 @@ const AUTO_PROFILE_SAMPLES_NS: u64 = 5_000_000_000;
 struct AutoRun {
     profiler: crate::auto_profile::AutoProfiler,
     counts: HashMap<u64, u64>,
+    /// When each live hook was actually armed. The step clock starts before
+    /// the unhooks, which can take longer than the step; a hook added at the
+    /// end is timed from here.
+    armed_at: HashMap<u64, u64>,
+    /// Start of the interval whose calls are still in `counts`. Advances only
+    /// when those counts are handed to the controller, so a step that returns
+    /// early does not shrink the denominator under calls it did not consume.
+    counted_through_ns: u64,
     last_step_ns: u64,
     steps: u32,
     /// How much of the session's `auto_unhooked` the controller has been told.
@@ -818,6 +826,11 @@ struct AutoRun {
     /// The last few things it did, newest last.
     log: std::collections::VecDeque<String>,
     error: String,
+    /// The uprobe engine itself cannot arm anything (no PMU, no permission).
+    /// Further candidates are not tried.
+    engine_down: bool,
+    /// The PMU was looked up once; a missing one is an engine failure.
+    probes_checked: bool,
     on: bool,
 }
 
@@ -845,21 +858,50 @@ impl AutoRun {
                 MAX_HOOKS,
             )),
             counts: HashMap::new(),
+            armed_at: HashMap::new(),
+            counted_through_ns: now_ns,
             last_step_ns: now_ns,
             steps: 0,
             limited_seen: 0,
             log: Default::default(),
             error: String::new(),
+            engine_down: false,
+            probes_checked: false,
             on: true,
         }
     }
 
+    fn push_log(&mut self, line: String) {
+        self.log.push_back(line);
+        while self.log.len() > 12 {
+            self.log.pop_front();
+        }
+    }
+
+    fn engine_failed(&mut self, error: String) {
+        self.engine_down = true;
+        self.error = format!("uprobes unavailable: {error}");
+        self.push_log(self.error.clone());
+    }
+
     fn step(&mut self, s: AutoStep<'_>) {
         use crate::auto_profile::{candidates_from_report, Action};
-        self.profiler.set_budget(s.service.settings().auto_profile_scopes_per_s);
-        let window_s = s.now_ns.saturating_sub(self.last_step_ns) as f64 / 1e9;
+        self.profiler
+            .set_budget(s.service.settings().auto_profile_scopes_per_s);
+        // The step clock throttles the loop. It is not the rate denominator:
+        // that waits until the counts are actually consumed.
         self.last_step_ns = s.now_ns;
         self.steps += 1;
+        if self.engine_down {
+            return;
+        }
+        if !self.probes_checked {
+            self.probes_checked = true;
+            if orbit_perf_ring::attr::uprobe_pmu_type().is_none() {
+                self.engine_failed("this kernel has no uprobe PMU (CONFIG_UPROBE_EVENTS)".into());
+                return;
+            }
+        }
         // The functions it can hook come from the symbol index: load it in
         // the background if nobody has, and wait for it.
         let index = s
@@ -874,15 +916,58 @@ impl AutoRun {
         };
         self.error.clear();
         let since = s.now_ns.saturating_sub(AUTO_PROFILE_SAMPLES_NS);
-        let report = s.store.report_json_for_ranges(&[SampleRange::new(since, u64::MAX, None)]);
-        // Never a function the analyzer calls unsafe or risky: nobody chose
-        // these by hand.
-        let candidates = candidates_from_report(&report, |id| index.by_id(id).is_some() && index.safety_of(id).is_safe());
-        let limited: Vec<u64> = s.session.auto_unhooked[self.limited_seen..].iter().map(|(id, _)| *id).collect();
+        let report = s
+            .store
+            .report_json_for_ranges(&[SampleRange::new(since, u64::MAX, None)]);
+        // Unsafe entries stay out: nobody chose these by hand. A risky verdict
+        // that only warns about an inline trampoline is fine, auto-profiling
+        // hooks with uprobes. A function too small for a return probe is not.
+        let candidates = candidates_from_report(&report, |id| {
+            index.by_id(id).is_some() && index.safety_of(id).allows_uprobe()
+        });
+        let limited: Vec<u64> = s.session.auto_unhooked[self.limited_seen..]
+            .iter()
+            .map(|(id, _)| *id)
+            .collect();
         self.limited_seen = s.session.auto_unhooked.len();
-        let actions = self.profiler.step(&candidates, &self.counts, window_s, &limited);
+        // How long each hook was really armed while these counts accumulated.
+        // A hook added at the end of the previous step was not armed for the
+        // unhooks before it, and those can take longer than the step.
+        let window_s = s.now_ns.saturating_sub(self.counted_through_ns) as f64 / 1e9;
+        let mut watched: HashMap<u64, f64> = HashMap::new();
+        for id in self.profiler.hooked_ids() {
+            let armed = self
+                .armed_at
+                .get(&id)
+                .copied()
+                .unwrap_or(self.counted_through_ns);
+            let start = armed.max(self.counted_through_ns);
+            let secs = if s.now_ns > start {
+                (s.now_ns - start) as f64 / 1e9
+            } else {
+                0.0
+            };
+            watched.insert(id, secs);
+        }
+        self.counted_through_ns = s.now_ns;
+        let entries = s.session.take_entry_hits();
+        let actions = self.profiler.step(
+            &candidates,
+            &self.counts,
+            window_s,
+            &watched,
+            &entries,
+            &limited,
+        );
         self.counts.clear();
+        let mut give_up = false;
         for action in actions {
+            if give_up {
+                if let Action::Hook { function_id, .. } = action {
+                    self.profiler.hook_failed(function_id);
+                }
+                continue;
+            }
             let line = match action {
                 Action::Hook { function_id, name, why } => {
                     let (specs, _) = hooks_from_ids(&index, &[function_id]);
@@ -890,15 +975,25 @@ impl AutoRun {
                         Some(spec) => match s.session.add_hook(&spec) {
                             Ok(_) => {
                                 s.hook_names.insert(function_id, s.names.id_for(&spec.name));
-                                s.armed_hooks.push(crate::hook_journal::ArmedHook {
-                                    size: index.by_id(function_id).map(|f| f.size).unwrap_or(0),
-                                    safety: index.safety_of(function_id),
-                                    spec,
-                                });
+                                self.armed_at.insert(function_id, crate::now_monotonic_ns());
+                                crate::hook_journal::set_hook(
+                                    s.armed_hooks,
+                                    function_id,
+                                    Some(crate::hook_journal::ArmedHook {
+                                        size: index.by_id(function_id).map(|f| f.size).unwrap_or(0),
+                                        safety: index.safety_of(function_id),
+                                        spec,
+                                    }),
+                                );
                                 format!("hooked {name}: {}", why.text())
                             }
                             Err(error) => {
                                 self.profiler.hook_failed(function_id);
+                                self.armed_at.remove(&function_id);
+                                if crate::auto_profile::uprobe_engine_unavailable(&error) {
+                                    self.engine_failed(error.clone());
+                                    give_up = true;
+                                }
                                 format!("could not hook {name}: {error}")
                             }
                         },
@@ -910,6 +1005,8 @@ impl AutoRun {
                 }
                 Action::Unhook { function_id, name, why } => {
                     s.session.remove_hook(function_id);
+                    self.armed_at.remove(&function_id);
+                    crate::hook_journal::set_hook(s.armed_hooks, function_id, None);
                     format!("unhooked {name}: {}", why.text())
                 }
             };
@@ -926,10 +1023,7 @@ impl AutoRun {
                 _pad: 0,
                 name_id: s.names.id_for(&format!("auto-profile: {line}")),
             });
-            self.log.push_back(line);
-            while self.log.len() > 12 {
-                self.log.pop_front();
-            }
+            self.push_log(line);
         }
     }
 
@@ -937,10 +1031,10 @@ impl AutoRun {
     fn status_line(&self) -> String {
         let st = self.profiler.status();
         format!(
-            "auto-profiling: {} function(s) hooked, {:.0} of {:.0} scopes/s{}",
+            "auto-profiling: {} function(s) hooked, {} of {} scopes/s{}",
             st.hooked.len(),
-            st.total_per_s,
-            st.budget_per_s,
+            crate::auto_profile::format_scopes_per_s(st.total_per_s),
+            crate::auto_profile::format_scopes_per_s(st.budget_per_s),
             if st.converged { ", converged" } else { "" }
         )
     }
@@ -1649,9 +1743,11 @@ fn capture_loop(
                 } else {
                     // The session is made the first time it is needed, so a
                     // capture that never auto-profiles is armed as before.
-                    let session = uprobes
-                        .get_or_insert_with(|| UprobeSession::arm(target_pid, &[], uprobe_duplicate_filter).0);
-                    let armed_before = armed_hooks.len();
+                    let session = uprobes.get_or_insert_with(|| {
+                        UprobeSession::arm(target_pid, &[], uprobe_duplicate_filter).0
+                    });
+                    let armed_before: Vec<u64> =
+                        armed_hooks.iter().map(|h| h.spec.function_id).collect();
                     run.step(AutoStep {
                         now_ns,
                         target_pid,
@@ -1664,10 +1760,20 @@ fn capture_loop(
                         armed_hooks: &mut armed_hooks,
                         batch: &mut batch,
                     });
-                    if armed_hooks.len() > armed_before {
-                        hooks_armed = true;
-                        visible.add_instrumented(target_pid as u32);
-                        if let Some(path) = crate::hook_journal::write_journal(target_pid, engine_label, &armed_hooks) {
+                    let armed_after: Vec<u64> =
+                        armed_hooks.iter().map(|h| h.spec.function_id).collect();
+                    if armed_before != armed_after {
+                        // Removals rewrite the file too, so a crash after an
+                        // unhook does not report hooks that are no longer armed.
+                        hooks_armed = !armed_hooks.is_empty();
+                        if hooks_armed {
+                            visible.add_instrumented(target_pid as u32);
+                        }
+                        if let Some(path) = crate::hook_journal::write_journal(
+                            target_pid,
+                            engine_label,
+                            &armed_hooks,
+                        ) {
                             log::debug!("hook journal rewritten to {}", path.display());
                         }
                     }
@@ -2272,9 +2378,13 @@ pub fn run_on(
             if let Some(previous) = worker.take() {
                 if previous.join().is_err() {
                     start_running.store(false, Ordering::SeqCst);
+                    start_service.set_auto_profile_status(serde_json::Value::Null);
                     return Err("previous capture worker panicked".into());
                 }
             }
+            // The previous capture is finished. Clear its auto-profile status
+            // before anything else can fail, or a failed start keeps showing it.
+            start_service.set_auto_profile_status(serde_json::Value::Null);
             start_pid.store(pid, Ordering::SeqCst);
             // Whatever the viewer ticked in the hook picker. The picker only
             // offers functions once symbols are ready, so an index is there
@@ -2402,7 +2512,6 @@ pub fn run_on(
             let store = start_store.clone();
             let helper = start_helper.clone();
             let symbols = start_symbols.clone();
-            start_service.set_auto_profile_status(serde_json::Value::Null);
             let handle = std::thread::Builder::new()
                 .name("orbit-capture".to_string())
                 .spawn(move || {

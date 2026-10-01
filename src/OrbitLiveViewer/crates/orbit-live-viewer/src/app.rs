@@ -7800,11 +7800,6 @@ impl OrbitLiveApp {
         }
     }
 
-    /// The line above a report that says what is hooked and what to do
-    /// about it: hooks arm on the next Record, not on the capture in view.
-    /// Auto-unhook: a checkbox and the rate, bound to the service's persisted
-    /// settings. A change is PUT back at once (the whole object, so other
-    /// keys survive) and applies to the next Record.
     /// Auto-profiling: a pill to switch it (live, mid-capture, or for the
     /// next Record) and its budget, bound to the service's settings like
     /// Auto-unhook.
@@ -7837,6 +7832,11 @@ impl OrbitLiveApp {
         }
     }
 
+    /// The line above a report that says what is hooked and what to do
+    /// about it: hooks arm on the next Record, not on the capture in view.
+    /// Auto-unhook: a checkbox and the rate, bound to the service's persisted
+    /// settings. A change is PUT back at once (the whole object, so other
+    /// keys survive) and applies to the next Record.
     fn auto_unhook_control(&mut self, ui: &mut Ui) {
         let Some(settings) = self.server_settings.as_mut() else { return };
         let mut on = settings.get("auto_unhook").and_then(|v| v.as_bool()).unwrap_or(true);

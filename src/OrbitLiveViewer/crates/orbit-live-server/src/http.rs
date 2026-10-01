@@ -1078,7 +1078,7 @@ impl ConfigBody {
     }
 }
 
-/// The persisted user settings (`settings.rs`).
+/// The body of `POST /api/auto_profile`.
 #[derive(Deserialize)]
 struct AutoProfileBody {
     on: bool,
@@ -1091,6 +1091,7 @@ async fn auto_profile(State(svc): State<Arc<LiveService>>, Json(body): Json<Auto
     Json(serde_json::json!({ "on": body.on, "status": svc.auto_profile_status() })).into_response()
 }
 
+/// The persisted user settings (`settings.rs`).
 async fn get_settings(State(svc): State<Arc<LiveService>>) -> Json<crate::Settings> {
     Json(svc.settings())
 }

@@ -811,9 +811,11 @@ def auto_profile(run):
             if line not in seen_log:
                 seen_log.append(line)
         hooked_max = max(hooked_max, len(auto.get("hooked", [])))
-        if any("Permission denied" in l or "Operation not permitted" in l for l in seen_log):
+        err = auto.get("error") or ""
+        blocked = ("Permission denied", "Operation not permitted", "no uprobe PMU", "CONFIG_UPROBE_EVENTS", "uprobes unavailable")
+        if any(s in err or any(s in l for l in seen_log) for s in blocked):
             run.stop_capture()
-            return "skipped: uprobes need CAP_SYS_ADMIN (run with --sudo)"
+            return "skipped: uprobes are unavailable (need CAP_SYS_ADMIN, or this kernel has no uprobe PMU)"
         if auto.get("converged") and any("too hot" in l or "call-rate" in l for l in seen_log):
             break
         time.sleep(1.0)

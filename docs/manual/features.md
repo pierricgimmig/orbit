@@ -169,13 +169,16 @@ opens on first load with a service and closes with its ×. Its rows:
 - **Auto** (auto-profiling) lets the service choose what to hook. Every
   two seconds it reads the sampling report of the last five and hooks the
   next functions it points at, widest inclusive share first, three at a
-  time, never one the hook-safety analyzer calls unsafe or risky. It
+  time, never one the hook-safety analyzer calls unsafe. A function that is
+  only risky because a call sits in its first five bytes is hooked: that
+  warning is about inline trampolines, and uprobes are unaffected. It
   unhooks what does not pay: a function past half the budget on its own
   (too hot to time with a hook; the samples already show it), one that
-  completed no call in a second and a half (a main loop entered before it
-  was hooked, an inlined copy, a path the program left; tried again about
-  thirty seconds later), and the hottest of the rest while the set is over
-  the budget. A hook that burns a whole step's budget cuts the step short.
+  completed no call in the time it was actually armed (tried again later,
+  less often each time, and then left alone), one that was entered and never
+  returned (a main loop; not tried again), and the hottest of the rest while
+  the set is over the budget. A hook that burns a whole step's budget cuts
+  the step short.
   It converges on a set that shows where the time goes at about the budget
   or less, and keeps going, so a new code path gets picked up. The budget,
   1000 scopes/s by default, is a user setting (`auto_profile_scopes_per_s`

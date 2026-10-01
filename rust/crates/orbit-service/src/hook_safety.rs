@@ -92,6 +92,19 @@ impl HookSafety {
     pub fn is_safe(&self) -> bool {
         matches!(self.level, SafetyLevel::Safe | SafetyLevel::Unknown)
     }
+
+    /// Safe to arm with a kernel uprobe. A `risky` verdict whose only hazard
+    /// is an inline trampoline (a call or branch in the first five bytes)
+    /// does not apply: uprobes relocate that one instruction out of line, and
+    /// the reason says so. A function too small for a return probe, or one
+    /// this analyser calls unsafe, is not.
+    pub fn allows_uprobe(&self) -> bool {
+        match self.level {
+            SafetyLevel::Safe | SafetyLevel::Unknown => true,
+            SafetyLevel::Unsafe => false,
+            SafetyLevel::Risky => self.reason.contains("kernel uprobes are unaffected"),
+        }
+    }
 }
 
 /// Whether this analyser can decode the given ELF machine.
@@ -268,6 +281,37 @@ mod tests {
         let s = assess(&[0x55, 0x5d], 2, true);
         assert_eq!(s.level, SafetyLevel::Risky, "{s:?}");
         assert!(s.reason.contains("too small"), "{}", s.reason);
+    }
+
+    #[test]
+    fn a_call_in_the_trampoline_window_is_risky_but_uprobe_safe() {
+        // push rbp; mov rbp, rsp; call rel32. The call starts at byte 4.
+        let s = assess(
+            &[0x55, 0x48, 0x89, 0xe5, 0xe8, 0x00, 0x00, 0x00, 0x00, 0x90],
+            32,
+            true,
+        );
+        assert_eq!(s.level, SafetyLevel::Risky, "{s:?}");
+        assert!(
+            s.reason.contains("kernel uprobes are unaffected"),
+            "{}",
+            s.reason
+        );
+        assert!(s.allows_uprobe());
+        assert!(!s.is_safe(), "risky stays risky for an inline hook");
+    }
+
+    #[test]
+    fn a_function_too_small_for_a_return_probe_is_not_uprobe_safe() {
+        let s = assess(&[0x55, 0x5d], 2, true);
+        assert_eq!(s.level, SafetyLevel::Risky, "{s:?}");
+        assert!(!s.allows_uprobe(), "{}", s.reason);
+    }
+
+    #[test]
+    fn an_unsafe_entry_is_not_uprobe_safe() {
+        let s = assess(&[0xc3], 1, true);
+        assert!(!s.allows_uprobe());
     }
 
     #[test]
