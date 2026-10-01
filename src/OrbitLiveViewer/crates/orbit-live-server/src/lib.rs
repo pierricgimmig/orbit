@@ -143,6 +143,13 @@ pub struct LiveService {
     pub instrumentation_status: Mutex<String>,
     /// A JSON summary of a target crash blamed on a hook, empty when none.
     pub hook_crash: Mutex<String>,
+    /// Auto-profiling on: the capture loop hooks and unhooks functions on
+    /// its own from the samples (`/api/auto_profile`, or `auto_profile` in
+    /// the start body). Off leaves the hook set as it stands.
+    pub auto_profile: AtomicBool,
+    /// What auto-profiling is doing, as JSON for `/api/status`; null until
+    /// it first runs.
+    pub auto_profile_status: Mutex<serde_json::Value>,
     /// User settings kept on disk (`settings.rs`); the source of truth for
     /// choices made in the viewer, whichever browser made them.
     pub settings: Mutex<Settings>,
@@ -330,6 +337,8 @@ impl LiveService {
             hooks: Mutex::new(None),
             instrumentation_status: Mutex::new(String::new()),
             hook_crash: Mutex::new(String::new()),
+            auto_profile: AtomicBool::new(false),
+            auto_profile_status: Mutex::new(serde_json::Value::Null),
             settings: Mutex::new(Settings::load()),
             sampling_report: Mutex::new(None),
             sampling_tree: Mutex::new(None),
@@ -378,6 +387,22 @@ impl LiveService {
 
     pub fn hook_crash(&self) -> String {
         self.hook_crash.lock().clone()
+    }
+
+    pub fn auto_profile(&self) -> bool {
+        self.auto_profile.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn set_auto_profile(&self, on: bool) {
+        self.auto_profile.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn set_auto_profile_status(&self, status: serde_json::Value) {
+        *self.auto_profile_status.lock() = status;
+    }
+
+    pub fn auto_profile_status(&self) -> serde_json::Value {
+        self.auto_profile_status.lock().clone()
     }
 
     pub fn settings(&self) -> Settings {

@@ -946,6 +946,9 @@ pub struct OrbitLiveApp {
     user_space_hooks: bool,
     /// The kernel-side duplicate-uprobe filter; off to see the ghosts.
     uprobe_duplicate_filter: bool,
+    /// Auto-profiling: the service hooks what the samples point at, within
+    /// a scopes-a-second budget. Sent with Record; switched live mid-capture.
+    auto_profile: bool,
     /// Off by default: see StartBody::show_all_processes.
     show_all_processes: bool,
     symbols: SymbolsStatusJson,
@@ -1683,6 +1686,7 @@ impl OrbitLiveApp {
             unwind_dwarf: true,
             user_space_hooks: true,
             uprobe_duplicate_filter: true,
+            auto_profile: false,
             show_all_processes: false,
             symbols: SymbolsStatusJson::default(),
             symbols_started_s: 0.0,
@@ -2346,6 +2350,7 @@ impl OrbitLiveApp {
             instrumented_function_ids: self.selected_hooks.iter().map(|f| f.function_id).collect(),
             show_all_processes: self.show_all_processes,
             uprobe_duplicate_filter: self.uprobe_duplicate_filter,
+            auto_profile: self.auto_profile,
         }
     }
 
@@ -2502,6 +2507,11 @@ impl OrbitLiveApp {
             self.capture_start_ns = s.capture_start_ns;
         }
         let capturing = s.capturing;
+        // While a capture runs the service is the truth (another viewer, or
+        // the HTTP API, may have switched it).
+        if capturing {
+            self.auto_profile = s.auto_profile;
+        }
         self.status = s;
         // A deep-linked report has no capture-stop transition to ride on, so
         // it asks once, as soon as the service is talking -- and opens the
@@ -2828,6 +2838,10 @@ impl OrbitLiveApp {
                     // no control state; keep what /api/status last said.
                     instrumentation: self.status.instrumentation.clone(),
                     hook_crash: self.status.hook_crash.clone(),
+                    // The viewer's own choice, so a stats push between a
+                    // click and the next /api/status does not undo it.
+                    auto_profile: self.auto_profile,
+                    auto_profile_status: self.status.auto_profile_status.clone(),
                     wire: self.status.wire.clone(),
                 });
                 // An opened capture is all here once the service reports it
@@ -3611,6 +3625,7 @@ impl OrbitLiveApp {
                 self.uprobe_duplicate_filter = !self.uprobe_duplicate_filter;
             }
             self.auto_unhook_control(ui);
+            self.auto_profile_control(ui);
             ui.label(
                 RichText::new(if self.user_space_hooks {
                     "requires permission to attach to the target"
@@ -3651,7 +3666,8 @@ impl OrbitLiveApp {
             // CAP_PERFMON, so "nothing was armed" is a normal outcome that has
             // to read as a fixable permissions problem, not an empty track.
             if !self.status.instrumentation.is_empty() {
-                let armed = self.status.instrumentation.starts_with("instrumenting");
+                let armed = self.status.instrumentation.starts_with("instrumenting")
+                    || self.status.instrumentation.starts_with("auto-profiling:");
                 // Records the kernel dropped mean an incomplete capture -- the
                 // ring overflowed -- so it reads amber even when hooks armed,
                 // not the muted grey of a clean run.
@@ -3673,9 +3689,9 @@ impl OrbitLiveApp {
                     }),
                 )
                 .on_hover_text(if unhooked {
-                    "A hooked function fired past the auto-unhook rate and was switched off mid-capture; an instant marks the moment on its track. The limit is in Settings."
+                    "A hooked function fired past the auto-unhook rate and was switched off mid-capture; an instant marks the moment on its track. The limit is in Settings.".to_string()
                 } else {
-                    ""
+                    auto_profile_summary(&self.status.auto_profile_status)
                 });
             }
         });
@@ -7781,6 +7797,38 @@ impl OrbitLiveApp {
         }
         if pill(ui, "Clear", false).on_hover_text("Clear the selection").clicked() {
             self.report_selection.clear();
+        }
+    }
+
+    /// Auto-profiling: a pill to switch it (live, mid-capture, or for the
+    /// next Record) and its budget, bound to the service's settings like
+    /// Auto-unhook.
+    fn auto_profile_control(&mut self, ui: &mut Ui) {
+        let resp = pill(ui, "Auto", self.auto_profile).on_hover_text(
+            "Auto-profile: the service samples, hooks the functions the samples point at (widest first, never one \
+             the analyzer calls unsafe), and unhooks what does not pay -- too hot, silent, or over the budget -- \
+             every two seconds, converging on an overview of where the time goes. Uses kernel uprobes. \
+             Switching it off leaves the hooks as they are.",
+        );
+        if resp.clicked() {
+            self.auto_profile = !self.auto_profile;
+            if self.status.capturing {
+                self.net.set_auto_profile(self.auto_profile);
+            }
+        }
+        if !self.auto_profile {
+            return;
+        }
+        let Some(settings) = self.server_settings.as_mut() else { return };
+        let mut budget = settings.get("auto_profile_scopes_per_s").and_then(|v| v.as_u64()).unwrap_or(1000);
+        if ui
+            .add(egui::DragValue::new(&mut budget).range(10..=1_000_000).speed(10.0).suffix(" scopes/s"))
+            .on_hover_text("Auto-profiling's budget: the most scopes a second, over every function it hooks. Kept by the service.")
+            .changed()
+        {
+            settings["auto_profile_scopes_per_s"] = serde_json::Value::from(budget);
+            let body = settings.clone();
+            self.net.put_settings(&body);
         }
     }
 
@@ -12072,6 +12120,28 @@ fn capture_timer_tick(t: &mut CaptureTimer, capturing: bool, observed_s: Option<
 /// hours, `h:mm:ss`, so the digits never nudge what is beside it.
 fn capture_timer_slot_w(ui: &Ui, font: &FontId) -> f32 {
     ui.fonts(|f| f.glyph_width(font, '0')) * 8.0
+}
+
+/// The hover text of the status line while auto-profiling: what is hooked,
+/// what each costs, and what it did last. Empty when it has not run.
+fn auto_profile_summary(status: &serde_json::Value) -> String {
+    let Some(obj) = status.as_object() else { return String::new() };
+    let mut text = String::new();
+    if let Some(hooked) = obj.get("hooked").and_then(|h| h.as_array()) {
+        text.push_str("Hooked:\n");
+        for h in hooked {
+            let name = h.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+            let per_s = h.get("per_s").and_then(|n| n.as_f64()).unwrap_or(0.0);
+            text.push_str(&format!("  {name}  {per_s:.0}/s\n"));
+        }
+    }
+    if let Some(log) = obj.get("log").and_then(|l| l.as_array()).filter(|l| !l.is_empty()) {
+        text.push_str("Lately:\n");
+        for line in log {
+            text.push_str(&format!("  {}\n", line.as_str().unwrap_or("")));
+        }
+    }
+    text.trim_end().to_string()
 }
 
 /// `m:ss.t` under an hour, `h:mm:ss` from there: a timer, not a duration.

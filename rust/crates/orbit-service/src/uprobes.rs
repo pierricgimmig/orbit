@@ -170,6 +170,10 @@ pub struct UprobeSession {
     fds_by_function: HashMap<u64, Vec<i32>>,
     /// Entries per function in the current one-second window.
     rates: HashMap<u64, CallRate>,
+    /// Entry hits since `take_entry_hits`, per function. Completed calls are
+    /// not enough to tell a quiet function from one that was entered and
+    /// never returned.
+    entry_hits: HashMap<u64, u64>,
     /// Functions switched off for firing over the limit, with the rate seen.
     pub auto_unhooked: Vec<(u64, u64)>,
     /// Per thread, the last entry that was let through: `(sp, ip, cpu)`.
@@ -181,6 +185,11 @@ pub struct UprobeSession {
     /// the same order as the call manager's stack: what a return is matched
     /// against, and what an entry is checked against.
     open: HashMap<i32, Vec<u64>>,
+    /// cpu -> position in `rings`, once that CPU has a leader: a hook added
+    /// later attaches to it rather than opening a ring of its own.
+    ring_of_cpu: HashMap<i32, usize>,
+    cpus: Vec<i32>,
+    ring_kb: u64,
 }
 
 impl UprobeSession {
@@ -219,92 +228,131 @@ impl UprobeSession {
             names: hooks.iter().map(|h| (h.function_id, h.name.clone())).collect(),
             fds_by_function: HashMap::new(),
             rates: HashMap::new(),
+            entry_hits: HashMap::new(),
             auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),
+            ring_of_cpu: HashMap::new(),
+            cpus: online_cpus(),
+            ring_kb: uprobe_ring_kb(),
         };
         let mut report = ArmReport::default();
-        let ring_kb = uprobe_ring_kb();
-        let cpus = online_cpus();
-        // cpu index -> position in `session.rings`, once a leader exists.
-        let mut ring_of_cpu: HashMap<i32, usize> = HashMap::new();
         for hook in hooks.iter().take(MAX_HOOKS) {
-            let mut armed_here = 0usize;
-            // The *first* real reason, not the last. Thread lists are read
-            // from /proc and go stale immediately: a thread that exits before
-            // its probe is opened returns ESRCH, and letting that overwrite
-            // the reason would report a vanished thread instead of, say, the
-            // missing capability that stopped every other thread too.
-            let mut reason = String::new();
-            let mut note = |error: String| {
-                if reason.is_empty() {
-                    reason = error;
+            match session.add_hook(hook) {
+                Ok(probes) => {
+                    report.armed_functions += 1;
+                    report.probe_count += probes;
+                }
+                Err(reason) => report.failures.push(format!("{}: {reason}", hook.name)),
+            }
+        }
+        (session, report)
+    }
+
+    /// Arms one more function's entry and return probes, on the running
+    /// session: attached to each CPU's existing leader, or opening the
+    /// leader when this is the first probe on that CPU. Returns how many
+    /// probes took, or the first reason none did.
+    pub fn add_hook(&mut self, hook: &HookSpec) -> Result<usize, String> {
+        let mut armed_here = 0usize;
+        // The *first* real reason, not the last. Thread lists are read
+        // from /proc and go stale immediately: a thread that exits before
+        // its probe is opened returns ESRCH, and letting that overwrite
+        // the reason would report a vanished thread instead of, say, the
+        // missing capability that stopped every other thread too.
+        let mut reason = String::new();
+        let mut note = |error: String| {
+            if reason.is_empty() {
+                reason = error;
+            }
+        };
+        for is_return in [false, true] {
+            let uprobe = match UprobeAttr::new(&hook.module_path, hook.file_offset, is_return) {
+                Ok(uprobe) => uprobe,
+                Err(error) => {
+                    note(error);
+                    continue;
                 }
             };
-            for is_return in [false, true] {
-                let uprobe =
-                    match UprobeAttr::new(&hook.module_path, hook.file_offset, is_return) {
-                        Ok(uprobe) => uprobe,
-                        Err(error) => {
-                            note(error);
-                            continue;
-                        }
-                    };
-                for cpu in &cpus {
-                    match ring_of_cpu.get(cpu).copied() {
-                        None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, *cpu, ring_kb) {
-                            Ok(ring) => {
-                                let id = match orbit_perf_ring::ring::event_id(&ring) {
-                                    Ok(id) => id,
-                                    Err(error) => {
-                                        note(format!("event id: {error}"));
-                                        continue;
-                                    }
-                                };
-                                if let Err(error) = ring.enable() {
-                                    note(format!("enable: {error}"));
+            for cpu in self.cpus.clone() {
+                match self.ring_of_cpu.get(&cpu).copied() {
+                    None => match orbit_perf_ring::ring::open_uprobe(&uprobe, -1, cpu, self.ring_kb) {
+                        Ok(ring) => {
+                            let id = match orbit_perf_ring::ring::event_id(&ring) {
+                                Ok(id) => id,
+                                Err(error) => {
+                                    note(format!("event id: {error}"));
                                     continue;
                                 }
-                                session.by_stream.insert(id, (hook.function_id, is_return));
-                                session.fds_by_function.entry(hook.function_id).or_default().push(ring.fd());
-                                ring_of_cpu.insert(*cpu, session.rings.len());
-                                session.rings.push(CpuRing { ring, attached_fds: Vec::new() });
+                            };
+                            if let Err(error) = ring.enable() {
+                                note(format!("enable: {error}"));
+                                continue;
+                            }
+                            self.by_stream.insert(id, (hook.function_id, is_return));
+                            self.fds_by_function.entry(hook.function_id).or_default().push(ring.fd());
+                            self.ring_of_cpu.insert(cpu, self.rings.len());
+                            self.rings.push(CpuRing { ring, attached_fds: Vec::new() });
+                            armed_here += 1;
+                        }
+                        Err(error) => note(format!("open on cpu {cpu}: {error}")),
+                    },
+                    Some(i) => {
+                        let leader = &self.rings[i].ring;
+                        match orbit_perf_ring::ring::open_uprobe_attached(&uprobe, -1, cpu, leader) {
+                            Ok((fd, id)) => {
+                                if let Err(error) = orbit_perf_ring::ring::enable_fd(fd) {
+                                    note(format!("enable: {error}"));
+                                    orbit_perf_ring::ring::close_fd(fd);
+                                    continue;
+                                }
+                                self.by_stream.insert(id, (hook.function_id, is_return));
+                                self.fds_by_function.entry(hook.function_id).or_default().push(fd);
+                                self.rings[i].attached_fds.push(fd);
                                 armed_here += 1;
                             }
-                            Err(error) => note(format!("open on cpu {cpu}: {error}")),
-                        },
-                        Some(i) => {
-                            let leader = &session.rings[i].ring;
-                            match orbit_perf_ring::ring::open_uprobe_attached(&uprobe, -1, *cpu, leader) {
-                                Ok((fd, id)) => {
-                                    if let Err(error) = orbit_perf_ring::ring::enable_fd(fd) {
-                                        note(format!("enable: {error}"));
-                                        orbit_perf_ring::ring::close_fd(fd);
-                                        continue;
-                                    }
-                                    session.by_stream.insert(id, (hook.function_id, is_return));
-                                    session.fds_by_function.entry(hook.function_id).or_default().push(fd);
-                                    session.rings[i].attached_fds.push(fd);
-                                    armed_here += 1;
-                                }
-                                Err(error) => note(format!("attach on cpu {cpu}: {error}")),
-                            }
+                            Err(error) => note(format!("attach on cpu {cpu}: {error}")),
                         }
                     }
                 }
             }
-            if armed_here == 0 {
-                if reason.is_empty() {
-                    reason = "no cpu accepted the probe".into();
+        }
+        if armed_here == 0 {
+            return Err(if reason.is_empty() { "no cpu accepted the probe".into() } else { reason });
+        }
+        self.names.insert(hook.function_id, hook.name.clone());
+        Ok(armed_here)
+    }
+
+    /// Takes one function's probes off the running session. Return probes are
+    /// closed before entry probes: the other order lets returns land after
+    /// the entry probe is gone, and every one of them is counted as a return
+    /// with no entry. A probe that leads a CPU's ring owns the ring every
+    /// other probe of that CPU writes into, so it is switched off instead.
+    /// Records already in the rings still pair (the stream ids stay known); a
+    /// call open at the time never closes and is counted as unclosed. False
+    /// when the function had no live probes.
+    pub fn remove_hook(&mut self, function_id: u64) -> bool {
+        let Some(fds) = self.fds_by_function.remove(&function_id) else {
+            return false;
+        };
+        // Armed entry-then-return, so reversing closes the returns first.
+        for fd in fds.into_iter().rev() {
+            match self.rings.iter_mut().find(|r| r.ring.fd() == fd) {
+                Some(_) => {
+                    let _ = orbit_perf_ring::ring::disable_fd(fd);
                 }
-                report.failures.push(format!("{}: {reason}", hook.name));
-            } else {
-                report.armed_functions += 1;
-                report.probe_count += armed_here;
+                None => {
+                    for ring in self.rings.iter_mut() {
+                        ring.attached_fds.retain(|f| *f != fd);
+                    }
+                    orbit_perf_ring::ring::close_fd(fd);
+                }
             }
         }
-        (session, report)
+        self.rates.remove(&function_id);
+        true
     }
 
     /// Drains every CPU's ring and returns the calls that can now be closed.
@@ -325,7 +373,14 @@ impl UprobeSession {
             .collect();
         let mut unhooked = Vec::new();
         for (function_id, entries) in offenders {
-            for fd in self.fds_by_function.remove(&function_id).unwrap_or_default() {
+            // Returns before entries, same reason as `remove_hook`.
+            for fd in self
+                .fds_by_function
+                .remove(&function_id)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+            {
                 let _ = orbit_perf_ring::ring::disable_fd(fd);
             }
             self.rates.remove(&function_id);
@@ -334,6 +389,12 @@ impl UprobeSession {
             self.auto_unhooked.push((function_id, entries));
         }
         unhooked
+    }
+
+    /// Entry hits since the last call, and the counter starts over. Auto-profiling
+    /// uses this to tell "nothing called it" from "it was entered and did not return".
+    pub fn take_entry_hits(&mut self) -> HashMap<u64, u64> {
+        std::mem::take(&mut self.entry_hits)
     }
 
     pub fn poll(&mut self) -> Vec<CompletedCall> {
@@ -512,12 +573,9 @@ impl UprobeSession {
                     rate.entries = 0;
                 }
                 rate.entries += 1;
-                self.calls.process_function_entry(
-                    hit.tid,
-                    hit.function_id,
-                    hit.timestamp_ns,
-                    None,
-                );
+                *self.entry_hits.entry(hit.function_id).or_insert(0) += 1;
+                self.calls
+                    .process_function_entry(hit.tid, hit.function_id, hit.timestamp_ns, None);
             }
         }
         out
@@ -629,10 +687,14 @@ mod tests {
             names: HashMap::new(),
             fds_by_function: HashMap::new(),
             rates: HashMap::new(),
+            entry_hits: HashMap::new(),
             auto_unhooked: Vec::new(),
             last_entry: HashMap::new(),
             report: HitReport::default(),
             open: HashMap::new(),
+            ring_of_cpu: HashMap::new(),
+            cpus: vec![0],
+            ring_kb: 64,
         }
     }
 
@@ -957,6 +1019,96 @@ mod tests {
     #[inline(never)]
     pub extern "C" fn orbit_uprobe_test_target(i: u64) -> u64 {
         std::hint::black_box(i).wrapping_mul(2_654_435_761) ^ 0x5bd1_e995
+    }
+
+    /// The function the add/remove test hooks: its own, so the firing test's
+    /// probes, armed in parallel, never land in this session's rings.
+    #[no_mangle]
+    #[inline(never)]
+    pub extern "C" fn orbit_uprobe_test_target_late(i: u64) -> u64 {
+        std::hint::black_box(i).wrapping_mul(40_503) ^ 0x9e37_79b9
+    }
+
+    /// Auto-profiling's path: a session armed with nothing, a hook added
+    /// while a thread is already calling the function, removed, and added
+    /// again -- the last one attaching to a CPU ring whose leader (the first
+    /// hook's probe) is switched off, which must still carry its records.
+    /// Privileged like the firing test above; unprivileged it is skipped.
+    #[test]
+    fn a_hook_added_mid_session_fires_stops_when_removed_and_comes_back() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+        if orbit_perf_ring::attr::uprobe_pmu_type().is_none() {
+            eprintln!("UPROBE TEST SKIPPED: no uprobe PMU on this kernel");
+            return;
+        }
+        let pid = std::process::id() as i32;
+        let index = crate::functions::FunctionIndex::for_pid(pid);
+        let target = index
+            .search("orbit_uprobe_test_target_late", 4)
+            .into_iter()
+            .find(|f| f.name == "orbit_uprobe_test_target_late")
+            .expect("this binary's symbol table names the target function");
+        let hook = HookSpec {
+            function_id: target.id,
+            module_path: target.module_path.clone(),
+            file_offset: target.file_offset,
+            name: target.name.clone(),
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let made = Arc::new(AtomicU64::new(0));
+        let worker = {
+            let (stop, made) = (stop.clone(), made.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    std::hint::black_box(orbit_uprobe_test_target_late(made.load(Ordering::SeqCst)));
+                    made.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_micros(500));
+                }
+            })
+        };
+        let finish = |stop: &AtomicBool| {
+            stop.store(true, Ordering::SeqCst);
+        };
+        let (mut session, report) = UprobeSession::arm(pid, &[], true);
+        assert_eq!(report.probe_count, 0, "armed with nothing");
+        let collect = |session: &mut UprobeSession, ms: u64| {
+            let started = std::time::Instant::now();
+            let mut calls = Vec::new();
+            while started.elapsed() < std::time::Duration::from_millis(ms) {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                calls.extend(session.poll());
+            }
+            calls.extend(session.flush());
+            calls
+        };
+        match session.add_hook(&hook) {
+            Ok(_) => {}
+            Err(reason) => {
+                finish(&stop);
+                let _ = worker.join();
+                assert!(
+                    reason.contains("Permission denied") || reason.contains("Operation not permitted"),
+                    "the probe was refused for a reason other than privilege: {reason}"
+                );
+                eprintln!("UPROBE TEST SKIPPED: needs CAP_SYS_ADMIN ({reason})");
+                return;
+            }
+        }
+        let hooked = collect(&mut session, 800);
+        assert!(hooked.len() > 50, "a hook added mid-session fires: {} calls", hooked.len());
+        assert!(session.remove_hook(target.id));
+        assert!(!session.remove_hook(target.id), "nothing left to remove");
+        // What was already in the rings drains; after that, silence.
+        collect(&mut session, 100);
+        let removed = collect(&mut session, 500);
+        assert!(removed.is_empty(), "no calls after the hook was removed: {}", removed.len());
+        session.add_hook(&hook).expect("the same hook arms again");
+        let again = collect(&mut session, 800);
+        finish(&stop);
+        let _ = worker.join();
+        eprintln!("UPROBE TEST: {} calls hooked, {} after removal, {} re-added", hooked.len(), removed.len(), again.len());
+        assert!(again.len() > 50, "re-added onto a switched-off leader's ring it still fires: {}", again.len());
     }
 
     /// A probe actually fires: this process arms entry and return probes on

@@ -166,6 +166,35 @@ opens on first load with a service and closes with its ×. Its rows:
   browsers and restarts; `GET`/`PUT /api/settings` reads and replaces
   them, and a capture request may carry its own `max_hook_calls_per_s`
   (0 = never) for one capture.
+- **Auto** (auto-profiling) lets the service choose what to hook. Every
+  two seconds it reads the sampling report of the last five and hooks the
+  next functions it points at, widest inclusive share first, three at a
+  time, never one the hook-safety analyzer calls unsafe. A function that is
+  only risky because a call sits in its first five bytes is hooked: that
+  warning is about inline trampolines, and uprobes are unaffected. It
+  unhooks what does not pay: a function past half the budget on its own
+  (too hot to time with a hook; the samples already show it), one that
+  completed no call in the time it was actually armed (tried again later,
+  less often each time, and then left alone), one that was entered and never
+  returned (a main loop; not tried again), and the hottest of the rest while
+  the set is over the budget. A hook that burns a whole step's budget cuts
+  the step short.
+  It converges on a set that shows where the time goes at about the budget
+  or less, and keeps going, so a new code path gets picked up. The budget,
+  1000 scopes/s by default, is a user setting (`auto_profile_scopes_per_s`
+  in `~/.config/orbit/settings.json`, the field beside the pill). It hooks
+  with kernel uprobes, the one engine that can arm mid-capture (a capture
+  started with Auto on uses them for every hook; they need CAP_SYS_ADMIN),
+  within the 16-hook cap and under Auto-unhook's limit. Each hook and unhook
+  is an instant `auto-profile: hooked|unhooked <function>: <why>` on the
+  target's main thread; the instrumentation line reads "auto-profiling: N
+  function(s) hooked, X of Y scopes/s", and its tooltip lists the set and
+  the last actions. The pill works mid-capture too; switching it off leaves
+  the hooks as they are. API: `"auto_profile": true` in the capture start
+  body, `POST /api/auto_profile {"on": bool}`, and `auto_profile` /
+  `auto_profile_status` in `/api/status`. The `auto-profile` e2e scenario
+  (box3d, `--sudo`) checks it hooks, unhooks a hot function, stays under
+  budget, leaves the target alive and keeps the set when switched off.
 - **HOOKED** counts the hooked functions and opens the **Functions**
   view; "Unhook all" clears them. After Record, the line says what was
   armed ("instrumenting N of M functions") or why nothing was.
