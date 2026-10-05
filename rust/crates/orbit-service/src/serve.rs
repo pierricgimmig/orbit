@@ -36,7 +36,7 @@ use orbit_live_event::{kind, thread_state, LiveEvent};
 use orbit_thread_states::Slice;
 use orbit_wire::{Event as WireEvent, METRIC_UNKNOWN_U32, METRIC_UNKNOWN_U64};
 #[cfg(target_os = "linux")]
-use orbit_perf_records::reader::{parse_record_sample, SampleFlags, REGS_USER_ALL_COUNT};
+use orbit_perf_records::reader::{parse_record_sample_with, SampleFlags, REGS_USER_ALL_COUNT};
 #[cfg(target_os = "linux")]
 use orbit_unwind::unwinder::StartRegs;
 #[cfg(target_os = "linux")]
@@ -265,6 +265,14 @@ impl SymbolState {
         })
         .to_string()
     }
+}
+
+/// A capture owns one symbol index, the target's. Loading another pid
+/// replaces that index and makes auto-profiling reload symbols mid-capture.
+/// Viewers ask for whatever they have selected; that selection is not
+/// allowed to swap the index out from under a running capture.
+fn capture_refuses_symbol_load(capturing: bool, target_pid: i32, requested: u32) -> bool {
+    capturing && target_pid != 0 && requested as i32 != target_pid
 }
 
 /// Starts indexing `pid` unless that has already been done or is under way.
@@ -687,10 +695,38 @@ struct SampleCounters {
     short_regs: u64,
 }
 
-/// Reads every sampling ring out once. Sampled callstacks: unwind,
-/// symbolize, and lay each frame out as a span one sampling period wide at
-/// its stack depth. Consecutive samples in the same function abut, so the
-/// timeline reads as a flame graph rather than a picket fence.
+/// One stack sample held until the uprobe reorder horizon catches up to it.
+#[cfg(target_os = "linux")]
+struct HeldSample {
+    time: u64,
+    tid: u32,
+    regs: Vec<u64>,
+    stack: Vec<u8>,
+}
+
+/// Buffers reused across a capture. A 1 kHz sample with a 64 KiB stack used
+/// to allocate a fresh perf record and a fresh stack copy every time; those
+/// sit below glibc's mmap threshold, so a few minutes of capture fragmented
+/// the heap into a gigabyte of RSS and the service was OOM-killed on a 2 GiB
+/// machine. `record` and `stack` are the steady-state path (unwind in place).
+/// `pool` keeps the stacks of samples held for the ~100 ms uprobe reorder
+/// window and takes them back after unwind, so a long capture stops
+/// allocating once the high-water mark of that window is reached.
+#[cfg(target_os = "linux")]
+struct SampleScratch {
+    record: Vec<u8>,
+    stack: Vec<u8>,
+    held: Vec<HeldSample>,
+    pool: Vec<Vec<u8>>,
+}
+
+#[cfg(target_os = "linux")]
+const STACK_POOL_MAX: usize = 2048;
+
+/// Reads sampling rings. Samples at or before `horizon_ns` are unwound now;
+/// newer ones wait in `scratch` until a later pass, so a uretprobe entry
+/// that is still inside the reorder window can patch the return slot first.
+/// `returns` is the uprobe session, when one is armed.
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn drain_samples(
@@ -705,80 +741,174 @@ fn drain_samples(
     sample_flags: SampleFlags,
     counters: &mut SampleCounters,
     batch: &mut Vec<LiveEvent>,
+    horizon_ns: u64,
+    returns: Option<&UprobeSession>,
+    scratch: &mut SampleScratch,
 ) {
+    emit_ready_samples(
+        unwinder, symbolizer, pc_ids, names, store, target_pid, period_ns, batch, horizon_ns, returns, scratch,
+    );
     for thread in threads.iter_mut() {
         let ring = &mut thread.sample;
-        while let Ok(Some(record)) = ring.read_record() {
-            let Some(header) = PerfEventHeader::parse(&record) else { continue };
+        while ring.read_record_into(&mut scratch.record).unwrap_or(false) {
+            let Some(header) = PerfEventHeader::parse(&scratch.record) else { continue };
             if { header.kind } != record_type::SAMPLE {
                 continue;
             }
             counters.records += 1;
-            let Some(sample) = parse_record_sample(&record, sample_flags, true) else {
+            let Some(sample) = parse_record_sample_with(&scratch.record, sample_flags, true, Some(&mut scratch.stack)) else {
                 continue;
             };
             counters.parsed += 1;
-            let (Some(regs), Some(stack)) = (sample.regs.as_deref(), sample.stack_data.as_deref()) else {
-                continue;
-            };
-            if regs.len() < REGS_USER_ALL_COUNT {
-                counters.short_regs += 1;
+            let Some(regs) = sample.regs.clone() else { continue };
+            if regs.len() < REGS_USER_ALL_COUNT || scratch.stack.is_empty() {
+                if regs.len() < REGS_USER_ALL_COUNT {
+                    counters.short_regs += 1;
+                }
                 continue;
             }
-            #[cfg(target_arch = "x86_64")]
-            let start = StartRegs { ip: regs[8], sp: regs[7], frame_pointer: regs[6], link: 0 };
-            #[cfg(target_arch = "aarch64")]
-            let start = StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] };
-            let outcome = {
-                let _unwind = orbit_api::scope("unwind");
-                unwinder.unwind(start, start.sp, stack, 64)
-            };
-            // frames[0] is the sampled pc; a flame graph stacks the
-            // outermost caller at depth 0, so walk them in reverse.
-            let depth_count = outcome.frames.len().min(u8::MAX as usize);
-            // Innermost-first ids, for the report's self/inclusive
-            // counts; the timeline spans below want them reversed.
-            let frame_ids: Vec<u32> = {
-                let _symbolize = orbit_api::scope("symbolize");
-                outcome
-                    .frames
-                    .iter()
-                    .take(depth_count)
-                    .map(|pc| {
-                        *pc_ids.entry(*pc).or_insert_with(|| names.id_for_frame(&symbolizer.resolve_frame(*pc)))
-                    })
-                    .collect()
-            };
-            // One tick on the thread's sample bar, named by the leaf
-            // frame so hovering it says what was running without a
-            // lookup. Drawn as an instant: see LiveEvent::end_ns.
-            batch.push(LiveEvent {
-                start_ns: sample.time,
-                duration_ns: period_ns,
-                tid: sample.tid,
-                pid: target_pid as u32,
-                kind: kind::SAMPLE,
-                depth: 0,
-                extra: 0,
-                _pad: 0,
-                name_id: frame_ids.first().copied().unwrap_or(0),
-            });
-            for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
-                batch.push(LiveEvent {
-                    start_ns: sample.time,
-                    duration_ns: period_ns,
-                    tid: sample.tid,
-                    pid: target_pid as u32,
-                    kind: kind::FUNCTION_CALL,
-                    depth: index as u8,
-                    extra: orbit_live_event::extra::SAMPLED_FRAME,
-                    _pad: 0,
-                    name_id,
-                });
+            if sample.time <= horizon_ns {
+                push_sample(
+                    sample.time,
+                    sample.tid,
+                    &regs,
+                    &mut scratch.stack,
+                    unwinder,
+                    symbolizer,
+                    pc_ids,
+                    names,
+                    store,
+                    target_pid,
+                    period_ns,
+                    batch,
+                    returns,
+                );
+            } else {
+                let mut owned = scratch.pool.pop().unwrap_or_default();
+                owned.clear();
+                owned.extend_from_slice(&scratch.stack);
+                scratch.held.push(HeldSample { time: sample.time, tid: sample.tid, regs, stack: owned });
             }
-            store.push(StoredSample { timestamp_ns: sample.time, tid: sample.tid, frames: frame_ids });
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)]
+fn emit_ready_samples(
+    unwinder: &mut ProcessUnwinder,
+    symbolizer: &Symbolizer,
+    pc_ids: &mut crate::report::FastMap<u64, u32>,
+    names: &mut FrameNames,
+    store: &SampleStore,
+    target_pid: i32,
+    period_ns: u64,
+    batch: &mut Vec<LiveEvent>,
+    horizon_ns: u64,
+    returns: Option<&UprobeSession>,
+    scratch: &mut SampleScratch,
+) {
+    let mut i = 0;
+    while i < scratch.held.len() {
+        if scratch.held[i].time > horizon_ns {
+            i += 1;
+            continue;
+        }
+        let mut held = scratch.held.swap_remove(i);
+        push_sample(
+            held.time,
+            held.tid,
+            &held.regs,
+            &mut held.stack,
+            unwinder,
+            symbolizer,
+            pc_ids,
+            names,
+            store,
+            target_pid,
+            period_ns,
+            batch,
+            returns,
+        );
+        if scratch.pool.len() < STACK_POOL_MAX {
+            held.stack.clear();
+            scratch.pool.push(held.stack);
+        }
+    }
+}
+
+/// Unwind one sample and push its timeline events. `stack` is patched in
+/// place when a uprobe session has hijacked return addresses.
+#[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)]
+fn push_sample(
+    time: u64,
+    tid: u32,
+    regs: &[u64],
+    stack: &mut [u8],
+    unwinder: &mut ProcessUnwinder,
+    symbolizer: &Symbolizer,
+    pc_ids: &mut crate::report::FastMap<u64, u32>,
+    names: &mut FrameNames,
+    store: &SampleStore,
+    target_pid: i32,
+    period_ns: u64,
+    batch: &mut Vec<LiveEvent>,
+    returns: Option<&UprobeSession>,
+) {
+    #[cfg(target_arch = "x86_64")]
+    let start = StartRegs { ip: regs[8], sp: regs[7], frame_pointer: regs[6], link: 0 };
+    #[cfg(target_arch = "aarch64")]
+    let start = StartRegs { ip: regs[32], sp: regs[31], frame_pointer: regs[29], link: regs[30] };
+    if let Some(session) = returns {
+        session.patch_user_stack(tid as i32, start.sp, time, stack);
+    }
+    let outcome = {
+        let _unwind = orbit_api::scope("unwind");
+        unwinder.unwind(start, start.sp, stack, 64)
+    };
+    // frames[0] is the sampled pc; a flame graph stacks the
+    // outermost caller at depth 0, so walk them in reverse.
+    let depth_count = outcome.frames.len().min(u8::MAX as usize);
+    // Innermost-first ids, for the report's self/inclusive
+    // counts; the timeline spans below want them reversed.
+    let frame_ids: Vec<u32> = {
+        let _symbolize = orbit_api::scope("symbolize");
+        outcome
+            .frames
+            .iter()
+            .take(depth_count)
+            .map(|pc| *pc_ids.entry(*pc).or_insert_with(|| names.id_for_frame(&symbolizer.resolve_frame(*pc))))
+            .collect()
+    };
+    // One tick on the thread's sample bar, named by the leaf
+    // frame so hovering it says what was running without a
+    // lookup. Drawn as an instant: see LiveEvent::end_ns.
+    batch.push(LiveEvent {
+        start_ns: time,
+        duration_ns: period_ns,
+        tid,
+        pid: target_pid as u32,
+        kind: kind::SAMPLE,
+        depth: 0,
+        extra: 0,
+        _pad: 0,
+        name_id: frame_ids.first().copied().unwrap_or(0),
+    });
+    for (index, name_id) in frame_ids.iter().rev().copied().enumerate() {
+        batch.push(LiveEvent {
+            start_ns: time,
+            duration_ns: period_ns,
+            tid,
+            pid: target_pid as u32,
+            kind: kind::FUNCTION_CALL,
+            depth: index as u8,
+            extra: orbit_live_event::extra::SAMPLED_FRAME,
+            _pad: 0,
+            name_id,
+        });
+    }
+    store.push(StoredSample { timestamp_ns: time, tid, frames: frame_ids });
 }
 
 /// The line a capture logs when its symbols land.
@@ -1209,6 +1339,12 @@ fn capture_loop(
         if unwinder.is_some() { "ready" } else { "unavailable" }
     );
     let sample_flags = SampleFlags::stack_sample();
+    let mut sample_scratch = SampleScratch {
+        record: Vec::new(),
+        stack: Vec::new(),
+        held: Vec::new(),
+        pool: Vec::new(),
+    };
     let mut switch_rings = Vec::new();
     {
         let _phase = orbit_api::scope("open scheduler rings");
@@ -1636,6 +1772,40 @@ fn capture_loop(
                 }
             }
         }
+        // Uprobe hits first. Entry samples carry the real return address,
+        // and stack samples taken while that frame is live still have the
+        // uretprobe trampoline in its place. Pairing the hits (and holding
+        // the newest 100 ms) before the unwind is what puts the hooked
+        // function back on the callstack instead of the trampoline address.
+        let probe_now_ns = crate::now_monotonic_ns();
+        let mut uprobe_calls = Vec::new();
+        if let Some(session) = uprobes.as_mut() {
+            let _probes = orbit_api::scope("read uprobes");
+            // A function firing past the limit is switched off and named on
+            // the status line; the rest of the hooks carry on.
+            for (name, rate) in session.enforce_call_limit(max_hook_calls_per_s) {
+                let line = format!("auto-unhooked {name}: {rate} calls/s (limit {max_hook_calls_per_s})");
+                log::info!("{line}");
+                uprobe_status.push_str("; ");
+                uprobe_status.push_str(&line);
+                service.set_instrumentation_status(uprobe_status.clone());
+                // And an instant on the target's row, so the moment shows on
+                // the timeline as well as on the status line.
+                batch.push(LiveEvent {
+                    start_ns: probe_now_ns,
+                    duration_ns: 0,
+                    tid: target_pid as u32,
+                    pid: target_pid as u32,
+                    kind: kind::API_SCOPE,
+                    depth: 0,
+                    extra: 0,
+                    _pad: 0,
+                    name_id: names.id_for(&format!("auto-unhooked: {name}")),
+                });
+            }
+            uprobe_calls = session.poll_at(probe_now_ns);
+        }
+        let sample_horizon = uprobes.as_ref().map(|s| s.sample_horizon(probe_now_ns)).unwrap_or(u64::MAX);
         // Hold samples until the symbols are ready; the kernel rings buffer
         // them meanwhile, so they arrive named rather than as bare addresses.
         let _samples = orbit_api::scope("read samples");
@@ -1652,9 +1822,35 @@ fn capture_loop(
                 sample_flags,
                 &mut samples,
                 &mut batch,
+                sample_horizon,
+                uprobes.as_ref(),
+                &mut sample_scratch,
             );
         }
         drop(_samples);
+        if let Some(session) = uprobes.as_mut() {
+            session.retire_returns_before(sample_horizon);
+        }
+        // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
+        // exact spans the target actually executed, and they belong above the
+        // sampled flame graph rather than mixed into it.
+        for call in uprobe_calls {
+            instrumented_calls += 1;
+            if let Some(run) = auto.as_mut().filter(|run| run.profiler.is_hooked(call.function_id)) {
+                *run.counts.entry(call.function_id).or_insert(0) += 1;
+            }
+            batch.push(LiveEvent {
+                start_ns: call.start_ns,
+                duration_ns: call.duration_ns,
+                tid: call.tid as u32,
+                pid: target_pid as u32,
+                kind: kind::API_SCOPE,
+                depth: call.depth,
+                extra: 0,
+                _pad: orbit_live_event::event_flags::DYNAMIC,
+                name_id: hook_names.get(&call.function_id).copied().unwrap_or(0),
+            });
+        }
         if let Some(tracer) = thread_states.as_mut() {
             let _states = orbit_api::scope("read thread states");
             for slice in tracer.poll() {
@@ -1677,54 +1873,9 @@ fn capture_loop(
             batch.extend(scope_batch.iter().copied().filter(|e| started_in_capture(e, capture_start_ns)));
         }
 
-        // Instrumented calls. API_SCOPE rather than FUNCTION_CALL: these are
-        // exact spans the target actually executed, and they belong above the
-        // sampled flame graph rather than mixed into it.
         if let Some(session) = frida.as_mut() {
             session.poll();
             service.set_instrumentation_status(session.status(scopes.events_lost, &scopes.auto_unhooked));
-        }
-        if let Some(session) = uprobes.as_mut() {
-            let _probes = orbit_api::scope("read uprobes");
-            // A function firing past the limit is switched off and named on
-            // the status line; the rest of the hooks carry on.
-            for (name, rate) in session.enforce_call_limit(max_hook_calls_per_s) {
-                let line = format!("auto-unhooked {name}: {rate} calls/s (limit {max_hook_calls_per_s})");
-                log::info!("{line}");
-                uprobe_status.push_str("; ");
-                uprobe_status.push_str(&line);
-                service.set_instrumentation_status(uprobe_status.clone());
-                // And an instant on the target's row, so the moment shows on
-                // the timeline as well as on the status line.
-                batch.push(LiveEvent {
-                    start_ns: crate::now_monotonic_ns(),
-                    duration_ns: 0,
-                    tid: target_pid as u32,
-                    pid: target_pid as u32,
-                    kind: kind::API_SCOPE,
-                    depth: 0,
-                    extra: 0,
-                    _pad: 0,
-                    name_id: names.id_for(&format!("auto-unhooked: {name}")),
-                });
-            }
-            for call in session.poll() {
-                instrumented_calls += 1;
-                if let Some(run) = auto.as_mut().filter(|run| run.profiler.is_hooked(call.function_id)) {
-                    *run.counts.entry(call.function_id).or_insert(0) += 1;
-                }
-                batch.push(LiveEvent {
-                    start_ns: call.start_ns,
-                    duration_ns: call.duration_ns,
-                    tid: call.tid as u32,
-                    pid: target_pid as u32,
-                    kind: kind::API_SCOPE,
-                    depth: call.depth,
-                    extra: 0,
-                    _pad: orbit_live_event::event_flags::DYNAMIC,
-                    name_id: hook_names.get(&call.function_id).copied().unwrap_or(0),
-                });
-            }
         }
 
         if has_target && service.auto_profile() {
@@ -1934,6 +2085,10 @@ fn capture_loop(
         orbit_api::span_async(format!("DROPPED {lost} events"), start, crate::now_monotonic_ns());
     }
 
+    // Pair every uprobe hit still inside the reorder window before the
+    // final unwind, so the last samples are patched with the same return
+    // addresses as the rest of the capture.
+    let flushed_calls = uprobes.as_mut().map(|session| session.flush()).unwrap_or_default();
     // Samples still held for the symbols. A capture stopped before its
     // symbol load finished -- the first capture of a big binary, stopped
     // within a second or two -- lost every sample it took: the rings were
@@ -1967,6 +2122,9 @@ fn capture_loop(
             sample_flags,
             &mut samples,
             &mut tail,
+            u64::MAX,
+            uprobes.as_ref(),
+            &mut sample_scratch,
         );
         if !tail.is_empty() {
             service.push_events(&tail);
@@ -2027,8 +2185,7 @@ fn capture_loop(
     // Calls held back for reordering would otherwise be lost with the
     // session: the last spans of a capture are as real as the first.
     if let Some(session) = uprobes.as_mut() {
-        let tail: Vec<LiveEvent> = session
-            .flush()
+        let tail: Vec<LiveEvent> = flushed_calls
             .into_iter()
             .map(|call| LiveEvent {
                 start_ns: call.start_ns,
@@ -2160,7 +2317,11 @@ pub fn run_on(
     });
 
     let symbols: Arc<Mutex<SymbolState>> = Arc::new(Mutex::new(SymbolState::default()));
-    let store = Arc::new(SampleStore::new());
+    // 64 MiB of callstack rows. The event ring is already capped (256 MiB,
+    // preallocated). This stops the sampling report from retaining every
+    // sample for the life of a live capture; `SampleStore::new` stays
+    // unlimited for tests and for the bench that pushes a million rows.
+    let store = Arc::new(SampleStore::with_byte_limit(64 << 20));
     let report_store = store.clone();
     service.set_sampling_report(Arc::new(move |ranges| {
         let ranges: Vec<SampleRange> = ranges
@@ -2346,6 +2507,8 @@ pub fn run_on(
     let stop_worker = worker;
     let start_symbols = symbols.clone();
     let load_state = symbols.clone();
+    let load_running = capture.running.clone();
+    let load_target = capture.target_pid.clone();
     let status_state = symbols.clone();
     let search_state = symbols.clone();
     let resolve_state = symbols.clone();
@@ -2551,7 +2714,20 @@ pub fn run_on(
             }
             Ok(())
         }),
-        load_symbols: Arc::new(move |pid| load_symbols_for(&load_state, pid)),
+        load_symbols: Arc::new(move |pid| {
+            if capture_refuses_symbol_load(
+                load_running.load(Ordering::Relaxed),
+                load_target.load(Ordering::Relaxed),
+                pid,
+            ) {
+                log::info!(
+                    "keeping capture symbols for pid {}; ignoring a load for pid {pid}",
+                    load_target.load(Ordering::Relaxed)
+                );
+                return Ok(());
+            }
+            load_symbols_for(&load_state, pid)
+        }),
         symbols_status_json: Arc::new(move |pid| {
             let state = status_state.lock().map_err(|_| "symbol state poisoned".to_string())?;
             // A status for a process nobody has asked about is "idle", not
@@ -2625,6 +2801,10 @@ mod tests {
             name: name.to_string(),
         };
         let hooks = [hook("b3World_Step", "/home/me/box3d/build/bin/samples", 0x1a2b0), hook("main", "/usr/bin/app", 0x40)];
+        assert!(capture_refuses_symbol_load(true, 4242, 1));
+        assert!(!capture_refuses_symbol_load(true, 4242, 4242));
+        assert!(!capture_refuses_symbol_load(false, 4242, 1));
+        assert!(!capture_refuses_symbol_load(true, 0, 1));
         let lines = hook_list_lines(1234, crate::frida::Engine::Uprobes, &hooks, &[96]);
         assert_eq!(
             lines,

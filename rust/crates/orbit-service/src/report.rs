@@ -217,6 +217,15 @@ struct StoreInner {
     /// merges the short tail in near-linear time.
     dirty: bool,
     names: HashMap<u32, FrameInfo>,
+    /// Heap bytes of `samples` (the row plus its frame-id storage).
+    bytes: usize,
+    /// 0 keeps every sample. A live capture sets a limit so a multi-minute
+    /// session cannot retain every historical callstack.
+    byte_limit: usize,
+}
+
+fn stored_bytes(sample: &StoredSample) -> usize {
+    std::mem::size_of::<StoredSample>() + sample.frames.capacity() * std::mem::size_of::<u32>()
 }
 
 impl StoreInner {
@@ -224,6 +233,22 @@ impl StoreInner {
         if self.dirty {
             self.samples.sort_by_key(|s| s.timestamp_ns);
             self.dirty = false;
+        }
+    }
+
+    /// Drops the oldest samples, an eighth of the store at a time, until the
+    /// byte budget holds. Always keeps the newest sample, even if that one
+    /// row is itself over the budget.
+    fn trim_to_limit(&mut self) {
+        if self.byte_limit == 0 || self.bytes <= self.byte_limit || self.samples.len() <= 1 {
+            return;
+        }
+        self.ensure_sorted();
+        while self.bytes > self.byte_limit && self.samples.len() > 1 {
+            let n = (self.samples.len() / 8).max(1).min(self.samples.len() - 1);
+            for sample in self.samples.drain(..n) {
+                self.bytes = self.bytes.saturating_sub(stored_bytes(&sample));
+            }
         }
     }
 
@@ -291,6 +316,20 @@ impl SampleStore {
         SampleStore::default()
     }
 
+    /// A live capture's store. `new` stays unlimited so tests and an opened
+    /// capture file keep every sample they were given; the running capture
+    /// drops the oldest rows once `limit` bytes of callstacks are held.
+    ///
+    /// Before this cap, `push` appended for the whole capture. Together with
+    /// a fresh ~64 KiB perf-record allocation per 1 kHz sample, service RSS
+    /// climbed through a gigabyte in a few minutes and the process was
+    /// OOM-killed on a 2 GiB machine. The cap bounds the retained callstacks;
+    /// the capture loop reuses the record and stack buffers so that churn
+    /// stops allocating.
+    pub fn with_byte_limit(limit: usize) -> SampleStore {
+        SampleStore { inner: Mutex::new(StoreInner { byte_limit: limit, ..StoreInner::default() }) }
+    }
+
     #[cfg(test)]
     pub fn record_name(&self, id: u32, name: &str) {
         self.record_frame(id, FrameInfo { name: name.to_string(), ..FrameInfo::default() });
@@ -305,13 +344,21 @@ impl SampleStore {
         if inner.samples.last().is_some_and(|last| last.timestamp_ns > sample.timestamp_ns) {
             inner.dirty = true;
         }
+        inner.bytes += stored_bytes(&sample);
         inner.samples.push(sample);
+        inner.trim_to_limit();
     }
 
     pub fn clear(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.samples.clear();
         inner.dirty = false;
+        inner.bytes = 0;
+    }
+
+    #[cfg(test)]
+    fn retained_bytes(&self) -> usize {
+        self.inner.lock().unwrap().bytes
     }
 
     /// Every sample as `(timestamp, tid, frames)` in time order, and the
@@ -333,9 +380,12 @@ impl SampleStore {
     /// Replaces everything with an opened capture's samples and frames.
     pub fn replace(&self, samples: Vec<StoredSample>, frames: Vec<(u32, FrameInfo)>) {
         let mut inner = self.inner.lock().unwrap();
+        inner.bytes = samples.iter().map(stored_bytes).sum();
         inner.samples = samples;
         inner.dirty = true;
         inner.names = frames.into_iter().collect();
+        // An opened capture is already bounded by the file. Leave it whole;
+        // the next live capture `clear`s this store and pushes under the limit.
     }
 
     /// Aggregates the samples in `[start_ns, end_ns]` into a JSON report:
@@ -1268,5 +1318,23 @@ mod tests {
         println!("REPORT_BENCH narrow_report_ms={narrow_ms:.3} (1ms window, ~1k samples) bytes={}", narrow.len());
         println!("REPORT_BENCH whole_tree_ms={tree_ms:.2} bytes={}", tree.len());
         println!("REPORT_BENCH narrow_tree_ms={narrow_tree_ms:.3} bytes={}", narrow_tree.len());
+    }
+
+    #[test]
+    fn a_byte_limited_store_keeps_the_newest_samples_inside_the_budget() {
+        let store = SampleStore::with_byte_limit(4096);
+        for i in 0..10_000u64 {
+            store.push(StoredSample { timestamp_ns: i, tid: 1, frames: vec![1, 2, 3, 4] });
+        }
+        let (rows, _) = store.export_rows();
+        assert!(rows.len() > 1 && rows.len() < 10_000, "kept {}, not every row", rows.len());
+        assert_eq!(rows.last().unwrap().0, 9_999, "the newest sample stays");
+        assert!(rows.first().unwrap().0 > 0, "the oldest samples were dropped");
+        assert!(store.retained_bytes() <= 4096, "retained {} bytes", store.retained_bytes());
+        let unlimited = SampleStore::new();
+        for i in 0..100u64 {
+            unlimited.push(StoredSample { timestamp_ns: i, tid: 1, frames: vec![1] });
+        }
+        assert_eq!(unlimited.export_rows().0.len(), 100);
     }
 }
